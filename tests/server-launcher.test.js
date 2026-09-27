@@ -71,12 +71,47 @@ function tables(path) {
   finally { db.close() }
 }
 
+function embedded(mode) {
+  return ['--input-type=module', '--eval', `
+    import assert from 'node:assert/strict'
+    import { Server, createServer } from 'node:http'
+    import { init } from './server.ts'
+    const httpServer = await init(${JSON.stringify(mode)})
+    assert.ok(httpServer instanceof Server)
+    assert.equal(httpServer.listening, false)
+    assert.equal(httpServer.address(), null)
+    assert.equal(httpServer.listenerCount('request'), 1)
+    assert.equal(httpServer.listenerCount('upgrade'), ${mode === 'managed' ? 0 : 1})
+    const [triageRequestListener] = httpServer.listeners('request')
+    const [triageUpgradeListener] = httpServer.listeners('upgrade')
+    const host = createServer((req, res) => {
+      res.setHeader('x-test-host', 'embedded')
+      triageRequestListener.call(httpServer, req, res)
+    })
+    if (triageUpgradeListener) host.on('upgrade', (req, socket, head) => {
+      triageUpgradeListener.call(httpServer, req, socket, head)
+    })
+    process.on('SIGTERM', async () => {
+      await httpServer[Symbol.asyncDispose]()
+      await host[Symbol.asyncDispose]()
+    })
+    host.listen(0, '127.0.0.1', () => {
+      assert.equal(httpServer.listening, false)
+      console.log('Host: http://127.0.0.1:' + host.address().port + '/')
+    })
+  `, '--', '--mode=ignored-by-init']
+}
+
 for (const [label, args, advertised, hasE2e, hasManaged] of [
-  ['default', ['server.js'], 'e2e', true, false],
-  ['e2e', ['server.js', '--mode=e2e'], 'e2e', true, false],
-  ['managed', ['server.js', '--mode', 'managed'], 'managed', false, true],
-  ['managed-e2e', ['server.js', '--mode', 'managed-e2e'], 'managed+e2e', true, true],
-  ['e2e-managed', ['server.js', '--mode=e2e-managed'], 'e2e+managed', true, true],
+  ['default', ['cli.js'], 'e2e', true, false],
+  ['e2e', ['cli.js', '--mode=e2e'], 'e2e', true, false],
+  ['managed', ['cli.js', '--mode', 'managed'], 'managed', false, true],
+  ['managed-e2e', ['cli.js', '--mode', 'managed-e2e'], 'managed+e2e', true, true],
+  ['e2e-managed', ['cli.js', '--mode=e2e-managed'], 'e2e+managed', true, true],
+  ['embedded e2e', embedded('e2e'), 'e2e', true, false],
+  ['embedded managed', embedded('managed'), 'managed', false, true],
+  ['embedded managed-e2e', embedded('managed-e2e'), 'managed+e2e', true, true],
+  ['embedded e2e-managed', embedded('e2e-managed'), 'e2e+managed', true, true],
   ['standalone e2e', ['server-e2e/index.ts'], 'e2e', true, false],
   ['standalone managed', ['server-managed/index.ts'], 'managed', false, true],
 ]) {
@@ -93,7 +128,9 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
     }
     const server = await boot(t, args, env)
     t.after(() => rmSync(dir, { recursive: true, force: true }))
-    const info = await (await fetch(`${server.url}/api/config`)).json()
+    const configResponse = await fetch(`${server.url}/api/config`)
+    if (label.startsWith('embedded')) assert.equal(configResponse.headers.get('x-test-host'), 'embedded')
+    const info = await configResponse.json()
     assert.equal(info.mode, advertised)
     if (hasManaged) {
       assert.equal(info.managed.loginPath, '/api/oauth/github/login')
@@ -144,14 +181,207 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
   })
 }
 
+for (const mode of ['e2e', 'managed', 'managed-e2e', 'e2e-managed']) {
+  for (const flag of ['--help', '-h']) {
+    test(`init(${mode}) ignores the embedding host's ${flag} argument`, () => {
+      const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-host-help-'))
+      try {
+        const proc = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+          import assert from 'node:assert/strict'
+          import { init } from './server.ts'
+          const server = await init(${JSON.stringify(mode)})
+          assert.equal(server.listening, false)
+          assert.equal(server.address(), null)
+          assert.equal(server.listenerCount('request'), 1)
+          assert.equal(server.listenerCount('upgrade'), ${mode === 'managed' ? 0 : 1})
+          console.log('initialized')
+          await server[Symbol.asyncDispose]()
+        `, '--', flag], { env: environment(dir), encoding: 'utf8', timeout: 15000 })
+        assert.equal(proc.status, 0, proc.stderr)
+        assert.match(proc.stdout, /^initialized$/mu, 'init must return to its host')
+        assert.doesNotMatch(proc.stdout, /Usage:/u)
+      } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
+  }
+}
+
+test('standalone e2e entry points handle both help flags without opening storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-e2e-help-'))
+  try {
+    const env = environment(dir)
+    for (const entry of ['server-e2e/cli.js', 'server-e2e/index.ts']) {
+      for (const flag of ['--help', '-h']) {
+        const proc = spawnSync(process.execPath, [entry, flag], { env, encoding: 'utf8', timeout: 5000 })
+        assert.equal(proc.status, 0, proc.stderr)
+        assert.match(proc.stdout, /Usage: node server-e2e\/index.ts/u)
+        assert.match(proc.stdout, /DB_PATH/u)
+        assert.equal(existsSync(env.DB_PATH), false)
+        assert.equal(existsSync(env.OBJSTORE_DIR), false)
+      }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+for (const mode of ['e2e', 'managed', 'managed-e2e', 'e2e-managed']) {
+  for (const embedding of ['unbound', 'listening', 'mounted', 'close']) {
+    test(`embedded ${embedding} server releases ${mode} resources and permits reinitialization`, () => {
+      const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-dispose-'))
+      try {
+        const proc = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+          import assert from 'node:assert/strict'
+          import { once } from 'node:events'
+          import { createServer } from 'node:http'
+          import { DatabaseSync } from 'node:sqlite'
+          import { mock } from 'node:test'
+          import { init } from './server.ts'
+          const closed = [], closeDb = DatabaseSync.prototype.close
+          let targetCount = 0, databasesClosed
+          mock.method(DatabaseSync.prototype, 'close', function () {
+            const result = closeDb.call(this)
+            closed.push(this)
+            if (closed.length === targetCount) databasesClosed.resolve()
+            return result
+          })
+          // Preserve listeners owned by the embedding host across both reloads.
+          process.on('SIGTERM', () => {})
+          const events = ['SIGINT', 'SIGTERM', 'unhandledRejection', 'uncaughtException']
+          const signals = events.map(name => process.listeners(name))
+          for (let n = 0; n < 2; n++) {
+            targetCount = (n + 1) * ${mode.includes('-') ? 2 : 1}
+            databasesClosed = Promise.withResolvers()
+            const server = await init(${JSON.stringify(mode)})
+            assert.deepEqual(events.map(name => process.listeners(name)), signals)
+            let host
+            if (${JSON.stringify(embedding)} === 'mounted') {
+              const [handler] = server.listeners('request')
+              host = createServer(handler)
+            } else if (${JSON.stringify(embedding)} !== 'unbound') host = server
+            if (host) {
+              host.listen(0, '127.0.0.1')
+              await once(host, 'listening')
+              const response = await fetch('http://127.0.0.1:' + host.address().port + '/api/config')
+              assert.equal((await response.json()).mode, ${JSON.stringify(mode.replace('-', '+'))})
+            }
+            if (${JSON.stringify(embedding)} === 'close') {
+              await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+              // The close event starts cleanup; reaping may still be draining.
+              await databasesClosed.promise
+              await server[Symbol.asyncDispose]()
+            } else await Promise.all([server[Symbol.asyncDispose](), server[Symbol.asyncDispose]()])
+            assert.equal(server.listening, false)
+            assert.equal(closed.length, (n + 1) * ${mode.includes('-') ? 2 : 1}, 'dispose closes each database exactly once')
+            for (const db of closed) assert.throws(() => db.prepare('SELECT 1'), /not open/u)
+            assert.deepEqual(events.map(name => process.listeners(name)), signals)
+            if (host && host !== server) {
+              const stopped = await fetch('http://127.0.0.1:' + host.address().port + '/api/sync/save', { method: 'POST', body: '{}' })
+              assert.equal(stopped.status, 503, 'the host stays alive while disposed handlers reject new work')
+              await stopped.text()
+              await host[Symbol.asyncDispose]()
+            }
+          }
+          console.log('disposed and reinitialized')
+          // No forced exit: a leaked GC interval would keep this process alive.
+        `], { env: { ...environment(dir), OBJSTORE_REAP_DISABLED: 'false', OBJSTORE_REAP_INTERVAL_MS: '10' }, encoding: 'utf8', timeout: 30000, killSignal: 'SIGKILL' })
+        assert.equal(proc.status, 0, proc.error?.message || proc.stderr)
+        assert.match(proc.stdout, /disposed and reinitialized/u)
+      } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
+  }
+}
+
+test('managed disposal drains work on a separate host before closing the database', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-dispose-drain-'))
+  try {
+    const proc = spawnSync(process.execPath, ['--experimental-test-module-mocks', '--input-type=module', '--eval', `
+      import assert from 'node:assert/strict'
+      import { once } from 'node:events'
+      import { createServer } from 'node:http'
+      import { setImmediate } from 'node:timers/promises'
+      import { mock } from 'node:test'
+      import { openManagedStorage } from './server-managed/storage.ts'
+      const entered = Promise.withResolvers(), release = Promise.withResolvers()
+      let closed = false, disposed = false
+      await mock.module('./server-managed/storage.ts', { exports: { openManagedStorage: async config => {
+        const storage = await openManagedStorage(config)
+        const reap = storage.db.deleteExpiredSessions, close = storage.db.close
+        storage.db.deleteExpiredSessions = async now => {
+          entered.resolve()
+          await release.promise
+          return reap(now)
+        }
+        storage.db.close = async () => { closed = true; await close() }
+        return storage
+      } } })
+      const { init } = await import('./server.ts')
+      const server = await init('managed')
+      const [handler] = server.listeners('request')
+      const host = createServer(handler)
+      host.listen(0, '127.0.0.1')
+      await once(host, 'listening')
+      const url = 'http://127.0.0.1:' + host.address().port
+      const request = fetch(url + '/api/reap', { headers: { authorization: 'Bearer test-cron-secret' } })
+      await entered.promise
+      const disposing = server[Symbol.asyncDispose]().then(() => { disposed = true })
+      await setImmediate()
+      assert.equal(closed, false, 'tracked work still owns the database')
+      assert.equal(disposed, false)
+      const stopped = await fetch(url + '/api/auth/session')
+      assert.equal(stopped.status, 503)
+      await stopped.text()
+      release.resolve()
+      const response = await request
+      assert.equal(response.status, 200)
+      await response.text()
+      await disposing
+      assert.equal(closed, true)
+      await host[Symbol.asyncDispose]()
+      console.log('drained')
+    `], { env: environment(dir), encoding: 'utf8', timeout: 30000 })
+    assert.equal(proc.status, 0, proc.error?.message || proc.stderr)
+    assert.match(proc.stdout, /drained/u)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+for (const mode of ['e2e', 'managed', 'managed-e2e', 'e2e-managed']) {
+  test(`embedded ${mode} bind errors preserve the host and dispose resources`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-bind-error-'))
+    try {
+      const proc = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+        import assert from 'node:assert/strict'
+        import { once } from 'node:events'
+        import { createServer } from 'node:http'
+        import { init } from './server.ts'
+        const host = createServer((req, res) => res.end('host alive'))
+        host.listen(0, '127.0.0.1')
+        await once(host, 'listening')
+        const port = host.address().port
+        const server = await init(${JSON.stringify(mode)})
+        const error = once(server, 'error')
+        server.listen(port, '127.0.0.1')
+        assert.equal((await error)[0].code, 'EADDRINUSE')
+        await server[Symbol.asyncDispose]()
+        assert.equal(await (await fetch('http://127.0.0.1:' + port)).text(), 'host alive')
+        const replacement = await init(${JSON.stringify(mode)})
+        replacement.listen(0, '127.0.0.1')
+        await once(replacement, 'listening')
+        await replacement[Symbol.asyncDispose]()
+        await host[Symbol.asyncDispose]()
+        console.log('recovered')
+      `], { env: environment(dir), encoding: 'utf8', timeout: 30000 })
+      assert.equal(proc.status, 0, proc.error?.message || proc.stderr)
+      assert.match(proc.stdout, /recovered/u)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+}
+
 test('launcher validates arguments before opening stores; help needs no managed credentials', () => {
   const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-cli-'))
   try {
     const env = { ...environment(dir), GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: '' }
     for (const args of [['--mode', 'bad'], ['--mode'], ['--unknown']]) {
-      assert.notEqual(spawnSync(process.execPath, ['server.js', ...args], { env }).status, 0)
+      assert.notEqual(spawnSync(process.execPath, ['cli.js', ...args], { env }).status, 0)
     }
-    const help = spawnSync(process.execPath, ['server.js', '--mode=managed-e2e', '--help'], { env, encoding: 'utf8' })
+    const help = spawnSync(process.execPath, ['cli.js', '--mode=managed-e2e', '--help'], { env, encoding: 'utf8' })
     assert.equal(help.status, 0)
     assert.match(help.stdout, /managed-e2e/u)
     assert.equal(existsSync(env.DB_PATH), false)
@@ -161,12 +391,42 @@ test('launcher validates arguments before opening stores; help needs no managed 
       assert.equal(scriptHelp.status, 0, `${script} forwards arguments`)
       assert.match(scriptHelp.stdout, /DB_PATH/u)
     }
-    const sameDb = spawnSync(process.execPath, ['server.js', '--mode=managed-e2e'], {
+    const sameDb = spawnSync(process.execPath, ['cli.js', '--mode=managed-e2e'], {
       env: { ...environment(dir), MANAGED_DB_PATH: join(dir, 'e2e.db') }, encoding: 'utf8',
     })
     assert.notEqual(sameDb.status, 0)
     assert.match(sameDb.stderr, /must differ/u)
     assert.equal(existsSync(env.DB_PATH), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('server.ts does not start itself, parse arguments or open storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-import-'))
+  try {
+    const env = { ...environment(dir), GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: '' }
+    const proc = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      "import { init, start } from './server.ts'; console.log(typeof init, typeof start)", '--', '--unknown'],
+    { env, encoding: 'utf8', timeout: 5000 })
+    assert.equal(proc.status, 0, proc.stderr)
+    assert.equal(proc.stdout.trim(), 'function function')
+    const direct = spawnSync(process.execPath, ['server.ts', '--unknown'], { env, encoding: 'utf8', timeout: 5000 })
+    assert.equal(direct.status, 0, direct.stderr)
+    assert.equal(direct.stdout, '')
+    assert.equal(existsSync(env.DB_PATH), false)
+    assert.equal(existsSync(env.MANAGED_DB_PATH), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('init rejects unsupported modes before opening storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-invalid-mode-'))
+  try {
+    const env = environment(dir)
+    const proc = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      "import { init } from './server.ts'; await init('bad')"], { env, encoding: 'utf8', timeout: 5000 })
+    assert.equal(proc.status, 1)
+    assert.match(proc.stderr, /Unknown mode: bad/u)
+    assert.equal(existsSync(env.DB_PATH), false)
+    assert.equal(existsSync(env.MANAGED_DB_PATH), false)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
@@ -181,7 +441,7 @@ test('both combined launchers reject mixed backends and ambiguous URLs before op
         { DATABASE_URL: 'postgres://example/shared', MANAGED_DATABASE_URL: 'postgres://example/managed' },
       ]) {
         const env = { ...environment(dir), ...urls }
-        const proc = spawnSync(process.execPath, ['server.js', '--mode', mode], { env, encoding: 'utf8', timeout: 5000 })
+        const proc = spawnSync(process.execPath, ['cli.js', '--mode', mode], { env, encoding: 'utf8', timeout: 5000 })
         assert.notEqual(proc.status, 0)
         assert.match(proc.stderr, /Mixing Neon and SQLite|DATABASE_URL cannot be combined/u)
         assert.equal(existsSync(env.DB_PATH), false)

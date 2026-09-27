@@ -2,13 +2,12 @@
 // vars, the optional config.json) into one immutable `Config`, failing
 // loud on malformed values so a typo surfaces at startup rather than
 // deep in `node:net` / at the first token verification. Pure parsing —
-// no backends opened, no crypto keys derived, no side effects beyond
-// `--help` / fail-fast `process.exit`. index.ts destructures the
-// result and does the wiring (backend selection, password HMAC, …).
+// no backends opened or process termination. Invalid configuration throws so
+// embedding hosts can recover; app.ts handles backend selection and wiring.
 
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
-import { argv, env } from 'node:process'
+import { env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { configuredScanServer } from '../server-common/scan-config.ts'
@@ -31,7 +30,7 @@ export type Config = {
   deepviewScanServer: string | null
 }
 
-// Parse + range-validate an integer env var, exiting with a clear
+// Parse + range-validate an integer env var, throwing a clear
 // up-front message on a malformed value — a NaN from `Number("abc")`
 // otherwise surfaces as a confusing crash deep inside `node:net`
 // (`WebSocketServer({ port: NaN })`) or a 0-ms `setInterval` loop. An
@@ -42,13 +41,12 @@ function intEnv(name: string, def: number, min: number, max: number, hint = ''):
   const raw = env[name]
   const n = raw == null ? def : Number(raw)
   if (!Number.isSafeInteger(n) || n < min || n > max) {
-    console.error(`Invalid ${name}: ${raw} — must be an integer in [${min}, ${max}].${hint ? ` ${hint}` : ''}`)
-    process.exit(1)
+    throw new Error(`Invalid ${name}: ${raw} — must be an integer in [${min}, ${max}].${hint ? ` ${hint}` : ''}`)
   }
   return n
 }
 
-const HELP = `Usage: node server-e2e/index.ts
+export const HELP = `Usage: node server-e2e/index.ts
 Environment:
   PORT                       listen port (default 8765)
   HOST                       bind host (default 127.0.0.1)
@@ -132,11 +130,11 @@ function readServerConfigFile(path: string): ServerConfigFile {
   let raw: string
   try { raw = readFileSync(path, 'utf8') } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return {}
-    console.error(`Failed to read ${path}:`, (err as Error)?.message ?? err); process.exit(1)
+    throw new Error(`Failed to read ${path}: ${(err as Error)?.message ?? err}`, { cause: err })
   }
   try { return JSON.parse(raw) as ServerConfigFile }
   catch (err) {
-    console.error(`Failed to parse ${path} as JSON:`, (err as Error)?.message ?? err); process.exit(1)
+    throw new Error(`Failed to parse ${path} as JSON: ${(err as Error)?.message ?? err}`, { cause: err })
   }
 }
 
@@ -151,20 +149,17 @@ function decodeTokenSecret(raw: string): Uint8Array<ArrayBuffer> {
   // typo-detector below would fail with a misleading message.
   const trimmed = raw.trim()
   if (trimmed.length === 0) {
-    console.error('OBJSTORE_TOKEN_SECRET is empty after trimming whitespace')
-    process.exit(1)
+    throw new Error('OBJSTORE_TOKEN_SECRET is empty after trimming whitespace')
   }
   const decoded = Buffer.from(trimmed, 'base64')
   const reencoded = decoded.toString('base64')
   const norm = (s: string): string => s.replace(/=+$/u, '')
   if (norm(reencoded) !== norm(trimmed)) {
-    console.error('OBJSTORE_TOKEN_SECRET contains non-base64 characters (likely a typo, e.g. base64url chars in a base64 secret).')
-    console.error('Regenerate with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
-    process.exit(1)
+    throw new Error('OBJSTORE_TOKEN_SECRET contains non-base64 characters (likely a typo, e.g. base64url chars in a base64 secret).\n' +
+      'Regenerate with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
   }
   if (decoded.byteLength !== 32) {
-    console.error(`OBJSTORE_TOKEN_SECRET must decode to 32 bytes (got ${decoded.byteLength})`)
-    process.exit(1)
+    throw new Error(`OBJSTORE_TOKEN_SECRET must decode to 32 bytes (got ${decoded.byteLength})`)
   }
   // Copy into a fresh ArrayBuffer so the type matches
   // `Uint8Array<ArrayBuffer>` (Buffer may be SharedArrayBuffer-backed).
@@ -193,7 +188,7 @@ export function loadConfig(): Config {
   const serverConfig = readServerConfigFile(configPath)
   const rawPassword = serverConfig.password
   if (rawPassword != null && typeof rawPassword !== 'string') {
-    console.error(`Invalid ${configPath}: "password" must be a string or null`); process.exit(1)
+    throw new Error(`Invalid ${configPath}: "password" must be a string or null`)
   }
   const password = rawPassword ?? null
   // Upper bound 65_536 — bounds memory under hostile load; a deployer
@@ -201,11 +196,6 @@ export function loadConfig(): Config {
   // here, after the config.json / password parse, to keep the
   // error-precedence order.
   const maxInflightPerSocket = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
-
-  if (argv.includes('--help') || argv.includes('-h')) {
-    console.log(HELP)
-    process.exit(0)
-  }
 
   const neonUrl = databaseUrls().e2e
   const blobToken = env['BLOB_READ_WRITE_TOKEN'] ?? null

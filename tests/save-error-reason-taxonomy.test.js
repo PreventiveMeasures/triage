@@ -8,7 +8,7 @@
 // Two assertions:
 //
 // 1. Source-level scrape: enumerate every `reason: '<token>'`
-//    literal in `server-e2e/index.ts` save-error emit sites and assert
+//    literal in `server-e2e/app.ts` save-error emit sites and assert
 //    each is a member of `SAVE_ERROR_REASONS` from the shared
 //    taxonomy module. New emit sites that bypass `sendSaveError`
 //    would also surface here as a typo-collision check.
@@ -51,7 +51,7 @@ const {
   SAVE_ERROR_REASONS,
 } = await import('../common/save-error-reason.ts')
 
-const SERVER_INDEX_PATH = fileURLToPath(new URL('../server-e2e/index.ts', import.meta.url))
+const SERVER_APP_PATH = fileURLToPath(new URL('../server-e2e/app.ts', import.meta.url))
 
 describe('workspace-save-error.reason taxonomy', () => {
   it('every server-emitted reason literal is a declared SAVE_ERROR_REASONS member', () => {
@@ -59,7 +59,7 @@ describe('workspace-save-error.reason taxonomy', () => {
     // and sync-handlers.ts ('too-large', 'stale-base'); index.ts is
     // scanned too in case a future emit site lands there.
     const read = (p) => readFileSync(fileURLToPath(new URL(p, import.meta.url)), 'utf8')
-    const src = readFileSync(SERVER_INDEX_PATH, 'utf8') + '\n'
+    const src = readFileSync(SERVER_APP_PATH, 'utf8') + '\n'
       + read('../server-e2e/sync-handlers.ts') + '\n'
       + read('../server-e2e/ws-server.ts')
     // Match `sendSaveError(..., 'reason')` calls — the typed wrapper

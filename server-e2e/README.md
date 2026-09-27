@@ -25,11 +25,47 @@ The SQLite file is created on first run; nothing else is needed.
 From a checkout, the root launcher can also run either server or both:
 
 ```sh
-node server.js --mode e2e          # default when --mode is omitted
-node server.js --mode managed
-node server.js --mode managed-e2e
-node server.js --mode e2e-managed
+node cli.js --mode e2e          # default when --mode is omitted
+node cli.js --mode managed
+node cli.js --mode managed-e2e
+node cli.js --mode e2e-managed
 ```
+
+`cli.js` registers the TypeScript loader and starts `server.ts`, which owns
+argument parsing and server selection. `server.ts` does not register a loader
+or start listening when imported or executed directly.
+
+To embed any mode, initialize it once during host startup. `init(mode)` returns
+an unbound Node HTTP server with its request and upgrade listeners installed:
+
+```js
+import { init } from './server.ts'
+
+const httpServer = await init('managed-e2e')
+const [triageRequestListener] = httpServer.listeners('request')
+const [triageUpgradeListener] = httpServer.listeners('upgrade')
+```
+
+Attach those listeners to your host server, or call `httpServer.listen(...)`
+yourself. The supported modes match `--mode`; managed-only has no upgrade
+listener. Each initialization opens its own storage handles and starts
+maintenance without binding a port or installing process handlers. The root
+`start()` is called only by `cli.js`; standalone launchers own signals and exit
+codes. Embedded hosts receive server errors through the server's `error` event.
+Invalid configuration rejects `init(mode)` so the host can correct it and retry;
+Neon configuration and driver checks run before opening storage.
+If later assembly fails, initialization releases acquired resources and waits
+for pending maintenance before rejecting, so retries do not leave background
+work or database handles behind.
+
+In every mode, await `httpServer[Symbol.asyncDispose]()` on teardown. It closes
+live WS/SSE connections, drains tracked work, stops maintenance and pubsub, and
+closes all enabled databases without exiting the host. This also works when its
+listeners were mounted on another server: the host's listener stays open, and
+disposed API handlers reject new work. Disposal is idempotent, and `init(mode)`
+can create a fresh instance afterward. A server `close` or `error` event also
+starts cleanup; await async disposal to wait for it to finish. The host remains
+responsible for closing its own HTTP server.
 
 Combined modes use one HTTP server on `HOST`/`PORT`, serving managed HTTP
 routes alongside the existing e2e HTTP, WebSocket and SSE routes. Only

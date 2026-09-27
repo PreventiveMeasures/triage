@@ -18,5 +18,10 @@
 // `import.meta.main` auto-start gate stays off, so we call the exported
 // `start()` ourselves.
 import '../strip-types-loader.js'
-const { start } = await import('./index.ts')
-start()
+const { HELP } = await import('./config.ts')
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(HELP)
+} else {
+  const { start } = await import('./index.ts')
+  start()
+}

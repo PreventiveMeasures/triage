@@ -106,6 +106,7 @@
     },
     {
       "files": [
+        "server-e2e/app.ts",
         "server-e2e/sync-handlers.ts",
         "server-e2e/sse-server.ts",
         "server-e2e/ws-server.ts"
