@@ -61,9 +61,18 @@
   background: color-mix(in srgb, var(--green) 6%, var(--panel));
 }
 .page-scan .page-icon {
-  color: var(--yellow);
-  border-color: color-mix(in srgb, var(--yellow) 18%, var(--border));
-  background: color-mix(in srgb, var(--yellow) 6%, var(--panel));
+  color: var(--scan-icon-color, var(--yellow));
+  border-color: color-mix(in srgb, var(--scan-icon-color, var(--yellow)) 18%, var(--border));
+  background: color-mix(in srgb, var(--scan-icon-color, var(--yellow)) 6%, var(--panel));
+}
+:host-context(body.theme-light) .page-scan .page-icon {
+  --scan-icon-color: #bf8700;
+}
+:host-context(body.theme-green) :is(.page-bundle, .page-scan) .page-icon,
+:host-context(body.theme-pink) :is(.page-bundle, .page-scan) .page-icon {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
 .page-icon svg {
   width: 1.2rem;
