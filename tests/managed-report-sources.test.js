@@ -397,3 +397,22 @@ test('Vercel bundle deletion removes source-cache versions across pages without 
   await h.cache.deleteBundle(h.bundle.id)
   assert.deepEqual([...h.fixture.objects.keys()].toSorted(), retained)
 })
+
+test('source files follow row security and same-organization dependency access after a repository rename', async t => {
+  const h = await setupBackend(t)
+  const report = await h.seed(JSON.stringify({ type: 'security', findings: [
+    { id: 'org-dependency', file: 'node_modules/dep/index.js', repo: { github: 'org/dep' }, security: false },
+    [{ id: 'app', file: 'src/main.js', isApp: true, security: false }, { id: 'security', file: 'secret.js' }],
+  ] }))
+  await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+  const allowed = await h.send(report.id, 'view')
+  assert.equal(allowed.status, 200)
+  assert.deepEqual(allowed.json().files, [['node_modules/dep/index.js', files['node_modules/dep/index.js']]])
+  const repo = (await h.db.listAllRepos()).find(entry => entry.repoId === 1)
+  await h.db.selectRepo({ ...repo, fullName: 'other/repo' }, Date.now())
+  const renamed = await h.send(report.id, 'view')
+  assert.equal(renamed.status, 200)
+  assert.deepEqual(renamed.json().files, [], 'do not reuse a source cache built under another own-source organization')
+  const admin = await h.send(report.id, 'admin')
+  assert.deepEqual(admin.json().files.map(([file]) => file).toSorted(), ['node_modules/dep/index.js', 'secret.js', 'src/main.js'])
+})

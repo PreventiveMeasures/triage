@@ -258,6 +258,7 @@ export type UserOption = {
   id: string
   login: string
   name: string | null
+  role: Role
 }
 
 // A team as shown in a member's own sidebar: the team name plus the reports and
@@ -707,7 +708,7 @@ function prepareStatements(db: ManagedSql) {
          JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
         WHERE r.id = ?`,
     ),
-    selectUserOptionsStmt: db.prepare(`SELECT id, login, name FROM managed_user ORDER BY login ASC`),
+    selectUserOptionsStmt: db.prepare(`SELECT id, login, name, role FROM managed_user ORDER BY login ASC`),
     selectTeamReposStmt: db.prepare(
       `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, sr.full_name AS fullName, NULLIF(tr.path, '') AS path
          FROM team_repo tr JOIN selected_repo sr ON sr.repo_id = tr.repo_id
@@ -1051,7 +1052,7 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       return row == null ? null : { id: row.id, slug: row.slug, name: row.name }
     },
     async listUserOptions(): Promise<UserOption[]> {
-      return ((await selectUserOptionsStmt.all()) as UserOption[]).map((u) => ({ id: u.id, login: u.login, name: u.name }))
+      return ((await selectUserOptionsStmt.all()) as UserOption[]).map((u) => ({ id: u.id, login: u.login, name: u.name, role: u.role }))
     },
     async listRepoScopesForUser(userId: string): Promise<{ repoId: number; path: string | null }[]> {
       return (await selectUserRepoScopesStmt.all(userId)) as { repoId: number; path: string | null }[]

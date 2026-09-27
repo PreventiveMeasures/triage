@@ -69,9 +69,9 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     queue = job.then(() => undefined, () => undefined)
     return job
   }
-  function filename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
+  function filename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }) {
     const key = createHash('sha256').update(JSON.stringify([
-      bundle.integrity, bundle.kind, permissions.dependencies, permissions.security,
+      'finding-access-v2', bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
     ])).digest('hex')
     return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
   }
@@ -79,10 +79,10 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
     return names.some(name => reportFormat(name) === reportFormat(report.filename)) && await db.getBundle(bundle.id) != null
   }
-  async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
+  async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }) {
     const bytes = await reports.get(report.id)
     if (!bytes) return false
-    const parsed = await loadManagedFindings(filterReportContent(bytes.toString('utf8'), permissions, report.filename), report.filename)
+    const parsed = await loadManagedFindings(filterReportContent(bytes.toString('utf8'), permissions, report.filename, repo), report.filename)
     if (!parsed) return false
     const details = await readBundleDetails(bundle, bundles)
     if (!details) return false
@@ -100,7 +100,7 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     }
     return true
   }
-  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions): Promise<boolean> {
+  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }): Promise<boolean> {
     const existing = pending.get(target)
     if (existing) {
       const ready = await existing.job
@@ -110,12 +110,12 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
       const initiator = await db.getReport(existing.reportId)
       if (initiator?.bundleId === bundle.id && initiator.sha256 === report.sha256) return false
       if (pending.get(target) === existing) pending.delete(target)
-      return ensure(target, report, bundle, permissions)
+      return ensure(target, report, bundle, permissions, repo)
     }
     const job = (async () => {
       if (await storage.exists(target)) return true
       // Serial cold builds bound peak decompression/parsing memory.
-      return enqueue(() => build(target, report, bundle, permissions))
+      return enqueue(() => build(target, report, bundle, permissions, repo))
     })()
     const entry = { reportId: report.id, job }
     pending.set(target, entry)
@@ -123,9 +123,11 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
   }
   return {
     async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions) {
-      const target = filename(report, bundle, permissions)
-      if (!(await ensure(target, report, bundle, permissions))) return null
-      return storage.open(target)
+      const repo = { github: (await db.listAllRepos()).find(entry => entry.repoId === report.repoId)?.fullName ?? null }
+      const target = filename(report, bundle, permissions, repo)
+      if (!(await ensure(target, report, bundle, permissions, repo))) return null
+      const opened = await storage.open(target)
+      return { ...opened, repo }
     },
     async deleteBundle(id: string) {
       const prefix = `${bundleDirectory(id)}/`

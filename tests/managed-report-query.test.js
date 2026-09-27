@@ -292,7 +292,7 @@ test('markdown and multi-scan CSV are served as parsed JSON with permissions app
   await h.db.setTeamMember('team', h.users.view.userId, { dependencies: false, security: true })
   const partial = await h.request({ ids: ['md', 'csv'] })
   assert.equal(partial.body.reports[0].data.findings.length, 1)
-  assert.deepEqual(partial.body.reports[1].data.findings.map(f => f.id), [managedCsvIds[0]])
+  assert.deepEqual(partial.body.reports[1].data.findings.map(f => f.id), managedCsvIds)
   const single = await h.request({}, { method: 'GET', path: '/api/reports/csv' })
   assert.deepEqual(single.body, { data: partial.body.reports[1].data, repo: partial.body.reports[1].repo })
 })
@@ -429,4 +429,41 @@ test('encoded output has its own bound and never returns a partial workspace', a
   const response = await h.request({ ids: ['a', 'b'] }, { role: 'admin' })
   assert.equal(response.status, 413)
   assert.deepEqual(response.body, { error: 'batch-too-large' })
+})
+
+test('report and triage responses intersect row security with individual dependency access, with admin/manager bypass', async t => {
+  const h = await setup(t)
+  await h.db.setTeamMember('team', h.users.manage.userId, { dependencies: false, security: false })
+  const findings = [
+    [{ id: 'own', file: 'src/main.js', security: false, package: { npm: { name: '@own/app' } } },
+      { id: 'third-party', file: 'node_modules/lib/a.js', security: false }],
+    { id: 'app', file: 'node_modules/lib/b.js', isApp: true, security: false },
+    { id: 'same-github', file: 'vendor/lib/a.js', repo: { github: 'org/lib' }, security: false },
+    { id: 'same-npm', file: 'dependencies/lib/a.js', package: { npm: { name: '@own/lib' } }, security: false },
+    { id: 'embedded-org', file: 'node_modules/lib/c.js', repo: { github: 'wrong/lib' }, security: false },
+    [{ id: 'security-sibling', isApp: true, security: false }, { id: 'hidden-security', file: 'node_modules/lib/d.js' }],
+  ]
+  h.blobs.set('a', Buffer.from(JSON.stringify({ type: 'security', repo: { github: 'wrong/app' }, findings })))
+  const allowed = ['own', 'app', 'same-github', 'same-npm']
+  const all = findings.flat().map(f => f.id)
+  for (const id of all) await h.db.setTriage(id, { color: 'red' }, h.users.admin.userId, 'admin', Date.now())
+  for (const role of ['view', 'manage', 'admin']) {
+    const expected = role === 'view' ? allowed : all
+    const batch = await h.request({ ids: ['a'] }, { role })
+    const single = await h.request({}, { role, method: 'GET', path: '/api/reports/a' })
+    assert.deepEqual(batch.body.reports[0].data, single.body.data)
+    assert.deepEqual(single.body.data.findings.flat().map(f => f.id), expected)
+    const triage = await h.request({}, { role, method: 'GET', path: '/api/reports/a/triage' })
+    assert.deepEqual(Object.keys(triage.body.entries).toSorted(), expected.toSorted())
+    if (role !== 'view') {
+      const download = await h.request({}, { role, method: 'GET', path: '/api/admin/reports/a' })
+      assert.deepEqual(download.body.findings.flat().map(f => f.id), expected, 'management downloads obey the same permissions')
+    }
+  }
+  // A warmed triage cache must follow assignment changes just like report data.
+  await h.db.setTeamRepo('team', 9, null)
+  await h.db.selectRepo({ ...(await h.db.listAllRepos()).find(repo => repo.repoId === 9), fullName: 'other/app' }, Date.now())
+  await h.db.setReportRepo('a', 9, '')
+  const reassigned = await h.request({}, { method: 'GET', path: '/api/reports/a/triage' })
+  assert.deepEqual(Object.keys(reassigned.body.entries).toSorted(), allowed.filter(id => id !== 'same-github').toSorted())
 })
