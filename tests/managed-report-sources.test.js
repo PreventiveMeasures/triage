@@ -50,7 +50,14 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
     isShuttingDown: () => false, track: job => { pending.add(job); job.finally(() => pending.delete(job)).catch(() => {}) },
   }))
   await new Promise(resolve => { server.listen(0, '127.0.0.1', resolve) })
-  t.after(async () => { await new Promise(resolve => { server.close(resolve) }); await Promise.allSettled([...pending]); await db.close(); await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => {
+    const stopping = new Promise(resolve => { server.close(resolve) })
+    server.closeAllConnections()
+    await stopping
+    await Promise.allSettled([...pending])
+    await db.close()
+    await rm(dir, { recursive: true, force: true })
+  })
   const users = {}
   for (const [i, role] of ['admin', 'manage', 'view', 'none'].entries()) {
     const session = await createSession(config, db, { githubUserId: i + 1, login: role, name: null, avatarUrl: null }, Date.now())

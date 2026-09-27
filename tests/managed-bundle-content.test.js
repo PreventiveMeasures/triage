@@ -49,7 +49,16 @@ async function setup(t) {
     isShuttingDown: () => false, track: promise => { pending.add(promise); promise.finally(() => pending.delete(promise)).catch(() => {}) },
   }))
   await new Promise(resolve => { server.listen(0, '127.0.0.1', resolve) })
-  t.after(async () => { await new Promise(resolve => { server.close(resolve) }); await Promise.allSettled([...pending]); await db.close(); await rm(dir, { recursive: true, force: true }) })
+  t.after(async () => {
+    const stopping = new Promise(resolve => { server.close(resolve) })
+    // Completed streaming responses can leave sockets waiting for keep-alive
+    // expiry. The assertions are finished; teardown must not wait for clients.
+    server.closeAllConnections()
+    await stopping
+    await Promise.allSettled([...pending])
+    await db.close()
+    await rm(dir, { recursive: true, force: true })
+  })
   const users = {}
   for (const [i, role] of ['admin', 'manage', 'manage', 'view', 'none'].entries()) {
     const session = await createSession(config, db, { githubUserId: i + 1, login: `user${i}`, name: null, avatarUrl: null }, Date.now())

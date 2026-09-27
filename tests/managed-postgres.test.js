@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 
+// Tests in this file run sequentially. Reuse the expensive WASM engine, but
+// recreate the schema (including functions and triggers) so each test still
+// exercises initialization and migrations against an empty database.
+let sharedPg
+after(async () => { await sharedPg?.close() })
+
 async function database(t) {
-  const pg = new PGlite()
+  const pg = sharedPg ??= new PGlite()
+  await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   const queries = []
   // PGlite has one connection. A lease covers the complete transaction, just
   // like distinct connections do in production; never interleave BEGINs.
@@ -26,7 +33,7 @@ async function database(t) {
     }
   }
   const db = await openPostgresManagedDb(connect, { triageHistoryLimit: 2 })
-  t.after(async () => { await db.close(); await pg.close() })
+  t.after(() => db.close())
   return { db, connect, queries }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
