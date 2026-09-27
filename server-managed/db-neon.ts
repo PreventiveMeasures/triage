@@ -52,6 +52,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if (!prefixed) await db.query('INSERT INTO managed_schema_version VALUES (3)')
     await db.query(postgresSchema(GITHUB_METADATA_SCHEMA))
     await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
+    await db.query('ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS attempted_at BIGINT')
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

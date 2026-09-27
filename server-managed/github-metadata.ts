@@ -10,10 +10,12 @@ export interface GithubMetadata {
   // GitHub supplied no recognized reason, so it needs no further backfill.
   stateReason: GithubIssueClosedReason | null
   fetchedAt: number
+  attemptedAt: number | null
 }
 export interface GithubMetadataStore {
   listGithubMetadata(keys: readonly string[]): Promise<GithubMetadata[]>
-  setGithubMetadata(entries: readonly GithubMetadata[]): Promise<void>
+  setGithubMetadata(entries: readonly Omit<GithubMetadata, 'attemptedAt'>[]): Promise<void>
+  recordGithubMetadataAttempts(keys: readonly string[], attemptedAt: number): Promise<void>
 }
 
 // Successful GitHub reads are shared and retained without eviction. The stable
@@ -27,12 +29,13 @@ CREATE TABLE IF NOT EXISTS managed_github_metadata (
   description TEXT,
   status TEXT NOT NULL CHECK (status IN ('open', 'draft', 'closed', 'merged')),
   state_reason ${GITHUB_STATE_REASON_COLUMN},
-  fetched_at INTEGER NOT NULL
+  fetched_at INTEGER NOT NULL,
+  attempted_at INTEGER
 ) STRICT;
 `
 
 export function githubMetadataMethods(db: ManagedSql): GithubMetadataStore {
-  const list = db.prepare(`SELECT cache_key AS key, title, description, status, state_reason AS stateReason, fetched_at AS fetchedAt
+  const list = db.prepare(`SELECT cache_key AS key, title, description, status, state_reason AS stateReason, fetched_at AS fetchedAt, attempted_at AS attemptedAt
     FROM managed_github_metadata WHERE cache_key IN (SELECT value FROM json_each(?))`)
   const set = db.prepare(`INSERT INTO managed_github_metadata (cache_key, title, description, status, state_reason, fetched_at)
     SELECT json_extract(e.value, '$.key'), json_extract(e.value, '$.title'),
@@ -42,6 +45,10 @@ export function githubMetadataMethods(db: ManagedSql): GithubMetadataStore {
     ON CONFLICT (cache_key) DO UPDATE SET title = excluded.title, description = excluded.description,
       status = excluded.status, state_reason = excluded.state_reason, fetched_at = excluded.fetched_at
     WHERE managed_github_metadata.status != 'merged' AND managed_github_metadata.fetched_at <= excluded.fetched_at`)
+  // Scheduling attempts never overwrite metadata or make stale data fresh.
+  // The monotonic guard preserves a newer attempt recorded by another reader.
+  const attempt = db.prepare(`UPDATE managed_github_metadata SET attempted_at = ?
+    WHERE cache_key IN (SELECT value FROM json_each(?)) AND (attempted_at IS NULL OR attempted_at < ?)`)
   return {
     async listGithubMetadata(keys) {
       if (keys.length === 0) return []
@@ -50,6 +57,9 @@ export function githubMetadataMethods(db: ManagedSql): GithubMetadataStore {
     },
     async setGithubMetadata(entries) {
       if (entries.length > 0) await set.run({ contexts: JSON.stringify(entries) })
+    },
+    async recordGithubMetadataAttempts(keys, attemptedAt) {
+      if (keys.length > 0) await attempt.run(attemptedAt, JSON.stringify(keys), attemptedAt)
     },
   }
 }

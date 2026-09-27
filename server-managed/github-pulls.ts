@@ -58,13 +58,17 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   })
   const metadata = new Map((await db.listGithubMetadata([...jobs.keys()])).map(entry => [entry.key, entry]))
   const now = Date.now()
+  const lastCheckedAt = (key: string) => {
+    const cached = metadata.get(key)
+    return Math.max(cached?.fetchedAt ?? 0, cached?.attemptedAt ?? 0)
+  }
   const pending = [...jobs.entries()].filter(([key, ref]) => {
     const cached = metadata.get(key)
     // Backfill closed issues cached before closure reasons existed, within the
     // same authorized/capped queue. Even an unknown reason completes backfill.
     return !cached || (ref.kind === 'issue' && cached.status === 'closed' && cached.stateReason == null)
       || (['open', 'draft'].includes(cached.status) && cached.fetchedAt + GITHUB_METADATA_TTL_MS <= now)
-  }).toSorted(([a], [b]) => (metadata.get(a)?.fetchedAt ?? 0) - (metadata.get(b)?.fetchedAt ?? 0)).slice(0, MAX_GITHUB_LOOKUPS)
+  }).toSorted(([a], [b]) => lastCheckedAt(a) - lastCheckedAt(b)).slice(0, MAX_GITHUB_LOOKUPS)
   // Only stale/missing, distinct, authorized entries consume the request budget.
   // Prioritize missing/oldest entries so a large workspace makes progress.
   if (pending.length > 0) {
@@ -74,17 +78,23 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
       return fetchImpl(input, { ...init, signal })
     }
     const token = await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline)
-    const fresh: GithubMetadata[] = []
+    const fresh: Omit<GithubMetadata, 'attemptedAt'>[] = []
+    const attempted: string[] = []
     if (token) {
       // Token refresh and all waves share one deadline, with at most four
       // upstream calls in flight. Failure retains even stale cached metadata.
       for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
         await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
+          if (signal.aborted) return
+          if (metadata.has(key)) attempted.push(key)
           const result = await fetchMetadata(ref, token, fetchWithinDeadline)
           if (result) fresh.push({ key, ...result, fetchedAt: Date.now() })
         }))
       }
     }
+    // Only started cached reads rotate. Missing entries retain priority, and
+    // jobs skipped by the cap, deadline or absent token keep their place.
+    if (attempted.length > 0) await db.recordGithubMetadataAttempts(attempted, Date.now())
     if (fresh.length > 0) {
       await db.setGithubMetadata(fresh)
       // A concurrent merged result must win over a slower open/closed read.

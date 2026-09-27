@@ -181,7 +181,12 @@ items. Its upstream queue takes missing entries first, then fills any remaining
 slots with stale open entries and legacy closed issues, oldest first, up to 200 distinct items total. A
 larger workspace is still a successful response. Successful refreshes replace
 cached values; GitHub failures, missing credentials, or an exhausted request
-budget retain the old data. There are at most four upstream calls in flight,
+budget retain the old data. Cached entries are ordered by their latest successful
+fetch or refresh attempt. Failed attempts rotate behind entries not checked as
+recently, without updating their successful fetch time, so repeated failures
+cannot monopolize the backfill queue. Only started reads record attempts;
+entries skipped by the cap, deadline, or absent credentials keep their place.
+There are at most four upstream calls in flight,
 with one shared 10-second deadline for token refresh and GitHub reads.
 
 Requests use the selected repository's stored full name and the validated item

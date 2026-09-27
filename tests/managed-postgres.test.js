@@ -304,13 +304,13 @@ test('Postgres upgrades existing databases and retains GitHub metadata across re
   finally { await reopened.close() }
 })
 
-test('Postgres adds closure reasons to an existing metadata table without discarding its cache', async t => {
+test('Postgres adds closure reasons and attempts to an existing metadata table without discarding its cache', async t => {
   const { connect, db } = await database(t)
-  const cached = { key: '7:issue:9', title: 'Legacy issue', description: 'Retained body', status: 'closed', stateReason: null, fetchedAt: 1 }
+  const cached = { key: '7:issue:9', title: 'Legacy issue', description: 'Retained body', status: 'closed', stateReason: null, fetchedAt: 1, attemptedAt: null }
   await db.setGithubMetadata([cached])
   await db.close()
   const connection = await connect()
-  try { await connection.query('ALTER TABLE managed_github_metadata DROP COLUMN state_reason') }
+  try { await connection.query('ALTER TABLE managed_github_metadata DROP COLUMN state_reason, DROP COLUMN attempted_at') }
   finally { await connection.release() }
   for (let i = 0; i < 2; i++) {
     const upgraded = await openPostgresManagedDb(connect)
@@ -319,6 +319,8 @@ test('Postgres adds closure reasons to an existing metadata table without discar
       cached.stateReason = 'completed'
       cached.fetchedAt++
       await upgraded.setGithubMetadata([cached])
+      cached.attemptedAt = 100 + i
+      await upgraded.recordGithubMetadataAttempts([cached.key], cached.attemptedAt)
     } finally { await upgraded.close() }
   }
 })

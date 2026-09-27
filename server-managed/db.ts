@@ -66,6 +66,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     migrateManagedTableNames(db)
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA)
     ensureColumn(db, 'managed_github_metadata', 'state_reason', GITHUB_STATE_REASON_COLUMN)
+    ensureColumn(db, 'managed_github_metadata', 'attempted_at', 'INTEGER')
     migrateTeamRepoPaths(db)
     migrateSlugs(db)
     // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
