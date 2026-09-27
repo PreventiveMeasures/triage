@@ -96,16 +96,10 @@ window.addEventListener('afterprint', () => {
 // throws on an unknown name so a typo in the console doesn't silently
 // fall back to dark (which would also clobber the persisted theme).
 export function setTheme(name) {
-  if (!THEMES.includes(name)) {
-    throw new TypeError(
-      `DeepView.setTheme: unknown theme ${JSON.stringify(name)} ` +
-      `(expected one of ${THEMES.map((t) => JSON.stringify(t)).join(', ')})`,
-    )
-  }
+  if (!THEMES.includes(name)) throw new TypeError('unknown theme')
   applyTheme(name)
 }
 export function getTheme() { return currentTheme }
-export const themes = THEMES
 
 class ThemeToggle extends LitElement {
   static properties = { _light: { state: true } }
