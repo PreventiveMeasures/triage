@@ -184,8 +184,10 @@ after upstream work before any metadata is released.
 
 HTTP responses use `no-store`. The browser keeps workspace metadata in JS memory
 for one minute and invalidates it on account, workspace, catalogue, or mode
-changes and successful triage saves. No browser storage is used. Compact Fix
-previews show the title, status and description as plain text.
+changes and successful Fix changes, once after the complete triage flush.
+Color, flag and triage-only edits do not invalidate Fix metadata. No browser
+storage is used. Compact Fix previews show the title, status and description
+as plain text.
 
 # Managed comments
 
