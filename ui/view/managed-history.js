@@ -24,7 +24,7 @@ export function createManagedHistory(browser) {
 
   function routeAt(url) {
     const route = parseManagedRoute(url)
-    const finding = extractFindingRef(url.hash)
+    const finding = route?.view === 'home' ? extractFindingRef(url.hash) : null
     return route ? { ...route, ...(finding ? { finding } : {}) } : null
   }
 
@@ -117,7 +117,8 @@ export function createManagedHistory(browser) {
       if (!route?.finding) return
       // OAuth returns to `/`. Retain only the destination in this tab until
       // its authenticated startup; no report contents enter browser storage.
-      try { browser.sessionStorage?.setItem(LOGIN_FINDING, `${managedRoutePath(route)}#${encodeFindingRef(route.finding)}`) } catch {}
+      const path = route.view === 'home' ? `/#${encodeFindingRef(route.finding)}` : managedRoutePath(route)
+      try { browser.sessionStorage?.setItem(LOGIN_FINDING, path) } catch {}
     },
     start(navigateToPage) {
       if (active) return

@@ -13,6 +13,7 @@ import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from
 import { managedReportViewChanged } from './managed-report-catalog.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
+import { filterManagedTeams } from './managed-sidebar.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -258,17 +259,17 @@ function workspaceHeaderTemplate() {
 // repository-owned bundles are listed alongside those reports.
 function teamsSectionTemplate() {
   if (!isManagedUiMode()) return nothing
-  const teams = Array.isArray(state.managedTeams) ? state.managedTeams : []
+  const teams = filterManagedTeams(state.managedTeams, searchQuery)
   if (teams.length === 0) return nothing
   return html`
     ${groupHeaderTemplate('Teams')}
-    ${repeat(teams, (t) => t.id, (t) => html`
+    ${repeat(teams, ({ team }) => team.id, ({ team: t, reports, bundles }) => html`
       <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && state.currentView === 'findings' ? ' current' : ''}`}>
         <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
         ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} data-tooltip="Share public link" @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
       </li>
-      ${repeat(t.reports, (r) => r.id, (r) => teamReportTemplate(t, r))}
-      ${repeat(t.bundles ?? [], (b) => b.id, (b) => teamBundleTemplate(t, b))}`)}`
+      ${repeat(reports, (r) => r.id, (r) => teamReportTemplate(t, r))}
+      ${repeat(bundles, (b) => b.id, (b) => teamBundleTemplate(t, b))}`)}`
 }
 
 // A clickable report row under its team (managed mode). Reuses the indented
@@ -2009,7 +2010,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
     const team = teams.find(candidate => candidate.id === state.currentManagedTeam)
     const canReopenReport = team && (state.currentManagedReport === null || team.reports.some(report => report.id === state.currentManagedReport))
     const route = bundleId
-      ? teams.some(candidate => candidate.bundles.some(bundle => bundle.id === bundleId)) ? { view: 'bundles', bundleId } : null
+      ? managedRouteForIds({ view: 'bundles', teamId: state.currentManagedTeam, bundleId, bundleTab: state.bundleDetailsTab }, teams)
       : canReopenReport ? managedRouteForIds({ view: state.currentView === 'links' ? 'findings' : state.currentView,
         teamId: team.id, reportId: state.currentManagedReport }, teams) : null
     readyManagedView = null
@@ -2091,7 +2092,7 @@ async function restoreManagedPage(route, isCurrent) {
     if (!result.ok) { if (result.reason) showToast(result.reason); return false }
     readyManagedView = currentViewGeneration()
     startManagedTeamFeed()
-    return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport }, state.managedTeams)
+    return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport, finding: { id: route.finding.id } }, state.managedTeams)
   }
   if (route.view === 'bundles') {
     const entries = route.teamId == null ? adminBundles.map(managedBundleEntry) : managedTeamBundleEntries(state.managedTeams)

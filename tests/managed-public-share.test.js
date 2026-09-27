@@ -54,6 +54,7 @@ async function fixture(t) {
     const response = await request(`/api/teams/${team}/share`, { role: 'manage', method: 'POST', body: permissions })
     assert.equal(response.status, 200)
     const token = response.body.path.split('.').at(-1)
+    assert.equal(new URL(response.body.path, 'https://triage.test').pathname, `/team/${(await db.listTeams()).find(entry => entry.id === team).slug}`)
     assert.equal(new URL(response.body.path, 'https://triage.test').hash, `#public=${hashToken(token).slice(0, 8)}.${token}`)
     return token
   }

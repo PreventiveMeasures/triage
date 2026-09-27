@@ -1,4 +1,4 @@
-// Per-finding deep links — headless half. Builds the `#finding=…` URL
+// Per-finding deep links — headless half. Builds the finding URL
 // the `.mark-link` button copies, and works out what has to change in
 // `state` for a linked finding to be on screen. The DOM half (navigate
 // to the right report, scroll, flash) lives in `finding-link-nav.js`.
@@ -40,8 +40,8 @@ export function findingLinkFor(finding, { teamOnly = false } = {}) {
   if (!isLinkableFindingId(id)) return null
   if (isManagedUiMode()) {
     const reportId = teamOnly ? null : state.currentView === 'links' ? finding._managedReportId : state.currentManagedReport
-    const path = managedRoutePath(managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId }, state.managedTeams))
-    return path ? buildFindingUrl({ id }, path) : null
+    const path = managedRoutePath(managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId, finding: { id } }, state.managedTeams))
+    return path ? `${typeof location === 'undefined' ? '' : location.origin}${path}` : null
   }
   const reportName = finding._reportName || state.currentFile || ''
   const workspaceId = state.currentWorkspace || reportWorkspaceFor(reportName)

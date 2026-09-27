@@ -26,7 +26,7 @@ test('managed page GET/HEAD share HTML; API and missing assets never fall back; 
     const origin = `http://127.0.0.1:${server.address().port}`
     const root = await fetch(origin)
     const body = await root.text()
-    for (const path of [...Object.values(MANAGED_PAGES), '/teams/t', '/teams/t/files', '/teams/t/reports/r', '/teams/t/reports/r/files', '/teams/t/bundles/b', '/teams/t/bundles/b/code', '/manage/bundles/b/compare', '/unknown-page']) {
+    for (const path of [...Object.values(MANAGED_PAGES), '/team/t', '/team/t/files', '/team/t/report/r', '/team/t/report/r/files', '/team/t/finding/issue', '/team/t/report/r/finding/https%3A%2F%2Fexample.com%2Fissue', '/team/t/bundle/b', '/team/t/bundle/b/code', '/manage/bundle/b/compare', '/unknown-page', '/teams/t/reports/r']) {
       const response = await fetch(origin + path)
       if (label === 'e2e') { assert.equal(response.status, 404); continue }
       assert.equal(response.status, 200, path)

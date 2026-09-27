@@ -55,7 +55,7 @@ the database. The dialog creates a read-only link and can
 revoke all public links for that workspace. Anyone holding a link can open it
 without GitHub sign-in, including on combined managed + E2E deployments.
 
-New links use `/teams/<team-slug>#public=<link-id>.<token>`. The eight-character
+New links use `/team/<team-slug>#public=<link-id>.<token>`. The eight-character
 link ID matches the ID shown in the dropdown and Manage's Links tab, so a URL can
 be matched to its entry for editing or revocation. It is a prefix of the stored
 token hash, not a credential. The full token uniquely resolves the workspace;
@@ -113,25 +113,34 @@ window also navigate to their managed page URL.
 | URL | Page |
 | --- | --- |
 | `/` | Team landing / login |
-| `/teams/:teamSlug` | Team findings |
-| `/teams/:teamSlug/files` | Team files |
-| `/teams/:teamSlug/reports/:reportSlug` | Report findings |
-| `/teams/:teamSlug/reports/:reportSlug/files` | Report files |
-| `/teams/:teamSlug/bundles/:bundleSlug[/:tab]` | Team bundle; active tab is part of the URL |
-| `/manage/bundles/:bundleSlug[/:tab]` | Bundle opened without an accessible team (manager/admin) |
+| `/team/:teamSlug` | Team findings |
+| `/team/:teamSlug/files` | Team files |
+| `/team/:teamSlug/report/:reportSlug` | Report findings |
+| `/team/:teamSlug/report/:reportSlug/files` | Report files |
+| `/team/:teamSlug/finding/:findingId` | Finding in a team |
+| `/team/:teamSlug/report/:reportSlug/finding/:findingId` | Finding in a report |
+| `/team/:teamSlug/bundle/:bundleSlug[/:tab]` | Team bundle; active tab is part of the URL |
+| `/manage/bundle/:bundleSlug[/:tab]` | Bundle opened without an accessible team (manager/admin) |
 | `/manage` | Manage overview |
-| `/manage/bundles` | Bundles |
+| `/manage/bundle` | Bundles |
 | `/manage/scans` | Scans |
-| `/manage/reports` | Reports |
+| `/manage/report` | Reports |
 | `/manage/repositories` | Repositories (admin) |
 | `/manage/users` | Users (admin) |
-| `/manage/teams` | Teams (admin) |
+| `/manage/team` | Teams (admin) |
 | `/manage/history` | Activity history; optional `?actor=<login>` |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
 unique, otherwise the full ID, with the same allocation rules for teams, reports,
 and bundles. API requests and database relationships continue to use full IDs.
 Existing bundle rows receive stable slugs during the SQLite/PostgreSQL upgrade.
+
+Finding IDs are percent-encoded as one path component. Finding links only appear
+under a team or report; there is no root `/finding/:id` route. E2E finding hashes
+remain supported and resolve to the accessible managed team/report destination.
+Old plural managed page URLs fall back to the landing page without redirects.
+Sidebar search filters the loaded team/report/bundle names locally, without
+fetching report contents or changing the catalogue used to open a team.
 
 Bundle links retain the clicked team, even when several teams share a repository.
 The optional tab suffix is omitted for Overview. Reload and Back/Forward restore
@@ -473,7 +482,7 @@ is not retained. The DB keeps the original filename, byte size and integrity
 so deduplication and report hashes keep working. Sourcemaps and metadata use
 Brotli quality 4 to avoid slow maximum-quality compression.
 
-The cache lives beside SQLite under `cache/bundles/:id/`, or in private Blob
+The cache lives beside SQLite under `cache/bundle/:id/`, or in private Blob
 storage for Neon deployments. Persistent servers schedule upload prebuilds;
 Vercel functions build missing derivatives during authorized reads. Builds
 are deduplicated and serialized to bound memory, with a 512 MiB decoded limit.

@@ -136,7 +136,7 @@ test('managed routes use exact server slugs and resolve back to internal UUIDs',
         const internal = { view, teamId: team.id, reportId: report?.id ?? null }
         const external = managedRouteForIds(internal, teams)
         const path = managedRoutePath(external)
-        assert.equal(path, `/teams/${team.slug}${report ? `/reports/${report.slug}` : ''}${view === 'files' ? '/files' : ''}`)
+        assert.equal(path, `/team/${team.slug}${report ? `/report/${report.slug}` : ''}${view === 'files' ? '/files' : ''}`)
         assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams), internal)
       }
     }
@@ -150,8 +150,8 @@ test('unknown and ambiguous slugs go home, including finding links; duplicate re
   const duplicateTeam = [...teams, { id: 'other', slug: short, reports: [] }]
   const duplicateReport = [...teams, { id: 'other', slug: 'other', reports: [{ id: 'other-report', slug: short }] }]
   for (const [catalogue, path] of [
-    [teams, '/teams/missing'], [teams, `/teams/${short}/reports/missing`],
-    [duplicateTeam, `/teams/${short}`], [duplicateReport, `/teams/${short}/reports/${short}#finding=issue`],
+    [teams, '/team/missing'], [teams, `/team/${short}/report/missing`],
+    [duplicateTeam, `/team/${short}`], [duplicateReport, `/team/${short}/report/${short}/finding/issue`],
   ]) {
     const { browser } = browserAt(path)
     let shown
@@ -170,7 +170,7 @@ test('unknown and ambiguous slugs go home, including finding links; duplicate re
 })
 
 test('slug history resolves UUIDs on clicks, Back/Forward and reload', async () => {
-  const { browser } = browserAt(`/teams/${short}/reports/${short}`)
+  const { browser } = browserAt(`/team/${short}/report/${short}`)
   let shown
   const restore = route => {
     const resolved = resolveManagedRoute(route, teams)
@@ -189,5 +189,5 @@ test('slug history resolves UUIDs on clicks, Back/Forward and reload', async () 
   assert.equal(shown.reportId, second)
   await createManagedHistory(browser).start(restore)
   assert.equal(shown.reportId, second)
-  assert.equal(browser.location.pathname, `/teams/${second}/reports/${second}/files`)
+  assert.equal(browser.location.pathname, `/team/${second}/report/${second}/files`)
 })

@@ -20,7 +20,7 @@ test('share dialog creates with both permissions off, lists creators, and edits 
     writes.push([path, options.method, options.body && JSON.parse(options.body)])
     if (options.method === 'POST') {
       links.push({ id: 'link-id', createdBy: 'manager', createdAt: 100, permissions: JSON.parse(options.body) })
-      return Response.json({ id: 'link-id', path: `/teams/team#public=link-id.${'A'.repeat(43)}` })
+      return Response.json({ id: 'link-id', path: `/team/team#public=link-id.${'A'.repeat(43)}` })
     }
     if (options.method === 'PATCH') links[0].permissions = JSON.parse(options.body)
     if (options.method === 'DELETE') links = []
