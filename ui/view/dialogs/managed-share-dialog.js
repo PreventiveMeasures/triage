@@ -74,7 +74,7 @@ class ManagedShareDialog extends AppDialog {
         <label><input type="checkbox" .checked=${this.security} @change=${event => { this.security = event.target.checked }}> Security findings and advisories</label>
         <label><input type="checkbox" .checked=${this.dependencies} @change=${event => { this.dependencies = event.target.checked }}> Findings in dependencies</label>
       </fieldset>
-      <p class="nwd-note">Both options are off for new links. Existing links keep their URL when permissions change.</p>
+      <p class="nwd-note">Both options are off for new links.<br>Existing links keep their URL when permissions change.</p>
       ${url ? html`<label class="share-field">Public link<input class="nwd-input" readonly .value=${url} @focus=${event => event.target.select()}></label>` : nothing}
       ${this.message ? html`<p class="nwd-note" role="status">${this.message}</p>` : nothing}
       <footer class="nwd-actions">

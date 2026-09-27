@@ -8,7 +8,8 @@ const LOGIN_FINDING = 'deepviewManagedLoginFinding'
 // Browser history contains only a navigation generation, never report data.
 // A mode change invalidates old entries; Back cannot restore the prior mode.
 export function createManagedHistory(browser) {
-  const publicShare = parsePublicShare(browser.location.hash)
+  const initialHash = browser.location.hash
+  const publicShare = parsePublicShare(initialHash)
   let active = false
   let generation = null
   let revision = 0
@@ -16,6 +17,10 @@ export function createManagedHistory(browser) {
   let currentPath = null
   let listening = false
   let findingUrl = null
+
+  // A changed public fragment triggers a document reload. Do not let an old
+  // popstate handler or pending navigation restore the previous credential.
+  function shareChanged() { return browser.location.hash.startsWith('#public=') && browser.location.hash !== initialHash }
 
   function routeAt(url) {
     const route = parseManagedRoute(url)
@@ -43,18 +48,19 @@ export function createManagedHistory(browser) {
   }
 
   function replace(path) {
+    if (shareChanged()) return
     path = publicSharePath(path, publicShare)
     browser.history.replaceState(active ? { [KEY]: generation } : null, '', path)
     currentPath = path
   }
 
   async function navigate(route, { replace: replacing = false, pop = false } = {}) {
-    if (!active || !restore) return false
+    if (!active || !restore || shareChanged()) return false
     route ??= { view: 'home' }
     let path = managedRoutePath(route)
     if (path === null) return false
     const request = ++revision
-    const isCurrent = () => active && request === revision
+    const isCurrent = () => active && request === revision && !shareChanged()
     let ok = false
     try { ok = await restore(route, isCurrent) }
     catch (err) { console.warn('managed: navigation failed:', err) }
@@ -78,6 +84,7 @@ export function createManagedHistory(browser) {
   }
 
   function onPop(event) {
+    if (shareChanged()) return
     if (!active) {
       // Only clean up this app's discarded managed entries. E2E navigation
       // otherwise neither writes history nor handles browser navigation.

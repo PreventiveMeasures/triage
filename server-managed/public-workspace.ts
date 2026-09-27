@@ -27,10 +27,11 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   }
   const method = req.method ?? 'GET'
   if (method !== 'GET' && method !== 'HEAD') { json(res, 403, { error: 'share-read-only' }); return }
+  const shareRoute = /^\/api\/shares\/([A-Za-z0-9_-]+)\/workspace$/u.exec(url.pathname)
   const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports|feed)$/u.exec(url.pathname)
   const reportRoute = /^\/api\/reports\/([^/]+)\/(triage|triage\/history|comments|sources)$/u.exec(url.pathname)
   const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories)$/u.exec(url.pathname)
-  if (!teamRoute && !reportRoute && !bundleRoute) { json(res, 403, { error: 'share-scope-required' }); return }
+  if (!shareRoute && !teamRoute && !reportRoute && !bundleRoute) { json(res, 403, { error: 'share-scope-required' }); return }
   const tokenHash = hashToken(token)
   const snapshot = await deps.db.getWorkspaceShare(tokenHash)
   if (!snapshot) { json(res, 401, { error: 'invalid-share' }); return }
@@ -50,6 +51,15 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   }
   if (url.searchParams.has('team') && (url.searchParams.getAll('team').length !== 1 || url.searchParams.get('team') !== snapshot.teamId)) {
     json(res, 404, { error: 'no-team' }); return
+  }
+  if (shareRoute) {
+    // The short hash is a recognizable link ID, never an access grant. Resolve
+    // with the full token so colliding IDs or slugs cannot broaden its scope.
+    // Existing links used the team ID as their fragment prefix.
+    if (shareRoute[1] !== tokenHash.slice(0, 8) && shareRoute[1] !== snapshot.teamId) {
+      json(res, 404, { error: 'no-share' }); return
+    }
+    await send({ user: snapshot.user, team: snapshot.team }); return
   }
   if (teamRoute) {
     if (teamRoute[1] !== snapshot.teamId) { json(res, 404, { error: 'no-team' }); return }

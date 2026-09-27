@@ -5,23 +5,47 @@ import { MANAGED_PAGES, managedRoutePath, parseManagedRoute } from '../common/ma
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
 
-test('public workspace capability stays in the fragment across navigation, history and reload', async () => {
-  const hash = `#public=team.${'A'.repeat(43)}`
-  const { browser, entries } = browserAt(`/teams/team${hash}`)
-  let nav = createManagedHistory(browser)
-  await nav.start(() => true)
-  await nav.navigate({ view: 'files', teamSlug: 'team' })
-  await nav.navigate({ view: 'files', teamSlug: 'team' })
-  assert.equal(entries.length, 2)
-  assert.equal(browser.location.hash, hash)
-  assert.equal(browser.location.search, '')
-  await browser.move(-1)
-  assert.equal(browser.location.hash, hash)
-  nav = createManagedHistory(browser)
-  await nav.start(() => true)
-  await nav.navigate({ view: 'bundles', bundleId: 'bundle' })
-  assert.equal(browser.location.hash, hash)
-  assert.equal(browser.location.pathname, '/bundles/bundle')
+for (const id of ['link0001', 'legacy-team-id']) {
+  test(`public capability ${id} stays in the fragment across navigation, history and reload`, async () => {
+    const hash = `#public=${id}.${'A'.repeat(43)}`
+    const { browser, entries } = browserAt(`/teams/team${hash}`)
+    let nav = createManagedHistory(browser)
+    await nav.start(() => true)
+    await nav.navigate({ view: 'files', teamSlug: 'team' })
+    await nav.navigate({ view: 'files', teamSlug: 'team' })
+    assert.equal(entries.length, 2)
+    assert.equal(browser.location.hash, hash)
+    assert.equal(browser.location.search, '')
+    await browser.move(-1)
+    assert.equal(browser.location.hash, hash)
+    nav = createManagedHistory(browser)
+    await nav.start(() => true)
+    await nav.navigate({ view: 'bundles', bundleId: 'bundle' })
+    assert.equal(browser.location.hash, hash)
+    assert.equal(browser.location.pathname, '/bundles/bundle')
+  })
+}
+
+test('pasting a new public fragment cannot restore the previous credential before reload', async () => {
+  for (const initial of ['', `#public=legacy-team.${'A'.repeat(43)}`]) {
+    const { browser, writes } = browserAt(`/teams/team${initial}`)
+    const nav = createManagedHistory(browser), pending = Promise.withResolvers()
+    let restores = 0
+    await nav.start(route => { restores++; return route.view === 'files' ? pending.promise : true })
+    const load = nav.navigate({ view: 'files', teamSlug: 'team' })
+    const hash = `#public=link0002.${'B'.repeat(43)}`
+    const count = writes.length
+    await browser.hash(hash)
+    pending.resolve(true)
+    assert.equal(await load, false)
+    assert.equal(restores, 2, 'popstate must not restore the old workspace')
+    assert.equal(browser.location.hash, hash)
+    assert.equal(writes.length, count)
+    assert.equal(await nav.navigate({ view: 'home' }), false)
+    await browser.hash('#public=malformed')
+    nav.reset()
+    assert.equal(browser.location.hash, '#public=malformed', 'invalid links also reload and fail closed')
+  }
 })
 
 test('all managed pages and team/report Files routes round-trip', () => {

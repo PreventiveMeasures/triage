@@ -53,7 +53,9 @@ async function fixture(t) {
   const mint = async (team = 'team', permissions) => {
     const response = await request(`/api/teams/${team}/share`, { role: 'manage', method: 'POST', body: permissions })
     assert.equal(response.status, 200)
-    return response.body.path.split('.').at(-1)
+    const token = response.body.path.split('.').at(-1)
+    assert.equal(new URL(response.body.path, 'https://triage.test').hash, `#public=${hashToken(token).slice(0, 8)}.${token}`)
+    return token
   }
   return { db, config, sessions, reads, store, deps, request, mint, seed }
 }
@@ -93,7 +95,7 @@ test('disabling sharing blocks every public route even when valid links remain i
     }
     assert.equal((await h.request('/api/admin/links', { role: 'admin' })).status, 404)
     assert.equal((await h.request(`/api/teams/whole/share/${hashToken(token)}`, { role: 'admin', method: 'PATCH', body: { security: true } })).status, 404)
-    for (const path of ['/api/teams/whole/shared', '/api/teams/whole/reports',
+    for (const path of [`/api/shares/${hashToken(token).slice(0, 8)}/workspace`, '/api/teams/whole/shared', '/api/teams/whole/reports',
       '/api/reports/visible/triage', '/api/reports/visible/triage/history?finding=visible-finding',
       '/api/reports/visible/comments', '/api/reports/visible/sources',
       '/api/bundles/bundle/metadata', '/api/bundles/bundle/contents', '/api/bundles/bundle/download',
@@ -110,6 +112,31 @@ test('disabling sharing blocks every public route even when valid links remain i
   assert.ok(await h.db.getWorkspaceShare(hashToken(token)), 'the link still exists in the database')
   h.config.allowShare = true
   assert.equal((await h.request('/api/teams/whole/shared', { token })).status, 200)
+})
+
+test('link IDs bootstrap only the token workspace and legacy team prefixes still work', async t => {
+  const h = await fixture(t), other = await h.mint('other'), token = await h.mint()
+  const path = `/api/shares/${hashToken(token).slice(0, 8)}/workspace`
+  const otherPath = `/api/shares/${hashToken(other).slice(0, 8)}/workspace`
+  const bootstrap = await h.request(path, { token })
+  assert.equal(bootstrap.status, 200)
+  assert.equal(bootstrap.body.team.id, 'team')
+  assert.deepEqual(bootstrap.body, (await h.request('/api/teams/team/shared', { token })).body)
+  assert.deepEqual(bootstrap.body, (await h.request('/api/shares/team/workspace', { token })).body, 'legacy links keep working')
+  assert.equal((await h.request(otherPath, { token: other })).body.team.id, 'other')
+  for (const role of [undefined, 'admin']) {
+    assert.equal((await h.request(path, { token: other, role })).status, 404)
+    assert.equal((await h.request(otherPath, { token, role })).status, 404)
+    assert.equal((await h.request('/api/shares/other/workspace', { token, role })).status, 404)
+    assert.equal((await h.request(path, { token: 'A'.repeat(43), role })).status, 401)
+    assert.equal((await h.request(path, { role })).status, 401, 'a link ID or login cookie is not a capability')
+  }
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal((await h.request(path, { token, method })).status, 403)
+  for (const global of ['/api/shares', '/api/shares/workspace', '/api/shares/all/workspace']) {
+    assert.notEqual((await h.request(global, { token })).status, 200)
+  }
+  assert.equal((await h.request(`${path}?team=other`, { token })).status, 404)
+  assert.deepEqual(h.reads, [], 'bootstrap only exposes the token workspace catalogue')
 })
 
 test('an anonymous token sees one published workspace, its annotations and no global endpoints', async t => {

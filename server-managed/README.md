@@ -55,6 +55,13 @@ the database. The dialog creates a read-only link and can
 revoke all public links for that workspace. Anyone holding a link can open it
 without GitHub sign-in, including on combined managed + E2E deployments.
 
+New links use `/teams/<team-slug>#public=<link-id>.<token>`. The eight-character
+link ID matches the ID shown in the dropdown and Manage's Links tab, so a URL can
+be matched to its entry for editing or revocation. It is a prefix of the stored
+token hash, not a credential. The full token uniquely resolves the workspace;
+the slug and short ID cannot grant access or select another team's data. Older
+links with a team ID before the token remain valid.
+
 A link exposes that team's currently published reports, links, triage, comments
 and cited source files. **Security** and **Dependencies** are independent opt-ins
 in the creation dialog, both off by default. Existing links also migrate with
@@ -88,7 +95,8 @@ These require an authenticated team manager or administrator; mutations also req
 same-origin access and CSRF. Public
 clients send the fragment token in `X-Deepview-Share`, with no cookies. A supplied
 token takes precedence over any login cookie and is confined to an explicit
-allowlist: `/api/teams/:id/{shared,reports,feed}`, visible reports' read-only
+allowlist: `/api/shares/:linkId/workspace` (only the token's own workspace),
+`/api/teams/:id/{shared,reports,feed}`, visible reports' read-only
 `triage`, `triage/history`, `comments`, and `sources` routes, and authorized
 bundles' `metadata`, `contents`, `download`, and `advisories` routes. Global
 endpoints, mutations, unknown routes, cleanup and sync transports are denied.
