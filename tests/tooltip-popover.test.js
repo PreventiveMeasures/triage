@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { GITHUB_ICON_SVG } from '../ui/view/icons.js'
+import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG } from '../ui/view/icons.js'
 
 // The shared tooltip is a manual popover (so it shows above modal
 // dialogs). Hiding it must close the popover too: an open-but-invisible
@@ -45,6 +45,18 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     target.dataset.tooltipRepo = 'org/repo/updated'
     showTooltip(target)
     assert.equal(node.children[0].children[0].textContent, 'org/repo/updated', 'a visible tooltip follows location changes')
+    target.dataset.tooltipBundle = 'sourcemap'
+    target.dataset.tooltipStats = '4 files · 123 LoC'
+    showTooltip(target)
+    assert.equal(node.children[1].innerHTML, BUNDLE_ICON_SVG)
+    assert.equal(node.children[1].children[0].textContent, 'Sourcemap · 4 files · 123 LoC')
+    target.dataset.tooltipBundle = 'stasis'
+    showTooltip(target)
+    assert.equal(node.children[1].children[0].src, './stasis.svg')
+    assert.equal(node.children[1].children[1].textContent, 'Stasis · 4 files · 123 LoC')
+    delete target.dataset.tooltipStats
+    showTooltip(target)
+    assert.equal(node.children[1].children[1].textContent, 'Stasis', 'missing counts do not appear as zero')
     hideTooltip()
     assert.equal(classes.has('visible'), false)
     assert.equal(open, false, 'no longer :popover-open once hidden')

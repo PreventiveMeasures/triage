@@ -455,7 +455,8 @@ class BundleCompare extends LitElement {
     for (const b of others) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1)
     return others.map((b) => ({
       id: b.integrity, integrity: b.integrity,
-      kind: b.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis',
+      kind: b.kind ?? (b.name.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'),
+      summary: b.summary,
       size: typeof b.size === 'number' ? formatBytes(b.size) : '—',
       filename: nameCounts.get(b.name) > 1
         ? `${b.name} · ${b.integrity.slice('sha512-'.length, 'sha512-'.length + 6)}…`

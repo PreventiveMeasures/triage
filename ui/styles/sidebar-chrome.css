@@ -38,12 +38,13 @@
   &.visible { opacity: 1; }
 }
 
-/* Repository details match the spacing and muted reference in issue/PR previews. */
-#styled-tooltip:has(.tooltip-repo) {
-  padding: 14px;
+/* Compact detail tooltips retain the muted reference style of issue/PR previews. */
+#styled-tooltip:has(.tooltip-repo, .tooltip-bundle) {
+  padding: 7px;
   line-height: 1.4;
 }
-#styled-tooltip .tooltip-repo {
+#styled-tooltip .tooltip-repo,
+#styled-tooltip .tooltip-bundle {
   display: flex;
   align-items: baseline;
   gap: .4rem;
@@ -51,7 +52,10 @@
   color: var(--muted);
   font: 12px/1.4 system-ui, sans-serif;
 }
-#styled-tooltip .tooltip-repo svg {
+#styled-tooltip .tooltip-repo svg,
+#styled-tooltip .tooltip-bundle :is(svg, img) {
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
   align-self: start;
   margin-top: .2em;

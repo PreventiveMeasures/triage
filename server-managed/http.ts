@@ -49,6 +49,7 @@ import { pipeline } from 'node:stream/promises'
 import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, putUploadPart, readUpload, validUploadPart } from './uploads.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
+import { bundleSummaries } from './bundle-catalog.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1006,11 +1007,16 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
 // admin|manage, read-only (no CSRF). `maxBytes` is the upload cap; `repos` feeds
 // the upload repo picker.
 async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readManageSession(res, deps, cookie)
+  let s = await readManageSession(res, deps, cookie)
   if (s == null) return
+  const summaries = await bundleSummaries(await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id), deps.bundleCache)
+  // A cold summary build may outlast changes to access or bundle locations.
+  s = await readManageSession(res, deps, cookie)
+  if (s == null) return
+  const bundles = await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id)
   sendJson(res, 200, {
-    bundles: await Promise.all((await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id)).map(async bundle => ({
-      ...bundle, canChangeRepo: await canChangeBundleRepo(deps, s.user, bundle.repoId, bundle.repoDirectory),
+    bundles: await Promise.all(bundles.map(async bundle => ({
+      ...bundle, summary: summaries.get(bundle.integrity) ?? null, canChangeRepo: await canChangeBundleRepo(deps, s.user, bundle.repoId, bundle.repoDirectory),
     }))),
     maxBytes: deps.config.maxBundleBytes,
     repos: selectableRepos(await bundleRepos(deps, s.user)),
@@ -1163,10 +1169,17 @@ async function adminMutation(req: IncomingMessage, res: ServerResponse, deps: Ma
 // attached to the team's repos, for the sidebar's per-user Teams section. Any approved
 // user (not just admin|manage); a user only ever sees their own teams.
 async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  let s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const teams = await deps.db.listTeamsForUser(s.user.id)
-  sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) })
+  const summaries = await bundleSummaries(s.user.role === 'none' ? [] : (await deps.db.listTeamsForUser(s.user.id)).flatMap(team => team.bundles), deps.bundleCache)
+  s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const teams = s.user.role === 'none' ? [] : await deps.db.listTeamsForUser(s.user.id)
+  sendJson(res, 200, {
+    teams: teams.map(team => ({ ...team, bundles: team.bundles.map(bundle => ({ ...bundle, summary: summaries.get(bundle.integrity) ?? null })) })),
+    // Derivatives do not change the catalog revision used by the live feed.
+    revision: teamCatalogRevision(teams),
+  })
 }
 
 // Admins read all reports. Managers read their uploads or reports inside their

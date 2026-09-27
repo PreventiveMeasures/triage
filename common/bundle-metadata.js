@@ -96,6 +96,16 @@ export async function createBundleMetadata(details) {
   return result
 }
 
+// Catalogs need counts without the per-file inventory. Match scan inputs:
+// textual resources count as files (with zero LoC); binary resources do not
+// count as Code inputs, and missing source bodies/directories are not files.
+export function createBundleSummary(details, metadata) {
+  const files = metadata.files.filter(([, size]) => size !== null)
+  const formats = details.kind === 'stasis' ? details.bundle.formats : null
+  return { files: files.length, lines: metadata.codeStats.lines,
+    codeFiles: files.filter(([path]) => !['resource:base64', 'directory'].includes(formats?.get(path))).length }
+}
+
 // `stale` marks an index this version did not write: its hashes still
 // answer report lookups, but its sizes and line counts are not trusted,
 // and an open rebuilds it.

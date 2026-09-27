@@ -214,7 +214,8 @@ export class ScanPage extends LitElement {
 
   _sourcePanel(bundle, files) {
     if (this.sourceLoading) return html`<section class="panel source-panel" aria-busy="true"><div class="panel-head"><h2>Source</h2></div><p class="empty" role="status">Loading scan sources…</p></section>`
-    const bundles = this._mode === 'code' ? this._repoBundles.map(item => item.files ? { ...item, files: codeScanFiles(item.files) } : item) : this._repoBundles
+    const bundles = this._mode === 'code' ? this._repoBundles.map(item => item.files ? { ...item, files: codeScanFiles(item.files) }
+      : item.summary ? { ...item, summary: { ...item.summary, files: item.summary.codeFiles } } : item) : this._repoBundles
     const { lines } = sourceMetrics(bundle?.files ? files : null)
     const counts = new Map()
     for (const item of this._bundles) counts.set(item.repoId, (counts.get(item.repoId) ?? 0) + 1)

@@ -88,6 +88,8 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
             byteSize: b.byteSize,
             repoId: b.repoId,
             filename: b.filename,
+            kind: b.kind,
+            summary: b.summary ?? null,
             repoDirectory: typeof b.repoDirectory === 'string' ? b.repoDirectory : '',
             repoFullName: typeof b.repoFullName === 'string' ? b.repoFullName : '',
           }))

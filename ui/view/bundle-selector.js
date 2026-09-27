@@ -16,6 +16,9 @@ export function bundleOptions(bundles) {
       metadata.push(`${bundle.files.length.toLocaleString()} files`)
       const { lines } = sourceMetrics(bundle.files)
       if (lines != null) metadata.push(`${lines.toLocaleString()} LoC`)
+    } else if (bundle.summary) {
+      if (Number.isSafeInteger(bundle.summary.files) && bundle.summary.files >= 0) metadata.push(`${bundle.summary.files.toLocaleString()} files`)
+      if (Number.isSafeInteger(bundle.summary.lines) && bundle.summary.lines >= 0) metadata.push(`${bundle.summary.lines.toLocaleString()} LoC`)
     }
     return { value: bundle.id, label: bundle.filename, detail, format, secondary: metadata.join(' · ') }
   })

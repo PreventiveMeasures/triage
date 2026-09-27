@@ -98,6 +98,62 @@ async function setup(t) {
   return { db, store, reportStore, cache, cacheDir, users, send, seed, team, pending, bundleDir: join(dir, 'bundles'), baseUrl: `http://127.0.0.1:${server.address().port}` }
 }
 
+test('catalog summaries reuse one cached count per hash across teams, uploads and cold starts', async t => {
+  const h = await setup(t)
+  const archive = await h.seed({ repoId: 1 }), sourcemap = await h.seed({ kind: 'sourcemap', repoId: 2 })
+  const extraTeam = randomUUID()
+  await h.db.createTeam(extraTeam, 'Second team', Date.now())
+  await h.db.setTeamRepo(extraTeam, 1, '')
+  await h.db.setTeamMember(extraTeam, h.users.viewer.userId, { dependencies: true, security: true })
+  const reads = t.mock.method(h.store, 'get')
+  const teamCatalog = (await h.send('/api/teams', 'viewer')).json()
+  const listed = teamCatalog.teams.flatMap(team => team.bundles)
+  assert.equal(listed.length, 2)
+  for (const bundle of listed) {
+    assert.equal(bundle.kind, 'stasis')
+    assert.deepEqual(bundle.summary, { files: 3, codeFiles: 2, lines: 2 })
+  }
+  assert.equal(reads.mock.callCount(), 1, 'shared bundles are decoded once')
+  const admin = (await h.send('/api/admin/bundles')).json().bundles
+  assert.deepEqual(admin.find(bundle => bundle.id === sourcemap.id).summary, { files: 1, codeFiles: 1, lines: 1 })
+  assert.equal(reads.mock.callCount(), 2)
+  const duplicate = await h.send('/api/admin/bundles', 'admin', 'POST', brotliCompressSync(Buffer.from(stasis)), { 'x-bundle-filename': 'renamed.stasis.code.br' })
+  assert.equal(duplicate.json().id, archive.id)
+  await Promise.all([...h.pending])
+  await h.send('/api/teams', 'viewer')
+  await h.send('/api/admin/bundles')
+  assert.equal(reads.mock.callCount(), 2, 'repeat catalogs and duplicate uploads reuse persisted counts')
+  const cold = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get() { throw new Error('must use summary cache') } })
+  await writeFile(join(h.cacheDir, archive.id, 'v2-metadata.json.br'), 'summary must not decode the full metadata')
+  assert.deepEqual(await cold.summary(archive), { files: 3, codeFiles: 2, lines: 2 })
+  await h.db.deleteBundle(archive.id)
+  await cold.delete(archive.id)
+  await assert.rejects(readdir(join(h.cacheDir, archive.id)), { code: 'ENOENT' })
+})
+
+test('unavailable bundle summaries do not hide valid catalog entries or fabricate zero counts', async t => {
+  const h = await setup(t)
+  const broken = await h.seed({ repoId: 1, kind: 'sourcemap', bytes: Buffer.from('not json') })
+  const empty = await h.seed({ repoId: 1, kind: 'sourcemap', bytes: Buffer.from('{"version":3,"sources":[],"sourcesContent":[]}') })
+  const bundles = (await h.send('/api/teams', 'viewer')).json().teams[0].bundles
+  assert.equal(bundles.find(bundle => bundle.id === broken.id).summary, null)
+  assert.deepEqual(bundles.find(bundle => bundle.id === empty.id).summary, { files: 0, codeFiles: 0, lines: 0 })
+})
+
+test('catalog responses recheck membership and repository scope after a cold summary build', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  const summary = h.cache.summary
+  let changeAccess = () => h.db.removeTeamMember(h.team, h.users.viewer.userId)
+  t.mock.method(h.cache, 'summary', async bundle => {
+    const value = await summary(bundle)
+    await changeAccess()
+    return value
+  })
+  assert.deepEqual((await h.send('/api/teams', 'viewer')).json().teams, [])
+  changeAccess = () => h.db.setBundleRepo(record.id, 2, '')
+  assert.deepEqual((await h.send('/api/admin/bundles', 'manager')).json().bundles, [])
+})
+
 test('bundle locations enforce source and destination scopes on upload, edit, download, and delete', async t => {
   const h = await setup(t)
   await h.db.removeTeamRepo(h.team, 1, null)
@@ -256,7 +312,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br', 'v2-package-versions.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br', 'v2-package-versions.json', 'v2-summary.json'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -313,7 +369,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-package-versions.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-package-versions.json', 'v2-summary.json'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -336,7 +392,7 @@ test('sourcemap uploads retain their identity while storing and serving only Bro
   assert.equal(contents.headers['content-encoding'], 'br')
   assert.deepEqual(contents.bytes, encoded)
   await Promise.allSettled([...h.pending])
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-summary.json'])
   const duplicate = await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)
   assert.equal(duplicate.status, 200)
   assert.equal(duplicate.json().id, id)
