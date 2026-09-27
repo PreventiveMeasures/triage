@@ -170,7 +170,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
         ${plan ? html`<section class="import-preview" aria-label="Import options">
           ${plan.team ? html`<p>Team ${plan.team.name} has been created. Retry continues its remaining import steps.</p>` : nothing}
           <label for="import-team">New team name</label><input id="import-team" maxlength="100" .value=${plan.name} ?disabled=${this._busy || !!plan.team} @input=${e => { plan.name = e.target.value; this.requestUpdate() }}>
-          <p>${plan.reports.length} reports / links · ${plan.bundles.length} source bundles · ${triageCount} triaged findings</p>
+          <p>${plan.reports.length} reports / links · ${bundleHashes.size} source bundles · ${triageCount} triaged findings</p>
           <label for="import-repo">Repository for files and source bundles without an existing repository</label>
           <select id="import-repo" .value=${String(this._repo ?? '')} ?disabled=${this._busy || !!plan.team} @change=${e => { this._repo = e.target.value ? Number(e.target.value) : null }}><option value="" ?selected=${this._repo == null}>Choose a repository…</option>${(this._catalog?.repos ?? []).map(repo => html`<option value=${String(repo.repoId)} ?selected=${this._repo === repo.repoId}>${repo.fullName}</option>`)}</select>
           <p>Declared report repositories and directories are preserved. The new team receives those repository paths; other published reports in the same paths are also visible to that team.</p>

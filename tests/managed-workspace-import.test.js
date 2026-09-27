@@ -225,3 +225,49 @@ test('a missing bundle catalog row stops publication and a retry reuses its comp
   const grants = mock.calls.filter(call => call.path === '/api/admin/teams/set-repo').map(call => call.body)
   assert.deepEqual(grants, [{ teamId: 'team', repoId: 9, path: '' }, { teamId: 'team', repoId: 7, path: 'src' }])
 })
+
+for (const assigned of [true, false]) {
+  test(`bundle-reference-only workspaces import stored ${assigned ? 'assigned' : 'unassigned'} bundles without uploading bytes`, async () => {
+    const plan = await prepareWorkspaceImport({ ...exported(), reports: [], bundles: ['sha512-existing', 'sha512-missing'] }, repos)
+    const mock = serverMock()
+    const original = mock.api.send
+    mock.api.send = (path, body, headers) => {
+      const result = original(path, body, headers)
+      if (path === '/api/admin/bundles' && body === undefined) {
+        return { bundles: [
+          { id: 'bundle', integrity: 'sha512-existing', repoId: assigned ? 9 : null },
+          { id: 'unrelated', integrity: 'sha512-unrelated', repoId: 10 },
+        ] }
+      }
+      return result
+    }
+    await runWorkspaceImport(plan, { api: mock.api, session, defaultRepo: assigned ? null : 7, includeTriage: false })
+    assert.equal(plan.team.name, 'Workspace')
+    assert.deepEqual(mock.calls[0], { path: '/api/admin/bundles', body: undefined, headers: undefined })
+    assert.equal(mock.calls.filter(call => call.path === '/api/admin/bundles').length, 1, 'resolve once and never upload')
+    assert.equal(mock.calls.some(call => call.path.startsWith('/api/admin/reports')), false)
+    assert.deepEqual(mock.calls.filter(call => call.path.endsWith('/set-repo')).map(call => call.body), assigned
+      ? [{ teamId: 'team', repoId: 9, path: '' }]
+      : [{ bundleId: 'bundle', repoId: 7 }, { teamId: 'team', repoId: 7, path: '' }])
+  })
+}
+
+test('empty or unavailable bundle-reference-only workspaces fail before creating a team', async () => {
+  for (const references of [[], ['sha512-unavailable']]) {
+    const plan = await prepareWorkspaceImport({ ...exported(), reports: [], bundles: references }, repos)
+    const mock = serverMock()
+    await assert.rejects(runWorkspaceImport(plan, { api: mock.api, session, defaultRepo: 7, includeTriage: false }), references.length > 0 ? /None.*available.*bundle bytes/u : /no report or bundle/u)
+    assert.equal(plan.team, null)
+    assert.equal(mock.calls.some(call => call.body !== undefined), false, 'validation performs no mutations')
+  }
+})
+
+test('an unassigned reference requires a repository before creating a team', async () => {
+  const plan = await prepareWorkspaceImport({ ...exported(), reports: [], bundles: ['sha512-existing'] }, repos)
+  const calls = []
+  const api = { send(path, body) { calls.push({ path, body }); return { bundles: [{ id: 'bundle', integrity: 'sha512-existing', repoId: null }] } } }
+  await assert.rejects(runWorkspaceImport(plan, { api, session, includeTriage: false }), /Choose a repository/u)
+  assert.equal(plan.team, null)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].body, undefined)
+})

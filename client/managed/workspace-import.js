@@ -145,9 +145,9 @@ async function importReportTriage(plan, report, { api, resolveConflicts, signal 
 // Deduplication preserves the stored bundle's repository, ignoring the upload's
 // repository header. Resolve access from the stored rows, including references
 // whose bytes were omitted from the export. Never reassign an attached bundle.
-async function grantWorkspaceBundles(plan, defaultRepo, api, step) {
+async function grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles) {
   if (plan.bundles.length === 0 && plan.references.length === 0) return
-  const { bundles } = await api.send('/api/admin/bundles')
+  const bundles = knownBundles ?? (await api.send('/api/admin/bundles')).bundles
   const uploadedIds = new Set(plan.bundles.map(bundle => bundle.uploaded.id))
   if ([...uploadedIds].some(id => !bundles.some(bundle => bundle.id === id))) throw new Error('Could not verify the uploaded source bundles. Retry the import.')
   const references = new Set(plan.references)
@@ -169,12 +169,26 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
       if (parseTriageEntryPatch(entry) === 'invalid') throw new Error(`Triage for ${id} exceeds the managed server limits. Choose Skip triage to import the files without it.`)
     }
   }
-  if (plan.reports.length === 0 && plan.bundles.length === 0) throw new Error('This workspace contains no report or bundle files.')
+  signal?.throwIfAborted()
+  // An export may contain only bundle references: bytes are optional. Resolve
+  // those before creating a team so unavailable references cannot leave an
+  // empty team behind. Reuse the same catalog for the subsequent grants.
+  let knownBundles = null
+  if (plan.bundles.length === 0) {
+    const references = new Set(plan.references)
+    knownBundles = references.size > 0
+      ? (await api.send('/api/admin/bundles')).bundles.filter(bundle => references.has(bundle.integrity)) : []
+  }
+  if (plan.reports.length === 0 && plan.bundles.length === 0 && knownBundles.length === 0) {
+    throw new Error(plan.references.length > 0
+      ? 'None of the referenced source bundles are available on the server. Export with bundle bytes included and try again.'
+      : 'This workspace contains no report or bundle files.')
+  }
   for (const report of plan.reports) {
     if (report.embedded && report.repoId == null) throw new Error(`Connect ${report.embedded} in Repositories before importing ${report.name}.`)
     if ((report.repoId ?? defaultRepo) == null) throw new Error(`Choose a repository for ${report.name}.`)
   }
-  if ((plan.bundles.length > 0 || plan.references.length > 0) && defaultRepo == null) throw new Error('Choose a repository for the source bundles.')
+  if ((plan.bundles.length > 0 || knownBundles.some(bundle => bundle.repoId == null)) && defaultRepo == null) throw new Error('Choose a repository for the source bundles.')
   const check = () => signal?.throwIfAborted()
   const step = async (key, work) => {
     check()
@@ -195,7 +209,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
       })
     }
   }
-  await grantWorkspaceBundles(plan, defaultRepo, api, step)
+  await grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles)
   for (const report of plan.reports) {
     check(); progress(`Importing ${report.name}…`)
     const repoId = report.repoId ?? defaultRepo

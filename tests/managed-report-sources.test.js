@@ -528,3 +528,34 @@ for (const [repoId, includeBytes] of [[1, true], [1, false], [null, true], [null
     assert.equal((await h.send(reportId, 'view', 'GET', { path })).status, 404, 'revocation still closes access')
   })
 }
+
+for (const repoId of [1, null]) {
+  test(`bundle-reference-only import creates a usable team from a stored bundle in ${repoId ?? 'no'} repository`, async t => {
+    const h = await setupBackend(t)
+    await h.db.setBundleRepo(h.bundle.id, repoId)
+    await h.db.removeTeamMember(h.team, h.users.view.userId)
+    const plan = await prepareWorkspaceImport({ workspace: { name: 'Bundle-only workspace' }, reports: [], bundles: [h.bundle.integrity] }, [])
+    const calls = []
+    const api = { async send(path, body) {
+      calls.push({ path, body })
+      const result = await h.send(null, 'admin', body === undefined ? 'GET' : 'POST', { path, body })
+      assert.ok(result.status >= 200 && result.status < 300, `${path}: ${result.bytes}`)
+      return result.json()
+    } }
+    const imported = await runWorkspaceImport(plan, { api, session: { id: h.users.admin.userId, role: 'admin', csrfToken: h.users.admin.csrfToken },
+      defaultRepo: repoId === null ? 1 : null, includeTriage: false,
+    })
+    assert.equal(imported.name, 'Bundle-only workspace')
+    assert.equal(calls.filter(call => call.path === '/api/admin/bundles').length, 1, 'reuse the catalog from validation')
+    assert.equal(calls.some(call => call.body !== undefined && ['/api/admin/bundles', '/api/admin/reports'].includes(call.path)), false, 'no file uploads')
+    assert.equal((await h.db.listBundles()).length, 1)
+    assert.equal((await h.db.listReports()).length, 1, 'existing report inventory is unchanged')
+    const path = `/api/bundles/${h.bundle.id}/download`
+    assert.equal((await h.send(null, 'view', 'GET', { path })).status, 404)
+    await h.db.setTeamMember(imported.id, h.users.view.userId, { security: true, dependencies: true })
+    const [team] = await h.db.listTeamsForUser(h.users.view.userId)
+    assert.equal(team.id, imported.id)
+    assert.deepEqual(team.bundles.map(bundle => bundle.id), [h.bundle.id])
+    assert.equal((await h.send(null, 'view', 'GET', { path })).status, 200, 'ordinary team members can read the existing bundle')
+  })
+}
