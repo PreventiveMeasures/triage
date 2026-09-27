@@ -1,5 +1,5 @@
 import { managedFetch } from './request.js'
-import { getPublicShare } from './public-share.js'
+import { getPublicShare, publicShareBootstrapPath } from './public-share.js'
 import { reportEntries } from '../../report/index.js'
 // Managed-mode client auth. Loaded lazily (see ui/view/client-managed.js) so
 // this managed-only code stays out of the main view bundle, mirroring
@@ -28,7 +28,7 @@ export async function probeSession({ fallback = null } = {}) {
   let body
   try {
     const share = getPublicShare()
-    const res = await managedFetch(share ? `/api/teams/${encodeURIComponent(share.teamId)}/shared` : '/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    const res = await managedFetch(share ? publicShareBootstrapPath(share) : '/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
     if (res.status === 401 || res.status === 403) return null
     if (!res.ok) return fallback
     body = await res.json()
@@ -57,7 +57,7 @@ export async function probeSession({ fallback = null } = {}) {
 // the session refresh.
 export async function probeTeams({ fallback = [] } = {}) {
   const share = getPublicShare()
-  const shared = share ? await getJson(`/api/teams/${encodeURIComponent(share.teamId)}/shared`) : null
+  const shared = share ? await getJson(publicShareBootstrapPath(share)) : null
   const body = share ? { teams: shared?.team ? [shared.team] : [] } : await getJson('/api/teams', { teams: fallback })
   const teams = body?.teams
   if (!Array.isArray(teams)) return body == null ? [] : fallback

@@ -5,7 +5,9 @@ export function parsePublicShare(hash) {
   const match = /^#public=([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/u.exec(hash)
   // Malformed links stay in public mode and fail closed instead of using a
   // signed-in account that happens to be present in this browser.
-  return match ? { teamId: match[1], token: match[2] } : { teamId: '', token: '' }
+  // New links use the short link ID; legacy links used the team ID here.
+  // The server resolves either form against the token's own workspace.
+  return match ? { id: match[1], token: match[2] } : { id: '', token: '' }
 }
 const initialHash = globalThis.location?.hash
 const share = parsePublicShare(initialHash)
@@ -17,6 +19,9 @@ globalThis.addEventListener?.('hashchange', () => {
   if (hash?.startsWith('#public=') && hash !== initialHash) globalThis.location.reload()
 })
 export function getPublicShare() { return share }
+export function publicShareBootstrapPath(value = share) {
+  return `/api/shares/${encodeURIComponent(value.id)}/workspace`
+}
 export function publicSharePath(path, value = share) {
-  return value ? `${path}#public=${value.teamId}.${value.token}` : path
+  return value ? `${path}#public=${value.id}.${value.token}` : path
 }

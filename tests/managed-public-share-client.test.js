@@ -2,19 +2,25 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 const token = 'A'.repeat(43)
-globalThis.location = new URL(`https://triage.test/teams/team#public=team.${token}`)
+const linkId = 'link0001'
+globalThis.location = new URL(`https://triage.test/teams/team#public=${linkId}.${token}`)
 let onHashChange
 globalThis.addEventListener = (event, listener) => { if (event === 'hashchange') onHashChange = listener }
-const { parsePublicShare } = await import('../client/managed/public-share.js')
+const { parsePublicShare, publicSharePath, publicShareBootstrapPath } = await import('../client/managed/public-share.js')
 const { managedFetch } = await import('../client/managed/request.js')
 const { probeSession, probeTeams, fetchFixes } = await import('../client/managed/session.js')
 
 test('public link parsing separates capabilities from ordinary and malformed links', () => {
   assert.equal(parsePublicShare('#share=encrypted-e2e-link'), null)
   assert.equal(parsePublicShare(''), null)
-  assert.deepEqual(parsePublicShare(`#public=team.${token}`), { teamId: 'team', token })
-  for (const hash of ['#public=', '#public=team.wrong', `#public=../other.${token}`]) {
-    assert.deepEqual(parsePublicShare(hash), { teamId: '', token: '' }, 'malformed links cannot fall back to cookie auth')
+  for (const id of [linkId, 'legacy-team-id']) {
+    const hash = `#public=${id}.${token}`, parsed = parsePublicShare(hash)
+    assert.deepEqual(parsed, { id, token })
+    assert.equal(publicSharePath('/bundles/bundle', parsed), `/bundles/bundle${hash}`)
+    assert.equal(publicShareBootstrapPath(parsed), `/api/shares/${id}/workspace`)
+  }
+  for (const hash of ['#public=', '#public=team.wrong', `#public=../other.${token}`, `#public=${token}`, `#public=${linkId}.${token}.extra`]) {
+    assert.deepEqual(parsePublicShare(hash), { id: '', token: '' }, 'malformed links cannot fall back to cookie auth')
   }
 })
 
@@ -36,7 +42,7 @@ test('public reads send a header without cookies and refuse cross-origin request
 test('public startup uses only scoped bootstrap and clears revoked access without a login probe', async t => {
   let revoked = false
   t.mock.method(globalThis, 'fetch', (url, options) => {
-    assert.equal(url, '/api/teams/team/shared')
+    assert.equal(url, `/api/shares/${linkId}/workspace`)
     assert.equal(options.headers.get('x-deepview-share'), token)
     return Promise.resolve(revoked ? Response.json({ error: 'invalid-share' }, { status: 401 }) : Response.json({
       user: { id: 'share:hash', login: 'public', name: 'Public workspace', role: 'view' },
@@ -52,6 +58,19 @@ test('public startup uses only scoped bootstrap and clears revoked access withou
   revoked = true
   assert.equal(await probeSession({ fallback: session }), null)
   assert.deepEqual(await probeTeams({ fallback: teams }), [])
+})
+
+test('public bootstrap resolves by link credential on team and bundle deep links', async t => {
+  const original = globalThis.location.pathname
+  t.after(() => { globalThis.location.pathname = original })
+  t.mock.method(globalThis, 'fetch', (url) => {
+    assert.equal(url, `/api/shares/${linkId}/workspace`)
+    return Promise.resolve(Response.json({ team: { id: 'resolved-team', slug: 'shared-name', name: 'Team' } }))
+  })
+  for (const path of ['/teams/shared-name', '/teams/shared-name/reports/report/files', '/bundles/bundle']) {
+    globalThis.location.pathname = path
+    assert.deepEqual((await probeTeams()).map(team => team.id), ['resolved-team'])
+  }
 })
 
 test('public views do not request authenticated GitHub fix metadata', async t => {

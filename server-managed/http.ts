@@ -1714,7 +1714,7 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
   const action = method === 'POST' ? 'created a public link' : method === 'PATCH' ? 'updated a public link' : id ? 'revoked a public link' : 'revoked public links'
   const access = method === 'DELETE' ? '' : ` (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`
   await activity(deps, s.user, 'access', `${action} for team ${team.name}${access}`)
-  sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/teams/${team.slug}#public=${teamId}.${token}` } : { ok: true })
+  sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/teams/${team.slug}#public=${shareId.slice(0, 8)}.${token}` } : { ok: true })
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
@@ -1727,7 +1727,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const method = req.method ?? 'GET'
     const cookie = req.headers.cookie
 
-    if (req.headers['x-deepview-share'] !== undefined) { await handlePublicWorkspace(req, res, deps, url); return }
+    if (req.headers['x-deepview-share'] !== undefined || path.startsWith('/api/shares/')) {
+      await handlePublicWorkspace(req, res, deps, url); return
+    }
 
     // Public mode probe — lets a client detect the managed protocol up front.
     if (path === CONFIG_PATH) {
