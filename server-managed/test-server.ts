@@ -135,6 +135,11 @@ const reportFixtures = [
   },
 ]
 
+reportFixtures.push({ ...reportFixtures[0]!, id: 'fixture-links', slug: 'fixture-links', filename: 'managed-links.json',
+  repoId: 101, analyzer: 'links', repoEmbedded: false, visible: true, bundleFilename: null, bundleIntegrity: '',
+  content: JSON.stringify([[{ id: 'managed-fixture-1' }, { id: 'managed-fixture-3' }]]),
+})
+
 const reports = new Map(reportFixtures.map((report) => [report.id, report.content]))
 const reportMetadata = reportFixtures.map(({ content: _content, ...metadata }) => ({
   ...metadata,
@@ -168,7 +173,7 @@ const bundles = [
 const teamFixtures = [
   {
     id: 'fixture-team', slug: 'fixture-team', name: 'Security fixtures',
-    reportIds: ['fixture-report-1', 'fixture-report-2', 'fixture-report-3'],
+    reportIds: ['fixture-report-1', 'fixture-report-2', 'fixture-report-3', 'fixture-links'],
     repoLinks: [{ repoId: 101, path: '' }, { repoId: 102, path: 'services/worker' }],
     memberIds: ['fixture-user', 'fixture-alex', 'fixture-riley'],
   },
@@ -279,7 +284,7 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
     if (!repo) { sendJson(res, 404, { error: 'no-repo' }); return true }
     const attached = reportFixtures.filter((report) => report.repoId === repoId)
     const ids = (items: typeof reportFixtures) => items.flatMap((report) =>
-      (JSON.parse(report.content) as { findings: { id: string }[] }).findings.map((finding) => finding.id))
+      (readManagedReport(report.content, report.filename).data.findings as { id: string }[]).map((finding) => finding.id))
     const otherIds = new Set(ids(reportFixtures.filter((report) => report.repoId !== repoId)))
     sendJson(res, 200, {
       repoId, fullName: repo.fullName,
@@ -396,7 +401,7 @@ const comments: ManagedComment[] = [{
 async function handleComments(req: IncomingMessage, res: ServerResponse, reportId: string, commentId: string | null): Promise<void> {
   const report = reportFixtures.find(item => item.id === reportId)
   if (!report || !['admin', 'manage', 'triage', 'view'].includes(role)) { sendJson(res, 404, { error: 'no-report' }); return }
-  const ids = new Set((JSON.parse(report.content).findings as { id: string }[]).map(finding => finding.id))
+  const ids = new Set((readManagedReport(report.content, report.filename).data.findings as { id: string }[]).map(finding => finding.id))
   if (req.method === 'GET' && commentId == null) {
     sendJson(res, 200, { comments: comments.filter(comment => ids.has(comment.findingId)) }); return
   }
@@ -440,7 +445,7 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
 async function handleTriage(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   const fixture = reportFixtures.find((report) => report.id === id)
   if (!fixture) { sendJson(res, 404, { error: 'not-found' }); return }
-  const ids = new Set<string>(JSON.parse(fixture.content).findings.map((finding: { id: string }) => finding.id))
+  const ids = new Set<string>(readManagedReport(fixture.content, fixture.filename).data.findings.map((finding: { id: string }) => finding.id))
   if (req.method === 'GET') {
     sendJson(res, 200, { entries: Object.fromEntries([...triage].filter(([key]) => ids.has(key))) })
     return
@@ -487,9 +492,21 @@ async function handleReportQuery(req: IncomingMessage, res: ServerResponse): Pro
     repo: { github: repoById(report!.repoId)?.fullName ?? null, directory: report!.repoDirectory } })) })
 }
 
+function serveTeamReports(path: string, res: ServerResponse): boolean {
+  const match = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
+  if (!match) return false
+  const team = teams.find(entry => entry.id === match[1])
+  if (!team) { sendJson(res, 404, { error: 'no-team' }); return true }
+  sendJson(res, 200, { reports: team.reports.map(entry => {
+    const report = reportFixtures.find(item => item.id === entry.id)!
+    return { id: report.id, filename: report.filename, data: readManagedReport(report.content, report.filename).data,
+      repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } }
+  }) })
+  return true
+}
+
 function handle(req: IncomingMessage, res: ServerResponse): void {
-  const url = new URL(req.url ?? '/', `http://${host}`)
-  const method = req.method ?? 'GET'
+  const method = req.method ?? 'GET', url = new URL(req.url ?? '/', `http://${host}`)
 
   if (url.pathname === '/api/config') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
@@ -515,6 +532,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     sendJson(res, 200, { teams })
     return
   }
+  if (serveTeamReports(url.pathname, res)) return
   if (url.pathname === '/api/reports/query') {
     if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })

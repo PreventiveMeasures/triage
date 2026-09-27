@@ -1757,7 +1757,7 @@ report.addEventListener('click', (e) => {
     linksPreviewTrigger = previewTrigger
     const rowIndex = previewTrigger.dataset.previewRow
     const loading = openLinksPreview(previewTrigger.dataset.linksPreview, previewTrigger.dataset.previewReport,
-      rowIndex === undefined ? undefined : Number(rowIndex))
+      rowIndex === undefined ? undefined : Number(rowIndex), previewTrigger.dataset.previewManagedReport)
     render()
     report.querySelector('.kanban-detail-close')?.focus({ preventScroll: true })
     void loading.then(() => {

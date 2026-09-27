@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { test } from 'node:test'
-import { fetchReport, fetchReports, probeTeams } from '../client/managed/session.js'
+import { fetchReport, fetchReports, fetchTeamReports, probeTeams } from '../client/managed/session.js'
 import { managedRouteForIds, managedRoutePath, resolveManagedRoute } from '../common/managed/routes.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
@@ -82,17 +82,22 @@ test('managed preview triage persists in memory and stays scoped to the requeste
       const loaded = await fetchReport(report.id)
       assert.ok(loaded, report.filename)
       assert.deepEqual(loaded.repo, { github: report.repoFullName, directory: report.repoDirectory })
-      assert.ok(loaded.data.findings.length > 0)
+      assert.ok(loaded.data.findings.length > 0 || loaded.data.links.length > 0)
       const raw = await fetch(`${base}/${report.id}`)
       assert.equal(raw.headers.get('content-type'), 'text/plain; charset=utf-8')
       assert.equal(raw.headers.get('vary'), 'Accept')
-      assert.deepEqual(JSON.parse(await raw.text()), loaded.data)
+      const rawData = JSON.parse(await raw.text())
+      assert.deepEqual(loaded.data.source === 'links' ? rawData.map(group => group.map(entry => entry.id)) : rawData, loaded.data.source === 'links' ? loaded.data.links : loaded.data)
       for (const accept of ['application/json, */*', 'application/json; q=1']) {
         const response = await fetch(`${base}/${report.id}`, { headers: { accept } })
         assert.equal(response.headers.get('cache-control'), 'no-store')
         assert.equal(response.headers.get('vary'), 'Accept')
         assert.deepEqual(await response.json(), loaded, accept)
       }
+    }
+    for (const team of await probeTeams()) {
+      const workspace = await fetchTeamReports(team.id)
+      assert.deepEqual(workspace.map(report => report.id), team.reports.map(report => report.id))
     }
     assert.equal(await fetchReport('unknown'), null)
     const ids = exported.reports.map(report => report.id)
@@ -105,7 +110,7 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   const impactUrl = new URL('/api/admin/repositories/impact?repoId=101', base)
   const impact = await (await fetch(impactUrl)).json()
   assert.equal(impact.repoId, 101)
-  assert.equal(impact.reports.length, 2)
+  assert.equal(impact.reports.length, 3)
   assert.equal(impact.bundles.length, 2)
   assert.equal(impact.triageCount, 1, 'the unattributed fixture comment is part of repository annotations')
   assert.equal((await fetch(new URL('/api/admin/repositories/impact?repoId=999', base))).status, 404)

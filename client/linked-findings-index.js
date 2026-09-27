@@ -1,3 +1,5 @@
+import { isManagedUiMode } from './state.ts'
+import { managedWorkspace } from './managed/workspace.js'
 // OPFS-wide index of the links files the user has dropped — the store
 // behind the Links view and behind the "Duplicates:" row a linked
 // finding grows on its card.
@@ -61,7 +63,7 @@ let needsRescan = false
 // until the next walk.
 let ready = false
 
-export function isLinkedFindingsIndexReady() { return ready }
+export function isLinkedFindingsIndexReady() { return isManagedUiMode() || ready }
 
 export function subscribeToLinkedFindings(callback) {
   listeners.add(callback)
@@ -86,6 +88,7 @@ function reindex() {
 // `[{ name, groups, skipped }]`. The arrays are the index's own — the
 // view iterates them, it doesn't own them.
 export function linkFiles() {
+  if (isManagedUiMode()) return managedWorkspace()?.links ?? []
   const out = []
   for (const [name, parsed] of byFile) {
     if (parsed) out.push({ name, groups: parsed.groups, skipped: parsed.skipped })
@@ -99,6 +102,7 @@ export function linkFiles() {
 // Whether any links file is indexed — what the finding card asks
 // before doing anything about duplicates at all.
 export function hasLinkedFindings() {
+  if (isManagedUiMode()) return Boolean(managedWorkspace()?.duplicates.size)
   return byId.size > 0
 }
 
@@ -106,6 +110,7 @@ export function hasLinkedFindings() {
 // stable order. Empty for a finding nothing links, which is almost
 // every finding — so this is the cheap path, one Map lookup.
 export function duplicatesOf(id) {
+  if (isManagedUiMode()) return [...managedWorkspace()?.duplicates.get(id) ?? []]
   const set = byId.get(id)
   return set ? [...set] : []
 }
@@ -142,6 +147,7 @@ async function indexOne(name) {
 // This does not mark the index ready: unknown or stale report classifications
 // may still hide additional links, so App metadata must wait for the full walk.
 export function ensureKnownLinkedFindingsIndexed() {
+  if (isManagedUiMode()) return Promise.resolve()
   if (knownRun) return knownRun
   knownRun = (async () => {
     try {
@@ -173,6 +179,7 @@ export function ensureKnownLinkedFindingsIndexed() {
 // and a later call re-walks the listing so newly-dropped files land
 // without re-reading the ones already classified.
 export function ensureLinkedFindingsIndexed() {
+  if (isManagedUiMode()) return Promise.resolve()
   if (activeRun) return activeRun
   activeRun = (async () => {
     try {

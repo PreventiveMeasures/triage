@@ -606,8 +606,8 @@ function groupModel(showRevalidation, upstreamOnly = false, hideRuledOut = false
       || groupCache.securityLinksTick !== state.linksTick || groupCache.findingIndexTick !== state.findingIndexTick
       || groupCache.managed !== managed) {
     stampSecurityGroups(reports.flatMap((r) => r.groups ?? []), {
-      linkedIds: managed ? undefined : duplicatesOf,
-      knownRows: managed ? undefined : reportRowsForFindingIds,
+      linkedIds: duplicatesOf,
+      knownRows: reportRowsForFindingIds,
     })
     groupCache = { reports: [...reports], merges, mergeCount: merges.length, managed,
       securityLinksTick: state.linksTick, findingIndexTick: state.findingIndexTick }

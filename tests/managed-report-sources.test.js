@@ -83,7 +83,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
   const report = await seed()
   function send(id = report.id, role = 'admin', method = 'GET', { path, body } = {}) {
     return new Promise((resolve, reject) => {
-      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: path ?? `/api/reports/${id}/sources`, method, headers: users[role] ? { cookie: users[role].cookie, 'x-csrf-token': users[role].csrfToken } : {} }, res => {
+      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: path ?? `/api/reports/${id}/sources${role === 'view' ? `?team=${team}` : ''}`, method, headers: users[role] ? { cookie: users[role].cookie, 'x-csrf-token': users[role].csrfToken } : {} }, res => {
         const chunks = []
         res.on('data', chunk => chunks.push(chunk))
         res.on('end', () => { const bytesOut = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: res.headers, bytes: bytesOut, json: () => JSON.parse(res.headers['content-encoding'] === 'gzip' ? gunzipSync(bytesOut) : bytesOut) }) })
@@ -423,3 +423,72 @@ test('source files follow row security and same-organization dependency access a
   const admin = await h.send(report.id, 'admin')
   assert.deepEqual(admin.json().files.map(([file]) => file).toSorted(), ['node_modules/dep/index.js', 'secret.js', 'src/main.js'])
 })
+
+test('team link security removes source files even after a broader source response was cached', async t => {
+  const h = await setupBackend(t)
+  await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+  assert.ok(new Map((await h.send(h.report.id, 'view')).json().files).has('src/main.js'))
+  await h.seed(JSON.stringify([[{ id: 'f1' }, { id: 'f3' }]]), null, 'links.json')
+  const filtered = await h.send(h.report.id, 'view')
+  assert.equal(filtered.status, 200)
+  assert.deepEqual(filtered.json().files, [])
+  const broad = 'other-team'
+  await h.db.createTeam(broad, broad, Date.now())
+  await h.db.setTeamRepo(broad, 1, null)
+  await h.db.setTeamMember(broad, h.users.view.userId, { dependencies: true, security: true })
+  const expanded = await h.send(h.report.id, 'view', 'GET', { path: `/api/reports/${h.report.id}/sources?team=${broad}` })
+  assert.ok(new Map(expanded.json().files).has('src/main.js'))
+  assert.deepEqual((await h.send(h.report.id, 'view')).json().files, [], 'another team grant cannot broaden this team source cache')
+})
+
+async function repeatedIdSourceFixture(t, backend, stacked) {
+  const h = await setupBackend(t, 'sourcemap', backend)
+  const members = [
+    { id: 'shared', file: 'src/main.js', isApp: true, evidence: [{ file: 'src/evidence.js' }] },
+    { id: 'shared', file: 'node_modules/dep/index.js', isApp: false, evidence: [{ file: 'unrelated.js' }] },
+  ]
+  const report = await h.seed(JSON.stringify({ findings: stacked ? [members] : members }))
+  const broad = randomUUID()
+  await h.db.createTeam(broad, 'Broad', Date.now())
+  await h.db.setTeamRepo(broad, 1, null)
+  await h.db.setTeamMember(broad, h.users.view.userId, { dependencies: true, security: true })
+  return { ...h, report, broad }
+}
+
+for (const backend of ['disk', 'vercel']) {
+  for (const stacked of [false, true]) {
+    test(`${backend}: source visibility distinguishes repeated IDs in ${stacked ? 'one row' : 'separate rows'}`, async t => {
+      const h = await repeatedIdSourceFixture(t, backend, stacked)
+      const broad = await h.send(h.report.id, 'view', 'GET', { path: `/api/reports/${h.report.id}/sources?team=${h.broad}` })
+      assert.equal(broad.json().files.length, 4, 'warm a broader cache first')
+      await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: true })
+      for (let i = 0; i < 2; i++) {
+        const restricted = await h.send(h.report.id, 'view')
+        assert.equal(restricted.status, 200)
+        assert.deepEqual(restricted.json().files.map(([file]) => file), ['src/main.js', 'src/evidence.js'])
+        assert.deepEqual(restricted.json().paths.map(([path]) => path), ['src/main.js', 'src/evidence.js'])
+      }
+      assert.equal((await h.send(h.report.id, 'manage')).json().files.length, 4)
+    })
+  }
+
+  test(`${backend}: permission changes reject in-flight sources even when visible IDs and aggregate grants stay identical`, async t => {
+    const h = await repeatedIdSourceFixture(t, backend, true)
+    const finish = Promise.withResolvers(), started = Promise.withResolvers()
+    const open = h.cache.open.bind(h.cache)
+    let stream
+    t.mock.method(h.cache, 'open', async (...args) => {
+      const result = await open(...args)
+      stream = result.stream; started.resolve(); await finish.promise
+      return result
+    })
+    const loading = h.send(h.report.id, 'view')
+    await started.promise
+    await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: true })
+    finish.resolve()
+    const result = await loading
+    assert.equal(result.status, 404)
+    assert.equal(stream.destroyed, true)
+    assert.equal(result.headers['content-encoding'], undefined)
+  })
+}

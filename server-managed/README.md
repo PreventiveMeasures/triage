@@ -106,13 +106,34 @@ They do not offer the local “Set repo” editor. Findings retain their own ups
 repository metadata (for example, a dependency's repository); source links that
 need a report fallback use the server assignment.
 
-`GET /api/reports/:id` with `Accept: application/json` returns
-`{ content, repo: { github, directory } }`. Content has the same permission
-filtering as the raw text response, and `github: null` means unassigned. Other
-callers still receive raw text. JSON can appear in a media-range list or carry
-parameters; `q=0` excludes it, and wildcards alone retain raw text. The local
-fixture server uses the same response contract. Responses are never cached or
-stored locally.
+`GET /api/teams/:id/reports` returns the complete workspace as separate
+`{ id, filename, data, repo: { github, directory } }` envelopes in `{ reports }`.
+The server derives the report list from that team's repository paths and the
+caller's membership. Ordinary users receive published reports filtered by that
+team's security/dependency grants; grants in other teams do not broaden the
+answer. Admins and managers retain their filtering bypass. Opening an individual
+report in the viewer selects it from the same whole-team response.
+
+Links files are uploaded, assigned and published like reports in Manage. Their
+wire data is `{ source: 'links', findings: [], links: [[findingId, ...], ...] }`.
+Security propagates across complete rows and links in the chosen team before
+dependency filtering. Links in the response contain only remaining finding IDs,
+and each retained link names at least two distinct findings. Unavailable reports
+and unpublished/out-of-scope links do not contribute to an ordinary user's view.
+
+`GET /api/reports/:id` and `POST /api/reports/query` are reserved for admins and
+managers, with existing ownership/team access rules. Individual previews with
+`Accept: application/json` return `{ data, repo: { github, directory } }`;
+other callers receive raw text. `github: null` means unassigned.
+
+Managed clients cache complete workspace responses only in JavaScript memory,
+keyed by team and invalidated on catalogue or session changes. HTTP responses
+use `no-store`; no report response is written to browser storage.
+
+Ordinary users supply `?team=:teamId` for report triage, history, comments and
+sources. These endpoints authorize against the same complete workspace and
+recheck access after cold reads. Triage and comments remain shared by finding ID
+across teams; the team is only the authorization context.
 
 # Fix pull requests
 
@@ -285,7 +306,8 @@ passed through without parsing; metadata generation still validates them.
 
 Report-scoped `/api/reports/:id/sources` responses use a separate gzip cache,
 backed by disk or private Blob storage. Derivatives are shared by report hash
-and filename format, scoped to the viewer's dependency/security permissions,
+and filename format, scoped to the source paths cited by the team's visible
+finding members (including evidence, even when members share a finding ID),
 and removed when their final report reference or bundle is deleted. Cold
 builders recheck references after publishing to reconcile concurrent deletion
 on another instance. Authorization is checked again before streaming sources.

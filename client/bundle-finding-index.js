@@ -1,3 +1,5 @@
+import { isManagedUiMode } from './state.ts'
+import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
 // OPFS-wide finding index — loads every report stored in OPFS
 // (not just the currently-active state.reports) and caches its
 // findings under two complementary indexes:
@@ -236,8 +238,7 @@ export function reportsForFindingByRepo(repo, finding) {
 // none of them. Empty when the id names nothing the user has, which
 // is exactly what that view has to be able to say out loud.
 export function reportsForFindingId(id) {
-  const entry = byId.get(id)
-  return entry ? [...entry.reports.keys()] : []
+  return isManagedUiMode() ? [...new Set(managedRowsForIds([id]).map(row => row.report))] : [...byId.get(id)?.reports.keys() ?? []]
 }
 
 // What the finding with this id is called — its own `title`, or the
@@ -250,11 +251,8 @@ export function reportsForFindingId(id) {
 // agree, and where they don't, any of them is a heading some report
 // here really wrote, which is the property that matters.
 export function findingTitleForId(id) {
-  const entry = byId.get(id)
-  if (!entry) return ''
-  for (const { title } of entry.reports.values()) {
-    if (title) return title
-  }
+  if (isManagedUiMode()) return managedTitleForId(id)
+  for (const { title } of byId.get(id)?.reports.values() ?? []) if (title) return title
   return ''
 }
 
@@ -262,6 +260,7 @@ export function findingTitleForId(id) {
 // Overlapping rows stay distinct: [A,B] and [A,C] are different cards even
 // though both contain A. The returned objects belong to the read-only index.
 export function reportRowsForFindingIds(ids) {
+  if (isManagedUiMode()) return managedRowsForIds(ids)
   const rows = new Set()
   for (const id of ids) {
     for (const report of byId.get(id)?.reports.values() ?? []) {
@@ -603,6 +602,7 @@ async function indexOne(name) {
 // indexed. Returns when every (currently-listed) report is
 // indexed.
 export function ensureBundleFindingsIndexed() {
+  if (isManagedUiMode()) return Promise.resolve()
   if (activeRun) return activeRun
   activeRun = (async () => {
     try {

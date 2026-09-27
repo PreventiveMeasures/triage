@@ -25,6 +25,7 @@ async function setup(t, createHandler = createManagedRequestHandler) {
   await db.createTeam('team', 'Workspace', now)
   await db.setTeamRepo('team', 7, 'packages/app')
   await db.setTeamMember('team', users.view.userId, { dependencies: false, security: false })
+  await db.setTeamMember('team', users.manage.userId, { dependencies: false, security: false })
   const blobs = new Map(), reads = []
   const store = { async get(id) { reads.push(id); await store.afterRead?.(id); return blobs.get(id) ?? null } }
   for (const [id, repoId, repoDirectory, visible] of [
@@ -44,7 +45,7 @@ async function setup(t, createHandler = createManagedRequestHandler) {
     config, db, reportStore: store, originGate: { isOriginAllowed: () => true },
     isShuttingDown: () => false, track: promise => { pending = promise },
   })
-  async function request(body, { role = 'view', method = 'POST', path = '/api/reports/query' } = {}) {
+  async function request(body, { role = 'manage', method = 'POST', path = '/api/reports/query' } = {}) {
     const req = Readable.from([Buffer.from(JSON.stringify(body))])
     Object.assign(req, { method, url: path, headers: { accept: 'application/json', cookie: users[role]?.setCookie.split(';')[0] } })
     const res = { statusCode: 0, headers: {}, body: '', headersSent: false,
@@ -56,7 +57,7 @@ async function setup(t, createHandler = createManagedRequestHandler) {
     await pending
     return { status: res.statusCode, headers: res.headers, body: JSON.parse(res.body) }
   }
-  return { db, users, blobs, reads, store, request }
+  return { db, users, blobs, reads, store, request, workspace: () => request({}, { role: 'view', method: 'GET', path: '/api/teams/team/reports' }) }
 }
 
 async function addReports(h, count, sizes = []) {
@@ -175,7 +176,7 @@ test('failed batches wake byte-budget waiters and drain active reads before resp
 
 test('a workspace batch returns all requested content with the same filtering and metadata as individual reads', async t => {
   const h = await setup(t)
-  for (const role of ['view', 'admin']) {
+  for (const role of ['manage', 'admin']) {
     const batch = await h.request({ ids: ['b', 'a', 'b'] }, { role })
     assert.equal(batch.status, 200)
     assert.equal(batch.headers['cache-control'], 'no-store')
@@ -184,7 +185,7 @@ test('a workspace batch returns all requested content with the same filtering an
       const single = await h.request({}, { method: 'GET', path: `/api/reports/${id}`, role })
       assert.deepEqual(content, single.body)
       assert.deepEqual(content.repo, { github: 'org/repo7', directory: id === 'a' ? 'packages/app' : 'packages/app/sub' })
-      assert.equal(content.data.findings.length, role === 'admin' ? 3 : 1)
+      assert.equal(content.data.findings.length, 3)
     }
   }
 })
@@ -232,7 +233,7 @@ test('batch access is checked per report and rejected atomically before reading 
   const h = await setup(t)
   assert.equal((await h.request({ ids: ['a'] }, { role: 'anonymous' })).status, 401)
   assert.equal((await h.request({ ids: ['a'] }, { role: 'none' })).status, 403)
-  for (const id of ['outside', 'foreign', 'draft', 'missing']) {
+  for (const id of ['outside', 'foreign', 'missing']) {
     const response = await h.request({ ids: ['a', id] })
     assert.equal(response.status, 404)
     assert.deepEqual(response.body, { error: 'no-report' })
@@ -255,7 +256,7 @@ test('batch request validation, empty workspaces, and deduplication', async t =>
 
 test('membership revoked while the batch reads storage prevents the entire response', async t => {
   const h = await setup(t)
-  h.store.afterRead = () => h.db.removeTeamMember('team', h.users.view.userId)
+  h.store.afterRead = () => h.db.removeTeamMember('team', h.users.manage.userId)
   const response = await h.request({ ids: ['a', 'b'] })
   assert.equal(response.status, 404)
   assert.deepEqual(response.body, { error: 'no-report' })
@@ -265,11 +266,11 @@ test('permission changes during storage reads reject the old snapshot and a retr
   const h = await setup(t)
   await h.db.setTeamMember('team', h.users.view.userId, { dependencies: true, security: true })
   h.store.afterRead = () => h.db.setTeamMember('team', h.users.view.userId, { dependencies: false, security: false })
-  const response = await h.request({ ids: ['a', 'b'] })
+  const response = await h.workspace()
   assert.equal(response.status, 404)
-  assert.deepEqual(response.body, { error: 'no-report' })
+  assert.deepEqual(response.body, { error: 'workspace-changed' })
   h.store.afterRead = null
-  const retried = await h.request({ ids: ['a', 'b'] })
+  const retried = await h.workspace()
   assert.equal(retried.status, 200)
   assert.deepEqual(retried.body.reports.map(report => report.data.findings.map(finding => finding.id)), [['a-own'], ['b-own']])
 })
@@ -286,15 +287,15 @@ test('markdown and multi-scan CSV are served as parsed JSON with permissions app
   assert.equal(all.body.reports[0].data.source, 'claude-security')
   assert.equal(all.body.reports[0].data.findings.length, 1)
   assert.deepEqual(all.body.reports[1].data.findings.map(f => f.id), managedCsvIds)
-  const restricted = await h.request({ ids: ['md', 'csv'] })
+  const restricted = await h.workspace()
   assert.equal(restricted.status, 200)
-  assert.ok(restricted.body.reports.every(report => report.data.findings.length === 0))
+  assert.ok(restricted.body.reports.filter(r => ['md', 'csv'].includes(r.id)).every(report => report.data.findings.length === 0))
   await h.db.setTeamMember('team', h.users.view.userId, { dependencies: false, security: true })
-  const partial = await h.request({ ids: ['md', 'csv'] })
-  assert.equal(partial.body.reports[0].data.findings.length, 1)
-  assert.deepEqual(partial.body.reports[1].data.findings.map(f => f.id), managedCsvIds)
-  const single = await h.request({}, { method: 'GET', path: '/api/reports/csv' })
-  assert.deepEqual(single.body, { data: partial.body.reports[1].data, repo: partial.body.reports[1].repo })
+  const partial = await h.workspace()
+  assert.equal(partial.body.reports.find(r => r.id === 'md').data.findings.length, 1)
+  assert.deepEqual(partial.body.reports.find(r => r.id === 'csv').data.findings.map(f => f.id), managedCsvIds)
+  const single = await h.request({}, { method: 'GET', path: '/api/reports/csv', role: 'view' })
+  assert.equal(single.status, 403)
 })
 
 test('unreadable reports fail the whole parsed JSON response', async t => {
@@ -346,9 +347,9 @@ test('access changes to an earlier report during a later read reject all prepare
   const h = await setup(t)
   await h.db.setTeamMember('team', h.users.view.userId, { dependencies: true, security: true })
   h.store.afterRead = id => id === 'b' && h.db.setTeamMember('team', h.users.view.userId, { dependencies: false, security: false })
-  const response = await h.request({ ids: ['a', 'b'] })
+  const response = await h.workspace()
   assert.equal(response.status, 404)
-  assert.deepEqual(response.body, { error: 'no-report' })
+  assert.deepEqual(response.body, { error: 'workspace-changed' })
 })
 
 test('session revocation, role changes, unpublishing, and report reassignment during loading reject the batch', async t => {
@@ -365,7 +366,7 @@ test('session revocation, role changes, unpublishing, and report reassignment du
     const h = await setup(t)
     let status
     h.store.afterRead = async id => { if (id === 'b') status = await change(h) }
-    const response = await h.request({ ids: ['a', 'b'] })
+    const response = await h.workspace()
     assert.equal(response.status, status)
     assert.equal(response.body.reports, undefined)
   }
@@ -392,7 +393,8 @@ test('bulk authorization matches individual reads for every role, manager owners
       const batch = await h.request({ ids: [id] }, { role })
       assert.deepEqual(batch.body.reports[0], { id, ...single.body })
     }
-    assert.deepEqual(snapshot.reports.map(report => report.id).toSorted(), allowed.toSorted())
+    if (role === 'admin' || role === 'manage') assert.deepEqual(snapshot.reports.map(report => report.id).toSorted(), allowed.toSorted())
+    else assert.deepEqual(allowed, [])
     if (role === 'triage') {
       assert.deepEqual(snapshot.reports.find(report => report.id === 'a').permissions, { dependencies: false, security: true })
       assert.deepEqual(snapshot.reports.find(report => report.id === 'b').permissions, { dependencies: true, security: true })
@@ -402,7 +404,7 @@ test('bulk authorization matches individual reads for every role, manager owners
 
 test('catalog report versions change with grants and repository assignments without reading blobs', async t => {
   const h = await setup(t)
-  const catalog = async () => (await h.request({}, { method: 'GET', path: '/api/teams' })).body.teams
+  const catalog = async () => (await h.request({}, { role: 'view', method: 'GET', path: '/api/teams' })).body.teams
   const original = await catalog()
   assert.equal(typeof original[0].reports[0].cacheKey, 'string')
   assert.deepEqual(await catalog(), original)
@@ -449,11 +451,12 @@ test('report and triage responses intersect row security with individual depende
   for (const id of all) await h.db.setTriage(id, { color: 'red' }, h.users.admin.userId, 'admin', Date.now())
   for (const role of ['view', 'manage', 'admin']) {
     const expected = role === 'view' ? allowed : all
-    const batch = await h.request({ ids: ['a'] }, { role })
+    const batch = role === 'view' ? await h.workspace() : await h.request({ ids: ['a'] }, { role })
     const single = await h.request({}, { role, method: 'GET', path: '/api/reports/a' })
-    assert.deepEqual(batch.body.reports[0].data, single.body.data)
-    assert.deepEqual(single.body.data.findings.flat().map(f => f.id), expected)
-    const triage = await h.request({}, { role, method: 'GET', path: '/api/reports/a/triage' })
+    if (role === 'view') assert.equal(single.status, 403)
+    else assert.deepEqual(batch.body.reports[0].data, single.body.data)
+    assert.deepEqual(batch.body.reports[0].data.findings.flat().map(f => f.id), expected)
+    const triage = await h.request({}, { role, method: 'GET', path: `/api/reports/a/triage${role === 'view' ? '?team=team' : ''}` })
     assert.deepEqual(Object.keys(triage.body.entries).toSorted(), expected.toSorted())
     if (role !== 'view') {
       const download = await h.request({}, { role, method: 'GET', path: '/api/admin/reports/a' })
@@ -464,6 +467,6 @@ test('report and triage responses intersect row security with individual depende
   await h.db.setTeamRepo('team', 9, null)
   await h.db.selectRepo({ ...(await h.db.listAllRepos()).find(repo => repo.repoId === 9), fullName: 'other/app' }, Date.now())
   await h.db.setReportRepo('a', 9, '')
-  const reassigned = await h.request({}, { method: 'GET', path: '/api/reports/a/triage' })
+  const reassigned = await h.request({}, { role: 'view', method: 'GET', path: '/api/reports/a/triage?team=team' })
   assert.deepEqual(Object.keys(reassigned.body.entries).toSorted(), allowed.filter(id => id !== 'same-github').toSorted())
 })

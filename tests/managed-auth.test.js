@@ -20,7 +20,6 @@ import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRep
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createBundleStore } from '../server-managed/bundle-store.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
-import { readManagedReport } from '../common/managed/report-content.ts'
 import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
@@ -983,11 +982,19 @@ function bundleHarness(db, cfg = config, reportStore = fakeBlobStore()) {
       get headersSent() { return this.ended }
     }()
   }
+  async function scopedAnnotation(url, cookie) {
+    if (!/^\/api\/reports\/[^/]+\/(?:triage|comments|sources)/u.test(url) || url.includes('team=')) return url
+    const session = await readSession(cfg, db, cookie, Date.now())
+    if (!session || ['admin', 'manage'].includes(session.user.role)) return url
+    const team = (await db.listTeamsForUser(session.user.id))[0]
+    return team ? `${url}${url.includes('?') ? '&' : '?'}team=${team.id}` : url
+  }
   async function upload(url, cookie, csrf, body, extraHeaders = {}) {
     const res = mockRes()
     const headers = { 'content-type': 'application/json', ...extraHeaders }
     if (cookie) headers.cookie = cookie
     if (csrf) headers['x-csrf-token'] = csrf
+    url = await scopedAnnotation(url, cookie)
     const req = new Readable({ read() {} })
     req.method = 'POST'; req.url = url; req.headers = headers
     handler(req, res)
@@ -1000,6 +1007,7 @@ function bundleHarness(db, cfg = config, reportStore = fakeBlobStore()) {
     const res = mockRes()
     const headers = cookie ? { cookie } : {}
     if (csrf) headers['x-csrf-token'] = csrf
+    url = await scopedAnnotation(url, cookie)
     handler({ method, url, headers }, res)
     await pending
     return res
@@ -1038,12 +1046,12 @@ for (const [label, filename] of [
     assert.equal(rec.repoEmbedded, false)
     await db.setReportVisible(rec.id, true)
     const view = `/api/reports/${rec.id}`
-    const triage = `${view}/triage`
+    const triage = `${view}/triage?team=${team}`
     assert.equal((await send('GET', `/api/admin/reports/${rec.id}`, adminCookie)).body, managedCsv)
     assert.equal((await send('GET', view, adminCookie)).body, managedCsv)
-    const own = await send('GET', view, memberCookie)
+    const own = await send('GET', `/api/teams/${team}/reports`, memberCookie)
     assert.equal(own.statusCode, 200)
-    assert.deepEqual(readManagedReport(own.body, rec.filename).data.findings.map((finding) => finding.id), managedCsvIds)
+    assert.deepEqual(JSON.parse(own.body).reports[0].data.findings.map((finding) => finding.id), managedCsvIds)
     const annotate = (cookie, csrf, id) => upload(triage, cookie, csrf, JSON.stringify({ entries: { [id]: { fix: 'Reviewed' } } }))
     assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[0])).statusCode, 200)
     assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[1])).statusCode, 200, 'external App findings survive dependency restrictions')
@@ -1053,7 +1061,7 @@ for (const [label, filename] of [
     assert.equal(impact.statusCode, 200)
     assert.equal(JSON.parse(impact.body).triageCount, 2)
     await db.setTeamMember(team, member.userId, { dependencies: true, security: false })
-    assert.deepEqual(JSON.parse((await send('GET', view, memberCookie)).body).findings, [])
+    assert.deepEqual(JSON.parse((await send('GET', `/api/teams/${team}/reports`, memberCookie)).body).reports[0].data.findings, [])
     assert.deepEqual(JSON.parse((await send('GET', triage, memberCookie)).body).entries, {})
     assert.equal((await annotate(memberCookie, member.csrfToken, managedCsvIds[0])).statusCode, 404)
   })
@@ -1085,9 +1093,9 @@ for (const role of ['view', 'triage', 'admin']) {
       assert.equal(await db.deleteReport(reportId), true)
       return bytes
     })
-    const response = await send('GET', `/api/reports/${id}`, cookiePair(viewer.setCookie))
+    const response = await send('GET', role === 'admin' ? `/api/reports/${id}` : `/api/teams/${team}/reports`, cookiePair(viewer.setCookie))
     assert.equal(response.statusCode, 404)
-    assert.deepEqual(JSON.parse(response.body), { error: 'no-report' })
+    assert.deepEqual(JSON.parse(response.body), { error: role === 'admin' ? 'no-report' : 'workspace-changed' })
     assert.ok(!response.body.includes(managedCsvIds[1]), 'never release the forbidden dependency finding')
   })
 }
@@ -1394,11 +1402,11 @@ test('team reports: read iff admin, OR (>=view role AND in a team holding the re
   assert.equal(okAdmin.body, '{"findings":[]}')
   assert.equal(okAdmin.headers['content-type'], 'text/plain; charset=utf-8')
   assert.equal(okAdmin.headers['x-content-type-options'], 'nosniff')
-  assert.equal((await view(viewerSess, reportId)).statusCode, 200) // >=view + member of the team holding repo 7
+  assert.equal((await view(viewerSess, reportId)).statusCode, 403) // >=view + member of the team holding repo 7
   assert.equal((await view(nonerSess, reportId)).statusCode, 403) // IN the team, but role 'none' → refused
-  assert.equal((await view(outsiderSess, reportId)).statusCode, 404) // >=view, but wrong team (no repo 7)
+  assert.equal((await view(outsiderSess, reportId)).statusCode, 403) // >=view, but wrong team (no repo 7)
   assert.equal((await view(adminSess, randomUUID())).statusCode, 404) // admin, but the report doesn't exist
-  for (const [session, status] of [[null, 401], [nonerSess, 403], [outsiderSess, 404]]) {
+  for (const [session, status] of [[null, 401], [nonerSess, 403], [outsiderSess, 403]]) {
     assert.equal((await req(`/api/reports/${reportId}`, session && cookiePair(session.setCookie), 'application/json')).statusCode, status, 'metadata follows the same access checks as content')
   }
 
@@ -1449,7 +1457,7 @@ test('team paths gate report listings, reads, triage, and permission aggregation
     const allowed = index < 2
     assert.equal(await db.userCanReadReport(member.id, id), allowed, `scope: ${directories[index]}`)
     for (const suffix of ['', '/triage', '/triage/history?finding=own']) {
-      assert.equal((await send('GET', `/api/reports/${id}${suffix}`, cookie)).statusCode, allowed ? 200 : 404, `${directories[index]}${suffix}`)
+      assert.equal((await send('GET', `/api/reports/${id}${suffix}`, cookie)).statusCode, suffix === '' ? 403 : allowed ? 200 : 404, `${directories[index]}${suffix}`)
     }
     const edit = await upload(`/api/reports/${id}/triage`, cookie, memberSess.csrfToken, JSON.stringify({ entries: { own: { fix: 'checked' } } }))
     assert.equal(edit.statusCode, allowed ? 200 : 404)
@@ -1563,9 +1571,11 @@ test('GET /api/reports/<id>: filtered content and authoritative repo metadata (a
   // admin is exempt → sees the whole report; viewer (deps off) → 'dep' stripped, 'sec' kept.
   const adminBody = (await view(adminSess, reportId)).body
   assert.deepEqual(JSON.parse(adminBody).findings.map((f) => f.id), ['own', 'dep', 'sec'])
+  assert.equal((await view(viewerSess, reportId)).statusCode, 403)
+  await db.setUserRole(viewer.id, 'manage')
   const viewerRes = await view(viewerSess, reportId)
   assert.equal(viewerRes.statusCode, 200)
-  assert.deepEqual(JSON.parse(viewerRes.body).findings.map((f) => f.id), ['own', 'sec'])
+  assert.deepEqual(JSON.parse(viewerRes.body).findings.map((f) => f.id), ['own', 'dep', 'sec'])
   // content-length must match the FILTERED body, not the original.
   assert.equal(Number(viewerRes.headers['content-length']), Buffer.byteLength(viewerRes.body))
   const metadata = await view(viewerSess, reportId, 'application/json')
@@ -2054,13 +2064,8 @@ for (const permission of ['dependencies', 'security']) {
       await db.setTeamMember(team.id, userId, { dependencies: true, security: true, [permission]: false })
       gate.resolve()
       const res = await response
-      if (operation === 'entries') {
-        assert.equal(res.statusCode, 200)
-        assert.deepEqual(JSON.parse(res.body), { entries: { own: { fix: 'before own' } } })
-      } else {
-        assert.equal(res.statusCode, 404)
-        assert.deepEqual(JSON.parse(res.body), { error: 'no-finding' })
-      }
+      assert.equal(res.statusCode, 404)
+      assert.deepEqual(JSON.parse(res.body), { error: 'workspace-changed' })
       assert.deepEqual(await db.listTriage(['own', hidden]), before)
       assert.deepEqual(await db.listTriageHistory(hidden, 20), beforeHistory)
       // The still-visible finding remains usable, including through the cache.
@@ -2600,13 +2605,13 @@ test('manager report lists, previews, downloads and triage reads share ownership
     for (const path of [`/api/reports/${id}`, `/api/admin/reports/${id}`, `/api/reports/${id}/triage`]) assert.equal((await h.get(path)).statusCode, 200, path)
   }
   for (const path of [`/api/reports/${unrelated}`, `/api/admin/reports/${unrelated}`, `/api/reports/${unrelated}/triage`, `/api/reports/${unrelated}/triage/history?finding=shared-finding`]) assert.equal((await h.get(path)).statusCode, 404, path)
-  assert.equal((await h.get(`/api/reports/${draft}`, 'viewer')).statusCode, 404, 'drafts remain hidden from viewers')
-  assert.equal((await h.get(`/api/reports/${scoped}`, 'viewer')).statusCode, 200)
+  assert.equal((await h.get(`/api/reports/${draft}`, 'viewer')).statusCode, 403, 'drafts remain hidden from viewers')
+  assert.equal((await h.get(`/api/reports/${scoped}`, 'viewer')).statusCode, 403)
   await h.db.removeTeamMember(h.team, h.sessions.manager.userId)
   assert.equal((await h.get(`/api/reports/${scoped}/triage`)).statusCode, 404, 'warm triage cache cannot bypass revoked membership')
   assert.equal((await h.get(`/api/reports/${own}`)).statusCode, 200)
   await h.db.setUserRole(h.sessions.manager.userId, 'view')
-  assert.equal((await h.get(`/api/reports/${own}`)).statusCode, 404, 'ownership alone does not grant a viewer access')
+  assert.equal((await h.get(`/api/reports/${own}`)).statusCode, 403, 'ownership alone does not grant a viewer access')
 })
 
 test('report mutations cannot bypass scoped access or remove an inaccessible repository link', async t => {

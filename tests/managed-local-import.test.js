@@ -93,40 +93,18 @@ test('empty local collections do not offer Import, including an empty bundle met
   assert.equal(await f.source.hasData('bundle'), false)
 })
 
-test('report imports exclude known links while preserving reports with known and unknown kinds', async () => {
-  const f = fixture()
-  f.deps.listFiles = () => ['report.md', 'native.json', 'legacy.json', 'links.json']
-  f.deps.getKind = name => ({ 'report.md': 'deepsec', 'native.json': null, 'links.json': LINKS_KIND })[name]
-  assert.equal(await f.source.hasData('report'), true)
-  assert.deepEqual((await f.source.list('report')).map(option => option.value), ['report.md', 'native.json', 'legacy.json'])
-  await assert.rejects(f.source.importItem('report', 'links.json', () => assert.fail('must not upload links')), /no longer/u)
-  assert.equal(f.calls.includes('readFile'), false, 'known links are excluded before reading their contents')
-  f.deps.getKind = () => LINKS_KIND
-  await assert.rejects(f.source.importItem('report', 'report.md', () => assert.fail('must revalidate the selected kind')), /no longer/u)
-})
-
-test('links-only local storage does not show report Import or ask to unlock', async () => {
-  for (const encrypted of [false, true]) {
-    const f = fixture({ encrypted })
-    f.deps.listFiles = () => ['links.json']
-    f.deps.getKind = () => LINKS_KIND
-    const ui = controller(f.source)
-    try {
-      await ui.refresh()
-      assert.equal(ui.hasData, false)
-      assert.equal(await f.source.hasData('report'), false)
-      assert.equal(f.calls.includes('readFile'), false)
-      assert.equal(f.calls.includes('unlock'), false)
-    } finally { ui.hostDisconnected() }
-  }
-})
-
-test('a links file with a missing or stale kind cache cannot reach the report upload', async () => {
-  for (const cachedKind of [undefined, 'deepsec']) {
+test('links files are listed and imported as managed reports, regardless of cached kind', async () => {
+  for (const cachedKind of [undefined, 'deepsec', LINKS_KIND]) {
     const f = fixture()
+    f.deps.listFiles = () => ['links.json']
     f.deps.getKind = () => cachedKind
     f.deps.readFile = () => '[[{"id":"one"},{"id":"two"}]]'
-    await assert.rejects(f.source.importItem('report', 'report.md', () => assert.fail('must not upload links')), /Links files cannot be imported as reports/u)
+    assert.equal(await f.source.hasData('report'), true)
+    assert.deepEqual((await f.source.list('report')).map(option => option.value), ['links.json'])
+    await f.source.importItem('report', 'links.json', async file => {
+      assert.equal(file.name, 'links.json')
+      assert.deepEqual(JSON.parse(await file.text()), [[{ id: 'one' }, { id: 'two' }]])
+    })
   }
 })
 

@@ -1,9 +1,12 @@
+import { parseLinkedFindings } from '../../client/linked-findings.js'
 import { detectFormat, loadFindings, parseCodexCsvToScans, readReport } from '../../report/index.js'
 
 // A managed blob retains one server identity even when a CSV contains several
 // scans. Keep all their findings (and upstream ids) under that identity. CSV
 // repository columns describe findings, not an embedded report-level location.
 export function readManagedReport(content: string, filename: string): ReturnType<typeof readReport> {
+  const links = content.trimStart().startsWith('[') ? parseLinkedFindings(content) : null
+  if (links) return { data: { source: 'links', findings: [], links: links.groups }, format: 'links', reason: null }
   const parsed = readReport(content)
   // Permission-filtered responses can be JSON under the original CSV filename.
   if (parsed.data != null || detectFormat(content, filename) !== 'codex') return parsed
@@ -21,4 +24,19 @@ export function readManagedReport(content: string, filename: string): ReturnType
 export function loadManagedFindings(content: string, filename: string): ReturnType<typeof loadFindings> {
   const parsed = readManagedReport(content, filename)
   return parsed.data == null ? Promise.resolve(null) : loadFindings(JSON.stringify(parsed.data))
+}
+
+// Source access follows individual visible members, not their shared finding
+// IDs: another member with the same ID can cite files the viewer cannot see.
+export function managedFindingSourcePaths(findings: unknown[]): Set<string> {
+  const paths = new Set<string>()
+  for (const finding of findings) {
+    if (!finding || typeof finding !== 'object') continue
+    const f = finding as { file?: unknown; evidence?: { file?: unknown }[] }
+    if (typeof f.file === 'string' && f.file) paths.add(f.file)
+    for (const evidence of Array.isArray(f.evidence) ? f.evidence : []) {
+      if (typeof evidence?.file === 'string' && evidence.file) paths.add(evidence.file)
+    }
+  }
+  return paths
 }

@@ -13,7 +13,10 @@ export function readReport(content: string): { data: any, format: string | null,
 export function reportRepoGithub(data: any): string | null
 export function inheritReportMeta(finding: Record<string, unknown>, data: Record<string, unknown>): void
 export function isAppFinding(finding: unknown, source?: unknown): boolean
-export function stampSecurityGroups(groups: Record<string, unknown>[][]): boolean
+export function stampSecurityGroups(groups: Record<string, unknown>[][], options?: { linkedIds?: (id: string) => Iterable<string> }): boolean
+export function reportEntries(data: unknown): unknown[] | null
 export function repoDirectory(repo: any): string
 export function detectFormat(content: string, filename?: string): string | null
 export function parseCodexCsvToScans(content: string): { displayName: string, data: { type: string, source: string, findings: unknown[] } }[]
+
+export function backfillFindingIds(findings: Record<string, unknown>[]): Promise<void>

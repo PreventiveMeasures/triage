@@ -13,7 +13,7 @@ test('an open aggregate view reloads newly visible reports even though no loaded
   cache.setReportCatalog(teams('a'))
   const refreshed = teams('a', 'b')
   const changed = cache.setReportCatalog(refreshed)
-  assert.deepEqual([...changed], ['b'])
+  assert.deepEqual([...changed], ['team:team', 'b'])
   assert.equal(managedReportViewChanged(aggregate, refreshed, changed), true)
 })
 
@@ -57,7 +57,7 @@ test('refreshing a catalog on a management page still invalidates cached report 
   await cache.load('reports:content:a', 'report', () => Promise.resolve({ data: { findings: [] } }))
   const refreshed = [{ id: 'team', reports: [{ id: 'a', cacheKey: 'a-v2' }] }]
   const changed = cache.setReportCatalog(refreshed)
-  assert.deepEqual([...changed], ['a'])
+  assert.deepEqual([...changed], ['team:team', 'a'])
   assert.equal(cache.read('reports:content:a'), undefined)
   assert.equal(managedReportViewChanged({ ...aggregate, currentView: 'manage-reports' }, refreshed, changed), false)
 })

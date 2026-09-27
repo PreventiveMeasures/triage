@@ -3,9 +3,10 @@
 export function managedReportViewChanged(state, teams, changedReports) {
   // Management pages can retain the last report's state while it is hidden.
   // Catalog refreshes still invalidate its cache, but must not replace that page.
-  if (state.currentView !== 'findings' && state.currentView !== 'files') return false
+  if (state.currentView !== 'findings' && state.currentView !== 'files' && state.currentView !== 'links') return false
   if (!state.currentManagedTeam) return false
   const team = teams.find(entry => entry.id === state.currentManagedTeam)
+  if (changedReports.has(`team:${state.currentManagedTeam}`)) return true
   if (!team || state.managedReports.some(report => changedReports.has(report.id))) return true
   const available = new Set(team.reports.map(report => report.id))
   if (state.currentManagedReport !== null) return !available.has(state.currentManagedReport)

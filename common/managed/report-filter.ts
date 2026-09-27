@@ -39,7 +39,7 @@ function npmScope(finding: Finding, fromPath = false): string | null {
 // Parsed projections keep run inheritance and derived flags out of cached
 // reports. A known positive security stamp may include linked findings outside
 // this report; a negative stamp never overrides the intrinsic classifier.
-function projectFinding(value: unknown, report: Finding): Finding | null {
+export function projectFinding(value: unknown, report: Finding): Finding | null {
   const original = object(value)
   if (!original) return null
   const finding = { ...original }
@@ -70,7 +70,7 @@ export function filterReportContent(content: string, perms: ViewerPermissions, f
 
 // repo, when supplied, is the server's authoritative assignment (including an
 // explicit unassigned value). Finding-specific repos still describe their source.
-export function filterReportData(data: unknown, perms: ViewerPermissions, repo?: unknown): unknown {
+export function filterReportData(data: unknown, perms: ViewerPermissions, repo?: unknown, securityIds?: Set<string>): unknown {
   if (perms.dependencies && perms.security) return data
   const report = object(data)
   if (!report) return data
@@ -95,7 +95,7 @@ export function filterReportData(data: unknown, perms: ViewerPermissions, repo?:
   let changed = false
   for (const { entry, members } of entries) {
     // Classify the complete row before hiding dependency components.
-    if (!perms.security && members.some(({ finding }) => finding?.['isSecurity'] === true)) { changed = true; continue }
+    if (!perms.security && members.some(({ finding }) => finding?.['isSecurity'] === true || securityIds?.has(String(finding?.['id'])))) { changed = true; continue }
     const visible = members.filter(({ finding }) => !finding || perms.dependencies || finding['isApp'] === true || !isDependency(finding)
       || githubOrgs.has(githubOrg(finding) ?? '') || npmScopes.has(npmScope(finding, true) ?? ''))
     if (visible.length === members.length) kept.push(entry)

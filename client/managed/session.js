@@ -114,6 +114,22 @@ export async function fetchReports(ids, { signal } = {}) {
   return ids.map(id => reports.get(id))
 }
 
+// A workspace is selected by team, never by a caller-provided report subset.
+export async function fetchTeamReports(teamId, { signal } = {}) {
+  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/reports`, null, { signal })
+  if (!Array.isArray(body?.reports)) return null
+  const reports = [], seen = new Set()
+  for (const entry of body.reports) {
+    const content = reportContent(entry)
+    if (!content || typeof entry.id !== 'string' || typeof entry.filename !== 'string' || seen.has(entry.id)) return null
+    seen.add(entry.id)
+    reports.push({ id: entry.id, filename: entry.filename, ...content })
+  }
+  return reports
+}
+
+export function teamQuery(teamId) { return teamId ? `?team=${encodeURIComponent(teamId)}` : '' }
+
 // GET /api/reports/<id>/triage → the server's triage entries for a team
 // report's findings, as `{ <findingId>: { color?, triage?, fix?,
 // flagged? } | null }` — null for an entry cleared server-side (its
@@ -121,8 +137,8 @@ export async function fetchReports(ids, { signal } = {}) {
 // server-side to the findings this viewer may see; null on any failure / no
 // access. `ignoredReports` never rides this wire — the per-report ignore stays
 // a client-local concept.
-export async function fetchReportTriage(id) {
-  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/triage`)
+export async function fetchReportTriage(id, teamId) {
+  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/triage${teamQuery(teamId)}`)
   const entries = body?.entries
   return entries != null && typeof entries === 'object' && !Array.isArray(entries) ? entries : null
 }
@@ -140,15 +156,15 @@ export async function fetchPullRequests(urls, csrfToken, signal) {
   } catch { return null }
 }
 
-export async function fetchReportComments(id) {
-  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/comments`)
+export async function fetchReportComments(id, teamId) {
+  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/comments${teamQuery(teamId)}`)
   return Array.isArray(body?.comments) ? body.comments : null
 }
 
-export async function saveReportComment(reportId, { findingId, body, commentId = null, version }, csrfToken) {
+export async function saveReportComment(reportId, { findingId, body, commentId = null, version }, csrfToken, teamId) {
   const suffix = commentId == null ? '' : `/${encodeURIComponent(commentId)}`
   try {
-    const res = await managedFetch(`/api/reports/${encodeURIComponent(reportId)}/comments${suffix}`, {
+    const res = await managedFetch(`/api/reports/${encodeURIComponent(reportId)}/comments${suffix}${teamQuery(teamId)}`, {
       method: commentId == null ? 'POST' : 'PATCH',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) },
@@ -158,9 +174,9 @@ export async function saveReportComment(reportId, { findingId, body, commentId =
   } catch { return { status: 0, comment: null } }
 }
 
-export async function deleteReportComment(reportId, commentId, version, csrfToken) {
+export async function deleteReportComment(reportId, commentId, version, csrfToken, teamId) {
   try {
-    const res = await managedFetch(`/api/reports/${encodeURIComponent(reportId)}/comments/${encodeURIComponent(commentId)}`, {
+    const res = await managedFetch(`/api/reports/${encodeURIComponent(reportId)}/comments/${encodeURIComponent(commentId)}${teamQuery(teamId)}`, {
       method: 'DELETE', credentials: 'same-origin',
       headers: { 'content-type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) },
       body: JSON.stringify({ version }),
@@ -174,9 +190,9 @@ export async function deleteReportComment(reportId, commentId, version, csrfToke
 // double-submit CSRF token the server requires for mutations. Resolves with
 // the HTTP status — 0 on a network failure — so the caller can tell a batch
 // the server refused as sent (4xx) from one that may land on a retry.
-export async function pushReportTriage(id, entries, csrfToken) {
+export async function pushReportTriage(id, entries, csrfToken, teamId) {
   try {
-    const res = await managedFetch(`/api/reports/${encodeURIComponent(id)}/triage`, {
+    const res = await managedFetch(`/api/reports/${encodeURIComponent(id)}/triage${teamQuery(teamId)}`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: {

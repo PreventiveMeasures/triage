@@ -23,7 +23,7 @@ beforeEach(() => {
   names.clear()
 })
 
-test('fresh managed report import loads persisted kinds without hydrating unrelated local state', async (t) => {
+test('fresh managed report import lists reports and links without hydrating unrelated local state', async (t) => {
   assert.equal(getKind('links.json'), undefined, 'the sidebar kind cache can already be empty')
   names.add('links.json')
   localStorage.setItem(COUNTS_KEY, counts())
@@ -31,11 +31,11 @@ test('fresh managed report import loads persisted kinds without hydrating unrela
   let fullHydrations = 0
   t.after(secureStorage.onAfterHydrate(() => { fullHydrations++ }))
   const source = createManagedLocalImportSource()
-  assert.equal(await source.hasData('report'), false)
-  assert.deepEqual(await source.list('report'), [])
+  assert.equal(await source.hasData('report'), true)
+  assert.deepEqual(await source.list('report'), [{ value: 'links.json', label: 'links.json' }])
   names.add('report.json')
   assert.equal(await source.hasData('report'), true)
-  assert.deepEqual(await source.list('report'), [{ value: 'report.json', label: 'report.json' }])
+  assert.deepEqual(await source.list('report'), [{ value: 'links.json', label: 'links.json' }, { value: 'report.json', label: 'report.json' }])
   assert.equal(secureStorage.getItem('deepview.workspaces'), null)
   assert.equal(fullHydrations, 0, 'import metadata must not start the local boot subscribers')
   // A later refresh uses current persisted kinds, not the earlier sidebar cache.
@@ -43,7 +43,7 @@ test('fresh managed report import loads persisted kinds without hydrating unrela
   assert.deepEqual((await source.list('report')).map(item => item.value), ['links.json', 'report.json'])
 })
 
-test('encrypted kind metadata is loaded after unlock even after a locked presence probe', async () => {
+test('encrypted local import lists links after unlock without loading kind metadata', async () => {
   const key = await importContentKey(new Uint8Array(32).fill(42))
   vault.__test__.setSessionKeyForTesting(key)
   await secureStorage.setItem(COUNTS_KEY, counts())
@@ -57,6 +57,6 @@ test('encrypted kind metadata is loaded after unlock even after a locked presenc
   assert.equal(secureStorage.getItem(COUNTS_KEY), null)
   await assert.rejects(source.list('report'), /locked/u)
   vault.__test__.setSessionKeyForTesting(key)
-  assert.equal(await source.hasData('report'), false)
-  assert.deepEqual(await source.list('report'), [])
+  assert.equal(await source.hasData('report'), true)
+  assert.deepEqual(await source.list('report'), [{ value: 'links.json', label: 'links.json' }])
 })

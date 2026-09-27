@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
-import { fetchReport, fetchReports } from '../ui/managed/report-data.js'
+import { fetchReport, fetchReports, fetchTeamReports } from '../ui/managed/report-data.js'
 import { managedAppState, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from '../ui/managed/state.js'
 
 const content = id => ({ data: { findings: [{ id }] }, repo: { github: 'org/repo', directory: '' } })
@@ -129,14 +129,14 @@ test('unchanged refreshed catalogs preserve content while changed access/assignm
   assert.deepEqual([...setManagedReportCatalog(catalog())], [])
   await fetchReports(['b', 'a'])
   assert.equal(calls.mock.callCount(), 1)
-  assert.deepEqual([...setManagedReportCatalog(catalog('a-new-grant'))], ['a'])
+  assert.deepEqual([...setManagedReportCatalog(catalog('a-new-grant'))], ['team:team', 'a'])
   await fetchReports(['a', 'b'])
   assert.equal(calls.mock.callCount(), 2)
   assert.deepEqual(JSON.parse(calls.mock.calls[1].arguments[1].body).ids, ['a'])
   setManagedReportCatalog(catalog('a-new-grant', 'b-new-repository'))
   await fetchReport('b')
   assert.equal(calls.mock.callCount(), 3)
-  assert.deepEqual([...setManagedReportCatalog([])].toSorted(), ['a', 'b'])
+  assert.deepEqual([...setManagedReportCatalog([])].toSorted(), ['a', 'b', 'team:team'])
   assert.equal(managedAppState.read('reports:content:a'), undefined)
   assert.equal(managedAppState.read('reports:content:b'), undefined)
 })
@@ -149,7 +149,7 @@ test('catalog versions include every team membership independent of ordering', a
   assert.deepEqual([...setManagedReportCatalog(teams.toReversed())], [])
   await fetchReport('a')
   assert.equal(calls.mock.callCount(), 1)
-  assert.deepEqual([...setManagedReportCatalog(catalog())], ['a'], 'revoking one membership invalidates shared findings')
+  assert.deepEqual([...setManagedReportCatalog(catalog())], ['team:other-team', 'a'], 'revoking one membership invalidates shared findings')
   await fetchReport('a')
   assert.equal(calls.mock.callCount(), 2)
 })
@@ -164,4 +164,35 @@ test('a refreshed catalog cancels older in-flight report content before it can r
   resolve(Response.json({ reports: ['a', 'b'].map(id => ({ id, ...content(id) })) }))
   assert.equal(await loading, null)
   assert.equal(managedAppState.read('reports:content:a'), undefined)
+})
+
+test('team workspaces share in-flight and completed requests only within the same team, and cache only in memory', async t => {
+  const calls = t.mock.method(globalThis, 'fetch', url => {
+    const team = url.split('/')[3]
+    return Promise.resolve(Response.json({ reports: [{ id: 'shared', filename: 'shared.json', ...content(team) }] }))
+  })
+  setManagedReportCatalog([{ id: 'a', reports: [{ id: 'shared', cacheKey: 'restricted' }] }, { id: 'b', reports: [{ id: 'shared', cacheKey: 'full' }] }])
+  const [first, again, other] = await Promise.all([fetchTeamReports('a'), fetchTeamReports('a'), fetchTeamReports('b')])
+  assert.strictEqual(first, again)
+  assert.equal(first[0].data.findings[0].id, 'a')
+  assert.equal(other[0].data.findings[0].id, 'b')
+  assert.equal(calls.mock.callCount(), 2)
+  assert.strictEqual(await fetchTeamReports('a'), first)
+  setManagedReportCatalog([{ id: 'a', reports: [{ id: 'shared', cacheKey: 'changed' }] }, { id: 'b', reports: [{ id: 'shared', cacheKey: 'full' }] }])
+  assert.strictEqual(await fetchTeamReports('b'), other)
+  assert.notStrictEqual(await fetchTeamReports('a'), first)
+  assert.equal(calls.mock.callCount(), 3)
+  setManagedAppSession({ id: 'different-user', role: 'view' })
+  assert.notStrictEqual(await fetchTeamReports('b'), other)
+})
+
+test('a changed links report invalidates the whole team response and cancels its stale in-flight load', async t => {
+  setManagedReportCatalog([{ id: 'a', reports: [{ id: 'links', cacheKey: 'v1' }] }])
+  const pending = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', () => pending.promise)
+  const loading = fetchTeamReports('a')
+  setManagedReportCatalog([{ id: 'a', reports: [{ id: 'links', cacheKey: 'v2' }] }])
+  pending.resolve(Response.json({ reports: [{ id: 'links', filename: 'links.json', data: { source: 'links', findings: [], links: [] }, repo: { github: null, directory: '' } }] }))
+  assert.equal(await loading, null)
+  assert.equal(managedAppState.read('reports:content:team:a'), undefined)
 })

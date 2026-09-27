@@ -96,6 +96,15 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
     assert.deepEqual(report.permissions, { dependencies: index % 2 !== 0, security: true })
     assert.equal(report.repo.github, 'org/repo')
   }
+  queries.length = 0
+  const app = await db.getTeamReportAccessSnapshot('session', 10, 'app')
+  assert.equal(queries.length, 5, 'one transaction: session, membership, whole-team report query')
+  assert.equal(app.reports.length, 32)
+  assert.ok(app.reports.every(report => !report.permissions.dependencies && report.permissions.security))
+  const sub = await db.getTeamReportAccessSnapshot('session', 10, 'sub')
+  assert.equal(sub.reports.length, 16)
+  assert.ok(sub.reports.every(report => report.permissions.dependencies && !report.permissions.security))
+  assert.equal((await db.getTeamReportAccessSnapshot('session', 10, 'missing')).teamId, null)
   await db.setTeamRepo('app', 7, 'elsewhere')
   await db.removeTeamRepo('app', 7, 'packages/app')
   await db.removeTeamMember('sub', viewer)

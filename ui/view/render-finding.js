@@ -379,7 +379,7 @@ function duplicatesTemplate(f, tabIds) {
         : ` — in ${reports.map((r) => `${displayName(r)} (${producerLabel(r)})`).join(', ')}`
       return html`<a
         class="duplicate-ref"
-        href=${`#${encodeFindingRef({ id: other })}`}
+        href=${isManagedUiMode() ? findingLinkFor({ id: other }, { teamOnly: true }) : `#${encodeFindingRef({ id: other })}`}
         data-tooltip=${`${displayId}${where}`}
       >${distinctGroups(reports).map((g) => unsafeHTML(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
         class="duplicate-ref-id"
