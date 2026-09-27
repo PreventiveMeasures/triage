@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { WebSocket } from 'ws'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
 import { MANAGED_SCHEMA } from './db-schema.ts'
-import { GITHUB_METADATA_SCHEMA } from './github-metadata.ts'
+import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
@@ -51,6 +51,7 @@ async function initialize(db: PgConnection): Promise<void> {
     }
     if (!prefixed) await db.query('INSERT INTO managed_schema_version VALUES (3)')
     await db.query(postgresSchema(GITHUB_METADATA_SCHEMA))
+    await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

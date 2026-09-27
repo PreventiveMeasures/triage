@@ -22,3 +22,25 @@ test('SQLite upgrades existing databases and retains GitHub metadata across rest
   try { assert.deepEqual(await reopened.listGithubMetadata([merged.key]), [merged]) }
   finally { await reopened.close() }
 })
+
+test('SQLite adds closure reasons to an existing metadata table without discarding its cache', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'triage-github-reasons-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.db')
+  const db = openSqliteManagedDb(path)
+  const cached = { key: '7:issue:9', title: 'Legacy issue', description: 'Retained body', status: 'closed', stateReason: null, fetchedAt: 1 }
+  await db.setGithubMetadata([cached])
+  await db.close()
+  const legacy = new DatabaseSync(path)
+  legacy.exec('ALTER TABLE managed_github_metadata DROP COLUMN state_reason')
+  legacy.close()
+  for (let i = 0; i < 2; i++) {
+    const upgraded = openSqliteManagedDb(path)
+    try {
+      assert.deepEqual(await upgraded.listGithubMetadata([cached.key]), [cached])
+      cached.stateReason = 'completed'
+      cached.fetchedAt++
+      await upgraded.setGithubMetadata([cached])
+    } finally { await upgraded.close() }
+  }
+})

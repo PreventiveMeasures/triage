@@ -7,9 +7,12 @@ import { managedFixes, subscribeFixes } from './managed-pull-requests.js'
 import { hideTooltip, installShadowTooltipListener } from './tooltip.js'
 import { GITHUB_ICON_SVG } from './icons.js'
 
-const labels = { open: 'Open', draft: 'Draft', closed: 'Closed', merged: 'Merged' }
+const labels = { open: 'Open', draft: 'Draft', closed: 'Closed', merged: 'Merged', completed: 'Completed', not_planned: 'Not planned', duplicate: 'Duplicate', unknown: 'Closed' }
 const prIcon = html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="3" r="1.75"/><circle cx="4" cy="13" r="1.75"/><circle cx="12" cy="13" r="1.75"/><path d="M4 4.75v6.5M12 11.25V5a2 2 0 0 0-2-2H8m2-2L8 3l2 2"/></svg>`
 const issueIcon = html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>`
+const completedIssueIcon = html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="m5 8 2 2 4-4"/></svg>`
+const notPlannedIssueIcon = html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="m3.5 12.5 9-9"/></svg>`
+const issueIcons = { completed: completedIssueIcon, not_planned: notPlannedIssueIcon }
 
 class ManagedFixLink extends StateElement {
   static properties = { url: { type: String }, compact: { type: Boolean, reflect: true } }
@@ -20,10 +23,9 @@ class ManagedFixLink extends StateElement {
     svg { flex: none; }
     /* GitHub Primer's foreground colors follow the app's color-scheme. */
     .open { color: light-dark(#1a7f37, #3fb950); }
-    .draft { color: var(--muted); }
+    .draft, .not_planned, .duplicate, .unknown { color: var(--muted); }
     .closed { color: light-dark(#d1242f, #f85149); }
-    .merged { color: light-dark(#8250df, #a371f7); }
-    .unknown { color: var(--muted); }
+    .merged, .completed { color: light-dark(#8250df, #a371f7); }
     :host(:not([compact])) { display: block; }
     :host(:not([compact])) .fix-link { display: flex; align-items: center; gap: .55rem; min-width: 0; }
     .link-icon { flex: none; line-height: 1; }
@@ -165,19 +167,20 @@ class ManagedFixLink extends StateElement {
       </a>`
     }
     const ref = pr || issue
-    const icon = pr ? prIcon : issue ? issueIcon : null
+    const status = issue && data.status === 'closed' ? data.stateReason ?? 'unknown' : data.status
+    const icon = pr ? prIcon : issue ? issueIcons[status] ?? issueIcon : null
     const name = ref ? `${ref.repo}#${ref.number}` : ''
-    const description = data ? `${labels[data.status]} ${pr ? 'pull request' : 'issue'}: ${data.title} (${name})`
+    const description = data ? `${labels[status]} ${pr ? 'pull request' : 'issue'}: ${data.title} (${name})`
       : ref ? `Open ${pr ? 'pull request' : 'issue'}: ${name}` : `Open fix link: ${this.url}`
     return html`<a class="fix-link" href=${this.url} target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${description}
       aria-details=${this.compact && ref ? 'fix-preview' : nothing} data-tooltip=${this.compact && !ref ? description : nothing}
       @mouseenter=${this._schedulePreview} @mouseleave=${this._leavePreview}
       @focus=${this._schedulePreview} @blur=${this._leavePreview} @click=${this._hidePreview}>
       ${this.compact
-        ? icon ? html`<span class=${`status ${data?.status ?? 'unknown'}`}>${icon}</span>` : html`<slot></slot>`
-        : html`${icon ? html`<span class=${`link-icon ${data?.status ?? 'unknown'}`}>${icon}</span>` : nothing}
+        ? icon ? html`<span class=${`status ${status}`}>${icon}</span>` : html`<slot></slot>`
+        : html`${icon ? html`<span class=${`link-icon ${status}`}>${icon}</span>` : nothing}
           <span class="link-title">${data?.title ?? this.url}</span>
-          ${data ? html`<span class="ref">${name}</span><span class=${`link-status ${data.status}`}>${labels[data.status]}</span>` : nothing}`}
+          ${data ? html`<span class="ref">${name}</span><span class=${`link-status ${status}`}>${labels[status]}</span>` : nothing}`}
     </a>${this.compact && ref ? html`<a class="preview" id="fix-preview" popover="manual" href=${this.url}
       target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${`Open ${pr ? 'pull request' : 'issue'} ${name} on GitHub`}
       @mouseenter=${this._keepPreview} @mouseleave=${this._leavePreview}
@@ -185,7 +188,7 @@ class ManagedFixLink extends StateElement {
       @click=${event => { event.stopPropagation(); this._hidePreview() }}>
       <div class="preview-header">
         <span class="preview-ref">${unsafeHTML(GITHUB_ICON_SVG)}<span>${name}</span></span>
-        <span class=${`status ${data?.status ?? 'unknown'}`}>${icon}${data ? labels[data.status] : nothing}</span>
+        <span class=${`status ${status}`}>${icon}${data ? labels[status] : nothing}</span>
       </div>
       ${data ? html`<div class="preview-title">${data.title}</div>` : nothing}
       ${data?.description ? html`<div class="preview-description">${data.description}</div>` : nothing}

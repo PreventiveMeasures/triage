@@ -1,10 +1,10 @@
-import { type GithubFixRef, type GithubFixResult, type GithubFixStatus, isGithubRepoName, parseGithubFixUrl } from '../common/github-pr.ts'
+import { type GithubFixRef, type GithubFixResult, type GithubFixStatus, githubIssueClosedReason, isGithubRepoName, parseGithubFixUrl } from '../common/github-pr.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { GithubMetadata } from './github-metadata.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
 
-type Metadata = { title: string; description: string | null; status: GithubFixStatus }
+type Metadata = Pick<GithubMetadata, 'title' | 'description' | 'status' | 'stateReason'>
 const MAX_GITHUB_LOOKUPS = 200
 const GITHUB_LOOKUP_TIMEOUT_MS = 10_000
 const GITHUB_METADATA_TTL_MS = 60_000
@@ -22,7 +22,7 @@ async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof
     })
     if (!response.ok) return null
     const body = await response.json() as { number?: unknown; title?: unknown; body?: unknown; state?: unknown; merged?: unknown;
-      draft?: unknown; base?: { repo?: { full_name?: unknown } }; repository_url?: unknown; pull_request?: unknown } | null
+      draft?: unknown; base?: { repo?: { full_name?: unknown } }; repository_url?: unknown; pull_request?: unknown; state_reason?: unknown } | null
     if (body?.number !== ref.number || typeof body.title !== 'string' || !body.title.trim() || body.title.length > 1024
       || !['open', 'closed'].includes(String(body.state)) || (body.body != null && typeof body.body !== 'string')) return null
     let status: GithubFixStatus
@@ -37,7 +37,8 @@ async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof
         || body.repository_url.toLowerCase() !== `https://api.github.com/repos/${ref.repo}`.toLowerCase()) return null
       status = body.state === 'closed' ? 'closed' : 'open'
     }
-    return { title: body.title, description: body.body ?? null, status }
+    const stateReason = ref.kind === 'issue' && status === 'closed' ? githubIssueClosedReason(body.state_reason) : null
+    return { title: body.title, description: body.body ?? null, status, stateReason }
   } catch { return null }
 }
 
@@ -57,9 +58,12 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   })
   const metadata = new Map((await db.listGithubMetadata([...jobs.keys()])).map(entry => [entry.key, entry]))
   const now = Date.now()
-  const pending = [...jobs.entries()].filter(([key]) => {
+  const pending = [...jobs.entries()].filter(([key, ref]) => {
     const cached = metadata.get(key)
-    return !cached || (['open', 'draft'].includes(cached.status) && cached.fetchedAt + GITHUB_METADATA_TTL_MS <= now)
+    // Backfill closed issues cached before closure reasons existed, within the
+    // same authorized/capped queue. Even an unknown reason completes backfill.
+    return !cached || (ref.kind === 'issue' && cached.status === 'closed' && cached.stateReason == null)
+      || (['open', 'draft'].includes(cached.status) && cached.fetchedAt + GITHUB_METADATA_TTL_MS <= now)
   }).toSorted(([a], [b]) => (metadata.get(a)?.fetchedAt ?? 0) - (metadata.get(b)?.fetchedAt ?? 0)).slice(0, MAX_GITHUB_LOOKUPS)
   // Only stale/missing, distinct, authorized entries consume the request budget.
   // Prioritize missing/oldest entries so a large workspace makes progress.
@@ -92,7 +96,7 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
     const key = keys[index]
     if (!key) return []
     const found = metadata.get(key)
-    return [found ? { url, title: found.title, description: found.description, status: found.status } : { url, error: 'unavailable' }]
+    return [found ? { url, title: found.title, description: found.description, status: found.status, stateReason: found.stateReason } : { url, error: 'unavailable' }]
   })
 }
 

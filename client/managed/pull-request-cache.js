@@ -1,4 +1,4 @@
-import { githubFixKey, parseGithubFixUrl } from '../../common/github-pr.ts'
+import { githubFixKey, githubIssueClosedReason, parseGithubFixUrl } from '../../common/github-pr.ts'
 
 // One in-memory response per active workspace/session. A rendered URL is only
 // a local lookup key; it never becomes input to the server or GitHub request.
@@ -56,7 +56,8 @@ export class FixCache {
     for (const result of Array.isArray(results) ? results : []) {
       const ref = parseGithubFixUrl(result?.url)
       if (ref && typeof result.title === 'string' && ['open', 'draft', 'closed', 'merged'].includes(result.status)) {
-        this.entries.set(githubFixKey(ref), { title: result.title, description: typeof result.description === 'string' ? result.description : null, status: result.status })
+        const stateReason = ref.kind === 'issue' && result.status === 'closed' ? githubIssueClosedReason(result.stateReason) : null
+        this.entries.set(githubFixKey(ref), { title: result.title, description: typeof result.description === 'string' ? result.description : null, status: result.status, stateReason })
       }
     }
     this.expires = this.now() + 60_000

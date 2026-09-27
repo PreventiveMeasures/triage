@@ -153,12 +153,16 @@ they keep the plain link presentation used in local/E2E mode. Other Fix values
 are skipped. An empty workspace returns an empty list.
 
 The response is `{ fixes: [...] }`. Successful items contain
-`{ url, title, description, status }`, where `description` is GitHub's body text
+`{ url, title, description, status, stateReason }`, where `description` is GitHub's body text
 (or null), and status is `open`, `draft`, `closed`, or `merged`. Ordinary issues
-use `open` or `closed`. An eligible item with no metadata has
+use `open` or `closed`. Closed issues also have `stateReason`: `completed`,
+`not_planned`, `duplicate`, or `unknown` when GitHub provides no recognized reason.
+Other items use null. Completed issues appear purple like merged PRs; not-planned,
+duplicate and unknown closed issues appear muted, with distinct labels for the
+known reasons. An eligible item with no metadata has
 `{ url, error: "unavailable" }` and remains usable as a plain Fix link.
 
-`managed_github_metadata` persists titles, descriptions, statuses and fetch times
+`managed_github_metadata` persists titles, descriptions, statuses, closure reasons and fetch times
 without eviction. Records are shared by stable repository ID, item type and
 number. Every read
 requires the current user’s membership in the selected team, that team’s repo
@@ -167,10 +171,14 @@ access to another team, repository, or hidden finding.
 Both SQLite and PostgreSQL create the table for existing installations. Cached
 merged PRs are never requested again. Closed items also stay cached; only open
 items (including draft PRs) older than one minute are queued for refresh.
+An exception is closed issues cached before closure reasons were stored: they
+are backfilled once successfully, keeping their old metadata on failure. A null
+reason marks these legacy entries; `unknown` completes backfill even if GitHub
+does not provide a reason. Database upgrades preserve all existing cache rows.
 
 Every workspace read returns all available cached metadata, including stale open
 items. Its upstream queue takes missing entries first, then fills any remaining
-slots with stale open entries, oldest first, up to 200 distinct items total. A
+slots with stale open entries and legacy closed issues, oldest first, up to 200 distinct items total. A
 larger workspace is still a successful response. Successful refreshes replace
 cached values; GitHub failures, missing credentials, or an exhausted request
 budget retain the old data. There are at most four upstream calls in flight,

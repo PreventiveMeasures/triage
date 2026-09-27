@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 export async function checkGithubMetadataStore(db) {
-  const open = { key: '7:pull:1', title: 'Open', description: 'Original body', status: 'open', fetchedAt: 1 }
+  const open = { key: '7:pull:1', title: 'Open', description: 'Original body', status: 'open', stateReason: null, fetchedAt: 1 }
   await db.setGithubMetadata([open])
   assert.deepEqual(await db.listGithubMetadata([open.key]), [open])
   const merged = { ...open, title: 'Merged', description: 'Merged body', status: 'merged', fetchedAt: 3 }
@@ -12,9 +12,11 @@ export async function checkGithubMetadataStore(db) {
   await db.setGithubMetadata([issue])
   await db.setGithubMetadata([{ ...issue, title: 'Outdated', fetchedAt: 9 }])
   assert.deepEqual(await db.listGithubMetadata([issue.key]), [issue])
-  const closed = { ...issue, status: 'closed', description: null, fetchedAt: 11 }
-  await db.setGithubMetadata([closed])
-  assert.deepEqual(await db.listGithubMetadata([issue.key]), [closed])
+  for (const [i, stateReason] of ['completed', 'not_planned', 'duplicate', 'unknown'].entries()) {
+    const closed = { ...issue, status: 'closed', stateReason, description: null, fetchedAt: 11 + i }
+    await db.setGithubMetadata([closed])
+    assert.deepEqual(await db.listGithubMetadata([issue.key]), [closed])
+  }
   const many = Array.from({ length: 250 }, (_, i) => ({ ...open, key: `9:pull:${i + 1}` }))
   await db.setGithubMetadata(many)
   assert.equal((await db.listGithubMetadata(many.map(row => row.key))).length, 250)

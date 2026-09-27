@@ -7,7 +7,7 @@ import { migrateReportLocations } from './report-migration.ts'
 import { initCommentMethods } from './comments.ts'
 import { initActivityMethods } from './activity.ts'
 import { MANAGED_SCHEMA } from './db-schema.ts'
-import { GITHUB_METADATA_SCHEMA } from './github-metadata.ts'
+import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
 import { createSqliteDriver, scopeManagedMethods } from './sql.ts'
@@ -65,6 +65,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec('PRAGMA foreign_keys = ON;')
     migrateManagedTableNames(db)
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA)
+    ensureColumn(db, 'managed_github_metadata', 'state_reason', GITHUB_STATE_REASON_COLUMN)
     migrateTeamRepoPaths(db)
     migrateSlugs(db)
     // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
