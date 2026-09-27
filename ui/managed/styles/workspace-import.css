@@ -1,4 +1,3 @@
-.wrap { max-width: 980px; }
 h1 { font-size: 1.35rem; margin-bottom: .5rem; }
 .workspace-drop { display: grid; gap: .8rem; padding: 2rem; margin: 1.5rem 0; border: 1px dashed var(--border); border-radius: 8px; }
 .workspace-drop.dragging { border-color: var(--accent); background: rgb(from var(--accent) r g b / .08); }
