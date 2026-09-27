@@ -3,6 +3,22 @@ import { roleAtLeast } from '../../common/managed/roles.ts'
 import { canDeleteComment, compareManagedComments } from '../../common/managed/comments.ts'
 import { deleteReportComment, fetchReportComments, saveReportComment } from './client-managed.js'
 
+const listeners = new Map()
+export function subscribeManagedComments(findingId, notify) {
+  if (!listeners.has(findingId)) listeners.set(findingId, new Set())
+  const subscribers = listeners.get(findingId)
+  subscribers.add(notify)
+  return () => {
+    subscribers.delete(notify)
+    if (subscribers.size === 0) listeners.delete(findingId)
+  }
+}
+
+function setManagedComments(findingId, comments) {
+  state.managedComments.set(findingId, comments)
+  for (const notify of listeners.get(findingId) ?? []) notify()
+}
+
 export function managedCommentsFor(finding) {
   return isManagedUiMode() ? state.managedComments?.get(finding?.id) ?? [] : []
 }
@@ -35,7 +51,7 @@ export async function loadManagedReportComments(reportId, { signal } = {}) {
   for (const comment of comments) if (grouped.has(comment.findingId)) grouped.get(comment.findingId).push(comment)
   for (const [id, entries] of grouped) {
     // A POST completed while this read was in flight; keep its newer result.
-    if (state.managedComments.get(id) === before.get(id)) state.managedComments.set(id, entries)
+    if (state.managedComments.get(id) === before.get(id)) setManagedComments(id, entries)
   }
   return true
 }
@@ -54,7 +70,7 @@ export async function writeManagedComment(finding, body, original = null) {
     const next = comments.filter(comment => comment.id !== result.comment.id)
     next.push(result.comment)
     next.sort(compareManagedComments)
-    state.managedComments.set(finding.id, next)
+    setManagedComments(finding.id, next)
   }
   return result
 }
@@ -67,7 +83,7 @@ export async function deleteManagedComment(finding, comment) {
   if (!current()) return 0
   if (status === 204) {
     const comments = state.managedComments.get(finding.id) ?? []
-    state.managedComments.set(finding.id, comments.filter(entry => entry.id !== comment.id))
+    setManagedComments(finding.id, comments.filter(entry => entry.id !== comment.id))
   }
   return status
 }

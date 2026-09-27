@@ -2,7 +2,7 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '#client/index.js'
 import { MAX_COMMENT_TEXT } from '../../../common/managed/comments.ts'
-import { canDeleteManagedComment, canWriteManagedComments, deleteManagedComment, loadManagedReportComments, managedCommentScope, managedCommentsFor, writeManagedComment } from '../managed-comments.js'
+import { canDeleteManagedComment, canWriteManagedComments, deleteManagedComment, loadManagedReportComments, managedCommentScope, managedCommentsFor, subscribeManagedComments, writeManagedComment } from '../managed-comments.js'
 import { renderCommentText } from '../render-finding.js'
 import { managedCommentAvatar, managedCommentTemplate } from '../managed-comment.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../icons.js'
@@ -36,13 +36,27 @@ class ManagedCommentsDialog extends AppDialog {
     document.addEventListener('managed-comments-reset', this._close)
   }
   disconnectedCallback() {
+    this._unsubscribeComments?.()
+    this._unsubscribeComments = null
     document.removeEventListener('managed-comments-reset', this._close)
     super.disconnectedCallback()
   }
   beforeOpen() {
     this._current = managedCommentScope(this.finding?._managedReportId)
     this._comments = managedCommentsFor(this.finding)
+    this._unsubscribeComments?.()
+    this._unsubscribeComments = subscribeManagedComments(this.finding.id, this._commentsChanged)
     void this._refresh({ scroll: true })
+  }
+  _commentsChanged = () => {
+    if (!this.isConnected) return
+    if (!this._current()) { this._close(); return }
+    const thread = this.renderRoot.querySelector('.discussion-log')
+    const atBottom = thread && thread.scrollHeight - thread.scrollTop - thread.clientHeight < 32
+    // Keep the composer and original edit version: a remote edit must still
+    // conflict with an existing draft instead of silently authorizing overwrite.
+    this._comments = managedCommentsFor(this.finding)
+    if (atBottom) void this._scrollToLatest()
   }
   _close = () => this._finish(null)
   _scrollToLatest = async () => {
