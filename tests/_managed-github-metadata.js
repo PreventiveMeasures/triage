@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 export async function checkGithubMetadataStore(db) {
-  const open = { key: '7:pull:1', title: 'Open', description: 'Original body', status: 'open', fetchedAt: 1 }
+  const open = { key: '7:pull:1', title: 'Open', description: 'Original body', status: 'open', stateReason: null, fetchedAt: 1, attemptedAt: null }
   await db.setGithubMetadata([open])
   assert.deepEqual(await db.listGithubMetadata([open.key]), [open])
   const merged = { ...open, title: 'Merged', description: 'Merged body', status: 'merged', fetchedAt: 3 }
@@ -12,12 +12,24 @@ export async function checkGithubMetadataStore(db) {
   await db.setGithubMetadata([issue])
   await db.setGithubMetadata([{ ...issue, title: 'Outdated', fetchedAt: 9 }])
   assert.deepEqual(await db.listGithubMetadata([issue.key]), [issue])
-  const closed = { ...issue, status: 'closed', description: null, fetchedAt: 11 }
-  await db.setGithubMetadata([closed])
-  assert.deepEqual(await db.listGithubMetadata([issue.key]), [closed])
+  for (const [i, stateReason] of ['completed', 'not_planned', 'duplicate', 'unknown'].entries()) {
+    const closed = { ...issue, status: 'closed', stateReason, description: null, fetchedAt: 11 + i }
+    await db.setGithubMetadata([closed])
+    assert.deepEqual(await db.listGithubMetadata([issue.key]), [closed])
+  }
   const many = Array.from({ length: 250 }, (_, i) => ({ ...open, key: `9:pull:${i + 1}` }))
   await db.setGithubMetadata(many)
   assert.equal((await db.listGithubMetadata(many.map(row => row.key))).length, 250)
   assert.deepEqual(await db.listGithubMetadata([open.key]), [merged], 'the persistent cache does not evict older records')
+  await db.recordGithubMetadataAttempts([issue.key, 'missing'], 100)
+  await db.recordGithubMetadataAttempts([issue.key], 99)
+  const [attempted] = await db.listGithubMetadata([issue.key])
+  assert.equal(attempted.attemptedAt, 100, 'older concurrent attempts cannot move the entry back in the queue')
+  assert.equal(attempted.fetchedAt, 14, 'attempts do not change the successful fetch time')
+  assert.equal(attempted.stateReason, 'unknown')
+  assert.equal(attempted.title, 'Issue')
+  assert.deepEqual(await db.listGithubMetadata(['missing']), [], 'failed attempts do not create successful metadata')
+  await db.setGithubMetadata([{ ...attempted, fetchedAt: 101, title: 'Updated' }])
+  assert.equal((await db.listGithubMetadata([issue.key]))[0].attemptedAt, 100, 'metadata updates preserve the independent attempt time')
   return merged
 }

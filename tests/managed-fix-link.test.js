@@ -26,6 +26,29 @@ function renderText(value) {
   })
 })
 
+test('issue reasons label and color both full links and compact previews without changing PR statuses', () => {
+  const link = new FixLink()
+  link.url = 'https://github.com/org/repo/issues/42'
+  for (const [stateReason, label, style] of [
+    ['completed', 'Completed', 'completed'], ['not_planned', 'Not planned', 'not_planned'],
+    ['duplicate', 'Duplicate', 'duplicate'], ['unknown', 'Closed', 'unknown'], [null, 'Closed', 'unknown'],
+  ]) {
+    metadata = { title: 'A fix', status: 'closed', stateReason, description: 'Details' }
+    for (const compact of [false, true]) {
+      link.compact = compact
+      const text = renderText(link.render())
+      assert.ok(text.includes(`${label} issue: A fix`))
+      assert.ok(text.includes(`class=${compact ? 'status' : 'link-icon'} ${style}`))
+      assert.ok(text.includes(`class=${compact ? 'status' : 'link-status'} ${style}`))
+    }
+  }
+  metadata = { title: 'A fix', status: 'open', stateReason: 'completed' }
+  assert.ok(renderText(link.render()).includes('Open issue: A fix'))
+  link.url = 'https://github.com/org/repo/pull/42'
+  metadata.status = 'closed'
+  assert.ok(renderText(link.render()).includes('Closed pull request: A fix'))
+})
+
 test('Fix URLs omitted by the workspace response keep the local/E2E plain-link rendering', () => {
   const link = new FixLink()
   link.url = 'https://github.com/unrelated/private/issues/42'

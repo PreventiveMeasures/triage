@@ -59,7 +59,7 @@ test('ordinary issue links fetch validated titles, descriptions and status from 
     assert.equal(options.headers.authorization, 'Bearer alice-token')
     return Response.json(issuePayload(123, { state: 'closed' }))
   })
-  assert.deepEqual(results, [{ url, title: 'Issue 123', description: 'Issue description 123', status: 'closed' }])
+  assert.deepEqual(results, [{ url, title: 'Issue 123', description: 'Issue description 123', status: 'closed', stateReason: 'unknown' }])
 })
 
 test('batch reads use the registered repo casing and only the numeric link ID, deduplicate, and return all four statuses', async t => {
@@ -79,7 +79,7 @@ test('batch reads use the registered repo casing and only the numeric link ID, d
   assert.equal(requests[0], 'https://api.github.com/repos/ExampleOrg/ExampleRepo/pulls/123')
   assert.deepEqual(results.map(result => result.status), ['open', 'open', 'draft', 'closed', 'merged'])
   assert.deepEqual(results.map(result => result.url), urls)
-  assert.deepEqual(Object.keys(results[0]).toSorted(), ['description', 'status', 'title', 'url'])
+  assert.deepEqual(Object.keys(results[0]).toSorted(), ['description', 'stateReason', 'status', 'title', 'url'])
 })
 
 test('team grants are required even for admins and are rechecked on each request before any token access', async t => {
@@ -197,9 +197,9 @@ test('workspace GET derives only saved Fix PRs surviving the complete security/d
   assert.equal(response.status, 200)
   assert.equal(response.headers['cache-control'], 'no-store')
   assert.deepEqual(response.body.fixes, [
-    { url: 'https://github.com/ExampleOrg/ExampleRepo/issues/1', title: 'Issue 1', description: 'Issue description 1', status: 'open' },
-    { url: link(1), title: 'Fix 1', description: 'Description 1', status: 'open' },
-    { url: link(6), title: 'Fix 6', description: 'Description 6', status: 'open' },
+    { url: 'https://github.com/ExampleOrg/ExampleRepo/issues/1', title: 'Issue 1', description: 'Issue description 1', status: 'open', stateReason: null },
+    { url: link(1), title: 'Fix 1', description: 'Description 1', status: 'open', stateReason: null },
+    { url: link(6), title: 'Fix 6', description: 'Description 6', status: 'open', stateReason: null },
   ])
   assert.deepEqual(calls.map(url => Number(url.split('/').at(-1))), [1, 1, 6], 'hidden rows, linked security, dependencies, drafts and arbitrary input never reach GitHub')
   const broad = await f.send({ path: '/api/teams/broad/fixes' })
@@ -391,7 +391,7 @@ test('merged and closed entries are retained indefinitely without reading a toke
   await f.db.setGithubMetadata([
     { key: '7:pull:1', title: 'Merged', description: 'Permanent merged body', status: 'merged', fetchedAt: 1 },
     { key: '7:pull:2', title: 'Closed', description: null, status: 'closed', fetchedAt: 1 },
-    { key: '7:issue:3', title: 'Closed issue', description: 'Done', status: 'closed', fetchedAt: 1 },
+    { key: '7:issue:3', title: 'Closed issue', description: 'Done', status: 'closed', stateReason: 'completed', fetchedAt: 1 },
   ])
   t.mock.method(f.db, 'getUserTokens', () => assert.fail('cached completed items must not read credentials'))
   const result = await f.lookup([link(1), link(2), 'https://github.com/ExampleOrg/ExampleRepo/issues/3'], () => assert.fail('completed items must not reach GitHub'))
@@ -479,6 +479,110 @@ test('issue metadata preserves descriptions, refreshes open issues and rejects w
   assert.equal(result[0].status, 'closed')
   assert.equal(result[0].description, 'Resolved issue description')
   assert.equal((await f.db.listGithubMetadata(['7:issue:1']))[0].description, 'Resolved issue description')
+})
+
+test('issue closure reasons survive the API and cache; unknown reasons never imply completion', async t => {
+  const f = await fixture(t)
+  const reasons = ['completed', 'not_planned', 'duplicate', null, undefined, 'reopened', 'future_reason', {}]
+  const urls = reasons.map((_, i) => `https://github.com/ExampleOrg/ExampleRepo/issues/${i + 1}`)
+  const results = await f.lookup(urls, url => {
+    const number = Number(url.split('/').at(-1))
+    return Response.json(issuePayload(number, { state: 'closed', state_reason: reasons[number - 1] }))
+  })
+  assert.deepEqual(results.map(row => row.stateReason), ['completed', 'not_planned', 'duplicate', ...Array.from({ length: 5 }, () => 'unknown')])
+  assert.deepEqual(await f.lookup(urls, () => assert.fail('a successfully checked closed issue is permanent')), results)
+  const [open, pull] = await f.lookup(['https://github.com/ExampleOrg/ExampleRepo/issues/99', link(99)], url =>
+    Response.json((url.includes('/issues/') ? issuePayload : payload)(99, { state_reason: 'completed' })))
+  assert.equal(open.stateReason, null, 'open/reopened issues cannot carry a stale completed reason')
+  assert.equal(pull.stateReason, null, 'PR state is based on merged/state/draft, never issue closure reasons')
+})
+
+test('legacy closed issues backfill within the authorized 200-item queue and retain cached data on failure', async t => {
+  const f = await fixture(t)
+  const urls = Array.from({ length: 201 }, (_, i) => `https://github.com/ExampleOrg/ExampleRepo/issues/${i + 1}`)
+  await f.db.setGithubMetadata(urls.map((_, i) => ({ key: `7:issue:${i + 1}`, title: 'Legacy', description: 'Cached body', status: 'closed', stateReason: null, fetchedAt: i + 1 })))
+  const calls = []
+  const failed = await f.lookup([link(999), ...urls], url => {
+    calls.push(url)
+    return new Response(null, { status: 503 })
+  })
+  assert.equal(calls.length, 200)
+  assert.ok(calls[0].endsWith('/pulls/999'), 'missing entries still take priority over legacy cached issues')
+  assert.ok(calls.at(-1).endsWith('/issues/199'), 'older cached issues are backfilled first')
+  assert.ok(failed.slice(1).every(row => row.title === 'Legacy' && row.stateReason === null), 'failures and the cap preserve existing metadata')
+  let refreshed = 0
+  const refresh = url => {
+    refreshed++
+    const number = Number(url.split('/').at(-1))
+    return Response.json(issuePayload(number, { state: 'closed', state_reason: number === 1 ? 'duplicate' : null }))
+  }
+  const first = await f.lookup(urls, refresh)
+  assert.equal(refreshed, 200)
+  assert.equal(first[0].stateReason, 'duplicate')
+  assert.equal(first[199].stateReason, 'unknown')
+  assert.equal(first[200].stateReason, 'unknown', 'issues skipped by the failed first batch get priority')
+  assert.equal(first[198].stateReason, null, 'the newest failed attempt waits when the cap is full')
+  await f.lookup(urls, refresh)
+  assert.equal(refreshed, 201, 'only the remaining legacy entry is fetched on the next request')
+  await f.lookup(urls, () => assert.fail('even unknown reasons finish backfill'))
+  await f.db.setGithubMetadata([{ key: '8:issue:1', title: 'Private legacy issue', description: 'Secret', status: 'closed', stateReason: null, fetchedAt: 1 }])
+  assert.deepEqual(await f.lookup(['https://github.com/OtherOrg/OtherRepo/issues/1'], () => assert.fail('unrelated repositories cannot trigger backfill')), [])
+})
+
+test('failed legacy backfills rotate behind later issues and stale open/draft fixes', async t => {
+  const f = await fixture(t)
+  let now = Date.now()
+  t.mock.method(Date, 'now', () => now)
+  const urls = Array.from({ length: 201 }, (_, i) => `https://github.com/ExampleOrg/ExampleRepo/issues/${i + 1}`)
+  const legacy = urls.map((_, i) => ({ key: `7:issue:${i + 1}`, title: 'Legacy', description: 'Cached body', status: 'closed', stateReason: null, fetchedAt: i + 1 }))
+  await f.db.setGithubMetadata([...legacy,
+    { key: '7:pull:202', title: 'Old open', description: null, status: 'open', fetchedAt: 202 },
+    { key: '7:pull:203', title: 'Old draft', description: null, status: 'draft', fetchedAt: 203 },
+  ])
+  const all = [...urls, link(202), link(203)]
+  const first = await f.lookup(all, () => new Response(null, { status: 404 }))
+  assert.ok(first.slice(0, 201).every(row => row.title === 'Legacy' && row.stateReason === null))
+  const pending = await f.db.listGithubMetadata(['7:issue:200', '7:issue:201', '7:pull:202'])
+  assert.equal(pending.find(row => row.key === '7:issue:200').attemptedAt, now)
+  assert.ok(pending.filter(row => row.key !== '7:issue:200').every(row => row.attemptedAt === null), 'the queue cap does not mark unattempted entries')
+  now += 60_000
+  const calls = []
+  const second = await f.lookup(all, url => {
+    calls.push(url)
+    const number = Number(url.split('/').at(-1))
+    if (number <= 200) return new Response(null, { status: 404 })
+    return Response.json(number === 201 ? issuePayload(number, { state: 'closed', state_reason: 'completed' })
+      : payload(number, { state: 'closed', merged: true }))
+  })
+  assert.equal(calls.length, 200)
+  assert.deepEqual(calls.slice(0, 3).map(url => Number(url.split('/').at(-1))), [201, 202, 203], 'previous failures cannot take every slot again')
+  assert.equal(second[200].stateReason, 'completed')
+  assert.deepEqual(second.slice(201).map(row => row.status), ['merged', 'merged'])
+  assert.ok(second.slice(0, 200).every(row => row.title === 'Legacy' && row.stateReason === null))
+  assert.equal((await f.db.listGithubMetadata(['7:issue:1']))[0].fetchedAt, 1, 'failed attempts do not freshen the successful cache read')
+})
+
+test('missing credentials and the shared deadline do not rotate cached jobs that never start', async t => {
+  const f = await fixture(t)
+  const entries = Array.from({ length: 8 }, (_, i) => ({ key: `7:pull:${i + 1}`, title: 'Cached', description: null, status: 'open', fetchedAt: 1 }))
+  await f.db.setGithubMetadata(entries)
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: null, expiresAt: 1 })
+  await f.lookup(entries.map((_, i) => link(i + 1)), () => assert.fail('no token, no attempts'))
+  assert.ok((await f.db.listGithubMetadata(entries.map(row => row.key))).every(row => row.attemptedAt === null))
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'valid', refreshToken: null, expiresAt: null })
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', () => controller.signal)
+  let calls = 0
+  await f.lookup(entries.map((_, i) => link(i + 1)), () => {
+    calls++
+    controller.abort()
+    return new Response(null, { status: 404 })
+  })
+  assert.equal(calls, 1)
+  const attempted = await f.db.listGithubMetadata(entries.map(row => row.key))
+  assert.ok(attempted.find(row => row.key === '7:pull:1').attemptedAt > 1)
+  assert.ok(attempted.filter(row => row.key !== '7:pull:1').every(row => row.attemptedAt === null))
+  assert.ok(attempted.every(row => row.fetchedAt === 1 && row.title === 'Cached'))
 })
 
 for (const change of ['membership', 'repo', 'security']) {

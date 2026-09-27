@@ -3,9 +3,15 @@ export const MAX_PULL_REQUEST_URL = 2048
 export interface PullRequestRef { repo: string; number: number }
 export type GithubFixRef = PullRequestRef & { kind: 'pull' | 'issue' }
 export type GithubFixStatus = 'open' | 'draft' | 'closed' | 'merged'
+export type GithubIssueClosedReason = 'completed' | 'not_planned' | 'duplicate' | 'unknown'
 export type GithubFixResult = { url: string } & (
-  { title: string; description: string | null; status: GithubFixStatus } | { error: 'unavailable' }
+  { title: string; description: string | null; status: GithubFixStatus; stateReason: GithubIssueClosedReason | null } | { error: 'unavailable' }
 )
+
+// Unknown closure reasons must never imply that an issue was completed.
+export function githubIssueClosedReason(value: unknown): GithubIssueClosedReason {
+  return value === 'completed' || value === 'not_planned' || value === 'duplicate' ? value : 'unknown'
+}
 
 export function isGithubRepoName(value: string): boolean {
   const [owner, repo, extra] = value.split('/')
