@@ -96,27 +96,26 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     node.append(row)
   }
   raise(node)
+  // Measure before anchoring: fixed-position auto width can otherwise shrink
+  // to the space left beside the sidebar instead of the tooltip's full width.
+  node.style.left = '0px'
+  node.classList.add('visible')
+  let anchorLeft = lastClientX
   if (placement === 'right') {
     // Anchor to the element's right edge, vertically centered.
     const rect = el.getBoundingClientRect()
     node.style.top = `${Math.round(rect.top + rect.height / 2)}px`
-    node.style.left = `${Math.round(rect.right + RIGHT_GAP_PX)}px`
+    anchorLeft = rect.right + RIGHT_GAP_PX
     node.style.transform = 'translateY(-50%)'
   } else {
-    // 'cursor' (default) — anchor below the cursor's last known
-    // location, then clamp horizontally so the right edge stays
-    // inside the viewport. Tooltip is `position: fixed`, so
-    // clientX / clientY are the right anchor frame.
+    // Tooltip is fixed, so client coordinates anchor it below the cursor.
     node.style.transform = 'none'
     node.style.top = `${lastClientY + CURSOR_GAP_PX}px`
-    node.style.left = '0px'
-    node.classList.add('visible')
-    const tipW = node.offsetWidth
-    const maxLeft = window.innerWidth - tipW - VIEWPORT_MARGIN_PX
-    const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(lastClientX, maxLeft))
-    node.style.left = `${Math.round(left)}px`
   }
-  node.classList.add('visible')
+  // Both placements must keep long repository paths inside the viewport.
+  const maxLeft = window.innerWidth - node.offsetWidth - VIEWPORT_MARGIN_PX
+  const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(anchorLeft, maxLeft))
+  node.style.left = `${Math.round(left)}px`
   currentTarget = el
   currentText = text
   currentRepo = repo

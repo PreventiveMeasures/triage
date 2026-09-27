@@ -7,11 +7,12 @@ import { GITHUB_ICON_SVG } from '../ui/view/icons.js'
 // one still matches `:popover-open`, which other code reads as "a
 // popover is up" — Escape in events.js stopped dismissing the links
 // preview after the first tooltip (review r4099015016).
-test('hideTooltip closes the popover it opened', async () => {
+test('tooltips preserve popover lifecycle and keep repository paths inside the viewport', async () => {
   const originalDocument = globalThis.document
   const originalWindow = globalThis.window
   let open = false
   const classes = new Set()
+  const listeners = {}
   let text = ''
   const node = {
     id: '', style: {}, offsetWidth: 100, children: [],
@@ -25,7 +26,7 @@ test('hideTooltip closes the popover it opened', async () => {
     matches(sel) { return sel === ':popover-open' && open },
   }
   let created = false
-  globalThis.document = { addEventListener() {}, createElement: () => {
+  globalThis.document = { addEventListener(type, listener) { listeners[type] = listener }, createElement: () => {
     if (!created) { created = true; return node }
     return { children: [], append(child) { this.children.push(child) } }
   }, body: { append() {} } }
@@ -53,6 +54,30 @@ test('hideTooltip closes the popover it opened', async () => {
     assert.equal(node.children.length, 0, 'plain tooltips do not retain the GitHub row')
     hideTooltip()
     assert.equal(open, false)
+    const sidebarTarget = {
+      dataset: { tooltip: 'report.json', tooltipRepo: `org/repo/${'long-directory/'.repeat(30)}` },
+      getBoundingClientRect: () => ({ right: 260, top: 200, height: 32 }),
+    }
+    for (const [viewportWidth, tooltipWidth, expectedLeft] of [[1280, 700, 268], [800, 700, 92], [320, 288, 24], [1000, 100, 268]]) {
+      globalThis.window.innerWidth = viewportWidth
+      node.offsetWidth = tooltipWidth
+      showTooltip(sidebarTarget, { placement: 'right' })
+      assert.equal(node.style.left, `${expectedLeft}px`)
+      assert.ok(expectedLeft >= 8 && expectedLeft + tooltipWidth <= viewportWidth - 8, 'the full repository row stays inside the viewport')
+      assert.equal(node.style.top, '216px')
+      assert.equal(node.style.transform, 'translateY(-50%)', 'sidebar tooltips stay vertically centered')
+      hideTooltip()
+    }
+    globalThis.window.innerWidth = 800
+    node.offsetWidth = 700
+    for (const [clientX, expectedLeft] of [[790, 92], [0, 8]]) {
+      listeners.mousemove({ clientX, clientY: 100 })
+      showTooltip({ dataset: { tooltip: 'plain cursor tooltip' } })
+      assert.equal(node.style.left, `${expectedLeft}px`, 'cursor placement retains both viewport margins')
+      assert.equal(node.style.top, '114px')
+      assert.equal(node.style.transform, 'none')
+      hideTooltip()
+    }
   } finally {
     globalThis.document = originalDocument
     globalThis.window = originalWindow
