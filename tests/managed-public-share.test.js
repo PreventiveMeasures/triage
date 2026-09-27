@@ -129,7 +129,7 @@ test('an anonymous token sees one published workspace, its annotations and no gl
   const denied = ['/api/teams', '/api/teams/other/shared', '/api/teams/other/reports', '/api/teams/whole/reports',
     '/api/reports/foreign/triage', '/api/reports/draft/comments', '/api/reports/sibling/sources',
     '/api/reports/visible', '/api/reports/visible/triage?team=other', '/api/reports/visible/triage?team=team&team=other',
-    '/api/reports/query', '/api/auth/session', '/api/auth/logout', '/api/config', '/api/oauth/github/login', '/api/oauth/github/callback',
+    '/api/reports/query', '/api/auth/session', '/api/auth/logout', '/api/config', '/api/oauth/github/login', '/api/oauth/github/callback', '/api/teams/team/fixes',
     '/api/admin/users', '/api/admin/reports', '/api/admin/history', '/api/admin/bundles', '/api/admin/teams', '/api/admin/models',
     '/api/avatar/user', '/api/github/repos', '/api/sync', '/api/sync/events', '/api/objstore/mint', '/api/npm/advisories', '/api/future-route',
     '/api/bundles/bundle/download', '/api/bundles/foreign-bundle/metadata', '/api/reap', '/', '/api/teams/team/share']

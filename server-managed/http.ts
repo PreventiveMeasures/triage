@@ -8,7 +8,7 @@
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/teams              → the current user's teams + their reports and bundles | 401
-//   POST /api/github/pull-requests → batch PR titles/statuses, restricted to the user's team repos
+//   GET  /api/teams/<id>/fixes → PR/issue metadata from visible findings' stored Fix links
 //   GET  /api/teams/<id>/reports → all reports and links filtered through this team | 401/404
 //   GET  /api/reports/<id>       → admin/manager report preview | 401/403/404
 //   POST /api/reports/query      → admin/manager batch preview, with repository metadata | 400/401/403/404/503
@@ -76,10 +76,9 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAc
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths } from './team-reports.ts'
+import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
-import { MAX_PULL_REQUESTS, MAX_PULL_REQUEST_URL } from '../common/github-pr.ts'
-import { lookupPullRequests } from './github-pulls.ts'
+import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { sendJson, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
@@ -118,21 +117,23 @@ const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
 
-async function handlePullRequests(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await checkMutation(req, res, deps, cookie)
+async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<void> {
+  const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return
-  if (!roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
-  let body: unknown
-  try { body = await readJsonBody(req, 128 * 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const urls = (body as { urls?: unknown } | null)?.urls
-  if (!Array.isArray(urls) || urls.length > MAX_PULL_REQUESTS
-    || urls.some(url => typeof url !== 'string' || url.length > MAX_PULL_REQUEST_URL)) {
-    sendJson(res, 400, { error: 'bad-urls' }); return
-  }
-  const pullRequests = await lookupPullRequests(deps.config, deps.db, s.user.id, urls)
-  // A role/session revocation while GitHub is responding must not release data.
+  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
+  const ids = [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
+  const urls = storedFixUrls(await deps.db.listTriage(ids))
+  await recheckTeam(deps.db, s.session.id, snapshot)
+  const fixes = await lookupFixes(deps.config, deps.db, snapshot, urls)
+  // Cold report reads, token refresh and upstream batches can outlive changes
+  // to security/links, team grants, publication, sessions or the Fix links.
+  const currentUrls = storedFixUrls(await deps.db.listTriage(ids))
   if (await readWorkspaceSession(res, deps, cookie) == null) return
-  sendJson(res, 200, { pullRequests })
+  await recheckTeam(deps.db, s.session.id, snapshot)
+  if (JSON.stringify(currentUrls) !== JSON.stringify(urls)) {
+    sendJson(res, 404, { error: 'workspace-changed' }); return
+  }
+  sendJson(res, 200, { fixes })
 }
 
 function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'bundleId' | 'report' | 'repoId' | 'repoDirectory'> = {}): Promise<void> {
@@ -1759,10 +1760,6 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       return
     }
     if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
-    if (path === '/api/github/pull-requests') {
-      if (method !== 'POST') { send405(res, 'POST'); return }
-      await handlePullRequests(req, res, deps, cookie); return
-    }
     // Cached avatar by user id, served same-origin (the page CSP forbids the
     // github CDN). The id in the path keys the browser cache per user, so a user
     // switch never serves a stale avatar. Workspace access is required.
@@ -1855,6 +1852,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleGetBundle(req, res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
+    }
+    const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
+    if (teamFixes) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleWorkspaceFixes(res, deps, cookie, teamFixes[1]!); return
     }
     const teamReports = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
     if (teamReports) {

@@ -4,34 +4,34 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { MANAGE_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
 
-let pendingLogin = null
+let pendingLanding = null
 
 export function updateManagedLanding(options) {
-  const { serverMode, session, sessionPending = false, teams = [], alternateMode = 'local', onSwitchMode } = options
+  const { serverMode, session, sessionPending = false, teamsPending = false, teams = [], alternateMode = 'local', onSwitchMode } = options
   const landing = document.querySelector('#drop-zone')
   const slot = landing?.querySelector('.managed-landing')
   if (!slot) return
   const managed = serverMode === 'managed'
   const local = serverMode === 'local'
-  // Keep quick session checks from painting a logged-out page. Repaints share
-  // the same deadline; resolving the session or leaving managed mode cancels it.
-  const waiting = managed && session == null && sessionPending
+  // Session and initial team loading share one deadline, so quick responses
+  // paint neither a login prompt nor an empty team landing in between.
+  const waiting = managed && (session ? session.role !== 'none' && teamsPending : sessionPending)
   if (!waiting) {
-    clearTimeout(pendingLogin?.timer)
-    pendingLogin = null
-  } else if (pendingLogin) pendingLogin.options = options
+    clearTimeout(pendingLanding?.timer)
+    pendingLanding = null
+  } else if (pendingLanding) pendingLanding.options = options
   else {
-    pendingLogin = { options, elapsed: false, timer: setTimeout(() => {
-      pendingLogin.elapsed = true
-      updateManagedLanding(pendingLogin.options)
+    pendingLanding = { options, elapsed: false, timer: setTimeout(() => {
+      pendingLanding.elapsed = true
+      updateManagedLanding(pendingLanding.options)
     }, 1000) }
   }
-  const deferLogin = waiting && !pendingLogin.elapsed
+  const deferLanding = waiting && !pendingLanding.elapsed
   landing.dataset.serverMode = managed ? 'managed' : 'local'
-  landing.setAttribute('aria-label', managed ? session?.role === 'none' ? 'No workspace access' : session ? 'Team findings' : deferLogin ? 'Loading session' : 'Log in' : 'Drop reports here')
+  landing.setAttribute('aria-label', managed ? deferLanding ? session ? 'Loading teams' : 'Loading session' : session?.role === 'none' ? 'No workspace access' : session ? 'Team findings' : 'Log in' : 'Drop reports here')
   const localCopy = landing.querySelector('.drop-local-copy')
   if (localCopy) localCopy.textContent = local ? 'Review locally in your browser.' : 'Review locally in your browser. Sync across devices when you need it.'
-  if (!managed || deferLogin) { render(nothing, slot); return }
+  if (!managed || deferLanding) { render(nothing, slot); return }
   const canManage = session?.role === 'admin' || session?.role === 'manage'
   const nonemptyTeams = teams.filter(team => team.reports.length > 0 || team.bundles?.length > 0)
   if (getPublicShare() && !session) {

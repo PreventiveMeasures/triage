@@ -248,15 +248,15 @@
   .landing-workspace:nth-child(n + 3) { display: none; }
 }
 
+.drop-eyebrow {
+  margin-bottom: .5rem;
+  color: var(--accent);
+  font-size: .7rem; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase;
+}
+
 .drop-heading {
   margin-bottom: 1.25rem;
-
-  & .drop-eyebrow {
-    margin-bottom: .5rem;
-    color: var(--accent);
-    font-size: .7rem; font-weight: 600;
-    letter-spacing: .12em; text-transform: uppercase;
-  }
   & h1 {
     color: var(--text);
     max-width: 18em;

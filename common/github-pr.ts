@@ -1,10 +1,10 @@
-export const MAX_PULL_REQUESTS = 50
 export const MAX_PULL_REQUEST_URL = 2048
 
 export interface PullRequestRef { repo: string; number: number }
-export type PullRequestStatus = 'open' | 'draft' | 'closed' | 'merged'
-export type PullRequestResult = { url: string } & (
-  { title: string; status: PullRequestStatus } | { error: 'invalid-url' | 'forbidden' | 'unavailable' }
+export type GithubFixRef = PullRequestRef & { kind: 'pull' | 'issue' }
+export type GithubFixStatus = 'open' | 'draft' | 'closed' | 'merged'
+export type GithubFixResult = { url: string } & (
+  { title: string; description: string | null; status: GithubFixStatus } | { error: 'unavailable' }
 )
 
 export function isGithubRepoName(value: string): boolean {
@@ -33,12 +33,18 @@ export function parseGithubPrUrl(value: unknown): PullRequestRef | null {
   return parseGithubNumberedUrl(value, /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/(?:files|commits|checks))?\/?$/u)
 }
 
-// Used only to identify issue links in the UI; these are not PR lookup inputs.
 export function parseGithubIssueUrl(value: unknown): PullRequestRef | null {
   return parseGithubNumberedUrl(value, /^\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/u)
 }
 
+export function parseGithubFixUrl(value: unknown): GithubFixRef | null {
+  const pr = parseGithubPrUrl(value)
+  if (pr) return { ...pr, kind: 'pull' }
+  const issue = parseGithubIssueUrl(value)
+  return issue ? { ...issue, kind: 'issue' } : null
+}
+
 // Browser-only deduplication key; never used to construct a server API call.
-export function pullRequestKey(ref: PullRequestRef): string {
-  return `${ref.repo.toLowerCase()}#${ref.number}`
+export function githubFixKey(ref: GithubFixRef): string {
+  return `${ref.repo.toLowerCase()}#${ref.kind}:${ref.number}`
 }

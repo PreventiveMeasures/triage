@@ -6,7 +6,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, fetchBundleMetadata, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './client-managed.js'
-import { resetManagedPullRequests } from './managed-pull-requests.js'
+import { resetManagedFixes } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { managedReportViewChanged } from './managed-report-catalog.js'
@@ -484,7 +484,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   const modeAtStart = clientModeLabel()
   updateManagedLanding({
     serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams,
-    sessionPending: managedSessionPending,
+    sessionPending: managedSessionPending, teamsPending: managedTeamsPending,
     alternateMode: isCombinedServerMode(state.serverModeConfig) ? 'e2e' : 'local', onSwitchMode: switchClientMode,
   })
   refreshScanNavigation()
@@ -1791,6 +1791,7 @@ let clientModeGeneration = 0
 let managedSessionRequest = 0
 let managedSessionRefresh = null
 let managedSessionPending = true
+let managedTeamsPending = true
 let managedBase = null
 
 async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
@@ -1798,8 +1799,9 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedBase?.remove()
   managedBase = null
   const generation = ++clientModeGeneration
+  managedTeamsPending = true
   resetManagedAppState()
-  resetManagedPullRequests()
+  resetManagedFixes()
   resetManagedTriage()
   setSyncForceDisabled(state.serverMode !== 'e2e')
   triageSync.setForcedOff(true)
@@ -1939,6 +1941,7 @@ async function revalidateManagedSession() {
     if (!isCurrent()) return
     state.managedSession = session
     managedSessionPending = false
+    if (!previous || previous.id !== session?.id || previous.role !== session?.role) managedTeamsPending = true
     renderSidebar()
     setManagedAppSession(session)
     if (previous && (previous.id !== session?.id || previous.role !== session?.role)) {
@@ -1968,8 +1971,9 @@ async function revalidateManagedSession() {
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   } finally {
-    if (isCurrent() && managedSessionPending) {
+    if (isCurrent() && (managedSessionPending || managedTeamsPending)) {
       managedSessionPending = false
+      managedTeamsPending = false
       renderSidebar()
     }
   }
@@ -1991,6 +1995,7 @@ async function refreshManagedTeams(isCurrent) {
   if (!isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
   const changedReports = setManagedReportCatalog(teams)
   state.managedTeams = teams
+  managedTeamsPending = false
   // Discard an already-rendered view as well as its cached envelopes. In
   // particular, Findings/Files navigation must not reuse revoked findings.
   if (managedReportViewChanged(state, teams, changedReports)) {
@@ -2073,7 +2078,7 @@ async function restoreManagedPage(route, isCurrent) {
   return managedRouteForIds({ ...route, view: state.currentView === 'links' ? 'findings' : state.currentView }, state.managedTeams)
 }
 
-async function openManagedBundle(id, isCurrent, tab = 'overview') {
+async function openManagedBundle(id, isCurrent, tab) {
   const generation = currentViewGeneration()
   let metadata
   try { metadata = await fetchBundleMetadata(id) } catch { return false } // The managed state reports request errors.

@@ -4,7 +4,7 @@ import { render } from './render.js'
 import { forceManagedMode } from './sidebar.js'
 import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
 import { getMergedGroups } from './group.js'
-import { getTheme, setTheme, themes } from './theme.js'
+import { getTheme, setTheme } from './theme.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
 // state for browser-console / external-script use. Findings + groups
@@ -152,13 +152,7 @@ window.DeepView = {
   // Clicking managed restores the previous mode; refresh resets the override.
   forceManagedMode,
 
-  // Theme switcher. The `<theme-toggle>` chrome button only ever
-  // cycles between 'dark' and 'light'; the full `themes` list also
-  // includes the 'green' / 'pink' easter-egg themes that are
-  // reachable only through `setTheme(name)` here. Persists to
-  // localStorage and re-paints the WCO title-bar via the meta
-  // theme-color tag. Throws TypeError on an unknown name.
-  themes,
+  // Persists the theme and updates the browser's theme-color tag.
   setTheme,
   get theme() { return getTheme() },
 

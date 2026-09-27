@@ -11,7 +11,7 @@ function fixture(pathCount) {
   function snapshot(team) {
     if (!snapshots.has(team)) {
       snapshots.set(team, {
-        user: { id: 'user', role: 'view', login: 'user', name: null, avatarUrl: null }, teamId: team,
+        user: { id: 'user', role: 'view', login: 'user', name: null, avatarUrl: null }, teamId: team, repositories: [],
         reports: [{ id: 'report', filename: 'report.json', byteSize: content.length, sha256: 'immutable', repo: { github: null, directory: '' }, permissions: { dependencies: true, security: true } }],
       })
     }

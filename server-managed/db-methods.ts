@@ -5,6 +5,7 @@ import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { preferredSlug } from './slugs.ts'
 import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
+import { type GithubMetadataStore, githubMetadataMethods } from './github-metadata.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
 
@@ -114,6 +115,7 @@ export interface ReportAccessRecord {
 }
 export interface TeamReportAccessSnapshot extends ReportAccessSnapshot {
   teamId: string | null
+  repositories: { repoId: number; github: string; path: string | null }[]
 }
 export interface ReportAccessSnapshot {
   user: StoredUser
@@ -288,7 +290,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, WorkspaceShareStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, WorkspaceShareStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted server configuration and
   // applies exclusively to the first insertion into an empty user table.
@@ -557,6 +559,11 @@ function prepareStatements(db: ManagedSql) {
            OR (g.id IS NOT NULL AND (? = 1 OR r.visible = 1))`,
     ),
     selectTeamAccessStmt: db.prepare(`SELECT 1 FROM managed_team_user WHERE user_id = ? AND team_id = ?`),
+    selectTeamRepositoriesStmt: db.prepare(
+      `SELECT tr.repo_id AS repoId, sr.full_name AS github, tr.path AS path
+         FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
+        WHERE tr.team_id = ? ORDER BY tr.repo_id, tr.path`,
+    ),
     selectTeamReportAccessStmt: db.prepare(
       `SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
               r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
@@ -874,13 +881,14 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
       const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
       if (!session) return null
       const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
-      if (user.role === 'none' || !await stmts.selectTeamAccessStmt.get(user.id, teamId)) return { user, teamId: null, reports: [] }
+      if (user.role === 'none' || !await stmts.selectTeamAccessStmt.get(user.id, teamId)) return { user, teamId: null, reports: [], repositories: [] }
       const whole = user.role === 'admin' || user.role === 'manage'
       const rows = await stmts.selectTeamReportAccessStmt.all(user.id, teamId, whole ? 1 : 0) as {
         id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
         repoFullName: string | null; dependencies: number; security: number
       }[]
-      return { user, teamId, reports: rows.map(row => ({
+      const repositories = await stmts.selectTeamRepositoriesStmt.all(teamId) as TeamReportAccessSnapshot['repositories']
+      return { user, teamId, repositories, reports: rows.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
@@ -1239,6 +1247,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       const row = (await selectGithubIdStmt.get(id)) as { githubId: number } | undefined
       return row?.githubId ?? null
     },
+    ...githubMetadataMethods(db),
     ...selectedRepoMethods(stmts),
     ...activity,
     ...comments,

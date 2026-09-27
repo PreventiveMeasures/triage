@@ -20,7 +20,7 @@ const state = {
 let notifier = () => {}
 let renders = 0, saves = 0
 // The wire, in call order: { fetch: reportId } and { id, entries, csrfToken }.
-let calls = []
+let calls = [], invalidations = []
 let pushStatus = 200
 // What GET /api/reports/<id>/triage answers, per report id; null = failure.
 // A function answers with a promise the test controls.
@@ -38,8 +38,9 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     if (typeof serverEntries === 'function') return serverEntries(id)
     return Promise.resolve(serverEntries == null ? null : (serverEntries[id] ?? {}))
   },
-  pushReportTriage: (id, entries, csrfToken, teamId) => { calls.push({ id, entries, csrfToken, ...(teamId ? { teamId } : {}) }); return Promise.resolve(pushStatus) },
+  pushReportTriage: (id, entries, csrfToken, teamId) => { calls.push({ id, entries, csrfToken, ...(teamId ? { teamId } : {}) }); return Promise.resolve(typeof pushStatus === 'function' ? pushStatus() : pushStatus) },
 } })
+mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedFixes: teamId => { invalidations.push(teamId) } } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.method(console, 'warn', () => {})
 const { hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } = await import('../ui/view/managed-triage.js')
@@ -73,7 +74,7 @@ beforeEach(async () => {
   state.localMode = false
   state.currentManagedTeam = null
   state.managedSession = { role: 'triage', csrfToken: 'tok' }
-  saves = 0; renders = 0; calls = []; pushStatus = 200; serverEntries = {}
+  saves = 0; renders = 0; calls = []; invalidations = []; pushStatus = 200; serverEntries = {}
   initManagedTriagePush()
 })
 
@@ -334,6 +335,7 @@ test('a push is split by entry count and by body size', async () => {
   await saveTriage()
   await drain()
   assert.deepEqual(pushes().map((p) => Object.keys(p.entries).length), [200, 30])
+  assert.deepEqual(invalidations, [], 'bulk color changes do not refresh Fix metadata')
   calls = []
   const big = Array.from({ length: 40 }, (_, i) => `g${i}`)
   state.reports = [{ groups: big.map((f) => [{ id: f }]) }]
@@ -344,6 +346,7 @@ test('a push is split by entry count and by body size', async () => {
   assert.ok(sizes.length > 1, 'more than one request')
   assert.ok(sizes.every((n) => n <= MAX_TRIAGE_BODY_BYTES), `each within the body cap: ${sizes}`)
   assert.equal(pushes().reduce((n, p) => n + Object.keys(p.entries).length, 0), 40)
+  assert.deepEqual(invalidations, [null], 'body-limited Fix batches invalidate once after the flush')
 })
 
 test('a role below triage hydrates but never pushes; a failed GET keeps the local map and blocks pushes', async () => {
@@ -379,4 +382,98 @@ test('pending triage keeps its original team authorization when the same report 
   await drain()
   assert.equal(pushes()[0].teamId, 'one')
   assert.equal(pushes()[0].entries.x.color, 'red')
+})
+
+
+test('saved triage invalidates Fix metadata for the captured workspace only after the save lands', async () => {
+  state.currentManagedTeam = 'first'
+  await open('B', ['y'])
+  await edit('y', { fix: 'https://github.com/org/repo/pull/1' })
+  assert.deepEqual(invalidations, [])
+  state.currentManagedTeam = 'second'
+  await drain()
+  assert.deepEqual(invalidations, ['first'])
+  await open('C', ['z'])
+  pushStatus = 400
+  await edit('z', { fix: 'https://github.com/org/repo/pull/2' })
+  await drain()
+  assert.deepEqual(invalidations, ['first'], 'a refused save does not change the server Fix source')
+})
+
+
+test('bulk color, flag and triage edits leave the Fix cache intact when URLs are unchanged', async () => {
+  const ids = Array.from({ length: 230 }, (_, i) => `f${i}`)
+  const fix = 'https://github.com/org/repo/issues/1'
+  serverEntries = { B: Object.fromEntries(ids.map(id => [id, { fix }])) }
+  await open('B', ids)
+  for (const id of ids) patchEntry(state.triage, id, { color: 'red', flagged: true, triage: 'fixed' })
+  await saveTriage()
+  await drain()
+  assert.equal(pushes().length, 2)
+  assert.ok(pushes().every(batch => Object.values(batch.entries).every(entry => entry.fix === fix)))
+  assert.deepEqual(invalidations, [])
+})
+
+test('Fix changes across reports and request batches invalidate once after the entire flush lands', async () => {
+  state.currentManagedTeam = 'team'
+  const ids = Array.from({ length: 230 }, (_, i) => `f${i}`)
+  state.managedReports = [{ id: 'A' }, { id: 'B' }]
+  state.reports = [
+    { _managedReportId: 'A', groups: ids.map(id => [{ id }]) },
+    { _managedReportId: 'B', groups: [[{ id: 'last' }]] },
+  ]
+  await hydrateManagedReportTriage('A', { renderView: false })
+  await hydrateManagedReportTriage('B', { renderView: false })
+  for (const id of [...ids, 'last']) patchEntry(state.triage, id, { fix: 'https://github.com/org/repo/pull/1' })
+  const finalBatch = Promise.withResolvers()
+  let count = 0
+  pushStatus = () => ++count === 3 ? finalBatch.promise : 200
+  await saveTriage()
+  await drain()
+  const before = [...invalidations]
+  finalBatch.resolve(200)
+  await settle()
+  assert.equal(count, 3)
+  assert.deepEqual(before, [], 'a pending final report delays invalidation even after earlier batches land')
+  assert.deepEqual(invalidations, ['team'])
+})
+
+const partialFailures = [503, 'throw']
+partialFailures.forEach(failure => {
+  test(`a partially landed Fix flush invalidates once even when a later batch fails (${failure})`, async () => {
+    state.currentManagedTeam = 'team'
+    const ids = Array.from({ length: 450 }, (_, i) => `f${i}`)
+    await open('B', ids)
+    for (const id of ids) patchEntry(state.triage, id, { fix: 'https://github.com/org/repo/issues/1' })
+    let count = 0
+    pushStatus = () => {
+      if (++count <= 2) return 200
+      if (failure === 'throw') throw new Error('network')
+      return failure
+    }
+    await saveTriage()
+    await drain()
+    assert.equal(count, 3)
+    assert.deepEqual(invalidations, ['team'], 'the successful batches changed persisted Fix values')
+  })
+})
+
+test('a rejected Fix edit does not hide a later successful change carried by a color edit', async () => {
+  state.currentManagedTeam = 'team'
+  serverEntries = { B: { x: { fix: 'https://github.com/org/repo/pull/1' } } }
+  await open('B', ['x'])
+  pushStatus = 400
+  await edit('x', { fix: 'https://github.com/org/repo/issues/2' })
+  await drain()
+  assert.deepEqual(invalidations, [])
+  pushStatus = 200
+  await edit('x', { color: 'red' })
+  await drain()
+  assert.deepEqual(invalidations, ['team'], 'compare with the last server-confirmed Fix, not the refused wire entry')
+  await edit('x', { fix: '' })
+  await drain()
+  assert.deepEqual(invalidations, ['team', 'team'], 'clearing a saved Fix also invalidates')
+  await edit('x', { flagged: true })
+  await drain()
+  assert.deepEqual(invalidations, ['team', 'team'], 'later non-Fix changes do not invalidate')
 })

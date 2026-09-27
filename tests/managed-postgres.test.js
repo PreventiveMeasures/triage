@@ -130,7 +130,8 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
   }
   queries.length = 0
   const app = await db.getTeamReportAccessSnapshot('session', 10, 'app')
-  assert.equal(queries.length, 5, 'one transaction: session, membership, whole-team report query')
+  assert.equal(queries.length, 6, 'one transaction: session, membership, reports and repository scopes')
+  assert.deepEqual(app.repositories, [{ repoId: 7, github: 'org/repo', path: 'packages/app' }])
   assert.equal(app.reports.length, 32)
   assert.ok(app.reports.every(report => !report.permissions.dependencies && report.permissions.security))
   const sub = await db.getTeamReportAccessSnapshot('session', 10, 'sub')
@@ -319,4 +320,18 @@ test('Postgres bundle advisories use only security grants on the bundle reposito
   assert.equal(await db.userCanReadBundleAdvisories(user, 'missing', null), false)
   await db.removeTeamRepo('security', 7)
   assert.equal(await db.userCanReadBundleAdvisories(user, 'bundle', null), false)
+})
+
+test('Postgres upgrades existing databases and retains GitHub metadata across restarts without eviction', async t => {
+  const { connect, db } = await database(t)
+  await db.close()
+  const connection = await connect()
+  try { await connection.query('DROP TABLE managed_github_metadata') } finally { await connection.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  const { checkGithubMetadataStore } = await import('./_managed-github-metadata.js')
+  const merged = await checkGithubMetadataStore(upgraded)
+  await upgraded.close()
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.deepEqual(await reopened.listGithubMetadata([merged.key]), [merged]) }
+  finally { await reopened.close() }
 })

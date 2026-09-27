@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { WebSocket } from 'ws'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
 import { MANAGED_SCHEMA } from './db-schema.ts'
+import { GITHUB_METADATA_SCHEMA } from './github-metadata.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
@@ -54,6 +55,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(WORKSPACE_SHARE_SCHEMA))
       await db.query('INSERT INTO managed_schema_version VALUES (4)')
     }
+    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA))
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

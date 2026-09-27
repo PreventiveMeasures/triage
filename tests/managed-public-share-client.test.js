@@ -7,7 +7,7 @@ let onHashChange
 globalThis.addEventListener = (event, listener) => { if (event === 'hashchange') onHashChange = listener }
 const { parsePublicShare } = await import('../client/managed/public-share.js')
 const { managedFetch } = await import('../client/managed/request.js')
-const { probeSession, probeTeams } = await import('../client/managed/session.js')
+const { probeSession, probeTeams, fetchFixes } = await import('../client/managed/session.js')
 
 test('public link parsing separates capabilities from ordinary and malformed links', () => {
   assert.equal(parsePublicShare('#share=encrypted-e2e-link'), null)
@@ -52,6 +52,11 @@ test('public startup uses only scoped bootstrap and clears revoked access withou
   revoked = true
   assert.equal(await probeSession({ fallback: session }), null)
   assert.deepEqual(await probeTeams({ fallback: teams }), [])
+})
+
+test('public views do not request authenticated GitHub fix metadata', async t => {
+  t.mock.method(globalThis, 'fetch', () => { assert.fail('Public view requested GitHub metadata') })
+  assert.deepEqual(await fetchFixes('team'), [])
 })
 
 test('pasting a different share fragment reinitializes the capability instead of retaining the old identity', t => {
