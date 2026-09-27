@@ -124,6 +124,7 @@ export {
 export {
   CONFIG_PATH,
   isCombinedServerMode,
+  isManagedModeLink,
   mergeSyncServerInfo,
   hasStandaloneProbeHint,
   parseServerInfo,

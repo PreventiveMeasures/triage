@@ -29,6 +29,12 @@ export function isCombinedServerMode(mode: ServerMode | null): boolean {
   return mode === 'managed+e2e' || mode === 'e2e+managed'
 }
 
+// Managed routes select their protocol on combined deployments, including an
+// unknown route under these prefixes. E2E-only servers keep their own fallback.
+export function isManagedModeLink(mode: ServerMode, pathname: string): boolean {
+  return (mode === 'managed' || isCombinedServerMode(mode)) && /^\/(?:team|manage)(?:\/|$)/u.test(pathname)
+}
+
 export function resolveServerMode(mode: ServerMode, selection: ServerProtocol | null = null): ServerProtocol {
   if (selection && (isCombinedServerMode(mode) || mode === selection)) return selection
   return mode === 'managed' || mode === 'managed+e2e' ? 'managed' : 'e2e'

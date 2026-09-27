@@ -310,3 +310,98 @@ test('PWA launches navigate only to same-origin managed pages', async () => {
   await setImmediate()
   assert.equal(shown, 'manage-bundles')
 })
+
+test('finding selection replaces the current entry through open, navigation and close', async () => {
+  for (const reportSlug of [null, 'report']) {
+    const base = { view: 'findings', teamSlug: 'team', reportSlug }
+    const path = managedRoutePath(base)
+    const hash = `#public=link0001.${'A'.repeat(43)}`
+    const { browser, entries, writes } = browserAt(path + hash)
+    const nav = createManagedHistory(browser)
+    let restores = 0
+    await nav.start(() => { restores++; return true })
+    for (const id of ['first-id', 'another /?# é']) {
+      const selected = { ...base, finding: { id } }
+      nav.replaceFindingRoute(selected)
+      assert.equal(browser.location.pathname, managedRoutePath(selected))
+      assert.equal(browser.location.hash, hash)
+      const count = writes.length
+      nav.replaceFindingRoute(selected)
+      assert.equal(writes.length, count, 'repainting the same selection does not write history')
+    }
+    nav.replaceFindingRoute(base)
+    assert.equal(browser.location.pathname, path, 'closing details or entering a list clears the suffix')
+    assert.equal(browser.location.hash, hash)
+    assert.equal(restores, 1, 'selection must not reload the report')
+    assert.equal(entries.length, 1, 'individual selections do not fill Back history')
+    nav.replaceFindingRoute({ ...base, teamSlug: 'other', finding: { id: 'stale-id' } })
+    assert.equal(browser.location.pathname, path, 'late paints cannot switch teams')
+    nav.reset()
+    const count = writes.length
+    nav.replaceFindingRoute({ ...base, finding: { id: 'stale-id' } })
+    assert.equal(writes.length, count, 'E2E/local mode ignores managed selection')
+  }
+})
+
+test('rendered selections wait for navigation to commit and retain the departing finding on Back', async () => {
+  const first = { view: 'findings', teamSlug: 'team', reportSlug: 'first', finding: { id: 'first-id' } }
+  const second = { ...first, reportSlug: 'second', finding: { id: 'second-id' } }
+  const { browser, entries } = browserAt(managedRoutePath(first))
+  const nav = createManagedHistory(browser)
+  const pending = Promise.withResolvers()
+  let loading = false
+  await nav.start(async route => {
+    if (loading) {
+      nav.replaceFindingRoute(second)
+      assert.equal(browser.location.pathname, managedRoutePath(first), 'incoming paint cannot overwrite departing history')
+      await pending.promise
+    } else nav.replaceFindingRoute(route)
+    return true
+  })
+  loading = true
+  const navigation = nav.navigate({ ...second, finding: undefined })
+  pending.resolve()
+  await navigation
+  assert.equal(browser.location.pathname, managedRoutePath(second), 'Focus default is committed with its report')
+  assert.equal(entries.length, 2)
+  loading = false
+  await browser.move(-1)
+  assert.equal(browser.location.pathname, managedRoutePath(first))
+  await browser.move(1)
+  assert.equal(browser.location.pathname, managedRoutePath(second))
+})
+
+test('deep-link restoration keeps the final revealed selection, including E2E hash resolution', async () => {
+  for (const path of ['/team/team/report/report/finding/linked-id', '/#finding=linked-id']) {
+    const { browser } = browserAt(path)
+    const nav = createManagedHistory(browser)
+    const canonical = { view: 'findings', teamSlug: 'team', reportSlug: 'report', finding: { id: 'linked-id' } }
+    await nav.start(() => {
+      nav.replaceFindingRoute({ ...canonical, finding: { id: 'default-id' } })
+      nav.replaceFindingRoute(canonical)
+      return canonical
+    })
+    assert.equal(browser.location.pathname, managedRoutePath(canonical))
+  }
+})
+
+test('failed or superseded navigation cannot publish a pending finding selection', async () => {
+  const { browser } = browserAt('/team/team')
+  const nav = createManagedHistory(browser)
+  const pending = Promise.withResolvers()
+  await nav.start(async route => {
+    if (route.reportSlug) {
+      nav.replaceFindingRoute({ ...route, finding: { id: 'pending-id' } })
+      if (route.reportSlug === 'slow') await pending.promise
+      return route.reportSlug !== 'missing'
+    }
+    return true
+  })
+  await nav.navigate({ view: 'findings', teamSlug: 'team', reportSlug: 'missing' })
+  assert.equal(browser.location.pathname, '/')
+  const slow = nav.navigate({ view: 'findings', teamSlug: 'team', reportSlug: 'slow' })
+  await nav.navigate({ view: 'manage' })
+  pending.resolve()
+  assert.equal(await slow, false)
+  assert.equal(browser.location.pathname, '/manage')
+})

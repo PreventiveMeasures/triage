@@ -1,7 +1,7 @@
 import { store } from '@rray/frontend/state-management'
 import type { ManagedComment } from '../common/managed/comments.ts'
 import { getItem as getSecureItem, mutate as mutateSecureItem, onAfterHydrate, setItem as setSecureItem } from './secure-storage.js'
-import { type ManagedServerInfo, type ServerMode, type ServerProtocol, isCombinedServerMode, readCachedServerInfo, resolveServerMode } from './sync/server-mode.ts'
+import { type ManagedServerInfo, type ServerMode, type ServerProtocol, isCombinedServerMode, isManagedModeLink, readCachedServerInfo, resolveServerMode } from './sync/server-mode.ts'
 
 export const VIEW_MODE_KEY = 'deepview.viewMode'
 export const SEVERITY_MODE_KEY = 'deepview.severityMode'
@@ -202,7 +202,7 @@ export interface State {
   // `applyServerInfo`).
   serverMode: ServerProtocol | 'standalone'
   // Advertised modes/default stay separate from the active protocol. The
-  // selection is memory-only and starts empty on every page load.
+  // selection is memory-only; managed URLs can seed it on page load.
   serverModeConfig: ServerMode | null
   serverModeSelection: ServerProtocol | null
   // A managed server can be viewed in local mode for offline work. This is a
@@ -465,6 +465,7 @@ export async function adoptRepoUrlFor(name: string | null | undefined, url: stri
 // Cached server protocol (from the last `server-info` connect frame), read
 // once so the initial render is mode-correct before the live frame confirms it.
 const INITIAL_SERVER_INFO = readCachedServerInfo()
+const INITIAL_MODE_SELECTION = isManagedModeLink(INITIAL_SERVER_INFO?.mode ?? 'e2e', globalThis.location?.pathname ?? '') ? 'managed' : null
 
 export const state: State = store<State>({
   // Exactly one OPFS-backed report is active at a time — the sidebar
@@ -940,10 +941,10 @@ export const state: State = store<State>({
   // events.js bumps this only while a links file is loaded — nothing
   // else on the findings surface reads that index per-card.
   findingIndexTick: 0,
-  // Use the advertised default on every reload, even after a mode switch.
-  serverMode: resolveServerMode(INITIAL_SERVER_INFO?.mode ?? 'e2e'),
+  // Reload uses the advertised default unless the URL names a managed page.
+  serverMode: resolveServerMode(INITIAL_SERVER_INFO?.mode ?? 'e2e', INITIAL_MODE_SELECTION),
   serverModeConfig: INITIAL_SERVER_INFO?.mode ?? null,
-  serverModeSelection: null,
+  serverModeSelection: INITIAL_MODE_SELECTION,
   deepviewScanServer: null,
   localMode: false,
   managed: INITIAL_SERVER_INFO?.managed ?? null,
@@ -970,11 +971,13 @@ export function setLocalMode(enabled: boolean): void {
   state.localMode = Boolean(enabled)
 }
 
-export function configureClientMode(mode: ServerMode): void {
+export function configureClientMode(mode: ServerMode, pathname = globalThis.location?.pathname ?? ''): void {
+  const managedLink = isManagedModeLink(mode, pathname)
+  if (managedLink) state.serverModeSelection = 'managed'
   state.serverModeConfig = mode
   state.serverMode = resolveServerMode(mode, state.serverModeSelection)
   if (state.serverModeSelection !== state.serverMode) state.serverModeSelection = null
-  if (state.serverMode === 'e2e' || isCombinedServerMode(mode)) setLocalMode(false)
+  if (managedLink || state.serverMode === 'e2e' || isCombinedServerMode(mode)) setLocalMode(false)
 }
 
 export function toggleClientMode(): boolean {

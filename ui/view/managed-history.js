@@ -5,6 +5,11 @@ import { parsePublicShare, publicSharePath } from '../../client/managed/public-s
 const KEY = 'deepviewManagedNavigation'
 const LOGIN_FINDING = 'deepviewManagedLoginFinding'
 
+function sameFindingsPage(a, b) {
+  return a?.view === 'findings' && b?.view === 'findings'
+    && a.teamSlug === b.teamSlug && (a.reportSlug ?? null) === (b.reportSlug ?? null)
+}
+
 // Browser history contains only a navigation generation, never report data.
 // A mode change invalidates old entries; Back cannot restore the prior mode.
 export function createManagedHistory(browser) {
@@ -17,6 +22,7 @@ export function createManagedHistory(browser) {
   let currentPath = null
   let listening = false
   let findingUrl = null
+  let restoring = null
 
   // A changed public fragment triggers a document reload. Do not let an old
   // popstate handler or pending navigation restore the previous credential.
@@ -60,6 +66,7 @@ export function createManagedHistory(browser) {
     let path = managedRoutePath(route)
     if (path === null) return false
     const request = ++revision
+    const pending = restoring = { route, findingRoute: null }
     const isCurrent = () => active && request === revision && !shareChanged()
     let ok = false
     try { ok = await restore(route, isCurrent) }
@@ -69,11 +76,19 @@ export function createManagedHistory(browser) {
       // Failed loads may already have cleared the old report. Always keep the
       // displayed page and URL together, including ordinary report clicks.
       await restore({ view: 'home' }, isCurrent)
-      if (isCurrent()) replace('/')
+      if (isCurrent()) { restoring = null; replace('/') }
       return false
     }
     // The renderer can fall back from Files when a report has no source tree.
     if (typeof ok === 'object') path = managedRoutePath(ok) ?? path
+    // Rendering can select a default Focus finding, reveal a linked finding,
+    // or hide details in a list view. Commit its final selection only after
+    // this navigation succeeds; intermediate paints must not rewrite the
+    // previous page's history entry or an incoming deep link.
+    if (sameFindingsPage(pending.findingRoute, typeof ok === 'object' ? ok : route)) {
+      path = managedRoutePath(pending.findingRoute)
+    }
+    restoring = null
     if (pop || replacing) replace(path)
     else if (publicSharePath(path, publicShare) !== currentPath) {
       path = publicSharePath(path, publicShare)
@@ -144,6 +159,19 @@ export function createManagedHistory(browser) {
       return navigate(route, { replace: true })
     },
     navigate,
+    replaceFindingRoute(route) {
+      if (!active || route?.view !== 'findings' || shareChanged()) return
+      const path = managedRoutePath(route)
+      if (path == null) return
+      if (restoring) {
+        if (restoring.route.view === 'home' && restoring.route.finding
+            || sameFindingsPage(route, { ...restoring.route, view: 'findings' })) restoring.findingRoute = route
+        return
+      }
+      // A late repaint of a previous report must not steal the current URL.
+      if (!sameFindingsPage(route, parseManagedRoute(new URL(browser.location.href)))) return
+      if (publicSharePath(path, publicShare) !== currentPath) replace(path)
+    },
     replaceRoute(route) {
       if (!active || !route || shareChanged()) return
       const path = managedRoutePath(route)
@@ -151,6 +179,7 @@ export function createManagedHistory(browser) {
     },
     reset({ force = false } = {}) {
       ++revision
+      restoring = null
       if (active || force) {
         try { browser.sessionStorage?.removeItem(LOGIN_FINDING) } catch {}
         active = false

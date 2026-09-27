@@ -34,12 +34,12 @@ import { cleanupGraph2 } from './graph/state.js'
 // loads, so a miss means a report that arrived by some path that didn't
 // — in which case the hint is simply omitted and the receiver's scan
 // picks up the slack.
-export function findingLinkFor(finding, { teamOnly = false } = {}) {
+export function findingLinkFor(finding, { teamOnly = false, reportId: targetReportId } = {}) {
   if (!finding) return null
   const id = tabKey(finding)
   if (!isLinkableFindingId(id)) return null
   if (isManagedUiMode()) {
-    const reportId = teamOnly ? null : state.currentView === 'links' ? finding._managedReportId : state.currentManagedReport
+    const reportId = teamOnly ? null : targetReportId ?? (state.currentView === 'links' ? finding._managedReportId : state.currentManagedReport)
     const path = managedRoutePath(managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId, finding: { id } }, state.managedTeams))
     return path ? `${typeof location === 'undefined' ? '' : location.origin}${path}` : null
   }

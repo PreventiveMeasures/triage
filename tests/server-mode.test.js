@@ -223,3 +223,46 @@ test('new deployment advertisements replace cached modes in both directions', (t
     }
   }
 })
+
+test('managed URL prefixes select managed only when the deployment offers it', (t) => {
+  const previous = { serverMode: state.serverMode, serverModeConfig: state.serverModeConfig, serverModeSelection: state.serverModeSelection, localMode: state.localMode }
+  t.after(() => Object.assign(state, previous))
+  for (const mode of ['managed', 'managed+e2e', 'e2e+managed', 'e2e']) {
+    for (const path of ['/team', '/team/team/report/report/finding/issue', '/manage', '/manage/report', '/manage/unknown']) {
+      state.serverModeSelection = 'e2e'
+      state.localMode = true
+      configureClientMode(mode, path)
+      assert.equal(clientModeLabel(), mode === 'e2e' ? 'e2e' : 'managed', `${mode}: ${path}`)
+      configureClientMode(mode, '/')
+      assert.equal(clientModeLabel(), mode === 'e2e' ? 'e2e' : 'managed', 'discovery retains the selected protocol after navigation')
+    }
+  }
+  for (const path of ['/', '/teams/a', '/management', '/teamwork', '/TEAM/a', '/unknown']) {
+    state.serverModeSelection = null
+    configureClientMode('e2e+managed', path)
+    assert.equal(clientModeLabel(), 'e2e', path)
+  }
+})
+
+test('cached combined mode selects managed before startup and fresh discovery can correct a stale e2e cache', async (t) => {
+  const previousLocation = globalThis.location
+  const previous = { serverMode: state.serverMode, serverModeConfig: state.serverModeConfig, serverModeSelection: state.serverModeSelection, localMode: state.localMode }
+  t.after(() => {
+    Object.assign(state, previous)
+    if (previousLocation === undefined) delete globalThis.location
+    else globalThis.location = previousLocation
+    localStorage.removeItem(SERVER_MODE_KEY)
+  })
+  for (const path of ['/team/example/finding/issue', '/manage/report']) {
+    globalThis.location = new URL(path, 'https://triage.test')
+    writeCachedServerInfo({ mode: 'e2e+managed', managed: null })
+    const fresh = await import(`../client/state.ts?managed-link=${path}`)
+    assert.equal(fresh.isManagedUiMode(), true)
+    state.serverModeSelection = null
+    configureClientMode('e2e')
+    assert.equal(isManagedUiMode(), false)
+    configureClientMode('e2e+managed')
+    assert.equal(isManagedUiMode(), true)
+    assert.equal(globalThis.location.pathname, path)
+  }
+})
