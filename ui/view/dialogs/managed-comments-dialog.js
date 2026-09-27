@@ -157,7 +157,9 @@ class ManagedCommentsDialog extends AppDialog {
           ${this.finding?.title ? html`<p class="discussion-finding">${this.finding.title}</p>` : nothing}
           <p class="loc">${this.finding?.file ?? ''}</p></div>
         <div class="header-actions">
-          <button type="button" ?disabled=${this._busy} @click=${() => this._refresh()}>Refresh</button>
+          <button type="button" class="refresh" aria-label="Refresh discussion" ?disabled=${this._busy} @click=${() => this._refresh()}>
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 7a5.5 5.5 0 1 0-1.2 4.5M13.5 3.5V7H10"/></svg>
+          </button>
           <button type="button" class="close" aria-label="Close discussion" @click=${this._close}>×</button>
         </div>
       </header>
