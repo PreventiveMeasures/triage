@@ -124,25 +124,31 @@ persistent server with the same Neon/Blob adapters.
 
 ## Team update streams
 
-`GET /api/teams/:id/feed` streams small SSE invalidations for visible triage and
-comments. Each stream ends after 240 seconds, leaving headroom below this
-deployment's 300-second invocation limit. The client reconnects and refreshes
-current annotations on every connection. Idle streams send 15-second
-heartbeats; the client retries stalled streams and transient failures with
-backoff. Navigation aborts the old team's request.
+`GET /api/teams/:id/feed` streams catalog invalidations for all the user's teams
+and triage/comment invalidations for the focused team. `GET /api/teams/feed`
+carries only catalog updates on Home, bundle and Manage pages, including for
+users with no memberships. The browser keeps one stream at a time.
+
+Each stream ends after 240 seconds, leaving headroom below this deployment's
+300-second invocation limit. Reconnection refreshes the catalog and any focused
+annotations. Idle streams send 15-second heartbeats; stalled streams and
+transient failures retry with backoff. Navigation aborts the previous request.
 
 The function stays awaited until the stream closes. It polls shared database
-revisions every three seconds using short transactions, releasing each Neon
-connection before waiting. No background process, sticky routing, persistent
+state every three seconds using short read-only transactions, releasing each
+Neon connection before waiting. Catalog polling reads membership, scope and
+report/bundle metadata; only focused triage needs report visibility and
+annotation revisions. No background process, sticky routing, persistent
 database connection, or instance-local notification bus is required. Each
-active browser feed occupies a streaming invocation and incurs those reads;
-see Vercel's
+signed-in browser feed, including on landing, occupies a streaming invocation
+and incurs those reads; see Vercel's
 [streaming and duration guidance](https://vercel.com/docs/functions/streaming-functions#function-duration).
 
-Authentication and team visibility are rechecked during polling. Revocation
-or a workspace change sends a terminal close event; expired connections cannot
-continue reading under an old permission snapshot. Public-share feeds use the
-same header capability and revocation checks as public report reads.
+Session and team visibility are rechecked during polling. Membership loss stops
+focused triage while retaining catalog notifications; logout, expiry or role
+changes send a terminal close event. Public-share feeds use the same header
+capability and revocation checks as public report reads and never receive the
+issuer's broader catalog.
 
 ## Coverage and limits
 

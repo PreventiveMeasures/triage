@@ -149,22 +149,22 @@ const reportMetadata = reportFixtures.map(({ content: _content, ...metadata }) =
 
 const bundles = [
   {
-    id: 'fixture-bundle-1', filename: 'managed-fixtures.stasis', kind: 'stasis',
+    id: 'fixture-bundle-1', slug: 'fixture-bundle-1', filename: 'managed-fixtures.stasis', kind: 'stasis',
     integrity: 'sha512-fixture-managed-1', byteSize: 4_827_136, repoId: 101,
     uploadedByLogin: 'alex-security', uploadedAt: 1_757_900_000_000,
   },
   {
-    id: 'fixture-bundle-2', filename: 'worker-sourcemaps.zip', kind: 'sourcemaps',
+    id: 'fixture-bundle-2', slug: 'fixture-bundle-2', filename: 'worker-sourcemaps.zip', kind: 'sourcemaps',
     integrity: 'sha512-fixture-managed-2', byteSize: 1_204_288, repoId: 102,
     uploadedByLogin: 'riley-reviewer', uploadedAt: 1_757_700_000_000,
   },
   {
-    id: 'fixture-bundle-3', filename: 'detached-preview.stasis', kind: 'stasis',
+    id: 'fixture-bundle-3', slug: 'fixture-bundle-3', filename: 'detached-preview.stasis', kind: 'stasis',
     integrity: 'sha512-fixture-managed-3', byteSize: 786_432, repoId: null,
     uploadedByLogin: 'sam-observer', uploadedAt: 1_757_500_000_000,
   },
   {
-    id: 'fixture-bundle-4', filename: 'managed-fixtures-sourcemaps.zip', kind: 'sourcemaps',
+    id: 'fixture-bundle-4', slug: 'fixture-bundle-4', filename: 'managed-fixtures-sourcemaps.zip', kind: 'sourcemaps',
     integrity: 'sha512-fixture-managed-4', byteSize: 512_000, repoId: 101,
     uploadedByLogin: 'alex-security', uploadedAt: 1_757_300_000_000,
   },
@@ -208,7 +208,7 @@ const teams = teamFixtures.map((team) => ({
   slug: team.slug,
   name: team.name,
   reports: teamReportRefs(team),
-  bundles: bundles.filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId)).map((bundle) => ({ id: bundle.id, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
+  bundles: bundles.filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId)).map((bundle) => ({ id: bundle.id, slug: bundle.slug, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
 }))
 
 function adminTeams() {

@@ -2470,8 +2470,16 @@ test('manager bundle access, deduplication and report auto-linking respect team 
   assert.equal((await f.post('bundles/set-repo', { bundleId: allowed.id, repoId: null })).statusCode, 200)
   assert.equal((await f.post('bundles/set-repo', { bundleId: allowed.id, repoId: 7 })).statusCode, 200)
   await f.db.setReportRepo('sibling-link', 7, 'src/new')
+  const beforeRepair = (await f.get('/api/teams')).teams.find(team => team.id === f.team.id)
   assert.equal((await uploadBundle('future bytes', 7)).statusCode, 200)
   assert.equal((await f.db.listReports()).find(r => r.id === 'sibling-link').bundleId, allowed.id, 'dedup reconciles reports that became accessible since the original upload')
+  const afterRepair = (await f.get('/api/teams')).teams.find(team => team.id === f.team.id)
+  assert.deepEqual(afterRepair.bundles, beforeRepair.bundles, 'dedup leaves the bundle catalog unchanged')
+  for (const report of beforeRepair.reports) {
+    const updated = afterRepair.reports.find(r => r.id === report.id)
+    if (report.id === 'sibling-link') assert.notEqual(updated.cacheKey, report.cacheKey, 'repaired source links invalidate the report cache key')
+    else assert.deepEqual(updated, report, 'unaffected reports keep their cache keys')
+  }
   assert.equal((await f.send('DELETE', `/api/admin/bundles/${allowed.id}`, f.cookie, f.frankSess.csrfToken)).statusCode, 200)
   assert.ok(await f.db.getBundle(privateBundle.id))
 })

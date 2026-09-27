@@ -388,10 +388,16 @@ describe('parseCommentRefs — self-links to a finding', () => {
   })
 
   it('preserves managed team and report destinations in managed mode', () => {
-    for (const path of ['/teams/team-id', '/teams/team-id/reports/report-id']) {
-      const link = onlyLink(`https://triage.space${path}#finding=${ID}`, { managed: true })
-      assert.equal(link.url, `${path}#finding=${ID}`)
+    for (const path of ['/team/team-id', '/team/team-id/report/report-id']) {
+      const link = onlyLink(`https://triage.space${path}/finding/${ID}`, { managed: true })
+      assert.equal(link.url, `${path}/finding/${ID}`)
       assert.equal(link.self, true)
+    }
+  })
+
+  it('does not linkify obsolete or malformed managed finding destinations', () => {
+    for (const path of [`/teams/t/reports/r#finding=${ID}`, `/team/t#finding=${ID}`, `/finding/${ID}`, `/team/t/bundle/b/finding/${ID}`, '/team/t/finding/%ff']) {
+      assert.deepEqual(parseCommentRefs(`https://triage.space${path}`, { managed: true }), [`https://triage.space${path}`])
     }
   })
 
@@ -399,12 +405,12 @@ describe('parseCommentRefs — self-links to a finding', () => {
     for (const path of ['/', '/index.html', '/triage/view.html']) {
       const link = onlyLink(`https://triage.space${path}#finding=${ID}&v=aB3-x_9Z`, { managed: true })
       assert.equal(link.url, `/#finding=${ID}&v=aB3-x_9Z`)
-      assert.equal(new URL(link.url, 'https://triage.space/teams/team/reports/current').pathname, '/')
+      assert.equal(new URL(link.url, 'https://triage.space/team/team/report/current').pathname, '/')
     }
   })
 
   it('keeps finding links on the current E2E deployment', () => {
-    const link = onlyLink(`https://triage.space/teams/team-id/reports/report-id#finding=${ID}`)
+    const link = onlyLink(`https://triage.space/team/team-id/report/report-id/finding/${ID}`)
     assert.equal(link.url, `#finding=${ID}`)
     assert.equal(new URL(link.url, 'https://triage.space/subpath/index.html').pathname, '/subpath/index.html')
   })

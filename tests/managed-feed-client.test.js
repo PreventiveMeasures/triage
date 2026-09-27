@@ -92,3 +92,52 @@ test('failed annotation refreshes are retried, and preview never opens a real fe
   await watchTeamFeed('team', { signal: new AbortController().signal, onUpdate() { assert.fail() }, onClose() {} })
   assert.equal(calls.length, 2)
 })
+
+
+test('catalog-only subscriptions dispatch teams before triage and retry failed catalog refreshes', async () => {
+  fetchResponse = signal => response(signal, ['event: teams\ndata: {}\n\nevent: triage\ndata: {}\n\n'], { hold: true })
+  const controller = new AbortController(), events = []
+  const done = watchTeamFeed(null, { signal: controller.signal,
+    onTeams: () => { events.push('teams'); return events.length > 1 },
+    onUpdate: () => { events.push('triage') }, onClose() {},
+  })
+  await settle()
+  assert.equal(calls[0].url, '/api/teams/feed')
+  assert.deepEqual(events, ['teams'], 'failed catalog refresh does not consume the next event')
+  mock.timers.tick(1000); await settle()
+  assert.deepEqual(events, ['teams', 'teams', 'triage'])
+  controller.abort(); await done
+})
+
+const stalledEvents = ['teams', 'triage']
+stalledEvents.forEach(stalled => {
+  test(`the watchdog cancels a stalled ${stalled} refresh and reconnects without navigation`, async t => {
+    fetchResponse = signal => response(signal, ['event: teams\ndata: {}\n\nevent: triage\ndata: {}\n\n'], { hold: true })
+    const controller = new AbortController(), events = [], signals = []
+    const refresh = (event, signal = controller.signal) => {
+      events.push(`${calls.length}:${event}`)
+      signals.push(signal)
+      if (calls.length > 1 || event !== stalled) return true
+      // Even a callback that reports success after cancellation must not allow
+      // buffered events from the timed-out connection to continue processing.
+      return new Promise(resolve => { signal.addEventListener('abort', () => resolve(true), { once: true }) })
+    }
+    const done = watchTeamFeed('team', { signal: controller.signal,
+      onTeams: signal => refresh('teams', signal), onUpdate: signal => refresh('triage', signal),
+      onClose() { assert.fail('a watchdog timeout must reconnect, not revoke access') },
+    })
+    t.after(async () => { controller.abort(); await done })
+    await settle()
+    const initial = stalled === 'teams' ? ['1:teams'] : ['1:teams', '1:triage']
+    assert.deepEqual(events, initial)
+    mock.timers.tick(45000); await settle()
+    assert.equal(signals[0].aborted, true, 'watchdog cancellation reaches the refresh')
+    assert.equal(controller.signal.aborted, false, 'the view remains subscribed')
+    assert.deepEqual(events, initial, 'do not process buffered frames after the timeout')
+    mock.timers.tick(1000); await settle()
+    assert.equal(calls.length, 2)
+    assert.deepEqual(events, [...initial, '2:teams', '2:triage'])
+    assert.equal(signals.at(-1), calls[1].signal)
+    assert.equal(signals.at(-1).aborted, false)
+  })
+})

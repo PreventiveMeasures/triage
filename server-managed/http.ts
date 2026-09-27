@@ -83,7 +83,7 @@ import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { sendJson, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
-import { serveTeamFeed } from './team-feed.ts'
+import { serveUserTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 
@@ -1749,7 +1749,7 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
   const action = method === 'POST' ? 'created a public link' : method === 'PATCH' ? 'updated a public link' : id ? 'revoked a public link' : 'revoked public links'
   const access = method === 'DELETE' ? '' : ` (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`
   await activity(deps, s.user, 'access', `${action} for team ${team.name}${access}`)
-  sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/teams/${team.slug}#public=${shareId.slice(0, 8)}.${token}` } : { ok: true })
+  sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/team/${team.slug}#public=${shareId.slice(0, 8)}.${token}` } : { ok: true })
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
@@ -1924,12 +1924,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       send405(res, 'GET, DELETE'); return
     }
     const teamFeed = /^\/api\/teams\/([^/]+)\/feed$/u.exec(path)
-    if (teamFeed) {
+    if (teamFeed || path === '/api/teams/feed') {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readWorkspaceSession(res, deps, cookie)
       if (!s) return
-      const snapshot = await teamSnapshot(db, s.session.id, teamFeed[1]!)
-      await serveTeamFeed(res, deps, snapshot, () => recheckTeam(db, s.session.id, snapshot)); return
+      const teamId = teamFeed?.[1] ?? null
+      if (teamId) await teamSnapshot(db, s.session.id, teamId)
+      await serveUserTeamFeed(res, deps, s.session.id, s.user, teamId); return
     }
     const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
     if (teamFixes) {

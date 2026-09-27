@@ -1002,8 +1002,7 @@ function kanbanCardTemplate(g, opts = {}) {
   let action = nothing
   if (isKanban && fix) {
     action = isHttpUrl(fix)
-      ? isManagedUiMode() ? html`<managed-fix-link class="kanban-action kanban-fix-link" compact .url=${fix}>${FIX_ICON}</managed-fix-link>`
-        : html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" data-tooltip=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
+      ? html`<managed-fix-link class="kanban-action kanban-fix-link" compact .url=${fix}>${FIX_ICON}</managed-fix-link>`
       : html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
   } else if (isKanban && (comment || (isManagedUiMode() && canTriageFinding(activeTab)))) {
     // Keep managed subscriptions mounted even before the first remote comment.

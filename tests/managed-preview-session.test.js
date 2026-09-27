@@ -147,3 +147,18 @@ test('the team catalogue preserves server slugs and report cache versions alongs
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams })))
   assert.deepEqual(await probeTeams(), teams)
 })
+
+test('feed probes preserve team grant keys and report transient failures for retry', async t => {
+  const teams = [{ id: 'team', slug: 'team', name: 'Team', cacheKey: 'grants-v2', reports: [], bundles: [] }]
+  let response = Response.json({ teams })
+  const signal = new AbortController().signal
+  t.mock.method(globalThis, 'fetch', (_url, options) => {
+    assert.equal(options.signal, signal)
+    return Promise.resolve(response)
+  })
+  assert.deepEqual(await probeTeams({ fallback: null, signal }), teams)
+  response = new Response('', { status: 503 })
+  assert.equal(await probeTeams({ fallback: null, signal }), null)
+  response = new Response('', { status: 403 })
+  assert.deepEqual(await probeTeams({ fallback: null, signal }), [])
+})

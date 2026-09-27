@@ -1,3 +1,5 @@
+import { BUNDLE_TABS } from '../../common/bundle-tabs.js'
+import { managedBundleRoute } from './managed-bundle-navigation.js'
 import { setManagedWorkspace } from '../../client/managed/workspace.js'
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
@@ -46,13 +48,18 @@ export const LAST_FILE_KEY = 'deepview.lastFile'
 // That fallback also covers old persisted suffixes naming removed
 // values ('packages' / 'files' / 'reports') — no migration needed,
 // they just miss the set.
-export const BUNDLE_TABS = new Set(['overview', 'graph', 'treemap', 'compare', 'advisories', 'issues', 'code', 'search', 'terminal'])
+export { BUNDLE_TABS } from '../../common/bundle-tabs.js'
 
+// Managed selections live in the URL; local selections use LAST_FILE_KEY.
 // Persist a bundle selection to LAST_FILE_KEY as `b:<integrity> <tab>`.
 // The default 'overview' tab is dropped from the suffix so the
 // round-trip lands on a clean `b:<integrity>`.
 export function persistLastBundle(integrity, tab = 'overview') {
-  if (isManagedUiMode()) return
+  if (isManagedUiMode()) {
+    const entry = state.bundles.find(bundle => bundle.integrity === integrity)
+    managedHistory.replaceRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, tab))
+    return
+  }
   const suffix = tab && tab !== 'overview' && BUNDLE_TABS.has(tab) ? ` ${tab}` : ''
   setSecureItem(LAST_FILE_KEY, `b:${integrity}${suffix}`).catch(() => {})
 }

@@ -55,7 +55,7 @@ the database. The dialog creates a read-only link and can
 revoke all public links for that workspace. Anyone holding a link can open it
 without GitHub sign-in, including on combined managed + E2E deployments.
 
-New links use `/teams/<team-slug>#public=<link-id>.<token>`. The eight-character
+New links use `/team/<team-slug>#public=<link-id>.<token>`. The eight-character
 link ID matches the ID shown in the dropdown and Manage's Links tab, so a URL can
 be matched to its entry for editing or revocation. It is a prefix of the stored
 token hash, not a credential. The full token uniquely resolves the workspace;
@@ -113,22 +113,43 @@ window also navigate to their managed page URL.
 | URL | Page |
 | --- | --- |
 | `/` | Team landing / login |
-| `/teams/:teamId` | Team findings |
-| `/teams/:teamId/files` | Team files |
-| `/teams/:teamId/reports/:reportId` | Report findings |
-| `/teams/:teamId/reports/:reportId/files` | Report files |
-| `/bundles/:bundleId` | Bundle overview, files and dependency graph |
+| `/team/:teamSlug` | Team findings |
+| `/team/:teamSlug/files` | Team files |
+| `/team/:teamSlug/report/:reportSlug` | Report findings |
+| `/team/:teamSlug/report/:reportSlug/files` | Report files |
+| `/team/:teamSlug/finding/:findingId` | Finding in a team |
+| `/team/:teamSlug/report/:reportSlug/finding/:findingId` | Finding in a report |
+| `/team/:teamSlug/bundle/:bundleSlug[/:tab]` | Team bundle; active tab is part of the URL |
+| `/manage/bundle/:bundleSlug[/:tab]` | Bundle opened without an accessible team (manager/admin) |
 | `/manage` | Manage overview |
-| `/manage/bundles` | Bundles |
+| `/manage/bundle` | Bundles |
 | `/manage/scans` | Scans |
-| `/manage/reports` | Reports |
+| `/manage/report` | Reports |
 | `/manage/repositories` | Repositories (admin) |
 | `/manage/users` | Users (admin) |
-| `/manage/teams` | Teams (admin) |
+| `/manage/team` | Teams (admin) |
 | `/manage/history` | Activity history; optional `?actor=<login>` |
 
-Manage pages require a manager or admin. Team and report URLs require the
-current user's team access. Unavailable pages return to the landing page;
+Page tokens are persistent server-assigned slugs: the last UUID component when
+unique, otherwise the full ID, with the same allocation rules for teams, reports,
+and bundles. API requests and database relationships continue to use full IDs.
+Existing bundle rows receive stable slugs during the SQLite/PostgreSQL upgrade.
+
+Finding IDs are percent-encoded as one path component. Finding links only appear
+under a team or report; there is no root `/finding/:id` route. E2E finding hashes
+remain supported and resolve to the accessible managed team/report destination.
+Old plural managed page URLs fall back to the landing page without redirects.
+Sidebar search filters the loaded team/report/bundle names locally, without
+fetching report contents or changing the catalogue used to open a team.
+
+Bundle links retain the clicked team, even when several teams share a repository.
+The optional tab suffix is omitted for Overview. Reload and Back/Forward restore
+the tab; switching bundles retains it when available. Compare offers accessible
+bundles assigned to the same repository, including bundles not previously opened.
+Unattached bundles cannot be compared with each other.
+
+Manage pages require a manager or admin. Team, report, and team bundle URLs require
+the current user's team access. Unavailable pages return to the landing page;
 Files falls back to Findings when the reports have no multi-file source tree.
 Switching between Findings and Files reuses the loaded reports and filters.
 
@@ -196,27 +217,49 @@ sources. These endpoints authorize against the same complete workspace and
 recheck access after cold reads. Triage and comments remain shared by finding ID
 across teams; the team is only the authorization context.
 
-# Fix pull requests and issues
+# Live team updates
 
-`GET /api/teams/:id/feed` is a read-only SSE subscription for the team's visible
-triage and comments. It sends `event: triage` with `data: {}` on connection and
-when annotations change; clients refresh the existing report annotation APIs.
-Writes continue through the existing POST/PATCH/DELETE routes. Notifications
-contain no finding IDs, annotation bodies, or global history sequence numbers.
+`GET /api/teams/:id/feed` is a read-only SSE subscription for an approved
+user. One connection carries two invalidations, each with `data: {}`:
 
-The feed checks compact database revisions every three seconds, so instances
-sharing SQLite or Postgres see each other's writes without an in-memory bus.
-It rechecks session/capability and team visibility before notifications, sends
-`event: close` when access or the workspace changes, and ends the stream.
-Clients must stop on that event and reload access before reopening the team.
+- `teams`: the current user's memberships, grants, repository scopes, team names,
+  and visible reports/bundles across **all teams they belong to**. The client
+  refreshes `GET /api/teams`.
+- `triage`: visible triage and comments for **only the focused team**. The client
+  refreshes the existing report annotation APIs.
+
+`GET /api/teams/feed` provides the same catalog updates without subscribing to
+triage. It works even before the user has joined a team. Both event types are
+sent on connection when applicable, so reconnects recover missed changes
+without a replay cursor. Notifications contain no finding IDs, annotation
+bodies, membership details, or global history sequence numbers. Writes continue
+through the existing POST/PATCH/DELETE routes.
+
+The feed checks shared database state every three seconds, so instances using
+SQLite or Postgres see each other's writes. Transactions finish before each
+wait; catalog reads do not write session timestamps. Visibility is recomputed
+when the focused team's reports or grants change, and concurrent access changes
+discard stale annotation reads. Catalog notifications are sent before report
+parsing; unreadable report blobs suspend only triage, which retries on later
+polls. Losing that team removes its triage subscription while the
+membership/catalog feed continues. Logout, session expiry or a role
+change sends terminal `event: close` and requires session revalidation.
+
+The UI keeps one feed, replacing it on navigation. Home, bundles and Manage use
+the catalog-only feed; the focused team's triage subscription starts after its
+reports hydrate. Catalog updates refresh the sidebar and landing links, evict
+changed report, source and bundle caches, and reload affected open content if
+still accessible. Logout and local mode close the subscription. Live annotation reads
+preserve pending local edits and refresh Fix metadata when needed.
+
+Public-share feeds remain limited to the single capability workspace. They
+never subscribe to the issuer's memberships or other teams; capability or
+workspace changes close them for revalidation.
+
 Heartbeats run every 15 seconds; streams end after at most 240 seconds and
-reconnect without a replay cursor. Every connection refreshes current state,
-including updates missed during disconnection. Slow consumers are disconnected.
+reconnect. Slow consumers are disconnected without queuing a backlog.
 
-The UI keeps one feed for the focused team/report, aborts it immediately on
-navigation, and opens the destination team's feed after its reports hydrate.
-Home, bundles, Manage, logout and local mode close the team subscription.
-Live reads preserve pending local edits and refresh Fix metadata when needed.
+# Fix pull requests and issues
 
 `GET /api/teams/:id/fixes` returns GitHub PR and ordinary issue metadata
 for the workspace. It requires an approved managed session (at least `view`)
@@ -439,7 +482,7 @@ is not retained. The DB keeps the original filename, byte size and integrity
 so deduplication and report hashes keep working. Sourcemaps and metadata use
 Brotli quality 4 to avoid slow maximum-quality compression.
 
-The cache lives beside SQLite under `cache/bundles/:id/`, or in private Blob
+The cache lives beside SQLite under `cache/bundle/:id/`, or in private Blob
 storage for Neon deployments. Persistent servers schedule upload prebuilds;
 Vercel functions build missing derivatives during authorized reads. Builds
 are deduplicated and serialized to bound memory, with a 512 MiB decoded limit.

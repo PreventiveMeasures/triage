@@ -50,15 +50,15 @@ export async function probeSession({ fallback = null } = {}) {
 
 // GET /api/teams → the signed-in user's teams, each with the reports and bundles
 // attached to the team's repos ([{ id, slug, name, reports: [{ id, slug, filename }],
-// bundles: [{ id, filename, repoFullName }] }]), or [] when
+// bundles: [{ id, slug, integrity, filename, byteSize, repoId, repoFullName }] }]), or [] when
 // unauthenticated. A failed background refresh keeps the provided fallback.
 // Kept on `state.managedTeams` and shown in the
 // sidebar's per-user Teams section. Never throws, so a probe failure can't break
 // the session refresh.
-export async function probeTeams({ fallback = [] } = {}) {
+export async function probeTeams({ fallback = [], signal } = {}) {
   const share = getPublicShare()
-  const shared = share ? await getJson(publicShareBootstrapPath(share)) : null
-  const body = share ? { teams: shared?.team ? [shared.team] : [] } : await getJson('/api/teams', { teams: fallback })
+  const shared = share ? await getJson(publicShareBootstrapPath(share), null, { signal }) : null
+  const body = share ? { teams: shared?.team ? [shared.team] : [] } : await getJson('/api/teams', { teams: fallback }, { signal })
   const teams = body?.teams
   if (!Array.isArray(teams)) return body == null ? [] : fallback
   return teams
@@ -67,6 +67,7 @@ export async function probeTeams({ fallback = [] } = {}) {
       id: t.id,
       slug: t.slug,
       name: t.name,
+      ...(typeof t.cacheKey === 'string' ? { cacheKey: t.cacheKey } : {}),
       reports: Array.isArray(t.reports)
         ? t.reports
           .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')
@@ -79,6 +80,10 @@ export async function probeTeams({ fallback = [] } = {}) {
           .filter((b) => b != null && typeof b.id === 'string' && typeof b.filename === 'string')
           .map((b) => ({
             id: b.id,
+            slug: b.slug,
+            integrity: b.integrity,
+            byteSize: b.byteSize,
+            repoId: b.repoId,
             filename: b.filename,
             repoFullName: typeof b.repoFullName === 'string' ? b.repoFullName : '',
           }))

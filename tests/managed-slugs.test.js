@@ -20,6 +20,7 @@ async function seed(db) {
     await db.selectRepo({ repoId, fullName: `owner/repo${repoId}`, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: user }, 100)
     await db.createTeam(id, `Team ${repoId}`, 100)
     await db.setTeamRepo(id, repoId, null)
+    await db.insertBundle({ id, integrity: id, filename: `${repoId}.map`, kind: 'sourcemap', byteSize: 1, uploadedBy: user, repoId }, 100)
     await db.insertReport({ id, filename: `${repoId}.json`, contentType: 'application/json', byteSize: 1, sha256: id, uploadedBy: user, repoId, visible: true }, 100)
   }
   await db.setTeamMember(second, user, { dependencies: false, security: false })
@@ -35,12 +36,18 @@ test('slugs are global within each namespace, persistent, and leave UUID relatio
   const user = await seed(db)
   assert.equal((await db.getTeam(first)).slug, short)
   assert.equal((await db.getReport(first)).slug, short)
+  assert.equal((await db.getBundle(first)).slug, short)
   assert.equal((await db.getTeam(second)).slug, second)
   assert.equal((await db.getReport(second)).slug, second)
+  assert.equal((await db.getBundle(second)).slug, second)
   assert.equal(await db.getTeam(short), null, 'DB lookups keep using UUIDs')
   assert.equal(await db.getReport(short), null)
+  assert.equal(await db.getBundle(short), null)
+  assert.deepEqual((await db.listBundles()).map(bundle => bundle.slug), [short, second])
   const [visible] = await db.listTeamsForUser(user)
   assert.equal(visible.id, second)
+  assert.deepEqual(visible.bundles.map(({ id, slug, integrity, repoId }) => ({ id, slug, integrity, repoId })),
+    [{ id: second, slug: second, integrity: second, repoId: 2 }])
   assert.equal(visible.slug, second, 'a collision outside the user\'s teams still reserves the short slug')
   assert.deepEqual(visible.reports.map(({ id, slug, filename }) => ({ id, slug, filename })), [{ id: second, slug: second, filename: '2.json' }])
   assert.equal(await db.userCanReadReport(user, first), false)
@@ -49,10 +56,12 @@ test('slugs are global within each namespace, persistent, and leave UUID relatio
   await db.renameTeam(second, 'Renamed', 200)
   await db.deleteTeam(first)
   await db.deleteReport(first)
+  await db.deleteBundle(first)
   await db.close()
   db = openSqliteManagedDb(path)
   assert.equal((await db.getTeam(second)).slug, second, 'renaming or removing a collision does not break links')
   assert.equal((await db.getReport(second)).slug, second)
+  assert.equal((await db.getBundle(second)).slug, second)
   assert.equal((await db.listTeamsForUser(user))[0].reports[0].id, second)
 })
 
@@ -64,7 +73,7 @@ test('existing teams and reports are backfilled deterministically without changi
   const user = await seed(db)
   await db.close()
   const legacy = new DatabaseSync(path)
-  for (const table of ['managed_team', 'managed_report']) {
+  for (const table of ['managed_team', 'managed_report', 'managed_bundle']) {
     legacy.exec(`DROP INDEX ${table}_slug_idx; ALTER TABLE ${table} DROP COLUMN slug`)
   }
   legacy.close()
@@ -72,12 +81,14 @@ test('existing teams and reports are backfilled deterministically without changi
   t.after(() => db.close())
   assert.deepEqual((await db.listTeams()).map(team => [team.id, team.slug]), [[first, short], [second, second]])
   assert.deepEqual((await db.listReports()).map(report => [report.id, report.slug]), [[first, short], [second, second]])
+  assert.deepEqual((await db.listBundles()).map(bundle => [bundle.id, bundle.slug]), [[first, short], [second, second]])
   assert.equal(await db.userCanReadReport(user, first), false)
   assert.equal(await db.userCanReadReport(user, second), true)
   await db.close()
   db = openSqliteManagedDb(path)
   assert.equal((await db.getTeam(first)).slug, short)
   assert.equal((await db.getReport(second)).slug, second)
+  assert.equal((await db.getBundle(second)).slug, second)
 })
 
 test('migration reserves legacy IDs before UUIDs can claim their suffixes', async t => {
@@ -89,10 +100,11 @@ test('migration reserves legacy IDs before UUIDs can claim their suffixes', asyn
   const ids = ['00000000-0000-4000-8000-123456789abc', short, 'ffffffff-ffff-4fff-8fff-123456789abc']
   const legacy = new DatabaseSync(path)
   try {
-    for (const table of ['managed_team', 'managed_report']) {
+    for (const table of ['managed_team', 'managed_report', 'managed_bundle']) {
       legacy.exec(`DROP INDEX ${table}_slug_idx; ALTER TABLE ${table} DROP COLUMN slug`)
     }
     for (const id of ids) {
+      legacy.prepare(`INSERT INTO managed_bundle (id, integrity, filename, byte_size, uploaded_at) VALUES (?, ?, ?, 1, 100)`).run(id, id, `${id}.map`)
       legacy.prepare('INSERT INTO managed_team (id, name, created_at, updated_at) VALUES (?, ?, 100, 100)').run(id, id)
       legacy.prepare(`INSERT INTO managed_report (id, filename, content_type, byte_size, sha256, uploaded_at)
         VALUES (?, ?, 'application/json', 1, 'hash', 100)`).run(id, `${id}.json`)
@@ -103,11 +115,13 @@ test('migration reserves legacy IDs before UUIDs can claim their suffixes', asyn
   for (const id of ids) {
     assert.equal((await db.getTeam(id)).slug, id)
     assert.equal((await db.getReport(id)).slug, id)
+    assert.equal((await db.getBundle(id)).slug, id)
   }
   await db.close()
   db = openSqliteManagedDb(path)
   assert.deepEqual((await db.listTeams()).map(team => team.slug), ids)
   assert.deepEqual((await db.listReports()).map(report => report.slug), ids)
+  assert.deepEqual((await db.listBundles()).map(bundle => bundle.slug), ids)
 })
 
 const teams = [
@@ -122,7 +136,7 @@ test('managed routes use exact server slugs and resolve back to internal UUIDs',
         const internal = { view, teamId: team.id, reportId: report?.id ?? null }
         const external = managedRouteForIds(internal, teams)
         const path = managedRoutePath(external)
-        assert.equal(path, `/teams/${team.slug}${report ? `/reports/${report.slug}` : ''}${view === 'files' ? '/files' : ''}`)
+        assert.equal(path, `/team/${team.slug}${report ? `/report/${report.slug}` : ''}${view === 'files' ? '/files' : ''}`)
         assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams), internal)
       }
     }
@@ -136,8 +150,8 @@ test('unknown and ambiguous slugs go home, including finding links; duplicate re
   const duplicateTeam = [...teams, { id: 'other', slug: short, reports: [] }]
   const duplicateReport = [...teams, { id: 'other', slug: 'other', reports: [{ id: 'other-report', slug: short }] }]
   for (const [catalogue, path] of [
-    [teams, '/teams/missing'], [teams, `/teams/${short}/reports/missing`],
-    [duplicateTeam, `/teams/${short}`], [duplicateReport, `/teams/${short}/reports/${short}#finding=issue`],
+    [teams, '/team/missing'], [teams, `/team/${short}/report/missing`],
+    [duplicateTeam, `/team/${short}`], [duplicateReport, `/team/${short}/report/${short}/finding/issue`],
   ]) {
     const { browser } = browserAt(path)
     let shown
@@ -156,7 +170,7 @@ test('unknown and ambiguous slugs go home, including finding links; duplicate re
 })
 
 test('slug history resolves UUIDs on clicks, Back/Forward and reload', async () => {
-  const { browser } = browserAt(`/teams/${short}/reports/${short}`)
+  const { browser } = browserAt(`/team/${short}/report/${short}`)
   let shown
   const restore = route => {
     const resolved = resolveManagedRoute(route, teams)
@@ -175,5 +189,5 @@ test('slug history resolves UUIDs on clicks, Back/Forward and reload', async () 
   assert.equal(shown.reportId, second)
   await createManagedHistory(browser).start(restore)
   assert.equal(shown.reportId, second)
-  assert.equal(browser.location.pathname, `/teams/${second}/reports/${second}/files`)
+  assert.equal(browser.location.pathname, `/team/${second}/report/${second}/files`)
 })

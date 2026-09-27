@@ -38,6 +38,24 @@ async function database(t) {
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
 
+test('Postgres bundle slugs migrate deterministically, persist, and resolve upload collisions', async t => {
+  const { db, connect } = await database(t)
+  const ids = ['11111111-1111-4111-8111-123456789abc', '22222222-2222-4222-8222-123456789abc']
+  for (const id of ids) await db.insertBundle({ id, integrity: id, filename: `${id}.map`, kind: 'sourcemap', byteSize: 1, repoId: null, uploadedBy: null }, 100)
+  assert.deepEqual((await db.listBundles()).map(bundle => bundle.slug), ['123456789abc', ids[1]])
+  const old = await connect()
+  try { await old.query('ALTER TABLE managed_bundle DROP COLUMN slug; DELETE FROM managed_schema_version WHERE version = 6;') }
+  finally { await old.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  try {
+    assert.deepEqual((await upgraded.listBundles()).map(bundle => bundle.slug), ['123456789abc', ids[1]])
+    await upgraded.deleteBundle(ids[0])
+  } finally { await upgraded.close() }
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.equal((await reopened.getBundle(ids[1])).slug, ids[1]) }
+  finally { await reopened.close() }
+})
+
 test('Postgres upgrades existing databases for durable, revocable workspace shares', async t => {
   const { db, connect } = await database(t)
   const userId = await db.upsertUser(identity(1), 1)
@@ -399,4 +417,53 @@ test('Postgres workspace triage imports compare and write atomically with other 
   await db.setTriage('f', { color: 'green' }, id, 'user1', 4)
   assert.equal(await db.importTriage([['f', { color: 'blue' }]], { f: snapshot.f.version }, actor, null, 5), false)
   assert.equal((await db.listTriage(['f']))[0].color, 'green')
+})
+
+test('Postgres feed snapshots scope catalogs to the session and release read-only transactions', async t => {
+  const { db, connect, queries } = await database(t)
+  const peer = await openPostgresManagedDb(connect)
+  t.after(() => peer.close())
+  const user = await db.upsertUser(identity(1), 1)
+  await db.setUserRole(user, 'view')
+  await db.createSession({ id: 'feed-session', userId: user, csrfToken: 'csrf', expiresAt: 1000 }, 1)
+  const read = () => db.getUserTeamFeedSnapshot('feed-session', 10)
+  const initial = await read()
+  assert.deepEqual(initial.user, { id: user, role: 'view' })
+  await peer.createTeam('team', 'Team', 1)
+  assert.equal((await read()).revision, initial.revision, 'nonmember teams do not notify')
+  await peer.setTeamMember('team', user, { security: false, dependencies: false })
+  const member = await read()
+  assert.notEqual(member.revision, initial.revision)
+  await peer.setTeamMember('team', user, { security: true, dependencies: false })
+  assert.notEqual((await read()).revision, member.revision, 'empty-team grants notify')
+  await peer.selectRepo({ repoId: 7, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: user }, 1)
+  await peer.setTeamRepo('team', 7, 'app')
+  const scoped = await read()
+  await peer.insertReport({ id: 'hidden', filename: 'report.json', contentType: 'application/json', byteSize: 1,
+    sha256: 'hidden', uploadedBy: user, repoId: 7, repoDirectory: 'outside', visible: true }, 1)
+  assert.equal((await read()).revision, scoped.revision)
+  await peer.insertReport({ id: 'report', filename: 'report.json', contentType: 'application/json', byteSize: 1,
+    sha256: 'hash', uploadedBy: user, repoId: 7, repoDirectory: 'app', visible: true, bundleIntegrity: 'bundle-hash' }, 1)
+  const content = await read()
+  assert.notEqual(content.revision, scoped.revision)
+  await peer.insertBundle({ id: 'bundle', integrity: 'bundle-hash', filename: 'bundle.stasis', kind: 'stasis', byteSize: 1, uploadedBy: user, repoId: 7 }, 1)
+  const bundled = await read()
+  assert.notEqual(bundled.revision, content.revision)
+  const beforeRepair = await db.listTeamsForUser(user)
+  await peer.linkReportsToBundle('bundle-hash', 'bundle', user)
+  const repaired = await read()
+  const afterRepair = await db.listTeamsForUser(user)
+  assert.notEqual(repaired.revision, bundled.revision, 'report-to-bundle repairs notify without changing the bundle catalog')
+  assert.deepEqual(afterRepair[0].bundles, beforeRepair[0].bundles)
+  assert.notEqual(afterRepair[0].reports[0].cacheKey, beforeRepair[0].reports[0].cacheKey)
+  await peer.setTriage('finding', { color: 'red' }, user, 'user1', 1)
+  queries.length = 0
+  assert.equal((await read()).revision, repaired.revision, 'catalogs exclude annotations')
+  assert.equal(queries[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+  assert.equal(queries.at(-1), 'COMMIT')
+  assert.equal(queries.some(sql => /UPDATE|INSERT|DELETE/u.test(sql)), false)
+  await peer.removeTeamMember('team', user)
+  assert.equal((await read()).revision, initial.revision)
+  await peer.deleteSession('feed-session')
+  assert.equal(await read(), null)
 })
