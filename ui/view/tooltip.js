@@ -70,8 +70,7 @@ const SHOW_DELAY_MS = 100
 const CURSOR_GAP_PX = 14
 // Horizontal gap from the element's right edge in 'right' placement.
 const RIGHT_GAP_PX = 8
-// Horizontal margin reserved between the tooltip and the viewport
-// edge when clamping.
+// Margin reserved between the tooltip and each viewport edge.
 const VIEWPORT_MARGIN_PX = 8
 
 export function showTooltip(el, { placement = 'cursor' } = {}) {
@@ -99,23 +98,29 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   // Measure before anchoring: fixed-position auto width can otherwise shrink
   // to the space left beside the sidebar instead of the tooltip's full width.
   node.style.left = '0px'
+  node.style.top = '0px'
+  node.style.transform = 'none'
   node.classList.add('visible')
   let anchorLeft = lastClientX
+  let anchorTop = lastClientY + CURSOR_GAP_PX
   if (placement === 'right') {
     // Anchor to the element's right edge, vertically centered.
     const rect = el.getBoundingClientRect()
-    node.style.top = `${Math.round(rect.top + rect.height / 2)}px`
     anchorLeft = rect.right + RIGHT_GAP_PX
-    node.style.transform = 'translateY(-50%)'
-  } else {
-    // Tooltip is fixed, so client coordinates anchor it below the cursor.
-    node.style.transform = 'none'
-    node.style.top = `${lastClientY + CURSOR_GAP_PX}px`
+    anchorTop = rect.top + rect.height / 2
   }
   // Both placements must keep long repository paths inside the viewport.
   const maxLeft = window.innerWidth - node.offsetWidth - VIEWPORT_MARGIN_PX
   const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(anchorLeft, maxLeft))
   node.style.left = `${Math.round(left)}px`
+  // Measure height at the final horizontal position, after long paths wrap.
+  // Prefer centering sidebar tips (or placing cursor tips below the pointer),
+  // but move them inward when that would hide content above/below the viewport.
+  const height = node.offsetHeight
+  const preferredTop = placement === 'right' ? anchorTop - height / 2 : anchorTop
+  const maxTop = window.innerHeight - height - VIEWPORT_MARGIN_PX
+  const top = Math.max(VIEWPORT_MARGIN_PX, Math.min(preferredTop, maxTop))
+  node.style.top = `${Math.round(top)}px`
   currentTarget = el
   currentText = text
   currentRepo = repo

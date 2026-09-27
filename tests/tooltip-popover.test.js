@@ -15,7 +15,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
   const listeners = {}
   let text = ''
   const node = {
-    id: '', style: {}, offsetWidth: 100, children: [],
+    id: '', style: {}, offsetWidth: 100, offsetHeight: 32, children: [],
     get textContent() { return text },
     set textContent(value) { text = value; this.children = [] },
     append(child) { this.children.push(child) },
@@ -30,7 +30,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     if (!created) { created = true; return node }
     return { children: [], append(child) { this.children.push(child) } }
   }, body: { append() {} } }
-  globalThis.window = { innerWidth: 1000 }
+  globalThis.window = { innerWidth: 1000, innerHeight: 800 }
   try {
     const { showTooltip, hideTooltip } = await import('../ui/view/tooltip.js')
     const target = { dataset: { tooltip: 'hello' } }
@@ -54,9 +54,10 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     assert.equal(node.children.length, 0, 'plain tooltips do not retain the GitHub row')
     hideTooltip()
     assert.equal(open, false)
+    let rowTop = 200
     const sidebarTarget = {
       dataset: { tooltip: 'report.json', tooltipRepo: `org/repo/${'long-directory/'.repeat(30)}` },
-      getBoundingClientRect: () => ({ right: 260, top: 200, height: 32 }),
+      getBoundingClientRect: () => ({ right: 260, top: rowTop, height: 32 }),
     }
     for (const [viewportWidth, tooltipWidth, expectedLeft] of [[1280, 700, 268], [800, 700, 92], [320, 288, 24], [1000, 100, 268]]) {
       globalThis.window.innerWidth = viewportWidth
@@ -64,17 +65,31 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       showTooltip(sidebarTarget, { placement: 'right' })
       assert.equal(node.style.left, `${expectedLeft}px`)
       assert.ok(expectedLeft >= 8 && expectedLeft + tooltipWidth <= viewportWidth - 8, 'the full repository row stays inside the viewport')
-      assert.equal(node.style.top, '216px')
-      assert.equal(node.style.transform, 'translateY(-50%)', 'sidebar tooltips stay vertically centered')
+      assert.equal(node.style.top, '200px', 'sidebar tooltips stay vertically centered when they fit')
+      assert.equal(node.style.transform, 'none', 'the bounded top is the actual top edge')
+      hideTooltip()
+    }
+    globalThis.window.innerWidth = 320
+    node.offsetWidth = 288
+    for (const [targetTop, tooltipHeight, viewportHeight, expectedTop] of [[0, 180, 600, 8], [200, 180, 600, 126], [568, 180, 600, 412], [0, 220, 240, 8], [208, 220, 240, 12]]) {
+      rowTop = targetTop
+      node.offsetHeight = tooltipHeight
+      globalThis.window.innerHeight = viewportHeight
+      showTooltip(sidebarTarget, { placement: 'right' })
+      assert.equal(node.style.left, '24px')
+      assert.equal(node.style.top, `${expectedTop}px`)
+      assert.ok(expectedTop >= 8 && expectedTop + tooltipHeight <= viewportHeight - 8, 'wrapped repository paths stay inside the top and bottom edges')
       hideTooltip()
     }
     globalThis.window.innerWidth = 800
+    globalThis.window.innerHeight = 800
     node.offsetWidth = 700
-    for (const [clientX, expectedLeft] of [[790, 92], [0, 8]]) {
-      listeners.mousemove({ clientX, clientY: 100 })
+    node.offsetHeight = 100
+    for (const [clientX, clientY, expectedLeft, expectedTop] of [[790, 100, 92, 114], [0, 100, 8, 114], [790, 790, 92, 692]]) {
+      listeners.mousemove({ clientX, clientY })
       showTooltip({ dataset: { tooltip: 'plain cursor tooltip' } })
       assert.equal(node.style.left, `${expectedLeft}px`, 'cursor placement retains both viewport margins')
-      assert.equal(node.style.top, '114px')
+      assert.equal(node.style.top, `${expectedTop}px`)
       assert.equal(node.style.transform, 'none')
       hideTooltip()
     }
