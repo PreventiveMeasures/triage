@@ -15,10 +15,14 @@ function wait(ms, signal) {
 export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose }) {
   if (getPreviewRole()) return
   let backoff = 1_000
-  const eventReceived = async event => {
+  const eventReceived = async (event, requestSignal) => {
+    requestSignal.throwIfAborted()
     if (event === 'close') { await onClose(); return false }
     if (event === 'triage' || event === 'teams') {
-      if (await (event === 'teams' ? onTeams?.() : onUpdate()) === false) throw new Error('Team refresh failed')
+      // Refresh requests share this connection's watchdog, not just the view's
+      // lifetime, so a stalled read cannot prevent the reconnect loop.
+      if (await (event === 'teams' ? onTeams?.(requestSignal) : onUpdate(requestSignal)) === false) throw new Error('Team refresh failed')
+      requestSignal.throwIfAborted()
       backoff = 1_000
     }
     return true
@@ -47,7 +51,7 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose
         throw new Error('Team feed unavailable')
       }
       reader = response.body.getReader()
-      const complete = await consume(reader, signal, alive, eventReceived)
+      const complete = await consume(reader, signal, alive, event => eventReceived(event, request.signal))
       if (complete) return
     } catch {
       // Includes proxy timeouts, deployment rollovers and failed refreshes.

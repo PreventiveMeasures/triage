@@ -15,7 +15,16 @@ export function createManagedTeamsProbe(probeTeams) {
         .then(teams => owned.aborted ? null : teams)
         .finally(() => { if (active === refresh) active = null })
     }
-    const teams = await active.promise
-    return signal.aborted ? null : teams
+    const refresh = active
+    // A feed may join a view-owned read. Its watchdog must cancel the shared
+    // request too, or awaiting that older promise would still block reconnects.
+    const abort = () => refresh.controller.abort()
+    signal.addEventListener('abort', abort, { once: true })
+    try {
+      const teams = await refresh.promise
+      return signal.aborted || refresh.signal.aborted ? null : teams
+    } finally {
+      signal.removeEventListener('abort', abort)
+    }
   }
 }

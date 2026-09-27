@@ -37,15 +37,15 @@ beforeEach(() => {
 test('one feed follows the focused team and closes as soon as navigation starts', async () => {
   open('one'); startManagedTeamFeed()
   assert.equal(calls.length, 1)
-  assert.equal(await calls[0].onUpdate(), true)
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
   assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
   beginViewNavigation()
   assert.equal(calls[0].signal.aborted, true)
   open('two')
   assert.equal(calls.length, 2)
   assert.equal(calls[1].teamId, 'two')
-  assert.equal(await calls[0].onUpdate(), false)
-  assert.equal(await calls[1].onUpdate(), true)
+  assert.equal(await calls[0].onUpdate(calls[0].signal), false)
+  assert.equal(await calls[1].onUpdate(calls[1].signal), true)
   beginViewNavigation() // Home / bundle / Manage all begin navigation.
   state.currentManagedTeam = null
   startManagedTeamFeed()
@@ -58,7 +58,7 @@ test('navigation during refresh drops the old continuation and refreshes only th
   const pending = Promise.withResolvers()
   refresh = () => pending.promise
   open('one')
-  const update = calls[0].onUpdate()
+  const update = calls[0].onUpdate(calls[0].signal)
   beginViewNavigation(); open('two')
   pending.resolve(true)
   assert.equal(await update, false)
@@ -84,7 +84,7 @@ test('catalog refresh is awaited, failures retry, and stale callbacks cannot ref
   state.currentView = 'home'; state.currentManagedTeam = null
   startManagedTeamFeed({ catalogOnly: true })
   assert.equal(calls[0].teamId, null)
-  const update = calls[0].onTeams()
+  const update = calls[0].onTeams(calls[0].signal)
   assert.equal(catalogs.length, 1)
   pending.resolve(false)
   assert.equal(await update, false)
@@ -92,7 +92,7 @@ test('catalog refresh is awaited, failures retry, and stale callbacks cannot ref
   startManagedTeamFeed({ catalogOnly: true })
   assert.equal(catalogs[0].current(), false)
   assert.equal(catalogs[0].signal.aborted, true)
-  assert.equal(await calls[0].onTeams(), false)
+  assert.equal(await calls[0].onTeams(calls[0].signal), false)
   assert.equal(catalogs.length, 1)
 })
 
@@ -120,4 +120,26 @@ test('unapproved users and public-share landing never open a user catalog feed',
     startManagedTeamFeed({ catalogOnly: true })
   }
   assert.equal(calls.length, 0)
+})
+
+test('catalog and triage refreshes use connection cancellation without stopping the subscription', async () => {
+  const catalogs = [], connection = new AbortController(), pending = Promise.withResolvers()
+  setManagedTeamFeedRefresh((current, signal) => { catalogs.push({ current, signal }); return pending.promise })
+  open('one')
+  const catalog = calls[0].onTeams(connection.signal)
+  assert.equal(catalogs[0].signal, connection.signal)
+  connection.abort()
+  pending.resolve(true)
+  assert.equal(await catalog, false)
+  assert.equal(catalogs[0].current(), false)
+  assert.equal(calls[0].signal.aborted, false, 'the watcher can reconnect in the same view')
+
+  const next = new AbortController(), triage = Promise.withResolvers()
+  refresh = ({ signal }) => { assert.equal(signal, next.signal); return triage.promise }
+  const update = calls[0].onUpdate(next.signal)
+  next.abort()
+  triage.resolve(true)
+  assert.equal(await update, false)
+  assert.deepEqual(refreshes, [['triage', 'one-report']], 'a timed-out triage read cannot start a comment refresh')
+  assert.equal(calls[0].signal.aborted, false)
 })

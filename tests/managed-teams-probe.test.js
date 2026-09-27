@@ -50,16 +50,21 @@ test('fetch cancellation finishes a stopped probe and permits the next feed refr
   assert.deepEqual(await next, teams)
 })
 
-test('live catalog callers share a request while cancelled callers discard its result', async t => {
+test('a joining feed watchdog cancels a stalled view-owned read and permits a fresh request', async t => {
   const { calls, read } = fixture(t)
   const caller = new AbortController(), owner = new AbortController()
   const first = read(owner.signal), second = read(caller.signal)
   assert.equal(calls.length, 1)
+  calls[0].signal.addEventListener('abort', () => calls[0].reject(calls[0].signal.reason), { once: true })
   caller.abort()
-  assert.equal(calls[0].signal.aborted, false, 'the original owner is still active')
-  calls[0].resolve(Response.json({ teams }))
-  assert.deepEqual(await first, teams)
+  assert.equal(calls[0].signal.aborted, true, 'the watchdog reaches a shared request started by another caller')
+  assert.equal(owner.signal.aborted, false, 'the view remains active')
+  assert.equal(await first, null)
   assert.equal(await second, null)
+  const next = read(owner.signal)
+  assert.equal(calls.length, 2)
+  calls[1].resolve(Response.json({ teams }))
+  assert.deepEqual(await next, teams)
 })
 
 for (const context of [{ generation: 2 }, { session: { id: 'other', role: 'view' } }, { session: { id: 'user', role: 'none' } }]) {

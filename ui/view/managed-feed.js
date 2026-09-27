@@ -30,24 +30,26 @@ export function startManagedTeamFeed({ catalogOnly = false } = {}) {
   const controller = new AbortController(), signal = AbortSignal.any([controller.signal, view])
   const subscription = { key, view, controller, signal, teamId }
   active = subscription
-  const current = () => !signal.aborted && active === subscription && isManagedUiMode()
+  const current = (requestSignal = signal) => !requestSignal.aborted && !signal.aborted && active === subscription && isManagedUiMode()
     && (!teamId || state.currentManagedTeam === teamId && state.reports === reports)
     && state.managedSession?.id === session.id && state.managedSession?.role === session.role
   void watchTeamFeed(teamId, {
     signal,
-    onTeams: async () => {
-      if (!current()) return false
-      return await refreshTeams(current, signal) && current()
+    onTeams: async requestSignal => {
+      const isCurrent = () => current(requestSignal)
+      if (!isCurrent()) return false
+      return await refreshTeams(isCurrent, requestSignal) && isCurrent()
     },
-    onUpdate: async () => {
+    onUpdate: async requestSignal => {
       if (!current()) { controller.abort(); return false }
+      if (!current(requestSignal)) return false
       if (!teamId) return true
       for (const report of state.managedReports) {
         if (!reports.some(loaded => loaded._managedReportId === report.id)) continue // links
-        if (!(await refreshManagedReportTriage(report.id, { signal }))) return false
-        if (!current() || !(await loadManagedReportComments(report.id, { signal }))) return false
+        if (!(await refreshManagedReportTriage(report.id, { signal: requestSignal }))) return false
+        if (!current(requestSignal) || !(await loadManagedReportComments(report.id, { signal: requestSignal }))) return false
       }
-      return current()
+      return current(requestSignal)
     },
     onClose: () => {
       if (current()) document.dispatchEvent(new Event('managed-feed-closed'))
