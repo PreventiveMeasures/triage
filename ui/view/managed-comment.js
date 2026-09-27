@@ -1,3 +1,4 @@
+import { getPublicShare } from '../../client/managed/public-share.js'
 import { html, nothing } from 'lit'
 import { keyed } from 'lit/directives/keyed.js'
 
@@ -5,8 +6,8 @@ export function managedCommentAvatar(id, login) {
   if (!id) return nothing
   return keyed(id, html`<span class="managed-comment-avatar" aria-hidden="true">
     <span>${(login?.[0] ?? '?').toUpperCase()}</span>
-    <img alt="" src=${`/api/avatar/${encodeURIComponent(id)}`} loading="lazy"
-      @error=${event => { event.currentTarget.hidden = true }}>
+    ${getPublicShare() ? nothing : html`<img alt="" src=${`/api/avatar/${encodeURIComponent(id)}`} loading="lazy"
+      @error=${event => { event.currentTarget.hidden = true }}>`}
   </span>`)
 }
 

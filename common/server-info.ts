@@ -16,6 +16,7 @@ export interface ManagedServerInfo {
   loginPath: string
   cookieName: string
   uploadChunkBytes?: number
+  allowShare?: boolean
 }
 
 // The `server-info` frame payload (the `type` discriminant is added at the

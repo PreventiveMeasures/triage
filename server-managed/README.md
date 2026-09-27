@@ -44,6 +44,42 @@ deployments retain the E2E service's separate authentication and permissions.
 
 # Managed browser navigation
 
+## Public workspace links
+
+Set `DEEPVIEW_ALLOW_SHARE=1` to let a manager or administrator share a team
+they belong to using the sidebar's **Share public link** button. Sharing is
+disabled for every other value. The dialog creates a read-only link and can
+revoke all public links for that workspace. Anyone holding a link can open it
+without GitHub sign-in, including on combined managed + E2E deployments.
+
+A link exposes that team's currently published reports (including security and
+dependency findings), links, triage, comments and cited source files. Future
+published reports in the team's repository paths are included; drafts and
+other workspaces are excluded. Whole-repository team grants also expose their
+bundles and published npm advisories. Directory-only grants expose cited source
+files, not entire bundles. GitHub PR metadata and user avatars require account
+access and are not fetched in public views.
+
+Tokens contain 256 random bits; only their SHA-256 hashes are stored, separately
+from sessions. They persist across restarts and issuer logout, and stop working
+when revoked, sharing is disabled, the team is deleted, or the issuer no longer
+has a manager/admin role and membership in that team. Reads recheck the current
+scope after slow storage or upstream work. Turning the flag off does not delete
+links; revoke them before re-enabling sharing if they should remain invalid.
+
+`POST /api/teams/:id/share` creates a link; `DELETE` revokes the team's links.
+Both require an authenticated team manager, same-origin access and CSRF. Public
+clients send the fragment token in `X-Deepview-Share`, with no cookies. A supplied
+token takes precedence over any login cookie and is confined to an explicit
+allowlist: `/api/teams/:id/{shared,reports}`, visible reports' read-only
+`triage`, `triage/history`, `comments`, and `sources` routes, and authorized
+bundles' `metadata`, `contents`, `download`, and `advisories` routes. Global
+endpoints, mutations, unknown routes, cleanup and sync transports are denied.
+The token stays in the URL fragment across browser navigation, rather than
+being sent in page URLs or stored in local storage.
+
+## Page routes
+
 Build the UI with `pnpm build` before starting a managed or combined server.
 Managed pages use the History API: navigation pushes a URL, Back/Forward
 restores it, and reloading opens the same page. PWA launches into an existing

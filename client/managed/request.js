@@ -1,6 +1,7 @@
 import { ROLES, isRole, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS } from '../../common/managed/permissions.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../../common/managed/scan-models.ts'
+import { getPublicShare } from './public-share.js'
 
 // This module belongs to the lazy managed chunk. Both its session API and its
 // custom elements share this in-memory preview, without replacing global fetch
@@ -81,6 +82,14 @@ export async function managedFetch(url, options) {
   const started = generation
   async function send(target, init) {
     if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
+    const share = getPublicShare()
+    if (share) {
+      const resolved = new URL(target, globalThis.location.origin)
+      if (resolved.origin !== globalThis.location.origin) throw new Error('Public workspace requests must be same-origin')
+      const headers = new Headers(init?.headers)
+      headers.set('x-deepview-share', share.token)
+      init = { ...init, headers, credentials: 'omit', redirect: 'error' }
+    }
     const response = await fetch(target, { ...init, cache: 'no-store' })
     if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
     return response

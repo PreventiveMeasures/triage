@@ -2,6 +2,7 @@ import { html, nothing, render } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { MANAGE_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { getPublicShare } from '../../client/managed/public-share.js'
 
 let pendingLogin = null
 
@@ -33,6 +34,10 @@ export function updateManagedLanding(options) {
   if (!managed || deferLogin) { render(nothing, slot); return }
   const canManage = session?.role === 'admin' || session?.role === 'manage'
   const nonemptyTeams = teams.filter(team => team.reports.length > 0 || team.bundles?.length > 0)
+  if (getPublicShare() && !session) {
+    render(html`<section class="managed-login"><h1>Public link unavailable</h1><p>This link is invalid, has been revoked, or public sharing is disabled.</p></section>`, slot)
+    return
+  }
   render(session == null ? html`
     <section class="managed-login" aria-labelledby="managed-login-title">
       <h1 id="managed-login-title">Log in to DeepView</h1>

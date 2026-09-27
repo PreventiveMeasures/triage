@@ -122,8 +122,7 @@ async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Team
 export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
   return (await loadTeamWorkspace(db, store, snapshot)).reports
 }
-async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<ReportVisibility> {
-  const snapshot = await teamSnapshot(db, sessionId, teamId)
+export async function teamReportVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot, reportId: string): Promise<ReportVisibility> {
   if (!snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
   const key = teamSnapshotKey(snapshot)
   let visible = caches.get(db)?.get(key)
@@ -132,12 +131,17 @@ async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: 
     // another request. Authorization uses this load's result in either case.
     visible = (await loadTeamWorkspace(db, store, snapshot)).visible
   }
-  await recheckTeam(db, sessionId, snapshot)
   return visible.get(reportId)!
 }
 export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
-  return (await teamReportVisibility(db, store, sessionId, teamId, reportId)).ids
+  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  const visible = await teamReportVisibility(db, store, snapshot, reportId)
+  await recheckTeam(db, sessionId, snapshot)
+  return visible.ids
 }
 export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
-  return (await teamReportVisibility(db, store, sessionId, teamId, reportId)).sourcePaths
+  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  const visible = await teamReportVisibility(db, store, snapshot, reportId)
+  await recheckTeam(db, sessionId, snapshot)
+  return visible.sourcePaths
 }

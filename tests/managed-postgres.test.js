@@ -38,6 +38,38 @@ async function database(t) {
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
 
+test('Postgres upgrades existing databases for durable, revocable workspace shares', async t => {
+  const { db, connect } = await database(t)
+  const userId = await db.upsertUser(identity(1), 1)
+  await db.setUserRole(userId, 'manage')
+  await db.createSession({ id: 'session', userId, csrfToken: 'csrf', expiresAt: 100 }, 1)
+  await db.createTeam('team', 'Team', 1)
+  await db.setTeamMember('team', userId, { security: true, dependencies: true })
+  // Simulate an existing installation predating the share table migration.
+  const old = await connect()
+  try {
+    await old.query('DROP TABLE managed_workspace_share; DELETE FROM managed_schema_version WHERE version = 4;')
+  } finally { await old.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  try {
+    assert.equal(await upgraded.createWorkspaceShare('session', 2, 'team', 'token-hash'), true)
+    assert.equal(await upgraded.createWorkspaceShare('session', 100, 'team', 'expired-session-token'), false)
+    assert.equal(await upgraded.createWorkspaceShare('session', 2, 'missing', 'foreign-token'), false)
+    const snapshot = await upgraded.getWorkspaceShare('token-hash')
+    assert.equal(snapshot.team.id, 'team')
+    assert.equal(snapshot.user.role, 'view')
+    await db.deleteSession('session')
+    assert.ok(await upgraded.getWorkspaceShare('token-hash'), 'public link survives issuer logout')
+    await db.setUserRole(userId, 'view')
+    assert.equal(await upgraded.getWorkspaceShare('token-hash'), null)
+    await db.setUserRole(userId, 'manage')
+    await db.createSession({ id: 'session', userId, csrfToken: 'csrf', expiresAt: 100 }, 3)
+    assert.equal(await upgraded.revokeWorkspaceShares('session', 4, 'team'), true)
+    assert.equal(await upgraded.getWorkspaceShare('token-hash'), null)
+    assert.equal((await db.listUsers()).length, 1, 'sharing never creates a login identity')
+  } finally { await upgraded.close() }
+})
+
 test('Postgres initial admin is restricted to the allowlisted first identity and never re-promotes existing users', async t => {
   const { db, connect } = await database(t)
   const [first] = await Promise.all([

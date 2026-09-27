@@ -1,5 +1,6 @@
 import { managedRoutePath, parseManagedRoute } from '../../common/managed/routes.js'
 import { encodeFindingRef, extractFindingRef } from '../../client/finding-link.js'
+import { parsePublicShare, publicSharePath } from '../../client/managed/public-share.js'
 
 const KEY = 'deepviewManagedNavigation'
 const LOGIN_FINDING = 'deepviewManagedLoginFinding'
@@ -7,6 +8,7 @@ const LOGIN_FINDING = 'deepviewManagedLoginFinding'
 // Browser history contains only a navigation generation, never report data.
 // A mode change invalidates old entries; Back cannot restore the prior mode.
 export function createManagedHistory(browser) {
+  const publicShare = parsePublicShare(browser.location.hash)
   let active = false
   let generation = null
   let revision = 0
@@ -41,6 +43,7 @@ export function createManagedHistory(browser) {
   }
 
   function replace(path) {
+    path = publicSharePath(path, publicShare)
     browser.history.replaceState(active ? { [KEY]: generation } : null, '', path)
     currentPath = path
   }
@@ -66,7 +69,8 @@ export function createManagedHistory(browser) {
     // The renderer can fall back from Files when a report has no source tree.
     if (typeof ok === 'object') path = managedRoutePath(ok) ?? path
     if (pop || replacing) replace(path)
-    else if (path !== currentPath) {
+    else if (publicSharePath(path, publicShare) !== currentPath) {
+      path = publicSharePath(path, publicShare)
       browser.history.pushState({ [KEY]: generation }, '', path)
       currentPath = path
     }

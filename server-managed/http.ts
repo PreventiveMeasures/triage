@@ -55,13 +55,13 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, StoredUser, TriageEventRow, TriageRow } from './db.ts'
+import type { ManagedDb, ManagedSession, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
-import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, isTriageBucket, parseTriageEntryPatch } from '../common/managed/triage.ts'
+import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '../report/index.js'
 import { loadManagedFindings, readManagedReport } from '../common/managed/report-content.ts'
 import type { ReportSourcesCache } from './report-sources.ts'
@@ -80,6 +80,10 @@ import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSna
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { MAX_PULL_REQUESTS, MAX_PULL_REQUEST_URL } from '../common/github-pr.ts'
 import { lookupPullRequests } from './github-pulls.ts'
+import { sendJson, writeResponse } from './http-response.ts'
+import { triageWireEntry } from './triage-response.ts'
+import { handlePublicWorkspace } from './public-workspace.ts'
+import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 
 const SESSION_PATH = '/api/auth/session'
@@ -190,20 +194,6 @@ export interface ManagedHttpDeps {
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
-
-// Writing body chunks enables the function's streamed-response path. Data is
-// already materialized by the authorization/filtering layer before we get here.
-function writeResponse(res: ServerResponse, body: string | Buffer): void {
-  const bytes = typeof body === 'string' ? Buffer.from(body) : body
-  if (bytes.length <= UPLOAD_CHUNK_BYTES) { res.end(body); return }
-  for (let offset = 0; offset < bytes.length; offset += 64 * 1024) res.write(bytes.subarray(offset, offset + 64 * 1024))
-  res.end()
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers })
-  writeResponse(res, JSON.stringify(body))
-}
 
 function send405(res: ServerResponse, allow: string): void {
   sendJson(res, 405, { error: 'method-not-allowed' }, { allow })
@@ -1406,20 +1396,6 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   return ids
 }
 
-// A stored triage row (current state or a trail event) → its wire entry: only
-// set fields present, `false` kept for flagged (the explicit un-flag tombstone
-// must round-trip), and null for the row of a cleared entry (every field
-// null) — the reader adopts the clear.
-function triageWireEntry(row: Pick<TriageRow, 'color' | 'triage' | 'comment' | 'fix' | 'flagged'>, legacyHistory = false): TriageEntryPatch | null {
-  const e: TriageEntryPatch = {}
-  if (row.color != null) e.color = row.color
-  if (isTriageBucket(row.triage)) e.triage = row.triage
-  if (legacyHistory && row.comment != null) e.comment = row.comment
-  if (row.fix != null) e.fix = row.fix
-  if (row.flagged != null) e.flagged = row.flagged
-  return Object.keys(e).length > 0 ? e : null
-}
-
 // GET /api/reports/<id>/triage — the stored triage entries for the findings of
 // a report the caller may view (canViewReport; 404 hides existence and denial
 // alike, matching handleViewReport). Entries are keyed by finding id and shared
@@ -1717,11 +1693,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const method = req.method ?? 'GET'
     const cookie = req.headers.cookie
 
+    if (req.headers['x-deepview-share'] !== undefined) { await handlePublicWorkspace(req, res, deps, url); return }
+
     // Public mode probe — lets a client detect the managed protocol up front.
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const info = deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } }
-      sendJson(res, 200, { ...info, managed: { ...info.managed, ...(deps.uploadStore ? { uploadChunkBytes: UPLOAD_CHUNK_BYTES } : {}) } })
+      sendJson(res, 200, { ...info, managed: { ...info.managed, ...(config.allowShare ? { allowShare: true } : {}), ...(deps.uploadStore ? { uploadChunkBytes: UPLOAD_CHUNK_BYTES } : {}) } })
       return
     }
     // OAuth: start → redirect to GitHub with the CSRF state cookie.
@@ -1762,6 +1740,24 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const managedDataPath = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
       .some(prefix => path === prefix || path.startsWith(prefix + '/'))
     if (managedDataPath && await readWorkspaceSession(res, deps, cookie) == null) return
+    const shareRoute = /^\/api\/teams\/([^/]+)\/share$/u.exec(path)
+    if (shareRoute) {
+      if (!config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
+      if (method !== 'POST' && method !== 'DELETE') { send405(res, 'POST, DELETE'); return }
+      const s = await checkMutation(req, res, deps, cookie)
+      if (!s || !requireManageRole(res, s.user)) return
+      const teamId = shareRoute[1]!
+      const token = randomToken()
+      const allowed = method === 'POST'
+        ? await db.createWorkspaceShare(s.session.id, Date.now(), teamId, hashToken(token))
+        : await db.revokeWorkspaceShares(s.session.id, Date.now(), teamId)
+      if (!allowed) { sendJson(res, 404, { error: 'no-team' }); return }
+      const team = await db.getTeam(teamId)
+      if (!team) { sendJson(res, 404, { error: 'no-team' }); return }
+      await activity(deps, s.user, 'access', `${method === 'POST' ? 'created a public link for' : 'revoked public links for'} team ${team.name}`)
+      sendJson(res, 200, method === 'POST' ? { path: `/teams/${team.slug}#public=${teamId}.${token}` } : { ok: true })
+      return
+    }
     if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
     if (path === '/api/github/pull-requests') {
       if (method !== 'POST') { send405(res, 'POST'); return }

@@ -7,6 +7,7 @@ import { ACTIVITY_SCHEMA } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
 import { managedTableRenames } from './db-table-names.ts'
+import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
 
 export interface PgConnection {
   query(sql: string, params?: unknown[]): Promise<{
@@ -49,6 +50,10 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query('INSERT INTO managed_schema_version VALUES (2)')
     }
     if (!prefixed) await db.query('INSERT INTO managed_schema_version VALUES (3)')
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 4')).rows.length === 0) {
+      await db.query(postgresSchema(WORKSPACE_SHARE_SCHEMA))
+      await db.query('INSERT INTO managed_schema_version VALUES (4)')
+    }
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

@@ -12,7 +12,7 @@ import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 const renamed = ['selected_repo', 'team_repo', 'team_user', 'finding_triage',
   'finding_triage_event', 'finding_comment', 'finding_comment_event']
 const tables = ['managed_user', 'managed_session', 'managed_bundle', 'managed_report',
-  'managed_team', 'managed_activity', ...renamed.map(name => `managed_${name}`)]
+  'managed_team', 'managed_activity', 'managed_workspace_share', ...renamed.map(name => `managed_${name}`)]
 
 // These tests run sequentially; only the engine is shared, never the schema.
 let sharedPg

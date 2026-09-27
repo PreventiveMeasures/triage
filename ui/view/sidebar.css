@@ -380,6 +380,10 @@ sidebar-view-button[hidden] { display: none !important; }
 
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
 }
+.file-item.team-item { display: flex; }
+.file-item.team-item button.file-name { flex: 1; min-width: 0; }
+.team-item .workspace-share { display: grid; }
+
 /* Leave button reads as the destructive-but-local action — picks
    up the same critical hue as the bottom-of-sidebar "Delete
    current" button on hover so the user pauses before clicking. */
