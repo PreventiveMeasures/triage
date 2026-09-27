@@ -2326,6 +2326,7 @@ function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
 function renderBundleDetails(entry, details) {
   const meta = html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
+    ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
     ${details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`

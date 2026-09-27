@@ -411,14 +411,14 @@ actions, targets, and timestamps, not annotation bodies or credentials.
 
 Managers manage reports and bundles they uploaded or can access through
 repositories assigned to their teams. Access through teams also requires a
-matching directory scope for reports; bundles use repository access. These rules apply to catalogues, downloads,
+matching directory scope for both reports and bundles. These rules apply to catalogues, downloads,
 uploads, visibility changes, assignment changes, deletion, and triage. Managers
 can review unpublished reports in scope. Viewer and triage roles still require
 publication. Administrators retain unrestricted content access.
 
 Managers can upload unassigned content and retain access to their own uploads.
 Detaching or deleting attached content requires access to its current repository
-(and report path); assigning it requires access to the destination. Repository
+and directory; assigning it requires access to the destination. Repository
 pickers contain only allowed repositories. Reports without embedded repository
 metadata can use the repository and directory
 controls on the upload page. Bundle deduplication never returns inaccessible
@@ -502,10 +502,22 @@ on another instance. Authorization is checked again before streaming sources.
 Admins can read/manage every bundle. Managers can read/manage bundles they own
 or can access through their teams. View/triage users need team access; the none
 role has no bundle access. Ownership survives repository attachment. Adding a
-repo link requires bundle management access and access to the destination repo;
-removing a link requires access to the current repo. Moving or deleting an
-attached bundle therefore checks the current repo too, even for its owner.
+repository location requires bundle management access and access to the destination
+repository and directory; detaching or deleting a bundle requires access to its
+current location, even for its owner.
 Manage lists and repository pickers enforce these rules on the server.
+
+Bundles store a repository and an optional directory, editable together from
+Manage → Bundles, just like report locations. Uploads accept `X-Repo-Id` and a
+URL-encoded `X-Repo-Directory`; `POST /api/admin/bundles/set-repo` accepts
+`{ bundleId, repoId, directory }`. Root is stored as an empty directory; existing
+bundles migrate to root. Detaching clears the directory, and deduplicated uploads
+preserve the stored location.
+
+A team granted `/` sees all bundles in that repository. A team granted `/foo`
+sees bundles at `/foo` and `/foo/*`, excluding root and `/foobar`. This applies
+to team catalogs, public workspace links, direct bundle access, advisories and
+manager activity. Directory edits also refresh open clients' catalogs.
 
 Opening a bundle downloads its metadata into managed app memory. Code,
 Terminal, source search and source comparison request contents when needed;

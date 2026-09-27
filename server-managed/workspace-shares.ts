@@ -77,13 +77,14 @@ function shareQueries(db: ManagedSql) {
     JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
     WHERE tr.team_id = ? AND r.visible = 1 AND (tr.path = '' OR r.repo_directory = tr.path
       OR substr(r.repo_directory, 1, length(tr.path) + 1) = tr.path || '/') ORDER BY r.id`)
-  // Raw bundles cover a whole repository. Directory-only grants expose cited
-  // source files through the report endpoint, never the entire archive.
+  // A raw bundle is visible only when its declared root is inside the team scope.
+  // Root bundles remain hidden from directory-only grants.
   const bundles = db.prepare(`SELECT DISTINCT b.id, b.slug, b.integrity, b.filename, b.kind, b.byte_size AS byteSize,
-    b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.uploaded_at AS uploadedAt, sr.full_name AS repoFullName
+    b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.uploaded_at AS uploadedAt, sr.full_name AS repoFullName
     FROM managed_team_repo tr JOIN managed_bundle b ON b.repo_id = tr.repo_id
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
-    WHERE tr.team_id = ? AND tr.path = '' ORDER BY b.id`)
+    WHERE tr.team_id = ? AND (tr.path = '' OR b.repo_directory = tr.path
+      OR substr(b.repo_directory, 1, length(tr.path) + 1) = tr.path || '/') ORDER BY b.id`)
   return { manager, insert, remove, update, list, session, all, share, repositories, reports, bundles }
 }
 
@@ -140,7 +141,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
           reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename,
             cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions]) })),
           bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
-            filename: row.filename, byteSize: row.byteSize, repoId: row.repoId!, repoFullName: row.repoFullName })),
+            filename: row.filename, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName })),
         },
         bundles: bundleRows,
       }

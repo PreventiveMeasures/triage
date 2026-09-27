@@ -47,12 +47,9 @@ select:focus-visible {
   color: var(--muted);
   font-size: .75rem;
 }
-.repo-select,
-.repo-attach {
+.repo-select {
   min-width: 0;
   width: 100%;
-}
-.repo-select {
   max-width: 18rem;
 }
 .drop-browse {
@@ -127,10 +124,6 @@ select:focus-visible {
   border-radius: 4px;
   font-size: .65rem;
 }
-.bundle-location-label {
-  color: var(--muted);
-  font-size: .75rem;
-}
 .action {
   display: grid;
   place-items: center;
@@ -187,11 +180,15 @@ select:focus-visible {
   padding: .55rem .85rem;
 }
 .bundle-location {
-  display: grid;
-  gap: .18rem;
+  display: block;
   min-width: 0;
   grid-column: auto;
   padding-left: 0;
+  color: var(--muted);
+  font-size: .75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .actions {
   display: flex;
@@ -325,3 +322,6 @@ select:focus-visible {
 
 .bundle-open { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
 .bundle-open:hover { color: var(--accent); text-decoration: underline; }
+
+.bundle-row > .location-editor { grid-column: 1 / -1; }
+.upload-directory { width: 12rem; }

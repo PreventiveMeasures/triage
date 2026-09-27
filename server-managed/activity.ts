@@ -98,7 +98,7 @@ const managerSource = `SELECT ${triageFields},
   LEFT JOIN managed_selected_repo p ON p.repo_id = b.repo_id
   WHERE a.report_id IS NULL AND EXISTS (
     SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-    WHERE tu.user_id = :userId AND tr.repo_id = b.repo_id
+    WHERE tu.user_id = :userId AND tr.repo_id = b.repo_id AND ${withinTeamPath('b.repo_directory')}
   )
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId, a.action, a.repo, a.report_id AS reportId,
     a.report, NULL AS finding, a.at FROM managed_activity a
@@ -107,7 +107,7 @@ const managerSource = `SELECT ${triageFields},
     AND NOT EXISTS (SELECT 1 FROM managed_bundle WHERE id = a.bundle_id)
     AND EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
       WHERE tu.user_id = :userId AND tr.repo_id = a.repo_id
-      AND (a.report_id IS NULL OR ${withinTeamPath('a.repo_directory')}))`
+      AND ${withinTeamPath('a.repo_directory')})`
 
 export const ACTIVITY_SCHEMA = `
     CREATE TABLE IF NOT EXISTS managed_activity (

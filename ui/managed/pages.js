@@ -19,6 +19,7 @@ import usersStyles from './styles/users.css'
 import reposStyles from './styles/repos.css'
 import reportsStyles from './styles/reports.css'
 import bundlesStyles from './styles/bundles.css'
+import locationStyles from './styles/location.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
@@ -890,13 +891,6 @@ function repoPickerTemplate(repos, selected, onChange, label = 'Repository for n
   </div>`
 }
 
-function repoRowSelect(repos, current, onPick, allowUnassigned = true) {
-  if (!Array.isArray(repos) || repos.length === 0) return nothing
-  return html`<repository-selector class="repo-attach" label="Attach to a repository"
-    .options=${repoOptions(repos, allowUnassigned)} .value=${current ?? null}
-    @repository-change=${event => onPick(event.detail.value)}></repository-selector>`
-}
-
 // Open a file picker (hidden input, created on demand) and hand the chosen files
 // to `onFiles`. `multiple` allows batch uploads.
 function pickFiles(onFiles, multiple = true) {
@@ -975,7 +969,7 @@ class ManagedAdminReports extends ManagedPage {
     _repoDirectory: { state: true },
   }
 
-  static styles = [unsafeCSS(reportsStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
+  static styles = [unsafeCSS(reportsStyles), unsafeCSS(locationStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
   constructor() {
     super()
@@ -1163,15 +1157,16 @@ async function fetchBundles(signal) {
 }
 
 // Upload one bundle file: raw bytes as the body, name in X-Bundle-Filename, an
-// optional repo link in X-Repo-Id, CSRF token. The server content-addresses it
+// optional location in X-Repo-Id / X-Repo-Directory, CSRF token. The server content-addresses it
 // (sha512) — re-uploading identical bytes dedupes — and auto-links any reports
 // that declared its integrity.
-async function uploadBundle(file, csrfToken, repoId) {
+async function uploadBundle(file, csrfToken, repoId, directory = '') {
   const headers = { 'content-type': 'application/octet-stream', 'x-bundle-filename': encodeURIComponent(file.name) }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
   if (repoId != null) headers['x-repo-id'] = String(repoId)
+  if (directory) headers['x-repo-directory'] = encodeURIComponent(directory)
   const res = await managedFetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
-  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? 'choose a repository within your team access' : `HTTP ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? 'choose a repository and directory within your team access' : `HTTP ${res.status}`)
   return res.json()
 }
 
@@ -1181,14 +1176,14 @@ async function deleteBundle(id, csrfToken) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
-// Attach a stored bundle to a repo (repoId) or detach it (null). CSRF token.
-async function setBundleRepo(id, repoId, csrfToken) {
+// Set a stored bundle's repository and directory, or detach it (null). CSRF token.
+async function setBundleRepo(id, repoId, directory, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
   const res = await managedFetch('/api/admin/bundles/set-repo', {
-    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ bundleId: id, repoId }),
+    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ bundleId: id, repoId, directory }),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 403 ? 'choose a repository and directory within your team access' : res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
 }
 
 // Package/box glyph, tinted via currentColor.
@@ -1206,12 +1201,17 @@ class ManagedAdminBundles extends ManagedPage {
     _query: { state: true },
     _data: { state: true },
     _repoId: { state: true },
+    _repoDirectory: { state: true },
+    _locationBundle: { state: true },
+    _locationRepo: { state: true },
+    _locationDirectory: { state: true },
+    _locationBusy: { state: true },
     _error: { state: true },
     _busy: { state: true },
     _dragOver: { state: true },
   }
 
-  static styles = [unsafeCSS(bundlesStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
+  static styles = [unsafeCSS(bundlesStyles), unsafeCSS(locationStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
   constructor() {
     super()
@@ -1220,11 +1220,16 @@ class ManagedAdminBundles extends ManagedPage {
     this._error = null
     this._busy = false
     this._repoId = null // null = no repo link; otherwise a selected repo id (for new uploads)
+    this._repoDirectory = ''
+    this._locationBundle = null
+    this._locationRepo = null
+    this._locationDirectory = ''
+    this._locationBusy = false
     this._dragOver = false
     this._teardownDrop = null
     this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
     this._localImport = new ManagedLocalImport(this, 'bundle', file => uploadLocalFile(this, file,
-      selected => uploadBundle(selected, this._csrf, this._repoId), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources']))
+      selected => uploadBundle(selected, this._csrf, this._repoId, this._repoDirectory.trim()), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources']))
   }
 
   connectedCallback() {
@@ -1254,7 +1259,7 @@ class ManagedAdminBundles extends ManagedPage {
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>
-          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<div class="location-field upload-directory"><label for="bundle-upload-directory">Directory</label><input id="bundle-upload-directory" type="text" placeholder="Repository root" .value=${this._repoDirectory} @input=${event => { this._repoDirectory = event.target.value }}></div><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         </section>
         ${this._body()}
       </div>`
@@ -1265,7 +1270,7 @@ class ManagedAdminBundles extends ManagedPage {
     const unassigned = bundles.filter((bundle) => bundle.repoId == null).length
     const bytes = bundles.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
     const query = this._query.trim().toLocaleLowerCase()
-    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
     const groups = Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')
     return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div><div class="section-head"><h2>Stored bundles</h2><span class="summary"><span>${this._data == null ? '… bundles' : `${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}`}</span><span>${this._data == null ? '…' : formatBytes(bytes)}</span><span class="unassigned">${this._data == null ? '… unattached' : unassigned ? `${unassigned} unattached` : ''}</span></span></div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
@@ -1273,28 +1278,46 @@ class ManagedAdminBundles extends ManagedPage {
   }
 
   _row(b) {
+    const location = b.repoFullName ? `${b.repoFullName}${b.repoDirectory ? `/${b.repoDirectory}` : ''}` : 'No repository assigned'
     const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
     return html`<li class="bundle-row">
       <span class="identity"><span class="bundle-icon" aria-hidden="true">${BUNDLE_ICON}</span><span class="who">
         <button type="button" class="filename bundle-open" @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: b, bubbles: true, composed: true }))}>${b.filename}</button>
         <span class="meta"><span class="kind">${b.kind === 'stasis' ? 'Stasis' : 'Sourcemaps'}</span><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span>@${b.uploadedByLogin}</span>` : nothing}</span>
       </span></span>
-      <span class="bundle-location">${b.canChangeRepo === false ? html`<span data-tooltip="Your teams do not grant access to change this repository link">${b.repoFullName ?? 'Attached repository'}</span>` : repoRowSelect(this._data?.repos, b.repoId, (repoId) => this._setRepo(b, repoId))}</span>
+      <span class="bundle-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
       <span class="actions">
+        ${b.canChangeRepo === false ? nothing : html`<button type="button" class="action" aria-label=${`Set location for ${b.filename}`} data-tooltip="Set repository location" ?disabled=${this._locationBusy} @click=${() => this._openLocation(b)}>${adminIcon('repo')}</button>`}
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
         <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : 'Delete bundle'} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
+      ${this._locationBundle === b.id ? this._locationEditor(b) : nothing}
     </li>`
   }
 
-  async _setRepo(b, repoId) {
+  _openLocation(bundle) {
+    if (this._locationBusy || bundle.canChangeRepo === false) return
+    this._locationBundle = bundle.id
+    this._locationRepo = bundle.repoId ?? null
+    this._locationDirectory = bundle.repoDirectory ?? ''
+    this._error = null
+  }
+
+  _locationEditor(bundle) {
+    const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
+    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label><input id=${`bundle-dir-${bundle.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}></div><div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => { this._locationBundle = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(bundle)}>Save</button></div></div>`
+  }
+
+  async _saveLocation(bundle) {
+    if (this._locationBusy || bundle.canChangeRepo === false) return
+    this._locationBusy = true
     this._error = null
     try {
-      await this.appState.mutate(() => setBundleRepo(b.id, repoId, this._csrf), ['bundles', 'repo-impact', 'history', 'scan-sources'])
-    } catch (err) {
-      this._error = `Couldn't change repo: ${String(err?.message ?? err)}`
-    }
-    await this._load({ preserveError: true })
+      await this.appState.mutate(() => setBundleRepo(bundle.id, this._locationRepo, this._locationDirectory.trim(), this._csrf), ['bundles', 'teams', 'repo-impact', 'history', 'scan-sources'])
+      this._locationBundle = null
+      await this._load({ preserveError: true })
+    } catch (err) { this._error = `Couldn't set bundle location: ${String(err?.message ?? err)}` }
+    finally { this._locationBusy = false }
   }
 
   async _upload(files) {
@@ -1306,7 +1329,7 @@ class ManagedAdminBundles extends ManagedPage {
     try {
       while (this._queue.length > 0) {
         const file = this._queue.shift()
-        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
+        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId, this._repoDirectory.trim()), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
       }
     } catch (err) {
       this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)

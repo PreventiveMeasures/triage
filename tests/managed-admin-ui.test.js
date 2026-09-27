@@ -237,29 +237,55 @@ test('refreshing reports preserves the open preview until that report is removed
   assert.equal(page._preview, null)
 })
 
-test('a failed bundle mutation retains the collection and its error after refresh', async (t) => {
+test('bundle location editing retains the collection and directory on failure, then saves with the current token', async (t) => {
   const Bundles = customElements.get('managed-admin-bundles')
   const page = createPage(Bundles)
   page.session = adminSession
-  const bundle = { id: 'b', repoId: null }
+  const bundle = { id: 'b', repoId: 7, repoDirectory: 'old' }
   page._data = { bundles: [bundle], repos: [] }
   let token = 'current-token'
   let status = 403
   t.mock.method(globalThis, 'fetch', (_url, options) => {
     if (options.method === 'POST') {
       assert.equal(options.headers['x-csrf-token'], token)
+      assert.deepEqual(JSON.parse(options.body), { bundleId: 'b', repoId: 7, directory: '/foo/sub' })
       return Promise.resolve(new Response('', { status }))
     }
     return Promise.resolve(Response.json({ bundles: [bundle], repos: [] }))
   })
-  await page._setRepo(bundle, 7)
-  assert.match(page._error, /Couldn't change repo: HTTP 403/u)
+  page._openLocation(bundle)
+  assert.equal(page._locationDirectory, 'old')
+  page._locationDirectory = '/foo/sub'
+  await page._saveLocation(bundle)
+  assert.match(page._error, /choose a repository and directory within your team access/u)
+  assert.equal(page._locationBundle, 'b')
+  assert.equal(page._locationDirectory, '/foo/sub')
   assert.deepEqual(page._data.bundles, [bundle])
   status = 200
   token = 'rotated-token'
   page.session = { ...adminSession, csrfToken: token }
-  await page._setRepo(bundle, 7)
+  await page._saveLocation(bundle)
+  assert.equal(page._locationBundle, null)
   assert.equal(page._error, null, 'a successful retry clears the previous action error')
+})
+
+test('bundle uploads include the selected repository and encoded directory', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  page.session = adminSession
+  page._repoId = 7
+  page._repoDirectory = '/foo/with space'
+  let uploaded = false
+  t.mock.method(globalThis, 'fetch', (_url, options) => {
+    if (options.method === 'POST') {
+      assert.equal(options.headers['x-repo-id'], '7')
+      assert.equal(options.headers['x-repo-directory'], '%2Ffoo%2Fwith%20space')
+      uploaded = true
+    }
+    return Promise.resolve(Response.json({ bundles: [], repos: [] }))
+  })
+  await page._upload([new File(['{}'], 'source.map')])
+  assert.equal(uploaded, true)
+  assert.equal(page._error, null)
 })
 
 test('cached repository details remain visible but cannot authorize removal after a failed refresh', async (t) => {

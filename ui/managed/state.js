@@ -36,7 +36,7 @@ export class ManagedAppState {
     const teamCatalog = new Map(teams.map(team => [team.id, JSON.stringify([
       team.cacheKey ?? null,
       team.reports.map(report => [report.id, report.cacheKey ?? null]).toSorted(),
-      (team.bundles ?? []).map(bundle => [bundle.id, bundle.filename, bundle.repoFullName]).toSorted(),
+      (team.bundles ?? []).map(bundle => [bundle.id, bundle.filename, bundle.repoFullName, bundle.repoDirectory ?? '']).toSorted(),
     ])]))
     for (const id of new Set([...this.teamCatalog?.keys() ?? [], ...teamCatalog.keys()])) {
       if (this.teamCatalog?.get(id) !== teamCatalog.get(id)) changedTeams.add(`team:${id}`)
@@ -76,7 +76,7 @@ export class ManagedAppState {
     for (const team of teams) {
       for (const bundle of team.bundles ?? []) {
         const keys = bundles.get(bundle.id) ?? []
-        keys.push(JSON.stringify([team.id, team.cacheKey ?? null, bundle.filename, bundle.repoFullName]))
+        keys.push(JSON.stringify([team.id, team.cacheKey ?? null, bundle.filename, bundle.repoFullName, bundle.repoDirectory ?? '']))
         bundles.set(bundle.id, keys)
       }
     }

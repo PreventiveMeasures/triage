@@ -86,7 +86,10 @@ test('bundle reassignment refreshes the shared scan catalogue without retaining 
   await appState.load('bundles', 'bundles', () => catalogue)
   const moved = { repos: catalogue.repos, bundles: [{ ...catalogue.bundles[0], repoId: 8, repoFullName: 'owner/empty' }] }
   t.mock.method(globalThis, 'fetch', (_url, options) => Promise.resolve(Response.json(options.method === 'POST' ? {} : moved)))
-  await createPage(Bundles, appState)._setRepo(catalogue.bundles[0], 8)
+  const page = createPage(Bundles, appState)
+  page._openLocation(catalogue.bundles[0])
+  page._locationRepo = 8
+  await page._saveLocation(catalogue.bundles[0])
   const scan = createPage(Scans, appState)
   const loading = scan._load()
   assert.deepEqual(scan._source, managedScanSource(moved))

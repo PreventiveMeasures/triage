@@ -89,14 +89,57 @@ async function setup(t) {
       req.end(body)
     })
   }
-  async function seed({ kind = 'stasis', owner = 'owner', repoId = null, bytes: suppliedBytes } = {}) {
+  async function seed({ kind = 'stasis', owner = 'owner', repoId = null, repoDirectory = '', bytes: suppliedBytes } = {}) {
     const bytes = suppliedBytes ?? (kind === 'stasis' ? brotliCompressSync(Buffer.from(stasis)) : Buffer.from(map)), id = randomUUID()
-    const record = { id, integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'test.stasis.code.br' : 'test.map', kind, byteSize: bytes.length, uploadedBy: users[owner].userId, uploadedByLogin: owner, repoId }
+    const record = { id, integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'test.stasis.code.br' : 'test.map', kind, byteSize: bytes.length, uploadedBy: users[owner].userId, uploadedByLogin: owner, repoId, repoDirectory }
     await store.put(id, bytes, kind); await db.insertBundle(record, Date.now())
     return await db.getBundle(id)
   }
   return { db, store, reportStore, cache, cacheDir, users, send, seed, team, pending, bundleDir: join(dir, 'bundles'), baseUrl: `http://127.0.0.1:${server.address().port}` }
 }
+
+test('bundle locations enforce source and destination scopes on upload, edit, download, and delete', async t => {
+  const h = await setup(t)
+  await h.db.removeTeamRepo(h.team, 1, null)
+  await h.db.setTeamRepo(h.team, 1, 'foo')
+  const headers = { 'x-bundle-filename': 'source.map', 'x-repo-id': '1', 'x-repo-directory': encodeURIComponent('/foo/./sub/') }
+  const upload = await h.send('/api/admin/bundles', 'manager', 'POST', map, headers)
+  assert.equal(upload.status, 201)
+  const id = upload.json().id
+  assert.equal(upload.json().repoDirectory, 'foo/sub')
+  const url = `/api/bundles/${id}`
+  assert.equal((await h.send(`${url}/metadata`, 'viewer')).status, 200)
+  const edit = (who, directory, repoId = 1) => h.send('/api/admin/bundles/set-repo', who, 'POST', JSON.stringify({ bundleId: id, repoId, directory }))
+  const listing = async () => (await h.send('/api/admin/bundles', 'manager')).json().bundles.find(b => b.id === id)
+  assert.equal((await listing()).repoDirectory, 'foo/sub')
+  assert.equal((await listing()).canChangeRepo, true)
+  for (const path of ['/', '/foobar']) {
+    assert.equal((await edit('manager', path)).status, 403, 'cannot move outside your granted directory')
+    assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', map, { ...headers, 'x-repo-directory': path })).status, 403)
+  }
+  for (const path of ['../foo', 'foo/../bar', 'foo\\bar']) {
+    assert.equal((await edit('admin', path)).status, 400)
+    assert.equal((await h.send('/api/admin/bundles', 'admin', 'POST', map, { ...headers, 'x-repo-directory': encodeURIComponent(path) })).status, 400)
+  }
+  assert.equal((await h.send('/api/admin/bundles', 'admin', 'POST', map, { ...headers, 'x-repo-directory': '%' })).status, 400)
+  assert.equal((await edit('manager', '/foo')).status, 200)
+  const duplicate = await h.send('/api/admin/bundles', 'manager', 'POST', map, headers)
+  assert.equal(duplicate.status, 200)
+  assert.equal(duplicate.json().repoDirectory, 'foo', 'deduplication never changes the stored location')
+  assert.equal((await edit('admin', '/foobar')).status, 200)
+  for (const part of ['metadata', 'contents', 'download']) {
+    for (const method of ['GET', 'HEAD']) assert.equal((await h.send(`${url}/${part}`, 'viewer', method)).status, 404, 'even cached bytes require current directory access')
+  }
+  assert.equal((await listing()).canChangeRepo, false, 'the uploader can retain its own bundle but cannot change a foreign location')
+  assert.equal((await edit('manager', '/foo')).status, 403)
+  assert.equal((await h.send(`/api/admin/bundles/${id}`, 'manager', 'DELETE')).status, 403)
+  assert.equal((await edit('admin', '/foo')).status, 200)
+  assert.equal((await h.send(`${url}/contents`, 'viewer')).status, 200)
+  assert.equal((await edit('manager', '/foo', null)).status, 200)
+  assert.equal((await h.db.getBundle(id)).repoDirectory, '')
+  assert.equal((await h.send(`${url}/contents`, 'viewer')).status, 404)
+  assert.equal((await h.send(`/api/admin/bundles/${id}`, 'manager', 'DELETE')).status, 200)
+})
 
 for (const kind of ['stasis', 'sourcemap']) {
   test(`${kind}: invalid UTF-8 cannot generate derivatives`, async t => {
@@ -337,17 +380,22 @@ test('deletion during a cold build cannot leave cache files behind or serve dele
 })
 
 for (const part of ['metadata', 'contents', 'download']) {
-  test(`a membership revoked while loading ${part} prevents serving it`, async t => {
-    const h = await setup(t), record = await h.seed({ repoId: 1 })
-    const method = part === 'metadata' ? 'get' : 'open'
-    const gate = Promise.withResolvers(), read = h.store[method], started = Promise.withResolvers()
-    h.store[method] = async (id, kind) => { started.resolve(); await gate.promise; return read(id, kind) }
-    const response = h.send(`/api/bundles/${record.id}/${part}`, 'viewer')
-    await started.promise
-    await h.db.removeTeamMember(h.team, h.users.viewer.userId)
-    gate.resolve()
-    assert.equal((await response).status, 404)
-  })
+  for (const change of ['membership', 'directory']) {
+    test(`a revoked ${change} grant while loading ${part} prevents serving it`, async t => {
+      const h = await setup(t), record = await h.seed({ repoId: 1, repoDirectory: 'foo' })
+      await h.db.removeTeamRepo(h.team, 1, null)
+      await h.db.setTeamRepo(h.team, 1, 'foo')
+      const method = part === 'metadata' ? 'get' : 'open'
+      const gate = Promise.withResolvers(), read = h.store[method], started = Promise.withResolvers()
+      h.store[method] = async (id, kind) => { started.resolve(); await gate.promise; return read(id, kind) }
+      const response = h.send(`/api/bundles/${record.id}/${part}`, 'viewer')
+      await started.promise
+      if (change === 'membership') await h.db.removeTeamMember(h.team, h.users.viewer.userId)
+      else await h.db.setBundleRepo(record.id, 1, 'foobar')
+      gate.resolve()
+      assert.equal((await response).status, 404)
+    })
+  }
 }
 
 test('permanent repository removal deletes bundle derivatives too', async t => {

@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS managed_bundle (
   -- this" survives the uploader being removed (when uploaded_by nulls out).
   uploaded_by_login TEXT,
   repo_id      INTEGER REFERENCES managed_selected_repo(repo_id) ON DELETE SET NULL,
+  repo_directory  TEXT NOT NULL DEFAULT '',
   uploaded_at  INTEGER NOT NULL
 ) STRICT;
 

@@ -15,7 +15,7 @@ test('legacy team links migrate without widening access, and multiple paths surv
   await db.selectRepo({ repoId: 7, fullName: 'owner/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: userId }, 100)
   for (const id of ['scoped', 'whole']) await db.createTeam(id, id, 100)
   await db.setTeamMember('scoped', userId, { dependencies: false, security: false })
-  await db.insertBundle({ id: 'bundle', integrity: 'sha512-bundle', filename: 'source.stasis', kind: 'stasis', byteSize: 1, uploadedBy: userId, repoId: 7 }, 100)
+  await db.insertBundle({ id: 'bundle', integrity: 'sha512-bundle', filename: 'source.stasis', kind: 'stasis', byteSize: 1, uploadedBy: userId, repoId: 7, repoDirectory: 'packages/a/sub' }, 100)
   for (const directory of ['packages/a', 'packages/a/sub', 'packages/b', 'packages/c']) {
     await db.insertReport({ id: directory, filename: `${directory}.json`, contentType: 'application/json', byteSize: 1, sha256: directory, uploadedBy: userId, repoId: 7, repoDirectory: directory, visible: true }, 100)
   }

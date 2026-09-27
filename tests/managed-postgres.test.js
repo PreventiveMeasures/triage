@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
+import { checkBundleLocations } from './_managed-bundle-location.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 
 // Tests in this file run sequentially. Reuse the expensive WASM engine, but
@@ -191,7 +192,7 @@ test('Postgres managed store: auth, scopes, uploads, history, comments, and rest
   assert.equal(await db.userCanReadRepoPath(user, 1, 'src/sub'), true)
   assert.equal(await db.userCanReadRepoPath(user, 1, 'src-other'), false)
   const bundle = randomUUID(), report = randomUUID()
-  await db.insertBundle({ id: bundle, integrity: 'sha512-abc', filename: 'source.map', kind: 'sourcemap', byteSize: 20, uploadedBy: admin, uploadedByLogin: 'user1', repoId: 1 }, 40)
+  await db.insertBundle({ id: bundle, integrity: 'sha512-abc', filename: 'source.map', kind: 'sourcemap', byteSize: 20, uploadedBy: admin, uploadedByLogin: 'user1', repoId: 1, repoDirectory: 'src' }, 40)
   await db.insertReport({ id: report, filename: 'report.json', contentType: 'application/json', byteSize: 30, sha256: 'hash', uploadedBy: admin, uploadedByLogin: 'user1', repoId: 1, repoDirectory: 'src', analyzer: null, visible: true, bundleId: null, bundleIntegrity: 'sha512-abc' }, 41)
   await db.linkReportsToBundle('sha512-abc', bundle, user)
   assert.equal((await db.listReports(user))[0].bundleId, bundle)
@@ -446,7 +447,7 @@ test('Postgres feed snapshots scope catalogs to the session and release read-onl
     sha256: 'hash', uploadedBy: user, repoId: 7, repoDirectory: 'app', visible: true, bundleIntegrity: 'bundle-hash' }, 1)
   const content = await read()
   assert.notEqual(content.revision, scoped.revision)
-  await peer.insertBundle({ id: 'bundle', integrity: 'bundle-hash', filename: 'bundle.stasis', kind: 'stasis', byteSize: 1, uploadedBy: user, repoId: 7 }, 1)
+  await peer.insertBundle({ id: 'bundle', integrity: 'bundle-hash', filename: 'bundle.stasis', kind: 'stasis', byteSize: 1, uploadedBy: user, repoId: 7, repoDirectory: 'app' }, 1)
   const bundled = await read()
   assert.notEqual(bundled.revision, content.revision)
   const beforeRepair = await db.listTeamsForUser(user)
@@ -466,4 +467,27 @@ test('Postgres feed snapshots scope catalogs to the session and release read-onl
   assert.equal((await read()).revision, initial.revision)
   await peer.deleteSession('feed-session')
   assert.equal(await read(), null)
+})
+
+
+test('Postgres bundle directories scope catalogs, access, advisories, public links, and activity', async t => {
+  const { db } = await database(t)
+  await checkBundleLocations(db)
+})
+
+test('Postgres migrates bundle locations to root and preserves directory edits on restart', async t => {
+  const { db, connect } = await database(t)
+  await db.selectRepo({ repoId: 1, fullName: 'org/repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, 1)
+  await db.insertBundle({ id: 'bundle', integrity: 'hash', filename: 'source.map', kind: 'sourcemap', byteSize: 1, repoId: 1, uploadedBy: null }, 1)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_bundle DROP COLUMN repo_directory; DELETE FROM managed_schema_version WHERE version = 7;') }
+  finally { await legacy.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  try {
+    assert.equal((await upgraded.getBundle('bundle')).repoDirectory, '')
+    await upgraded.setBundleRepo('bundle', 1, 'foo/sub')
+  } finally { await upgraded.close() }
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.equal((await reopened.getBundleByIntegrity('hash')).repoDirectory, 'foo/sub') }
+  finally { await reopened.close() }
 })
