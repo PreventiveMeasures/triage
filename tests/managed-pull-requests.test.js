@@ -92,6 +92,53 @@ test('known malformed repository names cannot supply an upstream path', async t 
   assert.equal((await f.lookup([link(123)], () => assert.fail('no upstream call')))[0].error, 'forbidden')
 })
 
+test('team and repository revocation during a later batch discards earlier PR results', async t => {
+  for (const revocation of ['membership', 'repository', 'team']) {
+    await t.test(revocation, async st => {
+      const f = await fixture(st)
+      await f.db.createTeam('other', 'Other team', Date.now())
+      await f.db.setTeamRepo('other', 8, null)
+      await f.db.setTeamMember('other', f.session.userId, { dependencies: false, security: false })
+      const otherUrl = 'https://github.com/OtherOrg/OtherRepo/pull/1'
+      const urls = [link(1), link(2), link(3), link(4), otherUrl, link('0001'), 'invalid']
+      const fetched = []
+      const results = await f.lookup(urls, async url => {
+        fetched.push(url)
+        if (url.includes('/OtherOrg/OtherRepo/')) {
+          assert.equal(fetched.length, 5, 'the first batch already finished')
+          if (revocation === 'membership') await f.db.removeTeamMember('team', f.session.userId)
+          else if (revocation === 'repository') await f.db.removeTeamRepo('team', 7)
+          else await f.db.deleteTeam('team')
+          return Response.json(payload(1, { base: { repo: { full_name: 'OtherOrg/OtherRepo' } } }))
+        }
+        return Response.json(payload(Number(url.split('/').at(-1))))
+      })
+      assert.deepEqual(results, urls.map(url => url === otherUrl ? { url, title: 'Fix 1', status: 'open' }
+        : { url, error: url === 'invalid' ? 'invalid-url' : 'forbidden' }))
+    })
+  }
+})
+
+test('PR authorization uses all remaining team grants after token refresh', async t => {
+  const f = await fixture(t)
+  await f.db.createTeam('second', 'Second team', Date.now())
+  await f.db.setTeamRepo('second', 7, 'other-path')
+  await f.db.setTeamMember('second', f.session.userId, { dependencies: false, security: false })
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
+  const fetchImpl = async url => {
+    if (url === 'https://github.com/login/oauth/access_token') {
+      await f.db.removeTeamMember('team', f.session.userId)
+      return Response.json({ access_token: 'refreshed', expires_in: 3600 })
+    }
+    return Response.json(payload(1))
+  }
+  assert.deepEqual(await f.lookup([link(1)], fetchImpl), [{ url: link(1), title: 'Fix 1', status: 'open' }])
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
+  await f.db.removeTeamMember('second', f.session.userId)
+  await f.db.setTeamMember('team', f.session.userId, { dependencies: false, security: false })
+  assert.deepEqual(await f.lookup([link(1)], fetchImpl), [{ url: link(1), error: 'forbidden' }])
+})
+
 test('missing or expired user credentials never fall back to the installed app; expiring tokens can refresh', async t => {
   const f = await fixture(t)
   await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: null, expiresAt: 1 })
@@ -180,4 +227,12 @@ test('HTTP batch endpoint authenticates, checks CSRF/origin, bounds input, and r
   const revoked = await send({ urls: [link(123)] })
   assert.equal(revoked.status, 403, 'revocation while GitHub responds must discard its result')
   assert.deepEqual(revoked.body, { error: 'forbidden' })
+  await f.db.setUserRole(f.session.userId, 'view')
+  t.mock.method(globalThis, 'fetch', async () => {
+    await f.db.removeTeamMember('team', f.session.userId)
+    return Response.json(payload(123))
+  })
+  const removed = await send({ urls: [link(123)] })
+  assert.equal(removed.status, 200)
+  assert.deepEqual(removed.body, { pullRequests: [{ url: link(123), error: 'forbidden' }] })
 })

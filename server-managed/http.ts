@@ -312,6 +312,8 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   if (typeof userId !== 'string' || !isRole(role)) { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 403, { error: 'cannot-change-own-role' }); return }
   const target = (await deps.db.listUsers()).find(user => user.id === userId)
+  // A caller can hold the body open while their admin access is revoked.
+  if (await readAdminSession(res, deps, cookie) == null) return
   const ok = await deps.db.setUserRole(userId, role)
   if (!ok) { sendJson(res, 404, { error: 'not-found' }); return }
   if (target?.role !== role) await activity(deps, s.user, 'access', `changed ${target?.login ?? userId}'s role to ${role}`)
@@ -1533,6 +1535,7 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
   const name = typeof rawName === 'string' ? rawName.trim() : ''
   if (name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
   const id = randomUUID()
+  if (await readAdminSession(res, deps, cookie) == null) return
   if (!(await deps.db.createTeam(id, name, Date.now()))) { sendJson(res, 409, { error: 'name-taken' }); return }
   await activity(deps, s.user, 'access', `created team ${name}`)
   sendJson(res, 201, await deps.db.getTeam(id))
@@ -1550,6 +1553,7 @@ async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps:
   const name = typeof rawName === 'string' ? rawName.trim() : ''
   if (typeof teamId !== 'string' || name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
   const team = await deps.db.getTeam(teamId)
+  if (await readAdminSession(res, deps, cookie) == null) return
   const result = await deps.db.renameTeam(teamId, name, Date.now())
   if (result === 'not-found') { sendJson(res, 404, { error: 'no-team' }); return }
   if (result === 'name-taken') { sendJson(res, 409, { error: 'name-taken' }); return }
@@ -1566,6 +1570,7 @@ async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps:
   const teamId = (body as { teamId?: unknown } | null)?.teamId
   if (typeof teamId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   const team = await deps.db.getTeam(teamId)
+  if (await readAdminSession(res, deps, cookie) == null) return
   if (!(await deps.db.deleteTeam(teamId))) { sendJson(res, 404, { error: 'no-team' }); return }
   await activity(deps, s.user, 'access', `deleted team ${team?.name ?? teamId}`)
   sendJson(res, 200, { ok: true })
@@ -1589,6 +1594,7 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
   const team = (await deps.db.listTeams()).find(row => row.id === teamId)
   if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
   if (!(await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)) { sendJson(res, 400, { error: 'repo-not-selected' }); return }
+  if (await readAdminSession(res, deps, cookie) == null) return
   await deps.db.setTeamRepo(teamId, repoId, path.path)
   if (!team.repos.some(repo => repo.repoId === repoId && (!repo.path || repo.path === (path.path ?? '')))) {
     await activity(deps, s.user, 'access', `granted team ${team.name} access to ${path.path || '/'}`, { repo: await repositoryName(deps, repoId) })
@@ -1610,6 +1616,7 @@ async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, d
   if (rawPath !== undefined && rawPath !== null && typeof rawPath !== 'string') { sendJson(res, 400, { error: 'bad-path' }); return }
   const path = normalizeTeamPath(rawPath)
   if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
+  if (await readAdminSession(res, deps, cookie) == null) return
   if (!(await deps.db.removeTeamRepo(teamId, repoId, rawPath === undefined ? undefined : path.path))) { sendJson(res, 404, { error: 'not-linked' }); return }
   await activity(deps, s.user, 'access', `removed team ${(await deps.db.getTeam(teamId))?.name ?? teamId}'s access to ${rawPath === undefined ? 'all paths' : path.path || '/'}`, { repo: await repositoryName(deps, repoId) })
   sendJson(res, 200, { ok: true })
@@ -1631,6 +1638,7 @@ async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, de
   if (user == null) { sendJson(res, 404, { error: 'no-user' }); return }
   const permissions = parseTeamUserPermissions(body)
   const member = team.members.find(row => row.userId === userId)
+  if (await readAdminSession(res, deps, cookie) == null) return
   await deps.db.setTeamMember(teamId, userId, permissions)
   if (!member || member.dependencies !== permissions.dependencies || member.security !== permissions.security) {
     await activity(deps, s.user, 'access', `set ${user.login}'s membership in ${team.name} (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`)
@@ -1647,6 +1655,7 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   const teamId = (body as { teamId?: unknown } | null)?.teamId
   const userId = (body as { userId?: unknown } | null)?.userId
   if (typeof teamId !== 'string' || typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (await readAdminSession(res, deps, cookie) == null) return
   if (!(await deps.db.removeTeamMember(teamId, userId))) { sendJson(res, 404, { error: 'not-member' }); return }
   const team = await deps.db.getTeam(teamId)
   const user = (await deps.db.listUserOptions()).find(row => row.id === userId)
