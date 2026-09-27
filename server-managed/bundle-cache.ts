@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
 import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, parseBundleContents } from '../common/bundle-metadata.js'
+import { bundleReasons } from '../common/bundle-reasons.js'
 import { bundlePackageVersions } from '../common/bundle-sources.js'
 import { decodeUtf8 } from '../common/utf8.js'
 import type { OpenedBlob } from './blob-store.ts'
@@ -36,20 +37,38 @@ export interface BundleCacheStorage {
 }
 
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
-const packagesFilename = 'v1-package-versions.json'
+const packagesFilename = 'v2-package-versions.json'
 
-// Keep this derivative uncompressed and bounded. A persisted null records an
-// inventory too large for npm without making other bundle metadata unavailable.
+// All scopes share one bounded derivative. Never decode full bundle metadata
+// on advisory requests, including when selecting a reason. Persist null when
+// the combined inventory exceeds the budget, without disabling metadata.
 function encodePackageInventory(details: BundleDetails): Buffer {
   const parts: string[] = []
-  let size = 2 // braces
-  for (const [name, versions] of bundlePackageVersions(details)) {
-    const part = `${JSON.stringify(name)}:${JSON.stringify([...versions].toSorted())}`
-    size += Buffer.byteLength(part) + (parts.length > 0 ? 1 : 0)
-    if (size > MAX_PACKAGE_INVENTORY_BYTES) return Buffer.from('null')
+  let size = 0
+  function append(part: string) {
+    size += Buffer.byteLength(part)
+    if (size > MAX_PACKAGE_INVENTORY_BYTES) return false
     parts.push(part)
+    return true
   }
-  return Buffer.from(`{${parts.join(',')}}`)
+  function inventory(paths: Set<string> | null) {
+    if (!append('{')) return false
+    let first = true
+    for (const [name, versions] of bundlePackageVersions(details, paths)) {
+      if (!append(`${first ? '' : ','}${JSON.stringify(name)}:${JSON.stringify([...versions].toSorted())}`)) return false
+      first = false
+    }
+    return append('}')
+  }
+  append('{"all":')
+  if (!inventory(null) || !append(',"reasons":{')) return Buffer.from('null')
+  let first = true
+  for (const [reason, paths] of bundleReasons(details)) {
+    if (!append(`${first ? '' : ','}${JSON.stringify(reason)}:`) || !inventory(paths)) return Buffer.from('null')
+    first = false
+  }
+  if (!append('}}')) return Buffer.from('null')
+  return Buffer.from(parts.join(''))
 }
 
 export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
@@ -94,7 +113,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       await ensure(record)
       return storage.open(record.id, filename)
     },
-    async packageVersions(record: ManagedBundle): Promise<Record<string, string[]> | null> {
+    async packageVersions(record: ManagedBundle, reason = ''): Promise<Record<string, string[]> | null | undefined> {
       if (record.kind !== 'stasis') return {}
       await ensure(record)
       const cached = await storage.open(record.id, packagesFilename)
@@ -107,7 +126,9 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
           if (size > MAX_PACKAGE_INVENTORY_BYTES) return null
           chunks.push(Buffer.from(chunk))
         }
-        return JSON.parse(decodeUtf8(Buffer.concat(chunks)))
+        const inventory = JSON.parse(decodeUtf8(Buffer.concat(chunks)))
+        if (inventory === null) return null
+        return reason ? (Object.hasOwn(inventory.reasons, reason) ? inventory.reasons[reason] : undefined) : inventory.all
       } finally { cached.stream.destroy() }
     },
     async delete(id: string) {

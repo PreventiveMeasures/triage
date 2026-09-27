@@ -7,6 +7,8 @@ import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
+import { bundleReasons } from '../../common/bundle-reasons.js'
+import './bundle-scope-selector.js'
 
 const localCache = new Map()
 let managedCache = new Map(), managedScope = []
@@ -20,7 +22,12 @@ function advisoryCache(details) {
   }
   return managedCache
 }
-function cacheKey(details) { return details.managedId ?? details.integrity }
+const scopes = new WeakMap()
+function advisoryScope(details) {
+  if (!scopes.has(details)) scopes.set(details, { reasons: bundleReasons(details), selected: '' })
+  return scopes.get(details)
+}
+function cacheKey(details) { return JSON.stringify([details.managedId ?? details.integrity, advisoryScope(details).selected]) }
 
 // Local/e2e bundles are private from the server. Ask before sending their
 // package inventory through the proxy to npm. Managed bundles are already
@@ -119,12 +126,13 @@ export async function ensureBundleAdvisories(details, renderFn) {
   if (!details?.integrity || (!details.managedId && !hasConsent())) return
   const cache = advisoryCache(details), key = cacheKey(details)
   if (cache.has(key)) return
-  let query = details.managedId ? new Map() : bundlePackageVersions(details)
+  const { reasons, selected } = advisoryScope(details)
+  let query = details.managedId ? new Map() : bundlePackageVersions(details, reasons.get(selected) ?? null)
   cache.set(key, { state: 'loading', query })
   try {
     let json
     if (details.managedId) {
-      const result = await fetchBundleAdvisories(details.managedId)
+      const result = await fetchBundleAdvisories(details.managedId, undefined, selected)
       query = new Map(Object.entries(result.packages).map(([name, versions]) => [name, new Set(versions)]))
       json = result.advisories
     } else {
@@ -214,7 +222,24 @@ function renderConsentPrompt() {
 //   * Data     — render one section per package with at least
 //                one advisory, sorted by severity desc then by
 //                package name (or a one-line summary when none)
-export function renderBundleAdvisoriesTab(details) {
+export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
+  const scope = details ? advisoryScope(details) : null
+  const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
+  return html`<div class="bundle-advisories-panel">
+    ${reasons.length > 0 ? html`<div class="bundle-advisories-scopes"><bundle-scope-selector
+      .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
+      @scope-change=${event => {
+        const reason = event.detail.value.replace(/^reason:/u, '')
+        scope.selected = scope.reasons.has(reason) ? reason : ''
+        const loading = ensureBundleAdvisories(details, renderFn)
+        renderFn()
+        return loading
+      }}></bundle-scope-selector></div>` : nothing}
+    ${renderAdvisoriesBody(details)}
+  </div>`
+}
+
+function renderAdvisoriesBody(details) {
   if (!details) return html`<div class="bundle-advisories-empty">Bundle not loaded yet.</div>`
   if (details.kind !== 'stasis' || (!details.managedId && !details.bundle)) {
     return html`<div class="bundle-advisories-empty">Advisories are only available for stasis bundles.</div>`
@@ -239,7 +264,7 @@ export function renderBundleAdvisoriesTab(details) {
   if (packagesWithAdvisories === 0) {
     return html`<div class="bundle-advisories">
       <div class="bundle-advisories-summary">
-        No advisories for the ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'} in this bundle.
+        No advisories for the ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
       </div>
     </div>`
   }

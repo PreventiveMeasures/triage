@@ -2,7 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { scanScopeOptions } from '../scan/scopes.js'
 
-// Full scope control shared by Scan and Compare. Keep IDs intact: presentation
+// Full scope control shared by Scan, Compare, and Advisories. Keep IDs intact: presentation
 // recognizes standard scopes, while custom bundle scopes remain selectable.
 export class BundleScopeSelector extends LitElement {
   static properties = { reasons: { attribute: false }, value: { attribute: false }, label: { type: String } }

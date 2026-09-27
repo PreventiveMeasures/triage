@@ -213,7 +213,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v1-package-versions.json', 'v2-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br', 'v2-package-versions.json'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -270,7 +270,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v1-package-versions.json', 'v2-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-package-versions.json'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -497,8 +497,8 @@ test('advisories use cached inventory, handle upstream failures, and reject unsu
 test('package inventories persist separately; concurrent cache upgrades build once', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
   await h.cache.prebuild(record)
-  const inventory = join(h.cacheDir, record.id, 'v1-package-versions.json')
-  assert.deepEqual(JSON.parse(await readFile(inventory, 'utf8')), { dep: ['2.0.0'] })
+  const inventory = join(h.cacheDir, record.id, 'v2-package-versions.json')
+  assert.deepEqual(JSON.parse(await readFile(inventory, 'utf8')), { all: { dep: ['2.0.0'] }, reasons: {} })
   // A metadata-only cache is upgraded once, even with simultaneous requests.
   await rm(inventory)
   const gate = Promise.withResolvers(), read = h.store.get, started = Promise.withResolvers()
@@ -520,7 +520,7 @@ test('oversized inventories persist a rejection marker and return 413 without co
   const large = stasis.replace('2.0.0', '1'.repeat(MAX_PACKAGE_INVENTORY_BYTES))
   const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(large)) })
   await h.cache.prebuild(record)
-  assert.equal(await readFile(join(h.cacheDir, record.id, 'v1-package-versions.json'), 'utf8'), 'null')
+  assert.equal(await readFile(join(h.cacheDir, record.id, 'v2-package-versions.json'), 'utf8'), 'null')
   t.mock.method(globalThis, 'fetch', () => { throw new Error('must reject before contacting npm') })
   t.mock.method(h.store, 'get', () => { throw new Error('must not rebuild rejected inventories') })
   const response = await h.send(`/api/bundles/${record.id}/advisories`, 'viewer')
@@ -540,7 +540,7 @@ for (const reportedSize of [MAX_PACKAGE_INVENTORY_BYTES + 1, null, 1]) {
     const cache = createBundleCache({
       exists: () => Promise.resolve(true),
       open: (_id, name) => {
-        assert.equal(name, 'v1-package-versions.json')
+        assert.equal(name, 'v2-package-versions.json')
         return Promise.resolve({ size: reportedSize, stream })
       },
     }, {}, { get() { throw new Error('must use inventory') } })
@@ -550,3 +550,45 @@ for (const reportedSize of [MAX_PACKAGE_INVENTORY_BYTES + 1, null, 1]) {
     if (reportedSize > MAX_PACKAGE_INVENTORY_BYTES) assert.equal(reads, 0)
   })
 }
+
+
+test('advisory reasons select exact package versions from persisted inventory', async t => {
+  const h = await setup(t)
+  const bundled = new Bundle({
+    modules: new Map([
+      ['.', { name: 'app', version: '1', files: { 'app.js': 'app' } }],
+      ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'one' } }],
+      ['node_modules/tool/node_modules/dep', { name: 'dep', version: '2.0.0', files: { 'index.js': 'two' } }],
+    ]),
+    reason: { metro: ['node_modules/dep/index.js'], run: ['node_modules/tool/node_modules/dep/index.js'], add: ['app.js'] },
+  }).serialize()
+  const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(bundled)) })
+  await h.cache.prebuild(record)
+  // Scope switches must not read full bundle contents or decode full metadata.
+  t.mock.method(h.store, 'get', () => { throw new Error('must use bounded inventory') })
+  await writeFile(join(h.cacheDir, record.id, 'v2-metadata.json.br'), 'not compressed metadata')
+  await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: true })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (_url, init) => {
+    const packages = JSON.parse(Buffer.from(init.body))
+    calls.push(packages)
+    return Promise.resolve(Response.json({ dep: [{ title: packages.dep.join(', '), severity: 'high' }] }))
+  })
+  const path = `/api/bundles/${record.id}/advisories?team=${h.team}`
+  for (const [reason, versions] of [['', ['1.0.0', '2.0.0']], ['metro', ['1.0.0']], ['run', ['2.0.0']]]) {
+    const response = await h.send(`${path}&reason=${reason}`, 'viewer')
+    assert.equal(response.status, 200)
+    assert.deepEqual(response.json().packages, { dep: versions })
+    assert.equal(response.json().advisories.dep[0].title, versions.join(', '))
+    assert.deepEqual(calls.at(-1), { dep: versions })
+  }
+  assert.deepEqual((await h.send(`${path}&reason=add`, 'viewer')).json(), { packages: {}, advisories: {} })
+  for (const reason of ['missing', '__proto__', 'constructor']) {
+    const response = await h.send(`${path}&reason=${reason}`, 'viewer')
+    assert.equal(response.status, 400)
+    assert.deepEqual(response.json(), { error: 'unknown-reason' })
+  }
+  assert.equal(calls.length, 3, 'empty and unknown scopes never contact npm')
+  await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
+  assert.equal((await h.send(`${path}&reason=metro`, 'viewer')).status, 403)
+})

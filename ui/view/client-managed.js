@@ -94,6 +94,6 @@ export async function fetchBundleContents(id, options) {
 
 export async function fetchTeamReports(teamId) { return (await loadManagedBundle()).fetchTeamReports(teamId) }
 
-export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam) {
-  return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId)
+export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '') {
+  return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId, reason)
 }

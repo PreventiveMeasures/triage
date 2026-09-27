@@ -2842,7 +2842,19 @@ body.report-fullscreen {
    package. Severity chips reuse the same palette as the rest of
    the report so a "critical" advisory reads the same red as a
    critical finding. */
-.bundles-slide-body > .bundle-advisories {
+.bundle-advisories-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.bundle-advisories-scopes {
+  display: flex;
+  justify-content: flex-end;
+  padding: .5rem .75rem;
+}
+.bundle-advisories-panel > .bundle-advisories {
   padding: .75rem;
   overflow-y: auto;
   overscroll-behavior: none;
@@ -2852,7 +2864,7 @@ body.report-fullscreen {
 /* First-visit consent prompt — centred card with explanation,
    primary Confirm button, and a trailing "preference is saved"
    note. Replaces the data body until the user opts in. */
-.bundles-slide-body > .bundle-advisories-consent {
+.bundle-advisories-panel > .bundle-advisories-consent {
   flex: 1;
   display: flex;
   align-items: center;

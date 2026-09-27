@@ -289,8 +289,9 @@ Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
 
 `GET /api/bundles/:id/advisories` looks up published npm advisories using the
-stored bundle's dependency names and versions. A separate package inventory is
-persisted during the shared metadata build; advisory requests buffer at most
+stored bundle's dependency names and versions. Optional `?reason=<name>` limits
+the lookup to package versions with files in that bundle reason; unknown reasons
+return 400. A separate package inventory, including the named scopes, is persisted during the shared metadata build; advisory requests buffer at most
 1 MiB before parsing, without decompressing the full file inventory. Oversized package
 inventories return 413 without contacting npm. The API accepts no bundle body and
 returns `{ packages, advisories }`, without source contents or scan findings.
