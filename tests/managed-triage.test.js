@@ -8,6 +8,7 @@ import { bucketOf, patchEntry, setEntry } from '../client/triage-entry.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_TEXT } from '../common/managed/triage.ts'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
+import { watchTeamFeed } from '../client/managed/team-feed.js'
 
 const state = {
   serverMode: 'managed',
@@ -524,4 +525,51 @@ test('feed refresh preserves failed pending writes and rejects responses after n
   response.resolve({ x: { color: 'green' } })
   assert.equal(await refresh, false)
   assert.equal(state.triage.get('x').color, 'red')
+})
+
+test('the feed watchdog escapes a stalled triage POST without cancelling or replaying the write', async t => {
+  await open('B', ['x', 'y'])
+  const upload = Promise.withResolvers()
+  pushStatus = () => upload.promise
+  await edit('x', { color: 'red' })
+  await drain()
+  const connections = [], controller = new AbortController()
+  let catalogs = 0
+  t.mock.method(globalThis, 'fetch', (_url, { signal }) => {
+    connections.push(signal)
+    return Promise.resolve(new Response(new ReadableStream({
+      start(stream) {
+        stream.enqueue(new TextEncoder().encode('event: teams\ndata: {}\n\nevent: triage\ndata: {}\n\n'))
+        signal.addEventListener('abort', () => stream.error(signal.reason), { once: true })
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } }))
+  })
+  const done = watchTeamFeed('team', { signal: controller.signal,
+    onTeams: () => { catalogs++; return true },
+    onUpdate: signal => refreshManagedReportTriage('B', { signal }),
+    onClose() { assert.fail('a stalled write must not revoke the subscription') },
+  })
+  t.after(async () => { controller.abort(); upload.resolve(200); await done; await settle() })
+  await settle()
+  assert.equal(catalogs, 1)
+  assert.deepEqual(calls, [{ fetch: 'B' }, push('B', { x: { color: 'red' } })], 'the feed waits before reading over a pending write')
+  mock.timers.tick(45000); await settle()
+  mock.timers.tick(1000); await settle()
+  assert.equal(connections[0].aborted, true)
+  assert.equal(connections.length, 2, 'the feed reconnects while the POST is still pending')
+  assert.equal(catalogs, 2, 'catalog events resume without navigation or completing the write')
+  assert.equal(controller.signal.aborted, false)
+  assert.equal(pushes().length, 1, 'read cancellation neither drops nor replays the pending POST')
+  assert.equal(state.triage.get('x').color, 'red')
+
+  serverEntries = { B: { x: { color: 'red' }, y: { color: 'green' } } }
+  pushStatus = 200
+  upload.resolve(200)
+  await settle()
+  assert.equal(calls.filter(call => call.fetch).length, 2, 'only the current connection reads after the POST lands')
+  assert.equal(state.triage.get('x').color, 'red')
+  assert.equal(state.triage.get('y').color, 'green', 'the reconnected feed resumes triage updates')
+  await edit('x', { color: 'blue' })
+  await drain()
+  assert.deepEqual(pushes(), [push('B', { x: { color: 'red' } }), push('B', { x: { color: 'blue' } })])
 })
