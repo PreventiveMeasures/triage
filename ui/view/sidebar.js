@@ -481,6 +481,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   const modeAtStart = clientModeLabel()
   updateManagedLanding({
     serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams,
+    sessionPending: managedSessionPending,
     alternateMode: isCombinedServerMode(state.serverModeConfig) ? 'e2e' : 'local', onSwitchMode: switchClientMode,
   })
   refreshScanNavigation()
@@ -1779,6 +1780,7 @@ let deferredServerInfo = null
 let clientModeGeneration = 0
 let managedSessionRequest = 0
 let managedSessionRefresh = null
+let managedSessionPending = true
 let managedBase = null
 
 async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
@@ -1906,6 +1908,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
 // and repaint the auth control. Only reached in managed mode.
 function refreshManagedSession() {
   if (managedSessionRefresh?.generation === clientModeGeneration) return managedSessionRefresh.promise
+  managedSessionPending = true
   const refresh = { generation: clientModeGeneration, promise: null }
   managedSessionRefresh = refresh
   refresh.promise = revalidateManagedSession().finally(() => {
@@ -1923,6 +1926,8 @@ async function revalidateManagedSession() {
     const session = await managedProbeSession({ fallback: previous })
     if (!isCurrent()) return
     state.managedSession = session
+    managedSessionPending = false
+    renderSidebar()
     setManagedAppSession(session)
     if (previous && (previous.id !== session?.id || previous.role !== session?.role)) {
       state.managedTeams = []
@@ -1950,6 +1955,11 @@ async function revalidateManagedSession() {
     } else if (session) await managedHistory.start(restoreManagedPage)
   } catch (err) {
     console.warn('managed: session probe failed:', err)
+  } finally {
+    if (isCurrent() && managedSessionPending) {
+      managedSessionPending = false
+      renderSidebar()
+    }
   }
 }
 

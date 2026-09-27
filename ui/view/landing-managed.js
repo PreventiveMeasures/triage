@@ -3,18 +3,36 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { MANAGE_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 
-export function updateManagedLanding({ serverMode, session, teams = [], alternateMode = 'local', onSwitchMode }) {
+let pendingLogin = null
+
+export function updateManagedLanding(options) {
+  const { serverMode, session, sessionPending = false, teams = [], alternateMode = 'local', onSwitchMode } = options
   const landing = document.querySelector('#drop-zone')
   const slot = landing?.querySelector('.managed-landing')
   if (!slot) return
   const managed = serverMode === 'managed'
   const local = serverMode === 'local'
+  // Keep quick session checks from painting a logged-out page. Repaints share
+  // the same deadline; resolving the session or leaving managed mode cancels it.
+  const waiting = managed && session == null && sessionPending
+  if (!waiting) {
+    clearTimeout(pendingLogin?.timer)
+    pendingLogin = null
+  } else if (pendingLogin) pendingLogin.options = options
+  else {
+    pendingLogin = { options, elapsed: false, timer: setTimeout(() => {
+      pendingLogin.elapsed = true
+      updateManagedLanding(pendingLogin.options)
+    }, 1000) }
+  }
+  const deferLogin = waiting && !pendingLogin.elapsed
   landing.dataset.serverMode = managed ? 'managed' : 'local'
-  landing.setAttribute('aria-label', managed ? session?.role === 'none' ? 'No workspace access' : session ? 'Team findings' : 'Log in' : 'Drop reports here')
+  landing.setAttribute('aria-label', managed ? session?.role === 'none' ? 'No workspace access' : session ? 'Team findings' : deferLogin ? 'Loading session' : 'Log in' : 'Drop reports here')
   const localCopy = landing.querySelector('.drop-local-copy')
   if (localCopy) localCopy.textContent = local ? 'Review locally in your browser.' : 'Review locally in your browser. Sync across devices when you need it.'
-  if (!managed) { render(nothing, slot); return }
+  if (!managed || deferLogin) { render(nothing, slot); return }
   const canManage = session?.role === 'admin' || session?.role === 'manage'
+  const nonemptyTeams = teams.filter(team => team.reports.length > 0 || team.bundles?.length > 0)
   render(session == null ? html`
     <section class="managed-login" aria-labelledby="managed-login-title">
       <h1 id="managed-login-title">Log in to DeepView</h1>
@@ -37,13 +55,13 @@ export function updateManagedLanding({ serverMode, session, teams = [], alternat
     <div class="managed-landing-hero">
       <p class="drop-eyebrow">Your security workspace</p>
       <h1>Your team's findings, in focus.</h1>
-      <p class="drop-prompt-intro">${teams.length > 0
+      <p class="drop-prompt-intro">${nonemptyTeams.length > 0
         ? 'Review the security findings shared with your account and turn them into clear next steps.'
         : 'Reports shared with your teams will appear here.'}</p>
     </div>
-    ${teams.length > 0 ? html`
+    ${nonemptyTeams.length > 0 ? html`
       <nav class="managed-team-list" aria-label="Teams">
-        ${repeat(teams, (team) => team.id, (team) => html`
+        ${repeat(nonemptyTeams, (team) => team.id, (team) => html`
           <button type="button" class="managed-team-button" data-managed-team=${team.id}>
             <span class="managed-team-icon" aria-hidden="true">${unsafeHTML(WORKSPACE_ICON_SVG)}</span>
             <span class="managed-team-copy">
