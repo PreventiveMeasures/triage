@@ -180,6 +180,28 @@ for (const status of [204, 404]) {
     assert.equal((await fetchReportSources('report/id', 'team')).sources.get('src/main.js'), 'main source')
     assert.equal(reads, 2)
   })
+
+  test(`a repaired report link clears cached ${status} sources with an unchanged bundle catalog`, async t => {
+    let available = false, reads = 0
+    t.mock.method(globalThis, 'fetch', () => {
+      reads++
+      return Promise.resolve(available ? Response.json(payload) : new Response(null, { status }))
+    })
+    managedAppState.setReportCatalog(sourceCatalog([sourceBundle]))
+    for (const team of ['team', undefined]) assert.equal(await fetchReportSources('report/id', team), null)
+    available = true
+    const repaired = sourceCatalog([sourceBundle])
+    repaired[0].reports[0].cacheKey = 'linked'
+    const changed = managedAppState.setReportCatalog(repaired)
+    assert.ok(changed.has('team:team'), 'reload the focused team')
+    assert.ok(changed.has('report/id'), 'reload the focused report')
+    assert.equal(changed.has('bundle:bundle'), false)
+    for (const team of ['team', undefined]) {
+      assert.equal(readReportSources('report/id', team), undefined)
+      assert.equal((await fetchReportSources('report/id', team)).sources.get('src/main.js'), 'main source')
+    }
+    assert.equal(reads, 4)
+  })
 }
 
 test('bundle removal evicts scoped and privileged source caches and cancels stale reads', async () => {

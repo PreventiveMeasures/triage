@@ -232,6 +232,24 @@ test('one feed covers own memberships and all member teams, but only focused tri
   assert.ok(res.frames.every(frame => /^event: (teams|triage)\ndata: \{\}\n\n$/u.test(frame)))
 })
 
+test('repairing a report link to an existing bundle notifies the feed across instances', async t => {
+  const h = await fixture(t), { writer, session } = h
+  await writer.insertBundle({ id: 'bundle', integrity: 'bundle-hash', filename: 'bundle.stasis', kind: 'stasis',
+    byteSize: 1, uploadedBy: session.userId, repoId: 1 }, 1)
+  await writer.insertReport({ id: 'unlinked', filename: 'unlinked.json', contentType: 'application/json', byteSize: 1,
+    sha256: 'unlinked-hash', uploadedBy: session.userId, repoId: 1, visible: true, bundleIntegrity: 'bundle-hash' }, 1)
+  const before = await h.db.listTeamsForUser(session.userId)
+  const { res } = await h.userFeed()
+  await writer.linkReportsToBundle('bundle-hash', 'bundle', session.userId)
+  await until(() => teamEvents(res) === 2)
+  const after = await h.db.listTeamsForUser(session.userId)
+  assert.deepEqual(after[0].bundles, before[0].bundles)
+  assert.notEqual(after[0].reports.find(r => r.id === 'unlinked').cacheKey, before[0].reports.find(r => r.id === 'unlinked').cacheKey)
+  await writer.linkReportsToBundle('bundle-hash', 'bundle', session.userId)
+  await delay(40)
+  assert.equal(teamEvents(res), 2, 'an already repaired link does not notify again')
+})
+
 test('catalog-only feed works with no memberships and observes empty-team grants and scopes', async t => {
   const h = await fixture(t)
   await h.writer.removeTeamMember('team', h.session.userId)

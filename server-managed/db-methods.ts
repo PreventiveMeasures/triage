@@ -721,7 +721,7 @@ function prepareStatements(db: ManagedSql) {
     // shows under every team whose repo it's attached to). Newest first.
     selectUserTeamReportsStmt: db.prepare(
       `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.uploaded_at,
-              r.sha256 AS sha256, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+              r.sha256 AS sha256, r.bundle_id AS bundleId, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
               tu.view_dependencies AS dependencies, tu.view_security AS security,
               (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
          FROM managed_team_user tu
@@ -1153,12 +1153,12 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       const scopes = await stmts.selectUserTeamScopesStmt.all(userId) as { teamId: string; repoId: number; path: string; fullName: string }[]
       const reportsByTeam = new Map<string, UserTeamReport[]>()
       for (const r of (await selectUserTeamReportsStmt.all(userId)) as {
-        teamId: string; id: string; slug: string; filename: string; sha256: string; repoId: number
+        teamId: string; id: string; slug: string; filename: string; sha256: string; bundleId: string | null; repoId: number
         repoDirectory: string; repoFullName: string | null; dependencies: number; security: number; role: string
       }[]) {
         const list = reportsByTeam.get(r.teamId) ?? []
         const cacheKey = createHash('sha256').update(JSON.stringify([
-          r.sha256, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
+          r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
         ])).digest('base64url')
         list.push({ id: r.id, slug: r.slug, filename: r.filename, cacheKey })
         reportsByTeam.set(r.teamId, list)
