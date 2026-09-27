@@ -382,6 +382,10 @@ sidebar-view-button[hidden] { display: none !important; }
 }
 .file-item.team-item { display: flex; }
 .file-item.team-item button.file-name { flex: 1; min-width: 0; }
+.file-item.team-item:focus-within .workspace-share { display: grid; }
+@media (hover: none) {
+  .file-item.team-item .workspace-share { display: grid; }
+}
 
 /* Leave button reads as the destructive-but-local action — picks
    up the same critical hue as the bottom-of-sidebar "Delete

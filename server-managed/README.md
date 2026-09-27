@@ -48,7 +48,8 @@ deployments retain the E2E service's separate authentication and permissions.
 
 Set `DEEPVIEW_ALLOW_SHARE=1` to let a manager share a team they belong to, or
 an administrator share any team, using the sidebar's **Share public link** button.
-The sidebar button appears on hover. Sharing is
+The sidebar button appears on hover or keyboard focus and remains visible on
+devices without hover. Sharing is
 disabled when unset or set to any other value, including for existing links in
 the database. The dialog creates a read-only link and can
 revoke all public links for that workspace. Anyone holding a link can open it
