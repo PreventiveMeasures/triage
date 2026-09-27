@@ -15,7 +15,7 @@
 
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
+import { setTimeout as delay, setImmediate as nextTurn } from 'node:timers/promises'
 
 await import('./_polyfills.js')
 
@@ -119,6 +119,17 @@ function makeTransport(opts = {}) {
     pongTimeoutMs: opts.pongTimeoutMs ?? 30,
     ...(opts.authResolver === undefined ? {} : { authResolver: opts.authResolver }),
   })
+}
+
+// Keep stream/microtask processing real while advancing transport deadlines.
+function mockTime(ctx) {
+  ctx.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  ctx.mock.method(Math, 'random', () => 1 - Number.EPSILON)
+  return async ms => {
+    await nextTurn()
+    ctx.mock.timers.tick(ms)
+    await nextTurn()
+  }
 }
 
 // Helper to capture consumer callbacks into arrays the test can
@@ -457,7 +468,8 @@ describe('socket-transport: reconnect', () => {
     } finally { t.close() }
   })
 
-  it('server-initiated close while acquired triggers reconnect after the initial delay', async () => {
+  it('server-initiated close while acquired triggers reconnect after the initial delay', async ctx => {
+    const advance = mockTime(ctx)
     const t = makeTransport()
     t.acquire()
     const wsA = FakeWebSocket.last
@@ -465,9 +477,8 @@ describe('socket-transport: reconnect', () => {
     // Server drops the connection.
     wsA.simulateClose()
     assert.equal(FakeWebSocket.instances.length, 1, 'no immediate reconnect')
-    // INITIAL_RECONNECT_DELAY is 1000ms in the transport. Wait long
-    // enough for the timer to fire + a turn for the new constructor.
-    await delay(1100)
+    // Advance the initial reconnect deadline after pinning its jitter.
+    await advance(1000)
     assert.equal(FakeWebSocket.instances.length, 2, 'reconnect fired')
     t.close()
   })
@@ -476,104 +487,69 @@ describe('socket-transport: reconnect', () => {
 // ─────────── heartbeat ───────────
 
 describe('socket-transport: heartbeat', () => {
-  // Auto-respond to every newly-observed ping frame on the current
-  // socket with a `pong` so the heartbeat loop keeps cycling. Without
-  // this, the `if (pongTimeoutId) return` re-entry guard in
-  // startHeartbeat means only the first ping ever fires before the
-  // pong-timeout closes the socket.
-  function autoRespondPongs(getWs) {
-    let lastSeen = 0
-    const id = setInterval(() => {
-      const ws = getWs()
-      if (!ws || ws.closed) return
-      while (lastSeen < ws.frames.length) {
-        const frame = ws.frames[lastSeen++]
-        let parsed
-        try { parsed = JSON.parse(frame) } catch { continue }
-        if (parsed?.type === 'ping') ws.simulateMessage({ type: 'pong' })
-      }
-    }, 5)
-    return () => clearInterval(id)
-  }
-
-  it('sends ping at the configured interval while open (with auto-pong)', async () => {
+  it('sends ping at the configured interval while open (with auto-pong)', async ctx => {
+    const advance = mockTime(ctx)
     const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 100 })
-    t.acquire()
-    const wsA = FakeWebSocket.last
-    wsA.handshake('n0')
-    const stop = autoRespondPongs(() => wsA)
-    try {
-      await delay(120)
-      const pings = wsA.frames.map(JSON.parse).filter((m) => m.type === 'ping')
-      assert.ok(pings.length >= 2, `expected ≥2 pings, got ${pings.length}`)
-    } finally {
-      stop()
-      t.close()
-    }
-  })
-
-  it('pong arrival cancels the pong-timeout', async () => {
-    // Long pong-timeout (1s) so we can prove the cancellation
-    // observationally: after a pong lands, the next ping should fire
-    // (proving the first pong-timeout was cleared, otherwise the
-    // `if (pongTimeoutId) return` re-entry guard would skip it).
-    const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 1_000 })
     t.acquire()
     const ws = FakeWebSocket.last
     ws.handshake('n0')
     try {
-      await delay(50)  // first ping fires at t=30, pong-timeout armed (fires at t=1030)
-      const pingCount = ws.frames.map(JSON.parse).filter((m) => m.type === 'ping').length
-      assert.equal(pingCount, 1, 'one ping fired')
-      ws.simulateMessage({ type: 'pong' })  // pong-timeout cancelled
-      await delay(80)  // well past the next ping interval; if pong cancelled, more pings fire
-      const after = ws.frames.map(JSON.parse).filter((m) => m.type === 'ping').length
-      assert.ok(after > pingCount, `pong cancelled timeout → next ping fired (was ${pingCount}, now ${after})`)
-      assert.equal(ws.closed, false, 'socket still alive')
-    } finally {
-      t.close()
-    }
+      for (let count = 1; count <= 3; count++) {
+        await advance(29)
+        assert.equal(ws.frames.map(JSON.parse).filter(m => m.type === 'ping').length, count - 1)
+        await advance(1)
+        assert.equal(ws.frames.map(JSON.parse).filter(m => m.type === 'ping').length, count)
+        ws.simulateMessage({ type: 'pong' })
+      }
+    } finally { t.close() }
   })
 
-  it('missed pong tears the socket down', async () => {
-    const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 20 })
-    t.acquire()
-    FakeWebSocket.last.handshake('n0')
-    try {
-      // Wait long enough for ping + pong-timeout to fire (no pong sent).
-      await delay(80)
-      assert.equal(FakeWebSocket.last.closed, true)
-    } finally {
-      t.close()
-    }
-  })
-
-  it('setHeartbeatTimings(0) disables pings AND clears any in-flight pong-timeout', async () => {
-    // Pong-timeout shorter than the assertion wait so a regression
-    // that fails to clear it would actually close the socket within
-    // the test window — without this, the original 1s timeout was
-    // never going to fire inside the 80ms wait anyway and the
-    // assertion was a green-only signal.
+  it('pong arrival cancels the pong-timeout', async ctx => {
+    const advance = mockTime(ctx)
     const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 40 })
     t.acquire()
-    const wsA = FakeWebSocket.last
-    wsA.handshake('n0')
+    const ws = FakeWebSocket.last
+    ws.handshake('n0')
     try {
-      await delay(35)  // first ping at t=30 → pong-timeout armed (fires at t=70)
-      const beforeCount = wsA.frames.length
+      await advance(30)
+      assert.equal(ws.frames.map(JSON.parse).filter(m => m.type === 'ping').length, 1)
+      ws.simulateMessage({ type: 'pong' })
+      await advance(30)
+      assert.equal(ws.frames.map(JSON.parse).filter(m => m.type === 'ping').length, 2)
+      await advance(11)
+      assert.equal(ws.closed, false, 'first pong deadline was cancelled; second is not due yet')
+    } finally { t.close() }
+  })
+
+  it('missed pong tears the socket down', async ctx => {
+    const advance = mockTime(ctx)
+    const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 20 })
+    t.acquire()
+    const ws = FakeWebSocket.last
+    ws.handshake('n0')
+    try {
+      await advance(30)
+      await advance(19)
+      assert.equal(ws.closed, false)
+      await advance(1)
+      assert.equal(ws.closed, true)
+    } finally { t.close() }
+  })
+
+  it('setHeartbeatTimings(0) disables pings AND clears any in-flight pong-timeout', async ctx => {
+    const advance = mockTime(ctx)
+    const t = makeTransport({ pingIntervalMs: 30, pongTimeoutMs: 40 })
+    t.acquire()
+    const ws = FakeWebSocket.last
+    ws.handshake('n0')
+    try {
+      await advance(30)
+      const beforeCount = ws.frames.length
       t.setHeartbeatTimings({ pingMs: 0 })
-      // Internally `startHeartbeat()` runs (because pingIntervalId
-      // was set), which calls `stopHeartbeat()` first — that clears
-      // BOTH the interval and the in-flight pong-timeout — then
-      // early-returns on `pingIntervalMs <= 0`. The wait below
-      // outlives the original pong-timeout, so a regression that
-      // failed to clear pongTimeoutId would close the socket.
-      await delay(80)
-      assert.equal(wsA.frames.length, beforeCount, 'no new pings sent after disable')
-      assert.equal(wsA.closed, false, 'in-flight pong-timeout was cleared (socket still alive past original deadline)')
-    } finally {
-      t.close()
-    }
+      await advance(80)
+      assert.equal(ws.frames.length, beforeCount, 'no new pings after disable')
+      assert.equal(ws.closed, false, 'in-flight pong deadline was cancelled')
+    } finally { t.close() }
   })
 })
 
@@ -585,7 +561,8 @@ describe('socket-transport: SSE heartbeat', () => {
   // tick (the server self-keepalives instead). Drive the SSE fallback by
   // making the WebSocket constructor throw, then serve the SSE downstream
   // from a mocked fetch, and assert no `{type:'ping'}` is ever POSTed.
-  it('sends NO ping in SSE mode (server self-keepalives)', async () => {
+  it('sends NO ping in SSE mode (server self-keepalives)', async ctx => {
+    const advance = mockTime(ctx)
     const realFetch = globalThis.fetch
     const realWS = globalThis.WebSocket
     const posts = []
@@ -608,7 +585,7 @@ describe('socket-transport: SSE heartbeat', () => {
     const t = makeTransport({ pingIntervalMs: 20, pongTimeoutMs: 100 })
     const h = t.acquire()
     try {
-      await delay(140)
+      await advance(140)
       assert.equal(t.isSse(), true, 'transport fell back to SSE')
       const pingPosts = posts.filter((b) => Array.isArray(b.frames) && b.frames.some((f) => f && f.type === 'ping'))
       assert.equal(pingPosts.length, 0, `expected zero ping POSTs in SSE mode, saw ${pingPosts.length} of ${posts.length} POST(s)`)
@@ -694,7 +671,9 @@ describe('socket-transport: misc invariants', () => {
     t.close()
   })
 
-  it('WebSocket constructor throwing schedules a reconnect', async () => {
+  it('WebSocket constructor throwing schedules a reconnect', async ctx => {
+    const advance = mockTime(ctx)
+    const failedPost = ctx.mock.method(globalThis, 'fetch', () => Promise.reject(new Error('SSE unavailable')))
     const calls = []
     let shouldThrow = true
     // Wrap the FakeWebSocket as a function that throws on the first
@@ -714,10 +693,13 @@ describe('socket-transport: misc invariants', () => {
     ThrowingWS.CLOSED = FakeWebSocket.CLOSED
     globalThis.WebSocket = ThrowingWS
     const t = makeTransport()
+    ctx.after(() => t.close())
     t.acquire()
     assert.equal(calls.length, 1, 'first constructor attempt threw')
-    // Reconnect fires after INITIAL_RECONNECT_DELAY (~1s).
-    await delay(1100)
+    // Complete the fallback failure before advancing its retry deadline.
+    await advance(0)
+    assert.equal(failedPost.mock.callCount(), 1)
+    await advance(1000)
     assert.equal(calls.length, 2, 'reconnect attempted')
     t.close()
   })
@@ -999,28 +981,22 @@ describe('socket-transport: SSE fallback', () => {
     t.close()
   })
 
-  it('1001 close code resets reconnect backoff to INITIAL', async () => {
+  it('1001 close code resets reconnect backoff to INITIAL', async ctx => {
+    const advance = mockTime(ctx)
     const t = makeTransport()
     t.acquire()
     FakeWebSocket.last.simulateClose()
-    assert.ok(await awaitFetch(1))
+    await advance(100)
+    assert.ok(fetchCalls.length > 0)
     lastStream().pushEvent('session', 'sid-x')
     lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
-    await delay(10)
-    // Drive the reconnect-backoff up: trigger a server-initiated 1001
-    // close, then check that the reconnect attempt fires at the
-    // INITIAL delay (~1s) rather than a bumped value. Observable via
-    // the timing of the next fetch.
+    await advance(0)
+    // A server-initiated 1001 close resets the next retry to INITIAL.
     lastStream().pushEvent('close', JSON.stringify({ code: 1001, reason: 'shutting down' }))
-    await delay(10)
+    await advance(0)
     const beforeReconnect = fetchCalls.length
-    // Reconnect cycle: the close listener resets reconnectDelayMs to
-    // INITIAL (1000ms) on 1001, so the next attempt should land
-    // within ~1100ms (with margin). A regression that didn't reset
-    // would still attempt within that window since this is the FIRST
-    // reconnect — but the assertion holds for any future regression
-    // that accidentally bumped the delay before resetting.
-    await delay(1100)
+    // Advance to the exact deadline with maximum jitter pinned.
+    await advance(1000)
     // Reconnect tries WS first (FakeWebSocket constructor); if WS
     // succeeds the SSE plane stays untouched. Either way, the WS
     // ctor fires another instance.
@@ -1029,7 +1005,8 @@ describe('socket-transport: SSE fallback', () => {
     t.close()
   })
 
-  it('a bare EOF on the live downstream (no close frame) disconnects + reconnects', async () => {
+  it('a bare EOF on the live downstream (no close frame) disconnects + reconnects', async ctx => {
+    const advance = mockTime(ctx)
     // The server (or an idle proxy / LB / a reaped session) drops the
     // live event-stream WITHOUT the graceful `close` event and without a
     // newer POST taking over. Pre-fix `consumeStream` returned silently
@@ -1043,20 +1020,21 @@ describe('socket-transport: SSE fallback', () => {
     t.acquire()
     assert.equal(FakeWebSocket.instances.length, 1, 'WS attempted first')
     FakeWebSocket.last.simulateClose()  // force the SSE fallback
-    assert.ok(await awaitFetch(1))
+    await advance(100)
+    assert.ok(fetchCalls.length > 0)
     lastStream().pushEvent('session', 'sid-x')
     lastStream().pushMessage({ type: 'challenge', nonce: 'n' })
-    await delay(10)
+    await advance(0)
     assert.deepEqual(c.connected, ['n'])
     assert.equal(c.disconnected.length, 0, 'healthy while the stream is live')
     // Live downstream EOFs with no `close` frame and no successor POST.
     lastStream().close()
-    await delay(30)
+    await advance(0)
     assert.equal(c.disconnected.length, 1, 'bare EOF on the live downstream disconnects')
     // ...and the outer transport reconnects (WS-first) rather than
     // hanging — the SSE `open` reset the backoff to INITIAL (~1s).
     const wsBefore = FakeWebSocket.instances.length
-    await delay(1100)
+    await advance(1000)
     assert.ok(FakeWebSocket.instances.length > wsBefore, 'reconnect attempted after the silent EOF')
     t.close()
   })
@@ -1358,25 +1336,26 @@ describe('socket-transport: auth flow', () => {
     t.close()
   })
 
-  it('new socket resets the cached-replay guard (so each socket gets one cached attempt)', async () => {
+  it('new socket resets the cached-replay guard (so each socket gets one cached attempt)', async ctx => {
+    const advance = mockTime(ctx)
     await setCachedSyncPassword('cached-pw')
     const t = makeTransport({ authResolver: () => Promise.resolve(null) })
     t.acquire()
     FakeWebSocket.last.handshake('n0')
     // Burn the replay on socket A.
     const pA = t.runAuthFlow()
-    await delay(0)
+    await advance(0)
     FakeWebSocket.last.simulateMessage({ type: 'unauthorized', kind: 'auth-failed' })
     await pA
     // Tear down socket A and let reconnect open socket B.
     FakeWebSocket.last.simulateClose()
-    await delay(1100)
+    await advance(1000)
     assert.equal(FakeWebSocket.instances.length, 2)
     const wsB = FakeWebSocket.last
     wsB.handshake('n1')
     await setCachedSyncPassword('cached-pw-2')
     const pB = t.runAuthFlow()
-    await delay(0)
+    await advance(0)
     const sent = wsB.frames.map(JSON.parse).find((m) => m.type === 'authenticate')
     assert.equal(sent?.password, 'cached-pw-2', 'fresh socket replays the (new) cached password')
     wsB.simulateMessage({ type: 'authenticated' })

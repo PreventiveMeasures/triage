@@ -8,7 +8,7 @@ import { createHub } from '../server-e2e/hub.ts'
 import { createBusReceiver } from '../server-e2e/bus-receiver.ts'
 import { getSharedTransport } from '../client/sync/sync-transport.ts'
 
-const { triageSync, setHydrationConflictResolver } = await import('../client/sync/triage-sync.ts')
+const { triageSync, setHydrationConflictResolver, setRedraw } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { upsertWorkspace, deleteWorkspace } = await import('../client/workspaces.js')
 const { patchEntry } = await import('../client/triage-entry.ts')
@@ -17,6 +17,7 @@ const cryptoMod = await import('../client/sync/sync-crypto.ts')
 const cleanups = []
 afterEach(async () => {
   setHydrationConflictResolver(null)
+  setRedraw(() => {})
   triageSync.closeSession()
   triageSync.setServerUrl('')
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup()
@@ -129,12 +130,17 @@ it('merges independent per-report ignore changes on the same finding', async () 
 it('keeps asynchronous state changes during a chain conflict dialog and defers saves until it resolves', async () => {
   const f = await fixture()
   const root = await f.revision(null, { A: { color: 'red' } })
+  const remote = await f.revision(root.id, { A: { color: 'blue' } })
+  let projected = false
+  // Seeing state.triage change is too early: root persistence may still be
+  // running and could pick up the next local edit as an unrelated save.
+  setRedraw(() => { if (f.info()?.baseRevision === root.id) projected = true })
   f.send({ type: 'workspace-state', revisions: [root] })
-  await waitFor(() => state.triage.get('A')?.color === 'red', 'root applied')
+  await waitFor(() => projected, 'root projected and persisted')
+  assert.equal(f.info().pending, null)
   patchEntry(state.triage, 'A', { color: 'amber' })
   let resolveDialog
   setHydrationConflictResolver(() => new Promise((resolve) => { resolveDialog = resolve }))
-  const remote = await f.revision(root.id, { A: { color: 'blue' } })
   f.send({ type: 'workspace-state', revisions: [remote] })
   await waitFor(() => resolveDialog != null, 'dialog open')
   // The modal blocks typing behind it. Async writers (such as an import
@@ -142,12 +148,13 @@ it('keeps asynchronous state changes during a chain conflict dialog and defers s
   patchEntry(state.triage, 'A', { color: 'cyan' })
   patchEntry(state.triage, 'B', { comment: 'import completed while resolving' })
   triageSync.notify()
-  // A macrotask lets crypto complete if the save incorrectly bypasses the dialog.
-  await new Promise((resolve) => { setTimeout(resolve, 75) })
-  const earlySaves = f.messages.filter((m) => m.type === 'workspace-save')
-  resolveDialog({ 'A:color': 'imported' })
-  await waitFor(() => f.messages.some((m) => m.type === 'workspace-save'), 'follow-up save')
-  assert.equal(earlySaves.length, 0, 'no save based on unresolved remote state')
+  try {
+    assert.equal(f.info().pendingSave, true, 'notification queues a save')
+    assert.equal(f.info().encrypting, false, 'no save starts while the dialog is unresolved')
+    assert.equal(f.info().pending, null)
+    assert.equal(f.messages.filter((m) => m.type === 'workspace-save').length, 0)
+  } finally { resolveDialog({ 'A:color': 'imported' }) }
+  await waitFor(() => f.messages.some((m) => m.type === 'workspace-save' && m.base === remote.id), 'follow-up save')
   assert.equal(state.triage.get('A')?.color, 'cyan', 'new edit supersedes old dialog choice')
   assert.equal(state.triage.get('B')?.comment, 'import completed while resolving')
 })

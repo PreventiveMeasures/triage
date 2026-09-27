@@ -25,6 +25,7 @@ function freshHandle() {
   return {
     handle,
     objDir,
+    db,
     cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }) },
   }
 }
@@ -68,6 +69,26 @@ function fakeBegin(over = {}) {
 function writeStaging(filePath, bytes) {
   const fd = openSync(filePath, 'a')
   try { writeSync(fd, bytes) } finally { closeSync(fd) }
+}
+
+// Cap tests need a full workspace as input. Seed valid rows and blobs in one
+// transaction; the upload/commit path is exercised by its own tests below.
+async function seedFullWorkspace({ db, handle, objDir }, workspaceTag = 'workspace-tag-1') {
+  mkdirSync(path.join(objDir, workspaceTag), { recursive: true })
+  db.exec('BEGIN')
+  try {
+    for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
+      const resourceTag = `r-${i.toString().padStart(4, '0')}`
+      const bytes = Buffer.alloc(4)
+      bytes.writeUInt32LE(i)
+      const hash = createHash('sha256').update(bytes).digest('base64url')
+      writeFileSync(liveFilePath(objDir, workspaceTag, hash), bytes)
+      const inserted = await handle.insertLiveIfAbsent.get(workspaceTag, resourceTag,
+        Buffer.alloc(16, i).toString('base64url'), hash, bytes.length, b64u64(), 1)
+      assert.equal(inserted.ok, 1)
+    }
+    db.exec('COMMIT')
+  } catch (err) { db.exec('ROLLBACK'); throw err }
 }
 
 describe('initObjstore — auth-gate config guard', () => {
@@ -258,19 +279,10 @@ describe('beginPut — version preconditions', () => {
 
 describe('beginPut — per-workspace resource cap (H1)', () => {
   it('rejects the (MAX+1)th NEW resource with reason=workspace-full', async () => {
-    const { handle, cleanup } = freshHandle()
+    const fixture = freshHandle()
+    const { handle, cleanup } = fixture
     try {
-      // Fill the workspace up to the cap with distinct resourceTags.
-      // 4-byte body keeps each commit cheap; we only care about the
-      // row count here, not the bytes.
-      for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
-        const tag = `r-${i.toString().padStart(4, '0')}`
-        const b = await beginPut(handle, fakeBegin({ resourceTag: tag, expectedLength: 4 }))
-        assert.equal(b.ok, true, `setup row #${i} should accept`)
-        writeStaging(b.filePath, Buffer.alloc(4))
-        const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: tag, stagingId: b.stagingId })
-        assert.equal(c.ok, true, `setup row #${i} should commit`)
-      }
+      await seedFullWorkspace(fixture)
       assert.equal((await listLive(handle, 'workspace-tag-1')).length, MAX_RESOURCES_PER_WORKSPACE)
       // The (MAX+1)th NEW resource must be rejected at begin — before
       // any staging row / staging file lands on disk.
@@ -284,16 +296,11 @@ describe('beginPut — per-workspace resource cap (H1)', () => {
     // The cap is on the live-row COUNT, not on the total writes. An
     // existing resource can still receive new versions even when the
     // workspace is full — no count change.
-    const { handle, cleanup } = freshHandle()
+    const fixture = freshHandle()
+    const { handle, cleanup } = fixture
     try {
-      let r0Incarnation = null
-      for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
-        const tag = `r-${i.toString().padStart(4, '0')}`
-        const b = await beginPut(handle, fakeBegin({ resourceTag: tag, expectedLength: 4 }))
-        writeStaging(b.filePath, Buffer.alloc(4))
-        const c = await commitPut(handle, { workspaceTag: 'workspace-tag-1', resourceTag: tag, stagingId: b.stagingId })
-        if (tag === 'r-0000') r0Incarnation = c.row.incarnation
-      }
+      await seedFullWorkspace(fixture)
+      const r0Incarnation = (await getLive(handle, 'workspace-tag-1', 'r-0000')).incarnation
       // Re-upload r-0000 as version 2 — should pass the cap check.
       const reup = await beginPut(handle, fakeBegin({ resourceTag: 'r-0000', prevVersion: 1, prevIncarnation: r0Incarnation, expectedLength: 8 }))
       assert.equal(reup.ok, true)
@@ -306,14 +313,10 @@ describe('beginPut — per-workspace resource cap (H1)', () => {
   })
 
   it('caps are per-workspace, not global — a second workspace still has full headroom', async () => {
-    const { handle, cleanup } = freshHandle()
+    const fixture = freshHandle()
+    const { handle, cleanup } = fixture
     try {
-      for (let i = 0; i < MAX_RESOURCES_PER_WORKSPACE; i++) {
-        const tag = `r-${i.toString().padStart(4, '0')}`
-        const b = await beginPut(handle, fakeBegin({ workspaceTag: 'ws-A', resourceTag: tag, expectedLength: 4 }))
-        writeStaging(b.filePath, Buffer.alloc(4))
-        await commitPut(handle, { workspaceTag: 'ws-A', resourceTag: tag, stagingId: b.stagingId })
-      }
+      await seedFullWorkspace(fixture, 'ws-A')
       // ws-A is full; ws-B should accept a fresh new resource.
       const b = await beginPut(handle, fakeBegin({ workspaceTag: 'ws-B', resourceTag: 'r-0000', expectedLength: 4 }))
       assert.equal(b.ok, true)

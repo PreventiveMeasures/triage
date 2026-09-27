@@ -1031,12 +1031,13 @@ describe('objstore client/server races', { concurrency: true }, () => {
     } finally { session.close() }
   })
 
-  it('GET races concurrent PUT v2: fetch returns either full v1 OR full v2 — never spliced', async () => {
+  it('GET races concurrent PUT v2: returns an intact version or rejects an obsolete read', async () => {
     // Companion to the previous test — a PUT v2 (different size!)
     // races with the GET. The pinned-fd defense ensures the fetch
     // either:
     //   - completes with v1 bytes (lock held the inode pinned),
     //   - or returns a fresh v2 token after the put landed.
+    // The client may also reject v1 if it has already observed v2.
     // It MUST NOT return v1's content-length with v2's bytes
     // (or vice versa).
     const { keys } = await makeKeys()
@@ -1047,11 +1048,20 @@ describe('objstore client/server races', { concurrency: true }, () => {
       const seedPut = await session.put({ fileName: 'race-get-put.bin', content: v1, prev: null })
       const fetchPromise = session.fetch('race-get-put.bin')
       const putPromise = session.put({ fileName: 'race-get-put.bin', content: v2, prev: seedPut.meta })
-      const [fetched, putResult] = await Promise.all([fetchPromise, putPromise])
+      // Our own PUT advances the session watermark. A v1 response finishing
+      // afterwards must be rejected even though its bytes are authentic.
+      const [read, write] = await Promise.allSettled([fetchPromise, putPromise])
+      assert.equal(write.status, 'fulfilled')
+      const putResult = write.value
       assert.equal(putResult.ok, true)
       assert.equal(putResult.meta.version, 2)
-      // Whichever version the fetch returned, the bytes match exactly.
+      if (read.status === 'rejected') {
+        assert.match(read.reason.message, /^objstore: version-rollback rejected — fetched v1 for an incarnation we've already seen at v2$/u)
+      }
+      const fetched = read.status === 'fulfilled' ? read.value : await session.fetch('race-get-put.bin')
+      // Any returned version must contain exactly that version's bytes.
       assert.ok(fetched, 'fetch returned a result')
+      if (read.status === 'rejected') assert.equal(fetched.version, 2, 'retry observes the completed PUT')
       if (fetched.version === 1) {
         assert.equal(fetched.content.byteLength, v1.byteLength, 'v1 fetch — full v1 byte count')
         assert.equal(Buffer.compare(Buffer.from(fetched.content), v1), 0, 'v1 fetch — exact v1 bytes')

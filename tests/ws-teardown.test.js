@@ -58,10 +58,22 @@ describe('closeWebSocketServer', () => {
   it('resolves on an idle server, and is safe to call twice', async () => {
     const { wss } = await listeningServer()
     await closeWebSocketServer(wss)
-    // Second call: already closed, so `close(cb)` errors/no-ops
-    // depending on state — the timed fallback must still let teardown
-    // finish rather than stranding a caller.
+    // ws reports an already closed server through its callback. Treat it
+    // as complete without waiting for the deadline.
     await closeWebSocketServer(wss, 100)
+  })
+
+  it('rejects incomplete shutdown at the deadline', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const closing = closeWebSocketServer({ clients: [], close() {} }, 100)
+    const rejected = assert.rejects(closing, /WebSocketServer close timeout/u)
+    t.mock.timers.tick(100)
+    await rejected
+  })
+
+  it('propagates unexpected close errors', async () => {
+    const error = new Error('close failed')
+    await assert.rejects(closeWebSocketServer({ clients: [], close(callback) { callback(error) } }), error)
   })
 
   it('stops accepting new connections', async () => {
