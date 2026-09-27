@@ -2,15 +2,16 @@ import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import '../ui/view/frontend-install.js'
 
-const state = { managedComments: new Map() }
+const state = { managedComments: new Map(), managedSession: { id: 'user' },
+  managedReports: [{ id: 'report' }], reports: [] }
 let managed = true
-const listeners = new Map()
-mock.module('../client/index.js', { namedExports: { isManagedUiMode: () => managed } })
-mock.module('../ui/view/managed-comments.js', { namedExports: {
-  managedCommentsFor: finding => state.managedComments.get(finding?.id) ?? [],
-  subscribeManagedComments: (id, notify) => { listeners.set(id, notify); return () => listeners.delete(id) },
+let serverComments = []
+mock.module('../client/index.js', { namedExports: { state, isManagedUiMode: () => managed } })
+mock.module('../ui/view/client-managed.js', { namedExports: {
+  fetchReportComments: () => Promise.resolve(serverComments), deleteReportComment() {}, saveReportComment() {},
 } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, installShadowTooltipListener() {} } })
+const { loadManagedReportComments } = await import('../ui/view/managed-comments.js')
 await import('../ui/view/comment-preview.js')
 const CommentPreview = customElements.get('comment-preview')
 
@@ -24,7 +25,8 @@ function renderText(value) {
 beforeEach(() => {
   managed = true
   state.managedComments.clear()
-  listeners.clear()
+  state.reports = [{ _managedReportId: 'report', groups: [[{ id: 'first' }, { id: 'second' }]] }]
+  serverComments = []
 })
 
 test('managed previews show each author, body and timestamp for the active finding', () => {
@@ -67,19 +69,56 @@ test('long comment lines widen the preview without widening short multiline comm
   assert.ok(renderText(preview.render()).includes('class=preview wide'))
 })
 
-test('subscriptions follow the active finding and refresh after comment edits', () => {
+test('subscriptions follow the active finding and refresh after comment edits', async t => {
   const preview = new CommentPreview()
   preview.finding = { id: 'first' }
   preview.requestUpdate = mock.fn()
   preview._subscribe()
-  listeners.get('first')()
+  t.after(() => preview.unsubscribe())
+  await loadManagedReportComments('report')
   assert.equal(preview.requestUpdate.mock.callCount(), 1)
   preview.finding = { id: 'second' }
   preview._subscribe()
-  assert.equal(listeners.has('first'), false)
-  assert.equal(listeners.has('second'), true)
+  preview.requestUpdate.mock.resetCalls()
+  await loadManagedReportComments('report')
+  assert.equal(preview.requestUpdate.mock.callCount(), 1, 'only the new finding notifies the preview')
   preview.unsubscribe()
-  assert.equal(listeners.size, 0)
+  await loadManagedReportComments('report')
+  assert.equal(preview.requestUpdate.mock.callCount(), 1, 'unsubscribed previews stop receiving updates')
+})
+
+test('an empty managed preview shows the first remote comment and hides after the last deletion', async t => {
+  const preview = new CommentPreview()
+  preview.finding = { id: 'first' }
+  let text = ''
+  const popup = { matches: () => false }
+  preview.renderRoot = { querySelector: () => text.includes('popover="manual"') ? popup : null }
+  preview._hidePreview = mock.fn()
+  const repaint = () => {
+    text = renderText(preview.render())
+    preview.updated(new Map())
+  }
+  preview.requestUpdate = mock.fn(repaint)
+  preview._subscribe()
+  t.after(() => preview.unsubscribe())
+  repaint()
+  assert.equal(preview.hidden, true)
+  assert.doesNotMatch(text, /mark-comment/u, 'empty subscribers have no focusable icon')
+
+  serverComments = [{ id: 'remote', findingId: 'first', body: 'First remote comment', authorLogin: 'alice' }]
+  await loadManagedReportComments('report')
+  assert.equal(preview.requestUpdate.mock.callCount(), 1)
+  assert.equal(preview.hidden, false)
+  assert.match(text, /First remote comment/u)
+
+  serverComments = []
+  await loadManagedReportComments('report')
+  assert.equal(preview.hidden, true)
+  assert.doesNotMatch(text, /mark-comment|popover="manual"/u)
+  serverComments = [{ id: 'later', findingId: 'first', body: 'Another remote comment' }]
+  await loadManagedReportComments('report')
+  assert.equal(preview.hidden, false, 'the hidden preview remains subscribed after deletion')
+  assert.match(text, /Another remote comment/u)
 })
 
 function interactivePreview(t) {

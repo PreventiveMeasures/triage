@@ -10,6 +10,7 @@ class CommentPreview extends HoverPreviewElement {
   static properties = { finding: { attribute: false }, comment: { type: String } }
   static styles = [HoverPreviewElement.styles, unsafeCSS(managedCommentCss), css`
     :host { display: inline-flex; }
+    :host([hidden]) { display: none !important; }
     button { border: 0; padding: 0; background: none; color: inherit; font: inherit; cursor: default; }
     .preview-trigger { display: inline-flex; align-items: center; justify-content: center; line-height: 0; }
     .preview-trigger:hover { color: var(--accent); }
@@ -44,6 +45,9 @@ class CommentPreview extends HoverPreviewElement {
   }
 
   updated(changed) {
+    // Collapse the empty subscriber even when the board styles the host as a
+    // flex item. It stays connected to receive the first remote comment.
+    this.hidden = !this.renderRoot.querySelector('.preview')
     if (changed.has('finding')) {
       this._hidePreview()
       this._subscribe()
@@ -73,21 +77,22 @@ class CommentPreview extends HoverPreviewElement {
     const managed = isManagedUiMode()
     const comments = managed ? managedCommentsFor(this.finding) : []
     const hasComments = managed ? comments.length > 0 : Boolean(this.comment)
+    if (!hasComments) return nothing
     const bodies = managed ? comments.map(comment => comment.body) : [this.comment]
     const wide = bodies.some(body => body.split(/[\r\n]/u).some(line => line.length > 100))
     return html`<button type="button" class="preview-trigger mark-comment" aria-label=${managed ? 'View comments' : 'Edit comment'}
-      aria-details=${hasComments ? 'comment-preview' : nothing}
+      aria-details="comment-preview"
       @mouseenter=${this._schedulePreview} @mouseleave=${this._leavePreview}
       @focus=${this._schedulePreview} @blur=${this._leavePreview} @click=${this._hidePreview}>
       <slot></slot>
-    </button>${hasComments ? html`<div class=${wide ? 'preview wide' : 'preview'} id="comment-preview" popover="manual"
+    </button><div class=${wide ? 'preview wide' : 'preview'} id="comment-preview" popover="manual"
       role="region" aria-label=${managed ? 'Comments' : 'Comment'}
       @mouseenter=${this._keepPreview} @mouseleave=${this._leavePreview}
       @focusin=${this._keepPreview} @focusout=${this._leavePreview} @click=${this._previewClick}>
       ${managed ? comments.map(comment => managedCommentTemplate(comment, renderCommentText(comment.body)))
         : html`<div class="comment-body">${renderCommentText(this.comment)}</div>
           <div class="preview-footer"><button type="button" class="mark-comment edit-hint">Edit</button></div>`}
-    </div>` : nothing}`
+    </div>`
   }
 }
 
