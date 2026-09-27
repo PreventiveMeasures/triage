@@ -81,3 +81,97 @@ for (const context of [{ generation: 2 }, { session: { id: 'other', role: 'view'
     assert.equal(await old, null)
   })
 }
+
+test('startup, navigation and unchanged feed confirmations share one completed catalog in memory', async t => {
+  const { calls, read } = fixture(t)
+  const startup = new AbortController()
+  const first = read(startup.signal)
+  calls[0].resolve(Response.json({ teams, revision: 'v1' }))
+  const catalog = await first
+  startup.abort() // Restoring the initial URL starts a new view.
+  const signal = new AbortController().signal
+  assert.equal(await read(signal, { reuse: true }), catalog)
+  assert.equal(await read(signal, { revision: 'v1' }), catalog)
+  assert.equal(await read(new AbortController().signal, { reuse: true }), catalog)
+  assert.equal(await read(new AbortController().signal, { revision: 'v1' }), catalog)
+  assert.equal(calls.length, 1)
+  const cancelled = new AbortController(); cancelled.abort()
+  assert.equal(await read(cancelled.signal, { reuse: true }), null)
+})
+
+test('changed feed revisions refresh once and navigation joins the fresh catalog read', async t => {
+  const { calls, read } = fixture(t)
+  const signal = new AbortController().signal
+  const first = read(signal)
+  calls[0].resolve(Response.json({ teams, revision: 'v1' }))
+  await first
+  const changed = read(signal, { revision: 'v2' })
+  const joining = read(signal, { reuse: true })
+  const duplicate = read(signal, { revision: 'v2' })
+  assert.equal(calls.length, 2)
+  calls[1].resolve(Response.json({ teams: [], revision: 'v2' }))
+  assert.deepEqual(await changed, [])
+  assert.equal(await joining, await duplicate)
+  assert.deepEqual(await read(signal, { revision: 'v2' }), [])
+  assert.equal(calls.length, 2)
+})
+
+test('a revision received during an older read starts a new request rather than losing the invalidation', async t => {
+  const { calls, read } = fixture(t)
+  const signal = new AbortController().signal
+  const older = read(signal)
+  const changed = read(signal, { revision: 'v2' })
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].signal.aborted, true)
+  calls[1].resolve(Response.json({ teams: [], revision: 'v2' }))
+  assert.deepEqual(await changed, [])
+  calls[0].resolve(Response.json({ teams, revision: 'v1' }))
+  assert.equal(await older, null)
+  assert.deepEqual(await read(signal, { reuse: true }), [])
+  assert.equal(calls.length, 2)
+})
+
+test('failed invalidations cannot reuse the old catalog; a retry can clear revoked access', async t => {
+  const { calls, read } = fixture(t)
+  const signal = new AbortController().signal
+  const first = read(signal)
+  calls[0].resolve(Response.json({ teams, revision: 'v1' }))
+  await first
+  const failed = read(signal, { revision: 'v2' })
+  calls[1].resolve(new Response('', { status: 503 }))
+  assert.equal(await failed, null)
+  const retry = read(signal, { reuse: true })
+  assert.equal(calls.length, 3)
+  calls[2].resolve(new Response('', { status: 403 }))
+  assert.deepEqual(await retry, [])
+  assert.deepEqual(await read(signal, { reuse: true }), [])
+})
+
+test('session revalidation and legacy unversioned feed events still request current state', async t => {
+  const { calls, read } = fixture(t)
+  const signal = new AbortController().signal
+  for (let i = 0; i < 3; i++) {
+    const refreshing = read(signal, i === 1 ? { revision: null } : {})
+    assert.equal(calls.length, i + 1)
+    calls[i].resolve(Response.json({ teams }))
+    assert.deepEqual(await refreshing, teams)
+    assert.deepEqual(await read(signal, { reuse: true }), teams)
+  }
+  assert.equal(calls.length, 3)
+})
+
+const changedContexts = [{ generation: 2 }, { session: { id: 'other', role: 'view' } },
+  { session: { id: 'user', role: 'triage' } }, { session: { ...session, csrfToken: 'rotated' } }]
+changedContexts.forEach(context => {
+  test(`completed catalog is discarded when context changes: ${JSON.stringify(context)}`, async t => {
+    const { calls, read } = fixture(t)
+    const signal = new AbortController().signal
+    const first = read(signal)
+    calls[0].resolve(Response.json({ teams, revision: 'v1' }))
+    await first
+    const changed = read(signal, { ...context, reuse: true, revision: 'v1' })
+    assert.equal(calls.length, 2)
+    calls[1].resolve(Response.json({ teams: [], revision: 'v2' }))
+    assert.deepEqual(await changed, [])
+  })
+})

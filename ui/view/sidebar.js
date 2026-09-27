@@ -495,7 +495,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   })
   refreshScanNavigation()
   if (isManagedUiMode()) {
-    if (!managedSessionPending && !managedTeamsPending) startManagedTeamFeed({ catalogOnly: true })
+    if (!managedSessionPending && !managedTeamsPending && !managedSessionRefresh && !managedNavigationPending) startManagedTeamFeed({ catalogOnly: true })
     state.bundles = (state.bundles ?? []).filter(entry => entry.managedId)
     state.storedFiles = []
     renderLandingWorkspaces([])
@@ -1801,6 +1801,7 @@ let managedSessionRequest = 0
 let managedSessionRefresh = null
 let managedSessionPending = true
 let managedTeamsPending = true
+let managedNavigationPending = false
 let managedBase = null
 
 async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
@@ -1809,6 +1810,7 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedBase = null
   const generation = ++clientModeGeneration
   managedTeamsPending = true
+  managedNavigationPending = false
   resetManagedAppState()
   resetManagedFixes()
   stopManagedTeamFeed()
@@ -1936,7 +1938,10 @@ function refreshManagedSession() {
   const refresh = { generation: clientModeGeneration, promise: null }
   managedSessionRefresh = refresh
   refresh.promise = revalidateManagedSession().finally(() => {
-    if (managedSessionRefresh === refresh) managedSessionRefresh = null
+    if (managedSessionRefresh === refresh) {
+      managedSessionRefresh = null
+      void renderSidebar()
+    }
   })
   return refresh.promise
 }
@@ -1990,13 +1995,13 @@ async function revalidateManagedSession() {
   }
 }
 
-setManagedTeamFeedRefresh((isCurrent, signal) => refreshManagedTeams(isCurrent, { strict: true, signal }))
+setManagedTeamFeedRefresh((isCurrent, signal, revision) => refreshManagedTeams(isCurrent, { strict: true, signal, revision }))
 
 const probeManagedTeams = createManagedTeamsProbe(managedProbeTeams)
-async function refreshManagedTeams(isCurrent, { strict = false, signal = currentViewSignal() } = {}) {
+async function refreshManagedTeams(isCurrent, { strict = false, signal = currentViewSignal(), reuse = false, revision = null } = {}) {
   const generation = clientModeGeneration
   const session = state.managedSession
-  const fresh = await probeManagedTeams({ generation, session, signal })
+  const fresh = await probeManagedTeams({ generation, session, signal, reuse, revision })
   const teams = fresh ?? (strict ? null : state.managedTeams)
   if (signal.aborted || teams === null || !isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
   const previousTeamName = state.managedTeams.find(team => team.id === state.currentManagedTeam)?.name
@@ -2064,12 +2069,23 @@ function canAccessManagedPage(view) {
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 async function restoreManagedPage(route, isCurrent) {
+  managedNavigationPending = true
+  try { return await restoreManagedPageContent(route, isCurrent) }
+  finally {
+    if (isCurrent()) {
+      managedNavigationPending = false
+      void renderSidebar()
+    }
+  }
+}
+
+async function restoreManagedPageContent(route, isCurrent) {
   const reusableView = readyManagedView === currentViewGeneration() ? readyManagedView : null
   // Cancel the previous feed and catalog read before checking the destination.
   beginViewNavigation()
-  // Revalidate lightweight access/assignment metadata on navigation; unchanged
-  // versions continue to reuse content without downloading the reports again.
-  if ((['findings', 'files', 'bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent))) return false
+  // The shared catalog is kept current by feed revisions. Do not read it again
+  // just to resolve another route; changed versions invalidate cached content.
+  if ((['findings', 'files', 'bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent, { reuse: true }))) return false
   let adminBundles = []
   if (route?.view === 'bundles' && route.teamSlug == null) {
     if (!canAccessManagedPage('manage-bundles')) return false

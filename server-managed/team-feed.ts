@@ -78,7 +78,8 @@ async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: (publ
   const deadline = setTimeout(close, lifetimeMs)
   const stopped = () => controller.signal.aborted || res.destroyed || deps.isShuttingDown()
   // Notifications carry no annotation bodies, finding IDs, or global cursors.
-  // A fresh connection always invalidates, including after a missed update.
+  // The catalog's opaque version lets clients reuse an identical REST snapshot;
+  // every connection still confirms current access, including after reconnects.
   function write(frame: string): boolean {
     if (stopped()) return false
     if (res.write(frame)) return true
@@ -98,7 +99,8 @@ async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: (publ
       if (stopped()) return false
       if (revision === undefined) { previous.delete(event); return true }
       if (revision === previous.get(event)) return true
-      if (!write(`event: ${event}\ndata: {}\n\n`)) return false
+      const data = event === 'teams' ? JSON.stringify({ revision }) : '{}'
+      if (!write(`event: ${event}\ndata: ${data}\n\n`)) return false
       previous.set(event, revision)
       heartbeat = Date.now()
       return true

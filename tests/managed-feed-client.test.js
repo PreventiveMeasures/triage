@@ -109,6 +109,20 @@ test('catalog-only subscriptions dispatch teams before triage and retry failed c
   controller.abort(); await done
 })
 
+test('catalog events pass their opaque revisions through split frames; legacy and malformed data invalidate normally', async () => {
+  fetchResponse = signal => response(signal, [
+    'event: teams\ndata: {"revision":', '"first"}\n\nevent: teams\ndata: {"revision":"next"}\n\n',
+    'event: teams\ndata: {}\n\nevent: teams\ndata: malformed\n\nevent: teams\ndata: {"revision":1}\n\n',
+    'event: close\ndata: {}\n\n',
+  ])
+  const revisions = []
+  await watchTeamFeed(null, { signal: new AbortController().signal,
+    onTeams(signal, revision) { assert.equal(signal, calls[0].signal); revisions.push(revision) },
+    onUpdate() { assert.fail() }, onClose() {},
+  })
+  assert.deepEqual(revisions, ['first', 'next', null, null, null])
+})
+
 const stalledEvents = ['teams', 'triage']
 stalledEvents.forEach(stalled => {
   test(`the watchdog cancels a stalled ${stalled} refresh and reconnects without navigation`, async t => {

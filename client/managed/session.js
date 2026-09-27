@@ -55,12 +55,13 @@ export async function probeSession({ fallback = null } = {}) {
 // Kept on `state.managedTeams` and shown in the
 // sidebar's per-user Teams section. Never throws, so a probe failure can't break
 // the session refresh.
-export async function probeTeams({ fallback = [], signal } = {}) {
+export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
   const share = getPublicShare()
   const shared = share ? await getJson(publicShareBootstrapPath(share), null, { signal }) : null
   const body = share ? { teams: shared?.team ? [shared.team] : [] } : await getJson('/api/teams', { teams: fallback }, { signal })
   const teams = body?.teams
   if (!Array.isArray(teams)) return body == null ? [] : fallback
+  onRevision?.(typeof body.revision === 'string' ? body.revision : null)
   return teams
     .filter((t) => t != null && typeof t.id === 'string' && typeof t.name === 'string')
     .map((t) => ({

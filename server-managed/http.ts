@@ -52,6 +52,7 @@ import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } f
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
+import { teamCatalogRevision } from './team-catalog.ts'
 import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
@@ -1165,7 +1166,7 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const teams = await deps.db.listTeamsForUser(s.user.id)
-  sendJson(res, 200, { teams })
+  sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) })
 }
 
 // Admins read all reports. Managers read their uploads or reports inside their

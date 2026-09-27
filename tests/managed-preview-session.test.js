@@ -162,3 +162,18 @@ test('feed probes preserve team grant keys and report transient failures for ret
   response = new Response('', { status: 403 })
   assert.deepEqual(await probeTeams({ fallback: null, signal }), [])
 })
+
+test('catalog probes expose the server revision without deriving it from normalized client fields', async t => {
+  const revisions = [], teams = [{ id: 'team', name: 'Team', reports: [], bundles: [] }]
+  let response = Response.json({ teams, revision: 'server-revision' })
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(response))
+  const onRevision = revision => revisions.push(revision)
+  await probeTeams({ fallback: null, onRevision })
+  assert.deepEqual(revisions, ['server-revision'])
+  response = new Response('', { status: 503 })
+  assert.equal(await probeTeams({ fallback: null, onRevision }), null)
+  assert.deepEqual(revisions, ['server-revision'], 'failed reads cannot claim a confirmed revision')
+  response = Response.json({ teams, revision: 42 })
+  await probeTeams({ fallback: null, onRevision })
+  assert.deepEqual(revisions, ['server-revision', null])
+})
