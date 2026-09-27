@@ -18,6 +18,7 @@ import { clearManagedWorkspace } from '../../client/managed/workspace.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_COLOR, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_TEXT } from '../../common/managed/triage.ts'
 import { fetchReportTriage, pushReportTriage } from './client-managed.js'
+import { invalidateManagedFixes } from './managed-pull-requests.js'
 import { render } from './render.js'
 
 const PUSH_DEBOUNCE_MS = 500
@@ -56,10 +57,10 @@ function fitsWire(id, wire) {
 
 const utf8Length = (s) => new TextEncoder().encode(s).length
 
-// What the server is known to hold, per finding id (wireKey strings): learned
-// from every GET and advanced by every landed push, across reports — the ids
-// are the same everywhere. An edit is whatever differs from it; an id absent
-// here is one the server has never been seen to hold.
+// Per finding ID: the last accepted/suppressed wire key and the last
+// server-confirmed Fix value. Refused entries suppress retries, but cannot
+// advance the confirmed Fix used to decide whether metadata needs refreshing.
+// GETs and landed pushes share this baseline across reports.
 const baseline = new Map()
 
 // Reports whose GET has been adopted — pushes for a report wait for its
@@ -149,7 +150,7 @@ function requeue(p, ids) {
   for (const id of ids) if (!q.changes.has(id)) q.changes.set(id, p.changes.get(id))
 }
 
-async function flush(p) {
+async function flush(p, changedFixTeams) {
   if (!canPushTriage()) return
   const ids = [...p.changes.keys()]
   let i = 0
@@ -181,7 +182,12 @@ async function flush(p) {
     // and let the baseline absorb those entries so they aren't sent again
     // until they change (the other batches still go).
     if (!landed) console.warn('managed: the server refused a triage batch', p.report.id, status, Object.keys(batch))
-    for (const id of Object.keys(batch)) baseline.set(id, wireKey(batch[id]))
+    for (const [id, entry] of Object.entries(batch)) {
+      const previousFix = baseline.get(id)?.fix ?? ''
+      const fix = landed ? entry?.fix ?? '' : previousFix
+      if (fix !== previousFix) changedFixTeams.add(p.teamId)
+      baseline.set(id, { key: wireKey(entry), fix })
+    }
   }
 }
 
@@ -189,9 +195,16 @@ function flushPending() {
   if (pushTimer != null) { clearTimeout(pushTimer); pushTimer = null }
   const batches = [...pending.values()]
   pending.clear()
+  if (batches.length === 0) return
+  const changedFixTeams = new Set()
   for (const p of batches) {
-    flushChain = flushChain.then(() => flush(p)).catch((err) => { console.warn('managed: triage push failed', err) })
+    flushChain = flushChain.then(() => flush(p, changedFixTeams)).catch((err) => { console.warn('managed: triage push failed', err) })
   }
+  // One refresh per affected workspace after every report/body batch settles,
+  // including partially successful flushes. Non-Fix edits do not refetch.
+  flushChain = flushChain.finally(() => {
+    for (const teamId of changedFixTeams) invalidateManagedFixes(teamId)
+  }).catch((err) => { console.warn('managed: Fix cache invalidation failed', err) })
 }
 
 // The change-notifier hook: fires at the tail of every saveTriage. No-op
@@ -204,13 +217,13 @@ function scheduleTriagePush() {
   for (const id of loadedFindingIds()) {
     const wire = wireEntryOf(state.triage.get(id))
     const key = wireKey(wire)
-    if ((baseline.get(id) ?? '') === key) continue
+    if ((baseline.get(id)?.key ?? '') === key) continue
     if (!fitsWire(id, wire)) {
       // Over the server's caps: it would be refused as sent. Keep it local
       // (say so once) and let the baseline absorb it so it isn't retried until
       // it changes again.
       console.warn('managed: triage entry exceeds the server caps, kept local only', id)
-      baseline.set(id, key)
+      baseline.set(id, { key, fix: baseline.get(id)?.fix ?? '' })
       continue
     }
     const report = reportForFinding(id)
@@ -288,7 +301,7 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
       continue
     }
     const wire = wireEntryOf(entries[id])
-    baseline.set(id, wireKey(wire))
+    baseline.set(id, { key: wireKey(wire), fix: wire?.fix ?? '' })
     const ignoredReports = wire?.triage == null ? state.triage.get(id)?.ignoredReports : undefined
     if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
   }

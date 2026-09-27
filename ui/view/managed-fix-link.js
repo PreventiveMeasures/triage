@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { StateElement } from '@rray/frontend/state-element'
 import { isHttpUrl } from '../../report/index.js'
 import { parseGithubIssueUrl, parseGithubPrUrl } from '../../common/github-pr.ts'
-import { managedPullRequests, subscribePullRequests } from './managed-pull-requests.js'
+import { managedFixes, subscribeFixes } from './managed-pull-requests.js'
 import { hideTooltip, installShadowTooltipListener } from './tooltip.js'
 import { GITHUB_ICON_SVG } from './icons.js'
 
@@ -45,6 +45,7 @@ class ManagedFixLink extends StateElement {
     .preview-ref { display: inline-flex; align-items: baseline; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; }
     .preview-ref svg { align-self: start; margin-top: .2em; }
     .preview-ref span { min-width: 0; }
+    .preview-description { margin-top: 8px; white-space: pre-wrap; }
     .preview-title { margin-top: 8px; font-size: 15px; font-weight: 600; line-height: 1.4; }
     .preview .preview-header .status { flex: none; margin: 0; font-size: 12px; line-height: 1.4; }
     @media print {
@@ -68,7 +69,7 @@ class ManagedFixLink extends StateElement {
 
   connectedCallback() {
     super.connectedCallback()
-    this.unsubscribe = subscribePullRequests(() => this.requestUpdate())
+    this.unsubscribe = subscribeFixes(() => this.requestUpdate())
     installShadowTooltipListener(this.renderRoot)
     if (this.hasUpdated) this.requestUpdate()
   }
@@ -155,11 +156,18 @@ class ManagedFixLink extends StateElement {
     if (!isHttpUrl(this.url)) return html`${this.url}`
     const pr = parseGithubPrUrl(this.url)
     const issue = !pr && parseGithubIssueUrl(this.url)
-    const data = managedPullRequests.read(this.url)
+    const data = managedFixes.read(this.url)
+    if (!data) {
+      const label = `Open fix link: ${this.url}`
+      return html`<a class=${this.compact ? 'fix-link' : ''} href=${this.url} target="_blank" rel="noopener noreferrer"
+        draggable="false" data-tooltip=${this.compact ? label : nothing} aria-label=${label}>
+        ${this.compact ? html`<slot></slot>` : this.url}
+      </a>`
+    }
     const ref = pr || issue
     const icon = pr ? prIcon : issue ? issueIcon : null
     const name = ref ? `${ref.repo}#${ref.number}` : ''
-    const description = data ? `${labels[data.status]} pull request: ${data.title} (${name})`
+    const description = data ? `${labels[data.status]} ${pr ? 'pull request' : 'issue'}: ${data.title} (${name})`
       : ref ? `Open ${pr ? 'pull request' : 'issue'}: ${name}` : `Open fix link: ${this.url}`
     return html`<a class="fix-link" href=${this.url} target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${description}
       aria-details=${this.compact && ref ? 'fix-preview' : nothing} data-tooltip=${this.compact && !ref ? description : nothing}
@@ -180,6 +188,7 @@ class ManagedFixLink extends StateElement {
         <span class=${`status ${data?.status ?? 'unknown'}`}>${icon}${data ? labels[data.status] : nothing}</span>
       </div>
       ${data ? html`<div class="preview-title">${data.title}</div>` : nothing}
+      ${data?.description ? html`<div class="preview-description">${data.description}</div>` : nothing}
     </a>` : nothing}`
   }
 }

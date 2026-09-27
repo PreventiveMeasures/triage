@@ -135,27 +135,59 @@ sources. These endpoints authorize against the same complete workspace and
 recheck access after cold reads. Triage and comments remain shared by finding ID
 across teams; the team is only the authorization context.
 
-# Fix pull requests
+# Fix pull requests and issues
 
-`POST /api/github/pull-requests` accepts `{ "urls": ["https://github.com/Owner/Repo/pull/123"] }`
-with at most 50 links. An approved managed session (at least `view`), same-origin request, and `X-CSRF-Token`
-are required. Results preserve input order in `{ pullRequests: [...] }`, with
-`{ url, title, status }` on success (`open`, `draft`, `closed`, or `merged`), or
-`{ url, error }` (`invalid-url`, `forbidden`, or `unavailable`) per failed item.
-Malformed batches return 400; empty batches return an empty list.
+`GET /api/teams/:id/fixes` returns GitHub PR and ordinary issue metadata
+for the workspace. It requires an approved managed session (at least `view`)
+and membership in that team. URLs come only from persisted Fix links on findings
+surviving the same workspace security and dependency filters as report reads,
+including whole-row and linked security propagation. Admins and managers retain
+their report-filter bypass. The caller supplies only the team ID, never a URL
+list. Both the former `POST /api/github/pull-requests` and the team
+`GET /api/teams/:id/pull-requests` endpoints are removed.
 
-Each link's repository is matched case-insensitively against the repositories
-assigned to the user's teams, including for administrators. A directory grant
-counts as membership in its repository. GitHub requests use that repository's
-stored full name and only the validated positive safe integer from the link;
-other link components never supply the upstream path. Duplicates share a lookup.
+Each link's repository must match a repository assigned to this team, including
+for administrators. Directory grants count as repository membership. Links to
+other repositories are omitted entirely, even if their metadata was cached;
+they keep the plain link presentation used in local/E2E mode. Other Fix values
+are skipped. An empty workspace returns an empty list.
 
-Team access is not GitHub access. Requests use only the signed-in user's stored
-GitHub token, refreshing it when possible. Missing credentials, denied GitHub
-access, redirects, and upstream failures leave the Fix link usable without
-metadata. Installation credentials are never substituted. Responses are not
-HTTP-cached; the UI batches links and keeps metadata in memory for one minute,
-invalidating it on account, team, or mode changes.
+The response is `{ fixes: [...] }`. Successful items contain
+`{ url, title, description, status }`, where `description` is GitHub's body text
+(or null), and status is `open`, `draft`, `closed`, or `merged`. Ordinary issues
+use `open` or `closed`. An eligible item with no metadata has
+`{ url, error: "unavailable" }` and remains usable as a plain Fix link.
+
+`managed_github_metadata` persists titles, descriptions, statuses and fetch times
+without eviction. Records are shared by stable repository ID, item type and
+number. Every read
+requires the current user’s membership in the selected team, that team’s repo
+grant, and a visible finding carrying the Fix link. Cached data never grants
+access to another team, repository, or hidden finding.
+Both SQLite and PostgreSQL create the table for existing installations. Cached
+merged PRs are never requested again. Closed items also stay cached; only open
+items (including draft PRs) older than one minute are queued for refresh.
+
+Every workspace read returns all available cached metadata, including stale open
+items. Its upstream queue takes missing entries first, then fills any remaining
+slots with stale open entries, oldest first, up to 200 distinct items total. A
+larger workspace is still a successful response. Successful refreshes replace
+cached values; GitHub failures, missing credentials, or an exhausted request
+budget retain the old data. There are at most four upstream calls in flight,
+with one shared 10-second deadline for token refresh and GitHub reads.
+
+Requests use the selected repository's stored full name and the validated item
+number, with the signed-in user's GitHub token only. Installation credentials
+are never substituted, redirects are rejected, and returned repository/item
+identity is validated. Workspace access and persisted Fix links are rechecked
+after upstream work before any metadata is released.
+
+HTTP responses use `no-store`. The browser keeps workspace metadata in JS memory
+for one minute and invalidates it on account, workspace, catalogue, or mode
+changes and successful Fix changes, once after the complete triage flush.
+Color, flag and triage-only edits do not invalidate Fix metadata. No browser
+storage is used. Compact Fix previews show the title, status and description
+as plain text.
 
 # Managed comments
 
