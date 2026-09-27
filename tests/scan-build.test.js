@@ -68,7 +68,7 @@ test('model requests use only the configured scan service and explicit API key',
   const authenticated = scanServerRequest('https://scan.example/prefix/', network, 'test-key')
   const models = await fetchScanModels(controller.signal, authenticated)
   assert.equal(models.defaultModel, 'openai/test')
-  assert.equal(calls[0].url, 'https://scan.example/prefix/api/admin/models')
+  assert.equal(calls[0].url, 'https://scan.example/prefix/api/admin/scan/models')
   assert.equal(calls[0].options.headers.get('authorization'), 'Bearer test-key')
   assert.equal(calls[0].options.credentials, 'omit')
   assert.equal(calls[0].options.redirect, 'error')

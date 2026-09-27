@@ -67,7 +67,7 @@ export function defaultEffort(model) {
 }
 
 export async function fetchScanModels(signal, request = fetch) {
-  const res = await request('/api/admin/models', { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
+  const res = await request('/api/admin/scan/models', { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const body = await res.json()
   return scanModelCatalogue(body)

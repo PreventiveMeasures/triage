@@ -250,7 +250,7 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
     })
     return true
   }
-  if (url.pathname === '/api/admin/models') {
+  if (url.pathname === '/api/admin/scan/models') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
     sendJson(res, 200, { models: scanModels, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })
     return true

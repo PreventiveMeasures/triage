@@ -90,7 +90,7 @@ const AVATAR_PREFIX = '/api/avatar/'
 const LOGOUT_PATH = '/api/auth/logout'
 const ADMIN_USERS_PATH = '/api/admin/users'
 const ADMIN_HISTORY_PATH = '/api/admin/history'
-const ADMIN_MODELS_PATH = '/api/admin/models'
+const ADMIN_SCAN_MODELS_PATH = '/api/admin/scan/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
@@ -346,7 +346,7 @@ async function readWorkspaceSession(res: ServerResponse, deps: ManagedHttpDeps, 
   return s
 }
 
-// GET /api/admin/models — the server's canonical scan model ids and effort
+// GET /api/admin/scan/models — the server's canonical scan model ids and effort
 // levels. Names are intentionally absent; the client derives them from ids.
 async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
@@ -1783,7 +1783,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       sendJson(res, 200, { users: await db.listUsers() })
       return
     }
-    if (path === ADMIN_MODELS_PATH) {
+    if (path === ADMIN_SCAN_MODELS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleListModels(res, deps, cookie); return
     }

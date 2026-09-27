@@ -197,7 +197,7 @@ test('db: without initial-admin configuration, all new users start with none and
   await db.close()
 })
 
-test('GET /api/admin/models: managed users receive the same starting catalogue as the UI', async () => {
+test('GET /api/admin/scan/models: managed users receive the same starting catalogue as the UI', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const adminSess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -207,7 +207,8 @@ test('GET /api/admin/models: managed users receive the same starting catalogue a
   const manage = (await readSession(config, db, cookiePair(manageSess.setCookie), now)).user
   await db.setUserRole(manage.id, 'manage')
   const { send } = bundleHarness(db)
-  const modelsPath = '/api/admin/models'
+  const modelsPath = '/api/admin/scan/models'
+  assert.equal((await send('GET', '/api/admin/models', cookiePair(adminSess.setCookie))).statusCode, 404)
   assert.equal((await send('GET', modelsPath, cookiePair(noneSess.setCookie))).statusCode, 403)
   assert.equal((await send('POST', modelsPath, cookiePair(adminSess.setCookie))).statusCode, 405)
   const response = await send('GET', modelsPath, cookiePair(manageSess.setCookie))
@@ -1624,7 +1625,7 @@ test('managers cannot bypass admin-only repository and team routes with direct r
   for (const [path, body] of mutations) {
     assert.equal((await upload(path, cookie, session.csrfToken, JSON.stringify(body))).statusCode, 403, path)
   }
-  for (const path of ['/api/admin/reports', '/api/admin/bundles', '/api/admin/models', '/api/teams']) {
+  for (const path of ['/api/admin/reports', '/api/admin/bundles', '/api/admin/scan/models', '/api/teams']) {
     assert.equal((await send('GET', path, cookie)).statusCode, 200, `content management remains available: ${path}`)
   }
 })
@@ -2646,7 +2647,7 @@ test('No access overrides report/bundle ownership and teams for every managed da
   await h.db.setUserRole(h.sessions.manager.userId, 'none')
   const reads = [
     '/api/teams', `/api/avatar/${h.sessions.admin.userId}`, '/api/admin/reports', '/api/admin/bundles',
-    '/api/admin/users', '/api/admin/teams', '/api/admin/repositories', '/api/admin/models',
+    '/api/admin/users', '/api/admin/teams', '/api/admin/repositories', '/api/admin/scan/models',
     `/api/reports/${id}`, `/api/admin/reports/${id}`, `/api/reports/${id}/triage`, `/api/reports/${id}/triage/history?finding=shared-finding`,
     `/api/bundles/${bundle}/metadata`, `/api/bundles/${bundle}/contents`, `/api/bundles/${bundle}/download`, `/api/admin/bundles/${bundle}`,
   ]
