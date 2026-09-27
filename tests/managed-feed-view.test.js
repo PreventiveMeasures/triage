@@ -22,6 +22,7 @@ mock.module('../ui/view/managed-comments.js', { namedExports: {
   loadManagedReportComments: id => { refreshes.push(['comments', id]); return Promise.resolve(true) },
 } })
 const { startManagedTeamFeed, stopManagedTeamFeed, setManagedTeamFeedRefresh } = await import('../ui/view/managed-feed.js')
+const settle = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => { setImmediate(resolve) }) }
 function open(team, options) {
   state.currentManagedTeam = team
   state.managedReports = [{ id: `${team}-report` }, { id: `${team}-links` }]
@@ -39,14 +40,15 @@ beforeEach(() => {
 })
 afterEach(() => stopManagedTeamFeed())
 
-test('one feed follows the focused team and closes as soon as navigation starts', async () => {
+test('one feed follows the focused team and reconnects only when its endpoint changes', async () => {
   open('one'); startManagedTeamFeed()
   assert.equal(calls.length, 1)
   assert.equal(await calls[0].onUpdate(calls[0].signal), true)
   assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
   beginViewNavigation()
-  assert.equal(calls[0].signal.aborted, true)
+  assert.equal(calls[0].signal.aborted, false)
   open('two')
+  assert.equal(calls[0].signal.aborted, true)
   assert.equal(calls.length, 2)
   assert.equal(calls[1].teamId, 'two')
   assert.equal(await calls[0].onUpdate(calls[0].signal), false)
@@ -70,16 +72,16 @@ test('navigation during refresh drops the old continuation and refreshes only th
   assert.deepEqual(refreshes, [['triage', 'one-report']], 'no comment refresh under the next team scope')
 })
 
-test('reused reports restart on the new navigation signal; local mode and account changes stop old subscriptions', () => {
+test('reused reports retain their connection; local mode and account changes stop old subscriptions', () => {
   open('one'); beginViewNavigation(); startManagedTeamFeed()
-  assert.equal(calls.length, 2)
-  assert.equal(calls[0].signal.aborted, true)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].signal.aborted, false)
   state.managedSession = { id: 'other', role: 'view' }
   startManagedTeamFeed()
-  assert.equal(calls[1].signal.aborted, true)
-  assert.equal(calls.length, 3)
+  assert.equal(calls[0].signal.aborted, true)
+  assert.equal(calls.length, 2)
   state.localMode = true; startManagedTeamFeed()
-  assert.equal(calls[2].signal.aborted, true)
+  assert.equal(calls[1].signal.aborted, true)
 })
 
 
@@ -148,9 +150,11 @@ test('catalog and triage refreshes use connection cancellation without stopping 
   assert.equal(calls[0].signal.aborted, false, 'the watcher can reconnect in the same view')
 
   const next = new AbortController(), triage = Promise.withResolvers()
-  refresh = ({ signal }) => { assert.equal(signal, next.signal); return triage.promise }
+  let readSignal
+  refresh = ({ signal }) => { readSignal = signal; return triage.promise }
   const update = calls[0].onUpdate(next.signal)
   next.abort()
+  assert.equal(readSignal.aborted, true)
   triage.resolve(true)
   assert.equal(await update, false)
   assert.deepEqual(refreshes, [['triage', 'one-report']], 'a timed-out triage read cannot start a comment refresh')
@@ -167,7 +171,7 @@ test('the first feed event hydrates once; sidebar renders and its fallback do no
   const update = calls[0].onUpdate(calls[0].signal)
   await Promise.resolve()
   assert.equal(reads.length, 1)
-  assert.equal(reads[0], calls[0].signal)
+  assert.equal(reads[0].aborted, false)
   assert.equal(startManagedTeamFeed({ catalogOnly: true }), ready)
   t.mock.timers.tick(5_000)
   pending.resolve(true)
@@ -227,7 +231,7 @@ test('navigation cancels pending initial loading before or during hydration', as
   beginViewNavigation()
   assert.equal(await ready, false)
   t.mock.timers.tick(5_000)
-  assert.equal(await calls[0].onUpdate(calls[0].signal), false)
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true, 'a detached view does not force a reconnect')
   assert.equal(reads, 0)
 
   const pending = Promise.withResolvers()
@@ -238,7 +242,7 @@ test('navigation cancels pending initial loading before or during hydration', as
   beginViewNavigation()
   assert.equal(signal.aborted, true)
   assert.equal(await ready, false)
-  assert.equal(await update, false)
+  assert.equal(await update, true, 'cancel hydration without reconnecting')
   pending.resolve(true)
   assert.deepEqual(refreshes, [])
 })
@@ -268,4 +272,133 @@ test('failed initial hydration cannot mark the view ready or apply live refreshe
   assert.equal(await calls[0].onUpdate(calls[0].signal), false)
   assert.equal(await ready, false)
   assert.deepEqual(refreshes, [])
+})
+
+test('Home, bundle selections and bundle tabs reuse one catalog connection', async () => {
+  const revisions = []
+  setManagedTeamFeedRefresh((current, signal, revision) => { assert.ok(current()); revisions.push(revision); return true })
+  for (const view of ['home', 'bundles', 'bundles', 'bundles', 'manage', 'home']) {
+    beginViewNavigation()
+    state.currentView = view
+    state.currentManagedTeam = view === 'bundles' ? 'one' : null
+    startManagedTeamFeed({ catalogOnly: true })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].teamId, null)
+    assert.equal(calls[0].signal.aborted, false)
+  }
+  assert.equal(await calls[0].onTeams(calls[0].signal, 'updated'), true)
+  assert.deepEqual(revisions, ['updated'])
+})
+
+test('workspace and report navigation hydrates new reports using the existing team stream', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const reads = []
+  const workspace = open('one', { hydrate: () => { reads.push('workspace'); return true } })
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.equal(await workspace, true)
+  for (const report of ['first', 'second', 'workspace']) {
+    beginViewNavigation()
+    startManagedTeamFeed({ catalogOnly: true })
+    state.reports = [{ _managedReportId: report }]
+    state.managedReports = [{ id: report }]
+    assert.equal(await startManagedTeamFeed({ hydrate: () => { reads.push(report); return true } }), true)
+    startManagedTeamFeed()
+    startManagedTeamFeed({ catalogOnly: true })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].signal.aborted, false)
+  }
+  assert.deepEqual(reads, ['workspace', 'first', 'second', 'workspace'])
+  assert.deepEqual(refreshes, [], 'one hydration per page, no duplicate live reads')
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.deepEqual(refreshes, [['triage', 'workspace'], ['comments', 'workspace']])
+})
+
+test('updates received between Findings and Files are applied without reopening the stream', async () => {
+  open('one')
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  refreshes.length = 0
+  beginViewNavigation()
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.deepEqual(refreshes, [], 'no reads into the detached view')
+  state.currentView = 'files'
+  startManagedTeamFeed()
+  await settle()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
+  refreshes.length = 0
+  beginViewNavigation()
+  state.currentView = 'findings'
+  startManagedTeamFeed()
+  await settle()
+  assert.deepEqual(refreshes, [], 'unchanged annotations need no extra reads')
+})
+
+test('same-team navigation cancels old reads without making the feed reconnect or dropping an update', async () => {
+  const pending = Promise.withResolvers()
+  let oldSignal
+  refresh = ({ signal }) => { oldSignal = signal; return pending.promise }
+  open('one')
+  const update = calls[0].onUpdate(calls[0].signal)
+  beginViewNavigation()
+  assert.equal(oldSignal.aborted, true)
+  assert.equal(await update, true)
+  refresh = () => Promise.resolve(true)
+  startManagedTeamFeed()
+  pending.resolve(true)
+  await settle()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('an event during retained-stream hydration is applied after that hydration finishes', async () => {
+  open('one')
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  refreshes.length = 0
+  const pending = Promise.withResolvers()
+  let reads = 0
+  beginViewNavigation()
+  const ready = open('one', { hydrate: () => { reads++; return pending.promise } })
+  await Promise.resolve()
+  const update = calls[0].onUpdate(calls[0].signal)
+  pending.resolve(true)
+  assert.equal(await ready, true)
+  assert.equal(await update, true)
+  assert.equal(reads, 1)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('failed catch-up refreshes reconnect and retry instead of consuming the missed event', async () => {
+  open('one')
+  beginViewNavigation()
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  refresh = () => Promise.resolve(false)
+  startManagedTeamFeed()
+  await settle()
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].signal.aborted, true)
+  refresh = () => Promise.resolve(true)
+  assert.equal(await calls[1].onUpdate(calls[1].signal), true)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('a live event joining navigation catch-up propagates its watchdog to the shared read', async () => {
+  open('one')
+  beginViewNavigation()
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  const connection = new AbortController(), pending = Promise.withResolvers()
+  let readSignal
+  refresh = ({ signal }) => { readSignal = signal; return pending.promise }
+  startManagedTeamFeed()
+  const update = calls[0].onUpdate(connection.signal)
+  assert.deepEqual(refreshes, [['triage', 'one-report']], 'catch-up and live refresh share their read')
+  connection.abort()
+  assert.equal(readSignal.aborted, true)
+  assert.equal(await update, false)
+  pending.resolve(false)
+  await settle()
+  assert.equal(calls.length, 2)
+  assert.deepEqual(refreshes, [['triage', 'one-report']], 'a canceled read cannot start comments')
+  refresh = () => Promise.resolve(true)
+  assert.equal(await calls[1].onUpdate(calls[1].signal), true)
 })
