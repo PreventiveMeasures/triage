@@ -11,6 +11,8 @@ import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
 import { managedReportViewChanged } from './managed-report-catalog.js'
+import { createManagedTeamsProbe } from './managed-teams-probe.js'
+import { currentViewSignal } from './view-navigation.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -1987,25 +1989,15 @@ async function revalidateManagedSession() {
   }
 }
 
-setManagedTeamFeedRefresh(isCurrent => refreshManagedTeams(isCurrent, { strict: true }))
+setManagedTeamFeedRefresh((isCurrent, signal) => refreshManagedTeams(isCurrent, { strict: true, signal }))
 
-let managedTeamsRefresh = null
-async function refreshManagedTeams(isCurrent, { strict = false } = {}) {
+const probeManagedTeams = createManagedTeamsProbe(managedProbeTeams)
+async function refreshManagedTeams(isCurrent, { strict = false, signal = currentViewSignal() } = {}) {
   const generation = clientModeGeneration
   const session = state.managedSession
-  if (managedTeamsRefresh?.generation !== generation || managedTeamsRefresh?.session?.id !== session?.id
-    || managedTeamsRefresh?.session?.role !== session?.role) {
-    const refresh = { generation, session, promise: null }
-    managedTeamsRefresh = refresh
-    // Navigation and feed reads share one request, so an older response cannot
-    // overwrite newer grants. Feed callers retry transient failures.
-    refresh.promise = managedProbeTeams({ fallback: null }).finally(() => {
-      if (managedTeamsRefresh === refresh) managedTeamsRefresh = null
-    })
-  }
-  const fresh = await managedTeamsRefresh.promise
+  const fresh = await probeManagedTeams({ generation, session, signal })
   const teams = fresh ?? (strict ? null : state.managedTeams)
-  if (teams === null || !isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
+  if (signal.aborted || teams === null || !isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
   const previousTeamName = state.managedTeams.find(team => team.id === state.currentManagedTeam)?.name
   const changedReports = setManagedReportCatalog(teams)
   state.managedTeams = teams
@@ -2070,6 +2062,9 @@ function canAccessManagedPage(view) {
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 async function restoreManagedPage(route, isCurrent) {
+  const reusableView = readyManagedView === currentViewGeneration() ? readyManagedView : null
+  // Cancel the previous feed and catalog read before checking the destination.
+  beginViewNavigation()
   // Revalidate lightweight access/assignment metadata on navigation; unchanged
   // versions continue to reuse content without downloading the reports again.
   if ((['findings', 'files', 'bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent))) return false
@@ -2081,9 +2076,8 @@ async function restoreManagedPage(route, isCurrent) {
   }
   route = resolveManagedRoute(route, state.managedTeams, adminBundles)
   if (!route) return false
-  const canReuseReport = readyManagedView === currentViewGeneration()
+  const canReuseReport = reusableView !== null && readyManagedView === reusableView
     && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
-  beginViewNavigation()
   if (!isCurrent() || !isManagedUiMode()) return false
   if (route.view !== 'home' && (!state.managedSession || state.managedSession.role === 'none')) return false
   if (route.finding) {
