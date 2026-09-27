@@ -161,3 +161,15 @@ test('stale saves and read-only/local modes cannot mutate managed comment state'
   assert.equal((await writeManagedComment(finding, 'Read-only note')).status, 403)
   assert.equal(writes.length, 1)
 })
+
+test('live comment reads cannot overwrite a POST that lands during the read', async () => {
+  await loadManagedReportComments('r')
+  const response = Promise.withResolvers()
+  fetchResult = () => response.promise
+  const refresh = loadManagedReportComments('r')
+  saveResult = { status: 200, comment: { ...comment, body: 'new', version: 2 } }
+  await writeManagedComment(finding, 'new', comment)
+  response.resolve([comment])
+  assert.equal(await refresh, true)
+  assert.equal(managedCommentsFor(finding)[0].body, 'new')
+})

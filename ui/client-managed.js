@@ -3,6 +3,7 @@
 // view.js. It loads when a managed session or page is first requested.
 import './managed/pages.js'
 export * from '../client/managed/session.js'
+export { watchTeamFeed } from '../client/managed/team-feed.js'
 export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-data.js'
 export { getPreviewRole, setPreviewRole } from '../client/managed/request.js'
 export { resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './managed/state.js'

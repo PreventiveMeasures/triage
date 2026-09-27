@@ -24,6 +24,7 @@ import { clearReportSources, fetchTeamReports, login as managedLogin } from './c
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
+import { startManagedTeamFeed } from './managed-feed.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 import { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
@@ -787,6 +788,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return false
   }
+  startManagedTeamFeed()
   await renderSidebar()
   return true
 }

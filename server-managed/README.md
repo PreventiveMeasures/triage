@@ -72,7 +72,7 @@ links; re-enabling sharing makes any unrevoked links usable again.
 Both require an authenticated team manager, same-origin access and CSRF. Public
 clients send the fragment token in `X-Deepview-Share`, with no cookies. A supplied
 token takes precedence over any login cookie and is confined to an explicit
-allowlist: `/api/teams/:id/{shared,reports}`, visible reports' read-only
+allowlist: `/api/teams/:id/{shared,reports,feed}`, visible reports' read-only
 `triage`, `triage/history`, `comments`, and `sources` routes, and authorized
 bundles' `metadata`, `contents`, `download`, and `advisories` routes. Global
 endpoints, mutations, unknown routes, cleanup and sync transports are denied.
@@ -173,6 +173,26 @@ recheck access after cold reads. Triage and comments remain shared by finding ID
 across teams; the team is only the authorization context.
 
 # Fix pull requests and issues
+
+`GET /api/teams/:id/feed` is a read-only SSE subscription for the team's visible
+triage and comments. It sends `event: triage` with `data: {}` on connection and
+when annotations change; clients refresh the existing report annotation APIs.
+Writes continue through the existing POST/PATCH/DELETE routes. Notifications
+contain no finding IDs, annotation bodies, or global history sequence numbers.
+
+The feed checks compact database revisions every three seconds, so instances
+sharing SQLite or Postgres see each other's writes without an in-memory bus.
+It rechecks session/capability and team visibility before notifications, sends
+`event: close` when access or the workspace changes, and ends the stream.
+Clients must stop on that event and reload access before reopening the team.
+Heartbeats run every 15 seconds; streams end after at most 240 seconds and
+reconnect without a replay cursor. Every connection refreshes current state,
+including updates missed during disconnection. Slow consumers are disconnected.
+
+The UI keeps one feed for the focused team/report, aborts it immediately on
+navigation, and opens the destination team's feed after its reports hydrate.
+Home, bundles, Manage, logout and local mode close the team subscription.
+Live reads preserve pending local edits and refresh Fix metadata when needed.
 
 `GET /api/teams/:id/fixes` returns GitHub PR and ordinary issue metadata
 for the workspace. It requires an approved managed session (at least `view`)

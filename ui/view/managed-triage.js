@@ -319,3 +319,39 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
   scheduleTriagePush()
   return true
 }
+
+// Live reads preserve edits captured locally or posted while the GET was in
+// flight. Flush first so a notification from our own POST cannot roll it back.
+export async function refreshManagedReportTriage(reportId, { signal } = {}) {
+  const reports = state.reports, teamId = state.currentManagedTeam
+  const role = state.managedSession?.role, userId = state.managedSession?.id
+  const current = () => !signal?.aborted && state.serverMode === 'managed' && !state.localMode
+    && state.reports === reports && state.currentManagedTeam === teamId
+    && state.managedSession?.id === userId && state.managedSession?.role === role
+    && hydratedReports.has(scopeFor(reportId, teamId))
+  if (!current()) return false
+  flushPending()
+  await flushChain
+  if (!current()) return false
+  const ids = findingIdsForManagedReport(reportId)
+  const before = new Map([...ids].map(id => [id, baseline.get(id)]))
+  const entries = await fetchReportTriage(reportId, teamId, { signal })
+  if (entries == null || !current()) return false
+  let changed = false, fixChanged = false
+  for (const id of ids) {
+    const known = before.get(id), local = wireEntryOf(state.triage.get(id))
+    if (baseline.get(id) !== known || wireKey(local) !== (known?.key ?? '')) continue
+    const wire = wireEntryOf(entries[id])
+    if ((known?.fix ?? '') !== (wire?.fix ?? '')) fixChanged = true
+    baseline.set(id, { key: wireKey(wire), fix: wire?.fix ?? '' })
+    const ignoredReports = wire?.triage == null ? state.triage.get(id)?.ignoredReports : undefined
+    if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
+  }
+  if (fixChanged) invalidateManagedFixes(teamId)
+  if (changed) {
+    await saveTriage()
+    if (!current()) return false
+    render()
+  }
+  return true
+}

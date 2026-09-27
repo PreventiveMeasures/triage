@@ -12,6 +12,7 @@ import { MAX_FINDING_ID, MAX_TRIAGE_HISTORY } from '../common/managed/triage.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
+import { serveTeamFeed } from './team-feed.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   sendJson(res, status, body, { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' })
@@ -26,7 +27,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   }
   const method = req.method ?? 'GET'
   if (method !== 'GET' && method !== 'HEAD') { json(res, 403, { error: 'share-read-only' }); return }
-  const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports)$/u.exec(url.pathname)
+  const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports|feed)$/u.exec(url.pathname)
   const reportRoute = /^\/api\/reports\/([^/]+)\/(triage|triage\/history|comments|sources)$/u.exec(url.pathname)
   const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories)$/u.exec(url.pathname)
   if (!teamRoute && !reportRoute && !bundleRoute) { json(res, 403, { error: 'share-scope-required' }); return }
@@ -52,6 +53,10 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   }
   if (teamRoute) {
     if (teamRoute[1] !== snapshot.teamId) { json(res, 404, { error: 'no-team' }); return }
+    if (teamRoute[2] === 'feed') {
+      if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
+      await serveTeamFeed(res, deps, snapshot, recheck); return
+    }
     if (teamRoute[2] === 'shared') { await send({ user: snapshot.user, team: snapshot.team }); return }
     await send({ reports: await loadTeamReports(deps.db, deps.reportStore, snapshot) }); return
   }

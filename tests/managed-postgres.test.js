@@ -356,3 +356,26 @@ test('Postgres adds closure reasons and attempts to an existing metadata table w
     } finally { await upgraded.close() }
   }
 })
+
+test('Postgres annotation revisions track visible changes across connections, trimming and purges', async t => {
+  const { db, connect } = await database(t)
+  const peer = await openPostgresManagedDb(connect, { triageHistoryLimit: 1 })
+  t.after(() => peer.close())
+  const initial = await db.getAnnotationRevision(['finding'])
+  await peer.setTriage('hidden', { color: 'red' }, null, null, 1)
+  assert.equal(await db.getAnnotationRevision(['finding']), initial)
+  await peer.setTriage('finding', { color: 'red' }, null, null, 1)
+  const red = await db.getAnnotationRevision(['finding'])
+  assert.notEqual(red, initial)
+  await peer.setTriage('finding', { color: 'blue' }, null, null, 1)
+  assert.notEqual(await db.getAnnotationRevision(['finding']), red)
+  const blue = await db.getAnnotationRevision(['finding'])
+  await peer.setTriage('finding', { color: 'blue' }, null, null, 2)
+  assert.equal(await db.getAnnotationRevision(['finding']), blue)
+  await peer.createComment({ findingId: 'finding', body: 'note', authorId: null, authorLogin: null }, 3)
+  assert.notEqual(await db.getAnnotationRevision(['finding']), blue)
+  await peer.deleteTriage(['finding'])
+  assert.equal(await db.getAnnotationRevision(['finding']), initial)
+  await peer.setTriage('finding', { color: 'red' }, null, null, 1)
+  assert.notEqual(await db.getAnnotationRevision(['finding']), red)
+})

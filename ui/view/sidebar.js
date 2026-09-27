@@ -14,6 +14,7 @@ import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
+import { startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -1802,6 +1803,7 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedTeamsPending = true
   resetManagedAppState()
   resetManagedFixes()
+  stopManagedTeamFeed()
   resetManagedTriage()
   setSyncForceDisabled(state.serverMode !== 'e2e')
   triageSync.setForcedOff(true)
@@ -1947,6 +1949,7 @@ async function revalidateManagedSession() {
     if (previous && (previous.id !== session?.id || previous.role !== session?.role)) {
       state.managedTeams = []
       state.bundles = []
+      stopManagedTeamFeed()
       resetManagedTriage()
       managedHistory.reset()
       void goHome({ history: false })
@@ -2055,6 +2058,7 @@ async function restoreManagedPage(route, isCurrent) {
     if (!isCurrent()) return false
     if (!result.ok) { if (result.reason) showToast(result.reason); return false }
     readyManagedView = currentViewGeneration()
+    startManagedTeamFeed()
     return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport }, state.managedTeams)
   }
   if (route.view === 'bundles') return openManagedBundle(route.bundleId, isCurrent, route.bundleTab)
@@ -2073,6 +2077,7 @@ async function restoreManagedPage(route, isCurrent) {
   // background PWA window where a view transition may wait for a paint.
   render({ animate: false })
   readyManagedView = currentViewGeneration()
+  startManagedTeamFeed()
   renderSidebar()
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
   return managedRouteForIds({ ...route, view: state.currentView === 'links' ? 'findings' : state.currentView }, state.managedTeams)
@@ -2109,6 +2114,13 @@ document.addEventListener('managed-bundle-open', event => {
   if (isManagedUiMode() && typeof event.detail?.id === 'string') {
     void managedHistory.navigate({ view: 'bundles', bundleId: event.detail.id })
   }
+})
+
+document.addEventListener('managed-feed-closed', () => {
+  stopManagedTeamFeed()
+  resetManagedTriage()
+  void goHome({ history: false }).then(() => refreshManagedSession())
+  showToast('Workspace access or reports changed. Reopen the team to refresh.')
 })
 
 export async function navigateToAdminPage(view, options = {}) {

@@ -23,8 +23,9 @@ For all backend combinations and sharing rules, see
 
 The app shares initialization within a function instance and retries failed
 initialization. Requests await their work; the serverless app installs no
-listener, signal handlers, or maintenance timers. Missing derivatives are built
-during authorized reads. Build deduplication and queues are local to each
+listener, signal handlers, or maintenance timers. Team SSE polling and heartbeat
+timers exist only for the lifetime of their awaited request. Missing derivatives
+are built during authorized reads. Build deduplication and queues are local to each
 instance; caches are shared, and builders recheck database references after
 publishing to handle concurrent deletion. Access is checked again after cold
 builds. Each Neon operation closes its connection before returning.
@@ -121,6 +122,28 @@ The 512 MiB decoding cap is not a total memory cap. These operations must fit
 within the function's memory and duration budget. Larger workloads can use the
 persistent server with the same Neon/Blob adapters.
 
+## Team update streams
+
+`GET /api/teams/:id/feed` streams small SSE invalidations for visible triage and
+comments. Each stream ends after 240 seconds, leaving headroom below this
+deployment's 300-second invocation limit. The client reconnects and refreshes
+current annotations on every connection. Idle streams send 15-second
+heartbeats; the client retries stalled streams and transient failures with
+backoff. Navigation aborts the old team's request.
+
+The function stays awaited until the stream closes. It polls shared database
+revisions every three seconds using short transactions, releasing each Neon
+connection before waiting. No background process, sticky routing, persistent
+database connection, or instance-local notification bus is required. Each
+active browser feed occupies a streaming invocation and incurs those reads;
+see Vercel's
+[streaming and duration guidance](https://vercel.com/docs/functions/streaming-functions#function-duration).
+
+Authentication and team visibility are rechecked during polling. Revocation
+or a workspace change sends a terminal close event; expired connections cannot
+continue reading under an old permission snapshot. Public-share feeds use the
+same header capability and revocation checks as public report reads.
+
 ## Coverage and limits
 
 The repository tests cover PostgreSQL queries and rollback behavior, function
@@ -130,7 +153,9 @@ coverage uses PGlite; Blob coverage uses SDK fixtures. See
 [managed-postgres](../tests/managed-postgres.test.js),
 [managed-vercel-runtime](../tests/managed-vercel-runtime.test.js),
 [managed-vercel-storage](../tests/managed-vercel-storage.test.js),
-[managed-vercel-reap](../tests/managed-vercel-reap.test.js), and
+[managed-vercel-reap](../tests/managed-vercel-reap.test.js),
+[team feeds](../tests/managed-team-feed.test.js),
+[feed reconnection](../tests/managed-feed-client.test.js), and
 [storage isolation](../tests/server-storage-isolation.test.js).
 
 These tests do not validate a deployed Vercel build, live OAuth/provider
