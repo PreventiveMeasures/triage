@@ -1004,8 +1004,7 @@ function kanbanCardTemplate(g, opts = {}) {
         : html`<a class="kanban-action kanban-fix-link" href=${fix} target="_blank" rel="noopener noreferrer" draggable="false" data-tooltip=${`Open fix link: ${fix}`} aria-label=${`Open fix link: ${fix}`}>${FIX_ICON}</a>`
       : html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
   } else if (isKanban && comment) {
-    const label = isManagedUiMode() ? 'View comments' : `Edit comment: ${comment}`
-    action = html`<button type="button" class="kanban-action mark-comment" data-tooltip=${label} aria-label=${label}>${COMMENT_ICON}</button>`
+    action = html`<comment-preview class="kanban-action" .finding=${activeTab} .comment=${comment}>${COMMENT_ICON}</comment-preview>`
   }
   const inner = html`<div class="kanban-badge-col">
       <span

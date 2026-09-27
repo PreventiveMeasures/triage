@@ -1,10 +1,9 @@
 import { css, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { StateElement } from '@rray/frontend/state-element'
+import { HoverPreviewElement } from './hover-preview.js'
 import { isHttpUrl } from '../../report/index.js'
 import { parseGithubIssueUrl, parseGithubPrUrl } from '../../common/github-pr.ts'
 import { managedFixes, subscribeFixes } from './managed-pull-requests.js'
-import { hideTooltip, installShadowTooltipListener } from './tooltip.js'
 import { GITHUB_ICON_SVG } from './icons.js'
 
 const labels = { open: 'Open', draft: 'Draft', closed: 'Closed', merged: 'Merged', completed: 'Completed', not_planned: 'Not planned', duplicate: 'Duplicate', unknown: 'Closed' }
@@ -14,9 +13,9 @@ const completedIssueIcon = html`<svg viewBox="0 0 16 16" width="16" height="16" 
 const notPlannedIssueIcon = html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="m3.5 12.5 9-9"/></svg>`
 const issueIcons = { completed: completedIssueIcon, not_planned: notPlannedIssueIcon }
 
-class ManagedFixLink extends StateElement {
+class ManagedFixLink extends HoverPreviewElement {
   static properties = { url: { type: String }, compact: { type: Boolean, reflect: true } }
-  static styles = css`
+  static styles = [HoverPreviewElement.styles, css`
     :host { display: inline; word-break: normal; }
     a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; cursor: default; }
     .status { display: inline-flex; align-items: center; gap: .3em; vertical-align: text-bottom; margin-right: .35em; font-weight: 600; white-space: nowrap; }
@@ -36,14 +35,6 @@ class ManagedFixLink extends StateElement {
     :host([compact]) { display: inline-flex; }
     :host([compact]) .fix-link { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
     :host([compact]) .status { margin: 0; font-size: 1rem; line-height: 1; }
-    .preview {
-      position: fixed; inset: auto; margin: 0; padding: 14px; box-sizing: border-box;
-      width: min(24rem, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto;
-      border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text);
-      box-shadow: 0 8px 28px rgb(0 0 0 / .25); font: 13px/1.45 system-ui, sans-serif;
-      text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal; cursor: default;
-    }
-    .preview.wide { width: min(36rem, calc(100vw - 24px)); }
     .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .preview-ref { display: inline-flex; align-items: center; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
     .preview-ref span { min-width: 0; }
@@ -58,26 +49,22 @@ class ManagedFixLink extends StateElement {
       .ref, .link-status { margin-left: .55rem; }
       .preview { display: none; }
     }
-  `
+  `]
 
   constructor() {
     super()
     this.url = ''
     this.compact = false
     this.unsubscribe = null
-    this.showTimer = null
-    this.hideTimer = null
   }
 
   connectedCallback() {
     super.connectedCallback()
     this.unsubscribe = subscribeFixes(() => this.requestUpdate())
-    installShadowTooltipListener(this.renderRoot)
     if (this.hasUpdated) this.requestUpdate()
   }
 
   disconnectedCallback() {
-    this._hidePreview()
     this.unsubscribe?.()
     this.unsubscribe = null
     super.disconnectedCallback()
@@ -86,72 +73,7 @@ class ManagedFixLink extends StateElement {
   updated(changed) {
     // Editing the destination or switching to a full row dismisses the preview.
     if (changed.has('url') || changed.has('compact')) this._hidePreview()
-    else if (this.renderRoot.querySelector('.preview')?.matches(':popover-open')) this._positionPreview()
-  }
-
-  _schedulePreview() {
-    clearTimeout(this.hideTimer)
-    clearTimeout(this.showTimer)
-    if (!this.renderRoot.querySelector('.preview')) return
-    this.showTimer = setTimeout(() => {
-      if (!this.isConnected) return
-      const preview = this.renderRoot.querySelector('.preview')
-      if (!preview) return
-      hideTooltip()
-      preview.showPopover()
-      this._positionPreview()
-      document.addEventListener('keydown', this._previewKeyDown, true)
-      window.addEventListener('scroll', this._previewScroll, true)
-      window.addEventListener('resize', this._hidePreview)
-    }, 150)
-  }
-
-  _keepPreview() {
-    clearTimeout(this.hideTimer)
-  }
-
-  _leavePreview() {
-    clearTimeout(this.showTimer)
-    clearTimeout(this.hideTimer)
-    this.hideTimer = setTimeout(() => {
-      if (!this.renderRoot.querySelector('.preview')?.contains(this.renderRoot.activeElement)) this._hidePreview()
-    }, 150)
-  }
-
-  _hidePreview = () => {
-    clearTimeout(this.showTimer)
-    clearTimeout(this.hideTimer)
-    const preview = this.renderRoot?.querySelector('.preview')
-    if (preview?.matches(':popover-open')) preview.hidePopover()
-    document.removeEventListener('keydown', this._previewKeyDown, true)
-    window.removeEventListener('scroll', this._previewScroll, true)
-    window.removeEventListener('resize', this._hidePreview)
-  }
-
-  _previewKeyDown = event => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    event.stopPropagation()
-    if (this.renderRoot.querySelector('.preview')?.contains(this.renderRoot.activeElement)) {
-      this.renderRoot.querySelector('.fix-link').focus({ preventScroll: true })
-    }
-    this._hidePreview()
-  }
-
-  _previewScroll = event => {
-    if (!event.composedPath().includes(this.renderRoot.querySelector('.preview'))) this._hidePreview()
-  }
-
-  _positionPreview() {
-    const preview = this.renderRoot.querySelector('.preview')
-    const anchor = this.renderRoot.querySelector('a').getBoundingClientRect()
-    const { width, height } = preview.getBoundingClientRect()
-    const gap = 8, margin = 12
-    const left = Math.max(margin, Math.min(anchor.left, window.innerWidth - width - margin))
-    const top = anchor.bottom + gap + height <= window.innerHeight - margin
-      ? anchor.bottom + gap : Math.max(margin, anchor.top - gap - height)
-    preview.style.left = `${left}px`
-    preview.style.top = `${top}px`
+    else super.updated(changed)
   }
 
   render() {
