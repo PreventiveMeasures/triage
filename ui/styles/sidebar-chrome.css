@@ -38,15 +38,23 @@
   &.visible { opacity: 1; }
 }
 
+/* Repository details match the spacing and muted reference in issue/PR previews. */
+#styled-tooltip:has(.tooltip-repo) {
+  padding: 14px;
+  line-height: 1.4;
+}
 #styled-tooltip .tooltip-repo {
   display: flex;
   align-items: baseline;
-  gap: .35rem;
+  gap: .4rem;
+  margin-top: 8px;
+  color: var(--muted);
+  font: 12px/1.4 system-ui, sans-serif;
 }
 #styled-tooltip .tooltip-repo svg {
   flex-shrink: 0;
   align-self: start;
-  margin-top: .15em;
+  margin-top: .2em;
 }
 
 body.theme-light #styled-tooltip {
