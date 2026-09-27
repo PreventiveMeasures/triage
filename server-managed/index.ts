@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
 import { managedStorageLines } from '../server-common/storage-log.ts'
 import { runReapers, withReap } from '../server-common/reap.ts'
+import { startServer } from '../server-common/standalone.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { loadManagedStatic } from './static.ts'
@@ -88,8 +89,6 @@ export async function init(config = loadManagedConfig()): Promise<Server> {
         } finally {
           try { await app.close() }
           finally {
-            process.off('SIGINT', onSignal)
-            process.off('SIGTERM', onSignal)
             server.off('error', onError)
             server.off('close', onClose)
             server.off('listening', onListening)
@@ -103,16 +102,7 @@ export async function init(config = loadManagedConfig()): Promise<Server> {
   // request listener and never bound this server. Repeated disposal is safe.
   server[Symbol.asyncDispose] = dispose
 
-  let closing = false
-  async function shutdown(code: number): Promise<void> {
-    if (closing) return
-    closing = true
-    try { await dispose() }
-    catch (err) { console.error('Managed shutdown failed:', err); code = 1 }
-    process.exit(code)
-  }
-  function onSignal(): void { void shutdown(0) }
-  function onError(err: Error): void { console.error('Managed server error:', err); void shutdown(1) }
+  function onError(): void { onClose() }
   function onClose(): void {
     if (!disposal) void dispose().catch(err => { console.error('Managed server cleanup failed:', err) })
   }
@@ -124,15 +114,13 @@ export async function init(config = loadManagedConfig()): Promise<Server> {
   server.on('error', onError)
   server.once('close', onClose)
   server.on('listening', onListening)
-  process.on('SIGINT', onSignal)
-  process.on('SIGTERM', onSignal)
   return server
 }
 
 export async function start(): Promise<void> {
   const config = loadManagedConfig()
   const server = await init(config)
-  server.listen(config.port, config.host)
+  startServer(server, config)
 }
 
 if (import.meta.main) await start()

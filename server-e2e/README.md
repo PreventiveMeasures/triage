@@ -48,15 +48,19 @@ const [triageUpgradeListener] = httpServer.listeners('upgrade')
 
 Attach those listeners to your host server, or call `httpServer.listen(...)`
 yourself. The supported modes match `--mode`; managed-only has no upgrade
-listener. Initialization opens storage and installs the server's maintenance
-and shutdown handlers, but does not bind a port. The root `start()` is called
-only by `cli.js`.
+listener. Each initialization opens its own storage handles and starts
+maintenance without binding a port or installing process handlers. The root
+`start()` is called only by `cli.js`; standalone launchers own signals and exit
+codes. Embedded hosts receive server errors through the server's `error` event.
 
-For an embedded managed-only server, await `httpServer[Symbol.asyncDispose]()`
-on teardown. It drains tracked work, stops maintenance, closes the database,
-and removes its process handlers without exiting the host. This also works
-when only its request listener was mounted on another server. Normal
-`httpServer.close()` triggers cleanup too; async disposal waits for it to finish.
+In every mode, await `httpServer[Symbol.asyncDispose]()` on teardown. It closes
+live WS/SSE connections, drains tracked work, stops maintenance and pubsub, and
+closes all enabled databases without exiting the host. This also works when its
+listeners were mounted on another server: the host's listener stays open, and
+disposed API handlers reject new work. Disposal is idempotent, and `init(mode)`
+can create a fresh instance afterward. A server `close` or `error` event also
+starts cleanup; await async disposal to wait for it to finish. The host remains
+responsible for closing its own HTTP server.
 
 Combined modes use one HTTP server on `HOST`/`PORT`, serving managed HTTP
 routes alongside the existing e2e HTTP, WebSocket and SSE routes. Only

@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util'
 import type { Server } from 'node:http'
+import { startServer } from './server-common/standalone.ts'
 
 const modes = ['e2e', 'managed', 'managed-e2e', 'e2e-managed'] as const
 export type ServerMode = typeof modes[number]
@@ -14,8 +15,8 @@ function parseMode(mode: string): ServerMode {
 export async function init(mode: ServerMode = 'e2e'): Promise<Server> {
   const selected = parseMode(mode)
   if (selected === 'e2e') {
-    const e2e = await import('./server-e2e/index.ts')
-    return e2e.httpServer
+    const { createE2eApp } = await import('./server-e2e/app.ts')
+    return (await createE2eApp()).httpServer
   }
   if (selected === 'managed') {
     const managed = await import('./server-managed/index.ts')
@@ -44,6 +45,6 @@ Combined mode does not support mixing Neon and SQLite.`)
       ? (await import('./server-managed/config.ts')).loadManagedConfig()
       : (await import('./server-e2e/config.ts')).loadConfig()
     const server = await init(mode)
-    server.listen(config.port, config.host)
+    startServer(server, config)
   }
 }

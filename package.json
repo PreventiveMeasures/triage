@@ -40,6 +40,7 @@
   },
   "files": [
     "api/reap.ts",
+    "server-e2e/app.ts",
     "server-e2e/auth.ts",
     "server-e2e/bus-receiver.ts",
     "server-e2e/cli.js",
@@ -84,6 +85,7 @@
     "server-common/reap.ts",
     "server-common/npm-advisories.ts",
     "server-common/origin.ts",
+    "server-common/standalone.ts",
     "server-common/storage-log.ts",
     "server-common/vercel-blob.ts",
     "server-common/scan-config.ts",
