@@ -92,3 +92,19 @@ test('failed annotation refreshes are retried, and preview never opens a real fe
   await watchTeamFeed('team', { signal: new AbortController().signal, onUpdate() { assert.fail() }, onClose() {} })
   assert.equal(calls.length, 2)
 })
+
+
+test('catalog-only subscriptions dispatch teams before triage and retry failed catalog refreshes', async () => {
+  fetchResponse = signal => response(signal, ['event: teams\ndata: {}\n\nevent: triage\ndata: {}\n\n'], { hold: true })
+  const controller = new AbortController(), events = []
+  const done = watchTeamFeed(null, { signal: controller.signal,
+    onTeams: () => { events.push('teams'); return events.length > 1 },
+    onUpdate: () => { events.push('triage') }, onClose() {},
+  })
+  await settle()
+  assert.equal(calls[0].url, '/api/teams/feed')
+  assert.deepEqual(events, ['teams'], 'failed catalog refresh does not consume the next event')
+  mock.timers.tick(1000); await settle()
+  assert.deepEqual(events, ['teams', 'teams', 'triage'])
+  controller.abort(); await done
+})

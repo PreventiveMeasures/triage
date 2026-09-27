@@ -61,3 +61,16 @@ test('refreshing a catalog on a management page still invalidates cached report 
   assert.equal(cache.read('reports:content:a'), undefined)
   assert.equal(managedReportViewChanged({ ...aggregate, currentView: 'manage-reports' }, refreshed, changed), false)
 })
+
+test('empty-team grant changes invalidate the workspace and its bundle metadata', async () => {
+  const cache = new ManagedAppState()
+  const catalog = key => [{ id: 'team', cacheKey: key, reports: [], bundles: [{ id: 'bundle', filename: 'b.stasis', repoFullName: 'org/repo' }] }]
+  cache.setReportCatalog(catalog('grant-v1'))
+  await cache.load('reports:content:team:team', 'workspace', () => Promise.resolve([]))
+  await cache.load('bundle-metadata:bundle', 'bundle', () => Promise.resolve({ files: [] }))
+  assert.equal(cache.setReportCatalog(catalog('grant-v1')).size, 0)
+  assert.deepEqual([...cache.setReportCatalog(catalog('grant-v2'))], ['team:team', 'bundle:bundle'])
+  assert.equal(cache.read('reports:content:team:team'), undefined)
+  assert.equal(cache.read('bundle-metadata:bundle'), undefined)
+  assert.deepEqual([...cache.setReportCatalog([])], ['team:team', 'bundle:bundle'])
+})

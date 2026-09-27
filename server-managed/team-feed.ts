@@ -1,8 +1,8 @@
 import type { ServerResponse } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { ManagedHttpDeps } from './http.ts'
-import type { TeamReportAccessSnapshot } from './db.ts'
-import { TeamReportsError, teamWorkspaceFindingIds } from './team-reports.ts'
+import type { StoredUser, TeamReportAccessSnapshot } from './db.ts'
+import { TeamReportsError, teamSnapshotKey, teamWorkspaceFindingIds } from './team-reports.ts'
 
 // Short database reads work across instances without pinning a Neon connection.
 // All polling belongs to the awaited request; nothing runs after it completes.
@@ -10,9 +10,61 @@ export const TEAM_FEED_POLL_MS = 3_000
 export const TEAM_FEED_LIFETIME_MS = 240_000 // below the configured Vercel 300s
 const HEARTBEAT_MS = 15_000
 
+type FeedOptions = { pollMs?: number; lifetimeMs?: number }
+type Revisions = { teams?: string; triage?: string | undefined }
+
+// Public capabilities remain scoped to their single shared workspace.
 export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
-  snapshot: TeamReportAccessSnapshot, recheck: () => Promise<void>,
-  { pollMs = TEAM_FEED_POLL_MS, lifetimeMs = TEAM_FEED_LIFETIME_MS } = {}): Promise<void> {
+  snapshot: TeamReportAccessSnapshot, recheck: () => Promise<void>, options: FeedOptions = {}): Promise<void> {
+  let ids: string[] | undefined
+  await serveFeed(res, deps, async () => {
+    await recheck()
+    ids ??= [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
+    const triage = await deps.db.getAnnotationRevision(ids)
+    await recheck()
+    return { triage }
+  }, options)
+}
+
+// Membership and content notifications cover all of the user's teams. Only
+// the focused team needs report parsing or annotation reads; null is the
+// catalog-only subscription used on landing and management pages.
+export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
+  sessionId: string, user: StoredUser, teamId: string | null, options: FeedOptions = {}): Promise<void> {
+  let ids: string[] = [], visibilityKey: string | undefined
+  const checkUser = (current: { user: Pick<StoredUser, 'id' | 'role'> } | null) => {
+    if (!current) throw new TeamReportsError(401, 'unauthenticated')
+    if (current.user.id !== user.id || current.user.role !== user.role || current.user.role === 'none') {
+      throw new TeamReportsError(403, 'access-changed')
+    }
+  }
+  await serveFeed(res, deps, async () => {
+    const catalog = await deps.db.getUserTeamFeedSnapshot(sessionId, Date.now())
+    checkUser(catalog)
+    let triage: string | undefined
+    if (teamId) {
+      const snapshot = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+      if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
+      const key = teamSnapshotKey(snapshot)
+      if (key !== visibilityKey) {
+        ids = snapshot.teamId ? [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)] : []
+        visibilityKey = key
+      }
+      if (snapshot.teamId) triage = JSON.stringify([key, await deps.db.getAnnotationRevision(ids)])
+      const current = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+      // A concurrent access/content change discards this poll. The next one
+      // recomputes visibility, without ever notifying under an old grant.
+      checkUser(current)
+      if (!current || teamSnapshotKey(current) !== key) return null
+    } else {
+      checkUser(await deps.db.getReportAccessSnapshot(sessionId, Date.now(), []))
+    }
+    return { teams: catalog!.revision, triage }
+  }, options)
+}
+
+async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: () => Promise<Revisions | null>,
+  { pollMs = TEAM_FEED_POLL_MS, lifetimeMs = TEAM_FEED_LIFETIME_MS }: FeedOptions): Promise<void> {
   const controller = new AbortController()
   const close = () => controller.abort()
   res.once('close', close)
@@ -28,24 +80,25 @@ export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
     return false
   }
   try {
-    const ids = [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
-    await recheck()
     if (stopped()) return
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'private, no-store, no-transform', 'x-accel-buffering': 'no',
       'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' })
     res.flushHeaders()
-    let heartbeat = Date.now(), previous: string | undefined
+    let heartbeat = Date.now()
+    const previous = new Map<string, string>()
     while (!stopped()) {
-      await recheck()
-      const revision = await deps.db.getAnnotationRevision(ids)
-      await recheck()
+      const revisions = await read()
       if (stopped()) break
-      if (revision !== previous) {
-        if (!write('event: triage\ndata: {}\n\n')) break
-        previous = revision
+      for (const event of revisions ? ['teams', 'triage'] as const : []) {
+        const revision = revisions![event]
+        if (revision === undefined) { previous.delete(event); continue }
+        if (revision === previous.get(event)) continue
+        if (!write(`event: ${event}\ndata: {}\n\n`)) return
+        previous.set(event, revision)
         heartbeat = Date.now()
-      } else if (Date.now() - heartbeat >= HEARTBEAT_MS) {
+      }
+      if (Date.now() - heartbeat >= HEARTBEAT_MS) {
         if (!write(': keepalive\n\n')) break
         heartbeat = Date.now()
       }

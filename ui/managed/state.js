@@ -6,6 +6,7 @@ export class ManagedAppState {
     this.session = null
     this.teamCatalog = null
     this.reportCatalog = null
+    this.bundleCatalog = null
     this.generation = 0
     this.sessionController = new AbortController()
     this.notify = notify
@@ -24,13 +25,14 @@ export class ManagedAppState {
     this.session = null
     this.teamCatalog = null
     this.reportCatalog = null
+    this.bundleCatalog = null
   }
 
   // Each team owns one filtered workspace response. Any report/link or grant
   // change invalidates that response, plus affected privileged report previews.
   setReportCatalog(teams) {
     const changedTeams = new Set()
-    const teamCatalog = new Map(teams.map(team => [team.id, JSON.stringify(team.reports.map(report => [report.id, report.cacheKey ?? null]).toSorted())]))
+    const teamCatalog = new Map(teams.map(team => [team.id, JSON.stringify([team.cacheKey ?? null, team.reports.map(report => [report.id, report.cacheKey ?? null]).toSorted()])]))
     for (const id of new Set([...this.teamCatalog?.keys() ?? [], ...teamCatalog.keys()])) {
       if (this.teamCatalog?.get(id) !== teamCatalog.get(id)) changedTeams.add(`team:${id}`)
     }
@@ -65,6 +67,21 @@ export class ManagedAppState {
         changed.add(id)
       }
     }
+    const bundles = new Map()
+    for (const team of teams) {
+      for (const bundle of team.bundles ?? []) {
+        const keys = bundles.get(bundle.id) ?? []
+        keys.push(JSON.stringify([team.id, team.cacheKey ?? null, bundle.filename, bundle.repoFullName]))
+        bundles.set(bundle.id, keys)
+      }
+    }
+    const bundleCatalog = new Map([...bundles].map(([id, keys]) => [id, JSON.stringify(keys.toSorted())]))
+    for (const id of new Set([...this.bundleCatalog?.keys() ?? [], ...bundleCatalog.keys()])) {
+      if (this.bundleCatalog?.get(id) === bundleCatalog.get(id)) continue
+      changed.add(`bundle:${id}`)
+      this.invalidate([`bundle-metadata:${id}`])
+    }
+    this.bundleCatalog = bundleCatalog
     return changed
   }
 

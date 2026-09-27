@@ -12,13 +12,13 @@ function wait(ms, signal) {
 // Fetch preserves the public-share header and never puts a capability in a
 // URL. Reconnection always starts with an invalidation, so no replay cursor or
 // instance affinity is needed. The caller owns the subscription's lifetime.
-export async function watchTeamFeed(teamId, { signal, onUpdate, onClose }) {
+export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose }) {
   if (getPreviewRole()) return
   let backoff = 1_000
   const eventReceived = async event => {
     if (event === 'close') { await onClose(); return false }
-    if (event === 'triage') {
-      if (await onUpdate() === false) throw new Error('Team refresh failed')
+    if (event === 'triage' || event === 'teams') {
+      if (await (event === 'teams' ? onTeams?.() : onUpdate()) === false) throw new Error('Team refresh failed')
       backoff = 1_000
     }
     return true
@@ -34,7 +34,7 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onClose }) {
     }
     try {
       alive()
-      const response = await managedFetch(`/api/teams/${encodeURIComponent(teamId)}/feed`, {
+      const response = await managedFetch(teamId ? `/api/teams/${encodeURIComponent(teamId)}/feed` : '/api/teams/feed', {
         credentials: 'same-origin', headers: { accept: 'text/event-stream' }, signal: request.signal,
       })
       if ([401, 403, 404].includes(response.status)) {
