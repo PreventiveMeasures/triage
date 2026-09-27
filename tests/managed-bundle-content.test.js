@@ -3,12 +3,13 @@ import { test } from 'node:test'
 import { createServer, request } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { Readable } from 'node:stream'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { createDiskBundleCache } from '../server-managed/bundle-cache.ts'
+import { MAX_PACKAGE_INVENTORY_BYTES, createBundleCache, createDiskBundleCache } from '../server-managed/bundle-cache.ts'
 import { createDiskBlobStore } from '../server-managed/blob-store.ts'
 import { createDiskBundleStore } from '../server-managed/bundle-store.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
@@ -212,7 +213,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v1-package-versions.json', 'v2-metadata.json.br'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -269,7 +270,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v1-package-versions.json', 'v2-metadata.json.br'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -409,3 +410,143 @@ test('individual bundle removal still deletes source bytes when cache cleanup fa
   assert.equal(await h.store.get(record.id, record.kind), null)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'owner')).status, 404)
 })
+
+// The upstream HTTP call is the only mock: routing, sessions, permissions,
+// package extraction and cached bundle metadata use the real implementations.
+test('bundle advisories require security, independently of dependency findings', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  const path = `/api/bundles/${record.id}/advisories`
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    calls.push({ url, init })
+    return Promise.resolve(Response.json({ dep: [{ title: 'Published vulnerability', severity: 'high' }] }))
+  })
+  assert.equal((await h.send(path, 'anonymous')).status, 401)
+  assert.equal((await h.send(path, 'none')).status, 403)
+  assert.equal((await h.send(path, 'viewer', 'POST')).status, 405)
+  for (const dependencies of [false, true]) {
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies, security: false })
+    assert.equal((await h.send(path, 'viewer')).status, 403)
+    assert.equal(calls.length, 0)
+  }
+  for (const dependencies of [false, true]) {
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies, security: true })
+    const response = await h.send(`${path}?team=${h.team}`, 'viewer')
+    assert.equal(response.status, 200)
+    assert.equal(response.headers['cache-control'], 'no-store')
+    assert.deepEqual(response.json(), { packages: { dep: ['2.0.0'] }, advisories: { dep: [{ title: 'Published vulnerability', severity: 'high' }] } })
+    assert.equal(calls.at(-1).url, 'https://registry.npmjs.org/-/npm/v1/security/advisories/bulk')
+    assert.deepEqual(JSON.parse(Buffer.from(calls.at(-1).init.body)), { dep: ['2.0.0'] })
+    assert.deepEqual(calls.at(-1).init.headers, { 'content-type': 'application/json', accept: 'application/json' })
+    assert.equal(response.bytes.includes(Buffer.from(source)), false)
+  }
+  const otherTeam = randomUUID()
+  await h.db.createTeam(otherTeam, 'Other team', Date.now())
+  await h.db.setTeamRepo(otherTeam, 1, null)
+  await h.db.setTeamMember(otherTeam, h.users.viewer.userId, { dependencies: true, security: false })
+  assert.equal((await h.send(`${path}?team=${otherTeam}`, 'viewer')).status, 403, 'a grant in another team does not authorize this team')
+  assert.equal((await h.send(`${path}?team=${randomUUID()}`, 'viewer')).status, 403)
+  assert.equal((await h.send(path, 'admin')).status, 200)
+  assert.equal((await h.send(path, 'manager')).status, 200)
+  await h.db.setBundleRepo(record.id, 2)
+  assert.equal((await h.send(path, 'viewer')).status, 404)
+  assert.equal((await h.send(path, 'manager')).status, 404)
+})
+
+test('advisories recheck security after cold metadata builds and upstream requests', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  const path = `/api/bundles/${record.id}/advisories`
+  let calls = 0
+  const original = h.cache.packageVersions.bind(h.cache)
+  const cacheMock = t.mock.method(h.cache, 'packageVersions', async rec => {
+    const packages = await original(rec)
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
+    return packages
+  })
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
+    return Response.json({ dep: [{ title: 'Must not escape', severity: 'high' }] })
+  })
+  assert.equal((await h.send(path, 'viewer')).status, 403)
+  assert.equal(calls, 0)
+  cacheMock.mock.restore()
+  await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: true })
+  const response = await h.send(path, 'viewer')
+  assert.equal(response.status, 403)
+  assert.deepEqual(response.json(), { error: 'security-access-required' })
+  assert.equal(calls, 1)
+})
+
+test('advisories use cached inventory, handle upstream failures, and reject unsupported bundles', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  await h.cache.prebuild(record)
+  t.mock.method(h.store, 'get', () => { throw new Error('Warm metadata must not reread bundle contents') })
+  const fetchMock = t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response('upstream offline', { status: 503 })))
+  const path = `/api/bundles/${record.id}/advisories`
+  const response = await h.send(path, 'viewer')
+  assert.equal(response.status, 502)
+  assert.equal(response.json().error, 'upstream-not-json')
+  fetchMock.mock.mockImplementation(() => Promise.reject(new Error('network')))
+  assert.equal((await h.send(path, 'viewer')).json().error, 'upstream-unreachable')
+  const mapRecord = await h.seed({ kind: 'sourcemap', repoId: 1 })
+  assert.equal((await h.send(`/api/bundles/${mapRecord.id}/advisories`, 'viewer')).status, 422)
+})
+
+
+test('package inventories persist separately; concurrent cache upgrades build once', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  await h.cache.prebuild(record)
+  const inventory = join(h.cacheDir, record.id, 'v1-package-versions.json')
+  assert.deepEqual(JSON.parse(await readFile(inventory, 'utf8')), { dep: ['2.0.0'] })
+  // A metadata-only cache is upgraded once, even with simultaneous requests.
+  await rm(inventory)
+  const gate = Promise.withResolvers(), read = h.store.get, started = Promise.withResolvers()
+  let builds = 0
+  h.store.get = async (...args) => { builds++; started.resolve(); await gate.promise; return read(...args) }
+  const queries = Array.from({ length: 8 }, () => h.cache.packageVersions(record))
+  await started.promise
+  gate.resolve()
+  for (const packages of await Promise.all(queries)) assert.deepEqual(packages, { dep: ['2.0.0'] })
+  assert.equal(builds, 1)
+  // A fresh instance needs neither the full metadata nor original bundle bytes.
+  await writeFile(join(h.cacheDir, record.id, 'v2-metadata.json.br'), 'not compressed metadata')
+  const restarted = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get() { throw new Error('must use inventory') } })
+  assert.deepEqual(await restarted.packageVersions(record), { dep: ['2.0.0'] })
+})
+
+test('oversized inventories persist a rejection marker and return 413 without contacting npm', async t => {
+  const h = await setup(t)
+  const large = stasis.replace('2.0.0', '1'.repeat(MAX_PACKAGE_INVENTORY_BYTES))
+  const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(large)) })
+  await h.cache.prebuild(record)
+  assert.equal(await readFile(join(h.cacheDir, record.id, 'v1-package-versions.json'), 'utf8'), 'null')
+  t.mock.method(globalThis, 'fetch', () => { throw new Error('must reject before contacting npm') })
+  t.mock.method(h.store, 'get', () => { throw new Error('must not rebuild rejected inventories') })
+  const response = await h.send(`/api/bundles/${record.id}/advisories`, 'viewer')
+  assert.equal(response.status, 413)
+  assert.deepEqual(response.json(), { error: 'payload-too-large' })
+  assert.equal((await h.send(`/api/bundles/${record.id}/metadata`, 'viewer')).status, 200, 'other metadata remains usable')
+})
+
+for (const reportedSize of [MAX_PACKAGE_INVENTORY_BYTES + 1, null, 1]) {
+  test(`inventory reads enforce the byte limit before parsing (reported size: ${reportedSize})`, async () => {
+    let reads = 0
+    const stream = Readable.from((function* () {
+      reads++; yield Buffer.alloc(MAX_PACKAGE_INVENTORY_BYTES, ' ')
+      reads++; yield Buffer.from('x')
+      reads++; yield Buffer.alloc(MAX_PACKAGE_INVENTORY_BYTES)
+    })(), { highWaterMark: 0 })
+    const cache = createBundleCache({
+      exists: () => Promise.resolve(true),
+      open: (_id, name) => {
+        assert.equal(name, 'v1-package-versions.json')
+        return Promise.resolve({ size: reportedSize, stream })
+      },
+    }, {}, { get() { throw new Error('must use inventory') } })
+    assert.equal(await cache.packageVersions({ id: 'id', kind: 'stasis' }), null)
+    assert.equal(stream.destroyed, true)
+    assert.ok(reads < 3, 'stop the stream as soon as its bound is exceeded')
+    if (reportedSize > MAX_PACKAGE_INVENTORY_BYTES) assert.equal(reads, 0)
+  })
+}

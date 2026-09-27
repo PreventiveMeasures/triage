@@ -12,6 +12,7 @@ import { createSession } from '../server-managed/session.ts'
 function environment(dir) {
   return {
     ...process.env, HOST: '127.0.0.1', PORT: '0', DATABASE_URL: '', E2E_DATABASE_URL: '', MANAGED_DATABASE_URL: '',
+    CRON_SECRET: 'test-cron-secret', OBJSTORE_REAP_DISABLED: 'true',
     CONFIG_PATH: join(dir, 'config.json'), DB_PATH: join(dir, 'e2e.db'),
     MANAGED_DB_PATH: join(dir, 'managed.db'), OBJSTORE_DIR: join(dir, 'objstore'),
     GITHUB_CLIENT_ID: 'test-client', GITHUB_CLIENT_SECRET: 'test-secret',
@@ -108,6 +109,11 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
     } else {
       assert.equal((await fetch(`${server.url}/api/auth/session`)).status, 404)
     }
+    assert.equal((await fetch(`${server.url}/api/reap`)).status, 401)
+    assert.equal((await fetch(`${server.url}/api/reap`, { method: 'POST', headers: { authorization: `Bearer ${env.CRON_SECRET}` } })).status, 405)
+    const cleanup = await fetch(`${server.url}/api/reap`, { headers: { authorization: `Bearer ${env.CRON_SECRET}` } })
+    assert.equal(cleanup.status, 200)
+    assert.deepEqual((await cleanup.json()).reaped, [...hasE2e ? ['e2e'] : [], ...hasManaged ? ['managed'] : []])
     let ws
     let reader
     if (hasE2e) {

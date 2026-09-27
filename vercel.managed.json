@@ -5,14 +5,12 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "out",
   "functions": {
-    "api/managed.ts": { "maxDuration": 300, "includeFiles": "out/**" },
-    "api/managed-reap.ts": { "maxDuration": 60 }
+    "api/managed.ts": { "maxDuration": 300, "includeFiles": "out/**" }
   },
   "routes": [
-    { "src": "/api/managed-reap", "dest": "/api/managed-reap" },
     { "src": "/(.*)", "dest": "/api/managed" }
   ],
   "crons": [
-    { "path": "/api/managed-reap", "schedule": "0 0 * * *" }
+    { "path": "/api/reap", "schedule": "0 0 * * *" }
   ]
 }

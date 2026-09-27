@@ -1,40 +1,30 @@
-// Advisories tab for the bundle slide. Stasis bundles carry
-// per-module `{ name, version }` metadata (see
-// `@exodus/stasis-core/bundle`'s `Bundle.modules` Map), so we can fan
-// out a single bulk lookup against the npm registry's advisories
-// endpoint and surface every CVE / advisory affecting the bundled
-// versions. The relay's `/api/npm-advisories` route proxies the
-// upstream call (the registry doesn't emit CORS headers for arbitrary
-// callers — direct browser fetches would fail same-origin).
-//
-// Fetch state lives in a module-scoped cache keyed by bundle
-// `integrity`. Each entry walks through:
-//   * `loading`  — fetch in flight; renders a placeholder
-//   * `ok`       — fetch landed; carries the per-package advisory
-//                  rows merged across known versions
-//   * `error`    — fetch failed (network / non-2xx / parse); shows
-//                  the reason
-//
-// The cache is intentionally NOT in `state` — re-rendering the
-// view shouldn't poke through observer-util on every tick when
-// the fetch is still in flight. We call `render()` explicitly at
-// the resolve / reject points to repaint the slide once the data
-// lands.
+// Published npm advisories for bundled package versions. Local/e2e queries
+// use the browser's inventory; managed queries use the authorized bundle ID.
+// Keep results in memory, scoped to the current managed identity and teams.
 
 import { html, nothing } from 'lit'
+import { state } from '#client/index.js'
+import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
 
-const cache = new Map()
+const localCache = new Map()
+let managedCache = new Map(), managedScope = []
+function advisoryCache(details) {
+  if (!details?.managedId) return localCache
+  const session = state.managedSession
+  const scope = [session?.id, session?.role, session?.csrfToken, state.currentManagedTeam, state.managedTeams]
+  if (scope.some((value, index) => value !== managedScope[index])) {
+    managedScope = scope
+    managedCache = new Map()
+  }
+  return managedCache
+}
+function cacheKey(details) { return details.managedId ?? details.integrity }
 
-// One-time consent for the npm-advisories network call. Even though
-// the proxy is same-origin and the upstream endpoint is public, the
-// request sends the bundle's full (package → versions) inventory to
-// a third party (the npm registry) on the user's behalf — so we ask
-// first. The flag is persisted so subsequent bundle visits skip the
-// prompt. Plain localStorage (matches the first-import-prompt
-// pattern); the secure-storage vault is overkill for a boolean
-// preference that's not personally identifying.
+// Local/e2e bundles are private from the server. Ask before sending their
+// package inventory through the proxy to npm. Managed bundles are already
+// server-readable and use the authorized bundle endpoint without this prompt.
 const CONSENT_KEY = 'deepview.advisories.proxyConsent'
 
 function hasConsent() {
@@ -87,7 +77,7 @@ function bundleHasAdvisoryCandidates(details) {
 //     `bundleHasAdvisoryCandidates` (so v0 stasis correctly hides).
 export function showAdvisoriesTab(entry, details) {
   if (!entry || bundleKind(entry.name) !== 'stasis') return false
-  if (!details || details.integrity !== entry.integrity) return true
+  if (entry.managedId || !details || details.integrity !== entry.integrity) return true
   return bundleHasAdvisoryCandidates(details)
 }
 
@@ -108,84 +98,50 @@ function queryToWire(query) {
   return obj
 }
 
-// Kick the fetch if it hasn't been started for this bundle yet.
-// Idempotent: a re-render that runs while the fetch is in flight
-// finds the `loading` entry and skips re-issuing. Resolved AND
-// errored entries are sticky — the cache is keyed by bundle
-// `integrity` (SRI hash of bundle bytes), so a re-open of the same
-// bundle returns the previous result without re-hitting the
-// registry. An errored entry stays until the user clicks the error
-// state's Retry button (`retryBundleAdvisories` below), which drops
-// it and re-issues. Memory is bounded by the unique-bundle count
-// per session (each entry is a few KB).
-export async function ensureBundleAdvisories(details, renderFn) {
-  if (!details?.integrity) return
-  if (cache.has(details.integrity)) return
-  // Gate the fetch behind the one-time consent prompt — the
-  // renderBundleAdvisoriesTab path paints the consent UI when
-  // hasConsent() returns false, and only after the user clicks
-  // through does this function fire the request.
-  if (!hasConsent()) return
-  // Collect every (packageName → Set<version>) the stasis bundle names
-  // in its `modules` map, restricted to upstream `node_modules/...`
-  // dependencies with concrete versions — exactly the bulk query the
-  // registry's advisories endpoint takes. This is the shared
-  // `bundlePackageVersions` extractor (see bundle-sources.js): stasis v1
-  // `scope: 'full'` bundles merge workspace sources into the same
-  // `Bundle.modules` Map, so the own-source `@scope/foo @ 0.0.0` would
-  // otherwise get sent to the registry as a real query (and resolve to
-  // an unrelated public package, or to nothing); the helper filters those
-  // out by directory key, and drops versionless (`null`) entries the
-  // endpoint can't accept.
-  const query = bundlePackageVersions(details)
-  if (query.size === 0) {
-    cache.set(details.integrity, { state: 'ok', byPackage: new Map(), query })
-    return
+// Local/e2e mode already owns the bundle; managed mode supplies its ID and
+// receives the package inventory with the advisories from the authorized API.
+async function fetchLocalAdvisories(query) {
+  const res = await fetch('/api/npm-advisories', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(queryToWire(query)),
+  })
+  if (!res.ok) {
+    let reason = `HTTP ${res.status}`
+    try {
+      const body = await res.json()
+      if (typeof body?.error === 'string' && body.error) reason = `${body.error} (HTTP ${res.status})`
+    } catch {}
+    throw new Error(reason)
   }
-  cache.set(details.integrity, { state: 'loading', query })
-  const integrity = details.integrity
+  return res.json()
+}
+
+export async function ensureBundleAdvisories(details, renderFn) {
+  if (!details?.integrity || (!details.managedId && !hasConsent())) return
+  const cache = advisoryCache(details), key = cacheKey(details)
+  if (cache.has(key)) return
+  let query = details.managedId ? new Map() : bundlePackageVersions(details)
+  cache.set(key, { state: 'loading', query })
   try {
-    const res = await fetch('/api/npm-advisories', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(queryToWire(query)),
-    })
-    if (!res.ok) {
-      // Surface the proxy's `{ error, … }` envelope rather than a
-      // bare `HTTP <status>` — the relay maps every documented
-      // failure mode to a named string (`upstream-not-json`,
-      // `payload-too-large`, `origin-denied`, `shutting-down`, …)
-      // so the UI can show something more actionable than a
-      // three-digit code. Falls back to the status if the body
-      // isn't parseable JSON or doesn't carry an `error` field.
-      let reason = `HTTP ${res.status}`
-      try {
-        const body = await res.json()
-        if (body && typeof body.error === 'string' && body.error) {
-          reason = `${body.error} (HTTP ${res.status})`
-        }
-      } catch {}
-      cache.set(integrity, { state: 'error', reason, query })
-      renderFn()
-      return
+    let json
+    if (details.managedId) {
+      const result = await fetchBundleAdvisories(details.managedId)
+      query = new Map(Object.entries(result.packages).map(([name, versions]) => [name, new Set(versions)]))
+      json = result.advisories
+    } else {
+      json = query.size > 0 ? await fetchLocalAdvisories(query) : {}
     }
-    const json = await res.json()
     const byPackage = new Map()
     if (json && typeof json === 'object') {
       for (const [name, list] of Object.entries(json)) {
         if (!Array.isArray(list)) continue
-        // Normalise the array of advisories — strip anything that
-        // doesn't carry the documented `severity` + `title`
-        // pair so an upstream shape change doesn't paint half-
-        // empty rows.
-        const normalised = list.filter((a) => a && typeof a === 'object'
+        const normalised = list.filter(a => a && typeof a === 'object'
           && typeof a.title === 'string' && typeof a.severity === 'string')
         if (normalised.length > 0) byPackage.set(name, normalised)
       }
     }
-    cache.set(integrity, { state: 'ok', byPackage, query })
+    cache.set(key, { state: 'ok', byPackage, query })
   } catch (err) {
-    cache.set(integrity, { state: 'error', reason: err?.message ?? 'fetch-failed', query })
+    cache.set(key, { state: 'error', reason: err?.message ?? 'fetch-failed', query })
   }
   renderFn()
 }
@@ -199,8 +155,9 @@ export async function ensureBundleAdvisories(details, renderFn) {
 // wanted anyway.
 export async function retryBundleAdvisories(details, renderFn) {
   if (!details?.integrity) return
-  if (cache.get(details.integrity)?.state !== 'error') return
-  cache.delete(details.integrity)
+  const cache = advisoryCache(details), key = cacheKey(details)
+  if (cache.get(key)?.state !== 'error') return
+  cache.delete(key)
   await ensureBundleAdvisories(details, renderFn)
 }
 
@@ -250,7 +207,7 @@ function renderConsentPrompt() {
 }
 
 // Render the Advisories tab body. Four branches:
-//   * Consent  — first visit; explains the outbound query (see
+//   * Consent  — first local/e2e visit; explains the outbound query (see
 //                renderConsentPrompt) before anything is fetched
 //   * Loading  — kicked the fetch, no data yet
 //   * Error    — the relay or upstream rejected
@@ -259,17 +216,11 @@ function renderConsentPrompt() {
 //                package name (or a one-line summary when none)
 export function renderBundleAdvisoriesTab(details) {
   if (!details) return html`<div class="bundle-advisories-empty">Bundle not loaded yet.</div>`
-  if (details.kind !== 'stasis' || !details.bundle) {
+  if (details.kind !== 'stasis' || (!details.managedId && !details.bundle)) {
     return html`<div class="bundle-advisories-empty">Advisories are only available for stasis bundles.</div>`
   }
-  // First visit (or post-`localStorage.clear()`) lands on a consent
-  // prompt — the request sends the bundle's full (package → versions)
-  // inventory to a third party (the npm registry, via the same-origin
-  // relay) and we shouldn't fire it without an explicit opt-in. The
-  // `data-advisories-consent` button is delegated through events.js
-  // and writes the flag + re-renders.
-  if (!hasConsent()) return renderConsentPrompt()
-  const entry = cache.get(details.integrity)
+  if (!details.managedId && !hasConsent()) return renderConsentPrompt()
+  const entry = advisoryCache(details).get(cacheKey(details))
   if (!entry || entry.state === 'loading') {
     return html`<div class="bundle-advisories-empty">Loading advisories from npm registry…</div>`
   }

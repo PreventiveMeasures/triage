@@ -1,10 +1,10 @@
 // Per-membership visibility permissions for a team's users — shared by the
 // managed server (which stores + validates them) and the admin client (the
 // team-member checkboxes). Each is an independent opt-in, BOTH DEFAULT OFF:
-//   dependencies — may see dependency (package) findings
-//   security     — may see security findings
-// Stored + assignable now; enforcement on the (not-yet-built) data plane is a
-// later step. New permissions slot in by extending the tuple + the row shape.
+//   dependencies — scan findings in dependencies' own code; App impact stays visible
+//   security     — security findings and published bundle advisories
+// The managed server filters report responses and authorizes advisory lookups
+// using these independent permissions.
 export type VisibilityPermission = 'dependencies' | 'security'
 
 export const VISIBILITY_PERMISSIONS: readonly VisibilityPermission[] = ['dependencies', 'security']

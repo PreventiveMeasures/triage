@@ -122,7 +122,7 @@ describe('initObjstore — auth-gate config guard', () => {
 })
 
 describe('initObjstore — reaper disable (OBJSTORE_REAP_DISABLED)', () => {
-  it('reapDisabled skips the boot sweep (a stale orphan survives) and stopReaper is a no-op', async () => {
+  it('reapDisabled skips automatic sweeps but retains explicit cleanup', async () => {
     const { handle, cleanup } = freshHandle()
     try {
       // Seed a stale staging row + file the reaper WOULD collect — mirrors
@@ -132,7 +132,7 @@ describe('initObjstore — reaper disable (OBJSTORE_REAP_DISABLED)', () => {
       handle.db.prepare(`UPDATE workspace_object_staging SET begun_at = ? WHERE staging_id = ?`).run(
         Date.now() - 2 * 60 * 60 * 1000, b.stagingId,
       )
-      // Boot the objstore with the reaper hard-disabled.
+      // Boot the objstore with automatic sweeps disabled.
       const init = initObjstore({
         handle, reapIntervalMs: 60_000, reapDisabled: true,
         send: () => {}, broadcast: () => {},
@@ -145,12 +145,10 @@ describe('initObjstore — reaper disable (OBJSTORE_REAP_DISABLED)', () => {
       assert.equal(existsSync(b.filePath), true, 'stale staging blob NOT reaped (reaper disabled)')
       const row = handle.db.prepare(`SELECT 1 FROM workspace_object_staging WHERE staging_id = ?`).get(b.stagingId)
       assert.ok(row, 'stale staging row NOT reaped (reaper disabled)')
-      // stopReaper is a no-op but must still resolve (no dangling timer/sweep).
+      // Explicit cleanup still collects the orphan and participates in drain.
+      await init.reap()
       await init.stopReaper()
-      // Sanity: the orphan IS collectible — a direct reapOrphans drops it,
-      // proving survival above was the disable switch, not an un-aged row.
-      await reapOrphans(handle)
-      assert.equal(existsSync(b.filePath), false, 'direct reapOrphans still collects the orphan')
+      assert.equal(existsSync(b.filePath), false, 'explicit cleanup still collects the orphan')
     } finally { cleanup() }
   })
 })

@@ -287,6 +287,23 @@ GET streams with backpressure instead of buffering the full bundle per request.
 Clients are expected to support Brotli; no encoding negotiation is needed.
 Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
+
+`GET /api/bundles/:id/advisories` looks up published npm advisories using the
+stored bundle's dependency names and versions. A separate package inventory is
+persisted during the shared metadata build; advisory requests buffer at most
+1 MiB before parsing, without decompressing the full file inventory. Oversized package
+inventories return 413 without contacting npm. The API accepts no bundle body and
+returns `{ packages, advisories }`, without source contents or scan findings.
+The managed Advisories tab loads it directly, without a consent prompt.
+Bundle access and the team's `security` permission are required for view/triage
+users; `dependencies` is not required. That permission gates scan findings in
+dependencies' own code, while findings about effects on the app remain visible.
+Managers and admins retain their normal full access to authorized bundles.
+An optional `?team=<id>` restricts the security grant to the selected team.
+Access is checked before reading inventory, before contacting npm, and before
+returning the result. The endpoint is available on standalone managed, combined,
+and managed Vercel servers.
+
 `GET /api/bundles/:id/download` preserves the uploaded filename and bytes:
 sourcemaps use HTTP Brotli decoding, while Stasis downloads remain .br archives.
 

@@ -90,3 +90,15 @@ test('rotating a token preserves an active contents request; actual failures sti
   await assert.rejects(fetchBundleContents('bundle/id'), /503/u)
   assert.deepEqual(stream.notices, ["Couldn't load bundle contents: Bundle contents request failed (503)"])
 })
+
+test('advisories send only an encoded bundle ID and team, using managed session cancellation', async t => {
+  const { fetchBundleAdvisories } = await import('../ui/managed/bundle-data.js')
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    assert.equal(url, '/api/bundles/bundle%2Fid/advisories?team=team%2Fid')
+    assert.equal(options.body, undefined)
+    assert.equal(options.credentials, 'same-origin')
+    assert.equal(options.signal, managedAppState.sessionController.signal)
+    return Promise.resolve(Response.json({ packages: { dep: ['1.0.0'] }, advisories: {} }))
+  })
+  assert.deepEqual(await fetchBundleAdvisories('bundle/id', 'team/id'), { packages: { dep: ['1.0.0'] }, advisories: {} })
+})

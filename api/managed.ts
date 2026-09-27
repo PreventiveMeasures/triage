@@ -2,6 +2,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createManagedApp } from '../server-managed/index.ts'
 import { loadManagedConfig } from '../server-managed/config.ts'
+import { withReap } from '../server-common/reap.ts'
 
 let pending: ReturnType<typeof createManagedApp> | undefined
 function app() {
@@ -13,7 +14,7 @@ function app() {
   return pending
 }
 
-export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleManaged(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try { await (await app()).handleRequest(req, res) }
   catch (err) {
     console.error('managed function initialization failed:', err)
@@ -22,3 +23,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     res.end(JSON.stringify({ error: 'unavailable' }))
   }
 }
+
+const handler = withReap(handleManaged, { managed: async () => { await (await app()).reap() } })
+export default handler

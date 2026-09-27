@@ -284,3 +284,27 @@ for (const failure of ['network', 'missing cursor', 'cyclic cursor']) {
     assert.equal(objects.size, 0)
   })
 }
+
+
+test('a second Blob-backed instance reads the bounded package inventory without fetching full metadata', async () => {
+  const { sdk, calls, objects } = sdkFixture()
+  const storage = await openManagedVercelStorage('secret', sdk)
+  const serialized = new Bundle({
+    entries: new Set(), executable: new Set(), formats: new Map(), imports: new Map(),
+    modules: new Map([['node_modules/dep', { name: 'dep', version: '1.2.3', files: { 'index.js': 'export default 1' } }]]),
+  }).serialize()
+  const bytes = brotliCompressSync(Buffer.from(serialized)), id = randomUUID()
+  const record = { id, integrity: 'sha512-test', filename: 'bundle.stasis.code.br', kind: 'stasis', byteSize: bytes.length }
+  const db = { getBundle: async () => record }
+  await storage.bundleStore.put(id, bytes, record.kind)
+  const cache = createBundleCache(storage.cacheStorage, db, storage.bundleStore)
+  await cache.prebuild(record)
+  calls.length = 0
+  const cold = createBundleCache(storage.cacheStorage, db, { get() { throw new Error('must use persisted inventory') } })
+  assert.deepEqual(await cold.packageVersions(record), { dep: ['1.2.3'] })
+  assert.equal(calls.filter(call => call.op === 'get').length, 1)
+  const inventory = objects.get(`.managed/cache/bundles/${id}/v1-package-versions.json`)
+  assert.deepEqual(JSON.parse(inventory.bytes), { dep: ['1.2.3'] })
+  await cold.delete(id)
+  assert.equal([...objects.keys()].some(key => key.includes('/cache/')), false)
+})
