@@ -3,7 +3,7 @@ import { openManagedShareDialog } from './client-managed.js'
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedModeLink, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, fetchBundleMetadata, fetchManagedBundleCatalog, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './client-managed.js'
 import { resetManagedFixes } from './managed-pull-requests.js'
@@ -1910,7 +1910,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
   if (wasManaged !== isManagedUiMode()) {
     // renderSidebar waits for mode detection. Release startup before awaiting
     // the transition's final render, or a first managed visit deadlocks.
-    void finishClientModeTransition({ forgetLastView: false, resetNavigation: hadConfiguration && !getPublicShare() }).catch((err) => console.warn('client mode transition:', err))
+    void finishClientModeTransition({ forgetLastView: false, resetNavigation: hadConfiguration && !getPublicShare() && !isManagedModeLink(info.mode, location.pathname) }).catch((err) => console.warn('client mode transition:', err))
     return
   }
   renderSyncStatus(triageSync.status)

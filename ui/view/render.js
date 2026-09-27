@@ -45,6 +45,8 @@ import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
 import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
 import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
 import { createSyncSuggester } from './sync-suggest.js'
+import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
+import { managedHistory } from './managed-history.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -1339,7 +1341,7 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
   </div>`
 }
 
-function findingsBodyTemplate(filtered) {
+function findingsBodyTemplate(filtered, selectedGroup) {
   if (state.viewMode === 'table') {
     // Table view is always flat. For 'file' sort we still want
     // line-within-file ordering to match the file-grouped layout's
@@ -1352,12 +1354,7 @@ function findingsBodyTemplate(filtered) {
       ? sortGroupsByPrimary(filtered, fileLineCmp)
       : filtered
     if (items.length === 0) return nothing
-    // Re-validate against the current filtered set so a stale gid
-    // (filter or sort changed, showDeleted flipped) doesn't open the
-    // details panel against a row no longer rendered.
-    const selectedGroup = state.tableSelectedGid
-      ? items.find((g) => groupKey(g) === state.tableSelectedGid)
-      : null
+    // selectedGroup has already been validated against the filtered set.
     pendingTableItems = items
     // Two-column layout when a row is selected: list on the left
     // (3 fr, capped at 1200px), details panel on the right (2 fr,
@@ -1402,17 +1399,9 @@ function findingsBodyTemplate(filtered) {
     // so the user's last-explicit pick can re-surface if the
     // filter reverts to a set that still contains it.
     if (filtered.length === 0) return nothing
-    let focusedIdx = state.focusGid
-      ? filtered.findIndex((g) => groupKey(g) === state.focusGid)
-      : -1
-    if (focusedIdx < 0) {
-      // Stale focusGid (never set, OR the focused finding fell out of
-      // view via a triage action / filter tightening) → fall back to
-      // the previous render's index, clamped (see Selection rules).
-      focusedIdx = Math.min(prevFocusedIdx, filtered.length - 1)
-    }
+    const focusedIdx = filtered.indexOf(selectedGroup)
     prevFocusedIdx = focusedIdx
-    const focused = filtered[focusedIdx]
+    const focused = selectedGroup
     const atStart = focusedIdx === 0
     const atEnd = focusedIdx === filtered.length - 1
     return html`<div class="focus-view">
@@ -1507,9 +1496,7 @@ function findingsBodyTemplate(filtered) {
     // view's lifecycle; switching to a different view-mode unmounts
     // it. The render() caller wraps state.kanbanPopoverGid mutations
     // in `document.startViewTransition` so the modal scales in / out.
-    const focusGroup = state.kanbanPopoverGid
-      ? filtered.find((g) => groupKey(g) === state.kanbanPopoverGid)
-      : null
+    const focusGroup = selectedGroup
     // The open card's own bucket, handed to the dialog for its
     // same-column rail. Resolved through the column list (not straight
     // off `commonTriage`) for the same reason the bucketing loop above
@@ -2457,6 +2444,7 @@ function renderImpl() {
   let toolbarTpl = nothing
   let emptyStateTpl = nothing
   let bodyTemplate = nothing
+  const selectedGroup = findingDetailGroup(filtered, state, prevFocusedIdx)
   // Reset unconditionally (not just on the non-graph path) so a
   // graph-mode render can't reattach a stale item list from the
   // last table render.
@@ -2531,7 +2519,7 @@ function renderImpl() {
         : html`<p style="color:var(--green)">No ${typeLabel} issues found.</p>`
     }
 
-    bodyTemplate = findingsBodyTemplate(filtered)
+    bodyTemplate = findingsBodyTemplate(filtered, selectedGroup)
   }
 
   // Slot-reuse: only rebuild the chrome when the structure
@@ -2646,4 +2634,5 @@ function renderImpl() {
   report.classList.add('active')
   dropZone.classList.add('hidden')
   document.title = `DeepView — ${typeLabel || 'no analyzer'}`
+  if (isManagedUiMode()) managedHistory?.replaceFindingRoute(managedFindingSelectionRoute(selectedGroup, state))
 }

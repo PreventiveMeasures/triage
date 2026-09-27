@@ -68,6 +68,7 @@ const { findGroupById, getMergedGroups, groupKey, sortTabs } = await import('../
 const { configureRevalidation, parseCommentRefs } = await import('../ui/view/format.js')
 
 const { state } = await import('../client/state.ts')
+const { findingDetailGroup, managedFindingSelectionRoute } = await import('../ui/view/finding-selection.js')
 const {
   findLoadedFinding,
   findingLinkFor,
@@ -406,7 +407,7 @@ function reset(groups = []) {
 
 describe('finding report chips — managed navigation', () => {
   const name = 'same-name.json'
-  const team = { id: 'team', reports: [{ id: 'first', filename: name }, { id: 'second', filename: name }] }
+  const team = { id: 'team', slug: 'team', reports: [{ id: 'first', slug: 'first', filename: name }, { id: 'second', slug: 'second', filename: name }] }
   const noLocal = () => assert.fail('managed report chips must not open local storage')
   beforeEach(() => {
     reset([[makeFinding(UUID_A)]])
@@ -414,6 +415,13 @@ describe('finding report chips — managed navigation', () => {
     state.currentManagedTeam = team.id
     state.currentWorkspace = `managed-team:${team.id}`
     state.managedTeams = [team]
+  })
+
+  it('builds a report link with the clicked finding and current team', () => {
+    const finding = makeFinding(UUID_B, { _reportName: name, _managedReportId: 'second' })
+    state.managedTeams.unshift({ id: 'other-team', reports: team.reports })
+    assert.equal(findingLinkFor(finding, { reportId: finding._managedReportId }), `/team/team/report/second/finding/${UUID_B}`)
+    assert.equal(findingLinkFor(finding), `/team/team/finding/${UUID_B}`, 'self links retain the merged team context')
   })
 
   it('opens the exact server report even when filenames and finding IDs overlap', async () => {
@@ -1201,5 +1209,63 @@ describe('finding deep links — un-hiding the target', () => {
     unhideFinding(group, UUID_A)
     assert.equal(state.viewMode, 'table')
     assert.equal(state.tableSelectedGid, UUID_A)
+  })
+})
+
+
+describe('managed finding selection routes', () => {
+  const groups = [[makeFinding(UUID_A), makeFinding(UUID_B)], [makeFinding(UUID_C)]]
+  const base = { view: 'findings', teamSlug: 'team', reportSlug: null }
+  beforeEach(() => {
+    reset(groups)
+    state.serverMode = 'managed'
+    state.currentManagedTeam = 'team-id'
+    state.managedTeams = [{ id: 'team-id', slug: 'team', reports: [{ id: 'report-id', slug: 'report' }] }]
+  })
+
+  it('tracks opening, changing the active dedup tab, and closing details in Table and Kanban', () => {
+    for (const [viewMode, key] of [['table', 'tableSelectedGid'], ['kanban', 'kanbanPopoverGid']]) {
+      state.viewMode = viewMode
+      state.activeTabByGroup.clear()
+      state[key] = groupKey(groups[0])
+      let selected = findingDetailGroup(groups, state)
+      assert.equal(selected, groups[0])
+      assert.deepEqual(managedFindingSelectionRoute(selected, state), { ...base, finding: { id: UUID_A } })
+      state.activeTabByGroup.set(groupKey(groups[0]), UUID_B)
+      assert.deepEqual(managedFindingSelectionRoute(selected, state), { ...base, finding: { id: UUID_B } })
+      state[key] = groupKey(groups[1])
+      selected = findingDetailGroup(groups, state)
+      assert.deepEqual(managedFindingSelectionRoute(selected, state), { ...base, finding: { id: UUID_C } })
+      assert.equal(findingDetailGroup([groups[0]], state), null, 'filtered-out details clear the URL')
+      state[key] = null
+      assert.deepEqual(managedFindingSelectionRoute(findingDetailGroup(groups, state), state), base)
+    }
+  })
+
+  it('Focus follows the rendered queue position when selection is removed by filtering or triage', () => {
+    state.viewMode = 'focus'
+    assert.equal(findingDetailGroup(groups, state), groups[0])
+    state.focusGid = groupKey(groups[1])
+    assert.equal(findingDetailGroup(groups, state), groups[1])
+    assert.equal(findingDetailGroup([groups[0]], state, 1), groups[0], 'clamp the old index to the remaining queue')
+    state.focusGid = 'missing'
+    assert.equal(findingDetailGroup(groups, state, 1), groups[1])
+    assert.equal(findingDetailGroup([], state, 1), null)
+  })
+
+  it('List, Grouped List and Graph clear stale selections; report routes retain their parent', () => {
+    state.focusGid = state.tableSelectedGid = state.kanbanPopoverGid = groupKey(groups[0])
+    state.currentManagedReport = 'report-id'
+    for (const mode of ['list', 'grouped', 'graph']) {
+      state.viewMode = mode
+      const selected = findingDetailGroup(groups, state)
+      assert.equal(selected, null)
+      assert.deepEqual(managedFindingSelectionRoute(selected, state), { ...base, reportSlug: 'report' })
+    }
+    for (const id of ['42', '.', '..']) {
+      assert.deepEqual(managedFindingSelectionRoute([makeFinding(id)], state), { ...base, reportSlug: 'report' })
+    }
+    state.currentView = 'bundles'
+    assert.equal(managedFindingSelectionRoute(groups[0], state), null)
   })
 })

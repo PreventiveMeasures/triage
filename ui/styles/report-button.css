@@ -9,6 +9,7 @@
   color: var(--muted);
   font: inherit;
   font-size: .7rem;
+  text-decoration: none;
   cursor: default;
   transition: border-color .12s, color .12s;
   &:hover { border-color: var(--accent); color: var(--accent); }

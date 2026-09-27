@@ -900,10 +900,15 @@ function reportChipTemplate(finding) {
   if (!reportName) return nothing
   if (isManagedUiMode() && !finding._managedReportId) return nothing
   const logo = REPORT_LOGOS[groupOf(reportName)] ?? REPORT_LOGOS.default
+  const label = html`${unsafeHTML(logo)}<span class="report-chip-label report-button-label">${displayName(reportName)}</span>`
+  if (isManagedUiMode()) {
+    const href = findingLinkFor(finding, { reportId: finding._managedReportId })
+    if (href) return html`<a class="report-chip report-button comment-self-ref" href=${href}>${label}</a>`
+  }
   return html`<button type="button" class="report-chip report-button"
     data-links-report=${reportName} data-links-finding=${tabKey(finding)}
     data-managed-report=${isManagedUiMode() ? finding._managedReportId : nothing}
-  >${unsafeHTML(logo)}<span class="report-chip-label report-button-label">${displayName(reportName)}</span></button>`
+  >${label}</button>`
 }
 
 // Action buttons — workspace-only report chip + comment / fix /
