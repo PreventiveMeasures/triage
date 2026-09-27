@@ -1,4 +1,5 @@
 import { managedFetch } from './request.js'
+import { getPublicShare } from './public-share.js'
 import { reportEntries } from '../../report/index.js'
 // Managed-mode client auth. Loaded lazily (see ui/view/client-managed.js) so
 // this managed-only code stays out of the main view bundle, mirroring
@@ -26,7 +27,8 @@ async function getJson(url, fallback = null, options = {}) {
 export async function probeSession({ fallback = null } = {}) {
   let body
   try {
-    const res = await managedFetch('/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+    const share = getPublicShare()
+    const res = await managedFetch(share ? `/api/teams/${encodeURIComponent(share.teamId)}/shared` : '/api/auth/session', { credentials: 'same-origin', headers: { accept: 'application/json' } })
     if (res.status === 401 || res.status === 403) return null
     if (!res.ok) return fallback
     body = await res.json()
@@ -42,6 +44,7 @@ export async function probeSession({ fallback = null } = {}) {
     avatarUrl: typeof user.avatarUrl === 'string' ? user.avatarUrl : null,
     role: typeof user.role === 'string' ? user.role : 'none',
     csrfToken: typeof body.csrfToken === 'string' ? body.csrfToken : null,
+    ...(getPublicShare() ? { publicShare: true } : {}),
   }
 }
 
@@ -53,7 +56,9 @@ export async function probeSession({ fallback = null } = {}) {
 // sidebar's per-user Teams section. Never throws, so a probe failure can't break
 // the session refresh.
 export async function probeTeams({ fallback = [] } = {}) {
-  const body = await getJson('/api/teams', { teams: fallback })
+  const share = getPublicShare()
+  const shared = share ? await getJson(`/api/teams/${encodeURIComponent(share.teamId)}/shared`) : null
+  const body = share ? { teams: shared?.team ? [shared.team] : [] } : await getJson('/api/teams', { teams: fallback })
   const teams = body?.teams
   if (!Array.isArray(teams)) return body == null ? [] : fallback
   return teams
@@ -144,6 +149,7 @@ export async function fetchReportTriage(id, teamId) {
 }
 
 export async function fetchFixes(teamId, signal) {
+  if (getPublicShare()) return []
   const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/fixes`, null, { signal })
   return Array.isArray(body?.fixes) ? body.fixes : null
 }
@@ -207,6 +213,7 @@ export function login(loginPath) {
 // requires for the logout mutation, then reload so the app re-probes and
 // repaints logged-out.
 export async function logout(csrfToken) {
+  if (getPublicShare()) { location.href = '/'; return }
   try {
     await managedFetch('/api/auth/logout', {
       method: 'POST',
@@ -215,4 +222,23 @@ export async function logout(csrfToken) {
     })
   } catch {}
   location.reload()
+}
+
+export async function changeWorkspaceShare(teamId, csrfToken, revoke = false) {
+  const response = await managedFetch(`/api/teams/${encodeURIComponent(teamId)}/share`, {
+    method: revoke ? 'DELETE' : 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken },
+  })
+  if (!response.ok) throw new Error(`Could not ${revoke ? 'revoke' : 'create'} public link (${response.status})`)
+  return response.json()
+}
+
+export async function downloadManagedBundle(id, filename) {
+  const response = await managedFetch(`/api/bundles/${encodeURIComponent(id)}/download`, { credentials: 'same-origin' })
+  if (!response.ok) throw new Error(`Could not download bundle (${response.status})`)
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }

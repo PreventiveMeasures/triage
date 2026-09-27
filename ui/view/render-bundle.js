@@ -12,6 +12,8 @@
 // `refreshBundleGraphTopPkgs`, and `renderBundleSourceModal` from
 // this module.
 import { html, nothing } from 'lit'
+import { getPublicShare } from '../../client/managed/public-share.js'
+import { loadManagedBundle } from './client-managed.js'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -2273,6 +2275,11 @@ function renderBundleLanguagesBar(details) {
 // module inventory, so they only appear once that's available and
 // carries at least one named+versioned component (`details` is null /
 // sourcemap / un-parsed on the other Overview branches → bundle-only).
+async function downloadPublicBundle(entry) {
+  try { await (await loadManagedBundle()).downloadManagedBundle(entry.managedId, entry.filename ?? entry.name ?? 'bundle') }
+  catch (error) { alert(error.message) }
+}
+
 function bundleExportsColumn(entry, details) {
   const hasSbom = bundleHasSbomComponents(details)
   const languages = renderBundleLanguagesBar(details)
@@ -2282,7 +2289,9 @@ function bundleExportsColumn(entry, details) {
   return html`<div class="bundles-overview-exports">
     ${languages}
     <div class="bundles-overview-exports-row">
-      ${entry.managedId ? html`<a class="bundles-download-btn" href=${`/api/bundles/${encodeURIComponent(entry.managedId)}/download`}>${DOWNLOAD_ICON}<span>Download bundle</span></a>` : html`<button type="button" class="bundles-download-btn" data-bundle-download=${entry.integrity}>
+      ${entry.managedId ? getPublicShare()
+        ? html`<button type="button" class="bundles-download-btn" @click=${() => void downloadPublicBundle(entry)}>${DOWNLOAD_ICON}<span>Download bundle</span></button>`
+        : html`<a class="bundles-download-btn" href=${`/api/bundles/${encodeURIComponent(entry.managedId)}/download`}>${DOWNLOAD_ICON}<span>Download bundle</span></a>` : html`<button type="button" class="bundles-download-btn" data-bundle-download=${entry.integrity}>
         ${DOWNLOAD_ICON}<span>Download bundle</span>
       </button>`}
       ${hasSbom ? html`<div class="bundles-export-pair">

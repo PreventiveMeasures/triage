@@ -25,6 +25,15 @@ function useEnv(t, values) {
   replaceEnv({ ...auth, ...values })
 }
 
+test('public workspace sharing requires exactly DEEPVIEW_ALLOW_SHARE=1', t => {
+  useEnv(t, {})
+  assert.equal(loadManagedConfig().allowShare, false)
+  for (const value of ['', '0', 'true', 'yes', ' 1 ', '1']) {
+    process.env.DEEPVIEW_ALLOW_SHARE = value
+    for (const combined of [false, true]) assert.equal(loadManagedConfig({ combined }).allowShare, value === '1')
+  }
+})
+
 test('initial admin configuration accepts only one positive numeric GitHub ID, and defaults off', t => {
   useEnv(t, {})
   assert.equal(loadManagedConfig().initialAdminGithubId, null)

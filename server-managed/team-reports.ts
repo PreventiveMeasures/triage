@@ -137,16 +137,20 @@ export async function teamWorkspaceFindingIds(db: ManagedDb, store: BlobStore, s
   for (const report of (await teamVisibility(db, store, snapshot)).values()) for (const id of report.ids) ids.add(id)
   return ids
 }
-async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<ReportVisibility> {
-  const snapshot = await teamSnapshot(db, sessionId, teamId)
+export async function teamReportVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot, reportId: string): Promise<ReportVisibility> {
   if (!snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
   const visible = await teamVisibility(db, store, snapshot)
-  await recheckTeam(db, sessionId, snapshot)
   return visible.get(reportId)!
 }
 export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
-  return (await teamReportVisibility(db, store, sessionId, teamId, reportId)).ids
+  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  const visible = await teamReportVisibility(db, store, snapshot, reportId)
+  await recheckTeam(db, sessionId, snapshot)
+  return visible.ids
 }
 export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
-  return (await teamReportVisibility(db, store, sessionId, teamId, reportId)).sourcePaths
+  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  const visible = await teamReportVisibility(db, store, snapshot, reportId)
+  await recheckTeam(db, sessionId, snapshot)
+  return visible.sourcePaths
 }

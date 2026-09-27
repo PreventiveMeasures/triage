@@ -7,6 +7,7 @@ import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
 import { type GithubMetadataStore, githubMetadataMethods } from './github-metadata.ts'
 import type { ManagedSql } from './sql.ts'
+import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
 // to the upsert; `githubUserId` is the provider lookup key, never exposed to
@@ -289,7 +290,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, WorkspaceShareStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted server configuration and
   // applies exclusively to the first insertion into an empty user table.
@@ -1250,6 +1251,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...selectedRepoMethods(stmts),
     ...activity,
     ...comments,
+    ...workspaceShareMethods(db),
     ...reportMethods(stmts),
     ...triageMethods(stmts, options.triageHistoryLimit ?? 0),
     ...bundleMethods(stmts),

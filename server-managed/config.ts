@@ -18,6 +18,7 @@ export interface ManagedConfig {
   blobToken?: string | null
   serverless?: boolean
   debug: boolean
+  allowShare: boolean
   trustProxyEnv: string | undefined
   // GitHub App user-authorization (identity) credentials — the App's client id
   // + secret, used by the login flow.
@@ -117,6 +118,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     // DB_PATH belongs to e2e in a combined process. Keep the two stores apart.
     dbPath: env['MANAGED_DB_PATH'] ?? (combined ? undefined : env['DB_PATH']) ?? 'server-managed/data/managed.db',
     debug: env['DEBUG'] === '1' || env['DEBUG'] === 'true',
+    allowShare: env['DEEPVIEW_ALLOW_SHARE'] === '1',
     trustProxyEnv: env['TRUST_PROXY'] ?? (serverless ? '1' : undefined),
     githubClientId: requireStr('GITHUB_CLIENT_ID'),
     githubClientSecret: requireStr('GITHUB_CLIENT_SECRET'),

@@ -1,3 +1,5 @@
+import { getPublicShare } from '../../client/managed/public-share.js'
+import { openManagedShareDialog } from './dialogs/managed-share-dialog.js'
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -259,6 +261,7 @@ function teamsSectionTemplate() {
     ${repeat(teams, (t) => t.id, (t) => html`
       <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && state.currentView === 'findings' ? ' current' : ''}`}>
         <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
+        ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} data-tooltip="Share public link" @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
       </li>
       ${repeat(t.reports, (r) => r.id, (r) => teamReportTemplate(t, r))}
       ${repeat(t.bundles ?? [], (b) => b.id, (b) => teamBundleTemplate(b))}`)}`
@@ -1239,6 +1242,13 @@ function renderAuthStatus() {
     if (menu) litRender(nothing, menu)
     return
   }
+  if (session.publicShare) {
+    if (manageBtn) manageBtn.hidden = true
+    authBtn.removeAttribute('popovertarget')
+    litRender(html`<span class="auth-login">Public workspace · Read only</span>`, authBtn)
+    if (menu) litRender(nothing, menu)
+    return
+  }
   // Logged in: the button keeps the avatar on the left and shows the username
   // beside it, while still opening the account popover.
   const initial = (session.login[0] ?? '?').toUpperCase()
@@ -1877,7 +1887,9 @@ function applyServerInfo(info, { runtime = true } = {}) {
   const previousMode = state.serverMode
   // A late single-mode managed response preserves the offline local fallback;
   // combined deployments use their selected protocol or advertised default.
+  if (getPublicShare() && info.managed) state.serverModeSelection = 'managed'
   configureClientMode(info.mode)
+  if (getPublicShare() && info.managed) setLocalMode(false)
   const changed = previousMode !== state.serverMode
   state.managed = info.managed
   if (runtime) state.deepviewScanServer = info.mode === 'managed' ? null : info.deepviewScanServer ?? null
@@ -1888,7 +1900,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
   if (wasManaged !== isManagedUiMode()) {
     // renderSidebar waits for mode detection. Release startup before awaiting
     // the transition's final render, or a first managed visit deadlocks.
-    void finishClientModeTransition({ forgetLastView: false, resetNavigation: hadConfiguration }).catch((err) => console.warn('client mode transition:', err))
+    void finishClientModeTransition({ forgetLastView: false, resetNavigation: hadConfiguration && !getPublicShare() }).catch((err) => console.warn('client mode transition:', err))
     return
   }
   renderSyncStatus(triageSync.status)

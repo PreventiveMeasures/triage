@@ -23,6 +23,7 @@ export function createReapHandler(reapers: Reapers, { secret = process.env['CRON
       res.end(JSON.stringify(body))
     }
     const authorization = req.headers.authorization
+    if (req.headers['x-deepview-share'] !== undefined) { send(403, { error: 'share-scope-required' }); return }
     if (!expected || typeof authorization !== 'string' || !timingSafeEqual(hash(authorization), expected)) {
       send(401, { error: 'unauthorized' }); return
     }

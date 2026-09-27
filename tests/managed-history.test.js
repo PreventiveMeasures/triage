@@ -5,6 +5,25 @@ import { MANAGED_PAGES, managedRoutePath, parseManagedRoute } from '../common/ma
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
 
+test('public workspace capability stays in the fragment across navigation, history and reload', async () => {
+  const hash = `#public=team.${'A'.repeat(43)}`
+  const { browser, entries } = browserAt(`/teams/team${hash}`)
+  let nav = createManagedHistory(browser)
+  await nav.start(() => true)
+  await nav.navigate({ view: 'files', teamSlug: 'team' })
+  await nav.navigate({ view: 'files', teamSlug: 'team' })
+  assert.equal(entries.length, 2)
+  assert.equal(browser.location.hash, hash)
+  assert.equal(browser.location.search, '')
+  await browser.move(-1)
+  assert.equal(browser.location.hash, hash)
+  nav = createManagedHistory(browser)
+  await nav.start(() => true)
+  await nav.navigate({ view: 'bundles', bundleId: 'bundle' })
+  assert.equal(browser.location.hash, hash)
+  assert.equal(browser.location.pathname, '/bundles/bundle')
+})
+
 test('all managed pages and team/report Files routes round-trip', () => {
   const routes = [{ view: 'bundles', bundleId: 'bundle-id' }, { view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
     { view: 'manage-history', actor: 'user name & repo' }, { view: 'manage-scans', bundleId: 'bundle-id' }]

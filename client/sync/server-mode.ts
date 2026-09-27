@@ -56,6 +56,7 @@ export function parseServerInfo(body: unknown): ServerInfo | null {
     const cookieName = (m as { cookieName?: unknown }).cookieName
     if (typeof loginPath === 'string' && typeof cookieName === 'string') {
       managed = { loginPath, cookieName }
+      if ((m as { allowShare?: unknown }).allowShare === true) managed.allowShare = true
     }
   }
   const deepviewScanServer = mode === 'managed' ? null : normalizeScanServer((body as { deepviewScanServer?: unknown }).deepviewScanServer)

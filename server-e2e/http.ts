@@ -230,7 +230,19 @@ export function createHttpServer(deps: HttpServerDeps): Server {
     res.end(NOT_FOUND_BODY)
   })
 
+  installUpgradeHandler(httpServer, wss, isOriginAllowed)
+
+  return httpServer
+}
+
+function installUpgradeHandler(httpServer: Server, wss: WebSocketServer, isOriginAllowed: HttpServerDeps['isOriginAllowed']): void {
   httpServer.on('upgrade', (req, socket, head) => {
+    // Combined deployments must not let a managed share capability enter the
+    // unscoped sync transport, which bypasses the normal HTTP router.
+    if (req.headers['x-deepview-share'] !== undefined) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+      return
+    }
     // RFC 6455: the WS upgrade IS an HTTP request; reject with a normal
     // HTTP response so a misconfigured client sees the JSON body instead
     // of ECONNRESET. `socket.end(body)` flushes before sending FIN.
@@ -261,6 +273,4 @@ export function createHttpServer(deps: HttpServerDeps): Server {
     }
     wss.handleUpgrade(req, socket, head, (ws) => { wss.emit('connection', ws, req) })
   })
-
-  return httpServer
 }

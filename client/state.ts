@@ -217,7 +217,7 @@ export interface State {
   deepviewScanServer: string | null
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
-  managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; role: string; csrfToken: string | null } | null
+  managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; role: string; csrfToken: string | null; publicShare?: boolean } | null
   // The managed user's teams (each with reports and bundles attached to the
   // team's repos), shown in the sidebar above Workspaces. Populated alongside the
   // session probe; empty when logged out / e2e.
