@@ -225,7 +225,10 @@ function renderConsentPrompt() {
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
   const scope = details ? advisoryScope(details) : null
   const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
+  const summary = renderAdvisoriesSummary(details)
   return html`<div class="bundle-advisories-panel">
+    ${summary !== nothing || reasons.length > 0 ? html`<div class="bundle-advisories-toolbar">
+    ${summary}
     ${reasons.length > 0 ? html`<div class="bundle-advisories-scopes"><bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
       @scope-change=${event => {
@@ -235,7 +238,26 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
         renderFn()
         return loading
       }}></bundle-scope-selector></div>` : nothing}
+    </div>` : nothing}
     ${renderAdvisoriesBody(details)}
+  </div>`
+}
+
+function renderAdvisoriesSummary(details) {
+  if (!details || (!details.managedId && !hasConsent())) return nothing
+  const entry = advisoryCache(details).get(cacheKey(details))
+  if (entry?.state !== 'ok') return nothing
+  const totalPackagesQueried = entry.query.size
+  const packagesWithAdvisories = entry.byPackage.size
+  if (packagesWithAdvisories === 0) {
+    return html`<div class="bundle-advisories-summary">
+      No advisories for the ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
+    </div>`
+  }
+  const totalAdvisories = [...entry.byPackage.values()].reduce((n, list) => n + list.length, 0)
+  return html`<div class="bundle-advisories-summary">
+    ${totalAdvisories} ${totalAdvisories === 1 ? 'advisory' : 'advisories'}
+    across ${packagesWithAdvisories} of ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'}
   </div>`
 }
 
@@ -255,19 +277,7 @@ function renderAdvisoriesBody(details) {
       <button type="button" class="bundle-advisories-retry" data-advisories-retry>Retry</button>
     </div>`
   }
-  // `ok` branch — paint the per-package sections. The tab is
-  // hidden by `bundleHasAdvisoryCandidates` when the bundle has no
-  // queryable packages at all, so we don't need a dedicated
-  // `totalPackagesQueried === 0` branch here.
-  const totalPackagesQueried = entry.query.size
-  const packagesWithAdvisories = entry.byPackage.size
-  if (packagesWithAdvisories === 0) {
-    return html`<div class="bundle-advisories">
-      <div class="bundle-advisories-summary">
-        No advisories for the ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
-      </div>
-    </div>`
-  }
+  if (entry.byPackage.size === 0) return nothing
   // Sort sections by the worst severity inside the section, then
   // by name — surfaces the most urgent stuff at the top while
   // keeping the rest deterministic across re-renders.
@@ -277,12 +287,7 @@ function renderAdvisoriesBody(details) {
     if (wa !== wb) return wa - wb
     return na.localeCompare(nb)
   })
-  const totalAdvisories = [...entry.byPackage.values()].reduce((n, l) => n + l.length, 0)
   return html`<div class="bundle-advisories">
-    <div class="bundle-advisories-summary">
-      ${totalAdvisories} ${totalAdvisories === 1 ? 'advisory' : 'advisories'}
-      across ${packagesWithAdvisories} of ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'}
-    </div>
     <ul class="bundle-advisories-list">
       ${sections.map(([pkg, list]) => renderAdvisorySection(pkg, list, entry.query.get(pkg)))}
     </ul>
@@ -297,12 +302,11 @@ function renderAdvisorySection(pkg, advisories, queriedVersions) {
   })
   const versions = queriedVersions ? [...queriedVersions].toSorted() : []
   return html`<li class="bundle-advisories-section">
-    <div class="bundle-advisories-section-header">
+    <div class="bundle-advisories-package">
       <span class="bundle-advisories-section-name">${pkg}</span>
       ${versions.length > 0 ? html`<span class="bundle-advisories-section-versions">
-        ${versions.map((v) => html`<span class="bundle-advisories-version-chip">${v}</span>`)}
+        ${versions.join(', ')}
       </span>` : nothing}
-      <span class="bundle-advisories-section-count">${sorted.length} ${sorted.length === 1 ? 'advisory' : 'advisories'}</span>
     </div>
     <ul class="bundle-advisories-rows">
       ${sorted.map((a) => renderAdvisoryRow(a))}
@@ -378,4 +382,3 @@ function renderAdvisoryRow(a) {
     </div>
   </li>`
 }
-
