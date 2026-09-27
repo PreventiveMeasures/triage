@@ -1394,8 +1394,7 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
       </div>`) : comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
-          ? isManagedUiMode() ? html`<managed-fix-link .url=${fix}></managed-fix-link>`
-            : html`<a href=${fix} target="_blank" rel="noopener noreferrer">${fix}</a>`
+          ? html`<managed-fix-link .url=${fix}></managed-fix-link>`
           : fix}</div>`
         : nothing}
     </div>
