@@ -2865,7 +2865,7 @@ body.report-fullscreen {
   max-width: 100%;
 }
 .bundle-advisories-panel > .bundle-advisories {
-  padding: 0 .75rem .5rem;
+  padding: 0 .75rem;
   overflow-y: auto;
   overscroll-behavior: none;
   -webkit-app-region: no-drag; app-region: no-drag;
