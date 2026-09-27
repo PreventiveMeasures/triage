@@ -276,10 +276,12 @@ export function resetManagedTriage() {
 // which the follow-up push carries up: the user's triage of those findings,
 // never uploaded. Pushes for the report wait for this to finish. Returns true
 // only when the server state was adopted and this is still the active view.
-export async function hydrateManagedReportTriage(reportId, { renderView = true } = {}) {
-  const reports = state.reports
-  const isCurrent = () => state.serverMode === 'managed' && state.localMode !== true
-    && state.managedSession != null && state.reports === reports
+export async function hydrateManagedReportTriage(reportId, { renderView = true, signal } = {}) {
+  const reports = state.reports, teamId = state.currentManagedTeam
+  const role = state.managedSession?.role, userId = state.managedSession?.id
+  const isCurrent = () => !signal?.aborted && state.serverMode === 'managed' && state.localMode !== true
+    && state.managedSession != null && state.managedSession.id === userId && state.managedSession.role === role
+    && state.reports === reports && state.currentManagedTeam === teamId
     && activeManagedReports().some((report) => report.id === reportId)
   if (!isCurrent()) return false
   hydratedReports.delete(scopeFor(reportId))
@@ -287,9 +289,8 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
   // read — so an edit made moments ago is what "server wins" then confirms,
   // not what it reverts.
   flushPending()
-  await flushChain
-  if (!isCurrent()) return false
-  const entries = await fetchReportTriage(reportId)
+  if (!(await waitForTriageFlush(signal)) || !isCurrent()) return false
+  const entries = await fetchReportTriage(reportId, teamId, { signal })
   // Bail when the fetch failed or the user already navigated elsewhere.
   if (entries == null || !isCurrent()) return false
   let changed = false

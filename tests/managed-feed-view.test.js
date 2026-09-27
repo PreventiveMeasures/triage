@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict'
-import { beforeEach, mock, test } from 'node:test'
+import { afterEach, beforeEach, mock, test } from 'node:test'
+import { autorun, store } from '@rray/frontend/state-management'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
-const state = { serverMode: 'managed', currentView: 'findings', localMode: false, managedSession: { id: 'user', role: 'triage' } }
+const state = store({ serverMode: 'managed', currentView: 'findings', localMode: false, managedSession: { id: 'user', role: 'triage' } })
 const calls = [], refreshes = []
 let refresh = () => Promise.resolve(true)
+let preview = false
 mock.module('../client/index.js', { namedExports: { state, isManagedUiMode: () => state.serverMode === 'managed' && !state.localMode } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
   watchTeamFeed: (teamId, options) => {
     calls.push({ teamId, ...options })
+    if (preview) return Promise.resolve()
     return new Promise(resolve => { options.signal.addEventListener('abort', resolve, { once: true }) })
   },
 } })
@@ -19,11 +22,11 @@ mock.module('../ui/view/managed-comments.js', { namedExports: {
   loadManagedReportComments: id => { refreshes.push(['comments', id]); return Promise.resolve(true) },
 } })
 const { startManagedTeamFeed, stopManagedTeamFeed, setManagedTeamFeedRefresh } = await import('../ui/view/managed-feed.js')
-function open(team) {
+function open(team, options) {
   state.currentManagedTeam = team
   state.managedReports = [{ id: `${team}-report` }, { id: `${team}-links` }]
   state.reports = [{ _managedReportId: `${team}-report` }]
-  startManagedTeamFeed()
+  return startManagedTeamFeed(options)
 }
 beforeEach(() => {
   stopManagedTeamFeed(); beginViewNavigation()
@@ -31,8 +34,10 @@ beforeEach(() => {
   state.currentView = 'findings'; state.localMode = false
   state.managedSession = { id: 'user', role: 'triage' }
   refresh = () => Promise.resolve(true)
+  preview = false
   setManagedTeamFeedRefresh(() => Promise.resolve(true))
 })
+afterEach(() => stopManagedTeamFeed())
 
 test('one feed follows the focused team and closes as soon as navigation starts', async () => {
   open('one'); startManagedTeamFeed()
@@ -142,4 +147,117 @@ test('catalog and triage refreshes use connection cancellation without stopping 
   assert.equal(await update, false)
   assert.deepEqual(refreshes, [['triage', 'one-report']], 'a timed-out triage read cannot start a comment refresh')
   assert.equal(calls[0].signal.aborted, false)
+})
+
+test('the first feed event hydrates once; sidebar renders and its fallback do not repeat annotation reads', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const pending = Promise.withResolvers(), reads = []
+  const ready = open('one', { hydrate: signal => { reads.push(signal); return pending.promise } })
+  assert.deepEqual(reads, [], 'wait for the initial feed baseline before reading annotations')
+  assert.equal(await calls[0].onTeams(calls[0].signal), true)
+  assert.deepEqual(reads, [])
+  const update = calls[0].onUpdate(calls[0].signal)
+  await Promise.resolve()
+  assert.equal(reads.length, 1)
+  assert.equal(reads[0], calls[0].signal)
+  assert.equal(startManagedTeamFeed({ catalogOnly: true }), ready)
+  t.mock.timers.tick(5_000)
+  pending.resolve(true)
+  assert.equal(await ready, true)
+  assert.equal(await update, true)
+  assert.equal(calls.length, 1)
+  assert.equal(reads.length, 1)
+  assert.deepEqual(refreshes, [], 'the initial event does not reread triage and comments')
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']], 'later changes still refresh both')
+})
+
+test('HTTP fallback loads a stalled feed and a late first event catches changes since loading began', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const pending = Promise.withResolvers()
+  let reads = 0
+  const ready = open('one', { hydrate: () => { reads++; return pending.promise } })
+  t.mock.timers.tick(1_000)
+  await Promise.resolve()
+  assert.equal(reads, 1)
+  const update = calls[0].onUpdate(calls[0].signal)
+  assert.deepEqual(refreshes, [], 'live refresh cannot overtake initial hydration')
+  pending.resolve(true)
+  assert.equal(await ready, true)
+  assert.equal(await update, true)
+  assert.equal(reads, 1)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('the first reactive render after hydration keeps the same report scope and live subscription', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const ready = open('one', { hydrate: () => true })
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.equal(await ready, true)
+  // StateElement renders lazily wrap nested values in reactive proxies.
+  const dispose = autorun(() => state.reports.length)
+  dispose()
+  assert.equal(await calls[0].onTeams(calls[0].signal), true)
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('preview without a feed hydrates immediately without waiting for the fallback timer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  preview = true
+  let reads = 0
+  assert.equal(await open('one', { hydrate: () => { reads++; return true } }), true)
+  assert.equal(reads, 1)
+  t.mock.timers.tick(5_000)
+  assert.equal(reads, 1)
+})
+
+test('navigation cancels pending initial loading before or during hydration', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let reads = 0
+  let ready = open('one', { hydrate: () => { reads++; return true } })
+  beginViewNavigation()
+  assert.equal(await ready, false)
+  t.mock.timers.tick(5_000)
+  assert.equal(await calls[0].onUpdate(calls[0].signal), false)
+  assert.equal(reads, 0)
+
+  const pending = Promise.withResolvers()
+  let signal
+  ready = open('two', { hydrate: value => { signal = value; return pending.promise } })
+  const update = calls[1].onUpdate(calls[1].signal)
+  await Promise.resolve()
+  beginViewNavigation()
+  assert.equal(signal.aborted, true)
+  assert.equal(await ready, false)
+  assert.equal(await update, false)
+  pending.resolve(true)
+  assert.deepEqual(refreshes, [])
+})
+
+test('a watchdog timeout releases the feed callback while a reconnect waits for the same initial hydration', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const connection = new AbortController(), pending = Promise.withResolvers()
+  let reads = 0, signal
+  const ready = open('one', { hydrate: value => { reads++; signal = value; return pending.promise } })
+  const update = calls[0].onUpdate(connection.signal)
+  await Promise.resolve()
+  connection.abort()
+  assert.equal(await update, false)
+  assert.equal(signal.aborted, false)
+  const reconnect = calls[0].onUpdate(new AbortController().signal)
+  assert.deepEqual(refreshes, [])
+  pending.resolve(true)
+  assert.equal(await ready, true)
+  assert.equal(await reconnect, true)
+  assert.equal(reads, 1)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('failed initial hydration cannot mark the view ready or apply live refreshes', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const ready = open('one', { hydrate: () => false })
+  assert.equal(await calls[0].onUpdate(calls[0].signal), false)
+  assert.equal(await ready, false)
+  assert.deepEqual(refreshes, [])
 })
