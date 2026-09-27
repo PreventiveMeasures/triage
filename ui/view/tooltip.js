@@ -23,6 +23,8 @@
 // the hovered element's right edge, vertically centered — for the
 // sidebar, whose left-pinned rows leave the main-content gutter free.
 
+import { GITHUB_ICON_SVG } from './icons.js'
+
 let tipEl
 function ensureEl() {
   if (tipEl) return tipEl
@@ -46,6 +48,8 @@ function raise(node) {
 }
 
 let currentTarget = null
+let currentText = ''
+let currentRepo = ''
 let showTimer = null
 
 // Last known cursor position — captured by the passive mousemove
@@ -73,13 +77,24 @@ const VIEWPORT_MARGIN_PX = 8
 export function showTooltip(el, { placement = 'cursor' } = {}) {
   const node = ensureEl()
   const text = el.dataset.tooltip ?? ''
+  const repo = el.dataset.tooltipRepo ?? ''
   if (!text) return
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
   // segments. Reuse the visible node in that case instead of hiding and
   // re-showing it for every child.
-  if (currentTarget === el && node.textContent === text) return
+  if (currentTarget === el && currentText === text && currentRepo === repo) return
   node.textContent = text
+  if (repo) {
+    const row = document.createElement('div')
+    row.className = 'tooltip-repo'
+    // Only the built-in icon is markup; repository/path stays literal text.
+    row.innerHTML = GITHUB_ICON_SVG
+    const label = document.createElement('span')
+    label.textContent = repo
+    row.append(label)
+    node.append(row)
+  }
   raise(node)
   if (placement === 'right') {
     // Anchor to the element's right edge, vertically centered.
@@ -103,6 +118,8 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   }
   node.classList.add('visible')
   currentTarget = el
+  currentText = text
+  currentRepo = repo
 }
 
 export function hideTooltip() {

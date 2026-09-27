@@ -138,7 +138,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
         reports: rows.map(row => ({ id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
           repo: { github: row.github, directory: row.directory }, permissions })),
         team: { ...team,
-          reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename,
+          reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, repoFullName: row.github, repoDirectory: row.directory,
             cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions]) })),
           bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
             filename: row.filename, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName })),

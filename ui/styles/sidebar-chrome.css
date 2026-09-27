@@ -38,6 +38,17 @@
   &.visible { opacity: 1; }
 }
 
+#styled-tooltip .tooltip-repo {
+  display: flex;
+  align-items: baseline;
+  gap: .35rem;
+}
+#styled-tooltip .tooltip-repo svg {
+  flex-shrink: 0;
+  align-self: start;
+  margin-top: .15em;
+}
+
 body.theme-light #styled-tooltip {
   background: rgb(246 248 250 / .96);
 }

@@ -200,7 +200,7 @@ function teamReportRefs(team: (typeof teamFixtures)[number]) {
   return team.reportIds
     .map((id) => reportMetadata.find((report) => report.id === id))
     .filter((report): report is (typeof reportMetadata)[number] => report != null)
-    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename }))
+    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory }))
 }
 
 const teams = teamFixtures.map((team) => ({

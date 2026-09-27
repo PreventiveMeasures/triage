@@ -206,7 +206,10 @@ test('Postgres managed store: auth, scopes, uploads, history, comments, and rest
   assert.equal(await db.userCanReadBundle(user, bundle), true)
   assert.equal(await db.userCanReadReport(user, report), true)
   assert.deepEqual(await db.reportPermissionsFor(user, report), { dependencies: true, security: true })
-  assert.equal((await db.listTeamsForUser(user))[0].reports[0].id, report)
+  const teamReport = (await db.listTeamsForUser(user))[0].reports[0]
+  assert.equal(teamReport.id, report)
+  assert.equal(teamReport.repoFullName, 'Owner/Repo')
+  assert.equal(teamReport.repoDirectory, 'src')
   assert.equal((await db.listTeams())[0].members[0].userId, user)
   assert.equal((await db.listActivityReports(user))[0].reportId, report)
   assert.equal((await db.listRepoScopesForUser(user))[0].repoId, 1)

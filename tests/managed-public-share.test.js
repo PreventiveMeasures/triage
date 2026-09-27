@@ -163,6 +163,7 @@ test('an anonymous token sees one published workspace, its annotations and no gl
   assert.equal(bootstrap.body.user.role, 'view')
   assert.equal(bootstrap.body.csrfToken, undefined)
   assert.deepEqual(bootstrap.body.team.reports.map(r => r.id), ['child', 'visible'])
+  assert.deepEqual(bootstrap.body.team.reports.map(r => [r.repoFullName, r.repoDirectory]), [['org/repo1', 'app/child'], ['org/repo1', 'app']])
   assert.deepEqual(bootstrap.body.team.bundles, [])
   assert.deepEqual((await h.request('/api/teams/team/reports', { token })).body.reports.map(r => r.id), ['child', 'visible'])
   await h.db.setTriage('visible-finding', { color: 'red' }, null, 'manager', Date.now())
