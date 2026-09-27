@@ -67,10 +67,12 @@ class CommentPreview extends HoverPreviewElement {
   }
 
   _previewClick(event) {
-    // Let links reach the finding-navigation delegate and buttons open the
-    // existing comments dialog. The host's kanban-action class keeps both
-    // from also opening the card's detail popover.
-    if (event.target.closest('a, button')) this._hidePreview()
+    // Links and the Edit button retain their own delegated actions. Elsewhere
+    // in the preview, reuse the icon's click to open the existing dialog once.
+    if (event.target.closest('a, button')) { this._hidePreview(); return }
+    if (window.getSelection?.()?.toString()) return
+    event.stopPropagation()
+    this.renderRoot.querySelector('.preview-trigger').click()
   }
 
   render() {

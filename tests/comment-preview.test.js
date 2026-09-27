@@ -131,12 +131,28 @@ function interactivePreview(t) {
     style: {}, matches: () => open, showPopover: () => { open = true }, hidePopover: () => { open = false },
     contains: node => node === popup, getBoundingClientRect: () => ({ width: 384, height: 200 }),
   }
-  const trigger = { getBoundingClientRect: () => ({ left: 750, top: 560, bottom: 572 }), focus: mock.fn() }
+  const trigger = { getBoundingClientRect: () => ({ left: 750, top: 560, bottom: 572 }), focus: mock.fn(), click: mock.fn() }
   element.renderRoot = { activeElement: null, querySelector: selector => selector === '.preview' ? popup : trigger }
   Object.defineProperty(element, 'isConnected', { value: true })
   t.after(() => { element._hidePreview(); delete globalThis.document; delete globalThis.window })
   return { element, popup, trigger }
 }
+
+test('clicking preview content opens the existing dialog action without intercepting links or text selection', t => {
+  const { element, trigger } = interactivePreview(t)
+  const event = { target: { closest: () => null }, stopPropagation: mock.fn() }
+  element._previewClick(event)
+  assert.equal(trigger.click.mock.callCount(), 1)
+  assert.equal(event.stopPropagation.mock.callCount(), 1)
+
+  for (const tagName of ['A', 'BUTTON']) {
+    element._previewClick({ ...event, target: { closest: () => ({ tagName }) } })
+  }
+  window.getSelection = () => ({ toString: () => 'Selected comment text' })
+  element._previewClick(event)
+  assert.equal(trigger.click.mock.callCount(), 1, 'links, Edit, and selection do not synthesize another icon click')
+  assert.equal(event.stopPropagation.mock.callCount(), 1, 'links and Edit still reach their own delegates')
+})
 
 test('hover previews wait briefly, stay open while entered, and dismiss on leave or Escape', t => {
   const { element, popup, trigger } = interactivePreview(t)

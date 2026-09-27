@@ -49,16 +49,38 @@ test('issue reasons label and color both full links and compact previews without
   assert.ok(renderText(link.render()).includes('Closed pull request: A fix'))
 })
 
-test('Fix URLs omitted by the workspace response keep the local/E2E plain-link rendering', () => {
-  const link = new FixLink()
-  link.url = 'https://github.com/unrelated/private/issues/42'
+test('GitHub Fix links without metadata show the repository and number in rows and tooltips', () => {
+  metadata = null // Local/E2E and managed URLs without available metadata.
+  for (const [kind, label] of [['pull', 'Pull request'], ['issues', 'Issue']]) {
+    const link = new FixLink()
+    link.url = `https://github.com/org/repo/${kind}/42`
+    for (const compact of [false, true]) {
+      link.compact = compact
+      const text = renderText(link.render())
+      assert.ok(text.includes(`href=${link.url}`))
+      assert.ok(text.includes('org/repo#42'))
+      assert.ok(text.includes('class=link-icon unavailable') || text.includes('class=status unavailable'))
+      assert.doesNotMatch(text, /preview-title|preview-description|link-status|undefined/u)
+      if (compact) {
+        assert.match(text, /id="fix-preview"/u)
+        assert.ok(text.includes(label))
+      } else {
+        assert.match(text, /class="link-title">org\/repo#42</u)
+      }
+    }
+  }
+})
+
+test('non-GitHub and unrecognized GitHub Fix URLs retain plain links and tooltips', () => {
   metadata = null
-  const full = renderText(link.render())
-  assert.ok(full.includes(link.url))
-  assert.doesNotMatch(full, /fix-preview|preview-title|link-icon|link-status/u)
-  link.compact = true
-  const compact = renderText(link.render())
-  assert.ok(compact.includes(`<slot></slot>`), 'the normal Fix icon is used instead of a GitHub issue/PR icon')
-  assert.ok(compact.includes(`Open fix link: ${link.url}`))
-  assert.doesNotMatch(compact, /fix-preview|<svg/u)
+  for (const url of ['https://example.com/fix/42', 'https://github.com/org/repo', 'https://github.com.evil.test/org/repo/pull/42']) {
+    const link = new FixLink()
+    link.url = url
+    assert.ok(renderText(link.render()).includes(url))
+    link.compact = true
+    const compact = renderText(link.render())
+    assert.ok(compact.includes('<slot></slot>'))
+    assert.ok(compact.includes(`Open fix link: ${url}`))
+    assert.doesNotMatch(compact, /fix-preview|preview-title|link-icon|link-status/u)
+  }
 })

@@ -22,7 +22,7 @@ class ManagedFixLink extends HoverPreviewElement {
     svg { flex: none; }
     /* GitHub Primer's foreground colors follow the app's color-scheme. */
     .open { color: light-dark(#1a7f37, #3fb950); }
-    .draft, .not_planned, .duplicate, .unknown { color: var(--muted); }
+    .draft, .not_planned, .duplicate, .unknown, .unavailable { color: var(--muted); }
     .closed { color: light-dark(#d1242f, #f85149); }
     .merged, .completed { color: light-dark(#8250df, #a371f7); }
     :host(:not([compact])) { display: block; }
@@ -80,19 +80,19 @@ class ManagedFixLink extends HoverPreviewElement {
     if (!isHttpUrl(this.url)) return html`${this.url}`
     const pr = parseGithubPrUrl(this.url)
     const issue = !pr && parseGithubIssueUrl(this.url)
+    const ref = pr || issue
     const data = managedFixes.read(this.url)
-    if (!data) {
+    if (!data && !ref) {
       const label = `Open fix link: ${this.url}`
       return html`<a class=${this.compact ? 'fix-link' : ''} href=${this.url} target="_blank" rel="noopener noreferrer"
         draggable="false" data-tooltip=${this.compact ? label : nothing} aria-label=${label}>
         ${this.compact ? html`<slot></slot>` : this.url}
       </a>`
     }
-    const ref = pr || issue
-    const status = issue && data.status === 'closed' ? data.stateReason ?? 'unknown' : data.status
+    const status = data ? issue && data.status === 'closed' ? data.stateReason ?? 'unknown' : data.status : 'unavailable'
     const icon = pr ? prIcon : issue ? issueIcons[status] ?? issueIcon : null
     const name = ref ? `${ref.repo}#${ref.number}` : ''
-    const widePreview = data.title.length > 40 || (data.description ?? '').split(/[\r\n]/u).some(line => line.length > 100)
+    const widePreview = (data?.title.length ?? 0) > 40 || (data?.description ?? '').split(/[\r\n]/u).some(line => line.length > 100)
     const description = data ? `${labels[status]} ${pr ? 'pull request' : 'issue'}: ${data.title} (${name})`
       : ref ? `Open ${pr ? 'pull request' : 'issue'}: ${name}` : `Open fix link: ${this.url}`
     return html`<a class="fix-link" href=${this.url} target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${description}
@@ -102,7 +102,7 @@ class ManagedFixLink extends HoverPreviewElement {
       ${this.compact
         ? icon ? html`<span class=${`status ${status}`}>${icon}</span>` : html`<slot></slot>`
         : html`${icon ? html`<span class=${`link-icon ${status}`}>${icon}</span>` : nothing}
-          <span class="link-title">${data?.title ?? this.url}</span>
+          <span class="link-title">${data?.title ?? (name || this.url)}</span>
           ${data ? html`<span class="ref">${name}</span><span class=${`link-status ${status}`}>${labels[status]}</span>` : nothing}`}
     </a>${this.compact && ref ? html`<a class=${widePreview ? 'preview wide' : 'preview'} id="fix-preview" popover="manual" href=${this.url}
       target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${`Open ${pr ? 'pull request' : 'issue'} ${name} on GitHub`}
@@ -111,7 +111,7 @@ class ManagedFixLink extends HoverPreviewElement {
       @click=${event => { event.stopPropagation(); this._hidePreview() }}>
       <div class="preview-header">
         <span class="preview-ref">${unsafeHTML(GITHUB_ICON_SVG)}<span>${name}</span></span>
-        <span class=${`status ${status}`}>${icon}${data ? labels[status] : nothing}</span>
+        <span class=${`status ${status}`}>${icon}${data ? labels[status] : pr ? 'Pull request' : 'Issue'}</span>
       </div>
       ${data ? html`<div class="preview-title">${data.title}</div>` : nothing}
       ${data?.description ? html`<div class="preview-description">${data.description}</div>` : nothing}
