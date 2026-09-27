@@ -395,6 +395,9 @@
   flex-shrink: 0;
 }
 
+.bundles-scan-button { flex-shrink: 0; }
+.bundles-scan-button[hidden] { display: none; }
+
 .bundles-slide-body {
   flex: 1;
   min-height: 0;

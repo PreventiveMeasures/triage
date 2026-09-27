@@ -4,16 +4,21 @@ import { bundlePkgOf } from '../view/bundle-pkg-of.js'
 import { bundleGraphReasons } from '../view/bundle-graph-inputs.js'
 import { formatBytes } from './metrics.js'
 
-// Storage currently records bundle identity and filename, without repository
-// assignments. Keep these bundles explicitly Unattached; don't infer a repo
-// from a filename or substitute managed fixtures.
-export function storedScanSource(entries) {
+// Preserve every workspace membership: one stored bundle can be selected from
+// several workspaces. Only bundles without an owner appear under Unattached.
+export function storedScanSource(entries, workspaces = []) {
+  const repositories = new Map()
+  const bundles = entries.flatMap(entry => {
+    const owners = workspaces.filter(workspace => workspace.bundles?.includes(entry.integrity))
+    const scopes = owners.length > 0 ? owners.map(workspace => ({ id: workspace.id, label: workspace.name })) : [{ id: 'unattached', label: 'Unattached' }]
+    return scopes.map(scope => {
+      repositories.set(scope.id, scope)
+      return { id: entry.integrity, integrity: entry.integrity, filename: entry.name,
+        repoId: scope.id, repo: scope.label, files: null, reasons: [], size: '—' }
+    })
+  })
   return {
-    repositories: entries.length > 0 ? [{ id: 'unattached', label: 'Unattached' }] : [],
-    bundles: entries.map(entry => ({
-      id: entry.integrity, integrity: entry.integrity, filename: entry.name,
-      repoId: 'unattached', repo: 'Unattached', files: null, reasons: [], size: '—',
-    })),
+    repositories: [...repositories.values()], bundles,
     reports: [], scans: [],
   }
 }

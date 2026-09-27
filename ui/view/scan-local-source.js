@@ -12,7 +12,7 @@ export async function loadLocalScanSource(signal) {
   checkLocal(signal)
   const entries = await listBundles()
   checkLocal(signal)
-  return storedScanSource(entries)
+  return storedScanSource(entries, listWorkspaces())
 }
 
 export async function loadLocalScanBundle(entry, signal) {

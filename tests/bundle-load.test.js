@@ -48,6 +48,16 @@ beforeEach(() => {
   state.bundles = [entry]; selectBundle(entry.integrity, 'overview')
 })
 
+it('tracks the clicked workspace when the same bundle is opened twice', () => {
+  selectBundle(entry.integrity, 'overview', { workspaceId: 'first-workspace' })
+  assert.equal(state.selectedBundleWorkspace, 'first-workspace')
+  selectBundle(entry.integrity, undefined, { workspaceId: 'second-workspace' })
+  assert.equal(state.selectedBundle, entry.integrity)
+  assert.equal(state.selectedBundleWorkspace, 'second-workspace')
+  selectBundle('unattached')
+  assert.equal(state.selectedBundleWorkspace, null)
+})
+
 it('does not preload source bundles for report hash lookups, even on cache misses', async () => {
   await prefetchBundleHashes(entry.integrity)
   assert.equal(reads, 0)

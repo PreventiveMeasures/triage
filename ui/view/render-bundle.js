@@ -18,7 +18,8 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { BUNDLE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
+import { canScanBundle, openScan } from './scan-navigation.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 const findingsForFileHash = hash => isManagedUiMode() ? [] : localFindingsForFileHash(hash)
 const indexedHashFindingCount = () => isManagedUiMode() ? 0 : localIndexedHashFindingCount()
@@ -1801,6 +1802,7 @@ function renderBundleSlide(entry) {
       <div class="bundles-slide-title">
         <div class="bundles-slide-name">${entry.name}</div>
       </div>
+      <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
       <div class="bundles-slide-tabs" role="tablist">
         ${showAdvisories ? html`<button
           type="button"

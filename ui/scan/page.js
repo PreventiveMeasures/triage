@@ -6,6 +6,7 @@ import { BUNDLE_ICON_SVG, CODE_ICON_SVG, REPORT_ICON_SVG } from '../view/icons.j
 import { fetchScanModels } from '../view/scan-models.js'
 import '../view/scan-model-picker.js'
 import '../view/repository-selector.js'
+import '../view/workspace-selector.js'
 import '../view/bundle-selector.js'
 import './report-inputs.js'
 import './regime-editor.js'
@@ -24,6 +25,8 @@ export class ScanPage extends LitElement {
   static properties = {
     hideHeading: { type: Boolean, attribute: 'hide-heading' },
     sourceLoading: { type: Boolean, attribute: false },
+    selection: { attribute: false },
+    scopeLabel: { type: String, attribute: 'scope-label' },
     source: { attribute: false }, loadBundle: { attribute: false }, loadModels: { attribute: false }, loadReportSources: { attribute: false }, canRun: { attribute: false },
     _loadingBundle: { state: true }, _bundleError: { state: true },
     _tab: { state: true },
@@ -53,6 +56,9 @@ export class ScanPage extends LitElement {
     this._tab = 'new'
     this._mode = 'code'
     this.source = null
+    this.selection = null
+    this.scopeLabel = 'Repository'
+    this._pendingSelection = null
     this.sourceLoading = false
     this.loadBundle = null
     this._loadingBundle = false
@@ -80,23 +86,36 @@ export class ScanPage extends LitElement {
   }
 
   willUpdate(changed) {
+    if (changed.has('selection')) this._pendingSelection = this.selection
     if (changed.has('source')) {
       this._bundles = this.source?.bundles ?? []
       this._repositories = this.source?.repositories ?? []
       this._scans = this.source?.scans ?? []
+    }
+    if (changed.has('source') || changed.has('selection')) {
       this._excluded = new Set()
       this._excludedModules = new Set()
       const repo = this._repositories.find(item => item.id === this._selectedRepoId)
-      const bundle = this._bundles.find(item => item.id === this._selectedBundleId)
-        ?? (repo ? this._bundles.find(item => item.repoId === repo.id) : this._bundles[0])
-      this._selectedRepoId = bundle?.repoId ?? repo?.id ?? this._repositories[0]?.id ?? 'unattached'
+      const requested = this._pendingSelection
+      const bundle = requested
+        ? this._bundles.find(item => item.id === requested.bundleId && (requested.repoId == null || item.repoId === requested.repoId))
+        : this._bundles.find(item => item.id === this._selectedBundleId && item.repoId === this._selectedRepoId)
+          ?? (this.scopeLabel === 'Workspace' ? null : this._bundles.find(item => item.id === this._selectedBundleId))
+          ?? (repo ? this._bundles.find(item => item.repoId === repo.id) : this._bundles[0])
+      this._selectedRepoId = bundle?.repoId ?? requested?.repoId ?? repo?.id ?? this._repositories[0]?.id ?? 'unattached'
       this._selectedBundleId = bundle?.id ?? null
       this._reason = bundle?.reasons?.[0]?.id ?? ''
+      if (requested) {
+        this._tab = 'new'
+        this._mode = 'code'
+        this._notice = bundle || this.source == null ? null : 'The selected bundle is no longer available in this source. Choose another bundle.'
+        if (bundle) this._pendingSelection = null
+      }
     }
   }
 
   updated(changed) {
-    if (changed.has('source') || changed.has('loadBundle')) void this._loadSelectedBundle()
+    if (changed.has('source') || changed.has('selection') || changed.has('loadBundle')) void this._loadSelectedBundle()
   }
 
   async _loadSelectedBundle() {
@@ -110,7 +129,7 @@ export class ScanPage extends LitElement {
     try {
       const loaded = await this.loadBundle(bundle, controller.signal)
       if (controller.signal.aborted) return
-      this._bundles = this._bundles.map(item => item.id === bundle.id ? loaded : item)
+      this._bundles = this._bundles.map(item => item.id === bundle.id ? { ...loaded, repoId: item.repoId, repo: item.repo } : item)
       this._reason = loaded.reasons?.[0]?.id ?? ''
     } catch (err) {
       if (!controller.signal.aborted) this._bundleError = String(err?.message ?? err)
@@ -202,7 +221,7 @@ export class ScanPage extends LitElement {
     const reserveScope = ['code', 'agentic'].includes(this._mode) && bundle != null
       && (!bundle.filename.toLowerCase().endsWith('.map') || bundle.reasons?.some(reason => reason.id !== 'all'))
     const repositories = this._repositories.map(repo => { const count = counts.get(repo.id) ?? 0; return { value: repo.id, label: repo.label, detail: `${count} ${count === 1 ? 'bundle' : 'bundles'}`, special: repo.id === 'unattached' } })
-    return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- A single repository is implicit. -->${showRepositoryPicker ? html`<div class="field"><span>Repository</span><repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${(e) => this._selectRepoById(e.detail.value)}></repository-selector></div>` : nothing}<div class="field">${showRepositoryPicker ? html`<span>Bundle</span>` : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : html`<div class="choice-empty">${this._bundles.length === 0 ? 'No stored bundles.' : 'No stored bundles for this repository.'}</div>`}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${lines == null ? '—' : lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
+    return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- A single repository is implicit. -->${showRepositoryPicker ? html`<div class="field"><span>${this.scopeLabel}</span>${this.scopeLabel === 'Workspace' ? html`<workspace-selector .options=${repositories} .value=${this._selectedRepoId} @workspace-change=${e => this._selectRepoById(e.detail.value)}></workspace-selector>` : html`<repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${e => this._selectRepoById(e.detail.value)}></repository-selector>`}</div>` : nothing}<div class="field">${showRepositoryPicker ? html`<span>Bundle</span>` : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : html`<div class="choice-empty">${this._bundles.length === 0 ? 'No stored bundles.' : `No stored bundles for this ${this.scopeLabel.toLowerCase()}.`}</div>`}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${lines == null ? '—' : lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
   }
 
   _scopeField(bundle) {
@@ -231,6 +250,7 @@ export class ScanPage extends LitElement {
   }
 
   _selectBundle(bundle) {
+    this._pendingSelection = null
     this._selectedRepoId = bundle.repoId
     this._selectedBundleId = bundle.id
     this._reason = bundle.reasons?.[0]?.id ?? ''
@@ -248,6 +268,7 @@ export class ScanPage extends LitElement {
   _selectRepoById(id) {
     if (id === this._selectedRepoId || !this._repositories.some(repo => repo.id === id)) return
     this._selectedRepoId = id
+    this._pendingSelection = null
     const bundle = this._bundles.find((candidate) => candidate.repoId === id)
     this._selectedBundleId = bundle?.id ?? null
     this._reason = bundle?.reasons[0]?.id ?? ''
@@ -330,6 +351,7 @@ export class ScanPage extends LitElement {
     if (mode === 'report' && (!reportInput?.source || reports.length === 0)) return
     if (mode !== 'report' && (!bundle || files.length === 0)) return
     const scan = { id: `scan-${Date.now()}`, mode, bundleId: mode === 'report' ? (this._reportMode === 'merge' ? reportInput.source.id : null) : bundle?.id ?? null, bundleName: mode === 'report' ? reportInput.source.label : bundle.filename, reason: mode === 'agentic' ? this._reasonData?.label ?? 'All files' : mode === 'report' ? this._reportMode === 'merge' ? 'Merge scan results' : 'Link saved reports' : mode === 'code' ? this._reasonData?.label ?? 'All files' : 'Dependencies', status: 'running', createdAt: 'Just now', duration: '', files: mode === 'report' ? reports.length : files.length, reportSaved: false, cached: this._options.cached, isolate: mode === 'code' && this._options.isolate, model: this._options.model, effort: this._options.effort }
+    if (mode !== 'report') scan.repoId = this._selectedRepoId
     if (mode === 'code') scan.analyzer = this._options.analyzer
     if (advanced) {
       scan.regimes = this._regimes.map(regime => ({ ...regime }))
@@ -381,7 +403,7 @@ export class ScanPage extends LitElement {
       this._notice = 'New report scan settings restored from the stopped run.'
       return
     }
-    const bundle = this._bundles.find(candidate => candidate.id === scan.bundleId)
+    const bundle = this._bundles.find(candidate => candidate.id === scan.bundleId && (scan.repoId == null || candidate.repoId === scan.repoId))
     if (!bundle) return
     this._selectBundle(bundle)
     this._mode = scan.mode ?? 'dependencies'

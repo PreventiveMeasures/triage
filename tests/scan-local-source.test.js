@@ -18,6 +18,23 @@ test('stored sourcemap files use actual byte sizes and package names', () => {
   assert.throws(() => storedScanBundle(entry, { error: 'invalid bundle' }), /invalid bundle/u)
 })
 
+test('local scan sources preserve every workspace membership and only unowned bundles are Unattached', () => {
+  const source = storedScanSource([
+    { integrity: 'shared', name: 'shared.map' }, { integrity: 'loose', name: 'loose.map' },
+  ], [
+    { id: 'first', name: 'First workspace', bundles: ['shared', 'missing'] },
+    { id: 'second', name: 'Second workspace', bundles: ['shared'] },
+    { id: 'empty', name: 'Empty workspace', bundles: [] },
+  ])
+  assert.deepEqual(source.repositories, [
+    { id: 'first', label: 'First workspace' }, { id: 'second', label: 'Second workspace' },
+    { id: 'unattached', label: 'Unattached' },
+  ])
+  assert.deepEqual(source.bundles.map(bundle => [bundle.id, bundle.repoId]), [
+    ['shared', 'first'], ['shared', 'second'], ['loose', 'unattached'],
+  ])
+})
+
 test('Stasis reasons keep exact file sets even when files share the same package', () => {
   const entry = storedScanSource([{ integrity: 'test', name: 'test.stasis' }]).bundles[0]
   const result = storedScanBundle(entry, {

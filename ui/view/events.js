@@ -391,6 +391,7 @@ report.addEventListener('click', (e) => {
       return
     }
     state.selectedBundle = integrity
+    state.selectedBundleWorkspace = null
     state.bundleDetails = null
     render()
     // Wait for openBundle to finish parsing + render so the

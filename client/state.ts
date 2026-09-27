@@ -112,6 +112,8 @@ export interface State {
   storedFiles: string[]
   bundles: unknown[]
   selectedBundle: string | null
+  selectedBundleWorkspace: string | null
+  scanSelection: { bundleId: string, repoId?: string | number } | null
   bundleDetails: unknown
   bundleDetailsTab: string
   selectedPackage: string | null
@@ -533,6 +535,8 @@ export const state: State = store<State>({
   // pattern; details load asynchronously (readBundle + parse for
   // .map) and stay cached on this slot until selection changes.
   selectedBundle: null,
+  selectedBundleWorkspace: null,
+  scanSelection: null,
   bundleDetails: null,
   // Active tab in the bundle view's tab strip: 'overview' (the
   // metadata + Packages / Files / Reports nested view), 'terminal',

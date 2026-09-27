@@ -16,6 +16,7 @@ export function managedRoutePath(route) {
   if (route.view === 'bundles') return /^[A-Za-z0-9_-]+$/u.test(route.bundleId ?? '') ? `/bundles/${encodeURIComponent(route.bundleId)}` : null
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
+    if (route.view === 'manage-scans' && route.bundleId) return `${path}?bundle=${encodeURIComponent(route.bundleId)}`
     return route.view === 'manage-history' && route.actor ? `${path}?actor=${encodeURIComponent(route.actor)}` : path
   }
   if (!['findings', 'files'].includes(route.view) || !route.teamSlug
@@ -29,7 +30,12 @@ export function parseManagedRoute(url) {
   const path = url.pathname.replace(/\/$/u, '') || '/'
   if (path === '/' || path === '/index.html') return { view: 'home' }
   const view = Object.keys(MANAGED_PAGES).find(key => MANAGED_PAGES[key] === path)
-  if (view) return { view, ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}) }
+  if (view) {
+    return { view,
+      ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}),
+      ...(view === 'manage-scans' && url.searchParams.get('bundle') ? { bundleId: url.searchParams.get('bundle') } : {}),
+    }
+  }
   const bundle = /^\/bundles\/([A-Za-z0-9_-]+)$/u.exec(path)
   if (bundle) return { view: 'bundles', bundleId: bundle[1] }
   const match = /^\/teams\/([^/]+)(?:\/reports\/([^/]+))?(\/files)?$/u.exec(path)

@@ -1332,7 +1332,7 @@ customElements.define('managed-admin-bundles', ManagedAdminBundles)
 
 // Manage supplies its own navigation and authenticated model transport.
 class ManagedAdminScans extends ManagedPage {
-  static properties = { _source: { state: true }, _error: { state: true } }
+  static properties = { selection: { attribute: false }, _source: { state: true }, _error: { state: true } }
   static styles = unsafeCSS(commonStyles)
   constructor() {
     super()
@@ -1374,7 +1374,7 @@ class ManagedAdminScans extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load scan sources: ${this._error} <button type="button" class="btn" @click=${() => void this._load()}>Retry</button></p>` : nothing}
-      <deepview-scan-page hide-heading .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
+      <deepview-scan-page hide-heading .selection=${this.selection} .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
     </div>`
   }
 }
