@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
@@ -13,6 +13,9 @@ import { CLAUDE_MARK_PATH, GITHUB_ICON_SVG } from './icons.js'
 import { findingLinkFor } from './finding-link.js'
 import { managedCommentsFor } from './managed-comments.js'
 import { managedCommentTemplate } from './managed-comment.js'
+import { renderCommentText } from './comment-text.js'
+
+export { renderCommentText } from './comment-text.js'
 
 // All `<finding-row>` / `<finding-card>` shadow-DOM markup is built
 // here as Lit `html` template results (no `unsafeHTML`). Lit
@@ -277,31 +280,6 @@ export function renderHighlighted(text, { paragraphs = true } = {}) {
   }
   if (blocks.length === 1 && typeof blocks[0] === 'string') return flow(blocks[0])
   return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b)))
-}
-
-// Render a triage comment, linkifying any GitHub issue / PR / commit /
-// security-advisory URL the user pasted, plus any per-finding deep link
-// into this instance ("duplicate of https://…/#finding=…").
-// parseCommentRefs (format.js) does the strict validation + tokenisation;
-// here we only map its segments to templates — plain `string` runs pass
-// through untouched (an all-prose comment comes back as a single string),
-// and each validated token becomes a compact `<a>`.
-//
-// The two token kinds render differently on purpose. An external ref
-// (`owner/repo#123`, `owner/repo@sha`, `GHSA-xxxx-xxxx-xxxx`) opens in a
-// new tab with the full URL in `title`. A self-link carries a
-// finding href and must navigate IN PLACE: `target="_blank"` would
-// boot a second copy of the app just to show a finding the reader is
-// already three inches away from. Its `title` names the action rather
-// than the href, which is an opaque id the reader can't act on.
-export function renderCommentText(text) {
-  return parseCommentRefs(text, { managed: isManagedUiMode() }).map((seg) => {
-    if (typeof seg === 'string') return seg
-    if (seg.self) {
-      return html`<a class="comment-self-ref" href=${seg.url} data-tooltip="Show this finding">${seg.label}</a>`
-    }
-    return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" data-tooltip=${seg.url}>${seg.label}</a>`
-  })
 }
 
 // The producer buckets behind a set of report names, first-seen order

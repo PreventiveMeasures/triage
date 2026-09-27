@@ -61,6 +61,7 @@ import './view/bundle-treemap.js'
 import './view/bundle-compare.js'
 import './view/download-button.js'
 import './view/managed-fix-link.js'
+import './view/comment-preview.js'
 import './view/api.js'
 // Eager side-effect import — runs the native DecompressionStream('br')
 // detection at boot and drops any leftover brotli SW from an older
