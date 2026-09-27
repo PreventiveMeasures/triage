@@ -151,12 +151,14 @@ export class ScanPage extends LitElement {
 
   _packageLabel(module) { return module === '__own__' ? 'Own code' : module }
 
-  get _files() {
+  get _scopeFiles() {
     const reason = this._reasonData
     const modules = reason?.fileModules
     const paths = reason?.filePaths ? new Set(reason.filePaths) : null
-    return codeScanFiles(this._bundle?.files).filter((file) => (modules == null || modules.includes(file.module)) && (paths == null || paths.has(file.path))).toSorted((a, b) => b.bytes - a.bytes)
+    return (this._bundle?.files ?? []).filter((file) => (modules == null || modules.includes(file.module)) && (paths == null || paths.has(file.path))).toSorted((a, b) => b.bytes - a.bytes)
   }
+
+  get _files() { return codeScanFiles(this._scopeFiles) }
 
   render() {
     return html`<div class="wrap">
@@ -177,7 +179,7 @@ export class ScanPage extends LitElement {
   _newScan() {
     const mode = this._mode
     const bundle = this._bundle
-    const files = mode === 'code' ? this._files : (bundle?.files ?? [])
+    const files = mode === 'code' ? this._files : mode === 'dependencies' ? this._scopeFiles : (bundle?.files ?? [])
     const excluded = this._excluded
     const excludedModules = this._excludedModules
     const included = files.filter((file) => !excluded.has(file.path) && !excludedModules.has(file.module))
@@ -218,14 +220,14 @@ export class ScanPage extends LitElement {
     for (const item of this._bundles) counts.set(item.repoId, (counts.get(item.repoId) ?? 0) + 1)
     const showRepositoryPicker = this._repositories.length > 1
     // Sourcemaps have no named graph scopes; Stasis may discover them after loading.
-    const reserveScope = ['code', 'agentic'].includes(this._mode) && bundle != null
+    const reserveScope = ['code', 'agentic', 'dependencies'].includes(this._mode) && bundle != null
       && (!bundle.filename.toLowerCase().endsWith('.map') || bundle.reasons?.some(reason => reason.id !== 'all'))
     const repositories = this._repositories.map(repo => { const count = counts.get(repo.id) ?? 0; return { value: repo.id, label: repo.label, detail: `${count} ${count === 1 ? 'bundle' : 'bundles'}`, special: repo.id === 'unattached' } })
     return html`<section class="panel source-panel" aria-busy=${this._loadingBundle}><div class="panel-head"><h2>Source</h2></div><div class=${`source-choice ${showRepositoryPicker ? '' : 'single-repository'}`}><!-- A single repository is implicit. -->${showRepositoryPicker ? html`<div class="field"><span>${this.scopeLabel}</span>${this.scopeLabel === 'Workspace' ? html`<workspace-selector .options=${repositories} .value=${this._selectedRepoId} @workspace-change=${e => this._selectRepoById(e.detail.value)}></workspace-selector>` : html`<repository-selector .options=${repositories} .value=${this._selectedRepoId} @repository-change=${e => this._selectRepoById(e.detail.value)}></repository-selector>`}</div>` : nothing}<div class="field">${showRepositoryPicker ? html`<span>Bundle</span>` : nothing}${bundles.length > 0 ? html`<bundle-selector .bundles=${bundles} .value=${bundle?.id ?? null} @bundle-change=${event => this._selectBundleById(event.detail.value)}></bundle-selector>` : html`<div class="choice-empty">${this._bundles.length === 0 ? 'No stored bundles.' : `No stored bundles for this ${this.scopeLabel.toLowerCase()}.`}</div>`}</div><div class="source-footer"><div class="bundle-stats" aria-label="Bundle statistics"><div class="metric"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/></svg><strong>${bundle?.size ?? '—'}</strong><span>bundle size</span></div><div class="metric">${SCAN_MODE_ICONS.report}<strong>${files.length}</strong><span>files</span></div><div class="metric">${SCAN_MODE_ICONS.code}<strong>${lines == null ? '—' : lines.toLocaleString()}</strong><span>LoC</span></div><div class="metric">${unsafeHTML(BUNDLE_ICON_SVG)}<strong>${new Set(files.map((file) => file.module)).size}</strong><span>packages</span></div></div>${reserveScope ? html`<div class="scope-slot">${this._scopeField(bundle)}</div>` : nothing}</div></div></section>`
   }
 
   _scopeField(bundle) {
-    if (!['code', 'agentic'].includes(this._mode)) return nothing
+    if (!['code', 'agentic', 'dependencies'].includes(this._mode)) return nothing
     const reasons = (bundle?.reasons ?? []).filter(reason => reason.id !== 'all')
     if (reasons.length === 0) return nothing
     return html`<bundle-scope-selector .reasons=${reasons} .value=${this._reason} label=${this._mode === 'agentic' ? 'Choose agentic scope' : 'Choose scan scope'} @scope-change=${event => this._changeReason(event.detail.value)}></bundle-scope-selector>`
@@ -347,18 +349,17 @@ export class ScanPage extends LitElement {
     const reports = reportInput?.inputs ?? []
     const files = mode === 'code'
       ? this._files.filter((file) => !this._excluded.has(file.path) && !this._excludedModules.has(file.module))
-      : (bundle?.files ?? [])
+      : mode === 'dependencies' ? this._scopeFiles : (bundle?.files ?? [])
     if (mode === 'report' && (!reportInput?.source || reports.length === 0)) return
     if (mode !== 'report' && (!bundle || files.length === 0)) return
-    const scan = { id: `scan-${Date.now()}`, mode, bundleId: mode === 'report' ? (this._reportMode === 'merge' ? reportInput.source.id : null) : bundle?.id ?? null, bundleName: mode === 'report' ? reportInput.source.label : bundle.filename, reason: mode === 'agentic' ? this._reasonData?.label ?? 'All files' : mode === 'report' ? this._reportMode === 'merge' ? 'Merge scan results' : 'Link saved reports' : mode === 'code' ? this._reasonData?.label ?? 'All files' : 'Dependencies', status: 'running', createdAt: 'Just now', duration: '', files: mode === 'report' ? reports.length : files.length, reportSaved: false, cached: this._options.cached, isolate: mode === 'code' && this._options.isolate, model: this._options.model, effort: this._options.effort }
-    if (mode !== 'report') scan.repoId = this._selectedRepoId
+    const scan = { id: `scan-${Date.now()}`, mode, bundleId: mode === 'report' ? (this._reportMode === 'merge' ? reportInput.source.id : null) : bundle?.id ?? null, bundleName: mode === 'report' ? reportInput.source.label : bundle.filename, reason: mode === 'report' ? this._reportMode === 'merge' ? 'Merge scan results' : 'Link saved reports' : this._reasonData?.label ?? 'All files', status: 'running', createdAt: 'Just now', duration: '', files: mode === 'report' ? reports.length : files.length, reportSaved: false, cached: this._options.cached, isolate: mode === 'code' && this._options.isolate, model: this._options.model, effort: this._options.effort }
+    if (mode !== 'report') { scan.repoId = this._selectedRepoId; scan.scopeId = this._reason }
     if (mode === 'code') scan.analyzer = this._options.analyzer
     if (advanced) {
       scan.regimes = this._regimes.map(regime => ({ ...regime }))
       scan.appModel = this._appModel ? { ...this._appModel } : null
       scan.appModelAutomatic = this._appModelAutomatic
       scan.reason = `Advanced · ${scan.regimes.length} regimes · ${scan.reason}`
-      scan.scopeId = this._reason
       scan.model = null
       scan.effort = null
       scan.isolate = false
@@ -416,7 +417,7 @@ export class ScanPage extends LitElement {
       this._regimesReady = false
     }
     this._reason = bundle.reasons.find((reason) => reason.label === scan.reason)?.id ?? bundle.reasons[0]?.id ?? ''
-    if (scan.regimes?.length > 0) this._reason = scan.scopeId ?? this._reason
+    this._reason = scan.scopeId ?? this._reason
     this._tab = 'new'
     this._notice = 'New scan settings restored from the stopped run.'
   }

@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
+import { Bundle } from '@exodus/stasis-core/bundle'
+import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
-let allowed = false, managedCalls = [], pending = null, result
+let allowed = false, managedCalls = [], managedReasons = [], pending = null, result
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: id => {
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason) => {
   managedCalls.push(id)
+  managedReasons.push(reason)
   return pending ?? Promise.resolve(result)
 } } })
 const { ensureBundleAdvisories, grantAdvisoriesProxyConsent, renderBundleAdvisoriesTab, retryBundleAdvisories, showAdvisoriesTab } = await import('../ui/view/render-bundle-advisories.js')
@@ -16,7 +19,7 @@ function renderText(value) {
   return value == null || typeof value === 'symbol' ? '' : String(value)
 }
 beforeEach(t => {
-  managedCalls = []; allowed = false; pending = null
+  managedCalls = []; managedReasons = []; allowed = false; pending = null
   state.managedTeams = []
   result = { packages: { dep: ['1.0.0'] }, advisories: { dep: [{ title: 'Public vulnerability', severity: 'high', url: 'https://example.com/advisory' }] } }
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
@@ -80,4 +83,88 @@ test('managed request failures are retryable; e2e still posts its local inventor
   await ensureBundleAdvisories(local, () => {})
   assert.equal(calls[0].url, '/api/npm-advisories')
   assert.deepEqual(JSON.parse(calls[0].options.body), { dep: ['1.0.0'] })
+})
+
+
+function scopeControl(value) {
+  if (value?.strings?.join('').includes('<bundle-scope-selector')) return value
+  for (const child of value?.values ?? (Array.isArray(value) ? value : [])) {
+    const found = scopeControl(child)
+    if (found) return found
+  }
+  return null
+}
+function selectReason(details, value) {
+  const control = scopeControl(renderBundleAdvisoriesTab(details))
+  assert.ok(control, 'reuse the annotated selector')
+  return control.values.find(item => typeof item === 'function')({ detail: { value } })
+}
+function reasonBundle(integrity) {
+  return { kind: 'stasis', integrity, size: 123, bundle: Bundle.parse(new Bundle({
+    modules: new Map([
+      ['.', { name: 'app', version: '1', files: { 'app.js': 'app' } }],
+      ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'one' } }],
+      ['node_modules/tool/node_modules/dep', { name: 'dep', version: '2.0.0', files: { 'index.js': 'two' } }],
+    ]),
+    reason: { metro: ['node_modules/dep/index.js'], run: ['node_modules/tool/node_modules/dep/index.js'], add: ['app.js'] },
+  }).serialize()) }
+}
+
+[false, true].forEach(managed => {
+  test(`${managed ? 'managed' : 'e2e'} advisory scopes query exact versions and keep separate cached results`, async t => {
+    let details = reasonBundle(`scoped-${managed}`)
+    const queries = []
+    if (managed) {
+      details = { ...parseBundleMetadata(await createBundleMetadata(details), details.integrity), managedId: 'scoped-bundle' }
+    } else {
+      grantAdvisoriesProxyConsent()
+      t.mock.method(globalThis, 'fetch', (_url, options) => {
+        const query = JSON.parse(options.body)
+        queries.push(query)
+        return Promise.resolve(Response.json({ dep: [{ title: query.dep.join(', '), severity: 'high' }] }))
+      })
+    }
+    await ensureBundleAdvisories(details, () => {})
+    result = { packages: { dep: ['1.0.0'] }, advisories: { dep: [{ title: 'Metro vulnerability', severity: 'high' }] } }
+    await selectReason(details, 'reason:metro')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
+    assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /2\.0\.0/u)
+    result = { packages: { dep: ['2.0.0'] }, advisories: { dep: [{ title: 'Run vulnerability', severity: 'high' }] } }
+    await selectReason(details, 'reason:run')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /2\.0\.0/u)
+    assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
+    await selectReason(details, 'reason:metro')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
+    assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /2\.0\.0/u)
+    await selectReason(details, '')
+    if (managed) assert.deepEqual(managedReasons, ['', 'metro', 'run'])
+    else assert.deepEqual(queries, [{ dep: ['1.0.0', '2.0.0'] }, { dep: ['1.0.0'] }, { dep: ['2.0.0'] }])
+    result = { packages: {}, advisories: {} }
+    await selectReason(details, 'reason:add')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /No advisories for the 0 packages in this scope/u)
+  })
+})
+
+test('advisory scope control is hidden if every named reason equals all files', () => {
+  const details = reasonBundle('unfiltered')
+  details.bundle.reason = { run: [...details.bundle.sources.keys()] }
+  assert.equal(scopeControl(renderBundleAdvisoriesTab(details)), null)
+  const noReasons = reasonBundle('no-reasons')
+  noReasons.bundle.reason = {}
+  assert.equal(scopeControl(renderBundleAdvisoriesTab(noReasons)), null)
+})
+
+test('a late response for the old reason cannot replace the selected reason', async () => {
+  const details = { ...reasonBundle('late-scope'), managedId: 'late-scope' }
+  const gate = Promise.withResolvers()
+  pending = gate.promise
+  const oldRequest = selectReason(details, 'reason:metro')
+  pending = null
+  result = { packages: { dep: ['2.0.0'] }, advisories: { dep: [{ title: 'Current run vulnerability', severity: 'high' }] } }
+  await selectReason(details, 'reason:run')
+  gate.resolve({ packages: { dep: ['1.0.0'] }, advisories: { dep: [{ title: 'Old metro vulnerability', severity: 'high' }] } })
+  await oldRequest
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(text, /Current run vulnerability/u)
+  assert.doesNotMatch(text, /Old metro vulnerability/u)
 })

@@ -965,7 +965,7 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
 
 // Published npm advisories require security access, independently of access to
 // unpublished dependency findings. Managers retain their normal bundle access.
-async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, teamId: string | null) {
+async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, teamId: string | null, reason: string) {
   const authorize = async () => {
     const session = await readSession(deps.config, deps.db, cookie, Date.now())
     if (!session) { sendJson(res, 401, { error: 'unauthenticated' }); return false }
@@ -980,11 +980,12 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   if (!record) { sendJson(res, 404, { error: 'no-bundle' }); return }
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
   if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-  let packages: Record<string, string[]> | null
-  try { packages = await deps.bundleCache.packageVersions(record) }
+  let packages: Record<string, string[]> | null | undefined
+  try { packages = await deps.bundleCache.packageVersions(record, reason) }
   catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
   if (!(await authorize())) return
   if (packages === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
+  if (packages === undefined) { sendJson(res, 400, { error: 'unknown-reason' }); return }
   const body = Buffer.from(JSON.stringify(packages))
   if (body.length > MAX_PACKAGE_INVENTORY_BYTES) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const controller = new AbortController()
@@ -1833,7 +1834,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const bundleAdvisories = /^\/api\/bundles\/([a-f\d-]{36})\/advisories$/iu.exec(path)
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleBundleAdvisories(res, deps, cookie, bundleAdvisories[1]!, url.searchParams.get('team'))
+      await handleBundleAdvisories(res, deps, cookie, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '')
       return
     }
     const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download)$/iu.exec(path)

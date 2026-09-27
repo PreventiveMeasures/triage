@@ -102,3 +102,17 @@ test('advisories send only an encoded bundle ID and team, using managed session 
   })
   assert.deepEqual(await fetchBundleAdvisories('bundle/id', 'team/id'), { packages: { dep: ['1.0.0'] }, advisories: {} })
 })
+
+
+test('advisory reason and team are encoded independently without sending inventory', async t => {
+  const { fetchBundleAdvisories } = await import('../ui/managed/bundle-data.js')
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    calls.push(url)
+    assert.equal(options.body, undefined)
+    return Promise.resolve(Response.json({ packages: {}, advisories: {} }))
+  })
+  await fetchBundleAdvisories('bundle/id', 'team/id', 'custom & build')
+  await fetchBundleAdvisories('bundle/id', undefined, 'run')
+  assert.deepEqual(calls, ['/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build', '/api/bundles/bundle%2Fid/advisories?reason=run'])
+})

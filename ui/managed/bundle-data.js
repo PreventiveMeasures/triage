@@ -25,7 +25,8 @@ export async function fetchBundleContents(id, { signal } = {}) {
 }
 
 // Advisory queries send only the bundle identity; inventory stays server-owned.
-export function fetchBundleAdvisories(id, teamId) {
-  const part = `advisories${teamId ? `?team=${encodeURIComponent(teamId)}` : ''}`
+export function fetchBundleAdvisories(id, teamId, reason = '') {
+  const params = [teamId ? `team=${encodeURIComponent(teamId)}` : '', reason ? `reason=${encodeURIComponent(reason)}` : ''].filter(Boolean).join('&')
+  const part = `advisories${params ? `?${params}` : ''}`
   return requestBundle(id, part, managedAppState.sessionController.signal)
 }
