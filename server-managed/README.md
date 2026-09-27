@@ -306,7 +306,8 @@ passed through without parsing; metadata generation still validates them.
 
 Report-scoped `/api/reports/:id/sources` responses use a separate gzip cache,
 backed by disk or private Blob storage. Derivatives are shared by report hash
-and filename format, scoped to permissions and the team's visible finding IDs,
+and filename format, scoped to the source paths cited by the team's visible
+finding members (including evidence, even when members share a finding ID),
 and removed when their final report reference or bundle is deleted. Cold
 builders recheck references after publishing to reconcile concurrent deletion
 on another instance. Authorization is checked again before streaming sources.

@@ -25,3 +25,18 @@ export function loadManagedFindings(content: string, filename: string): ReturnTy
   const parsed = readManagedReport(content, filename)
   return parsed.data == null ? Promise.resolve(null) : loadFindings(JSON.stringify(parsed.data))
 }
+
+// Source access follows individual visible members, not their shared finding
+// IDs: another member with the same ID can cite files the viewer cannot see.
+export function managedFindingSourcePaths(findings: unknown[]): Set<string> {
+  const paths = new Set<string>()
+  for (const finding of findings) {
+    if (!finding || typeof finding !== 'object') continue
+    const f = finding as { file?: unknown; evidence?: { file?: unknown }[] }
+    if (typeof f.file === 'string' && f.file) paths.add(f.file)
+    for (const evidence of Array.isArray(f.evidence) ? f.evidence : []) {
+      if (typeof evidence?.file === 'string' && evidence.file) paths.add(evidence.file)
+    }
+  }
+  return paths
+}

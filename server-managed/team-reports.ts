@@ -2,7 +2,7 @@
 // Only the visibility index is retained in memory for annotations/source reads.
 import { Buffer } from 'node:buffer'
 import { backfillFindingIds, reportEntries, stampSecurityGroups } from '../report/index.js'
-import { readManagedReport } from '../common/managed/report-content.ts'
+import { managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
@@ -10,7 +10,8 @@ import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.t
 
 type Finding = Record<string, unknown>
 type TeamReport = { id: string; filename: string; data: unknown; repo: { github: string | null; directory: string } }
-type Visibility = Map<string, Set<string>>
+type ReportVisibility = { ids: Set<string>; sourcePaths: Set<string> }
+type Visibility = Map<string, ReportVisibility>
 const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
 export class TeamReportsError extends Error {
   status: number
@@ -83,7 +84,7 @@ export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot:
       finding['isSecurity'] = securityIds.has(String(finding['id']))
       if (typeof finding['id'] === 'string') { ids.add(finding['id']); allIds.add(finding['id']) }
     }
-    visible.set(report.id, ids)
+    visible.set(report.id, { ids, sourcePaths: managedFindingSourcePaths(groupsOf(report.data).flat()) })
   }
   for (const report of reports) {
     const links = linksOf(report.data)
@@ -96,12 +97,12 @@ export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot:
   }
   let cache = caches.get(db)
   if (!cache) { cache = new Map(); caches.set(db, cache) }
-  // Bound total retained IDs as well as the number of snapshots.
-  while (cache.size >= 32 || [...cache.values()].reduce((n, entry) => n + [...entry.values()].reduce((sum, ids) => sum + ids.size, 0), 0) > 250_000) cache.delete(cache.keys().next().value!)
+  // Bound retained IDs/source paths as well as the number of snapshots.
+  while (cache.size >= 32 || [...cache.values()].reduce((n, entry) => n + [...entry.values()].reduce((sum, v) => sum + v.ids.size + v.sourcePaths.size, 0), 0) > 250_000) cache.delete(cache.keys().next().value!)
   cache.set(teamSnapshotKey(snapshot), visible)
   return reports
 }
-export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
+async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<ReportVisibility> {
   const snapshot = await teamSnapshot(db, sessionId, teamId)
   if (!snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
   const key = teamSnapshotKey(snapshot)
@@ -111,5 +112,11 @@ export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId:
     visible = caches.get(db)!.get(key)!
   }
   await recheckTeam(db, sessionId, snapshot)
-  return visible.get(reportId) ?? new Set()
+  return visible.get(reportId)!
+}
+export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
+  return (await teamReportVisibility(db, store, sessionId, teamId, reportId)).ids
+}
+export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
+  return (await teamReportVisibility(db, store, sessionId, teamId, reportId)).sourcePaths
 }

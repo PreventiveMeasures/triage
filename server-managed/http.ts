@@ -74,7 +74,7 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAc
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot } from './team-reports.ts'
+import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths } from './team-reports.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { MAX_PULL_REQUESTS, MAX_PULL_REQUEST_URL } from '../common/github-pr.ts'
 import { lookupPullRequests } from './github-pulls.ts'
@@ -1140,30 +1140,25 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  const visible = roleAtLeast(s.user.role, 'manage') ? undefined : await visibleFindingIds(deps, s.user, id, s.session.id, teamId)
+  const sourcePaths = roleAtLeast(s.user.role, 'manage') ? undefined : await teamSourcePaths(deps.db, deps.reportStore, s.session.id, teamId ?? '', id)
   const report = await deps.db.getReport(id)
   const bundle = report?.bundleId ? await deps.db.getBundle(report.bundleId) : null
   const empty = () => { res.writeHead(204, { 'cache-control': 'private, no-store' }); res.end() }
   if (!report || !bundle || !['stasis', 'sourcemap'].includes(bundle.kind ?? '') || !(await canAccessBundle(deps, s.user, bundle.id))) { empty(); return }
   if (!deps.reportSourcesCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-  const permissions = s.user.role === 'admin' || s.user.role === 'manage'
-    ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(s.user.id, id)
   let cached
-  try { cached = await deps.reportSourcesCache.open(report, bundle, permissions, visible) }
+  try { cached = await deps.reportSourcesCache.open(report, bundle, { dependencies: true, security: true }, sourcePaths) }
   catch { empty(); return }
   if (!cached) { empty(); return }
   // Cold parsing can outlast role/team changes, report deletion, or relinking.
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   const latest = await deps.db.getReport(id)
-  const currentPermissions = current && (current.user.role === 'admin' || current.user.role === 'manage'
-    ? { dependencies: true, security: true } : await deps.db.reportPermissionsFor(current.user.id, id))
-  let latestVisible: Set<string> | undefined
-  try { latestVisible = current && !roleAtLeast(current.user.role, 'manage') ? await visibleFindingIds(deps, current.user, id, current.session.id, teamId) : undefined }
+  let latestPaths: Set<string> | undefined
+  try { latestPaths = current && !roleAtLeast(current.user.role, 'manage') ? await teamSourcePaths(deps.db, deps.reportStore, current.session.id, teamId ?? '', id) : undefined }
   catch (error) { cached.stream.destroy(); throw error }
-  if (!current || current.user.role !== s.user.role || visible?.size !== latestVisible?.size || [...visible ?? []].some(findingId => !latestVisible?.has(findingId)) || !(await canViewReport(deps, current.user, id)) || !(await canAccessBundle(deps, current.user, bundle.id))
+  if (!current || current.user.role !== s.user.role || sourcePaths?.size !== latestPaths?.size || [...sourcePaths ?? []].some(path => !latestPaths?.has(path)) || !(await canViewReport(deps, current.user, id)) || !(await canAccessBundle(deps, current.user, bundle.id))
       || latest?.bundleId !== bundle.id || latest.sha256 !== report.sha256
-      || latest.repoId !== report.repoId || await repositoryName(deps, latest.repoId) !== cached.repo.github
-      || currentPermissions?.dependencies !== permissions.dependencies || currentPermissions?.security !== permissions.security) {
+      || latest.repoId !== report.repoId || await repositoryName(deps, latest.repoId) !== cached.repo.github) {
     cached.stream.destroy()
     sendJson(res, current ? 404 : 401, { error: current ? 'no-report' : 'unauthenticated' })
     return

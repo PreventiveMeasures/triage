@@ -4,7 +4,7 @@ import { extname } from 'node:path'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
-import { loadManagedFindings } from '../common/managed/report-content.ts'
+import { loadManagedFindings, managedFindingSourcePaths } from '../common/managed/report-content.ts'
 import { type ViewerPermissions, filterReportContent } from '../common/managed/report-filter.ts'
 import type { CacheStorage } from './cache-storage.ts'
 import { readBundleDetails } from './bundle-cache.ts'
@@ -25,10 +25,16 @@ function reportDirectory(bundleId: string, sha256: string) {
 function formatDirectory(bundleId: string, sha256: string, name: string) {
   return `${reportDirectory(bundleId, sha256)}/${createHash('sha256').update(reportFormat(name)).digest('hex')}`
 }
+function sourceCacheFilename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>) {
+  const key = createHash('sha256').update(JSON.stringify([
+    'finding-access-v4', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
+  ])).digest('hex')
+  return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
+}
 
 // Match the report's spelling exactly, then an unambiguous path suffix. Never
 // guess between duplicate basenames or treat a bundle path as a disk pathname.
-function selectSources(findings: unknown[], sources: Map<string, string>) {
+function selectSources(sourcePaths: Set<string>, sources: Map<string, string>) {
   const byBasename = new Map<string, string[]>()
   for (const file of sources.keys()) {
     const basename = file.split('/').at(-1)!
@@ -49,11 +55,7 @@ function selectSources(findings: unknown[], sources: Map<string, string>) {
     paths.set(path, file)
     files.set(file, sources.get(file)!)
   }
-  for (const finding of findings) {
-    const f = finding as { file?: unknown; evidence?: { file?: unknown }[] }
-    add(f.file)
-    if (Array.isArray(f.evidence)) for (const evidence of f.evidence) add(evidence?.file)
-  }
+  for (const path of sourcePaths) add(path)
   return { files: [...files], paths: [...paths] }
 }
 
@@ -69,24 +71,23 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     queue = job.then(() => undefined, () => undefined)
     return job
   }
-  function filename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, visible?: Set<string>) {
-    const key = createHash('sha256').update(JSON.stringify([
-      'finding-access-v3', visible ? [...visible].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
-    ])).digest('hex')
-    return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
-  }
   async function referenced(report: ReportRecord, bundle: ManagedBundle) {
     const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
     return names.some(name => reportFormat(name) === reportFormat(report.filename)) && await db.getBundle(bundle.id) != null
   }
-  async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, visible?: Set<string>) {
-    const bytes = await reports.get(report.id)
-    if (!bytes) return false
-    const parsed = await loadManagedFindings(filterReportContent(bytes.toString('utf8'), permissions, report.filename, repo), report.filename)
-    if (!parsed) return false
+  async function build(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>) {
+    // Team requests supply paths from their already-filtered members. Reopening
+    // the original report by ID would conflate visible and hidden occurrences.
+    if (!sourcePaths) {
+      const bytes = await reports.get(report.id)
+      if (!bytes) return false
+      const parsed = await loadManagedFindings(filterReportContent(bytes.toString('utf8'), permissions, report.filename, repo), report.filename)
+      if (!parsed) return false
+      sourcePaths = managedFindingSourcePaths(parsed.findings)
+    }
     const details = await readBundleDetails(bundle, bundles)
     if (!details) return false
-    const selection = selectSources(visible ? parsed.findings.filter(f => visible.has((f as { id: string }).id)) : parsed.findings, bundleSourcesAsMap(details))
+    const selection = selectSources(sourcePaths, bundleSourcesAsMap(details))
     const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection })), { level: 6 })
     // A duplicate with the same hash AND format can use these parsed bytes.
     // Another format must not keep a deleted variant's late build alive.
@@ -100,7 +101,7 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     }
     return true
   }
-  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, visible?: Set<string>): Promise<boolean> {
+  async function ensure(target: string, report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>): Promise<boolean> {
     const existing = pending.get(target)
     if (existing) {
       const ready = await existing.job
@@ -110,22 +111,22 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
       const initiator = await db.getReport(existing.reportId)
       if (initiator?.bundleId === bundle.id && initiator.sha256 === report.sha256) return false
       if (pending.get(target) === existing) pending.delete(target)
-      return ensure(target, report, bundle, permissions, repo, visible)
+      return ensure(target, report, bundle, permissions, repo, sourcePaths)
     }
     const job = (async () => {
       if (await storage.exists(target)) return true
       // Serial cold builds bound peak decompression/parsing memory.
-      return enqueue(() => build(target, report, bundle, permissions, repo, visible))
+      return enqueue(() => build(target, report, bundle, permissions, repo, sourcePaths))
     })()
     const entry = { reportId: report.id, job }
     pending.set(target, entry)
     try { return await job } finally { if (pending.get(target) === entry) pending.delete(target) }
   }
   return {
-    async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, visible?: Set<string>) {
+    async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, sourcePaths?: Set<string>) {
       const repo = { github: (await db.listAllRepos()).find(entry => entry.repoId === report.repoId)?.fullName ?? null }
-      const target = filename(report, bundle, permissions, repo, visible)
-      if (!(await ensure(target, report, bundle, permissions, repo, visible))) return null
+      const target = sourceCacheFilename(report, bundle, permissions, repo, sourcePaths)
+      if (!(await ensure(target, report, bundle, permissions, repo, sourcePaths))) return null
       const opened = await storage.open(target)
       return { ...opened, repo }
     },
