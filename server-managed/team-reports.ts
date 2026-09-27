@@ -12,7 +12,28 @@ type Finding = Record<string, unknown>
 type TeamReport = { id: string; filename: string; data: unknown; repo: { github: string | null; directory: string } }
 type ReportVisibility = { ids: Set<string>; sourcePaths: Set<string> }
 type Visibility = Map<string, ReportVisibility>
+const VISIBILITY_CACHE_MAX_ITEMS = 250_000
+const VISIBILITY_CACHE_MAX_SNAPSHOTS = 32
 const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
+function visibilityWeight(visible: Visibility): number {
+  return [...visible.values()].reduce((sum, v) => sum + v.ids.size + v.sourcePaths.size, 0)
+}
+function retainVisibility(db: ManagedDb, key: string, visible: Visibility): void {
+  let cache = caches.get(db)
+  // Replacement contributes its weight once and does not evict a peer merely
+  // because the cache already holds the maximum number of snapshots.
+  cache?.delete(key)
+  const incoming = visibilityWeight(visible)
+  if (incoming > VISIBILITY_CACHE_MAX_ITEMS) return
+  if (!cache) { cache = new Map(); caches.set(db, cache) }
+  let total = incoming + [...cache.values()].reduce((sum, entry) => sum + visibilityWeight(entry), 0)
+  for (const [oldest, entry] of cache) {
+    if (cache.size < VISIBILITY_CACHE_MAX_SNAPSHOTS && total <= VISIBILITY_CACHE_MAX_ITEMS) break
+    cache.delete(oldest)
+    total -= visibilityWeight(entry)
+  }
+  cache.set(key, visible)
+}
 export class TeamReportsError extends Error {
   status: number
   constructor(status: number, error: string) { super(error); this.status = status }
@@ -40,7 +61,7 @@ function linksOf(data: unknown): string[][] | null {
   if (!record.links.every(ids => Array.isArray(ids) && ids.every(id => typeof id === 'string'))) throw new TeamReportsError(422, 'unreadable-links')
   return record.links
 }
-export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
+async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<{ reports: TeamReport[]; visible: Visibility }> {
   if (snapshot.reports.length > MAX_REPORT_QUERY_COUNT || snapshot.reports.reduce((n, r) => n + r.byteSize, 0) > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   const reports: TeamReport[] = []
   let inputBytes = 0
@@ -95,12 +116,11 @@ export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot:
     outputBytes += Buffer.byteLength(JSON.stringify(report)) + 1
     if (outputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   }
-  let cache = caches.get(db)
-  if (!cache) { cache = new Map(); caches.set(db, cache) }
-  // Bound retained IDs/source paths as well as the number of snapshots.
-  while (cache.size >= 32 || [...cache.values()].reduce((n, entry) => n + [...entry.values()].reduce((sum, v) => sum + v.ids.size + v.sourcePaths.size, 0), 0) > 250_000) cache.delete(cache.keys().next().value!)
-  cache.set(teamSnapshotKey(snapshot), visible)
-  return reports
+  retainVisibility(db, teamSnapshotKey(snapshot), visible)
+  return { reports, visible }
+}
+export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
+  return (await loadTeamWorkspace(db, store, snapshot)).reports
 }
 async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<ReportVisibility> {
   const snapshot = await teamSnapshot(db, sessionId, teamId)
@@ -108,8 +128,9 @@ async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: 
   const key = teamSnapshotKey(snapshot)
   let visible = caches.get(db)?.get(key)
   if (!visible) {
-    await loadTeamReports(db, store, snapshot)
-    visible = caches.get(db)!.get(key)!
+    // A large snapshot may deliberately remain uncached, or be evicted by
+    // another request. Authorization uses this load's result in either case.
+    visible = (await loadTeamWorkspace(db, store, snapshot)).visible
   }
   await recheckTeam(db, sessionId, snapshot)
   return visible.get(reportId)!
