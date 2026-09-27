@@ -7,11 +7,6 @@
 // the CRON_SECRET bearer, and 500s (rather than throwing) when the backend env
 // is absent. Both gates return before any opener runs, so no SDK is needed.
 //
-// api/reap.ts reads env ONCE at module load, so each case imports a FRESH
-// module instance after setting env — a unique `?case=` query busts the module
-// cache so the top-level `const {…} = env` re-evaluates. The deps it imports
-// (server-e2e/objstore/*) are specifier-cached and shared, so only reap.ts re-runs.
-
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { env } from 'node:process'
@@ -25,15 +20,17 @@ mock.module('../server-e2e/objstore/blob-vercel.ts', { namedExports: { openVerce
 mock.module('../server-e2e/objstore/reaper.ts', { namedExports: { reapOrphans: () => Promise.resolve() } })
 let importN = 0
 
-// Set the given env (clearing the backend keys first), import a fresh handler so
-// it captures exactly that env, then restore the prior env. The handler holds
-// the captured values in its module closure, so the restore doesn't affect it.
 async function loadHandler(envVals) {
-  const saved = SNAP.map((k) => [k, env[k]])
-  for (const k of SNAP) delete env[k]
-  for (const [k, v] of Object.entries(envVals)) env[k] = v
+  const saved = SNAP.map(k => [k, env[k]])
+  const apply = values => { for (const k of SNAP) delete env[k]; Object.assign(env, values) }
+  apply(envVals)
   try {
-    return (await import(`../api/reap.ts?case=${++importN}`)).default
+    const handler = (await import(`../api/reap.ts?case=${++importN}`)).default
+    return async (req, res) => {
+      apply(envVals)
+      try { await handler(req, res) }
+      finally { for (const [k, v] of saved) { if (v === undefined) delete env[k]; else env[k] = v } }
+    }
   } finally {
     for (const [k, v] of saved) { if (v === undefined) delete env[k]; else env[k] = v }
   }
@@ -45,7 +42,7 @@ function run(handler, authorization) {
     writeHead(code) { this.statusCode = code; return this },
     end(body) { this.body = body },
   }
-  return handler({ headers: authorization == null ? {} : { authorization } }, res).then(() => res)
+  return handler({ method: 'GET', headers: authorization == null ? {} : { authorization } }, res).then(() => res)
 }
 
 test('cron reap: 401 (fail closed) when CRON_SECRET is unset — even with a bearer', async () => {
@@ -60,11 +57,11 @@ test('cron reap: 401 when the bearer does not match CRON_SECRET', async () => {
   assert.equal((await run(handler, 'topsecret')).statusCode, 401, 'missing "Bearer " prefix')
 })
 
-test('cron reap: 500 not-configured when authed but Neon/Blob env is absent', async () => {
+test('cron reap: 500 reap-failed when authed but Neon/Blob env is absent', async () => {
   const handler = await loadHandler({ CRON_SECRET: 'topsecret' })
   const res = await run(handler, 'Bearer topsecret')
   assert.equal(res.statusCode, 500)
-  assert.equal(JSON.parse(res.body).error, 'not-configured')
+  assert.equal(JSON.parse(res.body).error, 'reap-failed')
 })
 
 test('cron reap selects the shared or e2e-specific URL, never the managed URL', async () => {
@@ -86,7 +83,7 @@ test('cron reap rejects global/dedicated URL conflicts without touching storage'
     assert.equal((await run(handler, 'Bearer wrong')).statusCode, 401)
     const response = await run(handler, 'Bearer secret')
     assert.equal(response.statusCode, 500)
-    assert.match(JSON.parse(response.body).detail, /DATABASE_URL cannot be combined/u)
+    assert.equal(JSON.parse(response.body).error, 'reap-failed')
   }
   assert.equal(opened.length, before)
 })

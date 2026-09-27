@@ -29,6 +29,7 @@
 //   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
 //   POST /api/admin/reports/set-repo → admin|manage attaches/detaches a report's repo | 401/403/404
 //   GET  /api/bundles/<id>/{metadata,contents} → authorized encoded bytes | 401/404/422
+//   GET  /api/bundles/<id>/advisories → published npm advisories (security access) | 401/403/404
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
@@ -44,6 +45,7 @@
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
+import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, putUploadPart, readUpload, validUploadPart } from './uploads.ts'
 import type { BundleCache, BundleCachePart } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -961,6 +963,46 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
   try { await pipeline(cached.stream, res) } catch { res.destroy() }
 }
 
+// Published npm advisories require security access, independently of access to
+// unpublished dependency findings. Managers retain their normal bundle access.
+async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, teamId: string | null) {
+  const authorize = async () => {
+    const session = await readSession(deps.config, deps.db, cookie, Date.now())
+    if (!session) { sendJson(res, 401, { error: 'unauthenticated' }); return false }
+    if (!(await canAccessBundle(deps, session.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return false }
+    if (!roleAtLeast(session.user.role, 'manage') && !(await deps.db.userCanReadBundleAdvisories(session.user.id, id, teamId))) {
+      sendJson(res, 403, { error: 'security-access-required' }); return false
+    }
+    return true
+  }
+  if (!(await authorize())) return
+  const record = await deps.db.getBundle(id)
+  if (!record) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
+  if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let packages: Record<string, string[]>
+  try { packages = await deps.bundleCache.packageVersions(record) }
+  catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
+  if (!(await authorize())) return
+  const body = Buffer.from(JSON.stringify(packages))
+  if (body.length > 1024 * 1024) { sendJson(res, 413, { error: 'payload-too-large' }); return }
+  const controller = new AbortController()
+  const onClose = () => { if (!res.writableEnded) controller.abort() }
+  res.on('close', onClose)
+  const timer = setTimeout(() => controller.abort(), NPM_ADVISORIES_TIMEOUT_MS)
+  try {
+    if (res.destroyed) return
+    const result = Object.keys(packages).length === 0 ? { status: 200, body: {} }
+      : await fetchNpmAdvisories(body, controller.signal, deps.config.debug)
+    if (res.destroyed || !(await authorize())) return
+    // Return just inventory and public advisories, never source or report data.
+    sendJson(res, result.status, result.status >= 200 && result.status < 300 ? { packages, advisories: result.body } : result.body)
+  } finally {
+    clearTimeout(timer)
+    res.off('close', onClose)
+  }
+}
+
 // GET /api/admin/bundles — the uploaded bundles for the "Manage bundles" page.
 // admin|manage, read-only (no CSRF). `maxBytes` is the upload cap; `repos` feeds
 // the upload repo picker.
@@ -1787,6 +1829,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     // Bundles: list / upload on the exact path, download / delete per-id on the
     // prefix (same shape as reports).
+    const bundleAdvisories = /^\/api\/bundles\/([a-f\d-]{36})\/advisories$/iu.exec(path)
+    if (bundleAdvisories) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleBundleAdvisories(res, deps, cookie, bundleAdvisories[1]!, url.searchParams.get('team'))
+      return
+    }
     const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download)$/iu.exec(path)
     if (bundleRead) {
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }

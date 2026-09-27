@@ -364,6 +364,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   listBundles(userId?: string): Promise<AdminBundle[]>
   userCanReadBundle(userId: string, id: string): Promise<boolean>
   userCanReadRepo(userId: string, repoId: number): Promise<boolean>
+  userCanReadBundleAdvisories(userId: string, bundleId: string, teamId: string | null): Promise<boolean>
   userCanReadRepoPath(userId: string, repoId: number, directory: string): Promise<boolean>
   deleteBundle(id: string): Promise<boolean>
   // Attach / detach a bundle's repo link (repoId null = detach); resolves true
@@ -716,6 +717,13 @@ function prepareStatements(db: ManagedSql) {
          JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          JOIN managed_team_user tu ON tu.team_id = tr.team_id
         WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
+    ),
+    selectBundleSecurityStmt: db.prepare(
+      `SELECT 1 FROM managed_bundle b
+         JOIN managed_team_repo tr ON tr.repo_id = b.repo_id
+         JOIN managed_team_user tu ON tu.team_id = tr.team_id
+        WHERE b.id = ? AND tu.user_id = ? AND tu.view_security = 1
+          AND (? IS NULL OR tr.team_id = ?) LIMIT 1`,
     ),
     // The viewer's effective visibility permissions for a report: OR'd (MAX over
     // 0/1) across memberships whose repository path contains the report. NULLs
@@ -1120,6 +1128,9 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
     },
     async userCanReadReport(userId: string, reportId: string): Promise<boolean> {
       return (await selectReportReadableStmt.get(reportId, userId)) != null
+    },
+    async userCanReadBundleAdvisories(userId: string, bundleId: string, teamId: string | null): Promise<boolean> {
+      return (await stmts.selectBundleSecurityStmt.get(bundleId, userId, teamId, teamId)) != null
     },
     async reportPermissionsFor(userId: string, reportId: string): Promise<TeamUserPermissions> {
       const row = (await selectReportPermsStmt.get(userId, reportId)) as { dependencies: number | null; security: number | null } | undefined

@@ -269,3 +269,22 @@ test('Postgres upgrades existing managed databases for report-source lookup with
     assert.equal((await upgraded.query('SELECT version FROM managed_schema_version WHERE version = 2')).rows.length, 1)
   } finally { await upgraded.release() }
 })
+
+test('Postgres bundle advisories use only security grants on the bundle repository', async t => {
+  const { db } = await database(t)
+  const user = await db.upsertUser(identity(1), 1)
+  await db.setUserRole(user, 'view')
+  await db.selectRepo({ repoId: 7, fullName: 'org/repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: user }, 2)
+  await db.insertBundle({ id: 'bundle', integrity: 'sha512-test', filename: 'test.stasis.code.br', kind: 'stasis', byteSize: 12, uploadedBy: user, uploadedByLogin: 'user1', repoId: 7 }, 2)
+  for (const team of ['security', 'dependencies']) {
+    await db.createTeam(team, team, 2)
+    await db.setTeamRepo(team, 7, null)
+    await db.setTeamMember(team, user, { dependencies: team === 'dependencies', security: team === 'security' })
+  }
+  assert.equal(await db.userCanReadBundleAdvisories(user, 'bundle', null), true)
+  assert.equal(await db.userCanReadBundleAdvisories(user, 'bundle', 'security'), true)
+  assert.equal(await db.userCanReadBundleAdvisories(user, 'bundle', 'dependencies'), false)
+  assert.equal(await db.userCanReadBundleAdvisories(user, 'missing', null), false)
+  await db.removeTeamRepo('security', 7)
+  assert.equal(await db.userCanReadBundleAdvisories(user, 'bundle', null), false)
+})

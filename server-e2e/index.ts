@@ -73,9 +73,11 @@
 // and would not reject the attaching socket.
 
 import { type WebSocket, WebSocketServer } from 'ws'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { errMsg, errStack } from './util.ts'
 import type { PeerRegistry } from './peer.ts'
 import { LOOPBACK_HOSTS, createOriginGate } from '../server-common/origin.ts'
+import { withReap } from '../server-common/reap.ts'
 import { createHub } from './hub.ts'
 import { createAuth } from './auth.ts'
 import { createSyncHandlers } from './sync-handlers.ts'
@@ -303,7 +305,7 @@ const { handleSave, handleSaveRest, handleSubscribe, sendSaveError } = createSyn
   debug: DEBUG,
 })
 
-const { handlers: objstore, restDeps: objstoreRestDeps, startupReap, stopReaper } = initObjstore({
+const { handlers: objstore, restDeps: objstoreRestDeps, reap, startupReap, stopReaper } = initObjstore({
   handle: objstoreHandle, reapIntervalMs: OBJSTORE_REAP_INTERVAL_MS,
   reapDisabled: OBJSTORE_REAP_DISABLED,
   send, broadcast, publishObjPut, publishObjDeleted,
@@ -385,6 +387,11 @@ const httpServer = createHttpServer({
   isShuttingDown, track, handleSaveRest,
   restPutIdleTimeoutMs: REST_PUT_IDLE_TIMEOUT_MS, debug: DEBUG,
 })
+const requestHandler = httpServer.listeners('request')[0]!
+// Export the domain handler so combined mode installs one top-level reap route.
+export const handleRequest = (req: IncomingMessage, res: ServerResponse): void => { requestHandler.call(httpServer, req, res) }
+httpServer.removeListener('request', requestHandler)
+httpServer.on('request', withReap(handleRequest, { e2e: reap }, { isShuttingDown }))
 
 // WS runtime: per-connection handler + message dispatch + heartbeat
 // sweep (see ./ws-server.ts). Returns the heartbeat timer so shutdown
@@ -481,7 +488,7 @@ export function start(): void {
   httpServer.listen(PORT, HOST)
 }
 
-export { httpServer, wss, isShuttingDown }
+export { httpServer, wss, isShuttingDown, reap }
 
 // Library mode: when this module is `import`ed (rather than run as the
 // entry script) skip the auto-start so consumers can own the bind — e.g.

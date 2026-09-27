@@ -4,6 +4,7 @@ import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
 import { managedStorageLines } from '../server-common/storage-log.ts'
+import { runReapers, withReap } from '../server-common/reap.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { loadManagedStatic } from './static.ts'
@@ -19,6 +20,7 @@ export async function createManagedApp(config: ManagedConfig, options: Partial<P
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
   let shuttingDown = false
+  const isShuttingDown = () => shuttingDown || options.isShuttingDown?.() === true
   const inFlight = new Set<Promise<unknown>>()
   function track(p: Promise<unknown>): void {
     inFlight.add(p)
@@ -31,14 +33,21 @@ export async function createManagedApp(config: ManagedConfig, options: Partial<P
   const handleRequest = createManagedRequestHandler({
     ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, originGate, serveStatic,
     ...('uploadStore' in storage ? { uploadStore: storage.uploadStore } : {}),
-    isShuttingDown: () => shuttingDown || options.isShuttingDown?.() === true, track,
+    isShuttingDown, track,
   })
 
+  let cleanup: Promise<void> | undefined
+  function reap(): Promise<void> {
+    if (cleanup) return cleanup
+    cleanup = runReapers({
+      sessions: () => db.deleteExpiredSessions(Date.now()),
+      ...('reapUploads' in storage ? { uploads: () => storage.reapUploads() } : {}),
+    }).finally(() => { cleanup = undefined })
+    track(cleanup)
+    return cleanup
+  }
   const gcTimer = config.serverless ? null : setInterval(() => {
-    track(Promise.all([
-      db.deleteExpiredSessions(Date.now()),
-      ...('reapUploads' in storage ? [storage.reapUploads()] : []),
-    ].map(work => work.catch(err => console.warn('managed: maintenance failed:', err)))))
+    void reap().catch(err => console.warn('managed: maintenance failed:', err))
   }, SESSION_GC_INTERVAL_MS)
 
   function stop(): void {
@@ -51,7 +60,7 @@ export async function createManagedApp(config: ManagedConfig, options: Partial<P
     if (inFlight.size > 0) await Promise.allSettled([...inFlight])
     await db.close()
   }
-  return { handleRequest, stop, close }
+  return { handleRequest, reap, isShuttingDown, stop, close }
 }
 
 export function logManagedStartup(config: ManagedConfig, port: number, mode = 'managed'): void {
@@ -65,7 +74,7 @@ export function logManagedStartup(config: ManagedConfig, port: number, mode = 'm
 export async function start(): Promise<void> {
   const config = loadManagedConfig()
   const app = await createManagedApp(config)
-  const server = createServer(app.handleRequest)
+  const server = createServer(withReap(app.handleRequest, { managed: app.reap }, { isShuttingDown: app.isShuttingDown }))
   let closing = false
   async function shutdown(code: number): Promise<void> {
     if (closing) return

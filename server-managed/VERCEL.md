@@ -19,7 +19,7 @@ For all backend combinations and sharing rules, see
 | Reports, bundles, avatars | Private Blob objects under `.managed/`; clients receive authorized responses, not Blob credentials or public URLs |
 | Bundle storage | Sourcemaps are stored as Brotli; Stasis archives retain their uploaded bytes; original sizes and hashes remain in Postgres |
 | Derived data | Brotli bundle metadata and gzip report sources are cached in Blob; source caches include the viewer's permissions |
-| Cleanup | `api/managed-reap.ts` deletes expired sessions and upload parts older than 24 hours; cron is scheduled daily at 00:00 UTC |
+| Cleanup | `GET /api/reap` in `api/managed.ts` deletes expired sessions and upload parts older than 24 hours; cron is scheduled daily at 00:00 UTC |
 
 The app shares initialization within a function instance and retries failed
 initialization. Requests await their work; the serverless app installs no
@@ -106,7 +106,7 @@ after 24 hours, so removal is not immediate at the 24-hour mark.
 | Upload part | 3 MiB |
 | Decoded bundle | 512 MiB |
 | App invocation | 300 seconds (`api/managed.ts` in the deployment configuration) |
-| Cleanup invocation | 60 seconds (`api/managed-reap.ts` in the deployment configuration) |
+| Cleanup invocation | 300 seconds (shared `api/managed.ts` function) |
 
 Chunking keeps individual upload requests below Vercel's documented 4.5 MB
 payload limit. Raw uploads remain subject to that platform limit even when the

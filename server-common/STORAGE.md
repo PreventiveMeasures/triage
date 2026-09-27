@@ -118,10 +118,20 @@ Postgres advisory lock; readers use consistent snapshots. Cache builders
 recheck references after publishing. Repeated/concurrent cleanup is supported.
 All replicas of a mode must use the same configured database and byte storage.
 
-`api/reap.ts` selects the e2e URL and `api/managed-reap.ts` selects the managed
-URL through the same validator as application startup. Switching backends does
-not migrate metadata or bytes. Managed users default to No access. Only the
-preapproved `MANAGED_INITIAL_ADMIN_GITHUB_ID` can bootstrap the empty database's
+`GET /api/reap` is mounted by the top-level servers and runs cleanup for every
+enabled mode using its already-open storage. Standalone e2e runs object cleanup;
+standalone managed runs session/upload cleanup; either combined mode runs both.
+`Authorization: Bearer <CRON_SECRET>` is required (401 if unset or incorrect).
+Other methods return 405. Cleanup waits for all enabled modes and returns 500
+if any fails. Concurrent requests share each mode's in-flight sweep.
+
+On Vercel, the e2e function `api/reap.ts` opens the configured e2e store for each
+sweep. The managed function `api/managed.ts` handles `/api/reap` using its managed
+app. Both use the startup database URL validator. `OBJSTORE_REAP_DISABLED` disables
+automatic e2e sweeps; explicit `/api/reap` requests still run them.
+
+Switching backends does not migrate metadata or bytes. Managed users default to
+No access. Only the preapproved `MANAGED_INITIAL_ADMIN_GITHUB_ID` can bootstrap the empty database's
 first user as admin; once any user exists, it has no effect. See
 [account approval](../server-managed/README.md#account-approval).
 

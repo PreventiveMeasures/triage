@@ -91,13 +91,12 @@ Environment:
                              an e2e database URL selects Neon
                              (bytes live in Vercel Blob).
   OBJSTORE_REAP_INTERVAL_MS  orphan reaper period (default 600000)
-  OBJSTORE_REAP_DISABLED     set '1' / 'true' to disable the orphan
-                             reaper ENTIRELY — no boot sweep, no
-                             periodic GC. Orphaned/superseded blobs and
-                             stale staging rows then accumulate
-                             unbounded; only set this if an external job
-                             handles GC (e.g. a cron calling reapOrphans).
-                             Default OFF (reaper runs).
+  OBJSTORE_REAP_DISABLED     set '1' / 'true' to disable automatic orphan
+                             sweeps (boot and periodic). Explicit /api/reap
+                             remains available. Schedule cleanup externally
+                             to avoid accumulating orphaned bytes.
+  CRON_SECRET               bearer secret for GET /api/reap (fails closed
+                             when unset). Runs cleanup for enabled modes.
   TRUST_PROXY                set '1' / 'true' to honour X-Forwarded-
                              Host / X-Forwarded-Proto when computing
                              the same-origin gate's expected origin.
@@ -183,7 +182,7 @@ export function loadConfig(): Config {
   const objstoreDir = env['OBJSTORE_DIR'] ?? join(dirname(dbPath), 'objstore')
   // No practical upper bound beyond the safe-integer range.
   const reapIntervalMs = intEnv('OBJSTORE_REAP_INTERVAL_MS', 10 * 60 * 1000, 1, Number.MAX_SAFE_INTEGER)
-  // Hard off-switch for the orphan reaper (both the boot sweep AND the
+  // Off-switch for automatic orphan reaping (both the boot sweep AND the
   // periodic timer). '1' / 'true' (case-insensitive) → disabled; anything
   // else, including unset, leaves it ON. Same boolean shape as TRUST_PROXY.
   const reapDisabledEnv = env['OBJSTORE_REAP_DISABLED']

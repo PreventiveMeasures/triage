@@ -25,37 +25,23 @@
 //
 // Outbound fetch carries an `AbortController` so a hung upstream
 // (slow-loris response, TLS stall) tears down after
-// `UPSTREAM_TIMEOUT_MS`, and a client that closes its connection
+// `NPM_ADVISORIES_TIMEOUT_MS`, and a client that closes its connection
 // mid-fetch propagates an abort through the same controller — so a
 // stranded in-flight call doesn't block SIGTERM drain.
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Buffer } from 'node:buffer'
 import { errStack } from './util.ts'
+import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
 
 type HasHeaders = { headers: IncomingMessage['headers'] }
 
 export const NPM_ADVISORIES_PATH = '/api/npm-advisories'
-const UPSTREAM_URL = 'https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'
-
 // 1 MiB is generous: the bulk endpoint accepts `{ packageName:
 // [versions] }` maps, and even a bundle with thousands of pinned
 // versions serialises to well under this. Anything bigger is almost
 // certainly malformed input or a probe.
 const REQUEST_BODY_LIMIT = 1 * 1024 * 1024
-// 4 MiB caps the upstream response. The advisories endpoint
-// returns at most a few CVEs per package, so even a bundle with
-// hundreds of affected packages comes in well under this — a
-// runaway / hostile upstream gets cut off before we burn arbitrary
-// memory buffering it.
-const RESPONSE_BODY_LIMIT = 4 * 1024 * 1024
-// Hard deadline on the upstream call. The bulk endpoint typically
-// answers in well under a second; 30 s leaves plenty of headroom
-// for a slow path but caps a hung TLS / slow-loris connection so
-// a stranded fetch can't pin the inflight slot through SIGTERM
-// drain. Triggered via AbortController.
-const UPSTREAM_TIMEOUT_MS = 30_000
-
 export type NpmProxyDeps = {
   debug: boolean
 }
@@ -129,11 +115,12 @@ function deny(res: ServerResponse, status: number, reason: string): void {
 // Same shape as `deny` but for the richer multi-field envelopes
 // (upstream-not-json / upstream-too-large) — these can't reuse
 // `deny` because the body carries more than `{ error }`.
-function writeJsonEnvelope(res: ServerResponse, status: number, body: object): void {
+function writeJsonEnvelope(res: ServerResponse, status: number, body: unknown): void {
   if (!canWrite(res)) return
   try {
-    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-    res.end(JSON.stringify(body))
+    const out = JSON.stringify(body)
+    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': Buffer.byteLength(out) })
+    res.end(out)
   } catch {}
 }
 
@@ -162,7 +149,7 @@ export async function handleNpmAdvisories(
   if (req.method !== 'POST') { deny(res, 405, 'method-not-allowed'); return }
   // Single controller drives both the upstream deadline timer AND
   // the client-disconnect propagation: a fetch hung past
-  // UPSTREAM_TIMEOUT_MS and a browser tab closed mid-fetch both end
+  // NPM_ADVISORIES_TIMEOUT_MS and a browser tab closed mid-fetch both end
   // up aborting the same signal, which undici threads through into
   // the body reader. Without this the inflight slot pinned by
   // `track()` could outlive both a dead client and a wedged
@@ -187,7 +174,7 @@ export async function handleNpmAdvisories(
   // doesn't fire a no-op abort — itself a no-op on a settled
   // controller, but skipping the log noise.)
   const controller = new AbortController()
-  const timer = setTimeout(() => { try { controller.abort() } catch {} }, UPSTREAM_TIMEOUT_MS)
+  const timer = setTimeout(() => { try { controller.abort() } catch {} }, NPM_ADVISORIES_TIMEOUT_MS)
   const onResClose = (): void => {
     if (!res.writableEnded) controller.abort()
   }
@@ -219,130 +206,10 @@ export async function handleNpmAdvisories(
       try { req.destroy() } catch {}
       return
     }
-    await handleNpmAdvisoriesInner(deps, body, res, controller.signal)
+    const result = await fetchNpmAdvisories(body, controller.signal, deps.debug)
+    writeJsonEnvelope(res, result.status, result.body)
   } finally {
     clearTimeout(timer)
     res.off('close', onResClose)
-  }
-}
-
-async function handleNpmAdvisoriesInner(
-  deps: NpmProxyDeps,
-  body: Buffer,
-  res: ServerResponse,
-  signal: AbortSignal,
-): Promise<void> {
-  let upstream: Response
-  try {
-    upstream = await fetch(UPSTREAM_URL, {
-      method: 'POST',
-      // Force JSON — the bulk endpoint requires it. Drop every
-      // client-supplied header to keep an upstream fingerprint from
-      // leaking through (cookies, auth, custom UA, ...). The
-      // registry's bulk endpoint doesn't need any of them for a
-      // public lookup.
-      headers: { 'content-type': 'application/json', 'accept': 'application/json' },
-      // Re-wrap as a plain Uint8Array — Buffer's underlying
-      // ArrayBufferLike type doesn't satisfy fetch's BodyInit
-      // narrowing (it can't statically rule out SharedArrayBuffer),
-      // but a copy through Uint8Array is zero-cost in practice and
-      // unambiguously typed.
-      body: new Uint8Array(body),
-      signal,
-    })
-  } catch (err: unknown) {
-    if (deps.debug) console.warn('npm-advisories upstream error:', errStack(err))
-    // Client already gone — `canWrite` (inside `deny`) gates the
-    // write so a destroyed / writableEnded socket doesn't trip
-    // ERR_STREAM_DESTROYED on the way out.
-    deny(res, 502, 'upstream-unreachable')
-    return
-  }
-  // Assert JSON on the upstream body. The Content-Type header is
-  // unreliable (Cloudflare in front of registry.npmjs.org strips it
-  // from some responses; a captive portal / WAF can declare HTML on
-  // a body that's actually JSON or vice-versa), so we don't lean on
-  // it — instead we buffer the body and parse. A successful
-  // JSON.parse is the strongest guarantee we can hand the UI's
-  // `await res.json()`. Buffering is bounded by
-  // `RESPONSE_BODY_LIMIT`; the advisories endpoint's payloads sit
-  // well under that.
-  const upstreamContentType = upstream.headers.get('content-type') ?? ''
-  let buffered: Buffer | null
-  try {
-    buffered = await readUpstreamBody(upstream)
-  } catch (err: unknown) {
-    if (deps.debug) console.warn('npm-advisories upstream body error:', errStack(err))
-    deny(res, 502, 'upstream-unreachable')
-    return
-  }
-  if (buffered === null) {
-    if (deps.debug) console.warn(`npm-advisories upstream too large: status=${upstream.status}`)
-    writeJsonEnvelope(res, 502, { error: 'upstream-too-large', upstreamStatus: upstream.status })
-    return
-  }
-  // Treat the body as UTF-8 — `JSON.parse` operates on a string and
-  // the registry's responses are always UTF-8 in practice. A
-  // non-UTF-8 byte sequence still decodes (with U+FFFD
-  // substitution); the subsequent JSON.parse fails and routes
-  // through the error branch.
-  const text = buffered.toString('utf8')
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    if (deps.debug) console.warn(`npm-advisories upstream non-JSON: status=${upstream.status} ct=${upstreamContentType || '<none>'} bytes=${buffered.byteLength}`)
-    writeJsonEnvelope(res, 502, {
-      error: 'upstream-not-json',
-      upstreamStatus: upstream.status,
-      upstreamContentType: upstreamContentType || null,
-    })
-    return
-  }
-  if (!canWrite(res)) return
-  // Re-stringify rather than echoing `text` so the wire shape we
-  // emit is canonical (no upstream whitespace / BOM / trailing
-  // junk after the parsed value rides along), and so the client
-  // can rely on a single JSON document per response.
-  const out = JSON.stringify(parsed)
-  try {
-    res.writeHead(upstream.status, {
-      'content-type': 'application/json',
-      'cache-control': 'no-store',
-      'content-length': Buffer.byteLength(out),
-    })
-    res.end(out)
-  } catch {}
-}
-
-// Buffer the upstream response body up to RESPONSE_BODY_LIMIT.
-// Returns null if the cap is exceeded (caller maps to a 502
-// `upstream-too-large`), or the cumulative Buffer otherwise. A
-// transport error mid-read (e.g. AbortSignal fired by the deadline
-// timer or by `req` close) throws — the caller catches it.
-//
-// `finally { reader.cancel() }` is load-bearing on the error and
-// cap-exceeded paths: leaving the reader locked to the body holds
-// the underlying undici TCP socket out of the connection pool until
-// GC, and the cap-exceeded path explicitly needs to tear the
-// transfer down so we don't keep buffering bytes we'll never use.
-// On the clean-drain path (done:true), cancel() is a no-op.
-async function readUpstreamBody(upstream: Response): Promise<Buffer | null> {
-  if (!upstream.body) return Buffer.alloc(0)
-  const reader = upstream.body.getReader()
-  const chunks: Uint8Array[] = []
-  let received = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      received += value.byteLength
-      if (received > RESPONSE_BODY_LIMIT) return null
-      chunks.push(value)
-    }
-    return Buffer.concat(chunks)
-  } finally {
-    try { await reader.cancel() } catch {}
   }
 }

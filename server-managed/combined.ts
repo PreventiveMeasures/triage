@@ -2,6 +2,7 @@
 // transports and static UI. Managed handles its API, discovery and page HTML;
 // assets and other requests fall through to the unchanged e2e HTTP handler.
 import { resolve } from 'node:path'
+import { withReap } from '../server-common/reap.ts'
 import { loadConfig } from '../server-e2e/config.ts'
 import { loadManagedConfig } from './config.ts'
 import { LOGIN_PATH } from './github-oauth.ts'
@@ -20,7 +21,7 @@ export async function start(mode: 'managed+e2e' | 'e2e+managed'): Promise<void> 
   const next = handlers[0]
   if (handlers.length !== 1 || !next) throw new Error('Expected one e2e HTTP request handler')
   const managed = await createManagedApp(config, {
-    next: (req, res) => { next.call(e2e.httpServer, req, res) },
+    next: e2e.handleRequest,
     isShuttingDown: e2e.isShuttingDown,
     serverInfo: {
       mode, managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName },
@@ -29,7 +30,8 @@ export async function start(mode: 'managed+e2e' | 'e2e+managed'): Promise<void> 
   })
   e2e.onShutdown(managed.close)
   e2e.httpServer.removeListener('request', next)
-  e2e.httpServer.on('request', managed.handleRequest)
+  e2e.httpServer.on('request', withReap(managed.handleRequest,
+    { e2e: e2e.reap, managed: managed.reap }, { isShuttingDown: e2e.isShuttingDown }))
   e2e.httpServer.once('listening', () => {
     const address = e2e.httpServer.address()
     const port = typeof address === 'object' && address ? address.port : config.port

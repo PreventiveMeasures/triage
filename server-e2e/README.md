@@ -81,7 +81,7 @@ See the "Cross-instance broadcasts" detail in the Neon section.
 | `BLOB_READ_WRITE_TOKEN`| —                     | Neon mode, **required** — Vercel Blob R/W token |
 | `OBJSTORE_TOKEN_SECRET`| —                     | Neon mode, **required** — shared HMAC secret    |
 | `OBJSTORE_REAP_INTERVAL_MS` | `600000` (10 min) | orphan-reaper period                       |
-| `OBJSTORE_REAP_DISABLED` | —                   | `1` / `true` disables the reaper entirely (no GC; orphans grow unbounded — see below) |
+| `OBJSTORE_REAP_DISABLED` | —                   | `1` / `true` disables automatic sweeps; explicit `/api/reap` remains available |
 | `TRUST_PROXY`          | on for loopback `HOST` | any non-loopback bind behind a proxy — set `1` (see below) |
 
 ## SQLite mode (default)
@@ -660,15 +660,15 @@ The reaper runs once at startup (before accepting traffic) then every
 blobs expire after `STAGING_TTL_MS_DEFAULT` (1h) — the grace window that
 keeps a just-promoted blob from being collected mid-commit.
 
-Setting `OBJSTORE_REAP_DISABLED=1` (or `=true`) turns the reaper **off
-entirely** — no startup sweep and no periodic GC. Since live-blob
-reclamation lives solely in the reaper (DELETE and superseded commits only
-drop/orphan the row; see above), nothing then collects orphaned bytes or
-stale staging rows and they grow unbounded. Only use it when an external
-job owns GC — e.g. a scheduled task calling `reapOrphans(handle)` directly,
-which is stateless, lock-free, and safe to run concurrently with live
-traffic and across replicas. The server logs a loud warning at boot when
-the reaper is disabled.
+Setting `OBJSTORE_REAP_DISABLED=1` (or `=true`) disables automatic startup and
+periodic sweeps. Explicit cleanup remains available through `GET /api/reap`,
+authenticated with `Authorization: Bearer <CRON_SECRET>`. The endpoint fails
+closed (401) if the secret is unset or incorrect. Combined servers run both e2e
+and managed cleanup; standalone servers run only their own mode. Requests wait
+for all cleanup to finish and return 500 if any mode fails.
+
+With automatic sweeps disabled, schedule `/api/reap` or another cleanup job:
+DELETE and superseded commits leave unreferenced bytes for the reaper to collect.
 
 #### Vercel Cron reaper
 
@@ -688,7 +688,7 @@ Required env on the deployment:
   the GC endpoint can't be triggered by arbitrary callers. A 401 in the cron
   logs means it wasn't set.
 - **`DATABASE_URL` or `E2E_DATABASE_URL`**, plus **`BLOB_READ_WRITE_TOKEN`** — same Neon + Vercel Blob
-  config as the relay (the endpoint 500s `not-configured` without them).
+  config as the relay (the endpoint returns 500 `reap-failed` without them).
 
 `reapOrphans` being lock-free + idempotent means the cron can run alongside
 a still-enabled in-process reaper or other replicas without coordination —

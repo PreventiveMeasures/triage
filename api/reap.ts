@@ -1,85 +1,17 @@
-// Vercel Cron entry point for the objstore orphan reaper.
-//
-// The relay's in-process reaper (server-e2e/objstore/init.ts) is a boot sweep plus
-// a periodic setInterval — both need a long-lived process. For a serverless
-// deployment (no persistent event loop to host the periodic sweep), or any
-// deployment that sets OBJSTORE_REAP_DISABLED to take GC out-of-band, this
-// endpoint runs ONE reapOrphans sweep per invocation. Vercel Cron hits it on a
-// schedule (see vercel.json). reapOrphans is stateless, lock-free, and safe to
-// run concurrently with live traffic and across replicas, so a one-shot
-// function is a clean GC driver.
-//
-// Neon (DATABASE_URL or E2E_DATABASE_URL) + Vercel Blob only — the local-FS
-// / SQLite backend is single-process and reaps in-process. Opens its own
-// objstore handle (the Neon HTTP callable is stateless — nothing to close, see
-// server-e2e/objstore/store.ts) rather than booting the WS/SSE relay.
-
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { env } from 'node:process'
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+// E2e-only Vercel deployment: no persistent relay is running in this function.
+// The managed deployment routes /api/reap through its top-level app instead.
+import { createReapHandler } from '../server-common/reap.ts'
+import { databaseUrls } from '../server-common/database-config.ts'
 import { reapOrphans } from '../server-e2e/objstore/reaper.ts'
 import { openNeonObjstore } from '../server-e2e/objstore/store-neon.ts'
 import { openVercelBlobBackend } from '../server-e2e/objstore/blob-vercel.ts'
-import { databaseUrls } from '../server-common/database-config.ts'
 
-// Config read once at module load. Vercel sets env at cold start and it's
-// fixed for the function instance's lifetime, so there's nothing to re-read
-// per request. CRON_SECRET gates the endpoint; the e2e database URL and
-// BLOB_READ_WRITE_TOKEN select the Neon + Vercel Blob backend.
-const { CRON_SECRET, BLOB_READ_WRITE_TOKEN } = env
-// Keep config errors behind the authentication gate, with no storage opened.
-let databaseUrl: string | null = null
-let databaseError: string | null = null
-try { databaseUrl = databaseUrls().e2e }
-catch (err) { databaseError = (err as Error).message }
-
-// Constant-time bearer check, mirroring server-e2e/auth.ts's password gate: HMAC
-// both the expected `Bearer ${CRON_SECRET}` and the received Authorization
-// header under a per-process random key, then timingSafeEqual the fixed-length
-// digests. Hashing to a fixed length sidesteps timingSafeEqual's
-// throw-on-length-mismatch AND avoids leaking the secret's length through the
-// comparison. Null when CRON_SECRET is unset → the endpoint fails closed.
-const BEARER_HMAC_KEY = new Uint8Array(randomBytes(32))
-const bearerHmac = (s: string): Uint8Array =>
-  new Uint8Array(createHmac('sha256', BEARER_HMAC_KEY).update(s, 'utf8').digest())
-const EXPECTED_BEARER_HMAC = CRON_SECRET ? bearerHmac(`Bearer ${CRON_SECRET}`) : null
-
-function authorized(req: IncomingMessage): boolean {
-  if (EXPECTED_BEARER_HMAC == null) return false // CRON_SECRET unset → fail closed
-  const header = req.headers['authorization']
-  if (typeof header !== 'string') return false
-  return timingSafeEqual(bearerHmac(header), EXPECTED_BEARER_HMAC)
-}
-
-function send(res: ServerResponse, status: number, body: object): void {
-  res.writeHead(status, { 'content-type': 'application/json' })
-  res.end(JSON.stringify(body))
-}
-
-export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  // Require the Vercel-Cron bearer — Vercel sends `Authorization: Bearer
-  // ${CRON_SECRET}` on cron invocations. Constant-time + fail-closed via
-  // `authorized` above, so this DB- and blob-touching GC endpoint can't be
-  // probed by arbitrary callers (reapOrphans is idempotent/safe, but the
-  // endpoint still shouldn't be open). A 401 in the cron logs is the signal
-  // that CRON_SECRET wasn't set on the deployment.
-  if (!authorized(req)) {
-    send(res, 401, { error: 'unauthorized' })
-    return
-  }
-  if (databaseError || !databaseUrl || !BLOB_READ_WRITE_TOKEN) {
-    send(res, 500, { error: 'not-configured', detail: databaseError ?? 'requires DATABASE_URL or E2E_DATABASE_URL, plus BLOB_READ_WRITE_TOKEN (Neon + Vercel Blob)' })
-    return
-  }
-  const startedAt = Date.now()
-  try {
-    const blob = await openVercelBlobBackend({ token: BLOB_READ_WRITE_TOKEN })
-    const handle = await openNeonObjstore(databaseUrl, blob)
-    // Handle is stateless (HTTP `neon()` callable) — nothing to close.
-    await reapOrphans(handle)
-    send(res, 200, { ok: true, ms: Date.now() - startedAt })
-  } catch (err) {
-    console.error('cron reap failed:', err instanceof Error ? (err.stack ?? err.message) : String(err))
-    send(res, 500, { error: 'reap-failed' })
-  }
-}
+const handler = createReapHandler({ e2e: async () => {
+  const url = databaseUrls().e2e
+  const token = process.env['BLOB_READ_WRITE_TOKEN']
+  if (!url || !token) throw new Error('E2e cron requires DATABASE_URL or E2E_DATABASE_URL, plus BLOB_READ_WRITE_TOKEN')
+  const blob = await openVercelBlobBackend({ token })
+  // Stateless Neon HTTP handle: nothing to close, no relay listener or timer.
+  await reapOrphans(await openNeonObjstore(url, blob))
+} })
+export default handler

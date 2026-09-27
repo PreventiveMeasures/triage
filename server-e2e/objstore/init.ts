@@ -18,9 +18,9 @@ export type ObjstoreInitDeps = {
   // the workspace_revision handle in server-e2e/db.ts.
   handle: Handle
   reapIntervalMs: number
-  // Hard off-switch (OBJSTORE_REAP_DISABLED). When true, NEITHER the boot
+  // Automatic-sweep switch (OBJSTORE_REAP_DISABLED). When true, NEITHER the boot
   // sweep nor the periodic timer runs: `startupReap` resolves immediately
-  // and `stopReaper` is a no-op. Orphaned/superseded blobs and stale
+  // and no timer is installed. Orphaned/superseded blobs and stale
   // staging rows then accumulate unbounded — only safe if an external job
   // handles GC. Omitted/false → reaper runs (the default). See config.ts.
   reapDisabled?: boolean
@@ -59,6 +59,7 @@ export type ObjstoreInitDeps = {
 export type ObjstoreInit = {
   handlers: ObjstoreHandlers
   restDeps: ObjstoreRestDeps
+  reap: () => Promise<void>
   startupReap: Promise<void>
   // Cancels the periodic timer AND resolves only after any
   // currently-in-flight sweep has finished, so shutdown can safely
@@ -102,31 +103,22 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
   let inFlight: Promise<void> | null = null
   function enqueueSweep(): Promise<void> {
     if (inFlight) return inFlight
-    // Log reaper failures unconditionally (not gated on `debug`) — a
-    // failed sweep means stranded files / staging rows that never get
-    // cleaned, and operators need to see it. Inner catch makes the
-    // promise resolve so callers (startupReap awaiter + setInterval)
-    // don't have to handle rejection.
-    const p = reapOrphans(handle).catch((err) => {
-      console.warn('objstore reaper error:', errStack(err))
-    }).finally(() => { if (inFlight === p) inFlight = null })
+    // Keep failures visible to explicit callers; automatic sweeps log them.
+    const p = reapOrphans(handle).finally(() => { if (inFlight === p) inFlight = null })
     inFlight = p
     return p
   }
-  // Hard off-switch (OBJSTORE_REAP_DISABLED). Skip the boot sweep AND the
-  // periodic timer entirely: `startupReap` resolves immediately so the
-  // index.ts `await startupReap` gate is a no-op, and `stopReaper` has
-  // nothing to clear or drain. Loud, unconditional warning — with GC off,
-  // orphaned/superseded blobs and stale staging rows are never reclaimed
-  // (they accumulate until an external job, if any, collects them).
+  const drain = async () => { if (inFlight) await inFlight.catch(() => {}) }
+  const automaticSweep = () => enqueueSweep().catch(err => console.warn('objstore reaper error:', errStack(err)))
+  // Explicit cleanup remains available when automatic sweeps are disabled.
   if (deps.reapDisabled) {
-    console.warn('objstore: reaper DISABLED (OBJSTORE_REAP_DISABLED) — orphaned/superseded blobs and stale staging will NOT be reclaimed')
-    return { handlers, restDeps, startupReap: Promise.resolve(), stopReaper: async () => {} }
+    console.warn('objstore: automatic reaper DISABLED (OBJSTORE_REAP_DISABLED) — use /api/reap or an external cleanup job')
+    return { handlers, restDeps, reap: enqueueSweep, startupReap: Promise.resolve(), stopReaper: drain }
   }
   // Caller awaits this before accepting traffic so a fresh boot
   // can't hand out list / fetch / put-begin against a tag whose
   // on-disk state still has stranded files from a prior crash.
-  const startupReap = enqueueSweep()
+  const startupReap = automaticSweep()
   // Jittered start of the periodic timer. Multi-replica deploys
   // (Neon + Vercel Blob) commonly boot N replicas in tight lock-step
   // (deploy rollout, cluster restart), which would otherwise sync every
@@ -139,20 +131,20 @@ export function initObjstore(deps: ObjstoreInitDeps): ObjstoreInit {
   let reapTimer: ReturnType<typeof setInterval> | null = null
   const jitterMs = Math.floor(Math.random() * deps.reapIntervalMs)
   const firstTimer = setTimeout(() => {
-    enqueueSweep()
-    reapTimer = setInterval(enqueueSweep, deps.reapIntervalMs)
+    void automaticSweep()
+    reapTimer = setInterval(automaticSweep, deps.reapIntervalMs)
     reapTimer.unref?.()
   }, deps.reapIntervalMs + jitterMs)
   firstTimer.unref?.()
   return {
-    handlers, restDeps, startupReap,
+    handlers, restDeps, reap: enqueueSweep, startupReap,
     stopReaper: async () => {
       clearTimeout(firstTimer)
       if (reapTimer) clearInterval(reapTimer)
       // Drain whichever sweep is currently running (startup or
       // periodic) — either could be mid-readdir/unlink at SIGTERM
       // time and would otherwise outlive `handle.close()`.
-      if (inFlight) await inFlight.catch(() => {})
+      await drain()
     },
   }
 }

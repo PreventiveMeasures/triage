@@ -7,7 +7,7 @@ async function requestBundle(id, part, signal) {
   const generation = managedAppState.generation
   const response = await managedFetch(`/api/bundles/${encodeURIComponent(id)}/${part}`, { credentials: 'same-origin', signal })
   if (!response.ok) throw new Error(`Bundle ${part} request failed (${response.status})`)
-  const data = part === 'metadata' ? await response.json() : await response.text()
+  const data = part === 'contents' ? await response.text() : await response.json()
   signal?.throwIfAborted()
   if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
   return data
@@ -22,4 +22,10 @@ export async function fetchBundleContents(id, { signal } = {}) {
     if (err.name !== 'AbortError') managedAppState.notify(`Couldn't load bundle contents: ${err.message}`)
     throw err
   }
+}
+
+// Advisory queries send only the bundle identity; inventory stays server-owned.
+export function fetchBundleAdvisories(id, teamId) {
+  const part = `advisories${teamId ? `?team=${encodeURIComponent(teamId)}` : ''}`
+  return requestBundle(id, part, managedAppState.sessionController.signal)
 }

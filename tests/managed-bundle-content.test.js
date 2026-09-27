@@ -409,3 +409,85 @@ test('individual bundle removal still deletes source bytes when cache cleanup fa
   assert.equal(await h.store.get(record.id, record.kind), null)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'owner')).status, 404)
 })
+
+// The upstream HTTP call is the only mock: routing, sessions, permissions,
+// package extraction and cached bundle metadata use the real implementations.
+test('bundle advisories require security, independently of dependency findings', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  const path = `/api/bundles/${record.id}/advisories`
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    calls.push({ url, init })
+    return Promise.resolve(Response.json({ dep: [{ title: 'Published vulnerability', severity: 'high' }] }))
+  })
+  assert.equal((await h.send(path, 'anonymous')).status, 401)
+  assert.equal((await h.send(path, 'none')).status, 403)
+  assert.equal((await h.send(path, 'viewer', 'POST')).status, 405)
+  for (const dependencies of [false, true]) {
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies, security: false })
+    assert.equal((await h.send(path, 'viewer')).status, 403)
+    assert.equal(calls.length, 0)
+  }
+  for (const dependencies of [false, true]) {
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies, security: true })
+    const response = await h.send(`${path}?team=${h.team}`, 'viewer')
+    assert.equal(response.status, 200)
+    assert.equal(response.headers['cache-control'], 'no-store')
+    assert.deepEqual(response.json(), { packages: { dep: ['2.0.0'] }, advisories: { dep: [{ title: 'Published vulnerability', severity: 'high' }] } })
+    assert.equal(calls.at(-1).url, 'https://registry.npmjs.org/-/npm/v1/security/advisories/bulk')
+    assert.deepEqual(JSON.parse(Buffer.from(calls.at(-1).init.body)), { dep: ['2.0.0'] })
+    assert.deepEqual(calls.at(-1).init.headers, { 'content-type': 'application/json', accept: 'application/json' })
+    assert.equal(response.bytes.includes(Buffer.from(source)), false)
+  }
+  const otherTeam = randomUUID()
+  await h.db.createTeam(otherTeam, 'Other team', Date.now())
+  await h.db.setTeamRepo(otherTeam, 1, null)
+  await h.db.setTeamMember(otherTeam, h.users.viewer.userId, { dependencies: true, security: false })
+  assert.equal((await h.send(`${path}?team=${otherTeam}`, 'viewer')).status, 403, 'a grant in another team does not authorize this team')
+  assert.equal((await h.send(`${path}?team=${randomUUID()}`, 'viewer')).status, 403)
+  assert.equal((await h.send(path, 'admin')).status, 200)
+  assert.equal((await h.send(path, 'manager')).status, 200)
+  await h.db.setBundleRepo(record.id, 2)
+  assert.equal((await h.send(path, 'viewer')).status, 404)
+  assert.equal((await h.send(path, 'manager')).status, 404)
+})
+
+test('advisories recheck security after cold metadata builds and upstream requests', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  const path = `/api/bundles/${record.id}/advisories`
+  let calls = 0
+  const original = h.cache.packageVersions.bind(h.cache)
+  const cacheMock = t.mock.method(h.cache, 'packageVersions', async rec => {
+    const packages = await original(rec)
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
+    return packages
+  })
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++
+    await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
+    return Response.json({ dep: [{ title: 'Must not escape', severity: 'high' }] })
+  })
+  assert.equal((await h.send(path, 'viewer')).status, 403)
+  assert.equal(calls, 0)
+  cacheMock.mock.restore()
+  await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: true })
+  const response = await h.send(path, 'viewer')
+  assert.equal(response.status, 403)
+  assert.deepEqual(response.json(), { error: 'security-access-required' })
+  assert.equal(calls, 1)
+})
+
+test('advisories use cached inventory, handle upstream failures, and reject unsupported bundles', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  await h.cache.prebuild(record)
+  t.mock.method(h.store, 'get', () => { throw new Error('Warm metadata must not reread bundle contents') })
+  const fetchMock = t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response('upstream offline', { status: 503 })))
+  const path = `/api/bundles/${record.id}/advisories`
+  const response = await h.send(path, 'viewer')
+  assert.equal(response.status, 502)
+  assert.equal(response.json().error, 'upstream-not-json')
+  fetchMock.mock.mockImplementation(() => Promise.reject(new Error('network')))
+  assert.equal((await h.send(path, 'viewer')).json().error, 'upstream-unreachable')
+  const mapRecord = await h.seed({ kind: 'sourcemap', repoId: 1 })
+  assert.equal((await h.send(`/api/bundles/${mapRecord.id}/advisories`, 'viewer')).status, 422)
+})

@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
-import { BUNDLE_METADATA_VERSION, createBundleMetadata, parseBundleContents } from '../common/bundle-metadata.js'
+import { BUNDLE_METADATA_VERSION, createBundleMetadata, parseBundleContents, parseBundleMetadata } from '../common/bundle-metadata.js'
+import { bundlePackageVersions } from '../common/bundle-sources.js'
 import { decodeUtf8 } from '../common/utf8.js'
 import type { OpenedBlob } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -75,6 +76,15 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       }
       await ensure(record)
       return storage.open(record.id, filename)
+    },
+    async packageVersions(record: ManagedBundle): Promise<Record<string, string[]>> {
+      await ensure(record)
+      const cached = await storage.open(record.id, filename)
+      const chunks: Buffer[] = []
+      for await (const chunk of cached.stream) chunks.push(Buffer.from(chunk))
+      const bytes = await decompress(Buffer.concat(chunks), { maxOutputLength: MAX_DECODED_BYTES })
+      const details = parseBundleMetadata(JSON.parse(decodeUtf8(bytes)), record.integrity)
+      return Object.fromEntries([...bundlePackageVersions(details)].map(([name, versions]) => [name, [...versions].toSorted()]))
     },
     async delete(id: string) {
       // Call after deleting the row. Waiting prevents an in-flight builder
