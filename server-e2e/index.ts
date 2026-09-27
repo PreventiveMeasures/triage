@@ -96,6 +96,7 @@ import {
   createNeonPubSub, createNoopPubSub,
 } from './pubsub.ts'
 import { createBusReceiver } from './bus-receiver.ts'
+import { e2eStorageLines } from '../server-common/storage-log.ts'
 
 // All external inputs (env vars + optional config.json) are parsed
 // and validated in ./config.ts; destructure into the uppercase names
@@ -180,7 +181,6 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 // `openObjstore` accepts without a non-null assertion.
 let handle: Handle
 let objstoreHandle: ObjstoreHandle
-let objstoreBanner: string
 if (NEON_URL) {
   if (!BLOB_TOKEN) {
     console.error('DATABASE_URL or E2E_DATABASE_URL is set but BLOB_READ_WRITE_TOKEN is not.')
@@ -197,12 +197,10 @@ if (NEON_URL) {
   handle = await openNeonDb(NEON_URL)
   const blob = await openVercelBlobBackend({ token: BLOB_TOKEN })
   objstoreHandle = await openNeonObjstore(NEON_URL, blob)
-  objstoreBanner = 'objstore: vercel-blob (private)'
 } else {
   const sqliteHandle = openDb(DB_PATH)
   handle = sqliteHandle
   objstoreHandle = openObjstore(sqliteHandle.db, OBJSTORE_DIR)
-  objstoreBanner = `objstore: ${OBJSTORE_DIR}`
 }
 // Multi-replica deployments behind a load balancer / TLS terminator
 // (the typical Vercel + Neon shape) need TRUST_PROXY=1 to honour
@@ -405,11 +403,13 @@ httpServer.on('listening', () => {
   // `address()` is always a populated AddressInfo here.
   const addr = httpServer.address()
   const boundPort = typeof addr === 'object' && addr ? addr.port : PORT
-  // Differentiate the storage banner by backend so the log line
-  // doesn't claim a misleading DB_PATH under Neon, or a misleading
-  // OBJSTORE_DIR under Vercel Blob.
-  const dbBanner = NEON_URL ? 'db: neon-postgres' : `db: ${DB_PATH}`
-  console.log(`DeepView triage-sync server: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH} (sse fallback http://${HOST}:${boundPort}${SSE_OPEN_PATH}) http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag} (${dbBanner}, ${objstoreBanner})`)
+  console.log([
+    'DeepView triage-sync server:',
+    `  WebSocket: ws://${HOST}:${boundPort}${WS_UPGRADE_PATH}`,
+    `  SSE fallback: http://${HOST}:${boundPort}${SSE_OPEN_PATH}`,
+    `  Object API: http://${HOST}:${boundPort}/api/objstore/{workspaceTag}/{resourceTag}`,
+    ...e2eStorageLines(config),
+  ].join('\n'))
 })
 
 // Cross-instance bus receiver (see ./bus-receiver.ts): a remote NOTIFY

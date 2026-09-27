@@ -82,6 +82,7 @@
     "server-e2e/config.example.json",
     "server-common/database-config.ts",
     "server-common/origin.ts",
+    "server-common/storage-log.ts",
     "server-common/vercel-blob.ts",
     "server-common/scan-config.ts",
     "report/index.js",

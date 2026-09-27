@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { loadConfig } from '../server-e2e/config.ts'
 import { loadManagedConfig } from './config.ts'
 import { LOGIN_PATH } from './github-oauth.ts'
-import { createManagedApp } from './index.ts'
+import { createManagedApp, logManagedStartup } from './index.ts'
 
 export async function start(mode: 'managed+e2e' | 'e2e+managed'): Promise<void> {
   const config = loadManagedConfig({ combined: true })
@@ -30,6 +30,10 @@ export async function start(mode: 'managed+e2e' | 'e2e+managed'): Promise<void> 
   e2e.onShutdown(managed.close)
   e2e.httpServer.removeListener('request', next)
   e2e.httpServer.on('request', managed.handleRequest)
-  console.log(`triage combined server: mode=${mode}, managed db: ${config.neonUrl ? 'neon-postgres' : config.dbPath}`)
+  e2e.httpServer.once('listening', () => {
+    const address = e2e.httpServer.address()
+    const port = typeof address === 'object' && address ? address.port : config.port
+    logManagedStartup(config, port, mode)
+  })
   e2e.start()
 }
