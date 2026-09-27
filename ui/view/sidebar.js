@@ -481,7 +481,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   const modeAtStart = clientModeLabel()
   updateManagedLanding({
     serverMode: modeAtStart, session: state.managedSession, teams: state.managedTeams,
-    sessionPending: managedSessionPending,
+    sessionPending: managedSessionPending, teamsPending: managedTeamsPending,
     alternateMode: isCombinedServerMode(state.serverModeConfig) ? 'e2e' : 'local', onSwitchMode: switchClientMode,
   })
   refreshScanNavigation()
@@ -1781,6 +1781,7 @@ let clientModeGeneration = 0
 let managedSessionRequest = 0
 let managedSessionRefresh = null
 let managedSessionPending = true
+let managedTeamsPending = true
 let managedBase = null
 
 async function finishClientModeTransition({ forgetLastView = true, resetNavigation = true } = {}) {
@@ -1788,6 +1789,7 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedBase?.remove()
   managedBase = null
   const generation = ++clientModeGeneration
+  managedTeamsPending = true
   resetManagedAppState()
   resetManagedPullRequests()
   resetManagedTriage()
@@ -1927,6 +1929,7 @@ async function revalidateManagedSession() {
     if (!isCurrent()) return
     state.managedSession = session
     managedSessionPending = false
+    if (!previous || previous.id !== session?.id || previous.role !== session?.role) managedTeamsPending = true
     renderSidebar()
     setManagedAppSession(session)
     if (previous && (previous.id !== session?.id || previous.role !== session?.role)) {
@@ -1956,8 +1959,9 @@ async function revalidateManagedSession() {
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   } finally {
-    if (isCurrent() && managedSessionPending) {
+    if (isCurrent() && (managedSessionPending || managedTeamsPending)) {
       managedSessionPending = false
+      managedTeamsPending = false
       renderSidebar()
     }
   }
@@ -1979,6 +1983,7 @@ async function refreshManagedTeams(isCurrent) {
   if (!isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
   const changedReports = setManagedReportCatalog(teams)
   state.managedTeams = teams
+  managedTeamsPending = false
   // Discard an already-rendered view as well as its cached envelopes. In
   // particular, Findings/Files navigation must not reuse revoked findings.
   if (managedReportViewChanged(state, teams, changedReports)) {
