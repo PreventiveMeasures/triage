@@ -74,25 +74,58 @@ export function logManagedStartup(config: ManagedConfig, port: number, mode = 'm
 export async function init(config = loadManagedConfig()): Promise<Server> {
   const app = await createManagedApp(config)
   const server = createServer(withReap(app.handleRequest, { managed: app.reap }, { isShuttingDown: app.isShuttingDown }))
+  let disposal: Promise<void> | undefined
+  function dispose(): Promise<void> {
+    if (!disposal) {
+      app.stop()
+      disposal = (async () => {
+        try {
+          if (server.listening) {
+            await new Promise<void>((resolve, reject) => {
+              server.close(err => { if (err) reject(err); else resolve() })
+            })
+          }
+        } finally {
+          try { await app.close() }
+          finally {
+            process.off('SIGINT', onSignal)
+            process.off('SIGTERM', onSignal)
+            server.off('error', onError)
+            server.off('close', onClose)
+            server.off('listening', onListening)
+          }
+        }
+      })()
+    }
+    return disposal
+  }
+  // Embedding hosts can await full cleanup even when they only copied the
+  // request listener and never bound this server. Repeated disposal is safe.
+  server[Symbol.asyncDispose] = dispose
+
   let closing = false
   async function shutdown(code: number): Promise<void> {
     if (closing) return
     closing = true
-    app.stop()
-    try { server.closeIdleConnections() } catch {}
-    if (server.listening) await new Promise<void>((resolve) => { server.close(() => resolve()) })
-    await app.close()
+    try { await dispose() }
+    catch (err) { console.error('Managed shutdown failed:', err); code = 1 }
     process.exit(code)
   }
-  server.on('error', (err) => { console.error('Managed server error:', err); void shutdown(1) })
-  process.on('SIGINT', () => { void shutdown(0) })
-  process.on('SIGTERM', () => { void shutdown(0) })
-
-  server.on('listening', () => {
+  function onSignal(): void { void shutdown(0) }
+  function onError(err: Error): void { console.error('Managed server error:', err); void shutdown(1) }
+  function onClose(): void {
+    if (!disposal) void dispose().catch(err => { console.error('Managed server cleanup failed:', err) })
+  }
+  function onListening(): void {
     const address = server.address()
     const port = typeof address === 'object' && address ? address.port : config.port
     logManagedStartup(config, port)
-  })
+  }
+  server.on('error', onError)
+  server.once('close', onClose)
+  server.on('listening', onListening)
+  process.on('SIGINT', onSignal)
+  process.on('SIGTERM', onSignal)
   return server
 }
 

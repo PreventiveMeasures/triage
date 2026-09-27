@@ -218,6 +218,116 @@ test('standalone e2e entry points handle both help flags without opening storage
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+for (const embedding of ['unbound', 'listening', 'mounted', 'close']) {
+  test(`embedded ${embedding} server releases managed resources and permits reinitialization`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-dispose-'))
+    try {
+      const proc = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+        import assert from 'node:assert/strict'
+        import { once } from 'node:events'
+        import { createServer } from 'node:http'
+        import { DatabaseSync } from 'node:sqlite'
+        import { setImmediate } from 'node:timers/promises'
+        import { mock } from 'node:test'
+        import { init } from './server.ts'
+        const closed = [], closeDb = DatabaseSync.prototype.close
+        mock.method(DatabaseSync.prototype, 'close', function () {
+          closed.push(this)
+          return closeDb.call(this)
+        })
+        // Preserve listeners owned by the embedding host across both reloads.
+        process.on('SIGTERM', () => {})
+        const signals = ['SIGINT', 'SIGTERM'].map(name => process.listeners(name))
+        for (let n = 0; n < 2; n++) {
+          const server = await init('managed')
+          let host
+          if (${JSON.stringify(embedding)} === 'mounted') {
+            const [handler] = server.listeners('request')
+            host = createServer(handler)
+          } else if (${JSON.stringify(embedding)} !== 'unbound') host = server
+          if (host) {
+            host.listen(0, '127.0.0.1')
+            await once(host, 'listening')
+            const response = await fetch('http://127.0.0.1:' + host.address().port + '/api/config')
+            assert.equal((await response.json()).mode, 'managed')
+          }
+          if (${JSON.stringify(embedding)} === 'close') {
+            await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
+            await setImmediate()
+          } else await Promise.all([server[Symbol.asyncDispose](), server[Symbol.asyncDispose]()])
+          assert.equal(server.listening, false)
+          assert.equal(closed.length, n + 1, 'dispose closes the database exactly once')
+          assert.throws(() => closed[n].prepare('SELECT 1'), /not open/u)
+          assert.deepEqual(['SIGINT', 'SIGTERM'].map(name => process.listeners(name)), signals)
+          if (host && host !== server) {
+            const stopped = await fetch('http://127.0.0.1:' + host.address().port + '/api/auth/session')
+            assert.equal(stopped.status, 503, 'the host stays alive while disposed handlers reject new work')
+            await stopped.text()
+            await host[Symbol.asyncDispose]()
+          }
+        }
+        console.log('disposed and reinitialized')
+        // No forced exit: a leaked GC interval would keep this process alive.
+      `], { env: environment(dir), encoding: 'utf8', timeout: 30000 })
+      assert.equal(proc.status, 0, proc.error?.message || proc.stderr)
+      assert.match(proc.stdout, /disposed and reinitialized/u)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+}
+
+test('managed disposal drains work on a separate host before closing the database', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-dispose-drain-'))
+  try {
+    const proc = spawnSync(process.execPath, ['--experimental-test-module-mocks', '--input-type=module', '--eval', `
+      import assert from 'node:assert/strict'
+      import { once } from 'node:events'
+      import { createServer } from 'node:http'
+      import { setImmediate } from 'node:timers/promises'
+      import { mock } from 'node:test'
+      import { openManagedStorage } from './server-managed/storage.ts'
+      const entered = Promise.withResolvers(), release = Promise.withResolvers()
+      let closed = false, disposed = false
+      await mock.module('./server-managed/storage.ts', { exports: { openManagedStorage: async config => {
+        const storage = await openManagedStorage(config)
+        const reap = storage.db.deleteExpiredSessions, close = storage.db.close
+        storage.db.deleteExpiredSessions = async now => {
+          entered.resolve()
+          await release.promise
+          return reap(now)
+        }
+        storage.db.close = async () => { closed = true; await close() }
+        return storage
+      } } })
+      const { init } = await import('./server.ts')
+      const server = await init('managed')
+      const [handler] = server.listeners('request')
+      const host = createServer(handler)
+      host.listen(0, '127.0.0.1')
+      await once(host, 'listening')
+      const url = 'http://127.0.0.1:' + host.address().port
+      const request = fetch(url + '/api/reap', { headers: { authorization: 'Bearer test-cron-secret' } })
+      await entered.promise
+      const disposing = server[Symbol.asyncDispose]().then(() => { disposed = true })
+      await setImmediate()
+      assert.equal(closed, false, 'tracked work still owns the database')
+      assert.equal(disposed, false)
+      const stopped = await fetch(url + '/api/auth/session')
+      assert.equal(stopped.status, 503)
+      await stopped.text()
+      release.resolve()
+      const response = await request
+      assert.equal(response.status, 200)
+      await response.text()
+      await disposing
+      assert.equal(closed, true)
+      await host[Symbol.asyncDispose]()
+      console.log('drained')
+    `], { env: environment(dir), encoding: 'utf8', timeout: 30000 })
+    assert.equal(proc.status, 0, proc.error?.message || proc.stderr)
+    assert.match(proc.stdout, /drained/u)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('launcher validates arguments before opening stores; help needs no managed credentials', () => {
   const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-cli-'))
   try {

@@ -52,6 +52,12 @@ listener. Initialization opens storage and installs the server's maintenance
 and shutdown handlers, but does not bind a port. The root `start()` is called
 only by `cli.js`.
 
+For an embedded managed-only server, await `httpServer[Symbol.asyncDispose]()`
+on teardown. It drains tracked work, stops maintenance, closes the database,
+and removes its process handlers without exiting the host. This also works
+when only its request listener was mounted on another server. Normal
+`httpServer.close()` triggers cleanup too; async disposal waits for it to finish.
+
 Combined modes use one HTTP server on `HOST`/`PORT`, serving managed HTTP
 routes alongside the existing e2e HTTP, WebSocket and SSE routes. Only
 `/api/config` is shared: it advertises `managed+e2e` or `e2e+managed`, with
