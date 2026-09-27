@@ -21,14 +21,14 @@ test('legacy team links migrate without widening access, and multiple paths surv
   }
   await db.close()
   const legacy = new DatabaseSync(path)
-  legacy.exec(`DROP TABLE team_repo;
-    CREATE TABLE team_repo (
+  legacy.exec(`DROP TABLE managed_team_repo;
+    CREATE TABLE managed_team_repo (
       team_id TEXT NOT NULL REFERENCES managed_team(id) ON DELETE CASCADE,
-      repo_id INTEGER NOT NULL REFERENCES selected_repo(repo_id) ON DELETE CASCADE,
+      repo_id INTEGER NOT NULL REFERENCES managed_selected_repo(repo_id) ON DELETE CASCADE,
       path TEXT, PRIMARY KEY (team_id, repo_id)
     ) STRICT;
-    CREATE INDEX team_repo_repo_idx ON team_repo(repo_id);
-    INSERT INTO team_repo VALUES ('scoped', 7, 'packages/a'), ('whole', 7, NULL);`)
+    CREATE INDEX team_repo_repo_idx ON managed_team_repo(repo_id);
+    INSERT INTO managed_team_repo VALUES ('scoped', 7, 'packages/a'), ('whole', 7, NULL);`)
   legacy.close()
   db = openSqliteManagedDb(path)
   try {

@@ -37,7 +37,7 @@ CREATE INDEX IF NOT EXISTS managed_session_expires_idx ON managed_session(expire
 -- the App — and full_name + default_branch locate the contents. added_by is the
 -- selector, nulled (not cascaded) if that user is removed so the selection
 -- survives.
-CREATE TABLE IF NOT EXISTS selected_repo (
+CREATE TABLE IF NOT EXISTS managed_selected_repo (
   repo_id         INTEGER PRIMARY KEY,
   full_name       TEXT NOT NULL,
   is_private      INTEGER NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS selected_repo (
   active          INTEGER NOT NULL DEFAULT 1
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON selected_repo(full_name);
+CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON managed_selected_repo(full_name);
 
 -- Bundles uploaded to the server (the "Manage bundles" page). Like reports, the
 -- bytes are stored in the clear (blob-store, keyed by this opaque uuid id) for
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS managed_bundle (
   -- Durable snapshot of the uploader's login at upload time, so "who uploaded
   -- this" survives the uploader being removed (when uploaded_by nulls out).
   uploaded_by_login TEXT,
-  repo_id      INTEGER REFERENCES selected_repo(repo_id) ON DELETE SET NULL,
+  repo_id      INTEGER REFERENCES managed_selected_repo(repo_id) ON DELETE SET NULL,
   uploaded_at  INTEGER NOT NULL
 ) STRICT;
 
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS managed_report (
   uploaded_by      TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
   -- Durable snapshot of the uploader's login (see managed_bundle).
   uploaded_by_login TEXT,
-  repo_id          INTEGER REFERENCES selected_repo(repo_id) ON DELETE SET NULL,
+  repo_id          INTEGER REFERENCES managed_selected_repo(repo_id) ON DELETE SET NULL,
   repo_directory   TEXT NOT NULL DEFAULT '',
   repo_embedded    INTEGER NOT NULL DEFAULT 0,
   analyzer         TEXT,
@@ -120,7 +120,7 @@ CREATE INDEX IF NOT EXISTS managed_report_bundle_hash_idx ON managed_report(bund
 -- annotated" (so a stale client copy can't resurrect a teammate's clear).
 -- updated_by is the last writer (nulled when that user is removed);
 -- updated_by_login is the durable login snapshot (see managed_bundle).
-CREATE TABLE IF NOT EXISTS finding_triage (
+CREATE TABLE IF NOT EXISTS managed_finding_triage (
   finding_id       TEXT PRIMARY KEY,
   color            TEXT,
   triage           TEXT,
@@ -132,9 +132,9 @@ CREATE TABLE IF NOT EXISTS finding_triage (
   updated_at       INTEGER NOT NULL
 ) STRICT;
 
--- The trail behind finding_triage: one row per write that CHANGED an entry,
+-- The trail behind managed_finding_triage: one row per write that CHANGED an entry,
 -- holding the entry as written (every field NULL = a clear), who wrote it and
--- when. finding_triage stays the current-state projection reads hit; this is
+-- when. managed_finding_triage stays the current-state projection reads hit; this is
 -- walked only for a finding's history. The wire is whole-entry replace, so a
 -- snapshot per write is exactly what arrived and "what changed" is the diff
 -- against the previous row for the same id, computed on read. batch_id groups
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS finding_triage (
 -- (TRIAGE_HISTORY_LIMIT), in which case a finding's older events are trimmed
 -- as new ones land. An id no report carries any more is the tombstone GC's
 -- concern.
-CREATE TABLE IF NOT EXISTS finding_triage_event (
+CREATE TABLE IF NOT EXISTS managed_finding_triage_event (
   seq          INTEGER PRIMARY KEY,
   finding_id   TEXT NOT NULL,
   batch_id     TEXT NOT NULL,
@@ -158,8 +158,8 @@ CREATE TABLE IF NOT EXISTS finding_triage_event (
   actor_login  TEXT,
   at           INTEGER NOT NULL
 ) STRICT;
-CREATE INDEX IF NOT EXISTS finding_triage_event_finding_idx ON finding_triage_event(finding_id, seq);
-CREATE INDEX IF NOT EXISTS finding_triage_event_actor_at_idx ON finding_triage_event(actor_id, at);
+CREATE INDEX IF NOT EXISTS finding_triage_event_finding_idx ON managed_finding_triage_event(finding_id, seq);
+CREATE INDEX IF NOT EXISTS finding_triage_event_actor_at_idx ON managed_finding_triage_event(actor_id, at);
 
 -- Teams group users + repos for access scoping. A team has just a name here;
 -- the two link tables below carry the many-many relations.
@@ -175,19 +175,19 @@ CREATE TABLE IF NOT EXISTS managed_team (
 -- team is scoped to; empty path = the whole repo). Distinct paths can coexist;
 -- adding the whole repo replaces them. CASCADE removes links with either side. repo_id
 -- references the selected (operate-on) repos.
-CREATE TABLE IF NOT EXISTS team_repo (
+CREATE TABLE IF NOT EXISTS managed_team_repo (
   team_id  TEXT NOT NULL REFERENCES managed_team(id) ON DELETE CASCADE,
-  repo_id  INTEGER NOT NULL REFERENCES selected_repo(repo_id) ON DELETE CASCADE,
+  repo_id  INTEGER NOT NULL REFERENCES managed_selected_repo(repo_id) ON DELETE CASCADE,
   path     TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (team_id, repo_id, path)
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS team_repo_repo_idx ON team_repo(repo_id);
+CREATE INDEX IF NOT EXISTS team_repo_repo_idx ON managed_team_repo(repo_id);
 
 -- Team <-> user, many-many, with per-membership visibility permissions (see
 -- common/managed/permissions.ts) — view_dependencies / view_security, both
 -- default 0 (off). CASCADE so the membership dies with either side.
-CREATE TABLE IF NOT EXISTS team_user (
+CREATE TABLE IF NOT EXISTS managed_team_user (
   team_id           TEXT NOT NULL REFERENCES managed_team(id) ON DELETE CASCADE,
   user_id           TEXT NOT NULL REFERENCES managed_user(id) ON DELETE CASCADE,
   view_dependencies INTEGER NOT NULL DEFAULT 0,
@@ -195,5 +195,5 @@ CREATE TABLE IF NOT EXISTS team_user (
   PRIMARY KEY (team_id, user_id)
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS team_user_user_idx ON team_user(user_id);
+CREATE INDEX IF NOT EXISTS team_user_user_idx ON managed_team_user(user_id);
 `

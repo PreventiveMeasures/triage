@@ -4,7 +4,7 @@
 // dialect on the wire.
 //
 // `@neondatabase/serverless` is an OPTIONAL peer dep — selected by
-// the `DATABASE_URL` branch in `server-e2e/index.ts`. The peer dep
+// the configured database URL branch in `server-e2e/index.ts`. The peer dep
 // itself is loaded lazily inside `openNeonObjstore` below. A single
 // Neon project / database holds both `workspace_revision` and the
 // two objstore tables; each plane opens its own stateless
@@ -13,14 +13,10 @@
 // release.
 //
 // Byte plane: passed in as a `BlobBackend` (./blob.ts). The
-// supported pairings selected by server-e2e/index.ts are:
-//   - Neon + Vercel Blob Private Storage (multi-replica, the only
-//     pairing that survives a replica restart without local-disk
-//     coordination). Activated by setting BLOB_READ_WRITE_TOKEN
-//     alongside DATABASE_URL.
-//   - Neon + local FS (development / operator escape hatch — bytes
-//     still need to live on a shared filesystem if you run more
-//     than one replica).
+// supported Neon pairing selected by server-e2e/index.ts is Vercel
+// Blob Private Storage. DATABASE_URL or E2E_DATABASE_URL plus BLOB_READ_WRITE_TOKEN
+// is required; the launcher never selects Neon + local FS. Tests
+// can inject a local-FS backend directly through this adapter.
 
 import type { BlobBackend } from './blob.ts'
 import type { AllStmt, GetStmt, RunStmt } from '../db-stmt.ts'

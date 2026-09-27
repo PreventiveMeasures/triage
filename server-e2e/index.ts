@@ -165,12 +165,12 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 // Backend selection. Both planes (workspace_revision DB + the
 // v1.objstore byte store) are picked from config at boot. Two
 // supported pairings:
-//   1. DATABASE_URL set → Neon (workspace_revision + objstore
+//   1. DATABASE_URL or E2E_DATABASE_URL set → Neon (workspace_revision + objstore
 //      tables) + Vercel Blob Private Storage (bytes). Requires
 //      BLOB_READ_WRITE_TOKEN — fail fast at boot if missing, since
 //      a local-FS byte plane can't back a multi-replica deployment
 //      (one replica's writes wouldn't be visible to another).
-//   2. DATABASE_URL absent → SQLite + local FS bytes. Single-
+//   2. Both database URLs absent → SQLite + local FS bytes. Single-
 //      process; the only pairing the SQLite plane supports.
 // The Neon / Vercel files import their peer deps lazily inside the
 // open functions, so static imports here are safe even on a SQLite-
@@ -183,13 +183,13 @@ let objstoreHandle: ObjstoreHandle
 let objstoreBanner: string
 if (NEON_URL) {
   if (!BLOB_TOKEN) {
-    console.error('DATABASE_URL is set but BLOB_READ_WRITE_TOKEN is not.')
+    console.error('DATABASE_URL or E2E_DATABASE_URL is set but BLOB_READ_WRITE_TOKEN is not.')
     console.error('The Neon DB plane requires the Vercel Blob byte plane (local-FS bytes cannot back a multi-replica deployment).')
-    console.error('Set BLOB_READ_WRITE_TOKEN to your Vercel Blob R/W token, or unset DATABASE_URL to fall back to SQLite + local FS.')
+    console.error('Set BLOB_READ_WRITE_TOKEN to your Vercel Blob R/W token, or unset the e2e database URL to fall back to SQLite + local FS.')
     process.exit(1)
   }
   if (!TOKEN_SECRET) {
-    console.error('DATABASE_URL is set but OBJSTORE_TOKEN_SECRET is not.')
+    console.error('DATABASE_URL or E2E_DATABASE_URL is set but OBJSTORE_TOKEN_SECRET is not.')
     console.error('Multi-replica deployments need a shared HMAC secret so REST bearer tokens minted on one replica validate on any other.')
     console.error('Generate one with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
     process.exit(1)
@@ -216,7 +216,7 @@ if (NEON_URL) {
 // operator who genuinely terminates TLS in the container without
 // X-Forwarded-* (rare) can set `TRUST_PROXY=0` to acknowledge.
 if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !== '0' && TRUST_PROXY_ENV !== 'false') {
-  console.error(`DATABASE_URL is set and HOST=${HOST} is not loopback, but TRUST_PROXY is not enabled.`)
+  console.error(`DATABASE_URL or E2E_DATABASE_URL is set and HOST=${HOST} is not loopback, but TRUST_PROXY is not enabled.`)
   console.error('Browser requests through a load balancer / TLS terminator will be rejected by the same-origin gate (all 403).')
   console.error('Set TRUST_PROXY=1 to honour X-Forwarded-Host / X-Forwarded-Proto from the upstream proxy.')
   console.error('Set TRUST_PROXY=0 if you really terminate TLS in the container without X-Forwarded-* headers (no proxy).')
@@ -261,7 +261,7 @@ if (NEON_URL) {
   // also lets tests swap in a PGlite-backed shim (`tests/pubsub.test.js`).
   const mod = (await import('./neon-driver.ts')) as unknown as { Client?: NeonClientCtor }
   if (!mod.Client) {
-    console.error('DATABASE_URL is set but the @neondatabase/serverless Client export is not available.')
+    console.error('DATABASE_URL or E2E_DATABASE_URL is set but the @neondatabase/serverless Client export is not available.')
     console.error('Cross-instance broadcasts require the WebSocket-based Client (the HTTP `neon()` callable cannot LISTEN).')
     console.error('Reinstall the peer dep: pnpm add @neondatabase/serverless')
     process.exit(1)

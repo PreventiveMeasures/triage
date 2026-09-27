@@ -4,7 +4,7 @@
 // dialect on the wire.
 //
 // `@neondatabase/serverless` is an OPTIONAL peer dep — selected by
-// the `DATABASE_URL` branch in `server-e2e/index.ts`. The peer dep
+// the configured database URL branch in `server-e2e/index.ts`. The peer dep
 // itself is loaded lazily via the dynamic `import()` inside
 // `openNeonDb` below, so a SQLite-only deployment never installs it
 // (`autoInstallPeers: false` in `pnpm-workspace.yaml`) and never

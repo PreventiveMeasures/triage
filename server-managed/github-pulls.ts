@@ -5,7 +5,7 @@ import { ensureUserAccessToken } from './github-oauth.ts'
 
 type Metadata = { title: string; status: PullRequestStatus }
 
-// The repo argument is always the canonical name read from selected_repo,
+// The repo argument is always the canonical name read from managed_selected_repo,
 // never an owner/repo/path taken from the submitted URL. Redirects cannot
 // move this authenticated request outside that authorized repository.
 async function fetchPullRequest(repo: string, number: number, token: string, fetchImpl: typeof fetch): Promise<Metadata | null> {

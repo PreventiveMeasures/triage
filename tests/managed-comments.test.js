@@ -66,7 +66,7 @@ test('migration preserves comments written by a legacy server after an earlier m
   db = null
   // Model a DB already migrated by the initial deterministic-ID migration.
   const sql = new DatabaseSync(path)
-  sql.prepare(`INSERT INTO finding_comment (id, finding_id, body, created_at, updated_at)
+  sql.prepare(`INSERT INTO managed_finding_comment (id, finding_id, body, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)`).run('legacy:f', 'f', 'Previously migrated note', 15, 15)
   sql.close()
 
@@ -125,13 +125,13 @@ test('existing comment tables migrate to nullable dates without changing records
   await db.close()
   db = null
   const sql = new DatabaseSync(path)
-  sql.exec(`ALTER TABLE finding_comment RENAME TO previous_comments;
-    CREATE TABLE finding_comment (
+  sql.exec(`ALTER TABLE managed_finding_comment RENAME TO previous_comments;
+    CREATE TABLE managed_finding_comment (
       id TEXT PRIMARY KEY, finding_id TEXT NOT NULL, body TEXT NOT NULL,
       author_id TEXT REFERENCES managed_user(id) ON DELETE SET NULL, author_login TEXT,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 1
     ) STRICT;
-    INSERT INTO finding_comment SELECT * FROM previous_comments;
+    INSERT INTO managed_finding_comment SELECT * FROM previous_comments;
     DROP TABLE previous_comments;`)
   sql.close()
   db = openSqliteManagedDb(path)

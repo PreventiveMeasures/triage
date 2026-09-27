@@ -13,10 +13,10 @@
 // so the absent peer dep is never loaded under test.
 //
 // In production the wrapper is only ever imported on the Neon path
-// (`DATABASE_URL` set), where the operator has installed the peer dep
+// (an e2e database URL set), where the operator has installed the peer dep
 // (`pnpm add @neondatabase/serverless`) so the re-export resolves. A
 // SQLite-only deploy never imports this module — the dynamic `import()`
-// sites are gated behind the `DATABASE_URL` branch in `index.ts`.
+// sites are gated behind the configured database URL branch in `index.ts`.
 //
 // `@ts-ignore` rather than `@ts-expect-error`: when the peer dep IS
 // installed the specifier resolves and tsc sees a real type, which

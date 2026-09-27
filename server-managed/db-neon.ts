@@ -6,6 +6,7 @@ import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
+import { managedTableRenames } from './db-table-names.ts'
 
 export interface PgConnection {
   query(sql: string, params?: unknown[]): Promise<{
@@ -24,9 +25,19 @@ async function initialize(db: PgConnection): Promise<void> {
   try {
     await db.query(LOCK)
     await db.query('CREATE TABLE IF NOT EXISTS managed_schema_version (version INTEGER PRIMARY KEY)')
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 1')).rows.length === 0) {
+    const initialized = (await db.query('SELECT version FROM managed_schema_version WHERE version = 1')).rows.length > 0
+    const prefixed = (await db.query('SELECT version FROM managed_schema_version WHERE version = 3')).rows.length > 0
+    if (initialized && !prefixed) {
+      const { rows } = await db.query("SELECT relname AS name FROM pg_class WHERE relkind IN ('r', 'p') AND pg_table_is_visible(oid)")
+      for (const [from, to] of managedTableRenames(new Set(rows.map(row => String(row['name']))))) {
+        await db.query(`ALTER TABLE ${from} RENAME TO ${to}`)
+      }
+      // PL/pgSQL function bodies retain literal table names after ALTER TABLE.
+      for (const type of ['report', 'bundle']) await createUploadTrigger(db, type, false)
+    }
+    if (!initialized) {
       await db.query(postgresSchema(MANAGED_SCHEMA + COMMENT_SCHEMA + ACTIVITY_SCHEMA))
-      await db.query(`ALTER TABLE finding_triage_event ADD COLUMN report_id TEXT, ADD COLUMN report TEXT, ADD COLUMN repo TEXT;
+      await db.query(`ALTER TABLE managed_finding_triage_event ADD COLUMN report_id TEXT, ADD COLUMN report TEXT, ADD COLUMN repo TEXT;
         CREATE UNIQUE INDEX managed_team_slug_idx ON managed_team(slug);
         CREATE UNIQUE INDEX managed_report_slug_idx ON managed_report(slug);
         CREATE INDEX managed_activity_actor_at_idx ON managed_activity(actor_id, at);`)
@@ -37,6 +48,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query('CREATE INDEX IF NOT EXISTS managed_report_bundle_hash_idx ON managed_report(bundle_id, sha256)')
       await db.query('INSERT INTO managed_schema_version VALUES (2)')
     }
+    if (!prefixed) await db.query('INSERT INTO managed_schema_version VALUES (3)')
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')
@@ -44,19 +56,21 @@ async function initialize(db: PgConnection): Promise<void> {
   }
 }
 
-async function createUploadTrigger(db: PgConnection, type: string): Promise<void> {
-  await db.query(`CREATE FUNCTION managed_${type}_activity_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+async function createUploadTrigger(db: PgConnection, type: string, createTrigger = true): Promise<void> {
+  await db.query(`CREATE OR REPLACE FUNCTION managed_${type}_activity_insert() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
       INSERT INTO managed_activity (id, kind, actor, action, repo, report_id, report, at, bundle_id, actor_id)
       VALUES ('${type}-upload:' || NEW.id, 'upload',
         COALESCE(NEW.uploaded_by_login, (SELECT login FROM managed_user WHERE id = NEW.uploaded_by)),
-        'uploaded a ${type}', (SELECT full_name FROM selected_repo WHERE repo_id = NEW.repo_id),
+        'uploaded a ${type}', (SELECT full_name FROM managed_selected_repo WHERE repo_id = NEW.repo_id),
         ${type === 'report' ? 'NEW.id' : 'NULL'}, NEW.filename, NEW.uploaded_at,
         ${type === 'bundle' ? 'NEW.id' : 'NULL'}, NEW.uploaded_by);
       RETURN NEW;
-    END $$;
-    CREATE TRIGGER managed_${type}_activity AFTER INSERT ON managed_${type}
+    END $$;`)
+  if (createTrigger) {
+    await db.query(`CREATE TRIGGER managed_${type}_activity AFTER INSERT ON managed_${type}
       FOR EACH ROW EXECUTE FUNCTION managed_${type}_activity_insert();`)
+  }
 }
 
 // Exposed for parity tests against real PostgreSQL semantics via PGlite.

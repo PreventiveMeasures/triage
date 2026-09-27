@@ -22,9 +22,9 @@ test('activity migrates existing uploads and triage, persists snapshots after de
   // Recreate the pre-feature schema with existing records, then migrate it.
   const legacy = new DatabaseSync(file)
   legacy.exec(`DROP TRIGGER managed_report_activity; DROP TRIGGER managed_bundle_activity; DROP TABLE managed_activity;
-    ALTER TABLE finding_triage_event DROP COLUMN report_id;
-    ALTER TABLE finding_triage_event DROP COLUMN report;
-    ALTER TABLE finding_triage_event DROP COLUMN repo;`)
+    ALTER TABLE managed_finding_triage_event DROP COLUMN report_id;
+    ALTER TABLE managed_finding_triage_event DROP COLUMN report;
+    ALTER TABLE managed_finding_triage_event DROP COLUMN repo;`)
   legacy.close()
   db = openSqliteManagedDb(file)
   const first = await db.listActivity(query)

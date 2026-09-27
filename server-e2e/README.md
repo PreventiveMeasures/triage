@@ -51,9 +51,12 @@ and mode-switch behavior. E2E page navigation is unchanged.
 
 ## Storage backends
 
+For the full standalone/combined backend matrix and sharing constraints, see
+[storage separation between e2e and managed](../server-common/STORAGE.md).
+
 The e2e server supports **two storage backends**, each pairing a
 metadata store with a byte (blob) store. The backend is chosen entirely by
-whether `DATABASE_URL` is set — there's no mix-and-match:
+whether `DATABASE_URL` or `E2E_DATABASE_URL` is set — there's no mix-and-match:
 
 | Mode                 | Metadata          | Blob bytes                  | Topology         |
 | -------------------- | ----------------- | --------------------------- | ---------------- |
@@ -73,7 +76,8 @@ See the "Cross-instance broadcasts" detail in the Neon section.
 | `DEBUG`                | —                     | `DEBUG=1` logs every message                   |
 | `DB_PATH`              | `server-e2e/data/data.db` | SQLite mode only                               |
 | `OBJSTORE_DIR`         | next to `DB_PATH`     | SQLite mode only — on-disk blob bytes          |
-| `DATABASE_URL`         | —                     | set → Neon mode (Postgres connection string)   |
+| `DATABASE_URL`         | —                     | Shared Neon URL for all enabled modes; excludes per-mode URLs |
+| `E2E_DATABASE_URL`     | —                     | E2e-specific Neon URL; cannot be combined with `DATABASE_URL` |
 | `BLOB_READ_WRITE_TOKEN`| —                     | Neon mode, **required** — Vercel Blob R/W token |
 | `OBJSTORE_TOKEN_SECRET`| —                     | Neon mode, **required** — shared HMAC secret    |
 | `OBJSTORE_REAP_INTERVAL_MS` | `600000` (10 min) | orphan-reaper period                       |
@@ -108,7 +112,13 @@ TRUST_PROXY=1 HOST=0.0.0.0 \
   pnpm server
 ```
 
-When `DATABASE_URL` is set, `DB_PATH` / `OBJSTORE_DIR` are ignored and the
+`DATABASE_URL` selects the same Neon database for both enabled modes. To
+configure them separately, unset it and set `E2E_DATABASE_URL` and
+`MANAGED_DATABASE_URL`. Combined mode requires both per-mode URLs or neither;
+it rejects mixed Neon/SQLite backends. Standalone mode uses only its own URL.
+Global and per-mode URLs cannot be combined, even if their values match.
+
+When an e2e database URL is set, `DB_PATH` / `OBJSTORE_DIR` are ignored and the
 server **fails fast at boot** if any required companion is missing:
 
 - **`BLOB_READ_WRITE_TOKEN`** — the Vercel Blob R/W token. Local-FS bytes
@@ -677,7 +687,7 @@ Required env on the deployment:
   cron invocations; the endpoint **fails closed** (401) without a match, so
   the GC endpoint can't be triggered by arbitrary callers. A 401 in the cron
   logs means it wasn't set.
-- **`DATABASE_URL`** + **`BLOB_READ_WRITE_TOKEN`** — same Neon + Vercel Blob
+- **`DATABASE_URL` or `E2E_DATABASE_URL`**, plus **`BLOB_READ_WRITE_TOKEN`** — same Neon + Vercel Blob
   config as the relay (the endpoint 500s `not-configured` without them).
 
 `reapOrphans` being lock-free + idempotent means the cron can run alongside

@@ -125,7 +125,7 @@ export type CommitResult =
 // (`./db-neon.ts`) constructs a Handle with `db` unset. Callers that
 // reach into `db` directly (e.g. `openObjstore`, test-only fixture
 // SQL) are SQLite-coupled by construction; passing them a Neon-backed
-// Handle is the operator's mistake to catch at the `if (DATABASE_URL)`
+// Handle is the operator's mistake to catch at the database URL
 // switch in `server-e2e/index.ts`.
 //
 // `tryCommit` is the backend-specific atomic-commit primitive

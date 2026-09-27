@@ -34,17 +34,17 @@ const COMMENT_COLUMNS = `id TEXT PRIMARY KEY, finding_id TEXT NOT NULL, body TEX
   version INTEGER NOT NULL DEFAULT 1`
 
 export const COMMENT_SCHEMA = `
-    CREATE TABLE IF NOT EXISTS finding_comment (${COMMENT_COLUMNS}) STRICT;
-    CREATE INDEX IF NOT EXISTS finding_comment_finding_idx ON finding_comment(finding_id, created_at, id);
-    CREATE TABLE IF NOT EXISTS finding_comment_event (
+    CREATE TABLE IF NOT EXISTS managed_finding_comment (${COMMENT_COLUMNS}) STRICT;
+    CREATE INDEX IF NOT EXISTS finding_comment_finding_idx ON managed_finding_comment(finding_id, created_at, id);
+    CREATE TABLE IF NOT EXISTS managed_finding_comment_event (
       seq INTEGER PRIMARY KEY, comment_id TEXT NOT NULL, finding_id TEXT NOT NULL,
       actor_id TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
       actor_login TEXT, action TEXT NOT NULL, at INTEGER NOT NULL,
       report_id TEXT, report TEXT, repo TEXT
     ) STRICT;
-    CREATE INDEX IF NOT EXISTS finding_comment_event_finding_idx ON finding_comment_event(finding_id, seq);
-    CREATE INDEX IF NOT EXISTS finding_comment_event_actor_at_idx ON finding_comment_event(actor_id, at);
-    CREATE INDEX IF NOT EXISTS finding_comment_event_at_idx ON finding_comment_event(at, seq);
+    CREATE INDEX IF NOT EXISTS finding_comment_event_finding_idx ON managed_finding_comment_event(finding_id, seq);
+    CREATE INDEX IF NOT EXISTS finding_comment_event_actor_at_idx ON managed_finding_comment_event(actor_id, at);
+    CREATE INDEX IF NOT EXISTS finding_comment_event_at_idx ON managed_finding_comment_event(at, seq);
 `
 
 export function initCommentMethods(db: DatabaseSync): void {
@@ -56,10 +56,10 @@ export function initCommentMethods(db: DatabaseSync): void {
   // ID so a later legacy-server write cannot collide with an earlier import.
   db.exec('BEGIN')
   try {
-    db.exec(`INSERT INTO finding_comment (id, finding_id, body, created_at, updated_at)
+    db.exec(`INSERT INTO managed_finding_comment (id, finding_id, body, created_at, updated_at)
       SELECT 'legacy:' || lower(hex(randomblob(16))), finding_id, comment, updated_at, updated_at
-      FROM finding_triage WHERE comment IS NOT NULL AND comment != '';
-      UPDATE finding_triage SET comment = NULL WHERE comment IS NOT NULL;`)
+      FROM managed_finding_triage WHERE comment IS NOT NULL AND comment != '';
+      UPDATE managed_finding_triage SET comment = NULL WHERE comment IS NOT NULL;`)
     db.exec('COMMIT')
   } catch (err) {
     db.exec('ROLLBACK')
@@ -71,25 +71,25 @@ export function commentMethods(db: ManagedSql): CommentStore {
   const fields = `c.id, c.finding_id AS findingId, c.body, c.author_id AS authorId,
     COALESCE(u.login, c.author_login) AS authorLogin,
     c.created_at AS createdAt, c.updated_at AS updatedAt, c.version`
-  const select = db.prepare(`SELECT ${fields} FROM finding_comment c
+  const select = db.prepare(`SELECT ${fields} FROM managed_finding_comment c
     LEFT JOIN managed_user u ON u.id = c.author_id WHERE c.id = ?`)
-  const list = db.prepare(`SELECT ${fields} FROM finding_comment c
+  const list = db.prepare(`SELECT ${fields} FROM managed_finding_comment c
     LEFT JOIN managed_user u ON u.id = c.author_id
     WHERE c.finding_id IN (SELECT value FROM json_each(?)) ORDER BY c.created_at NULLS FIRST, c.id`)
-  const insert = db.prepare(`INSERT INTO finding_comment
+  const insert = db.prepare(`INSERT INTO managed_finding_comment
     (id, finding_id, body, author_id, author_login, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-  const update = db.prepare(`UPDATE finding_comment SET body = ?, updated_at = ?, version = version + 1
+  const update = db.prepare(`UPDATE managed_finding_comment SET body = ?, updated_at = ?, version = version + 1
     WHERE id = ? AND author_id = ? AND version = ?`)
-  const remove = db.prepare('DELETE FROM finding_comment WHERE id = ? AND (author_id = ? OR (author_id IS NULL AND ? IS NULL)) AND version = ?')
+  const remove = db.prepare('DELETE FROM managed_finding_comment WHERE id = ? AND (author_id = ? OR (author_id IS NULL AND ? IS NULL)) AND version = ?')
   const userRole = db.prepare('SELECT role FROM managed_user WHERE id = ?')
   // Deleted comments still have audit events which explicit annotation purges
   // must find, including when no current triage/comment record remains.
-  const annotated = db.prepare(`SELECT finding_id AS id FROM finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
-    UNION SELECT finding_id AS id FROM finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))`)
-  const event = db.prepare(`INSERT INTO finding_comment_event
+  const annotated = db.prepare(`SELECT finding_id AS id FROM managed_finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
+    UNION SELECT finding_id AS id FROM managed_finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))`)
+  const event = db.prepare(`INSERT INTO managed_finding_comment_event
     (comment_id, finding_id, actor_id, actor_login, action, at, report_id, report, repo)
     VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT filename FROM managed_report WHERE id = ?),
-      (SELECT p.full_name FROM managed_report r JOIN selected_repo p ON p.repo_id = r.repo_id WHERE r.id = ?))`)
+      (SELECT p.full_name FROM managed_report r JOIN managed_selected_repo p ON p.repo_id = r.repo_id WHERE r.id = ?))`)
   const read = async (id: string) => (await select.get(id)) as ManagedComment | undefined
   return {
     async listComments(ids) { return ids.length > 0 ? (await list.all(JSON.stringify(ids))) as unknown as ManagedComment[] : [] },
@@ -136,16 +136,16 @@ export function commentMethods(db: ManagedSql): CommentStore {
 }
 
 function migrateCommentDates(db: DatabaseSync): void {
-  const columns = db.prepare('PRAGMA table_info(finding_comment)').all() as { name: string; notnull: number }[]
+  const columns = db.prepare('PRAGMA table_info(managed_finding_comment)').all() as { name: string; notnull: number }[]
   if (!columns.some(column => ['created_at', 'updated_at'].includes(column.name) && column.notnull)) return
   db.exec('BEGIN')
   try {
-    db.exec(`CREATE TABLE finding_comment_nullable_dates (${COMMENT_COLUMNS}) STRICT;
-      INSERT INTO finding_comment_nullable_dates (id, finding_id, body, author_id, author_login, created_at, updated_at, version)
-        SELECT id, finding_id, body, author_id, author_login, created_at, updated_at, version FROM finding_comment;
-      DROP TABLE finding_comment;
-      ALTER TABLE finding_comment_nullable_dates RENAME TO finding_comment;
-      CREATE INDEX finding_comment_finding_idx ON finding_comment(finding_id, created_at, id);`)
+    db.exec(`CREATE TABLE managed_finding_comment_nullable_dates (${COMMENT_COLUMNS}) STRICT;
+      INSERT INTO managed_finding_comment_nullable_dates (id, finding_id, body, author_id, author_login, created_at, updated_at, version)
+        SELECT id, finding_id, body, author_id, author_login, created_at, updated_at, version FROM managed_finding_comment;
+      DROP TABLE managed_finding_comment;
+      ALTER TABLE managed_finding_comment_nullable_dates RENAME TO managed_finding_comment;
+      CREATE INDEX finding_comment_finding_idx ON managed_finding_comment(finding_id, created_at, id);`)
     db.exec('COMMIT')
   } catch (err) { db.exec('ROLLBACK'); throw err }
 }
