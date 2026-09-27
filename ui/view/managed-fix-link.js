@@ -44,9 +44,8 @@ class ManagedFixLink extends StateElement {
       text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal; cursor: default;
     }
     .preview.wide { width: min(36rem, calc(100vw - 24px)); }
-    .preview-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-    .preview-ref { display: inline-flex; align-items: baseline; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; }
-    .preview-ref svg { align-self: start; margin-top: .2em; }
+    .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .preview-ref { display: inline-flex; align-items: center; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
     .preview-ref span { min-width: 0; }
     .preview-description { margin-top: 8px; white-space: pre-wrap; }
     .preview-title { margin-top: 8px; font-size: 15px; font-weight: 600; line-height: 1.4; }
