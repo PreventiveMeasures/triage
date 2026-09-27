@@ -1,18 +1,34 @@
-// Coalesce catalog reads only while their owning view/feed is alive. A new
-// navigation must not inherit an aborted request, even before it settles.
+// One memory-only catalog for the active account/mode. Navigation reuses it;
+// feed versions confirm unchanged snapshots or trigger a fresh read. Requests
+// still belong to their view/feed, so stopped reads cannot replace newer data.
 export function createManagedTeamsProbe(probeTeams) {
-  let active = null
-  return async ({ generation, session, signal }) => {
+  let active = null, cached = null, context = null
+  return async ({ generation, session, signal, reuse = false, revision = null }) => {
     if (signal.aborted) return null
-    const key = JSON.stringify([generation, session?.id, session?.role])
-    if (!active || active.key !== key || active.signal.aborted) {
+    const key = JSON.stringify([generation, session?.id, session?.role, session?.csrfToken])
+    if (context !== key) {
       active?.controller.abort()
+      active = null
+      cached = null
+      context = key
+    }
+    if (cached && (reuse || revision !== null && revision === cached.revision)) return cached.teams
+    // An invalidation arriving after a read began must not adopt its older
+    // snapshot and consume the notification. Start a read after that event.
+    if (!active || active.signal.aborted || revision !== null && active.revision !== revision) {
+      active?.controller.abort()
+      cached = null
       const controller = new AbortController()
       const owned = AbortSignal.any([signal, controller.signal])
-      const refresh = { key, controller, signal: owned, promise: null }
+      const refresh = { controller, signal: owned, promise: null, revision }
       active = refresh
-      refresh.promise = probeTeams({ fallback: null, signal: owned })
-        .then(teams => owned.aborted ? null : teams)
+      let receivedRevision = null
+      refresh.promise = probeTeams({ fallback: null, signal: owned, onRevision: value => { receivedRevision = value } })
+        .then(teams => {
+          if (owned.aborted || context !== key) return null
+          if (teams !== null) cached = { teams, revision: receivedRevision }
+          return teams
+        })
         .finally(() => { if (active === refresh) active = null })
     }
     const refresh = active

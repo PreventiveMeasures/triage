@@ -10,18 +10,23 @@ function wait(ms, signal) {
 }
 
 // Fetch preserves the public-share header and never puts a capability in a
-// URL. Reconnection always starts with an invalidation, so no replay cursor or
-// instance affinity is needed. The caller owns the subscription's lifetime.
+// URL. Reconnection confirms the catalog version and invalidates annotations,
+// so no replay cursor or instance affinity is needed. The caller owns the
+// subscription's lifetime.
 export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose }) {
   if (getPreviewRole()) return
   let backoff = 1_000
-  const eventReceived = async (event, requestSignal) => {
+  const eventReceived = async (event, data, requestSignal) => {
     requestSignal.throwIfAborted()
     if (event === 'close') { await onClose(); return false }
     if (event === 'triage' || event === 'teams') {
       // Refresh requests share this connection's watchdog, not just the view's
       // lifetime, so a stalled read cannot prevent the reconnect loop.
-      if (await (event === 'teams' ? onTeams?.(requestSignal) : onUpdate(requestSignal)) === false) throw new Error('Team refresh failed')
+      let revision = null
+      if (event === 'teams') {
+        try { const parsed = JSON.parse(data); if (typeof parsed?.revision === 'string') revision = parsed.revision } catch {}
+      }
+      if (await (event === 'teams' ? onTeams?.(requestSignal, revision) : onUpdate(requestSignal)) === false) throw new Error('Team refresh failed')
       requestSignal.throwIfAborted()
       backoff = 1_000
     }
@@ -51,7 +56,7 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose
         throw new Error('Team feed unavailable')
       }
       reader = response.body.getReader()
-      const complete = await consume(reader, signal, alive, event => eventReceived(event, request.signal))
+      const complete = await consume(reader, signal, alive, (event, data) => eventReceived(event, data, request.signal))
       if (complete) return
     } catch {
       // Includes proxy timeouts, deployment rollovers and failed refreshes.
@@ -81,7 +86,8 @@ async function consume(reader, signal, alive, eventReceived) {
       const frame = buffer.slice(0, end)
       buffer = buffer.slice(end + 2)
       const event = frame.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim()
-      if (signal.aborted || await eventReceived(event) === false) return true
+      const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+      if (signal.aborted || await eventReceived(event, data) === false) return true
     }
   }
   return true

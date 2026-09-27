@@ -18,6 +18,7 @@ import { acceptsReportMetadata } from './report-response.ts'
 import { readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { randomUUID } from 'node:crypto'
+import { teamCatalogRevision } from './team-catalog.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -529,7 +530,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   if (url.pathname === '/api/teams') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-    sendJson(res, 200, { teams })
+    sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) })
     return
   }
   if (serveTeamReports(url.pathname, res)) return

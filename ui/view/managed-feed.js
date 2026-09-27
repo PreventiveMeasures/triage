@@ -81,10 +81,10 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   subscription.ready = hydration?.promise
   void watchTeamFeed(teamId, {
     signal,
-    onTeams: async requestSignal => {
+    onTeams: async (requestSignal, revision) => {
       const isCurrent = () => current(requestSignal)
       if (!isCurrent()) return false
-      return await refreshTeams(isCurrent, requestSignal) && isCurrent()
+      return await refreshTeams(isCurrent, requestSignal, revision) && isCurrent()
     },
     onUpdate: async requestSignal => {
       if (!current()) { controller.abort(); return false }

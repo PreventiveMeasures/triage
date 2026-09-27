@@ -101,6 +101,14 @@ test('catalog refresh is awaited, failures retry, and stale callbacks cannot ref
   assert.equal(catalogs.length, 1)
 })
 
+test('catalog revisions reach the shared page catalog without changing its connection signal', async () => {
+  const revisions = []
+  setManagedTeamFeedRefresh((current, signal, revision) => { revisions.push(revision); assert.equal(current(), true); assert.equal(signal, calls[0].signal); return true })
+  open('one')
+  assert.equal(await calls[0].onTeams(calls[0].signal, 'catalog-v1'), true)
+  assert.deepEqual(revisions, ['catalog-v1'])
+})
+
 test('sidebar renders keep one feed and do not subscribe to triage before hydration', () => {
   state.currentManagedTeam = 'one'
   startManagedTeamFeed({ catalogOnly: true })

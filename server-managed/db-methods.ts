@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { teamCatalogRevision } from './team-catalog.ts'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
@@ -1192,7 +1193,7 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       if (!session) return null
       const teams = session.role === 'none' ? [] : await methods.listTeamsForUser(session.uid)
       return { user: { id: session.uid, role: session.role },
-        revision: createHash('sha256').update(JSON.stringify(teams)).digest('base64url'),
+        revision: teamCatalogRevision(teams),
       }
     },
     async userCanReadReport(userId: string, reportId: string): Promise<boolean> {

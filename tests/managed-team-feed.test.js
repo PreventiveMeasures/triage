@@ -97,7 +97,7 @@ test('GET feed checks session, role, team and method before subscribing', async 
   assert.equal(res.status, 200)
   assert.match(res.headers['content-type'], /^text\/event-stream/u)
   assert.match(res.headers['cache-control'], /no-store/u)
-  assert.equal(res.frames[0], 'event: teams\ndata: {}\n\n')
+  assert.match(res.frames[0], /^event: teams\ndata: \{"revision":"[\w-]{43}"\}\n\n$/u)
   res.destroy(); await done
   await h.db.setUserRole(h.session.userId, 'none')
   const blocked = h.request('/api/teams/team/feed'); await blocked.done
@@ -194,8 +194,35 @@ test('revocation during a revision read closes before emitting an update', async
   assert.deepEqual(res.frames, ['event: close\ndata: {}\n\n'])
 })
 
-const teamEvents = res => res.frames.filter(frame => frame === 'event: teams\ndata: {}\n\n').length
+const teamEvents = res => res.frames.filter(frame => frame.startsWith('event: teams\n')).length
+const eventNames = res => res.frames.map(frame => frame.split('\n')[0])
 const triageEvents = res => res.frames.filter(frame => frame === 'event: triage\ndata: {}\n\n').length
+
+test('REST catalogs and feed confirmations share a version that changes with this user\'s visible access', async t => {
+  const h = await fixture(t)
+  async function catalog() {
+    const { res, done } = h.request('/api/teams')
+    await done
+    assert.equal(res.status, 200)
+    return JSON.parse(res.body)
+  }
+  const initial = await catalog()
+  assert.match(initial.revision, /^[\w-]{43}$/u)
+  const { res } = await h.userFeed(null)
+  const revisions = () => res.frames.filter(frame => frame.startsWith('event: teams\n'))
+    .map(frame => JSON.parse(frame.split('\n')[1].slice(6)).revision)
+  assert.deepEqual(revisions(), [initial.revision], 'the first feed event confirms the already-loaded catalog')
+  await h.writer.setTeamMember('team', h.session.userId, { security: true, dependencies: false })
+  await until(() => teamEvents(res) === 2)
+  const changed = await catalog()
+  assert.notEqual(changed.revision, initial.revision)
+  assert.equal(revisions().at(-1), changed.revision)
+  await h.writer.removeTeamMember('team', h.session.userId)
+  await until(() => teamEvents(res) === 3)
+  const removed = await catalog()
+  assert.deepEqual(removed.teams, [])
+  assert.equal(revisions().at(-1), removed.revision)
+})
 
 test('one feed covers own memberships and all member teams, but only focused triage', async t => {
   const h = await fixture(t), { writer, session } = h
@@ -229,7 +256,7 @@ test('one feed covers own memberships and all member teams, but only focused tri
   await writer.removeTeamMember('other', session.userId)
   await until(() => teamEvents(res) === 7)
   assert.equal(res.ended, undefined)
-  assert.ok(res.frames.every(frame => /^event: (teams|triage)\ndata: \{\}\n\n$/u.test(frame)))
+  assert.ok(res.frames.every(frame => /^event: (teams\ndata: \{"revision":"[\w-]{43}"\}|triage\ndata: \{\})\n\n$/u.test(frame)))
 })
 
 test('repairing a report link to an existing bundle notifies the feed across instances', async t => {
@@ -268,7 +295,7 @@ test('catalog-only feed works with no memberships and observes empty-team grants
   await until(() => teamEvents(res) === 5)
   const http = h.request('/api/teams/feed')
   await until(() => http.res.frames.length > 0)
-  assert.deepEqual(http.res.frames, ['event: teams\ndata: {}\n\n'])
+  assert.deepEqual(eventNames(http.res), ['event: teams'])
 })
 
 test('losing the focused team preserves the catalog feed and stops its annotation reads', async t => {
@@ -303,7 +330,7 @@ for (const change of ['logout', 'role']) {
     if (change === 'logout') await h.writer.deleteSession(h.session.id)
     else await h.writer.setUserRole(h.session.userId, 'none')
     await done
-    assert.deepEqual(res.frames, ['event: teams\ndata: {}\n\n', 'event: close\ndata: {}\n\n'])
+    assert.deepEqual(eventNames(res), ['event: teams', 'event: close'])
   })
 }
 
@@ -336,7 +363,7 @@ test('catalog invalidation arrives before a focused report finishes loading', as
   h.deps.reportStore.get = () => gate.promise
   try {
     const { res } = await h.userFeed()
-    assert.deepEqual(res.frames, ['event: teams\ndata: {}\n\n'])
+    assert.deepEqual(eventNames(res), ['event: teams'])
     gate.resolve(bytes)
     await until(() => triageEvents(res) === 1)
   } finally { gate.resolve(bytes) }
