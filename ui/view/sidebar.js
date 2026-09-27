@@ -2066,7 +2066,7 @@ async function restoreManagedPage(route, isCurrent) {
   return managedRouteForIds({ ...route, view: state.currentView === 'links' ? 'findings' : state.currentView }, state.managedTeams)
 }
 
-async function openManagedBundle(id, isCurrent, tab = 'overview') {
+async function openManagedBundle(id, isCurrent, tab) {
   const generation = currentViewGeneration()
   let metadata
   try { metadata = await fetchBundleMetadata(id) } catch { return false } // The managed state reports request errors.
