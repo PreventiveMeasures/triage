@@ -1379,16 +1379,15 @@ export function displayFindingId(id) {
 // Validate one candidate URL string as a per-finding deep link into THIS
 // instance and, on success, return its `{ url, label, self }` token.
 // `parseFindingUrl` (client/finding-link.js) owns the strictness — same
-// host + scheme, no credentials, canonical round-trip, a fragment that
-// parses as a finding ref.
+// host + scheme, no credentials, canonical round-trip, and a valid finding reference.
 //
 // Local E2E navigation uses only a fragment. Managed navigation retains
 // the destination path, including `/` for links without a team/report.
 function selfRefToken(candidate, managed) {
-  const found = parseFindingUrl(candidate)
+  const found = parseFindingUrl(candidate, { managed })
   if (!found) return null
   const short = shortFindingId(found.id)
-  return { url: `${managed ? found.path : ''}#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
+  return { url: managed ? found.path : `#${found.fragment}`, label: short ? `finding ${short}` : 'finding', self: true }
 }
 
 // Candidate-URL scanner: an `http(s)://` run of URL-legal characters.

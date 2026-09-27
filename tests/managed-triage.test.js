@@ -156,7 +156,7 @@ test('a view switch inside the debounce window still flushes the edits to the re
 })
 
 test('a comment link to another team preserves an edit made inside the debounce window', async () => {
-  const { browser } = browserAt('/teams/first/reports/B')
+  const { browser } = browserAt('/team/first/report/B')
   const nav = createManagedHistory(browser)
   await nav.start(async route => {
     await open(route.reportSlug, route.reportSlug === 'B' ? ['y'] : ['q'])
@@ -164,10 +164,10 @@ test('a comment link to another team preserves an edit made inside the debounce 
   })
   await edit('y', { triage: 'inprogress' })
   assert.deepEqual(pushes(), [], 'the edit is still waiting for its debounce')
-  assert.equal(await browser.click('/teams/second/reports/C#finding=q'), true)
+  assert.equal(await browser.click('/team/second/report/C/finding/q'), true)
   await settle()
   assert.deepEqual(calls, [{ fetch: 'B' }, push('B', { y: { triage: 'inprogress' } }), { fetch: 'C' }])
-  assert.equal(browser.location.pathname, '/teams/second/reports/C')
+  assert.equal(browser.location.pathname, '/team/second/report/C/finding/q')
   assert.equal(state.managedReport.id, 'C')
 })
 

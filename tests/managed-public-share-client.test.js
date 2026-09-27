@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 const token = 'A'.repeat(43)
 const linkId = 'link0001'
-globalThis.location = new URL(`https://triage.test/teams/team#public=${linkId}.${token}`)
+globalThis.location = new URL(`https://triage.test/team/team#public=${linkId}.${token}`)
 let onHashChange
 globalThis.addEventListener = (event, listener) => { if (event === 'hashchange') onHashChange = listener }
 const { parsePublicShare, publicSharePath, publicShareBootstrapPath } = await import('../client/managed/public-share.js')
@@ -16,7 +16,7 @@ test('public link parsing separates capabilities from ordinary and malformed lin
   for (const id of [linkId, 'legacy-team-id']) {
     const hash = `#public=${id}.${token}`, parsed = parsePublicShare(hash)
     assert.deepEqual(parsed, { id, token })
-    assert.equal(publicSharePath('/bundles/bundle', parsed), `/bundles/bundle${hash}`)
+    assert.equal(publicSharePath('/team/team/bundle/bundle', parsed), `/team/team/bundle/bundle${hash}`)
     assert.equal(publicShareBootstrapPath(parsed), `/api/shares/${id}/workspace`)
   }
   for (const hash of ['#public=', '#public=team.wrong', `#public=../other.${token}`, `#public=${token}`, `#public=${linkId}.${token}.extra`]) {
@@ -67,7 +67,7 @@ test('public bootstrap resolves by link credential on team and bundle deep links
     assert.equal(url, `/api/shares/${linkId}/workspace`)
     return Promise.resolve(Response.json({ team: { id: 'resolved-team', slug: 'shared-name', name: 'Team' } }))
   })
-  for (const path of ['/teams/shared-name', '/teams/shared-name/reports/report/files', '/bundles/bundle']) {
+  for (const path of ['/team/shared-name', '/team/shared-name/report/report/files', '/team/shared-name/bundle/bundle', '/team/shared-name/report/report/finding/issue']) {
     globalThis.location.pathname = path
     assert.deepEqual((await probeTeams()).map(team => team.id), ['resolved-team'])
   }

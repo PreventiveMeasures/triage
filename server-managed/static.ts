@@ -1,4 +1,5 @@
 import { type StaticHandler, loadStatic } from '../server-e2e/static.ts'
+import { parseManagedRoute } from '../common/managed/routes.js'
 
 // A deep page URL must still resolve every asset at the app root. Preload
 // headers resolve against the request URL, so their hrefs must be absolute too.
@@ -17,8 +18,9 @@ export function loadManagedStatic(staticDir: string, { indexOnly = false, scanSe
     if (path === '/api' || path.startsWith('/api/')) return false
     if (serve(req, res)) return true
     if (req.method !== 'GET' && req.method !== 'HEAD') return false
-    // Missing assets retain a 404. Other page paths share the same entry HTML.
-    if (path.split('/').at(-1)?.includes('.')) return false
+    // Finding IDs can contain dots (including URL-shaped IDs). Recognised
+    // pages still receive HTML; missing assets retain a 404.
+    if (path.split('/').at(-1)?.includes('.') && !parseManagedRoute(url)) return false
     const original = req.url
     req.url = '/'
     try { return serve(req, res) } finally { req.url = original }

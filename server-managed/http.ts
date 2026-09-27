@@ -1714,7 +1714,7 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
   const action = method === 'POST' ? 'created a public link' : method === 'PATCH' ? 'updated a public link' : id ? 'revoked a public link' : 'revoked public links'
   const access = method === 'DELETE' ? '' : ` (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`
   await activity(deps, s.user, 'access', `${action} for team ${team.name}${access}`)
-  sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/teams/${team.slug}#public=${shareId.slice(0, 8)}.${token}` } : { ok: true })
+  sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/team/${team.slug}#public=${shareId.slice(0, 8)}.${token}` } : { ok: true })
 }
 
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {

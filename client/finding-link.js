@@ -37,54 +37,8 @@
 
 import { encodeUtf8 } from '../common/utf8.js'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
-
-// Session-local finding ids (see `client/triage.js`'s SESSION_ID_RE:
-// purely numeric `_id` fallbacks, handed out by an in-memory counter
-// for findings whose id couldn't be derived) are re-assigned on every
-// load, so a link built on one would point at an arbitrary other
-// finding after a reload — including in the SENDER's own tab. Those are
-// refused up front rather than silently mis-resolving. Everything else
-// the app treats as persistent — the analyzer's uuids, the deterministic
-// uuids `report/src/finding-id.js` derives, and the codex importer's
-// finding-URL ids — is linkable, which is why this is a
-// "not session-local" test rather than a uuid-shape test.
-const SESSION_ID_RE = /^\d+$/u
-
-// Control characters can't appear in a uuid, a URL, or an OPFS filename
-// the app will hand out, so their presence means a mangled / hand-crafted
-// fragment. Rejecting them keeps a stray `\n` out of an `alert()` and out
-// of the `[data-gid]` selector the reveal path builds. A scan rather than
-// a character-class regex: matching control characters in a literal is a
-// lint error (`no-control-regex`), and spelling the range out in code is
-// clearer than the escaped equivalent anyway.
-function hasControlChar(value) {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.codePointAt(i)
-    if (code < 0x20 || code === 0x7f) return true
-  }
-  return false
-}
-
-// Per-component cap. The longest legitimate value is a codex finding-URL
-// id; report names and workspace ids no longer travel in the fragment at
-// all. The cap exists so a hostile fragment can't push a megabyte of
-// text through `decodeURIComponent` + the "couldn't find it" alert.
-const MAX_PART_LEN = 512
-
-function isUsablePart(value) {
-  return typeof value === 'string'
-    && value.length > 0
-    && value.length <= MAX_PART_LEN
-    && !hasControlChar(value)
-}
-
-// Whether a finding id survives a reload, i.e. whether a link built on
-// it means anything tomorrow. Callers use this to decide whether to
-// OFFER a link at all (the per-finding Link button hides itself for a
-// session-local id) rather than handing out one that silently rots.
-export function isLinkableFindingId(id) {
-  return isUsablePart(id) && !SESSION_ID_RE.test(id)
-}
+import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../common/finding-id.js'
+export { isLinkableFindingId } from '../common/finding-id.js'
 
 // ── location hints ───────────────────────────────────────────────────
 
@@ -289,10 +243,10 @@ export function extractFindingRef(hash) {
     if (key !== 'finding') continue
     // Cheap length bound BEFORE decoding: percent-encoding expands at
     // most 3:1, so nothing under this cap can decode to something over
-    // MAX_PART_LEN, and a megabyte fragment never reaches
+    // MAX_FINDING_ID_LENGTH, and a megabyte fragment never reaches
     // decodeURIComponent. `isLinkableFindingId` re-checks the decoded
     // length, so this is a guard, not the rule.
-    if (rawValue.length > MAX_PART_LEN * 3) continue
+    if (rawValue.length > MAX_FINDING_ID_LENGTH * 3) continue
     let value
     // decodeURIComponent throws URIError on a truncated / invalid escape
     // (`%`, `%zz`) — common when a chat client mangles a pasted link.
@@ -305,8 +259,8 @@ export function extractFindingRef(hash) {
 
 // Recognise a finding deep link pasted into free text — the reverse of
 // `buildFindingUrl`, used to linkify comments (see `parseCommentRefs` in
-// `ui/view/format.js`). Returns `{ id, fragment, path }` with the fragment
-// re-emitted canonically and a managed destination path, or null
+// `ui/view/format.js`). Returns `{ id, fragment, path }` with the E2E fragment
+// re-emitted canonically and a managed destination URL, or null
 // for anything that isn't one of OUR links.
 //
 // "Ours" means the CURRENT host, scheme included. A finding id resolves
@@ -318,8 +272,8 @@ export function extractFindingRef(hash) {
 // something the app ever emits).
 //
 // Managed team/report paths are preserved to identify the intended copy.
-// Other paths resolve from `/` in managed mode, without inheriting the
-// current report. E2E consumers use just the fragment to stay on their
+// E2E entry links resolve from `/` in managed mode, without inheriting
+// the current report. E2E consumers use just the fragment to stay on their
 // current deployment, including `/index.html` and subpaths.
 //
 // The anti-mutation guard is the one from `githubRefToken`: `new URL`
@@ -329,7 +283,7 @@ export function extractFindingRef(hash) {
 // already canonical is refused rather than linkified. Every link this
 // app emits round-trips unchanged, since `buildFindingUrl` builds from
 // `location` itself.
-export function parseFindingUrl(candidate) {
+export function parseFindingUrl(candidate, { managed = false } = {}) {
   if (typeof location === 'undefined') return null
   let u
   try { u = new URL(candidate) } catch { return null }
@@ -337,12 +291,15 @@ export function parseFindingUrl(candidate) {
   if (u.protocol !== location.protocol) return null
   if (u.host !== location.host) return null
   if (u.username || u.password) return null
+  const route = parseManagedRoute(u)
+  if (route?.finding) {
+    return { id: route.finding.id, fragment: encodeFindingRef(route.finding), path: managedRoutePath(route) }
+  }
+  // Only E2E entry pages carry finding hashes. Unknown managed page URLs
+  // must not turn into a search for another accessible copy of the finding.
+  if (managed && route?.view !== 'home' && !/\/(?:index|view)\.html$/u.test(u.pathname)) return null
   const ref = extractFindingRef(u.hash)
   if (!ref) return null
-  // Re-emitted rather than passed through, so an unrecognised extra
-  // param or a mangled hint can't ride into the href we hand the
-  // renderer.
-  const route = parseManagedRoute(u)
-  const path = route?.teamSlug ? managedRoutePath({ ...route, view: 'findings' }) : '/'
-  return { id: ref.id, fragment: encodeFindingRef(ref), path }
+  const fragment = encodeFindingRef(ref)
+  return { id: ref.id, fragment, path: `/#${fragment}` }
 }
