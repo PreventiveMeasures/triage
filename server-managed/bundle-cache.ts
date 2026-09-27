@@ -118,6 +118,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
   return {
     prebuild: ensure,
     summary: summaries.summary,
+    summaryStatus: summaries.summaryStatus,
     backfillSummaries: summaries.backfill,
     async open(record: ManagedBundle, part: BundleCachePart) {
       if (part === 'contents') {

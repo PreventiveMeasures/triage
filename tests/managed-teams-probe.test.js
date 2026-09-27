@@ -118,6 +118,44 @@ test('navigation eventually refreshes unknown summaries without losing normal ca
   assert.equal(calls.length, 2)
 })
 
+test('failed summaries preserve catalog reuse until the server retry deadline', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 })
+  const { calls, read } = fixture(t), signal = new AbortController().signal
+  const failedTeams = [{ ...teams[0], bundles: [{ id: 'bad', filename: 'bad.map', kind: 'sourcemap', summary: null, summaryRetryAt: 301_000 }] }]
+  const first = read(signal)
+  calls[0].resolve(Response.json({ teams: failedTeams, revision: 'v1' }))
+  const cached = await first
+  assert.equal(cached[0].bundles[0].summaryRetryAt, 301_000)
+  for (let i = 0; i < 4; i++) {
+    t.mock.timers.tick(60_000)
+    assert.equal(await read(signal, { reuse: true }), cached)
+    assert.equal(await read(signal, { revision: 'v1' }), cached)
+  }
+  assert.equal(calls.length, 1, 'failed counts do not expire the whole catalog every five seconds')
+  t.mock.timers.tick(60_000)
+  const retry = read(signal, { reuse: true })
+  assert.equal(calls.length, 2, 'the server gets another chance after its backoff expires')
+  calls[1].resolve(Response.json({ teams: failedTeams, revision: 'v1' }))
+  await retry
+})
+
+test('pending summaries refresh promptly even when another bundle is backed off', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 })
+  const { calls, read } = fixture(t), signal = new AbortController().signal
+  const mixed = [{ ...teams[0], bundles: [
+    { id: 'bad', filename: 'bad.map', kind: 'sourcemap', summary: null, summaryRetryAt: 301_000 },
+    { id: 'pending', filename: 'new.map', kind: 'sourcemap', summary: null },
+  ] }]
+  const first = read(signal)
+  calls[0].resolve(Response.json({ teams: mixed, revision: 'v1' }))
+  await first
+  t.mock.timers.tick(5_000)
+  const refresh = read(signal, { reuse: true })
+  assert.equal(calls.length, 2)
+  calls[1].resolve(Response.json({ teams: mixed, revision: 'v1' }))
+  await refresh
+})
+
 test('changed feed revisions refresh once and navigation joins the fresh catalog read', async t => {
   const { calls, read } = fixture(t)
   const signal = new AbortController().signal

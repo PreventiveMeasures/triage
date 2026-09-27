@@ -90,6 +90,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
             filename: b.filename,
             kind: b.kind,
             summary: b.summary ?? null,
+            summaryRetryAt: Number.isSafeInteger(b.summaryRetryAt) && b.summaryRetryAt > 0 ? b.summaryRetryAt : null,
             repoDirectory: typeof b.repoDirectory === 'string' ? b.repoDirectory : '',
             repoFullName: typeof b.repoFullName === 'string' ? b.repoFullName : '',
           }))

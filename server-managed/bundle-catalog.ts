@@ -4,10 +4,10 @@ import type { AdminBundle, UserTeamBundle } from './db.ts'
 // Read only existing summaries: cold/malformed bundles must never trigger
 // parsing or wait for metadata builds before the catalog response is sent.
 export async function bundleSummaries(bundles: readonly (AdminBundle | UserTeamBundle)[], cache?: BundleCache) {
-  const summaries = new Map<string, BundleSummary | null>()
+  const summaries = new Map<string, { summary: BundleSummary | null; summaryRetryAt: number | null }>()
   if (cache) {
     await Promise.all([...new Map(bundles.map(bundle => [bundle.integrity, bundle])).values()].map(async bundle => {
-      summaries.set(bundle.integrity, await cache.summary(bundle).catch(() => null))
+      summaries.set(bundle.integrity, await cache.summaryStatus(bundle).catch(() => ({ summary: null, summaryRetryAt: null })))
     }))
   }
   return summaries

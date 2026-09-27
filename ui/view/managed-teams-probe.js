@@ -1,6 +1,19 @@
 // One memory-only catalog for the active account/mode. Navigation reuses it;
 // feed versions confirm unchanged snapshots or trigger a fresh read. Requests
 // still belong to their view/feed, so stopped reads cannot replace newer data.
+function summaryExpiry(teams) {
+  let expiresAt = Infinity
+  const pendingExpiry = Date.now() + 5_000
+  for (const team of teams) {
+    for (const bundle of team.bundles ?? []) {
+      if (['stasis', 'sourcemap'].includes(bundle.kind) && bundle.summary == null) {
+        expiresAt = Math.min(expiresAt, Math.max(pendingExpiry, bundle.summaryRetryAt ?? 0))
+      }
+    }
+  }
+  return expiresAt
+}
+
 export function createManagedTeamsProbe(probeTeams) {
   let active = null, cached = null, context = null
   return async ({ generation, session, signal, reuse = false, revision = null }) => {
@@ -28,10 +41,9 @@ export function createManagedTeamsProbe(probeTeams) {
           if (owned.aborted || context !== key) return null
           if (teams !== null) {
             // Counts can finish backfilling without changing access/content.
-            // Let later navigation pick them up instead of retaining unknown
-            // summaries forever under an unchanged feed revision.
-            const missing = teams.some(team => team.bundles?.some(bundle => ['stasis', 'sourcemap'].includes(bundle.kind) && bundle.summary == null))
-            cached = { teams, revision: receivedRevision, expiresAt: missing ? Date.now() + 5_000 : Infinity }
+            // Pick up pending counts on later navigation, but respect the
+            // server's retry deadline for failed/unavailable bundles.
+            cached = { teams, revision: receivedRevision, expiresAt: summaryExpiry(teams) }
           }
           return teams
         })

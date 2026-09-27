@@ -44,7 +44,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   const sendTeam = async () => {
     const summaries = await bundleSummaries(snapshot.team.bundles, deps.bundleCache)
     await send({ user: snapshot.user, team: { ...snapshot.team,
-      bundles: snapshot.team.bundles.map(bundle => ({ ...bundle, summary: summaries.get(bundle.integrity) ?? null })),
+      bundles: snapshot.team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })),
     } })
     await backfillBundleSummaries(snapshot.team.bundles, deps.bundleCache)
   }

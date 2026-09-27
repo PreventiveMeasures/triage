@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Readable } from 'node:stream'
+import { setImmediate } from 'node:timers/promises'
 import { SUMMARY_FILENAME, createBundleSummaryCache } from '../server-managed/bundle-summary-cache.ts'
 
 function fixture() {
@@ -47,7 +48,9 @@ test('failed summaries persist backoff across cold starts and retry after the de
   await cache.backfill([records[0]])
   assert.equal(builds, 1)
   assert.equal(await cache.summary(records[0]), null)
+  assert.deepEqual(await cache.summaryStatus(records[0]), { summary: null, summaryRetryAt: 301_000 })
   const cold = createBundleSummaryCache(storage, build, exists)
+  assert.deepEqual(await cold.summaryStatus(records[0]), { summary: null, summaryRetryAt: 301_000 })
   await cold.backfill([records[0]])
   assert.equal(builds, 1, 'malformed bytes are not parsed on the next request or cold start')
   t.mock.timers.tick(5 * 60_000)
@@ -74,4 +77,28 @@ test('deleting a bundle during backfill cannot republish its summary or a failur
     assert.equal(files.size, 0)
     assert.equal(await cache.summary(records[0]), null)
   }
+})
+
+test('forget waits only for the named bundle, never a later bundle in the same batch', async () => {
+  const { storage, records } = fixture()
+  const first = Promise.withResolvers(), second = Promise.withResolvers()
+  const startedFirst = Promise.withResolvers(), startedSecond = Promise.withResolvers()
+  const cache = createBundleSummaryCache(storage, async record => {
+    if (record.id === records[0].id) { startedFirst.resolve(); await first.promise }
+    else { startedSecond.resolve(); await second.promise }
+    return { files: 1, codeFiles: 1, lines: 2 }
+  }, () => Promise.resolve(true))
+  const pending = cache.backfill(records.slice(0, 2))
+  let completed = false
+  try {
+    await startedFirst.promise
+    const removal = cache.forget(records[0].id).then(() => { completed = true; return true })
+    await setImmediate()
+    assert.equal(completed, false, 'the matching active build must finish before cache removal')
+    first.resolve()
+    await startedSecond.promise
+    await setImmediate()
+    assert.equal(completed, true, 'a stalled later build cannot hold up removal')
+    await removal
+  } finally { first.resolve(); second.resolve(); await pending }
 })

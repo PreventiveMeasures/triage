@@ -30,6 +30,7 @@ async function readSummary(storage: BundleCacheStorage, id: string): Promise<Cac
 
 export function createBundleSummaryCache(storage: BundleCacheStorage, build: (record: BundleCacheRecord) => Promise<BundleSummary>, exists: (id: string) => Promise<unknown>) {
   const entries = new Map<string, { id: string; value: CachedSummary }>()
+  const active = new Map<string, Promise<void>>()
   let pending: Promise<void> | null = null
   function remember(record: BundleCacheRecord, value: CachedSummary) {
     if (entries.size >= 256) entries.delete(entries.keys().next().value!)
@@ -49,6 +50,15 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
     if (!await exists(record.id)) { await storage.delete(record.id); return }
     remember(record, value)
   }
+  async function buildOne(record: BundleCacheRecord) {
+    try { await publish(record, await build(record)) }
+    catch { await publish(record, { retryAt: Date.now() + RETRY_MS }).catch(() => {}) }
+  }
+  async function summaryStatus(record: BundleCacheRecord) {
+    const value = ['stasis', 'sourcemap'].includes(record.kind ?? '') ? await read(record) : null
+    return { summary: value && !('retryAt' in value) ? value : null,
+      summaryRetryAt: value && 'retryAt' in value ? value.retryAt : null }
+  }
   async function backfill(records: readonly BundleCacheRecord[]) {
     // Start after the catalog has been sent. Keep this work awaited by the
     // request owner (including serverless), with no detached tasks or backlog.
@@ -58,17 +68,18 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
       if (!['stasis', 'sourcemap'].includes(record.kind ?? '')) continue
       const cached = await read(record).catch(() => null)
       if (cached && (!('retryAt' in cached) || cached.retryAt > Date.now())) continue
+      if (!await exists(record.id)) continue
       if (attempts++ >= BACKFILL_LIMIT) break
-      try { await publish(record, await build(record)) }
-      catch { await publish(record, { retryAt: Date.now() + RETRY_MS }).catch(() => {}) }
+      const job = buildOne(record)
+      active.set(record.id, job)
+      try { await job } finally { active.delete(record.id) }
     }
   }
   return {
     remember,
+    summaryStatus,
     async summary(record: BundleCacheRecord): Promise<BundleSummary | null> {
-      if (!['stasis', 'sourcemap'].includes(record.kind ?? '')) return null
-      const value = await read(record)
-      return value && !('retryAt' in value) ? value : null
+      return (await summaryStatus(record)).summary
     },
     backfill(records: readonly BundleCacheRecord[]) {
       if (pending) return Promise.resolve() // Another catalog already owns the bounded batch.
@@ -77,7 +88,9 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
       return job
     },
     async forget(id: string) {
-      await pending
+      // Only this bundle can republish its cache during deletion. A stalled
+      // backfill elsewhere must not delay removing these bytes or responding.
+      await active.get(id)
       for (const [hash, entry] of entries) if (entry.id === id) entries.delete(hash)
     },
   }

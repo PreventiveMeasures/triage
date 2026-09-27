@@ -146,14 +146,46 @@ test('unavailable bundle summaries do not hide valid catalog entries or fabricat
   await Promise.all([...h.pending])
   const bundles = (await h.send('/api/teams', 'viewer')).json().teams[0].bundles
   assert.equal(bundles.find(bundle => bundle.id === broken.id).summary, null)
+  const retryAt = bundles.find(bundle => bundle.id === broken.id).summaryRetryAt
+  assert.ok(retryAt > Date.now(), 'the client can distinguish retry backoff from pending work')
   assert.deepEqual(bundles.find(bundle => bundle.id === empty.id).summary, { files: 0, codeFiles: 0, lines: 0 })
+  assert.equal(bundles.find(bundle => bundle.id === empty.id).summaryRetryAt, null)
+  const admin = (await h.send('/api/admin/bundles')).json().bundles
+  assert.equal(admin.find(bundle => bundle.id === broken.id).summaryRetryAt, retryAt)
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', 'POST', '{}')).json()
+  const shared = (await h.send(`/api/teams/${h.team}/shared`, 'viewer', 'GET', undefined, { 'x-deepview-share': share.path.split('.').at(-1) })).json().team.bundles
+  assert.equal(shared.find(bundle => bundle.id === broken.id).summaryRetryAt, retryAt)
+})
+
+test('deleting an unrelated bundle completes and removes bytes while a catalog backfill is stalled', async t => {
+  const h = await setup(t)
+  const blocked = await h.seed({ repoId: 1 }), victim = await h.seed({ kind: 'sourcemap', repoId: 2 })
+  await h.cache.prebuild(victim)
+  const gate = Promise.withResolvers(), get = h.store.get, started = Promise.withResolvers()
+  t.mock.method(h.store, 'get', async (id, kind) => {
+    if (id === blocked.id) { started.resolve(); await gate.promise }
+    return get(id, kind)
+  })
+  let timeout
+  try {
+    await h.send('/api/teams', 'viewer')
+    await started.promise
+    const response = await Promise.race([
+      h.send(`/api/admin/bundles/${victim.id}`, 'admin', 'DELETE'),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('delete waited for another bundle')), 2_000) }),
+    ])
+    assert.equal(response.status, 200)
+    assert.equal(await h.db.getBundle(victim.id), null)
+    assert.equal(await h.store.get(victim.id, victim.kind), null)
+    await assert.rejects(readdir(join(h.cacheDir, victim.id)), { code: 'ENOENT' })
+  } finally { clearTimeout(timeout); gate.resolve(); await Promise.all([...h.pending]) }
 })
 
 test('catalog responses recheck membership and repository scope after cached summary reads', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
-  const summary = h.cache.summary
+  const summary = h.cache.summaryStatus
   let changeAccess = () => h.db.removeTeamMember(h.team, h.users.viewer.userId)
-  t.mock.method(h.cache, 'summary', async bundle => {
+  t.mock.method(h.cache, 'summaryStatus', async bundle => {
     const value = await summary(bundle)
     await changeAccess()
     return value

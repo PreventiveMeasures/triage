@@ -1016,7 +1016,8 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, coo
   const bundles = await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id)
   sendJson(res, 200, {
     bundles: await Promise.all(bundles.map(async bundle => ({
-      ...bundle, summary: summaries.get(bundle.integrity) ?? null, canChangeRepo: await canChangeBundleRepo(deps, s.user, bundle.repoId, bundle.repoDirectory),
+      ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }),
+      canChangeRepo: await canChangeBundleRepo(deps, s.user, bundle.repoId, bundle.repoDirectory),
     }))),
     maxBytes: deps.config.maxBundleBytes,
     repos: selectableRepos(await bundleRepos(deps, s.user)),
@@ -1177,7 +1178,7 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const teams = s.user.role === 'none' ? [] : await deps.db.listTeamsForUser(s.user.id)
   sendJson(res, 200, {
-    teams: teams.map(team => ({ ...team, bundles: team.bundles.map(bundle => ({ ...bundle, summary: summaries.get(bundle.integrity) ?? null })) })),
+    teams: teams.map(team => ({ ...team, bundles: team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })) })),
     // Derivatives do not change the catalog revision used by the live feed.
     revision: teamCatalogRevision(teams),
   })
