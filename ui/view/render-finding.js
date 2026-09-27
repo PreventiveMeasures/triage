@@ -3,6 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
+import { publicSharePath } from '../../client/managed/public-share.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
@@ -903,7 +904,7 @@ function reportChipTemplate(finding) {
   const label = html`${unsafeHTML(logo)}<span class="report-chip-label report-button-label">${displayName(reportName)}</span>`
   if (isManagedUiMode()) {
     const href = findingLinkFor(finding, { reportId: finding._managedReportId })
-    if (href) return html`<a class="report-chip report-button comment-self-ref" href=${href}>${label}</a>`
+    if (href) return html`<a class="report-chip report-button comment-self-ref" href=${publicSharePath(href)}>${label}</a>`
   }
   return html`<button type="button" class="report-chip report-button"
     data-links-report=${reportName} data-links-finding=${tabKey(finding)}
