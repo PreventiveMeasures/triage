@@ -43,6 +43,10 @@ export async function probeTeams(options) {
   return (await loadManagedBundle()).probeTeams(options)
 }
 
+export async function openManagedShareDialog(team) {
+  return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
+}
+
 export async function fetchReport(id) {
   return (await loadManagedBundle()).fetchReport(id)
 }

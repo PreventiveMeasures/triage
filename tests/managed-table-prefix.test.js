@@ -84,6 +84,43 @@ async function makeLegacy(fixture, backend) {
 }
 
 for (const backend of ['sqlite', 'postgres']) {
+  test(`${backend}: existing public links migrate to opt-in permissions and edits survive restart`, async t => {
+    const fixture = await database(t, backend)
+    let db = await fixture.open()
+    const { user } = await seed(db)
+    assert.equal(await db.createWorkspaceShare('session', 10, 'team', 'existing-link', { dependencies: true, security: true }), true)
+    await db.close()
+    await fixture.exec('ALTER TABLE managed_workspace_share DROP COLUMN dependencies; ALTER TABLE managed_workspace_share DROP COLUMN security; DELETE FROM managed_schema_version WHERE version = 5;')
+    db = await fixture.open()
+    try {
+      assert.deepEqual((await db.getWorkspaceShare('existing-link')).permissions, { dependencies: false, security: false })
+      const links = await db.listManagedWorkspaceShares('session', 11)
+      assert.equal(links.length, 1)
+      assert.equal(links[0].createdBy, 'admin')
+      assert.equal(links[0].id, 'existing-link')
+      await db.removeTeamMember('team', user)
+      assert.equal(await db.updateWorkspaceShare('session', 12, 'team', 'existing-link', { dependencies: true, security: false }), true, 'admins can edit links outside their memberships')
+      const manager = await db.upsertUser({ githubUserId: 2, login: 'manager', name: null, avatarUrl: null }, 12)
+      await db.setUserRole(manager, 'manage')
+      await db.createSession({ id: 'manager-session', userId: manager, csrfToken: 'csrf', expiresAt: 1000 }, 12)
+      assert.deepEqual(await db.listManagedWorkspaceShares('manager-session', 13), [])
+      assert.equal(await db.updateWorkspaceShare('manager-session', 13, 'team', 'existing-link', { dependencies: false, security: true }), false)
+      await db.setTeamMember('team', manager, { dependencies: false, security: false })
+      assert.equal((await db.listManagedWorkspaceShares('manager-session', 13)).length, 1)
+    } finally { await db.close() }
+    db = await fixture.open()
+    try {
+      assert.deepEqual((await db.getWorkspaceShare('existing-link')).permissions, { dependencies: true, security: false })
+      assert.equal(await db.createWorkspaceShare('session', 14, 'team', 'new-link'), true)
+      assert.deepEqual((await db.getWorkspaceShare('new-link')).permissions, { dependencies: false, security: false })
+      assert.equal(await db.revokeWorkspaceShares('session', 15, 'team', 'existing-link'), true)
+      assert.equal(await db.getWorkspaceShare('existing-link'), null)
+      assert.ok(await db.getWorkspaceShare('new-link'))
+      assert.equal(await db.revokeWorkspaceShares('session', 16, 'team'), true)
+      assert.deepEqual(await db.listWorkspaceShares('session', 17, 'team'), [])
+    } finally { await db.close() }
+  })
+
   test(`${backend}: table-prefix migration retains data, grants, references, triggers and e2e tables`, async t => {
     const fixture = await database(t, backend)
     let db = await fixture.open()

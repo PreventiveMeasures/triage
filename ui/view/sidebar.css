@@ -382,7 +382,6 @@ sidebar-view-button[hidden] { display: none !important; }
 }
 .file-item.team-item { display: flex; }
 .file-item.team-item button.file-name { flex: 1; min-width: 0; }
-.team-item .workspace-share { display: grid; }
 
 /* Leave button reads as the destructive-but-local action — picks
    up the same critical hue as the bottom-of-sidebar "Delete
@@ -392,6 +391,7 @@ sidebar-view-button[hidden] { display: none !important; }
   border-color: var(--critical, #f87171);
 }
 @media (hover: hover) {
+  .file-item.team-item:hover .workspace-share,
   .file-item.workspace-item:hover .workspace-share,
   .file-item.workspace-item:hover .workspace-export,
   .file-item.workspace-item:hover .workspace-leave { display: grid; }

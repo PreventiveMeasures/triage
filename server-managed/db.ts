@@ -67,6 +67,9 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA)
     ensureColumn(db, 'managed_github_metadata', 'state_reason', GITHUB_STATE_REASON_COLUMN)
     ensureColumn(db, 'managed_github_metadata', 'attempted_at', 'INTEGER')
+    // Existing public links must opt in too; never preserve an implicit grant.
+    ensureColumn(db, 'managed_workspace_share', 'dependencies', 'INTEGER NOT NULL DEFAULT 0')
+    ensureColumn(db, 'managed_workspace_share', 'security', 'INTEGER NOT NULL DEFAULT 0')
     migrateTeamRepoPaths(db)
     migrateSlugs(db)
     // Migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS

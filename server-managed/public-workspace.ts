@@ -76,6 +76,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   }
   const bundle = snapshot.bundles.find(item => item.id === bundleRoute![1])
   if (!bundle) { json(res, 404, { error: 'no-bundle' }); return }
+  if (bundleRoute![2] === 'advisories' && !snapshot.permissions.security) { json(res, 403, { error: 'security-access-required' }); return }
   await serveBundle(res, deps, bundle, bundleRoute![2]!, url, recheck, stream)
 }
 
@@ -114,7 +115,7 @@ async function sources(res: ServerResponse, deps: ManagedHttpDeps, snapshot: Wor
   if (!report || !bundle || !['stasis', 'sourcemap'].includes(bundle.kind ?? '') || bundle.repoId !== report.repoId) { await empty(); return }
   if (!deps.reportSourcesCache) { json(res, 503, { error: 'unavailable' }); return }
   let cached
-  try { cached = await deps.reportSourcesCache.open(report, bundle, { dependencies: true, security: true }, paths) }
+  try { cached = await deps.reportSourcesCache.open(report, bundle, snapshot.permissions, paths) }
   catch { await empty(); return }
   if (!cached) { await empty(); return }
   const current = await deps.db.getReport(id), currentBundle = await deps.db.getBundle(bundle.id)

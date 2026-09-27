@@ -1,0 +1,8 @@
+.share-field { display: grid; gap: .35rem; margin-top: .8rem; font-size: .82rem; }
+fieldset { display: grid; gap: .55rem; border: 0; margin-top: 1rem; font-size: .82rem; }
+legend { margin-bottom: .55rem; font-weight: 600; }
+fieldset label { display: flex; align-items: center; gap: .5rem; }
+input[type=checkbox] { accent-color: var(--accent); }
+.nwd-actions { flex-wrap: wrap; }
+.revoke-all { margin-top: .75rem; border: 0; background: none; color: var(--muted); font: inherit; font-size: .74rem; }
+.revoke-all:hover:not(:disabled) { color: var(--critical); }

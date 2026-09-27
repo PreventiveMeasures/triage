@@ -10,12 +10,13 @@ const PAGES = [
   ['manage-repos', 'Repositories', 'admin'],
   ['admin-users', 'Users', 'admin'],
   ['manage-teams', 'Teams', 'admin'],
+  ['manage-links', 'Links'],
   ['manage-history', 'History'],
 ]
 
-export function adminNavigation(current, role) {
+export function adminNavigation(current, role, allowShare = false) {
   return html`<nav class="manage-nav" aria-label="Management pages">
-    ${PAGES.filter(([, , required]) => required == null || required === role).map(([view, label]) => html`
+    ${PAGES.filter(([view, , required]) => (required == null || required === role) && (view !== 'manage-links' || allowShare)).map(([view, label]) => html`
       <button type="button" aria-current=${current === view ? 'page' : nothing} @click=${() => {
         document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view }, bubbles: true, composed: true }))
       }}>${label}</button>`)}

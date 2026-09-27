@@ -46,30 +46,45 @@ deployments retain the E2E service's separate authentication and permissions.
 
 ## Public workspace links
 
-Set `DEEPVIEW_ALLOW_SHARE=1` to let a manager or administrator share a team
-they belong to using the sidebar's **Share public link** button. Sharing is
+Set `DEEPVIEW_ALLOW_SHARE=1` to let a manager share a team they belong to, or
+an administrator share any team, using the sidebar's **Share public link** button.
+The sidebar button appears on hover. Sharing is
 disabled when unset or set to any other value, including for existing links in
 the database. The dialog creates a read-only link and can
 revoke all public links for that workspace. Anyone holding a link can open it
 without GitHub sign-in, including on combined managed + E2E deployments.
 
-A link exposes that team's currently published reports (including security and
-dependency findings), links, triage, comments and cited source files. Future
+A link exposes that team's currently published reports, links, triage, comments
+and cited source files. **Security** and **Dependencies** are independent opt-ins
+in the creation dialog, both off by default. Existing links also migrate with
+both permissions off until a manager explicitly enables them. The same finding
+filters apply to report data, comments, triage/history and cited sources. Future
 published reports in the team's repository paths are included; drafts and
 other workspaces are excluded. Whole-repository team grants also expose their
-bundles and published npm advisories. Directory-only grants expose cited source
+bundles; published npm advisories require the security opt-in. Directory-only grants expose cited source
 files, not entire bundles. GitHub PR metadata and user avatars require account
 access and are not fetched in public views.
 
 Tokens contain 256 random bits; only their SHA-256 hashes are stored, separately
 from sessions. They persist across restarts and issuer logout, and stop working
 when revoked, sharing is disabled, the team is deleted, or the issuer no longer
-has a manager/admin role and membership in that team. Reads recheck the current
+has administrator access or a manager role with membership in that team. Reads recheck the current
 scope after slow storage or upstream work. Turning the flag off does not delete
 links; re-enabling sharing makes any unrevoked links usable again.
 
-`POST /api/teams/:id/share` creates a link; `DELETE` revokes the team's links.
-Both require an authenticated team manager, same-origin access and CSRF. Public
+The **Links** tab in Manage lists public links grouped by team, with their creator,
+creation time and permissions. Managers see only their teams' links; administrators
+see all links. Select **Edit** to change permissions without changing the URL or
+revoke a link. The share dialog also lists the team's links and can revoke all of them.
+Only hashes are stored, so an existing link's original URL cannot be recovered from
+the listing; copy a newly created URL before closing the dialog.
+
+`GET /api/admin/links` lists links within the manager's scope. `GET /api/teams/:id/share`
+lists one team's links. `POST` creates a link with `{ security, dependencies }`, where
+only literal `true` opts in; `PATCH /api/teams/:id/share/:id` replaces those permissions.
+`DELETE` on a link revokes just that link; `DELETE` on the team's collection revokes all.
+These require an authenticated team manager or administrator; mutations also require
+same-origin access and CSRF. Public
 clients send the fragment token in `X-Deepview-Share`, with no cookies. A supplied
 token takes precedence over any login cookie and is confined to an explicit
 allowlist: `/api/teams/:id/{shared,reports}`, visible reports' read-only

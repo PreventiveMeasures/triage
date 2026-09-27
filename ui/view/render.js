@@ -1709,6 +1709,7 @@ const ADMIN_VIEWS = {
   'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
   'manage-history': { slot: 'manage-history-slot', tag: 'managed-admin-history', title: 'DeepView — history' },
   'manage-teams':   { slot: 'manage-teams-slot',   tag: 'managed-admin-teams',   title: 'DeepView — teams' },
+  'manage-links':   { slot: 'manage-links-slot',   tag: 'managed-admin-links',   title: 'DeepView — links' },
   'manage-scans':   { slot: 'manage-scans-slot',   tag: 'managed-admin-scans',   title: 'DeepView — scans' },
 }
 
@@ -1969,6 +1970,7 @@ function renderImpl() {
       const el = document.createElement(adminView.tag)
       el.localImportSource = createManagedLocalImportSource()
       el.session = state.managedSession
+      el.allowShare = state.managed?.allowShare === true
       if (state.currentView === 'manage-scans') el.selection = state.scanSelection
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
@@ -1986,7 +1988,10 @@ function renderImpl() {
         })
       })().catch(() => {})
     }
-    if (slot?.firstElementChild) slot.firstElementChild.session = state.managedSession
+    if (slot?.firstElementChild) {
+      slot.firstElementChild.session = state.managedSession
+      slot.firstElementChild.allowShare = state.managed?.allowShare === true
+    }
     if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
     report.classList.add('active')
     dropZone.classList.add('hidden')

@@ -4,11 +4,12 @@ import { managedAppState } from './state.js'
 // The host already knows the session before opening Manage. Pass it across the
 // lazy-bundle boundary instead of giving every page its own blocking probe.
 export class ManagedPage extends LitElement {
-  static properties = { session: { attribute: false }, _loading: { state: true } }
+  static properties = { session: { attribute: false }, allowShare: { attribute: false }, _loading: { state: true } }
 
   constructor() {
     super()
     this.session = null
+    this.allowShare = false
     this.appState = managedAppState
     this._loading = false
     this._loadRequest = null
