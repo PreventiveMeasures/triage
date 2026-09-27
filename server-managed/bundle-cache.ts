@@ -14,12 +14,13 @@ import type { OpenedBlob } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
+import { SUMMARY_FILENAME, createBundleSummaryCache } from './bundle-summary-cache.ts'
 
 const decompress = promisify(brotliDecompress)
 const MAX_DECODED_BYTES = 512 * 1024 * 1024
 export const MAX_PACKAGE_INVENTORY_BYTES = 1024 * 1024
 export type BundleCachePart = 'metadata' | 'contents'
-type BundleCacheRecord = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'kind' | 'byteSize'>
+export type BundleCacheRecord = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'kind' | 'byteSize'>
 export interface BundleSummary { files: number; codeFiles: number; lines: number }
 
 export async function readBundleDetails(record: BundleCacheRecord, store: BundleStore) {
@@ -40,7 +41,6 @@ export interface BundleCacheStorage {
 
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
 const packagesFilename = 'v2-package-versions.json'
-const summaryFilename = `v${BUNDLE_METADATA_VERSION}-summary.json`
 
 // All scopes share one bounded derivative. Never decode full bundle metadata
 // on advisory requests, including when selecting a reason. Persist null when
@@ -74,23 +74,6 @@ function encodePackageInventory(details: BundleDetails): Buffer {
   return Buffer.from(parts.join(''))
 }
 
-async function readSummary(storage: BundleCacheStorage, id: string): Promise<BundleSummary> {
-  const cached = await storage.open(id, summaryFilename)
-  try {
-    const chunks: Buffer[] = []
-    let size = 0
-    for await (const chunk of cached.stream) {
-      size += chunk.length
-      if (size > 1024) throw new Error('Invalid bundle summary')
-      chunks.push(Buffer.from(chunk))
-    }
-    const summary = JSON.parse(decodeUtf8(Buffer.concat(chunks))) as BundleSummary
-    if (!summary || ![summary.files, summary.codeFiles, summary.lines].every(value => Number.isSafeInteger(value) && value >= 0)
-        || summary.codeFiles > summary.files) throw new Error('Invalid bundle summary')
-    return summary
-  } finally { cached.stream.destroy() }
-}
-
 async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
   const details = await readBundleDetails(record, store)
   if (!details) throw new Error('Bundle bytes unavailable')
@@ -99,28 +82,33 @@ async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db:
   if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')
   await storage.put(record.id, filename, body)
   if (record.kind === 'stasis') await storage.put(record.id, packagesFilename, encodePackageInventory(details))
-  await storage.put(record.id, summaryFilename, Buffer.from(JSON.stringify(createBundleSummary(details, metadata))))
+  const summary = createBundleSummary(details, metadata)
+  await storage.put(record.id, SUMMARY_FILENAME, Buffer.from(JSON.stringify(summary)))
   // A different instance may have deleted the row while these writes ran.
   // Reconcile after publishing so its cleanup cannot be undone by us.
   if (!(await db.getBundle(record.id))) {
     await storage.delete(record.id)
     throw new Error('Bundle deleted')
   }
+  return summary
 }
 
 export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
   const pending = new Map<string, Promise<void>>()
   // The database deduplicates by integrity, so each hash has one persistent
   // bundle/cache directory, shared across teams and repeated uploads.
-  const summaries = new Map<string, { id: string; summary: BundleSummary }>()
+  const summaries = createBundleSummaryCache(storage, async record => {
+    const details = await readBundleDetails(record, store)
+    if (!details) throw new Error('Bundle bytes unavailable')
+    return createBundleSummary(details)
+  }, id => db.getBundle(id))
   let queue = Promise.resolve()
   async function ensure(record: BundleCacheRecord): Promise<void> {
     const existing = pending.get(record.id)
     if (existing) return existing
     const job = (async () => {
-      if (await storage.exists(record.id, filename) && await storage.exists(record.id, summaryFilename)
-          && (record.kind !== 'stasis' || await storage.exists(record.id, packagesFilename))) return
-      const work = queue.then(() => build(record, storage, db, store))
+      if (await storage.exists(record.id, filename) && (record.kind !== 'stasis' || await storage.exists(record.id, packagesFilename))) return
+      const work = queue.then(async () => summaries.remember(record, await build(record, storage, db, store)))
       queue = work.catch(() => {})
       await work
     })()
@@ -129,16 +117,8 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
   }
   return {
     prebuild: ensure,
-    async summary(record: BundleCacheRecord): Promise<BundleSummary | null> {
-      if (record.kind !== 'stasis' && record.kind !== 'sourcemap') return null
-      const known = summaries.get(record.integrity)
-      if (known) return known.summary
-      await ensure(record)
-      const summary = await readSummary(storage, record.id)
-      if (summaries.size >= 256) summaries.delete(summaries.keys().next().value!)
-      summaries.set(record.integrity, { id: record.id, summary })
-      return summary
-    },
+    summary: summaries.summary,
+    backfillSummaries: summaries.backfill,
     async open(record: ManagedBundle, part: BundleCachePart) {
       if (part === 'contents') {
         if (record.kind !== 'stasis' && record.kind !== 'sourcemap') throw new Error('Unsupported bundle')
@@ -171,7 +151,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       // Call after deleting the row. Waiting prevents an in-flight builder
       // from recreating its files after deletion has completed.
       await pending.get(id)?.catch(() => {})
-      for (const [hash, entry] of summaries) if (entry.id === id) summaries.delete(hash)
+      await summaries.forget(id)
       await storage.delete(id)
     },
   }

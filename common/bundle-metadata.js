@@ -100,9 +100,10 @@ export async function createBundleMetadata(details) {
 // textual resources count as files (with zero LoC); binary resources do not
 // count as Code inputs, and missing source bodies/directories are not files.
 export function createBundleSummary(details, metadata) {
-  const files = metadata.files.filter(([, size]) => size !== null)
+  const files = (metadata?.files ?? [...bundleFileSizes(details)]).filter(([, size]) => size !== null)
   const formats = details.kind === 'stasis' ? details.bundle.formats : null
-  return { files: files.length, lines: metadata.codeStats.lines,
+  const lines = metadata?.codeStats.lines ?? [...bundleSourcesAsMap(details).values()].reduce((sum, source) => sum + bundleSourceLineCount(source), 0)
+  return { files: files.length, lines,
     codeFiles: files.filter(([path]) => !['resource:base64', 'directory'].includes(formats?.get(path))).length }
 }
 

@@ -99,6 +99,25 @@ test('startup, navigation and unchanged feed confirmations share one completed c
   assert.equal(await read(cancelled.signal, { reuse: true }), null)
 })
 
+test('navigation eventually refreshes unknown summaries without losing normal catalog reuse', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 })
+  const { calls, read } = fixture(t), signal = new AbortController().signal
+  const pendingTeams = [{ ...teams[0], bundles: [{ id: 'bundle', filename: 'app.map', kind: 'sourcemap', summary: null }] }]
+  const first = read(signal)
+  calls[0].resolve(Response.json({ teams: pendingTeams, revision: 'v1' }))
+  const old = await first
+  assert.equal(await read(signal, { reuse: true }), old)
+  t.mock.timers.tick(5_000)
+  const next = read(signal, { reuse: true })
+  assert.equal(calls.length, 2)
+  calls[1].resolve(Response.json({ teams: [{ ...pendingTeams[0], bundles: [{ ...pendingTeams[0].bundles[0], summary: { files: 1, codeFiles: 1, lines: 3 } }] }], revision: 'v1' }))
+  const complete = await next
+  assert.equal(complete[0].bundles[0].summary.lines, 3)
+  t.mock.timers.tick(60_000)
+  assert.equal(await read(signal, { revision: 'v1' }), complete)
+  assert.equal(calls.length, 2)
+})
+
 test('changed feed revisions refresh once and navigation joins the fresh catalog read', async t => {
   const { calls, read } = fixture(t)
   const signal = new AbortController().signal

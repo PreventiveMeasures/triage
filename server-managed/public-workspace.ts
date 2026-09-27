@@ -11,7 +11,7 @@ import { TeamReportsError, loadTeamReports, teamReportVisibility } from './team-
 import { MAX_FINDING_ID, MAX_TRIAGE_HISTORY } from '../common/managed/triage.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
-import { bundleSummaries } from './bundle-catalog.ts'
+import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
 import { serveTeamFeed } from './team-feed.ts'
 
@@ -46,6 +46,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     await send({ user: snapshot.user, team: { ...snapshot.team,
       bundles: snapshot.team.bundles.map(bundle => ({ ...bundle, summary: summaries.get(bundle.integrity) ?? null })),
     } })
+    await backfillBundleSummaries(snapshot.team.bundles, deps.bundleCache)
   }
   const stream = async (stored: OpenedBlob, encoding: string | null, contentType = 'application/json') => {
     try { await recheck() } catch (error) { stored.stream.destroy(); throw error }

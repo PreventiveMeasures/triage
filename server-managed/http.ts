@@ -49,7 +49,7 @@ import { pipeline } from 'node:stream/promises'
 import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, putUploadPart, readUpload, validUploadPart } from './uploads.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
-import { bundleSummaries } from './bundle-catalog.ts'
+import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1010,7 +1010,7 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, coo
   let s = await readManageSession(res, deps, cookie)
   if (s == null) return
   const summaries = await bundleSummaries(await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id), deps.bundleCache)
-  // A cold summary build may outlast changes to access or bundle locations.
+  // Even cached storage reads may outlast changes to access or locations.
   s = await readManageSession(res, deps, cookie)
   if (s == null) return
   const bundles = await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id)
@@ -1022,6 +1022,7 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, coo
     repos: selectableRepos(await bundleRepos(deps, s.user)),
     repoScopes: s.user.role === 'admin' ? null : await deps.db.listRepoScopesForUser(s.user.id),
   })
+  await backfillBundleSummaries(bundles, deps.bundleCache)
 }
 
 // POST /api/admin/bundles — upload a bundle. Mutation: same-origin + CSRF,
@@ -1180,6 +1181,7 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie:
     // Derivatives do not change the catalog revision used by the live feed.
     revision: teamCatalogRevision(teams),
   })
+  await backfillBundleSummaries(teams.flatMap(team => team.bundles), deps.bundleCache)
 }
 
 // Admins read all reports. Managers read their uploads or reports inside their

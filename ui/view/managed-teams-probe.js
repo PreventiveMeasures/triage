@@ -12,7 +12,7 @@ export function createManagedTeamsProbe(probeTeams) {
       cached = null
       context = key
     }
-    if (cached && (reuse || revision !== null && revision === cached.revision)) return cached.teams
+    if (cached && Date.now() < cached.expiresAt && (reuse || revision !== null && revision === cached.revision)) return cached.teams
     // An invalidation arriving after a read began must not adopt its older
     // snapshot and consume the notification. Start a read after that event.
     if (!active || active.signal.aborted || revision !== null && active.revision !== revision) {
@@ -26,7 +26,13 @@ export function createManagedTeamsProbe(probeTeams) {
       refresh.promise = probeTeams({ fallback: null, signal: owned, onRevision: value => { receivedRevision = value } })
         .then(teams => {
           if (owned.aborted || context !== key) return null
-          if (teams !== null) cached = { teams, revision: receivedRevision }
+          if (teams !== null) {
+            // Counts can finish backfilling without changing access/content.
+            // Let later navigation pick them up instead of retaining unknown
+            // summaries forever under an unchanged feed revision.
+            const missing = teams.some(team => team.bundles?.some(bundle => ['stasis', 'sourcemap'].includes(bundle.kind) && bundle.summary == null))
+            cached = { teams, revision: receivedRevision, expiresAt: missing ? Date.now() + 5_000 : Infinity }
+          }
           return teams
         })
         .finally(() => { if (active === refresh) active = null })
