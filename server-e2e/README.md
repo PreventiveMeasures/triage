@@ -54,6 +54,9 @@ maintenance without binding a port or installing process handlers. The root
 codes. Embedded hosts receive server errors through the server's `error` event.
 Invalid configuration rejects `init(mode)` so the host can correct it and retry;
 Neon configuration and driver checks run before opening storage.
+If later assembly fails, initialization releases acquired resources and waits
+for pending maintenance before rejecting, so retries do not leave background
+work or database handles behind.
 
 In every mode, await `httpServer[Symbol.asyncDispose]()` on teardown. It closes
 live WS/SSE connections, drains tracked work, stops maintenance and pubsub, and

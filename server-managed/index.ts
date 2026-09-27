@@ -6,6 +6,7 @@ import { createOriginGate } from '../server-common/origin.ts'
 import { managedStorageLines } from '../server-common/storage-log.ts'
 import { runReapers, withReap } from '../server-common/reap.ts'
 import { startServer } from '../server-common/standalone.ts'
+import { initializeApp } from '../server-common/initialize.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { loadManagedStatic } from './static.ts'
@@ -15,9 +16,16 @@ import { openManagedStorage } from './storage.ts'
 // (`WHERE expires_at > now`), so this is housekeeping, not a security control.
 const SESSION_GC_INTERVAL_MS = 3_600_000
 
-export async function createManagedApp(config: ManagedConfig, options: Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>> = {}) {
+type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>>
+
+export async function createManagedApp(config: ManagedConfig, options: ManagedAppOptions = {}) {
+  return await initializeApp(rollback => assembleManagedApp(config, options, rollback))
+}
+
+async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOptions, rollback: AsyncDisposableStack) {
   const storage = await openManagedStorage(config)
   const { db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache } = storage
+  rollback.defer(() => db.close())
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
   let shuttingDown = false
@@ -50,6 +58,7 @@ export async function createManagedApp(config: ManagedConfig, options: Partial<P
   const gcTimer = config.serverless ? null : setInterval(() => {
     void reap().catch(err => console.warn('managed: maintenance failed:', err))
   }, SESSION_GC_INTERVAL_MS)
+  rollback.defer(stop)
 
   function stop(): void {
     shuttingDown = true

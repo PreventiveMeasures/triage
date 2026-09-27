@@ -78,6 +78,7 @@ import { errMsg, errStack } from './util.ts'
 import type { PeerRegistry } from './peer.ts'
 import { LOOPBACK_HOSTS, createOriginGate } from '../server-common/origin.ts'
 import { withReap } from '../server-common/reap.ts'
+import { initializeApp } from '../server-common/initialize.ts'
 import { createHub } from './hub.ts'
 import { createAuth } from './auth.ts'
 import { createSyncHandlers } from './sync-handlers.ts'
@@ -86,7 +87,7 @@ import { installWsServer } from './ws-server.ts'
 import { SSE_OPEN_PATH, installSseServer } from './sse-server.ts'
 import type { ServerInfo } from '../common/server-info.ts'
 import { createLifecycle } from './lifecycle.ts'
-import { loadConfig } from './config.ts'
+import { type Config, loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { initObjstore } from './objstore/init.ts'
@@ -102,6 +103,10 @@ import { e2eStorageLines } from '../server-common/storage-log.ts'
 
 // Each embedding gets its own stores, transports, timers and shutdown state.
 export async function createE2eApp(config = loadConfig()) {
+  return await initializeApp(rollback => assembleE2eApp(config, rollback))
+}
+
+async function assembleE2eApp(config: Config, rollback: AsyncDisposableStack) {
   // All external inputs (env vars + optional config.json) are parsed
   // and validated in ./config.ts; destructure into the uppercase names
   // the rest of this module uses.
@@ -239,22 +244,16 @@ export async function createE2eApp(config = loadConfig()) {
       debug: DEBUG,
     })
     handle = await openNeonDb(NEON_URL)
-    try {
-      const blob = await openVercelBlobBackend({ token: BLOB_TOKEN })
-      objstoreHandle = await openNeonObjstore(NEON_URL, blob)
-    } catch (err) {
-      await handle.close()
-      throw err
-    }
+    rollback.defer(() => handle.close())
+    const blob = await openVercelBlobBackend({ token: BLOB_TOKEN })
+    objstoreHandle = await openNeonObjstore(NEON_URL, blob)
   } else {
     const sqliteHandle = openDb(DB_PATH)
     handle = sqliteHandle
-    try { objstoreHandle = openObjstore(sqliteHandle.db, OBJSTORE_DIR) }
-    catch (err) {
-      await handle.close()
-      throw err
-    }
+    rollback.defer(() => handle.close())
+    objstoreHandle = openObjstore(sqliteHandle.db, OBJSTORE_DIR)
   }
+  rollback.defer(() => pubsub.stop())
 
   // "Workspace exists on the server" gate. The auth requirement only
   // kicks in for the FIRST action against a never-before-seen tag —
@@ -330,6 +329,7 @@ export async function createE2eApp(config = loadConfig()) {
     // single-replica).
     ...(TOKEN_SECRET ? { tokenSecret: TOKEN_SECRET } : {}),
   })
+  rollback.defer(stopReaper)
 
   // 4 MiB cap leaves headroom above MAX_CIPHERTEXT_LEN (2 MiB) for
   // the JSON envelope + base64 overhead. `ws` defaults to 100 MiB
@@ -337,6 +337,7 @@ export async function createE2eApp(config = loadConfig()) {
   // accepts and JSON.parses up to that before the signature-fail drops
   // the frame.
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 })
+  rollback.defer(() => new Promise<void>(resolve => { wss.close(() => resolve()) }))
 
   // Process lifecycle (see ./lifecycle.ts): `track` (in-flight request
   // drain) and `isShuttingDown` (the new-work gate) are consumed by the
@@ -377,6 +378,7 @@ export async function createE2eApp(config = loadConfig()) {
     maxBodyBytes: 4 * 1024 * 1024,
     debug: DEBUG,
   })
+  rollback.defer(() => clearInterval(sseServer.keepaliveTimer))
 
   // HTTP plane: REST byte-transfer routing + SSE fallback + the WS
   // upgrade gate (see ./http.ts). Built after the lifecycle state above
@@ -401,6 +403,7 @@ export async function createE2eApp(config = loadConfig()) {
     wss, heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
     ...peerConnectionDeps,
   })
+  rollback.defer(() => clearInterval(heartbeatTimer))
 
   httpServer.on('listening', () => {
     // Read the actual bound port from `httpServer.address()` rather
