@@ -338,6 +338,13 @@ function applyTriageEntries(entries, { replace = false } = {}) {
       if (!(pendingHas(id) && pendingEntries[id]?.flagged !== undefined) && (noBlob || v?.flagged === undefined)) {
         patchEntry(map, id, { flagged: undefined })
       }
+      // The upstream record is client-local but still persisted, so it
+      // mirrors the fields above rather than the wire: a sibling that
+      // cleared it must clear it here too, or the stale record would
+      // outlive the tab that dropped it.
+      if (!(pendingHas(id) && pendingEntries[id]?.upstream) && (noBlob || !v?.upstream)) {
+        patchEntry(map, id, { upstream: undefined })
+      }
     }
     // Per-report ignore. Drop a report from an id's `ignoredReports`
     // when the new blob no longer lists it. Session-only ids are left
@@ -376,6 +383,10 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // Tri-state flag — adopt both `true` and `false` (false is the
     // explicit "unflagged" tombstone, not "unset").
     if (v && typeof v.flagged === 'boolean') patch.flagged = v.flagged
+    // Adopted raw: `patchEntry` normalizes, which sanitizes the record
+    // and drops it if a hand-edited or older-peer blob left nothing
+    // meaningful — the same treatment `comment` and `fix` get here.
+    if (v && v.upstream && typeof v.upstream === 'object') patch.upstream = v.upstream
     if (Object.keys(patch).length > 0) patchEntry(map, id, patch)
     // Mutual exclusion with triage: triage and per-report ignore
     // can't coexist on a tab. Skip importing `ignoredReports` when

@@ -13,6 +13,12 @@ export const TRIAGE_LABELS = {
   deleted: 'Deleted', ignored: 'Ignored',
 }
 
+// The cause track — what the code's own maintainers did about a
+// finding, as distinct from what an app did about shipping it.
+export const UPSTREAM_LABELS = {
+  reported: 'Reported', fixed: 'Fixed', wontfix: 'Won’t fix',
+}
+
 export const COLOR_LABELS = { red: 'Red', blue: 'Blue', green: 'Green', gray: 'Gray', none: 'Unmarked' }
 
 // The producer behind a report's `source` marker, one per format the

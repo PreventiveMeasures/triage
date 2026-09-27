@@ -49,6 +49,7 @@ const HOOKS = {
       comment: entry?.comment,
       fix: entry?.fix,
       flagged: entry?.flagged === true,
+      upstream: entry?.upstream,
       ignored,
     }
   },

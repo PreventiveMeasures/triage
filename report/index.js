@@ -94,7 +94,7 @@ export { stampSecurityGroups } from './src/security.js'
 // spells the app's enumerations with, for the viewer's surfaces that
 // describe the same things in prose.
 export { writeMarkdown } from './src/write-md.js'
-export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, severityLabel } from './src/labels.js'
+export { COLOR_LABELS, SEVERITY_LABELS, SOURCE_LABELS, TRIAGE_LABELS, UPSTREAM_LABELS, severityLabel } from './src/labels.js'
 
 // Reading a finding: what a finding IS, asked of one. The card, the
 // row, the filters and the writer all ask the same questions of the

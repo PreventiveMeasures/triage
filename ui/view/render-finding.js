@@ -3,8 +3,9 @@ import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, isModule, lineRange, listSegments, locationLabel, markdownLinkToken, parseCommentRefs, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
+import { UPSTREAM_LABELS } from '../../report/index.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
@@ -859,6 +860,30 @@ const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hid
 // icon height; outline by default, the `.flagged` button fills the cloth
 // + turns accent via CSS. Exported so the kanban card (render.js) and
 // the toolbar `<annotation-filter>` reuse the identical glyph.
+// The cause track's chip, beside the fix link it is the other half of:
+// that one says what THIS app did, this one what the dependency's own
+// maintainers did. Dependency findings only — for the app's own code
+// the app is the upstream, and a second button promising otherwise
+// would be a lie about who can fix it.
+export const UPSTREAM_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+  <path d="M8 13.5V4.5M8 4.5 4.5 8M8 4.5 11.5 8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M2.5 2.5h11" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+</svg>`
+
+function upstreamButtonTemplate(f, isFocus = false) {
+  if (!isModule(f.file)) return nothing
+  const up = triageEntry(f)?.upstream
+  const label = up?.state ? UPSTREAM_LABELS[up.state] : ''
+  const title = label ? `Upstream: ${label}` : 'Record upstream status (reported / fixed / won’t fix)'
+  return html`<button
+    type="button"
+    class=${classMap({ 'mark-upstream': true, 'has-upstream': Boolean(label) })}
+    ?disabled=${!canTriageFinding(f)}
+    data-tooltip=${title}
+    aria-label=${title}
+  >${UPSTREAM_ICON}${isFocus ? html`<span class="mark-btn-label">${label || 'Upstream'}</span>` : nothing}</button>`
+}
+
 export const FLAG_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="flag-cloth" d="M5 1.5h6v13l-3-2.7-3 2.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
 </svg>`
@@ -956,6 +981,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${showActionLabels && !activeFix ? nothing : fixTitle} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
   const flagBtn = flagButtonTemplate(activeTab, showActionLabels)
+  const upstreamBtn = upstreamButtonTemplate(activeTab, showActionLabels)
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
@@ -1003,7 +1029,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
     : groupSt.hasConflict
     ? 'change triage state (colors mismatch — acts per-tab)'
     : (sortedTabs.length > 1 ? 'change triage state for the whole group' : 'change triage state')
-  return html`<div class="finding-actions">${reportChip}<div class="finding-action-controls"><span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}</div></div>`
+  return html`<div class="finding-actions">${reportChip}<div class="finding-action-controls"><span class="mark-action-group">${commentBtn}${fixBtn}${flagBtn}${upstreamBtn}</span><span class="mark-action-group">${copyBtn}${linkBtn}${issueBtn}${claudeBtn}</span>${picker}${triageMenuTemplate(group, menuTitle, context, groupSt, activeTab)}</div></div>`
 }
 
 // Triage menu — chevron button toggling a popover with the Fixed /

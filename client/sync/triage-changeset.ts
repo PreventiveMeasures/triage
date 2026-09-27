@@ -5,7 +5,7 @@
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
 import type { TriageEntry } from './host.ts'
-import { normalizeEntry } from '../triage-entry.ts'
+import { normalizeEntry, upstreamEqual } from '../triage-entry.ts'
 
 export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged'
 
@@ -135,6 +135,7 @@ function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
     && (a.comment ?? '') === (b.comment ?? '')
     && (a.fix ?? '') === (b.fix ?? '')
     && a.flagged === b.flagged
+    && upstreamEqual(a.upstream, b.upstream)
     && ignoredReportsEqual(a.ignoredReports, b.ignoredReports)
 }
 
@@ -173,6 +174,18 @@ export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, re
         // Assign through a patch so TS retains each field's value type.
         Object.assign(merged, { [field]: current[field] })
       }
+    }
+    // The cause record rebases as ONE value, because that is how it is
+    // written: there is no per-field edit path for it, and the sentence
+    // it makes ("fixed in 4.17.21", with the link) is not three
+    // independent opinions. So when this client changed it, its version
+    // wins whole; otherwise the chain's stands. Compared through
+    // `upstreamEqual` and not the identity test the string fields above
+    // use — this one is an object, and two equal records are never the
+    // same object.
+    if (preserveEntry || !upstreamEqual(before.upstream, current.upstream)) {
+      if (current.upstream) merged.upstream = current.upstream
+      else delete merged.upstream
     }
     // Triage and ignoredReports are mutually exclusive. A conflicting
     // bucket/ignore choice keeps the local choice, but when both sides

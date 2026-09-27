@@ -91,6 +91,26 @@ export type TriageEntry = {
   flagged?: boolean
   ignoredReports?: string[]
   deleted?: boolean
+  // What the code's own maintainers did about the finding, as distinct
+  // from what an app did about shipping it. Only dependency findings
+  // carry one: for the app's own code the app IS the upstream, and the
+  // entry's `triage` already says everything there is to say.
+  //
+  // Global by id on purpose. A finding's id comes from the source's own
+  // bytes, so every app shipping that dependency reads this same entry
+  // — which is exactly where "superseded in 4.17.21" belongs: recorded
+  // once, seen by everyone still shipping those bytes.
+  upstream?: UpstreamEntry
+}
+
+// `since` names the first version carrying the fix — the field that
+// turns another app's copy of this finding from "no known remedy" into
+// "upgrade to 4.17.21".
+export type UpstreamState = 'reported' | 'fixed' | 'wontfix'
+export type UpstreamEntry = {
+  state?: UpstreamState
+  link?: string
+  since?: string
 }
 
 // Deepview state schema. Fields with ad-hoc / nested shapes (parsed

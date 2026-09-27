@@ -18,7 +18,7 @@
 // their last field are deleted, keeping the map free of empty shells
 // so iteration / persistence / GC only ever see meaningful ids.
 
-import type { TriageBucket, TriageEntry } from './state.ts'
+import type { TriageBucket, TriageEntry, UpstreamEntry, UpstreamState } from './state.ts'
 
 export type TriageMap = Map<string, TriageEntry>
 
@@ -29,6 +29,34 @@ export type TriagePatch = { [K in keyof TriageEntry]?: TriageEntry[K] | undefine
 
 function asBucket(v: unknown): TriageBucket | undefined {
   return v === 'inprogress' || v === 'fixed' || v === 'invalid' || v === 'deleted' ? v : undefined
+}
+
+function asUpstreamState(v: unknown): UpstreamState | undefined {
+  return v === 'reported' || v === 'fixed' || v === 'wontfix' ? v : undefined
+}
+
+// The cause record, sanitized. Trims the two free-text fields and
+// drops the record when nothing meaningful is left, so an entry never
+// carries an empty shell — the same rule every other field here
+// follows, and what lets `entryIsEmpty` stay a plain field check.
+function normalizeUpstream(v: unknown): UpstreamEntry | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const src = v as { state?: unknown, link?: unknown, since?: unknown }
+  const out: UpstreamEntry = {}
+  const state = asUpstreamState(src.state)
+  if (state) out.state = state
+  if (typeof src.link === 'string' && src.link.trim()) out.link = src.link.trim()
+  if (typeof src.since === 'string' && src.since.trim()) out.since = src.since.trim()
+  return out.state || out.link || out.since ? out : undefined
+}
+
+// Whole-value comparison. The record is written and replaced whole
+// (there is no per-field patch path for it), so this is all the
+// equality any caller needs.
+export function upstreamEqual(a: UpstreamEntry | undefined, b: UpstreamEntry | undefined): boolean {
+  return (a?.state ?? '') === (b?.state ?? '')
+    && (a?.link ?? '') === (b?.link ?? '')
+    && (a?.since ?? '') === (b?.since ?? '')
 }
 
 // The effective triage bucket, honoring the legacy `deleted: true`
@@ -42,7 +70,7 @@ export function entryIsEmpty(entry: TriageEntry | undefined): boolean {
   if (!entry) return true
   return !entry.color && !bucketOf(entry) && !entry.comment && !entry.fix
     && !(entry.ignoredReports && entry.ignoredReports.length > 0)
-    && entry.flagged === undefined
+    && entry.flagged === undefined && !entry.upstream
 }
 
 export function isReportIgnored(map: TriageMap, id: string, report: string): boolean {
@@ -68,6 +96,7 @@ export function normalizeEntry(src: unknown): TriageEntry | undefined {
   const e = src as {
     color?: unknown, triage?: unknown, comment?: unknown,
     fix?: unknown, flagged?: unknown, ignoredReports?: unknown, deleted?: unknown,
+    upstream?: unknown,
   }
   const out: TriageEntry = {}
   if (typeof e.color === 'string' && e.color) out.color = e.color
@@ -82,6 +111,8 @@ export function normalizeEntry(src: unknown): TriageEntry | undefined {
     const reports = e.ignoredReports.filter((r): r is string => typeof r === 'string' && r.length > 0)
     if (reports.length > 0) out.ignoredReports = reports
   }
+  const upstream = normalizeUpstream(e.upstream)
+  if (upstream) out.upstream = upstream
   return entryIsEmpty(out) ? undefined : out
 }
 
@@ -104,6 +135,7 @@ function entriesEqual(a: TriageEntry | undefined, b: TriageEntry | undefined): b
     && (ea.comment ?? '') === (eb.comment ?? '')
     && (ea.fix ?? '') === (eb.fix ?? '')
     && ea.flagged === eb.flagged
+    && upstreamEqual(ea.upstream, eb.upstream)
     && ignoredEqual(ea.ignoredReports, eb.ignoredReports)
 }
 
