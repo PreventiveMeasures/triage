@@ -71,12 +71,43 @@ function tables(path) {
   finally { db.close() }
 }
 
+function embedded(mode) {
+  return ['--input-type=module', '--eval', `
+    import assert from 'node:assert/strict'
+    import { Server, createServer } from 'node:http'
+    import { init } from './server.ts'
+    const httpServer = await init(${JSON.stringify(mode)})
+    assert.ok(httpServer instanceof Server)
+    assert.equal(httpServer.listening, false)
+    assert.equal(httpServer.address(), null)
+    assert.equal(httpServer.listenerCount('request'), 1)
+    assert.equal(httpServer.listenerCount('upgrade'), ${mode === 'managed' ? 0 : 1})
+    const [triageRequestListener] = httpServer.listeners('request')
+    const [triageUpgradeListener] = httpServer.listeners('upgrade')
+    const host = createServer((req, res) => {
+      res.setHeader('x-test-host', 'embedded')
+      triageRequestListener.call(httpServer, req, res)
+    })
+    if (triageUpgradeListener) host.on('upgrade', (req, socket, head) => {
+      triageUpgradeListener.call(httpServer, req, socket, head)
+    })
+    host.listen(0, '127.0.0.1', () => {
+      assert.equal(httpServer.listening, false)
+      console.log('Host: http://127.0.0.1:' + host.address().port + '/')
+    })
+  `, '--', '--mode=ignored-by-init']
+}
+
 for (const [label, args, advertised, hasE2e, hasManaged] of [
-  ['default', ['server.js'], 'e2e', true, false],
-  ['e2e', ['server.js', '--mode=e2e'], 'e2e', true, false],
-  ['managed', ['server.js', '--mode', 'managed'], 'managed', false, true],
-  ['managed-e2e', ['server.js', '--mode', 'managed-e2e'], 'managed+e2e', true, true],
-  ['e2e-managed', ['server.js', '--mode=e2e-managed'], 'e2e+managed', true, true],
+  ['default', ['cli.js'], 'e2e', true, false],
+  ['e2e', ['cli.js', '--mode=e2e'], 'e2e', true, false],
+  ['managed', ['cli.js', '--mode', 'managed'], 'managed', false, true],
+  ['managed-e2e', ['cli.js', '--mode', 'managed-e2e'], 'managed+e2e', true, true],
+  ['e2e-managed', ['cli.js', '--mode=e2e-managed'], 'e2e+managed', true, true],
+  ['embedded e2e', embedded('e2e'), 'e2e', true, false],
+  ['embedded managed', embedded('managed'), 'managed', false, true],
+  ['embedded managed-e2e', embedded('managed-e2e'), 'managed+e2e', true, true],
+  ['embedded e2e-managed', embedded('e2e-managed'), 'e2e+managed', true, true],
   ['standalone e2e', ['server-e2e/index.ts'], 'e2e', true, false],
   ['standalone managed', ['server-managed/index.ts'], 'managed', false, true],
 ]) {
@@ -93,7 +124,9 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
     }
     const server = await boot(t, args, env)
     t.after(() => rmSync(dir, { recursive: true, force: true }))
-    const info = await (await fetch(`${server.url}/api/config`)).json()
+    const configResponse = await fetch(`${server.url}/api/config`)
+    if (label.startsWith('embedded')) assert.equal(configResponse.headers.get('x-test-host'), 'embedded')
+    const info = await configResponse.json()
     assert.equal(info.mode, advertised)
     if (hasManaged) {
       assert.equal(info.managed.loginPath, '/api/oauth/github/login')
@@ -149,9 +182,9 @@ test('launcher validates arguments before opening stores; help needs no managed 
   try {
     const env = { ...environment(dir), GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: '' }
     for (const args of [['--mode', 'bad'], ['--mode'], ['--unknown']]) {
-      assert.notEqual(spawnSync(process.execPath, ['server.js', ...args], { env }).status, 0)
+      assert.notEqual(spawnSync(process.execPath, ['cli.js', ...args], { env }).status, 0)
     }
-    const help = spawnSync(process.execPath, ['server.js', '--mode=managed-e2e', '--help'], { env, encoding: 'utf8' })
+    const help = spawnSync(process.execPath, ['cli.js', '--mode=managed-e2e', '--help'], { env, encoding: 'utf8' })
     assert.equal(help.status, 0)
     assert.match(help.stdout, /managed-e2e/u)
     assert.equal(existsSync(env.DB_PATH), false)
@@ -161,12 +194,42 @@ test('launcher validates arguments before opening stores; help needs no managed 
       assert.equal(scriptHelp.status, 0, `${script} forwards arguments`)
       assert.match(scriptHelp.stdout, /DB_PATH/u)
     }
-    const sameDb = spawnSync(process.execPath, ['server.js', '--mode=managed-e2e'], {
+    const sameDb = spawnSync(process.execPath, ['cli.js', '--mode=managed-e2e'], {
       env: { ...environment(dir), MANAGED_DB_PATH: join(dir, 'e2e.db') }, encoding: 'utf8',
     })
     assert.notEqual(sameDb.status, 0)
     assert.match(sameDb.stderr, /must differ/u)
     assert.equal(existsSync(env.DB_PATH), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('server.ts does not start itself, parse arguments or open storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-import-'))
+  try {
+    const env = { ...environment(dir), GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: '' }
+    const proc = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      "import { init, start } from './server.ts'; console.log(typeof init, typeof start)", '--', '--unknown'],
+    { env, encoding: 'utf8', timeout: 5000 })
+    assert.equal(proc.status, 0, proc.stderr)
+    assert.equal(proc.stdout.trim(), 'function function')
+    const direct = spawnSync(process.execPath, ['server.ts', '--unknown'], { env, encoding: 'utf8', timeout: 5000 })
+    assert.equal(direct.status, 0, direct.stderr)
+    assert.equal(direct.stdout, '')
+    assert.equal(existsSync(env.DB_PATH), false)
+    assert.equal(existsSync(env.MANAGED_DB_PATH), false)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('init rejects unsupported modes before opening storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-invalid-mode-'))
+  try {
+    const env = environment(dir)
+    const proc = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      "import { init } from './server.ts'; await init('bad')"], { env, encoding: 'utf8', timeout: 5000 })
+    assert.equal(proc.status, 1)
+    assert.match(proc.stderr, /Unknown mode: bad/u)
+    assert.equal(existsSync(env.DB_PATH), false)
+    assert.equal(existsSync(env.MANAGED_DB_PATH), false)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
@@ -181,7 +244,7 @@ test('both combined launchers reject mixed backends and ambiguous URLs before op
         { DATABASE_URL: 'postgres://example/shared', MANAGED_DATABASE_URL: 'postgres://example/managed' },
       ]) {
         const env = { ...environment(dir), ...urls }
-        const proc = spawnSync(process.execPath, ['server.js', '--mode', mode], { env, encoding: 'utf8', timeout: 5000 })
+        const proc = spawnSync(process.execPath, ['cli.js', '--mode', mode], { env, encoding: 'utf8', timeout: 5000 })
         assert.notEqual(proc.status, 0)
         assert.match(proc.stderr, /Mixing Neon and SQLite|DATABASE_URL cannot be combined/u)
         assert.equal(existsSync(env.DB_PATH), false)

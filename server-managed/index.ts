@@ -1,6 +1,6 @@
 // Managed HTTP app and standalone boot. The combined launcher mounts this
 // same app on e2e's listener; storage, routing and cleanup stay here.
-import { createServer } from 'node:http'
+import { type Server, createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
 import { managedStorageLines } from '../server-common/storage-log.ts'
@@ -71,8 +71,7 @@ export function logManagedStartup(config: ManagedConfig, port: number, mode = 'm
   ].join('\n'))
 }
 
-export async function start(): Promise<void> {
-  const config = loadManagedConfig()
+export async function init(config = loadManagedConfig()): Promise<Server> {
   const app = await createManagedApp(config)
   const server = createServer(withReap(app.handleRequest, { managed: app.reap }, { isShuttingDown: app.isShuttingDown }))
   let closing = false
@@ -89,11 +88,18 @@ export async function start(): Promise<void> {
   process.on('SIGINT', () => { void shutdown(0) })
   process.on('SIGTERM', () => { void shutdown(0) })
 
-  server.listen(config.port, config.host, () => {
+  server.on('listening', () => {
     const address = server.address()
     const port = typeof address === 'object' && address ? address.port : config.port
     logManagedStartup(config, port)
   })
+  return server
+}
+
+export async function start(): Promise<void> {
+  const config = loadManagedConfig()
+  const server = await init(config)
+  server.listen(config.port, config.host)
 }
 
 if (import.meta.main) await start()

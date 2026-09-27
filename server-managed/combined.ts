@@ -2,13 +2,14 @@
 // transports and static UI. Managed handles its API, discovery and page HTML;
 // assets and other requests fall through to the unchanged e2e HTTP handler.
 import { resolve } from 'node:path'
+import type { Server } from 'node:http'
 import { withReap } from '../server-common/reap.ts'
 import { loadConfig } from '../server-e2e/config.ts'
 import { loadManagedConfig } from './config.ts'
 import { LOGIN_PATH } from './github-oauth.ts'
 import { createManagedApp, logManagedStartup } from './index.ts'
 
-export async function start(mode: 'managed+e2e' | 'e2e+managed'): Promise<void> {
+export async function init(mode: 'managed+e2e' | 'e2e+managed'): Promise<Server> {
   const config = loadManagedConfig({ combined: true })
   const e2eConfig = loadConfig()
   if (!e2eConfig.neonUrl && !config.neonUrl && config.dbPath !== ':memory:' && resolve(config.dbPath) === resolve(e2eConfig.dbPath)) {
@@ -37,5 +38,5 @@ export async function start(mode: 'managed+e2e' | 'e2e+managed'): Promise<void> 
     const port = typeof address === 'object' && address ? address.port : config.port
     logManagedStartup(config, port, mode)
   })
-  e2e.start()
+  return e2e.httpServer
 }
