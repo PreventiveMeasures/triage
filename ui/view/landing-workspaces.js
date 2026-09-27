@@ -9,7 +9,8 @@ import { WORKSPACE_ICON_SVG } from './icons.js'
 export function renderLandingWorkspaces(workspaces) {
   const slot = document.querySelector('#landing-workspaces')
   if (!slot) return
-  const top = workspaces.toSorted((a, b) => b.reports.length - a.reports.length
+  const top = workspaces.filter(w => w.reports.length > 0 || w.bundles?.length > 0)
+    .toSorted((a, b) => b.reports.length - a.reports.length
     || a.name.localeCompare(b.name)).slice(0, 5)
   render(top.length > 0 ? html`
     <nav class="landing-workspaces" aria-label="Workspaces">
