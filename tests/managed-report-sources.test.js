@@ -17,6 +17,7 @@ import { createReportSourcesCache } from '../server-managed/report-sources.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
+import { prepareWorkspaceImport, runWorkspaceImport } from '../client/managed/workspace-import.js'
 
 const config = {
   port: 0, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -81,17 +82,17 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
     return db.getReport(id)
   }
   const report = await seed()
-  function send(id = report.id, role = 'admin', method = 'GET', { path, body } = {}) {
+  function send(id = report.id, role = 'admin', method = 'GET', { path, body, headers = {} } = {}) {
     return new Promise((resolve, reject) => {
-      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: path ?? `/api/reports/${id}/sources${role === 'view' ? `?team=${team}` : ''}`, method, headers: users[role] ? { cookie: users[role].cookie, 'x-csrf-token': users[role].csrfToken } : {} }, res => {
+      const req = request({ hostname: '127.0.0.1', port: server.address().port, path: path ?? `/api/reports/${id}/sources${role === 'view' ? `?team=${team}` : ''}`, method, headers: { ...headers, ...(users[role] ? { cookie: users[role].cookie, 'x-csrf-token': users[role].csrfToken } : {}) } }, res => {
         const chunks = []
         res.on('data', chunk => chunks.push(chunk))
         res.on('end', () => { const bytesOut = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: res.headers, bytes: bytesOut, json: () => JSON.parse(res.headers['content-encoding'] === 'gzip' ? gunzipSync(bytesOut) : bytesOut) }) })
       })
-      req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body))
+      req.on('error', reject); req.end(body === undefined || Buffer.isBuffer(body) ? body : JSON.stringify(body))
     })
   }
-  return { fixture, cacheStorage, db, reports, bundles, cache, bundle, report, seed, send, users, team, cacheDir: join(dir, 'cache') }
+  return { fixture, cacheStorage, db, reports, bundles, cache, bundle, bundleBytes: bytes, report, seed, send, users, team, cacheDir: join(dir, 'cache') }
 }
 
 async function cachedFiles(h) {
@@ -490,5 +491,40 @@ for (const backend of ['disk', 'vercel']) {
     assert.equal(result.status, 404)
     assert.equal(stream.destroyed, true)
     assert.equal(result.headers['content-encoding'], undefined)
+  })
+}
+
+for (const [repoId, includeBytes] of [[1, true], [1, false], [null, true], [null, false]]) {
+  test(`workspace import makes ${includeBytes ? 'deduplicated' : 'referenced'} bundles in ${repoId ?? 'no'} repository readable to its members`, async t => {
+    const h = await setupBackend(t)
+    await h.db.setBundleRepo(h.bundle.id, repoId)
+    await h.db.selectRepo({ repoId: 2, fullName: 'org/imported', private: true, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: h.users.admin.userId }, Date.now())
+    await h.db.removeTeamMember(h.team, h.users.view.userId)
+    const content = JSON.stringify({ repo: { github: 'org/imported' }, bundleHashes: [h.bundle.integrity], findings: [{ id: 'imported-finding', file: 'src/main.js' }] })
+    const data = { workspace: { name: 'Imported workspace' }, reports: [{ name: 'imported.json', content }], bundles: [h.bundle.integrity],
+      bundleBlobs: includeBytes ? [{ name: h.bundle.filename, integrity: h.bundle.integrity, data: h.bundleBytes.toString('base64') }] : [],
+    }
+    const plan = await prepareWorkspaceImport(data, [{ repoId: 2, fullName: 'org/imported' }])
+    const api = { async send(path, body, headers) {
+      const result = await h.send(null, 'admin', body === undefined ? 'GET' : 'POST', { path, headers,
+        body: body instanceof File ? Buffer.from(await body.arrayBuffer()) : body,
+      })
+      assert.ok(result.status >= 200 && result.status < 300, `${path}: ${result.bytes}`)
+      return result.json()
+    } }
+    const imported = await runWorkspaceImport(plan, { api, session: { id: h.users.admin.userId, role: 'admin', csrfToken: h.users.admin.csrfToken }, defaultRepo: 2, includeTriage: false })
+    assert.equal((await h.db.listBundles()).length, 1, 'identical bytes retain one stored bundle')
+    assert.equal((await h.db.getBundle(h.bundle.id)).repoId, repoId ?? 2, 'assigned bundles retain their repository; unassigned bundles use the chosen repository')
+    const reportId = plan.reports[0].uploaded.id
+    assert.equal((await h.db.getReport(reportId)).bundleId, h.bundle.id)
+    const path = `/api/reports/${reportId}/sources?team=${imported.id}`
+    assert.equal((await h.send(reportId, 'view', 'GET', { path })).status, 404, 'import does not grant outsiders access')
+    await h.db.setTeamMember(imported.id, h.users.view.userId, { security: true, dependencies: true })
+    const sources = await h.send(reportId, 'view', 'GET', { path })
+    assert.equal(sources.status, 200, 'ordinary team members receive source files, not the inaccessible-bundle 204')
+    assert.deepEqual(sources.json().files, [['src/main.js', files['src/main.js']]])
+    if (repoId !== null) assert.equal(await h.db.userCanReadBundle(h.users.manage.userId, h.bundle.id), true, 'existing team access is preserved')
+    await h.db.removeTeamMember(imported.id, h.users.view.userId)
+    assert.equal((await h.send(reportId, 'view', 'GET', { path })).status, 404, 'revocation still closes access')
   })
 }

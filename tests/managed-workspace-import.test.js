@@ -23,7 +23,7 @@ function serverMock() {
     if (path.endsWith('/import-triage')) return onTriage(body)
     if (path === '/api/admin/teams') return { id: 'team', name: body.name }
     if (path === '/api/admin/reports') return { id: `report-${calls.length}` }
-    if (path === '/api/admin/bundles') return { id: 'bundle' }
+    if (path === '/api/admin/bundles') return body ? { id: 'bundle' } : { bundles: [{ id: 'bundle', repoId: 7 }] }
     if (path.endsWith('/set-visible') && failPublish) throw new Error('temporarily unavailable')
     return { ok: true }
   } }
@@ -204,4 +204,24 @@ test('oversized local triage can be skipped; importing it fails before creating 
   assert.equal(mock.calls.length, 0)
   await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: false })
   assert.equal(plan.team.id, 'team')
+})
+
+test('a missing bundle catalog row stops publication and a retry reuses its completed upload', async () => {
+  const plan = await prepareWorkspaceImport(exported(), repos)
+  plan.bundles = [{ name: 'bundle.map', bytes: new Uint8Array([1]) }]
+  const mock = serverMock()
+  const original = mock.api.send
+  let missing = true
+  mock.api.send = (path, body, headers) => {
+    if (path === '/api/admin/bundles' && body === undefined) return { bundles: missing ? [] : [{ id: 'bundle', repoId: 9 }] }
+    return original(path, body, headers)
+  }
+  const options = { api: mock.api, session, defaultRepo: 7, includeTriage: false }
+  await assert.rejects(runWorkspaceImport(plan, options), /verify.*source bundles/u)
+  assert.equal(mock.calls.some(call => call.path.endsWith('/set-visible')), false)
+  missing = false
+  await runWorkspaceImport(plan, options)
+  assert.equal(mock.calls.filter(call => call.path === '/api/admin/bundles').length, 1)
+  const grants = mock.calls.filter(call => call.path === '/api/admin/teams/set-repo').map(call => call.body)
+  assert.deepEqual(grants, [{ teamId: 'team', repoId: 9, path: '' }, { teamId: 'team', repoId: 7, path: 'src' }])
 })

@@ -142,6 +142,25 @@ async function importReportTriage(plan, report, { api, resolveConflicts, signal 
   }
 }
 
+// Deduplication preserves the stored bundle's repository, ignoring the upload's
+// repository header. Resolve access from the stored rows, including references
+// whose bytes were omitted from the export. Never reassign an attached bundle.
+async function grantWorkspaceBundles(plan, defaultRepo, api, step) {
+  if (plan.bundles.length === 0 && plan.references.length === 0) return
+  const { bundles } = await api.send('/api/admin/bundles')
+  const uploadedIds = new Set(plan.bundles.map(bundle => bundle.uploaded.id))
+  if ([...uploadedIds].some(id => !bundles.some(bundle => bundle.id === id))) throw new Error('Could not verify the uploaded source bundles. Retry the import.')
+  const references = new Set(plan.references)
+  for (const bundle of bundles) {
+    if (!uploadedIds.has(bundle.id) && !references.has(bundle.integrity)) continue
+    const repoId = bundle.repoId ?? defaultRepo
+    if (bundle.repoId == null) {
+      await step(`bundle-repo:${bundle.id}`, () => api.send('/api/admin/bundles/set-repo', { bundleId: bundle.id, repoId }))
+    }
+    await step(`repo:${repoId}:`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId, path: '' }))
+  }
+}
+
 export async function runWorkspaceImport(plan, { api, session, defaultRepo, includeTriage, resolveConflicts, signal, progress = () => {} }) {
   if (session?.role !== 'admin' || !session.csrfToken) throw new Error('An administrator session is required.')
   if (!plan.name.trim() || plan.name.trim().length > 100) throw new Error('Enter a team name of up to 100 characters.')
@@ -155,7 +174,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
     if (report.embedded && report.repoId == null) throw new Error(`Connect ${report.embedded} in Repositories before importing ${report.name}.`)
     if ((report.repoId ?? defaultRepo) == null) throw new Error(`Choose a repository for ${report.name}.`)
   }
-  if (plan.bundles.length > 0 && defaultRepo == null) throw new Error('Choose a repository for the source bundles.')
+  if ((plan.bundles.length > 0 || plan.references.length > 0) && defaultRepo == null) throw new Error('Choose a repository for the source bundles.')
   const check = () => signal?.throwIfAborted()
   const step = async (key, work) => {
     check()
@@ -176,6 +195,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
       })
     }
   }
+  await grantWorkspaceBundles(plan, defaultRepo, api, step)
   for (const report of plan.reports) {
     check(); progress(`Importing ${report.name}…`)
     const repoId = report.repoId ?? defaultRepo
@@ -188,6 +208,5 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
     if (includeTriage) await importReportTriage(plan, report, { api, resolveConflicts, signal })
     await step(`publish:${report.uploaded.id}`, () => api.send('/api/admin/reports/set-visible', { reportId: report.uploaded.id, visible: true }))
   }
-  if (plan.bundles.length > 0 && defaultRepo != null) await step(`repo:${defaultRepo}:`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId: defaultRepo, path: '' }))
   return plan.team
 }

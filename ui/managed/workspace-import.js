@@ -63,8 +63,8 @@ export function registerWorkspaceImport(ManagedPage, request) {
       try {
         await this._loadCollection('workspace-import:catalog', 'import options', async signal => {
           const api = workspaceImportApi(request, this.session, signal)
-          const [reports, teams] = await Promise.all([api.send('/api/admin/reports'), api.send('/api/admin/teams')])
-          return { repos: reports.repos, teams: teams.teams }
+          const [reports, teams, bundles] = await Promise.all([api.send('/api/admin/reports'), api.send('/api/admin/teams'), api.send('/api/admin/bundles')])
+          return { repos: reports.repos, teams: teams.teams, bundles: bundles.bundles }
         }, data => { this._catalog = data })
       } catch (err) { this._error = String(err?.message ?? err) }
     }
@@ -153,6 +153,8 @@ export function registerWorkspaceImport(ManagedPage, request) {
       if (this._role !== 'admin') return nothing
       const plan = this._plan
       const triageCount = plan ? Object.keys(plan.triage).length : 0
+      const bundleHashes = new Set([...(plan?.references ?? []), ...(plan?.bundles.map(bundle => bundle.integrity) ?? [])])
+      const reusedBundles = (this._catalog?.bundles ?? []).filter(bundle => bundleHashes.has(bundle.integrity))
       const missing = plan?.references.filter(hash => !plan.bundles.some(bundle => bundle.integrity === hash)).length ?? 0
       return html`<div class="wrap" @dragleave=${() => { this._drag = false }}>${adminNavigation('manage-import', this._role, this.allowShare)}
         <h1>Import workspace</h1><p class="intro">Create a new team from a workspace export or a workspace stored in this browser.</p>
@@ -169,10 +171,12 @@ export function registerWorkspaceImport(ManagedPage, request) {
           ${plan.team ? html`<p>Team ${plan.team.name} has been created. Retry continues its remaining import steps.</p>` : nothing}
           <label for="import-team">New team name</label><input id="import-team" maxlength="100" .value=${plan.name} ?disabled=${this._busy || !!plan.team} @input=${e => { plan.name = e.target.value; this.requestUpdate() }}>
           <p>${plan.reports.length} reports / links · ${plan.bundles.length} source bundles · ${triageCount} triaged findings</p>
-          <label for="import-repo">Repository for files without a repository and source bundles</label>
+          <label for="import-repo">Repository for files and source bundles without an existing repository</label>
           <select id="import-repo" .value=${String(this._repo ?? '')} ?disabled=${this._busy || !!plan.team} @change=${e => { this._repo = e.target.value ? Number(e.target.value) : null }}><option value="" ?selected=${this._repo == null}>Choose a repository…</option>${(this._catalog?.repos ?? []).map(repo => html`<option value=${String(repo.repoId)} ?selected=${this._repo === repo.repoId}>${repo.fullName}</option>`)}</select>
           <p>Declared report repositories and directories are preserved. The new team receives those repository paths; other published reports in the same paths are also visible to that team.</p>
           <ul>${plan.reports.map(report => html`<li>${report.name}<span>${report.github ?? 'Uses selected repository'}${report.embedded && report.repoId == null ? ' — connect this repository first' : ''}</span></li>`)}</ul>
+          ${reusedBundles.length > 0 ? html`<p>Existing source bundles keep their repositories. The new team also receives access to those repositories. Unassigned bundles use the selected repository.</p>
+            <ul>${reusedBundles.map(bundle => html`<li>${bundle.filename}<span>${bundle.repoFullName ?? 'Uses selected repository'}</span></li>`)}</ul>` : nothing}
           ${missing ? html`<p>${missing} referenced source bundles have no bytes in this export. Reports can use matching bundles already on the server.</p>` : nothing}
           ${triageCount ? html`<fieldset ?disabled=${this._busy || !!plan.team}><legend>Import triage?</legend>
             <label><input type="radio" name="import-triage" value="include" ?checked=${this._triage === 'include'} @change=${() => { this._triage = 'include' }}> Include triage and comments</label>
