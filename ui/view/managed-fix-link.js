@@ -30,10 +30,12 @@ class ManagedFixLink extends HoverPreviewElement {
     .link-icon { flex: none; line-height: 1; }
     .link-icon svg { display: block; }
     .link-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; line-height: 1.5; }
+    .link-icon.unavailable + .link-title { color: var(--accent); }
     .ref { min-width: 0; max-width: 32%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .74rem; }
     .link-status { flex: none; padding: .15rem .4rem; border-radius: 999px; background: color-mix(in srgb, currentColor 10%, transparent); font-size: .7rem; font-weight: 500; line-height: 1.3; }
     :host([compact]) { display: inline-flex; }
     :host([compact]) .fix-link { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+    :host([compact]) .fix-link svg { width: 14px; height: 14px; }
     :host([compact]) .status { margin: 0; font-size: 1rem; line-height: 1; }
     .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .preview-ref { display: inline-flex; align-items: center; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }

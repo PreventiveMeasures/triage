@@ -479,6 +479,7 @@
   &:hover { color: var(--accent); }
   & svg { width: 12px; height: 12px; }
 }
+.kanban-card .kanban-fix-link { align-self: flex-end; }
 /* Flag indicator stacked under the severity badge — display-only on the
    compact card (toggling lives in the detail popover's finding-card).
    Rendered a touch larger than the 11px base glyph so it reads clearly
