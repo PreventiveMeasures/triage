@@ -79,6 +79,36 @@ test('public sharing is opt-in, requires team management and CSRF; the token is 
   assert.equal((await h.request('/api/teams/team/reports', { token })).status, 401)
 })
 
+test('disabling sharing blocks every public route even when valid links remain in the database', async t => {
+  const h = await fixture(t), token = await h.mint('whole')
+  assert.equal((await h.request('/api/teams/whole/shared', { token })).status, 200)
+  const getShare = h.db.getWorkspaceShare
+  h.db.getWorkspaceShare = () => { assert.fail('Disabled sharing looked up a stored token') }
+  for (const enabled of [false, undefined]) {
+    h.config.allowShare = enabled
+    assert.equal((await h.request('/api/config')).body.managed.allowShare, undefined)
+    for (const method of ['POST', 'DELETE']) {
+      assert.equal((await h.request('/api/teams/whole/share', { role: 'manage', method })).status, 404)
+    }
+    for (const path of ['/api/teams/whole/shared', '/api/teams/whole/reports',
+      '/api/reports/visible/triage', '/api/reports/visible/triage/history?finding=visible-finding',
+      '/api/reports/visible/comments', '/api/reports/visible/sources',
+      '/api/bundles/bundle/metadata', '/api/bundles/bundle/contents', '/api/bundles/bundle/download',
+      '/api/bundles/bundle/advisories', '/api/auth/session', '/api/admin/users', '/api/future-route']) {
+      for (const method of ['GET', 'HEAD']) {
+        for (const role of [undefined, 'admin']) {
+          assert.equal((await h.request(path, { token, role, method })).status, 401, path)
+        }
+      }
+    }
+  }
+  assert.deepEqual(h.reads, [], 'disabled links cannot read any blobs')
+  h.db.getWorkspaceShare = getShare
+  assert.ok(await h.db.getWorkspaceShare(hashToken(token)), 'the link still exists in the database')
+  h.config.allowShare = true
+  assert.equal((await h.request('/api/teams/whole/shared', { token })).status, 200)
+})
+
 test('an anonymous token sees one published workspace, its annotations and no global endpoints', async t => {
   const h = await fixture(t), token = await h.mint()
   const bootstrap = await h.request('/api/teams/team/shared', { token })

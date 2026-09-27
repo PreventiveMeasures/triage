@@ -48,7 +48,8 @@ deployments retain the E2E service's separate authentication and permissions.
 
 Set `DEEPVIEW_ALLOW_SHARE=1` to let a manager or administrator share a team
 they belong to using the sidebar's **Share public link** button. Sharing is
-disabled for every other value. The dialog creates a read-only link and can
+disabled when unset or set to any other value, including for existing links in
+the database. The dialog creates a read-only link and can
 revoke all public links for that workspace. Anyone holding a link can open it
 without GitHub sign-in, including on combined managed + E2E deployments.
 
@@ -65,7 +66,7 @@ from sessions. They persist across restarts and issuer logout, and stop working
 when revoked, sharing is disabled, the team is deleted, or the issuer no longer
 has a manager/admin role and membership in that team. Reads recheck the current
 scope after slow storage or upstream work. Turning the flag off does not delete
-links; revoke them before re-enabling sharing if they should remain invalid.
+links; re-enabling sharing makes any unrevoked links usable again.
 
 `POST /api/teams/:id/share` creates a link; `DELETE` revokes the team's links.
 Both require an authenticated team manager, same-origin access and CSRF. Public
