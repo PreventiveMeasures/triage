@@ -426,7 +426,6 @@ sidebar-view-button[hidden] { display: none !important; }
   width: 100%; box-sizing: border-box;
   background: none; border: 0;
   padding: .2rem .3rem .2rem 1.3rem;
-  color: var(--muted);
   font-family: inherit; font-size: .78rem;
   text-align: left;
 }
