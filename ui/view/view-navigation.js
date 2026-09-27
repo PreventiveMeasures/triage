@@ -1,4 +1,4 @@
-// Source downloads belong to one active view. Abort the transport as soon as
+// Source downloads and the team feed belong to one active view. Abort as soon as
 // navigation starts, including while the next page is still loading.
 let generation = 0
 let controller = new AbortController()

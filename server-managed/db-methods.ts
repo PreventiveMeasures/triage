@@ -351,6 +351,8 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // stamp nor the trail. Every change also appends to managed_finding_triage_event;
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
+  // A content-free fingerprint of current annotations, read in one snapshot.
+  getAnnotationRevision(findingIds: readonly string[]): Promise<string>
   setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
   setTriageEntries(entries: readonly (readonly [string, TriageEntryPatch | null])[], updatedBy: string | null, updatedByLogin: string | null, now: number, reportId?: string): Promise<void>
   listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]>
@@ -624,6 +626,15 @@ function prepareStatements(db: ManagedSql) {
         WHERE t.finding_id IN (SELECT value FROM json_each(?))
         ORDER BY t.finding_id ASC`,
     ),
+    annotationTriageRevisionStmt: db.prepare(`
+      SELECT t.finding_id AS id,
+        (SELECT e.batch_id FROM managed_finding_triage_event e
+          WHERE e.finding_id = t.finding_id ORDER BY e.seq DESC LIMIT 1) AS revision
+      FROM managed_finding_triage t WHERE t.finding_id IN (SELECT value FROM json_each(?))
+      ORDER BY t.finding_id`),
+    annotationCommentRevisionStmt: db.prepare(`
+      SELECT id, version FROM managed_finding_comment
+      WHERE finding_id IN (SELECT value FROM json_each(?)) ORDER BY id`),
     insertBundleStmt: db.prepare(
       `INSERT INTO managed_bundle (id, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, uploaded_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -962,6 +973,16 @@ function triageMethods( stmts: ReturnType<typeof prepareStatements>, historyLimi
     if (historyLimit > 0) await trimTriageEventsStmt.run(findingId, findingId, historyLimit)
   }
   return {
+    async getAnnotationRevision(findingIds: readonly string[]): Promise<string> {
+      if (findingIds.length === 0) return '[]'
+      const ids = JSON.stringify(findingIds)
+      // Batch UUIDs survive history trimming and distinguish same-timestamp
+      // writes, even if SQLite reuses a sequence after an annotation purge.
+      return JSON.stringify([
+        await stmts.annotationTriageRevisionStmt.all(ids),
+        await stmts.annotationCommentRevisionStmt.all(ids),
+      ])
+    },
     async deleteTriage(findingIds: readonly string[]): Promise<number> {
       if (findingIds.length === 0) return 0
       const ids = JSON.stringify(findingIds)

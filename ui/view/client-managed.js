@@ -51,16 +51,16 @@ export async function fetchReports(ids) {
   return (await loadManagedBundle()).fetchReports(ids)
 }
 
-export async function fetchReportTriage(id, teamId = state.currentManagedTeam) {
-  return (await loadManagedBundle()).fetchReportTriage(id, teamId)
+export async function fetchReportTriage(id, teamId = state.currentManagedTeam, options) {
+  return (await loadManagedBundle()).fetchReportTriage(id, teamId, options)
 }
 
 export async function fetchFixes(teamId, signal) {
   return (await loadManagedBundle()).fetchFixes(teamId, signal)
 }
 
-export async function fetchReportComments(id, teamId = state.currentManagedTeam) {
-  return (await loadManagedBundle()).fetchReportComments(id, teamId)
+export async function fetchReportComments(id, teamId = state.currentManagedTeam, options) {
+  return (await loadManagedBundle()).fetchReportComments(id, teamId, options)
 }
 
 export async function saveReportComment(reportId, entry, csrfToken, teamId = state.currentManagedTeam) {
@@ -93,6 +93,10 @@ export async function fetchBundleContents(id, options) {
 }
 
 export async function fetchTeamReports(teamId) { return (await loadManagedBundle()).fetchTeamReports(teamId) }
+
+export async function watchTeamFeed(teamId, options) {
+  return (await loadManagedBundle()).watchTeamFeed(teamId, options)
+}
 
 export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '') {
   return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId, reason)

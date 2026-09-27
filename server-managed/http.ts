@@ -10,6 +10,7 @@
 //   GET  /api/teams              → the current user's teams + their reports and bundles | 401
 //   GET  /api/teams/<id>/fixes → PR/issue metadata from visible findings' stored Fix links
 //   GET  /api/teams/<id>/reports → all reports and links filtered through this team | 401/404
+//   GET  /api/teams/<id>/feed    → SSE notifications for visible triage and comments | 401/404
 //   GET  /api/reports/<id>       → admin/manager report preview | 401/403/404
 //   POST /api/reports/query      → admin/manager batch preview, with repository metadata | 400/401/403/404/503
 //   GET  /api/reports/<id>/triage → triage entries (by finding id, shared across reports) for a viewable report's findings | 401/404
@@ -82,6 +83,7 @@ import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { sendJson, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
+import { serveTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 
@@ -1852,6 +1854,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'GET') { await handleGetBundle(req, res, deps, cookie, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
+    }
+    const teamFeed = /^\/api\/teams\/([^/]+)\/feed$/u.exec(path)
+    if (teamFeed) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readWorkspaceSession(res, deps, cookie)
+      if (!s) return
+      const snapshot = await teamSnapshot(db, s.session.id, teamFeed[1]!)
+      await serveTeamFeed(res, deps, snapshot, () => recheckTeam(db, s.session.id, snapshot)); return
     }
     const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
     if (teamFixes) {

@@ -1,4 +1,5 @@
-// Vercel Node function: no listener, signal handlers, timers or detached work.
+// Vercel Node function: no listener, signal handlers or detached work. Feed
+// timers live only inside their awaited, bounded streaming request.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createManagedApp } from '../server-managed/index.ts'
 import { loadManagedConfig } from '../server-managed/config.ts'

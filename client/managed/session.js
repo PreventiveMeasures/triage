@@ -142,8 +142,8 @@ export function teamQuery(teamId) { return teamId ? `?team=${encodeURIComponent(
 // server-side to the findings this viewer may see; null on any failure / no
 // access. `ignoredReports` never rides this wire — the per-report ignore stays
 // a client-local concept.
-export async function fetchReportTriage(id, teamId) {
-  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/triage${teamQuery(teamId)}`)
+export async function fetchReportTriage(id, teamId, options) {
+  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/triage${teamQuery(teamId)}`, null, options)
   const entries = body?.entries
   return entries != null && typeof entries === 'object' && !Array.isArray(entries) ? entries : null
 }
@@ -154,8 +154,8 @@ export async function fetchFixes(teamId, signal) {
   return Array.isArray(body?.fixes) ? body.fixes : null
 }
 
-export async function fetchReportComments(id, teamId) {
-  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/comments${teamQuery(teamId)}`)
+export async function fetchReportComments(id, teamId, options) {
+  const body = await getJson(`/api/reports/${encodeURIComponent(id)}/comments${teamQuery(teamId)}`, null, options)
   return Array.isArray(body?.comments) ? body.comments : null
 }
 

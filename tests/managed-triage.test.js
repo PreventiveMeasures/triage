@@ -477,3 +477,51 @@ test('a rejected Fix edit does not hide a later successful change carried by a c
   await drain()
   assert.deepEqual(invalidations, ['team', 'team'], 'later non-Fix changes do not invalidate')
 })
+
+const { refreshManagedReportTriage } = await import('../ui/view/managed-triage.js')
+test('feed refresh adopts remote changes and purges, preserves ignored reports, and does not echo POSTs', async () => {
+  state.currentManagedTeam = 'team'
+  serverEntries = { B: { x: { color: 'red' }, y: { triage: 'fixed' } } }
+  await open('B', ['x', 'y'])
+  state.triage.set('x', { color: 'red', ignoredReports: ['old.json'] })
+  serverEntries = { B: { x: { color: 'blue', fix: 'https://github.com/org/repo/pull/1' } } }
+  assert.equal(await refreshManagedReportTriage('B'), true)
+  assert.equal(state.triage.get('x').color, 'blue')
+  assert.deepEqual(state.triage.get('x').ignoredReports, ['old.json'])
+  assert.equal(state.triage.get('y'), undefined)
+  await drain()
+  assert.deepEqual(pushes(), [])
+  assert.deepEqual(invalidations, ['team'])
+})
+
+test('feed refresh preserves edits made or posted while its GET is pending', async () => {
+  await open('B', ['x'])
+  const response = Promise.withResolvers()
+  serverEntries = () => response.promise
+  const refresh = refreshManagedReportTriage('B')
+  await settle()
+  await edit('x', { color: 'red' })
+  await drain()
+  response.resolve({ x: { color: 'blue' } })
+  assert.equal(await refresh, true)
+  assert.equal(state.triage.get('x').color, 'red')
+  assert.equal(pushes().length, 1)
+})
+
+test('feed refresh preserves failed pending writes and rejects responses after navigation', async () => {
+  await open('B', ['x'])
+  pushStatus = 503
+  await edit('x', { color: 'red' })
+  serverEntries = { B: { x: { color: 'blue' } } }
+  await refreshManagedReportTriage('B')
+  assert.equal(state.triage.get('x').color, 'red')
+  const response = Promise.withResolvers()
+  serverEntries = () => response.promise
+  const controller = new AbortController()
+  const refresh = refreshManagedReportTriage('B', { signal: controller.signal })
+  await settle()
+  controller.abort()
+  response.resolve({ x: { color: 'green' } })
+  assert.equal(await refresh, false)
+  assert.equal(state.triage.get('x').color, 'red')
+})
