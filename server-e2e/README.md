@@ -52,6 +52,8 @@ listener. Each initialization opens its own storage handles and starts
 maintenance without binding a port or installing process handlers. The root
 `start()` is called only by `cli.js`; standalone launchers own signals and exit
 codes. Embedded hosts receive server errors through the server's `error` event.
+Invalid configuration rejects `init(mode)` so the host can correct it and retry;
+Neon configuration and driver checks run before opening storage.
 
 In every mode, await `httpServer[Symbol.asyncDispose]()` on teardown. It closes
 live WS/SSE connections, drains tracked work, stops maintenance and pubsub, and

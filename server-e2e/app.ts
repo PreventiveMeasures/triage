@@ -182,46 +182,78 @@ export async function createE2eApp(config = loadConfig()) {
   // branch (not a ternary) so the SQLite path keeps its `SqliteHandle`
   // narrowing — `sqliteHandle.db` is a non-optional `DatabaseSync` that
   // `openObjstore` accepts without a non-null assertion.
+  // Validate the Neon pubsub driver before opening storage. Creating the bus
+  // does not connect it; start() runs once handlers and teardown are installed.
+  let pubsub: PubSub = createNoopPubSub()
   let handle: Handle
   let objstoreHandle: ObjstoreHandle
   if (NEON_URL) {
     if (!BLOB_TOKEN) {
-      console.error('DATABASE_URL or E2E_DATABASE_URL is set but BLOB_READ_WRITE_TOKEN is not.')
-      console.error('The Neon DB plane requires the Vercel Blob byte plane (local-FS bytes cannot back a multi-replica deployment).')
-      console.error('Set BLOB_READ_WRITE_TOKEN to your Vercel Blob R/W token, or unset the e2e database URL to fall back to SQLite + local FS.')
-      process.exit(1)
+      throw new Error([
+        'DATABASE_URL or E2E_DATABASE_URL is set but BLOB_READ_WRITE_TOKEN is not.',
+        'The Neon DB plane requires the Vercel Blob byte plane (local-FS bytes cannot back a multi-replica deployment).',
+        'Set BLOB_READ_WRITE_TOKEN to your Vercel Blob R/W token, or unset the e2e database URL to fall back to SQLite + local FS.',
+      ].join('\n'))
     }
     if (!TOKEN_SECRET) {
-      console.error('DATABASE_URL or E2E_DATABASE_URL is set but OBJSTORE_TOKEN_SECRET is not.')
-      console.error('Multi-replica deployments need a shared HMAC secret so REST bearer tokens minted on one replica validate on any other.')
-      console.error('Generate one with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'')
-      process.exit(1)
+      throw new Error([
+        'DATABASE_URL or E2E_DATABASE_URL is set but OBJSTORE_TOKEN_SECRET is not.',
+        'Multi-replica deployments need a shared HMAC secret so REST bearer tokens minted on one replica validate on any other.',
+        'Generate one with: node -e \'console.log(require("crypto").randomBytes(32).toString("base64"))\'',
+      ].join('\n'))
     }
+    // Multi-replica deployments behind a load balancer / TLS terminator
+    // (the typical Vercel + Neon shape) need TRUST_PROXY=1 to honour
+    // X-Forwarded-Host when computing the same-origin gate's expected
+    // origin. Otherwise the gate derives the origin from the internal
+    // container hostname and rejects every browser request as a
+    // cross-origin attempt — silently from the operator's perspective
+    // until users report 403s. Fail fast (parallels the
+    // BLOB_READ_WRITE_TOKEN / OBJSTORE_TOKEN_SECRET checks above) so
+    // a misconfigured deploy doesn't ship a 100%-403 fleet. An
+    // operator who genuinely terminates TLS in the container without
+    // X-Forwarded-* (rare) can set `TRUST_PROXY=0` to acknowledge.
+    if (!TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !== '0' && TRUST_PROXY_ENV !== 'false') {
+      throw new Error([
+        `DATABASE_URL or E2E_DATABASE_URL is set and HOST=${HOST} is not loopback, but TRUST_PROXY is not enabled.`,
+        'Browser requests through a load balancer / TLS terminator will be rejected by the same-origin gate (all 403).',
+        'Set TRUST_PROXY=1 to honour X-Forwarded-Host / X-Forwarded-Proto from the upstream proxy.',
+        'Set TRUST_PROXY=0 if you really terminate TLS in the container without X-Forwarded-* headers (no proxy).',
+      ].join('\n'))
+    }
+    // Dynamic import: the Client export lives in the same optional peer
+    // dep as the HTTP `neon()` callable (see ./neon-driver.ts), but the
+    // dep itself is only present on a Neon-mode deploy. The wrapper path
+    // also lets tests swap in a PGlite-backed shim (`tests/pubsub.test.js`).
+    const mod = (await import('./neon-driver.ts')) as unknown as { Client?: NeonClientCtor }
+    if (!mod.Client) {
+      throw new Error([
+        'DATABASE_URL or E2E_DATABASE_URL is set but the @neondatabase/serverless Client export is not available.',
+        'Cross-instance broadcasts require the WebSocket-based Client (the HTTP `neon()` callable cannot LISTEN).',
+        'Reinstall the peer dep: pnpm add @neondatabase/serverless',
+      ].join('\n'))
+    }
+    const NeonClientImpl = mod.Client
+    pubsub = createNeonPubSub({
+      newClient: () => new NeonClientImpl(NEON_URL),
+      debug: DEBUG,
+    })
     handle = await openNeonDb(NEON_URL)
-    const blob = await openVercelBlobBackend({ token: BLOB_TOKEN })
-    objstoreHandle = await openNeonObjstore(NEON_URL, blob)
+    try {
+      const blob = await openVercelBlobBackend({ token: BLOB_TOKEN })
+      objstoreHandle = await openNeonObjstore(NEON_URL, blob)
+    } catch (err) {
+      await handle.close()
+      throw err
+    }
   } else {
     const sqliteHandle = openDb(DB_PATH)
     handle = sqliteHandle
-    objstoreHandle = openObjstore(sqliteHandle.db, OBJSTORE_DIR)
-  }
-  // Multi-replica deployments behind a load balancer / TLS terminator
-  // (the typical Vercel + Neon shape) need TRUST_PROXY=1 to honour
-  // X-Forwarded-Host when computing the same-origin gate's expected
-  // origin. Otherwise the gate derives the origin from the internal
-  // container hostname and rejects every browser request as a
-  // cross-origin attempt — silently from the operator's perspective
-  // until users report 403s. Fail fast (parallels the
-  // BLOB_READ_WRITE_TOKEN / OBJSTORE_TOKEN_SECRET checks above) so
-  // a misconfigured deploy doesn't ship a 100%-403 fleet. An
-  // operator who genuinely terminates TLS in the container without
-  // X-Forwarded-* (rare) can set `TRUST_PROXY=0` to acknowledge.
-  if (NEON_URL && !TRUST_PROXY && !LOOPBACK_HOSTS.has(HOST) && TRUST_PROXY_ENV !== '0' && TRUST_PROXY_ENV !== 'false') {
-    console.error(`DATABASE_URL or E2E_DATABASE_URL is set and HOST=${HOST} is not loopback, but TRUST_PROXY is not enabled.`)
-    console.error('Browser requests through a load balancer / TLS terminator will be rejected by the same-origin gate (all 403).')
-    console.error('Set TRUST_PROXY=1 to honour X-Forwarded-Host / X-Forwarded-Proto from the upstream proxy.')
-    console.error('Set TRUST_PROXY=0 if you really terminate TLS in the container without X-Forwarded-* headers (no proxy).')
-    process.exit(1)
+    try { objstoreHandle = openObjstore(sqliteHandle.db, OBJSTORE_DIR) }
+    catch (err) {
+      await handle.close()
+      throw err
+    }
   }
 
   // "Workspace exists on the server" gate. The auth requirement only
@@ -241,38 +273,6 @@ export async function createE2eApp(config = loadConfig()) {
   // broadcast (see ./hub.ts).
   const hub = createHub({ peers, maxBufferedBytes: MAX_BUFFERED_BYTES, debug: DEBUG })
   const { send, broadcast, subscribe, unsubscribeAll, broadcastLocalRaw } = hub
-
-  // Cross-instance pub/sub for live broadcasts (see ./pubsub.ts). SQLite
-  // mode is single-process by construction so it gets a no-op; Neon mode
-  // uses Postgres LISTEN/NOTIFY on a dedicated long-lived Client
-  // connection (separate from the HTTP `neon()` callable the queries flow
-  // over — LISTEN needs a session-bound socket, the HTTP path is
-  // stateless). The bus carries lookup hints, not the full wire payload:
-  // the `workspace-state` broadcast's ciphertext alone can exceed the
-  // ~8 KB NOTIFY payload cap, so the receiver re-fetches from the shared
-  // DB to construct the wire frame. The bus is best-effort fan-out, not a
-  // durability layer — the DB itself is the source of truth, and a
-  // dropped publish only means peers on other instances miss the live
-  // push (they still catch up via the chain on their next subscribe).
-  let pubsub: PubSub = createNoopPubSub()
-  if (NEON_URL) {
-    // Dynamic import: the Client export lives in the same optional peer
-    // dep as the HTTP `neon()` callable (see ./neon-driver.ts), but the
-    // dep itself is only present on a Neon-mode deploy. The wrapper path
-    // also lets tests swap in a PGlite-backed shim (`tests/pubsub.test.js`).
-    const mod = (await import('./neon-driver.ts')) as unknown as { Client?: NeonClientCtor }
-    if (!mod.Client) {
-      console.error('DATABASE_URL or E2E_DATABASE_URL is set but the @neondatabase/serverless Client export is not available.')
-      console.error('Cross-instance broadcasts require the WebSocket-based Client (the HTTP `neon()` callable cannot LISTEN).')
-      console.error('Reinstall the peer dep: pnpm add @neondatabase/serverless')
-      process.exit(1)
-    }
-    const NeonClientImpl = mod.Client
-    pubsub = createNeonPubSub({
-      newClient: () => new NeonClientImpl(NEON_URL),
-      debug: DEBUG,
-    })
-  }
 
   // Password gate (see ./auth.ts) — HMAC derivation + the `authenticate`
   // handshake.
