@@ -12,13 +12,17 @@ function wait(ms, signal) {
 // Fetch preserves the public-share header and never puts a capability in a
 // URL. Reconnection always starts with an invalidation, so no replay cursor or
 // instance affinity is needed. The caller owns the subscription's lifetime.
-export async function watchTeamFeed(teamId, { signal, onUpdate, onClose }) {
+export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose }) {
   if (getPreviewRole()) return
   let backoff = 1_000
-  const eventReceived = async event => {
+  const eventReceived = async (event, requestSignal) => {
+    requestSignal.throwIfAborted()
     if (event === 'close') { await onClose(); return false }
-    if (event === 'triage') {
-      if (await onUpdate() === false) throw new Error('Team refresh failed')
+    if (event === 'triage' || event === 'teams') {
+      // Refresh requests share this connection's watchdog, not just the view's
+      // lifetime, so a stalled read cannot prevent the reconnect loop.
+      if (await (event === 'teams' ? onTeams?.(requestSignal) : onUpdate(requestSignal)) === false) throw new Error('Team refresh failed')
+      requestSignal.throwIfAborted()
       backoff = 1_000
     }
     return true
@@ -34,7 +38,7 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onClose }) {
     }
     try {
       alive()
-      const response = await managedFetch(`/api/teams/${encodeURIComponent(teamId)}/feed`, {
+      const response = await managedFetch(teamId ? `/api/teams/${encodeURIComponent(teamId)}/feed` : '/api/teams/feed', {
         credentials: 'same-origin', headers: { accept: 'text/event-stream' }, signal: request.signal,
       })
       if ([401, 403, 404].includes(response.status)) {
@@ -47,7 +51,7 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onClose }) {
         throw new Error('Team feed unavailable')
       }
       reader = response.body.getReader()
-      const complete = await consume(reader, signal, alive, eventReceived)
+      const complete = await consume(reader, signal, alive, event => eventReceived(event, request.signal))
       if (complete) return
     } catch {
       // Includes proxy timeouts, deployment rollovers and failed refreshes.

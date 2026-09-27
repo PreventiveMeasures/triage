@@ -11,11 +11,13 @@ import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
 import { managedReportViewChanged } from './managed-report-catalog.js'
+import { createManagedTeamsProbe } from './managed-teams-probe.js'
+import { currentViewSignal } from './view-navigation.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
-import { startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
+import { setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -492,6 +494,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   })
   refreshScanNavigation()
   if (isManagedUiMode()) {
+    if (!managedSessionPending && !managedTeamsPending) startManagedTeamFeed({ catalogOnly: true })
     state.bundles = (state.bundles ?? []).filter(entry => entry.managedId)
     state.storedFiles = []
     renderLandingWorkspaces([])
@@ -1986,30 +1989,45 @@ async function revalidateManagedSession() {
   }
 }
 
-let managedTeamsRefresh = null
-async function refreshManagedTeams(isCurrent) {
+setManagedTeamFeedRefresh((isCurrent, signal) => refreshManagedTeams(isCurrent, { strict: true, signal }))
+
+const probeManagedTeams = createManagedTeamsProbe(managedProbeTeams)
+async function refreshManagedTeams(isCurrent, { strict = false, signal = currentViewSignal() } = {}) {
   const generation = clientModeGeneration
   const session = state.managedSession
-  if (managedTeamsRefresh?.generation !== generation || managedTeamsRefresh?.session?.id !== session?.id
-    || managedTeamsRefresh?.session?.role !== session?.role) {
-    const refresh = { generation, session, promise: null }
-    managedTeamsRefresh = refresh
-    refresh.promise = managedProbeTeams({ fallback: state.managedTeams }).finally(() => {
-      if (managedTeamsRefresh === refresh) managedTeamsRefresh = null
-    })
-  }
-  const teams = await managedTeamsRefresh.promise
-  if (!isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
+  const fresh = await probeManagedTeams({ generation, session, signal })
+  const teams = fresh ?? (strict ? null : state.managedTeams)
+  if (signal.aborted || teams === null || !isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
+  const previousTeamName = state.managedTeams.find(team => team.id === state.currentManagedTeam)?.name
   const changedReports = setManagedReportCatalog(teams)
   state.managedTeams = teams
   managedTeamsPending = false
   // Discard an already-rendered view as well as its cached envelopes. In
   // particular, Findings/Files navigation must not reuse revoked findings.
-  if (managedReportViewChanged(state, teams, changedReports)) {
+  const bundleId = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
+  if (managedReportViewChanged(state, teams, changedReports) || bundleId && changedReports.has(`bundle:${bundleId}`)) {
+    const team = teams.find(candidate => candidate.id === state.currentManagedTeam)
+    const canReopenReport = team && (state.currentManagedReport === null || team.reports.some(report => report.id === state.currentManagedReport))
+    const route = bundleId
+      ? teams.some(candidate => candidate.bundles.some(bundle => bundle.id === bundleId)) ? { view: 'bundles', bundleId } : null
+      : canReopenReport ? managedRouteForIds({ view: state.currentView === 'links' ? 'findings' : state.currentView,
+        teamId: team.id, reportId: state.currentManagedReport }, teams) : null
     readyManagedView = null
-    await goHome({ history: false })
+    const cleared = goHome({ history: false })
+    const navigation = currentViewGeneration()
+    await cleared
+    // Drop stale content immediately, then reopen still-accessible content.
+    // A user's intervening navigation/account switch always wins.
+    if (strict) {
+      if (navigation === currentViewGeneration() && generation === clientModeGeneration
+        && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role && isManagedUiMode()) {
+        await managedHistory.navigate(route ?? { view: 'home' }, { replace: true })
+      }
+      return false // the old feed was aborted by navigation
+    }
     if (!isCurrent()) return false
   }
+  if (previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name) render({ animate: false })
   renderSidebar()
   return true
 }
@@ -2044,6 +2062,9 @@ function canAccessManagedPage(view) {
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 async function restoreManagedPage(route, isCurrent) {
+  const reusableView = readyManagedView === currentViewGeneration() ? readyManagedView : null
+  // Cancel the previous feed and catalog read before checking the destination.
+  beginViewNavigation()
   // Revalidate lightweight access/assignment metadata on navigation; unchanged
   // versions continue to reuse content without downloading the reports again.
   if ((['findings', 'files', 'bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent))) return false
@@ -2055,9 +2076,8 @@ async function restoreManagedPage(route, isCurrent) {
   }
   route = resolveManagedRoute(route, state.managedTeams, adminBundles)
   if (!route) return false
-  const canReuseReport = readyManagedView === currentViewGeneration()
+  const canReuseReport = reusableView !== null && readyManagedView === reusableView
     && state.currentManagedTeam === route.teamId && state.currentManagedReport === route.reportId
-  beginViewNavigation()
   if (!isCurrent() || !isManagedUiMode()) return false
   if (route.view !== 'home' && (!state.managedSession || state.managedSession.role === 'none')) return false
   if (route.finding) {
@@ -2139,10 +2159,11 @@ document.addEventListener('managed-bundle-open', event => {
 })
 
 document.addEventListener('managed-feed-closed', () => {
+  managedSessionPending = true
   stopManagedTeamFeed()
   resetManagedTriage()
   void goHome({ history: false }).then(() => refreshManagedSession())
-  showToast('Workspace access or reports changed. Reopen the team to refresh.')
+  showToast('Workspace access changed. Refreshing your session.')
 })
 
 export async function navigateToAdminPage(view, options = {}) {

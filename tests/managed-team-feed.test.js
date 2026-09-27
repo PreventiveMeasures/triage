@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { TEAM_FEED_LIFETIME_MS, serveTeamFeed } from '../server-managed/team-feed.ts'
+import { TEAM_FEED_LIFETIME_MS, serveTeamFeed, serveUserTeamFeed } from '../server-managed/team-feed.ts'
 import { recheckTeam, teamSnapshot } from '../server-managed/team-reports.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 
@@ -69,13 +69,23 @@ async function fixture(t) {
     await until(() => res.frames.length > 0)
     return { res, done }
   }
-  return { db, writer, session, deps, request, feed }
+  async function userFeed(teamId = 'team', options = {}) {
+    const { user } = await db.sessionWithUser(session.id, Date.now())
+    const res = new Response()
+    const done = serveUserTeamFeed(res, deps, session.id, user, teamId, { pollMs: 10, lifetimeMs: 10000, ...options })
+    feeds.push({ res, done })
+    await until(() => res.frames.length > 0)
+    return { res, done }
+  }
+  return { db, writer, session, deps, request, feed, userFeed }
 }
 
 test('GET feed checks session, role, team and method before subscribing', async t => {
   const h = await fixture(t)
   for (const [path, options, status] of [
     ['/api/teams/team/feed', { cookie: '' }, 401],
+    ['/api/teams/feed', { cookie: '' }, 401],
+    ['/api/teams/feed', { method: 'POST' }, 405],
     ['/api/teams/missing/feed', {}, 404],
     ['/api/teams/team/feed', { method: 'POST' }, 405],
   ]) {
@@ -87,7 +97,7 @@ test('GET feed checks session, role, team and method before subscribing', async 
   assert.equal(res.status, 200)
   assert.match(res.headers['content-type'], /^text\/event-stream/u)
   assert.match(res.headers['cache-control'], /no-store/u)
-  assert.equal(res.frames[0], 'event: triage\ndata: {}\n\n')
+  assert.equal(res.frames[0], 'event: teams\ndata: {}\n\n')
   res.destroy(); await done
   await h.db.setUserRole(h.session.userId, 'none')
   const blocked = h.request('/api/teams/team/feed'); await blocked.done
@@ -180,6 +190,198 @@ test('revocation during a revision read closes before emitting an update', async
     return revision
   }
   const { res, done } = await h.feed()
+  await done
+  assert.deepEqual(res.frames, ['event: close\ndata: {}\n\n'])
+})
+
+const teamEvents = res => res.frames.filter(frame => frame === 'event: teams\ndata: {}\n\n').length
+const triageEvents = res => res.frames.filter(frame => frame === 'event: triage\ndata: {}\n\n').length
+
+test('one feed covers own memberships and all member teams, but only focused triage', async t => {
+  const h = await fixture(t), { writer, session } = h
+  await writer.createTeam('other', 'Other', 1)
+  await writer.createTeam('foreign', 'Foreign', 1)
+  await writer.selectRepo({ repoId: 2, fullName: 'own/other', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: session.userId }, 1)
+  await writer.setTeamRepo('other', 2, '')
+  const { res } = await h.userFeed()
+  assert.equal(teamEvents(res), 1)
+  assert.equal(triageEvents(res), 1)
+  await writer.renameTeam('foreign', 'Unrelated rename', 2)
+  await delay(40)
+  assert.equal(teamEvents(res), 1)
+  await writer.setTeamMember('other', session.userId, { security: false, dependencies: false })
+  await until(() => teamEvents(res) === 2)
+  await writer.insertReport({ id: 'other-report', filename: 'other.json', repoId: 2, contentType: 'application/json', byteSize: 10, sha256: 'other-hash', uploadedBy: session.userId, visible: true }, 2)
+  await until(() => teamEvents(res) === 3)
+  await writer.insertBundle({ id: 'bundle', filename: 'bundle.stasis', byteSize: 10, integrity: 'bundle-hash', uploadedBy: session.userId, repoId: 2, kind: 'stasis' }, 2)
+  await until(() => teamEvents(res) === 4)
+  await writer.setTriage('other-finding', { color: 'red' }, null, null, 2)
+  await writer.createComment({ findingId: 'other-finding', body: 'Other team comment', authorId: session.userId, authorLogin: 'viewer' }, 2)
+  await delay(40)
+  assert.equal(teamEvents(res), 4, 'annotations do not invalidate the catalog')
+  assert.equal(triageEvents(res), 1, 'unfocused annotations are not subscribed')
+  await writer.setTriage('visible', { color: 'green' }, null, null, 2)
+  await until(() => triageEvents(res) === 2)
+  await writer.deleteBundle('bundle')
+  await until(() => teamEvents(res) === 5)
+  await writer.setReportVisible('other-report', false)
+  await until(() => teamEvents(res) === 6)
+  await writer.removeTeamMember('other', session.userId)
+  await until(() => teamEvents(res) === 7)
+  assert.equal(res.ended, undefined)
+  assert.ok(res.frames.every(frame => /^event: (teams|triage)\ndata: \{\}\n\n$/u.test(frame)))
+})
+
+test('repairing a report link to an existing bundle notifies the feed across instances', async t => {
+  const h = await fixture(t), { writer, session } = h
+  await writer.insertBundle({ id: 'bundle', integrity: 'bundle-hash', filename: 'bundle.stasis', kind: 'stasis',
+    byteSize: 1, uploadedBy: session.userId, repoId: 1 }, 1)
+  await writer.insertReport({ id: 'unlinked', filename: 'unlinked.json', contentType: 'application/json', byteSize: 1,
+    sha256: 'unlinked-hash', uploadedBy: session.userId, repoId: 1, visible: true, bundleIntegrity: 'bundle-hash' }, 1)
+  const before = await h.db.listTeamsForUser(session.userId)
+  const { res } = await h.userFeed()
+  await writer.linkReportsToBundle('bundle-hash', 'bundle', session.userId)
+  await until(() => teamEvents(res) === 2)
+  const after = await h.db.listTeamsForUser(session.userId)
+  assert.deepEqual(after[0].bundles, before[0].bundles)
+  assert.notEqual(after[0].reports.find(r => r.id === 'unlinked').cacheKey, before[0].reports.find(r => r.id === 'unlinked').cacheKey)
+  await writer.linkReportsToBundle('bundle-hash', 'bundle', session.userId)
+  await delay(40)
+  assert.equal(teamEvents(res), 2, 'an already repaired link does not notify again')
+})
+
+test('catalog-only feed works with no memberships and observes empty-team grants and scopes', async t => {
+  const h = await fixture(t)
+  await h.writer.removeTeamMember('team', h.session.userId)
+  const { res } = await h.userFeed(null)
+  h.db.getAnnotationRevision = () => { assert.fail('catalog feed must not read annotations') }
+  h.deps.reportStore.get = () => { assert.fail('catalog feed must not read report bytes') }
+  await h.writer.createTeam('empty', 'Empty', 1)
+  await h.writer.setTeamMember('empty', h.session.userId, { security: false, dependencies: false })
+  await until(() => teamEvents(res) === 2)
+  await h.writer.setTeamMember('empty', h.session.userId, { security: true, dependencies: false })
+  await until(() => teamEvents(res) === 3)
+  await h.writer.setTeamRepo('empty', 1, 'empty/path')
+  await until(() => teamEvents(res) === 4)
+  assert.equal(triageEvents(res), 0)
+  await h.writer.renameTeam('empty', 'Renamed', 2)
+  await until(() => teamEvents(res) === 5)
+  const http = h.request('/api/teams/feed')
+  await until(() => http.res.frames.length > 0)
+  assert.deepEqual(http.res.frames, ['event: teams\ndata: {}\n\n'])
+})
+
+test('losing the focused team preserves the catalog feed and stops its annotation reads', async t => {
+  const h = await fixture(t), { res } = await h.userFeed()
+  await h.writer.removeTeamMember('team', h.session.userId)
+  await until(() => teamEvents(res) === 2)
+  const triage = triageEvents(res)
+  await h.writer.setTriage('visible', { color: 'red' }, null, null, 2)
+  await delay(40)
+  assert.equal(triageEvents(res), triage)
+  assert.equal(res.ended, undefined)
+  await h.writer.setTeamMember('team', h.session.userId, { security: false, dependencies: false })
+  await until(() => teamEvents(res) === 3 && triageEvents(res) === triage + 1)
+})
+
+test('revocation during an annotation read discards the poll, then reports membership loss only', async t => {
+  const h = await fixture(t), { res } = await h.userFeed()
+  const original = h.db.getAnnotationRevision
+  h.db.getAnnotationRevision = async ids => {
+    const revision = await original(ids)
+    await h.writer.removeTeamMember('team', h.session.userId)
+    return revision
+  }
+  await h.writer.setTriage('visible', { color: 'red' }, null, null, 2)
+  await until(() => teamEvents(res) === 2)
+  assert.equal(triageEvents(res), 1)
+})
+
+for (const change of ['logout', 'role']) {
+  test(`user feed terminates on ${change} without further events`, async t => {
+    const h = await fixture(t), { res, done } = await h.userFeed(null)
+    if (change === 'logout') await h.writer.deleteSession(h.session.id)
+    else await h.writer.setUserRole(h.session.userId, 'none')
+    await done
+    assert.deepEqual(res.frames, ['event: teams\ndata: {}\n\n', 'event: close\ndata: {}\n\n'])
+  })
+}
+
+test('public shares cannot subscribe to the user catalog even with an issuer cookie', async t => {
+  const h = await fixture(t), token = 'b'.repeat(43)
+  await h.db.setUserRole(h.session.userId, 'manage')
+  await h.db.createWorkspaceShare(h.session.id, Date.now(), 'team', hashToken(token))
+  const { res, done } = h.request('/api/teams/feed', { headers: { 'x-deepview-share': token } })
+  await done
+  assert.equal(res.status, 403)
+})
+
+test('focused visibility is recomputed after grant and report publication changes', async t => {
+  const h = await fixture(t), { res } = await h.userFeed()
+  await h.writer.setTeamMember('team', h.session.userId, { security: true, dependencies: true })
+  await until(() => teamEvents(res) === 2 && triageEvents(res) === 2)
+  await h.writer.setTriage('hidden', { color: 'red' }, null, null, 1)
+  await until(() => triageEvents(res) === 3)
+  await h.writer.setReportVisible('report', false)
+  await until(() => teamEvents(res) === 3 && triageEvents(res) === 4)
+  await h.writer.setTriage('hidden', { color: 'blue' }, null, null, 2)
+  await delay(40)
+  assert.equal(triageEvents(res), 4)
+  assert.equal(res.ended, undefined)
+})
+
+test('catalog invalidation arrives before a focused report finishes loading', async t => {
+  const gate = Promise.withResolvers(), h = await fixture(t)
+  const bytes = await h.deps.reportStore.get('report')
+  h.deps.reportStore.get = () => gate.promise
+  try {
+    const { res } = await h.userFeed()
+    assert.deepEqual(res.frames, ['event: teams\ndata: {}\n\n'])
+    gate.resolve(bytes)
+    await until(() => triageEvents(res) === 1)
+  } finally { gate.resolve(bytes) }
+})
+
+for (const failure of ['missing', 'malformed', 'storage error']) {
+  test(`${failure} report blobs suspend triage but preserve catalog updates and recover on repair`, async t => {
+    const h = await fixture(t), original = h.deps.reportStore.get
+    let broken = true
+    h.deps.reportStore.get = id => {
+      if (id !== 'broken' || !broken) return original(id)
+      if (failure === 'storage error') return Promise.reject(new Error('Blob store unavailable'))
+      return Promise.resolve(failure === 'missing' ? null : Buffer.from('{broken json'))
+    }
+    const { res } = await h.userFeed()
+    await until(() => triageEvents(res) === 1)
+    await h.writer.insertReport({ id: 'broken', filename: 'broken.json', contentType: 'application/json',
+      byteSize: 12, sha256: 'broken', uploadedBy: h.session.userId, repoId: 1, visible: true }, 1)
+    await until(() => teamEvents(res) === 2)
+    await h.writer.createTeam('new', 'New team', 1)
+    await h.writer.setTeamMember('new', h.session.userId, { security: false, dependencies: false })
+    await until(() => teamEvents(res) === 3)
+    await h.writer.insertBundle({ id: 'bundle', integrity: 'bundle-hash', filename: 'bundle.stasis', kind: 'stasis',
+      byteSize: 1, uploadedBy: h.session.userId, repoId: 1 }, 1)
+    await until(() => teamEvents(res) === 4)
+    assert.equal(triageEvents(res), 1)
+    assert.equal(res.ended, undefined)
+    assert.ok(res.frames.every(frame => !frame.includes('event: close')))
+    broken = false
+    await until(() => triageEvents(res) === 2)
+    assert.equal(teamEvents(res), 4, 'repair needs no catalog change or reconnect')
+    await h.writer.deleteSession(h.session.id)
+    await until(() => res.ended)
+    assert.equal(res.frames.at(-1), 'event: close\ndata: {}\n\n')
+  })
+}
+
+test('session revocation during a catalog read prevents its early invalidation', async t => {
+  const h = await fixture(t), original = h.db.getUserTeamFeedSnapshot
+  h.db.getUserTeamFeedSnapshot = async (...args) => {
+    const catalog = await original(...args)
+    await h.writer.deleteSession(h.session.id)
+    return catalog
+  }
+  const { res, done } = await h.userFeed()
   await done
   assert.deepEqual(res.frames, ['event: close\ndata: {}\n\n'])
 })

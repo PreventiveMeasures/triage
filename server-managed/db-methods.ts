@@ -291,6 +291,7 @@ export interface UserTeam {
   id: string
   slug: string
   name: string
+  cacheKey?: string
   reports: UserTeamReport[]
   bundles: UserTeamBundle[]
 }
@@ -403,6 +404,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // bundles attached to that team's repos — for that user's own sidebar Teams section.
   // Any user; only their own memberships.
   listTeamsForUser(userId: string): Promise<UserTeam[]>
+  getUserTeamFeedSnapshot(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; revision: string } | null>
   // Whether `userId` may read `reportId`: true iff the report's repo belongs to
   // a team the user is a member of. Backs the team-scoped report view endpoint.
   userCanReadReport(userId: string, reportId: string): Promise<boolean>
@@ -704,15 +706,22 @@ function prepareStatements(db: ManagedSql) {
     renameTeamStmt: db.prepare(`UPDATE managed_team SET name = ?, updated_at = ? WHERE id = ?`),
     selectTeamsStmt: db.prepare(`SELECT id, slug, name FROM managed_team ORDER BY name ASC`),
     selectTeamsForUserStmt: db.prepare(
-      `SELECT t.id AS id, t.slug AS slug, t.name AS name
+      `SELECT t.id AS id, t.slug AS slug, t.name AS name,
+              tu.view_dependencies AS dependencies, tu.view_security AS security
          FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
-        WHERE tu.user_id = ? ORDER BY t.name ASC`,
+        WHERE tu.user_id = ? ORDER BY t.name ASC, t.id ASC`,
+    ),
+    selectUserTeamScopesStmt: db.prepare(
+      `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, tr.path AS path, sr.full_name AS fullName
+         FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+         JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
+        WHERE tu.user_id = ? ORDER BY tr.team_id, tr.repo_id, tr.path`,
     ),
     // Reports attached to the repos of the user's teams, tagged by team (a report
     // shows under every team whose repo it's attached to). Newest first.
     selectUserTeamReportsStmt: db.prepare(
       `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.uploaded_at,
-              r.sha256 AS sha256, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+              r.sha256 AS sha256, r.bundle_id AS bundleId, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
               tu.view_dependencies AS dependencies, tu.view_security AS security,
               (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
          FROM managed_team_user tu
@@ -720,7 +729,7 @@ function prepareStatements(db: ManagedSql) {
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
         WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) IN ('admin', 'manage'))
-        ORDER BY r.uploaded_at DESC, r.filename ASC`,
+        ORDER BY r.uploaded_at DESC, r.filename ASC, r.id ASC`,
     ),
     // Bundles are scoped through the same team -> repository links as reports.
     // They have no visibility flag: membership in a team that can see the repo
@@ -733,7 +742,7 @@ function prepareStatements(db: ManagedSql) {
          JOIN managed_bundle b ON b.repo_id = tr.repo_id
          JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
         WHERE tu.user_id = ?
-        ORDER BY b.uploaded_at DESC, b.filename ASC`,
+        ORDER BY b.uploaded_at DESC, b.filename ASC, b.id ASC`,
     ),
     selectUserRepoScopesStmt: db.prepare(
       `SELECT DISTINCT tr.repo_id AS repoId, NULLIF(tr.path, '') AS path
@@ -1114,7 +1123,7 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
     selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
     upsertTeamRepoStmt, deleteTeamRepoStmt, deleteTeamRepoPathStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
-  return {
+  const methods = {
     async createTeam(id: string, name: string, now: number): Promise<boolean> {
       return Number((await insertTeamStmt.run(id, preferredSlug(id), name, now, now)).changes) > 0
     },
@@ -1140,15 +1149,16 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       return (await selectUserRepoScopesStmt.all(userId)) as { repoId: number; path: string | null }[]
     },
     async listTeamsForUser(userId: string): Promise<UserTeam[]> {
-      const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string }[]
+      const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string; dependencies: number; security: number }[]
+      const scopes = await stmts.selectUserTeamScopesStmt.all(userId) as { teamId: string; repoId: number; path: string; fullName: string }[]
       const reportsByTeam = new Map<string, UserTeamReport[]>()
       for (const r of (await selectUserTeamReportsStmt.all(userId)) as {
-        teamId: string; id: string; slug: string; filename: string; sha256: string; repoId: number
+        teamId: string; id: string; slug: string; filename: string; sha256: string; bundleId: string | null; repoId: number
         repoDirectory: string; repoFullName: string | null; dependencies: number; security: number; role: string
       }[]) {
         const list = reportsByTeam.get(r.teamId) ?? []
         const cacheKey = createHash('sha256').update(JSON.stringify([
-          r.sha256, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
+          r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
         ])).digest('base64url')
         list.push({ id: r.id, slug: r.slug, filename: r.filename, cacheKey })
         reportsByTeam.set(r.teamId, list)
@@ -1162,9 +1172,22 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       }
       return teams.map((t) => ({
         id: t.id, slug: t.slug, name: t.name,
+        cacheKey: createHash('sha256').update(JSON.stringify([
+          t.dependencies, t.security, scopes.filter(scope => scope.teamId === t.id),
+        ])).digest('base64url'),
         reports: reportsByTeam.get(t.id) ?? [],
         bundles: bundlesByTeam.get(t.id) ?? [],
       }))
+    },
+    async getUserTeamFeedSnapshot(sessionId: string, now: number) {
+      // One short read-only transaction, shared by SQLite and Postgres. Never
+      // touch last-seen timestamps or include other users' memberships.
+      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
+      if (!session) return null
+      const teams = session.role === 'none' ? [] : await methods.listTeamsForUser(session.uid)
+      return { user: { id: session.uid, role: session.role },
+        revision: createHash('sha256').update(JSON.stringify(teams)).digest('base64url'),
+      }
     },
     async userCanReadReport(userId: string, reportId: string): Promise<boolean> {
       return (await selectReportReadableStmt.get(reportId, userId)) != null
@@ -1213,6 +1236,7 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       return Number((await deleteTeamMemberStmt.run(teamId, userId)).changes) > 0
     },
   }
+  return methods
 }
 
 // `triageHistoryLimit`: events kept per finding in the triage trail; 0 (the

@@ -83,7 +83,7 @@ import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { sendJson, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
-import { serveTeamFeed } from './team-feed.ts'
+import { serveUserTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 
@@ -1884,12 +1884,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       send405(res, 'GET, DELETE'); return
     }
     const teamFeed = /^\/api\/teams\/([^/]+)\/feed$/u.exec(path)
-    if (teamFeed) {
+    if (teamFeed || path === '/api/teams/feed') {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readWorkspaceSession(res, deps, cookie)
       if (!s) return
-      const snapshot = await teamSnapshot(db, s.session.id, teamFeed[1]!)
-      await serveTeamFeed(res, deps, snapshot, () => recheckTeam(db, s.session.id, snapshot)); return
+      const teamId = teamFeed?.[1] ?? null
+      if (teamId) await teamSnapshot(db, s.session.id, teamId)
+      await serveUserTeamFeed(res, deps, s.session.id, s.user, teamId); return
     }
     const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
     if (teamFixes) {

@@ -320,6 +320,19 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true }
   return true
 }
 
+// A feed timeout cancels only its wait. The queued POSTs keep their original
+// scope and order, and can still confirm the user's edits after reconnection.
+function waitForTriageFlush(signal) {
+  if (!signal) return flushChain.then(() => true)
+  if (signal.aborted) return Promise.resolve(false)
+  return new Promise(resolve => {
+    const finish = flushed => { signal.removeEventListener('abort', abort); resolve(flushed) }
+    const abort = () => finish(false)
+    signal.addEventListener('abort', abort, { once: true })
+    flushChain.then(() => finish(true), () => finish(false))
+  })
+}
+
 // Live reads preserve edits captured locally or posted while the GET was in
 // flight. Flush first so a notification from our own POST cannot roll it back.
 export async function refreshManagedReportTriage(reportId, { signal } = {}) {
@@ -331,8 +344,7 @@ export async function refreshManagedReportTriage(reportId, { signal } = {}) {
     && hydratedReports.has(scopeFor(reportId, teamId))
   if (!current()) return false
   flushPending()
-  await flushChain
-  if (!current()) return false
+  if (!(await waitForTriageFlush(signal)) || !current()) return false
   const ids = findingIdsForManagedReport(reportId)
   const before = new Map([...ids].map(id => [id, baseline.get(id)]))
   const entries = await fetchReportTriage(reportId, teamId, { signal })
