@@ -142,8 +142,8 @@ test('background team refresh preserves the sidebar during an outage and clears 
 })
 
 
-test('the team catalogue preserves server slugs and report cache versions alongside UUIDs', async t => {
-  const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json', cacheKey: 'access-and-assignment-v1' }], bundles: [] }]
+test('the team catalogue preserves report locations, server slugs, and cache versions alongside UUIDs', async t => {
+  const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json', repoFullName: 'org/repo', repoDirectory: 'packages/app', cacheKey: 'access-and-assignment-v1' }], bundles: [] }]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams })))
   assert.deepEqual(await probeTeams(), teams)
 })

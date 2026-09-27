@@ -1454,6 +1454,7 @@ test('team paths gate report listings, reads, triage, and permission aggregation
   const cookie = cookiePair(memberSess.setCookie)
   const list = JSON.parse((await send('GET', '/api/teams', cookie)).body).teams
   assert.deepEqual(list[0].reports.map((r) => r.id).toSorted(), reportIds.slice(0, 2).toSorted())
+  assert.deepEqual(list[0].reports.map(r => [r.repoFullName, r.repoDirectory]).toSorted(), [['o/r', 'packages/a'], ['o/r', 'packages/a/sub']])
   for (const [index, id] of reportIds.entries()) {
     const allowed = index < 2
     assert.equal(await db.userCanReadReport(member.id, id), allowed, `scope: ${directories[index]}`)

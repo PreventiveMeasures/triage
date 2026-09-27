@@ -280,6 +280,8 @@ export interface UserTeamReport {
   id: string
   slug: string
   filename: string
+  repoFullName: string | null
+  repoDirectory: string
   cacheKey: string
 }
 export interface UserTeamBundle {
@@ -1167,7 +1169,7 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
         const cacheKey = createHash('sha256').update(JSON.stringify([
           r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
         ])).digest('base64url')
-        list.push({ id: r.id, slug: r.slug, filename: r.filename, cacheKey })
+        list.push({ id: r.id, slug: r.slug, filename: r.filename, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory, cacheKey })
         reportsByTeam.set(r.teamId, list)
       }
       const bundlesByTeam = new Map<string, UserTeamBundle[]>()

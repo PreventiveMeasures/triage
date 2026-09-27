@@ -1,3 +1,7 @@
+export function managedRepositoryPath(item) {
+  return item.repoFullName ? `${item.repoFullName}${item.repoDirectory ? `/${item.repoDirectory}` : ''}` : ''
+}
+
 // Filter only the loaded catalogue. Keep the original team for click handlers
 // so opening a team still loads all of its reports, not just the search results.
 export function filterManagedTeams(teams, query = '') {
