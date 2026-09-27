@@ -3,6 +3,13 @@
 // view.js. It loads when a managed session or page is first requested.
 import './managed/pages.js'
 import './managed/links.js'
+import { ManagedPage } from './managed/page.js'
+import { managedFetch } from '../client/managed/request.js'
+export async function loadWorkspaceImportPage() {
+  const path = './client-managed-import.js'
+  const mod = await import(path)
+  mod.registerWorkspaceImport(ManagedPage, managedFetch)
+}
 export async function openManagedShareDialog(...args) {
   return (await import('./view/dialogs/managed-share-dialog.js')).openManagedShareDialog(...args)
 }

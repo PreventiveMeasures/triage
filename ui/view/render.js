@@ -4,7 +4,9 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands } from './file-display.js'
-import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, isManagedUiMode, listBundles, listWorkspaces, state } from '#client/index.js'
+import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, state } from '#client/index.js'
+import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bundle-dialog.js'
+import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
@@ -1710,6 +1712,7 @@ const ADMIN_VIEWS = {
   'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
   'manage-history': { slot: 'manage-history-slot', tag: 'managed-admin-history', title: 'DeepView — history' },
   'manage-teams':   { slot: 'manage-teams-slot',   tag: 'managed-admin-teams',   title: 'DeepView — teams' },
+  'manage-import':  { slot: 'manage-import-slot',  tag: 'managed-admin-import',  title: 'DeepView — import' },
   'manage-links':   { slot: 'manage-links-slot',   tag: 'managed-admin-links',   title: 'DeepView — links' },
   'manage-scans':   { slot: 'manage-scans-slot',   tag: 'managed-admin-scans',   title: 'DeepView — scans' },
 }
@@ -1970,6 +1973,11 @@ function renderImpl() {
     if (slot && !slot.firstElementChild) {
       const el = document.createElement(adminView.tag)
       el.localImportSource = createManagedLocalImportSource()
+      if (state.currentView === 'manage-import') {
+        el.localDeps = managedWorkspaceImportDeps()
+        el.promptPassword = openWorkspaceUnlockBundleDialog
+        el.resolveConflicts = resolveTriageConflicts
+      }
       el.session = state.managedSession
       el.allowShare = state.managed?.allowShare === true
       if (state.currentView === 'manage-scans') el.selection = state.scanSelection

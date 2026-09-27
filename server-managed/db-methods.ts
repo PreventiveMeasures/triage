@@ -6,6 +6,7 @@ import { preferredSlug } from './slugs.ts'
 import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
 import { type GithubMetadataStore, githubMetadataMethods } from './github-metadata.ts'
+import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
 
@@ -290,7 +291,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, WorkspaceShareStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, WorkspaceShareStore, ImportTriageStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted server configuration and
   // applies exclusively to the first insertion into an empty user table.
@@ -1215,6 +1216,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const comments = commentMethods(db)
   const activity = activityMethods(db)
   const stmts = prepareStatements(db)
+  const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0)
   const {
     upsertUserStmt, selectUserIdStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
@@ -1274,7 +1276,8 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...comments,
     ...workspaceShareMethods(db),
     ...reportMethods(stmts),
-    ...triageMethods(stmts, options.triageHistoryLimit ?? 0),
+    ...triage,
+    ...importTriageMethods({ ...triage, ...comments }),
     ...bundleMethods(stmts),
     ...teamMethods(stmts),
     async close() {

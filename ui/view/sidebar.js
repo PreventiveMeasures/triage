@@ -2024,10 +2024,11 @@ const ADMIN_PAGES = {
   'manage-bundles': 'admin: bundles bundle load failed:',
   'manage-history': 'admin: history bundle load failed:',
   'manage-teams': 'admin: teams bundle load failed:',
+  'manage-import': 'admin: import bundle load failed:',
   'manage-links': 'admin: links bundle load failed:',
   'manage-scans': 'admin: scans bundle load failed:',
 }
-const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams'])
+const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams', 'manage-import'])
 let readyManagedView = null
 
 function canAccessManagedPage(view) {
@@ -2118,6 +2119,8 @@ document.addEventListener('managed-bundle-open', event => {
   }
 })
 
+document.addEventListener('managed-import-complete', () => { void refreshManagedSession() })
+
 document.addEventListener('managed-feed-closed', () => {
   stopManagedTeamFeed()
   resetManagedTriage()
@@ -2133,7 +2136,10 @@ export async function navigateToAdminPage(view, options = {}) {
   if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
   const generation = clientModeGeneration
-  try { await loadManagedBundle() }
+  try {
+    const managed = await loadManagedBundle()
+    if (view === 'manage-import' && canAccessManagedPage(view)) await managed.loadWorkspaceImportPage()
+  }
   catch (err) { console.warn(ADMIN_PAGES[view], err); return false }
   if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view

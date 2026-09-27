@@ -1483,6 +1483,41 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   sendJson(res, 200, { ok: true })
 }
 
+// Admin imports compare the exact snapshot shown by the conflict dialog before
+// writing. The store commits shared finding triage and imported comments together.
+async function handleImportReportTriage(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await adminMutation(req, res, deps, cookie)
+  if (!s) return
+  let body: { findingIds?: unknown; entries?: unknown; expected?: unknown }
+  try { body = await readJsonBody(req, MAX_TRIAGE_BODY_BYTES) as typeof body }
+  catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  if (!body || typeof body !== 'object') { sendJson(res, 400, { error: 'bad-body' }); return }
+  const reading = body.entries === undefined
+  const raw = body.entries
+  if (!reading && (!raw || typeof raw !== 'object' || Array.isArray(raw))) { sendJson(res, 400, { error: 'bad-entries' }); return }
+  const ids = reading ? body.findingIds : Object.keys(raw!)
+  if (!Array.isArray(ids) || ids.length > MAX_TRIAGE_ENTRIES || ids.some(value => typeof value !== 'string' || !value || value.length > MAX_FINDING_ID)) {
+    sendJson(res, 400, { error: 'bad-finding-ids' }); return
+  }
+  const parsed: [string, TriageEntryPatch | null][] = []
+  const expected = body.expected as Record<string, string> | null
+  if (!reading) {
+    if (!expected || typeof expected !== 'object' || Array.isArray(expected)) { sendJson(res, 400, { error: 'bad-expected' }); return }
+    for (const [findingId, value] of Object.entries(raw!)) {
+      const patch = parseTriageEntryPatch(value)
+      if (patch === 'invalid' || !/^[a-f\d]{64}$/u.test(expected[findingId] ?? '')) { sendJson(res, 400, { error: 'bad-entry' }); return }
+      parsed.push([findingId, patch])
+    }
+  }
+  if (!(await deps.db.getReport(id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const visible = await visibleFindingIds(deps, s.user, id, s.session.id, null)
+  if (await readAdminSession(res, deps, cookie) == null) return
+  if (ids.some(findingId => !visible.has(findingId))) { sendJson(res, 404, { error: 'no-finding' }); return }
+  if (reading) { sendJson(res, 200, { snapshots: await deps.db.getImportTriage(ids) }); return }
+  const applied = await deps.db.importTriage(parsed, expected!, { id: s.user.id, login: s.user.login }, id, Date.now())
+  sendJson(res, applied ? 200 : 409, { ok: applied })
+}
+
 // A report grants access to its visible findings; comments themselves are
 // shared by finding ID. Author IDs always come from the authenticated session.
 async function handleReportComments(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, reportId: string, commentId: string | null, teamId: string | null): Promise<void> {
@@ -1845,6 +1880,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPORT_SET_VISIBLE_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetReportVisible(req, res, deps, cookie); return
+    }
+    const importTriage = /^\/api\/admin\/reports\/([a-f\d-]{36})\/import-triage$/iu.exec(path)
+    if (importTriage) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleImportReportTriage(req, res, deps, cookie, importTriage[1]!); return
     }
     if (path.startsWith(REPORT_PREFIX)) {
       const id = path.slice(REPORT_PREFIX.length)

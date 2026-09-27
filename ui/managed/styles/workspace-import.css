@@ -1,0 +1,22 @@
+.wrap { max-width: 980px; }
+h1 { font-size: 1.35rem; margin-bottom: .5rem; }
+.workspace-drop { display: grid; gap: .8rem; padding: 2rem; margin: 1.5rem 0; border: 1px dashed var(--border); border-radius: 8px; }
+.workspace-drop.dragging { border-color: var(--accent); background: rgb(from var(--accent) r g b / .08); }
+.workspace-drop span, p, li span { color: var(--muted); line-height: 1.5; }
+.actions, .local-choice { display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; }
+.local-choice { margin-bottom: 1.5rem; }
+.import-preview { display: grid; gap: .8rem; }
+input:not([type=radio]), select {
+  padding: .55rem; border: 1px solid var(--border); border-radius: 5px;
+  color: var(--text); background: var(--bg); font: inherit;
+}
+.import-preview input:not([type=radio]), .import-preview select { width: 100%; box-sizing: border-box; }
+fieldset { display: grid; gap: .8rem; padding: 1rem; border: 1px solid var(--border); border-radius: 5px; }
+fieldset label { display: flex; gap: .5rem; align-items: center; }
+li { padding: .4rem 0; overflow-wrap: anywhere; }
+li span { display: block; font-size: .8rem; }
+ul { padding-left: 1.2rem; }
+.primary { justify-self: start; color: var(--accent); }
+.error { color: var(--critical); }
+button:disabled { opacity: .5; }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -252,7 +252,7 @@ export function saveTriage() {
 // swallows it via the same `console.warn` path that handles every
 // other read failure, and the UI surfaces the unlock prompt via the
 // vault-state-change listener registered at boot.
-async function readTriageBlob() {
+export async function readTriageBlob() {
   // Prefer the synchronous "ahead-of-compress" snapshot when
   // present — it's strictly newer than the compressed key (a
   // successful saveTriage clears it after the compressed write
