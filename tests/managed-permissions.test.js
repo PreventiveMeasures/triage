@@ -18,15 +18,19 @@ function harness(db, extra = {}) {
     config, db, originGate: { isOriginAllowed: () => true },
     isShuttingDown: () => false, track: () => {}, ...extra,
   })
-  return async (path, { method = 'GET', session, cookie = session && cookieOf(session) } = {}) => {
+  return async (path, { method = 'GET', session, cookie = session && cookieOf(session), body, beforeBody } = {}) => {
     const req = {
       url: path, method, headers: { cookie, 'x-csrf-token': session?.csrfToken },
-      [Symbol.asyncIterator]() { assert.fail('a denied request must not read the body') },
+      async *[Symbol.asyncIterator]() {
+        assert.notEqual(body, undefined, 'a denied request must not read the body')
+        await beforeBody?.()
+        yield Buffer.from(JSON.stringify(body))
+      },
     }
     const res = {
       status: 0, headers: {}, body: '',
       writeHead(status, headers) { this.status = status; this.headers = headers },
-      end(body) { this.body = body ?? '' },
+      end(value) { this.body = value ?? '' },
     }
     await handler(req, res)
     return res
@@ -94,6 +98,53 @@ test('every managed data route rejects anonymous, invalid, expired, revoked, and
         assert.equal(res.headers['cache-control'], 'no-store')
       }
     }
+  }
+})
+
+test('role and team mutations reject admin access lost while the request body is pending', async t => {
+  for (const revocation of ['none', 'manage', 'logout', 'expired']) {
+    await t.test(revocation, async st => {
+      const db = openSqliteManagedDb(':memory:')
+      st.after(() => db.close())
+      const now = Date.now()
+      const target = await createSession(config, db, identity(1), now)
+      await db.selectRepo({ repoId: 7, fullName: 'example/repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: 'https://github.com/example/repo', addedBy: target.userId }, now)
+      await db.createTeam('team', 'Team', now)
+      await db.setTeamRepo('team', 7, 'src')
+      await db.setTeamMember('team', target.userId, { dependencies: false, security: false })
+      const teams = await db.listTeams()
+      const send = harness(db)
+      const mutations = [
+        ['/api/admin/set-role', { userId: target.userId, role: 'admin' }],
+        ['/api/admin/teams', { name: 'New team' }],
+        ['/api/admin/teams/rename', { teamId: 'team', name: 'Renamed team' }],
+        ['/api/admin/teams/delete', { teamId: 'team' }],
+        ['/api/admin/teams/set-repo', { teamId: 'team', repoId: 7, path: '' }],
+        ['/api/admin/teams/remove-repo', { teamId: 'team', repoId: 7 }],
+        ['/api/admin/teams/set-member', { teamId: 'team', userId: target.userId, dependencies: true, security: true }],
+        ['/api/admin/teams/remove-member', { teamId: 'team', userId: target.userId }],
+      ]
+      for (const [path, body] of mutations) {
+        const session = await createSession(config, db, identity(2), now)
+        await db.setUserRole(session.userId, 'admin')
+        let bodyRead = false
+        const res = await send(path, { method: 'POST', session, body, beforeBody: async () => {
+          // This hook runs only after the initial authorization, modeling a
+          // client withholding its body until an administrator revokes access.
+          bodyRead = true
+          if (revocation === 'logout') await endSession(config, db, cookieOf(session))
+          else if (revocation === 'expired') st.mock.method(Date, 'now', () => now + config.sessionTtlMs)
+          else await db.setUserRole(session.userId, revocation)
+        } })
+        assert.equal(bodyRead, true, path)
+        const error = revocation === 'logout' || revocation === 'expired' ? 'unauthenticated' : 'forbidden'
+        assert.equal(res.status, error === 'unauthenticated' ? 401 : 403, path)
+        assert.deepEqual(JSON.parse(res.body), { error }, path)
+        assert.equal((await db.listUsers()).find(user => user.id === target.userId).role, 'none', path)
+        assert.deepEqual(await db.listTeams(), teams, path)
+        st.mock.restoreAll()
+      }
+    })
   }
 })
 

@@ -34,12 +34,12 @@ export async function lookupPullRequests(config: ManagedConfig, db: ManagedDb, u
   const [scopes, repos] = await Promise.all([db.listRepoScopesForUser(userId), db.listAllRepos()])
   const allowedIds = new Set(scopes.map(scope => scope.repoId))
   const allowed = new Map(repos.filter(repo => allowedIds.has(repo.repoId) && isGithubRepoName(repo.fullName))
-    .map(repo => [repo.fullName.toLowerCase(), repo.fullName]))
+    .map(repo => [repo.fullName.toLowerCase(), repo]))
   const parsed = urls.map(parseGithubPrUrl)
   const jobs = new Map<string, PullRequestRef>()
   for (const ref of parsed) {
     const repo = ref && allowed.get(ref.repo.toLowerCase())
-    if (ref && repo) jobs.set(`${repo}#${ref.number}`, { repo, number: ref.number })
+    if (ref && repo) jobs.set(`${repo.fullName}#${ref.number}`, { repo: repo.fullName, number: ref.number })
   }
   const metadata = new Map<string, Metadata | null>()
   // Forbidden/invalid-only batches do not even read or refresh a GitHub token.
@@ -53,12 +53,15 @@ export async function lookupPullRequests(config: ManagedConfig, db: ManagedDb, u
       }))
     }
   }
+  // Token refresh and multiple upstream batches can outlast a team or repo
+  // grant. Discard even early results when their repository is no longer allowed.
+  const currentIds = new Set((await db.listRepoScopesForUser(userId)).map(scope => scope.repoId))
   return urls.map((url, index) => {
     const ref = parsed[index]
     if (!ref) return { url, error: 'invalid-url' }
     const repo = allowed.get(ref.repo.toLowerCase())
-    if (!repo) return { url, error: 'forbidden' }
-    const found = metadata.get(`${repo}#${ref.number}`)
+    if (!repo || !currentIds.has(repo.repoId)) return { url, error: 'forbidden' }
+    const found = metadata.get(`${repo.fullName}#${ref.number}`)
     return found ? { url, ...found } : { url, error: 'unavailable' }
   })
 }
