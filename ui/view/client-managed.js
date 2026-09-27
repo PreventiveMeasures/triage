@@ -12,6 +12,7 @@ export function getPreviewRole() { return managedModule?.getPreviewRole() ?? nul
 export function clearPreviewRole() { managedModule?.setPreviewRole(null) }
 export function resetManagedAppState() { managedModule?.resetManagedAppState() }
 export function setManagedAppSession(session) { managedModule?.setManagedAppSession(session) }
+export function setManagedReportCatalog(teams) { return managedModule?.setManagedReportCatalog(teams) ?? new Set() }
 export function readReportSources(id) { return managedModule?.readReportSources(id) }
 export function clearReportSources() { managedModule?.clearReportSources() }
 export async function fetchReportSources(id) { return (await loadManagedBundle()).fetchReportSources(id) }
@@ -43,6 +44,10 @@ export async function probeTeams(options) {
 
 export async function fetchReport(id) {
   return (await loadManagedBundle()).fetchReport(id)
+}
+
+export async function fetchReports(ids) {
+  return (await loadManagedBundle()).fetchReports(ids)
 }
 
 export async function fetchReportTriage(id) {

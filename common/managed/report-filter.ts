@@ -88,10 +88,18 @@ export function filterReportContent(content: string, perms: ViewerPermissions, f
   }
   let data: unknown
   try { data = JSON.parse(content) } catch { return content } // not JSON → pass through
-  if (data == null || typeof data !== 'object') return content
+  const filtered = filterReportData(data, perms)
+  return filtered === data ? content : JSON.stringify(filtered)
+}
+
+// Managed JSON responses parse every supported format first, then apply the
+// same subtractive filter to that object without serializing/reparsing it.
+export function filterReportData(data: unknown, perms: ViewerPermissions): unknown {
+  if (perms.dependencies && perms.security) return data
+  if (data == null || typeof data !== 'object') return data
   const d = data as { findings?: unknown; groups?: unknown; source?: unknown }
   const key = Array.isArray(d.findings) ? 'findings' : Array.isArray(d.groups) ? 'groups' : null
-  if (key == null) return content
+  if (key == null) return data
   const findings = d[key] as unknown[]
   const reportSource = d.source
   // Pair each original entry with its tabs (so kept entries keep their exact
@@ -104,6 +112,6 @@ export function filterReportContent(content: string, perms: ViewerPermissions, f
     if (!perms.security && tabs.some((t) => tabIsSecurity(t, reportSource))) continue
     kept.push(entry)
   }
-  if (kept.length === findings.length) return content // nothing stripped
-  return JSON.stringify({ ...(data as object), [key]: kept })
+  if (kept.length === findings.length) return data // nothing stripped
+  return { ...(data as object), [key]: kept }
 }

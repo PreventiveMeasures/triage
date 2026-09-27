@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { fetchReport } from '../client/managed/session.js'
 
 test('managed report loads request content with the server repository assignment', async (t) => {
-  const body = { content: '{"repo":{"github":"wrong/embedded"},"findings":[]}', repo: { github: 'server/assigned', directory: 'packages/ui' } }
+  const body = { data: { repo: { github: 'wrong/embedded' }, findings: [] }, repo: { github: 'server/assigned', directory: 'packages/ui' } }
   const fetch = t.mock.method(globalThis, 'fetch', (url, options) => {
     assert.equal(url, '/api/reports/report%20id')
     assert.equal(options.headers.accept, 'application/json')
@@ -19,7 +19,8 @@ test('managed report loads request content with the server repository assignment
 test('managed report loads never fall back to report metadata when the response lacks its assignment', async (t) => {
   let response
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(response))
-  for (const body of [null, {}, { content: '{}' }, { content: '{}', repo: {} }, { content: '{}', repo: { github: 7, directory: '' } }]) {
+  for (const body of [null, {}, { data: {} }, { data: { findings: [] }, repo: {} }, { data: { findings: [] }, repo: { github: 7, directory: '' } },
+    { content: '{"findings":[]}', repo: { github: null, directory: '' } }]) {
     response = Response.json(body)
     assert.equal(await fetchReport('id'), null)
   }

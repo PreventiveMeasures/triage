@@ -6,6 +6,7 @@ import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 
 async function database(t) {
   const pg = new PGlite()
+  const queries = []
   // PGlite has one connection. A lease covers the complete transaction, just
   // like distinct connections do in production; never interleave BEGINs.
   let tail = Promise.resolve()
@@ -16,6 +17,7 @@ async function database(t) {
     await previous
     return {
       async query(sql, params) {
+        queries.push(sql)
         if (!params && sql.includes(';')) { await pg.exec(sql); return { rows: [] } }
         const result = await pg.query(sql, params)
         return { ...result, rowCount: result.affectedRows }
@@ -25,9 +27,57 @@ async function database(t) {
   }
   const db = await openPostgresManagedDb(connect, { triageHistoryLimit: 2 })
   t.after(async () => { await db.close(); await pg.close() })
-  return { db, connect }
+  return { db, connect, queries }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+test('Postgres report batches snapshot sessions, scoped grants, and metadata with constant SQL round trips', async t => {
+  const { db, queries } = await database(t)
+  const admin = await db.upsertUser(identity(1), 1), viewer = await db.upsertUser(identity(2), 2)
+  await db.setUserRole(viewer, 'view')
+  await db.createSession({ id: 'session', userId: viewer, csrfToken: 'csrf', expiresAt: 1000 }, 2)
+  await db.selectRepo({ repoId: 7, fullName: 'org/repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: admin }, 3)
+  for (const [team, path, permissions] of [
+    ['app', 'packages/app', { dependencies: false, security: true }],
+    ['sub', 'packages/app/sub', { dependencies: true, security: false }],
+  ]) {
+    await db.createTeam(team, team, 3)
+    await db.setTeamRepo(team, 7, path)
+    await db.setTeamMember(team, viewer, permissions)
+  }
+  const ids = []
+  for (let i = 0; i < 32; i++) {
+    const id = `r-${i}`
+    await db.insertReport({ id, filename: `${id}.json`, contentType: 'application/json', byteSize: 100, sha256: id,
+      uploadedBy: admin, uploadedByLogin: 'user1', repoId: 7, repoDirectory: i % 2 === 0 ? 'packages/app' : 'packages/app/sub',
+      analyzer: null, visible: true, bundleId: null, bundleIntegrity: null }, 4)
+    ids.push(id)
+  }
+  queries.length = 0
+  const single = await db.getReportAccessSnapshot('session', 10, ids.slice(0, 1))
+  const count = queries.length
+  assert.equal(single.reports.length, 1)
+  assert.equal(count, 4, 'BEGIN, session SELECT, bulk report SELECT, COMMIT')
+  queries.length = 0
+  const batch = await db.getReportAccessSnapshot('session', 10, [...ids, ids[0], 'missing'])
+  assert.equal(queries.length, count)
+  assert.equal(queries[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+  assert.equal(batch.reports.length, ids.length)
+  for (const [index, id] of ids.entries()) {
+    const report = batch.reports.find(entry => entry.id === id)
+    assert.deepEqual(report.permissions, { dependencies: index % 2 !== 0, security: true })
+    assert.equal(report.repo.github, 'org/repo')
+  }
+  await db.setTeamRepo('app', 7, 'elsewhere')
+  await db.removeTeamRepo('app', 7, 'packages/app')
+  await db.removeTeamMember('sub', viewer)
+  assert.deepEqual((await db.getReportAccessSnapshot('session', 10, ids)).reports, [])
+  await db.setUserRole(viewer, 'admin')
+  assert.equal((await db.getReportAccessSnapshot('session', 10, ids)).reports.length, ids.length)
+  assert.equal(await db.getReportAccessSnapshot('session', 1000, ids), null)
+  await db.deleteSession('session')
+  assert.equal(await db.getReportAccessSnapshot('session', 10, ids), null)
+})
 
 test('Postgres managed store: auth, scopes, uploads, history, comments, and restart', async t => {
   const { db, connect } = await database(t)

@@ -63,6 +63,7 @@ const { decodeReportLocation, encodeReportLocation } = await import('../client/r
 const { getItem: getSecureItem, setItem: setSecureItem, hydrate: hydrateSecureStorage } = await import('../client/secure-storage.js')
 const { locateLinkedFinding, locateReportFinding } = await import('../ui/view/finding-link-route.js')
 const { deriveFindingId } = await import('../report/index.js')
+const { fetchReport: fetchManagedReport } = await import('../client/managed/session.js')
 const { findGroupById, getMergedGroups, groupKey, sortTabs } = await import('../ui/view/group.js')
 const { configureRevalidation, parseCommentRefs } = await import('../ui/view/format.js')
 
@@ -706,7 +707,8 @@ describe('finding deep links — managed resolution', () => {
   const first = { id: 'first', filename: 'first.json' }
   const second = { id: 'second', filename: 'second.json' }
   const team = { id: 'team', reports: [first, second] }
-  const content = { first: JSON.stringify({ findings: [makeFinding(UUID_A)] }), second: JSON.stringify({ findings: [makeFinding(UUID_B)] }) }
+  const repo = { github: 'org/repo', directory: '' }
+  const content = { first: { data: { findings: [makeFinding(UUID_A)] }, repo }, second: { data: { findings: [makeFinding(UUID_B)] }, repo } }
 
   beforeEach(() => {
     reset()
@@ -786,6 +788,52 @@ describe('finding deep links — managed resolution', () => {
     const missing = await locateLinkedFinding({ id: UUID_C, report: 'xxxx' }, navigation)
     assert.equal(missing, null)
     assert.deepEqual(reads, ['first', 'second'])
+  })
+
+  it('resolves hints and fallback scans through the real managed JSON response contract', async t => {
+    const network = t.mock.method(globalThis, 'fetch', url => {
+      const id = decodeURIComponent(url.slice('/api/reports/'.length))
+      return Promise.resolve(Response.json(content[id]))
+    })
+    navigation.readReport = fetchManagedReport
+    for (const hint of [await computeLinkHint('report', second.filename), 'xxxx']) {
+      state.reports = []
+      state.currentManagedTeam = null
+      state.currentManagedReport = null
+      calls.length = 0
+      network.mock.resetCalls()
+      const hit = await locateLinkedFinding({ id: UUID_B, report: hint }, navigation)
+      assert.equal(hit.finding.id, UUID_B)
+      assert.deepEqual(calls, [['team', 'second']])
+      assert.equal(network.mock.calls.at(-1).arguments[0], '/api/reports/second')
+      assert.equal(network.mock.callCount(), hint === 'xxxx' ? 2 : 1)
+    }
+  })
+
+  it('searches grouped parsed data under original CSV/Markdown filenames without mutating cached findings', async () => {
+    const finding = makeFinding(null)
+    delete finding.id
+    const id = await deriveFindingId(finding)
+    assert.ok(id)
+    const envelope = { data: { groups: [[Object.freeze(finding)]] }, repo }
+    navigation.readReport = () => envelope
+    navigation.openManagedReport = (target, reportId) => {
+      calls.push([target.id, reportId])
+      state.currentManagedTeam = target.id
+      state.currentManagedReport = reportId
+      state.reports = [{ fileName: target.reports[0].filename, groups: [[{ ...finding, id }]] }]
+      return true
+    }
+    for (const filename of ['export.csv', 'security.md']) {
+      state.currentManagedTeam = null
+      state.currentManagedReport = null
+      state.reports = []
+      state.managedTeams = [{ id: 'team', reports: [{ id: 'grouped', filename }] }]
+      const hit = await locateLinkedFinding({ id, report: await computeLinkHint('report', filename) }, navigation)
+      assert.equal(hit.finding.id, id)
+      assert.deepEqual(calls.at(-1), ['team', 'grouped'])
+      assert.equal(finding.id, undefined, 'ID derivation must not change the cached envelope')
+    }
   })
 
   it('rejects inaccessible explicit routes without using another copy or local storage', async () => {

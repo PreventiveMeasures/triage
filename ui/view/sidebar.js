@@ -3,10 +3,11 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { clearPreviewRole, fetchBundleMetadata, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession } from './client-managed.js'
+import { clearPreviewRole, fetchBundleMetadata, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './client-managed.js'
 import { resetManagedPullRequests } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
+import { managedReportViewChanged } from './managed-report-catalog.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -1936,10 +1937,7 @@ async function revalidateManagedSession() {
     initManagedTriagePush()
     // The user's teams (sidebar Teams section). probeTeams never throws; empty
     // when logged out. Repaint the sidebar so the section reflects the result.
-    const teams = session == null || session.role === 'none' ? [] : await managedProbeTeams({ fallback: state.managedTeams })
-    if (!isCurrent()) return
-    state.managedTeams = teams
-    renderSidebar()
+    if (!(await refreshManagedTeams(isCurrent))) return
     if (!document.querySelector('base')) {
       managedBase = document.createElement('base')
       managedBase.href = '/'
@@ -1951,6 +1949,33 @@ async function revalidateManagedSession() {
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   }
+}
+
+let managedTeamsRefresh = null
+async function refreshManagedTeams(isCurrent) {
+  const generation = clientModeGeneration
+  const session = state.managedSession
+  if (managedTeamsRefresh?.generation !== generation || managedTeamsRefresh?.session?.id !== session?.id
+    || managedTeamsRefresh?.session?.role !== session?.role) {
+    const refresh = { generation, session, promise: null }
+    managedTeamsRefresh = refresh
+    refresh.promise = managedProbeTeams({ fallback: state.managedTeams }).finally(() => {
+      if (managedTeamsRefresh === refresh) managedTeamsRefresh = null
+    })
+  }
+  const teams = await managedTeamsRefresh.promise
+  if (!isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
+  const changedReports = setManagedReportCatalog(teams)
+  state.managedTeams = teams
+  // Discard an already-rendered view as well as its cached envelopes. In
+  // particular, Findings/Files navigation must not reuse revoked findings.
+  if (managedReportViewChanged(state, teams, changedReports)) {
+    readyManagedView = null
+    await goHome({ history: false })
+    if (!isCurrent()) return false
+  }
+  renderSidebar()
+  return true
 }
 
 // Admin / manage pages reachable from the account menu. Keys double
@@ -1981,6 +2006,9 @@ function canAccessManagedPage(view) {
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 async function restoreManagedPage(route, isCurrent) {
+  // Revalidate lightweight access/assignment metadata on navigation; unchanged
+  // versions continue to reuse content without downloading the reports again.
+  if ((['findings', 'files'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent))) return false
   route = resolveManagedRoute(route, state.managedTeams)
   if (!route) return false
   const canReuseReport = readyManagedView === currentViewGeneration()

@@ -39,7 +39,9 @@ export async function locateManagedFinding(ref, { openManagedReport, readReport 
       const content = await readReport(report.id)
       if (!current()) return null
       if (content == null) continue
-      const parsed = await loadManagedFindings(content, report.filename)
+      // The endpoint returns parsed data; the finding loader takes text and
+      // backfills IDs on its own copy, leaving the shared report cache intact.
+      const parsed = await loadManagedFindings(JSON.stringify(content.data), report.filename)
       if (!current()) return null
       if (parsed?.findings.some(finding => finding.id === ref.id)) return open(team, report.id)
     }

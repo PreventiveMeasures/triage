@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Role } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
@@ -99,6 +99,21 @@ export interface ReportRecord {
   analyzer: string | null
   visible: boolean
   bundleId: string | null
+}
+
+// One transaction snapshots all metadata needed to authorize, filter and
+// revalidate a report batch. Unauthorized/missing reports are omitted.
+export interface ReportAccessRecord {
+  id: string
+  filename: string
+  byteSize: number
+  sha256: string
+  repo: { github: string | null; directory: string }
+  permissions: TeamUserPermissions
+}
+export interface ReportAccessSnapshot {
+  user: StoredUser
+  reports: ReportAccessRecord[]
 }
 
 // What the upload handler supplies to record a report; the store stamps
@@ -252,6 +267,7 @@ export interface UserTeamReport {
   id: string
   slug: string
   filename: string
+  cacheKey: string
 }
 export interface UserTeamBundle {
   id: string
@@ -306,6 +322,7 @@ export interface ManagedDb extends ActivityStore, CommentStore {
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
+  getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null>
   listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
   deleteReport(id: string): Promise<boolean>
   // Attach / detach a report's repo + directory link (repoId null = detach);
@@ -512,6 +529,23 @@ function prepareStatements(db: ManagedSql) {
               analyzer AS analyzer, visible AS visible, bundle_id AS bundleId
          FROM managed_report WHERE id = ?`,
     ),
+    selectReportAccessStmt: db.prepare(
+      `WITH requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
+         SELECT r.id AS id, MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
+           FROM managed_report r JOIN requested q ON q.id = r.id
+           JOIN team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+           JOIN team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+          GROUP BY r.id
+       )
+       SELECT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
+              r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+              COALESCE(g.dependencies, 0) AS dependencies, COALESCE(g.security, 0) AS security
+         FROM managed_report r JOIN requested q ON q.id = r.id
+         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
+         LEFT JOIN report_grants g ON g.id = r.id
+        WHERE ? = 1 OR (? = 1 AND r.uploaded_by = ?)
+           OR (g.id IS NOT NULL AND (? = 1 OR r.visible = 1))`,
+    ),
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
@@ -629,10 +663,14 @@ function prepareStatements(db: ManagedSql) {
     // Reports attached to the repos of the user's teams, tagged by team (a report
     // shows under every team whose repo it's attached to). Newest first.
     selectUserTeamReportsStmt: db.prepare(
-      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.uploaded_at
+      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.uploaded_at,
+              r.sha256 AS sha256, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+              tu.view_dependencies AS dependencies, tu.view_security AS security,
+              (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
          FROM team_user tu
          JOIN team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+         LEFT JOIN selected_repo sr ON sr.repo_id = r.repo_id
         WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) = 'manage')
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
@@ -802,6 +840,23 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
         bundleId: row.bundleId,
       }
+    },
+    async getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null> {
+      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
+      if (!session) return null
+      const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
+      if (user.role === 'none' || ids.length === 0) return { user, reports: [] }
+      const admin = user.role === 'admin', manage = user.role === 'manage'
+      const rows = await stmts.selectReportAccessStmt.all(JSON.stringify([...new Set(ids)]), user.id,
+        admin ? 1 : 0, manage ? 1 : 0, user.id, manage ? 1 : 0) as {
+        id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
+        repoFullName: string | null; dependencies: number; security: number
+      }[]
+      return { user, reports: rows.map(row => ({
+        id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
+        repo: { github: row.repoFullName, directory: row.repoDirectory },
+        permissions: { dependencies: admin || manage || row.dependencies === 1, security: admin || manage || row.security === 1 },
+      })) }
     },
     async listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]> {
       const rows = (await stmts.reportFilenamesWithBundleHashStmt.all(bundleId, sha256)) as { filename: string }[]
@@ -1004,9 +1059,15 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
     async listTeamsForUser(userId: string): Promise<UserTeam[]> {
       const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string }[]
       const reportsByTeam = new Map<string, UserTeamReport[]>()
-      for (const r of (await selectUserTeamReportsStmt.all(userId)) as { teamId: string; id: string; slug: string; filename: string }[]) {
+      for (const r of (await selectUserTeamReportsStmt.all(userId)) as {
+        teamId: string; id: string; slug: string; filename: string; sha256: string; repoId: number
+        repoDirectory: string; repoFullName: string | null; dependencies: number; security: number; role: string
+      }[]) {
         const list = reportsByTeam.get(r.teamId) ?? []
-        list.push({ id: r.id, slug: r.slug, filename: r.filename })
+        const cacheKey = createHash('sha256').update(JSON.stringify([
+          r.sha256, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
+        ])).digest('base64url')
+        list.push({ id: r.id, slug: r.slug, filename: r.filename, cacheKey })
         reportsByTeam.set(r.teamId, list)
       }
       const bundlesByTeam = new Map<string, UserTeamBundle[]>()

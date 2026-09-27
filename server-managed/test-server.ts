@@ -15,6 +15,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
+import { readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { randomUUID } from 'node:crypto'
 
@@ -475,6 +476,17 @@ async function handleTriage(req: IncomingMessage, res: ServerResponse, id: strin
   sendJson(res, 200, { ok: true })
 }
 
+async function handleReportQuery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const chunks = []
+  for await (const chunk of req) chunks.push(Buffer.from(chunk))
+  const { ids } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) { sendJson(res, 400, { error: 'bad-ids' }); return }
+  const selected = [...new Set(ids)].map(id => reportFixtures.find(report => report.id === id))
+  if (selected.some(report => !report)) { sendJson(res, 404, { error: 'no-report' }); return }
+  sendJson(res, 200, { reports: selected.map(report => ({ id: report!.id, data: readManagedReport(report!.content, report!.filename).data,
+    repo: { github: repoById(report!.repoId)?.fullName ?? null, directory: report!.repoDirectory } })) })
+}
+
 function handle(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', `http://${host}`)
   const method = req.method ?? 'GET'
@@ -503,6 +515,11 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     sendJson(res, 200, { teams })
     return
   }
+  if (url.pathname === '/api/reports/query') {
+    if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+    void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })
+    return
+  }
   if (url.pathname.startsWith('/api/reports/')) {
     const route = /^\/api\/reports\/([^/]+)\/comments(?:\/([^/]+))?$/u.exec(url.pathname)
     if (route) {
@@ -526,7 +543,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     res.setHeader('x-content-type-options', 'nosniff')
     if (acceptsReportMetadata(req.headers.accept)) {
       sendJson(res, 200, {
-        content: report.content,
+        data: readManagedReport(report.content, report.filename).data,
         repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory },
       })
     } else sendText(res, 200, report.content)

@@ -1531,17 +1531,17 @@ test('GET /api/reports/<id>: filtered content and authoritative repo metadata (a
   assert.equal(metadata.statusCode, 200)
   assert.equal(metadata.headers['cache-control'], 'no-store')
   assert.equal(metadata.headers.vary, 'Accept')
-  assert.deepEqual(JSON.parse(metadata.body), { content: viewerRes.body, repo: { github: 'o/r', directory: '' } })
+  assert.deepEqual(JSON.parse(metadata.body), { data: JSON.parse(viewerRes.body), repo: { github: 'o/r', directory: '' } })
   for (const accept of ['application/json, */*', 'application/json; q=1', 'text/plain, APPLICATION/JSON; q=0.5']) {
     assert.deepEqual(JSON.parse((await view(viewerSess, reportId, accept)).body), JSON.parse(metadata.body), accept)
   }
   for (const accept of ['*/*', 'text/plain', 'application/json; q=0, */*']) {
     assert.equal((await view(viewerSess, reportId, accept)).body, viewerRes.body, accept)
   }
-  assert.equal(JSON.parse(JSON.parse(metadata.body).content).repo.github, 'wrong/embedded', 'metadata does not rewrite the report or triage identity')
+  assert.equal(JSON.parse(metadata.body).data.repo.github, 'wrong/embedded', 'metadata does not rewrite the report or triage identity')
   await db.setReportRepo(reportId, 7, 'packages/updated')
   assert.deepEqual(JSON.parse((await view(adminSess, reportId, 'application/json')).body), {
-    content, repo: { github: 'o/r', directory: 'packages/updated' },
+    data: JSON.parse(content), repo: { github: 'o/r', directory: 'packages/updated' },
   }, 'each load includes the current assignment, without a separate catalogue refresh')
   await db.setReportRepo(reportId, null, '')
   assert.deepEqual(JSON.parse((await view(adminSess, reportId, 'application/json')).body).repo, { github: null, directory: '' }, 'unassigned is explicit, never inferred from embedded data')

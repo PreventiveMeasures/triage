@@ -365,7 +365,7 @@ class ManagedAdminUsers extends ManagedPage {
     const prev = u.role
     if (role === prev) return
     try {
-      await this.appState.mutate(() => setRole(u.id, role, this._csrf), ['users', 'teams', 'history'])
+      await this.appState.mutate(() => setRole(u.id, role, this._csrf), ['users', 'teams', 'reports', 'history'])
       u.role = role
       await this._load()
     } catch (err) {
@@ -1438,7 +1438,7 @@ class ManagedAdminTeams extends ManagedPage {
     if (this._busy) return
     this._busy = true
     this._error = null
-    try { await this.appState.mutate(fn, ['teams', 'users', 'history']) } catch (err) { this._error = String(err?.message ?? err) }
+    try { await this.appState.mutate(fn, ['teams', 'users', 'reports', 'history']) } catch (err) { this._error = String(err?.message ?? err) }
     finally { this._busy = false; await this._load({ preserveError: true }) }
   }
 
