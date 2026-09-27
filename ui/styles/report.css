@@ -3002,7 +3002,7 @@ body.report-fullscreen {
 }
 .bundle-advisory-row {
   display: flex; align-items: flex-start; gap: .65rem;
-  padding: .375rem 0;
+  padding: .3125rem 0;
 }
 .bundle-advisory-row + .bundle-advisory-row {
   border-top: 1px solid color-mix(in oklch, var(--border) 65%, transparent);
