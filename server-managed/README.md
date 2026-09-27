@@ -289,7 +289,10 @@ Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
 
 `GET /api/bundles/:id/advisories` looks up published npm advisories using the
-stored bundle's dependency names and versions. It accepts no bundle body and
+stored bundle's dependency names and versions. A separate package inventory is
+persisted during the shared metadata build; advisory requests buffer at most
+1 MiB before parsing, without decompressing the full file inventory. Oversized package
+inventories return 413 without contacting npm. The API accepts no bundle body and
 returns `{ packages, advisories }`, without source contents or scan findings.
 The managed Advisories tab loads it directly, without a consent prompt.
 Bundle access and the team's `security` permission are required for view/triage

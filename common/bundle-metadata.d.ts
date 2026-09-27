@@ -3,4 +3,3 @@ export interface BundleIdentity { integrity: string; kind: string | null; size: 
 export interface BundleDetails extends BundleIdentity { bundle?: unknown; json?: unknown }
 export function parseBundleContents(text: string, identity: BundleIdentity): BundleDetails
 export function createBundleMetadata(details: BundleDetails): Promise<Record<string, unknown>>
-export function parseBundleMetadata(data: unknown, integrity?: string): BundleDetails

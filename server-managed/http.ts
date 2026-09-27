@@ -47,7 +47,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, putUploadPart, readUpload, validUploadPart } from './uploads.ts'
-import type { BundleCache, BundleCachePart } from './bundle-cache.ts'
+import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
@@ -980,12 +980,13 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   if (!record) { sendJson(res, 404, { error: 'no-bundle' }); return }
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
   if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-  let packages: Record<string, string[]>
+  let packages: Record<string, string[]> | null
   try { packages = await deps.bundleCache.packageVersions(record) }
   catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
   if (!(await authorize())) return
+  if (packages === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const body = Buffer.from(JSON.stringify(packages))
-  if (body.length > 1024 * 1024) { sendJson(res, 413, { error: 'payload-too-large' }); return }
+  if (body.length > MAX_PACKAGE_INVENTORY_BYTES) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
