@@ -3,6 +3,7 @@
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
+import { managedStorageLines } from '../server-common/storage-log.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { loadManagedStatic } from './static.ts'
@@ -53,6 +54,14 @@ export async function createManagedApp(config: ManagedConfig, options: Partial<P
   return { handleRequest, stop, close }
 }
 
+export function logManagedStartup(config: ManagedConfig, port: number, mode = 'managed'): void {
+  console.log([
+    `DeepView managed server (${mode}):`,
+    `  HTTP: http://${config.host}:${port}/`,
+    ...managedStorageLines(config),
+  ].join('\n'))
+}
+
 export async function start(): Promise<void> {
   const config = loadManagedConfig()
   const app = await createManagedApp(config)
@@ -74,7 +83,7 @@ export async function start(): Promise<void> {
   server.listen(config.port, config.host, () => {
     const address = server.address()
     const port = typeof address === 'object' && address ? address.port : config.port
-    console.log(`triage managed server listening on http://${config.host}:${port} (mode=managed)`)
+    logManagedStartup(config, port)
   })
 }
 
