@@ -11,18 +11,18 @@ export const TEAM_FEED_LIFETIME_MS = 240_000 // below the configured Vercel 300s
 const HEARTBEAT_MS = 15_000
 
 type FeedOptions = { pollMs?: number; lifetimeMs?: number }
-type Revisions = { teams?: string; triage?: string | undefined }
+type Publish = (event: 'teams' | 'triage', revision: string | undefined) => boolean
 
 // Public capabilities remain scoped to their single shared workspace.
 export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
   snapshot: TeamReportAccessSnapshot, recheck: () => Promise<void>, options: FeedOptions = {}): Promise<void> {
   let ids: string[] | undefined
-  await serveFeed(res, deps, async () => {
+  await serveFeed(res, deps, async publish => {
     await recheck()
     ids ??= [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
     const triage = await deps.db.getAnnotationRevision(ids)
     await recheck()
-    return { triage }
+    publish('triage', triage)
   }, options)
 }
 
@@ -38,32 +38,39 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
       throw new TeamReportsError(403, 'access-changed')
     }
   }
-  await serveFeed(res, deps, async () => {
+  await serveFeed(res, deps, async publish => {
     const catalog = await deps.db.getUserTeamFeedSnapshot(sessionId, Date.now())
     checkUser(catalog)
+    checkUser(await deps.db.getReportAccessSnapshot(sessionId, Date.now(), []))
+    // Publish catalog state before loading any report blobs. A slow or broken
+    // focused report must not hide membership/content changes from the client.
+    if (!publish('teams', catalog!.revision) || !teamId) return
     let triage: string | undefined
-    if (teamId) {
-      const snapshot = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
-      if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
-      const key = teamSnapshotKey(snapshot)
-      if (key !== visibilityKey) {
+    const snapshot = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+    if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
+    checkUser(snapshot)
+    const key = teamSnapshotKey(snapshot)
+    if (key !== visibilityKey) {
+      try {
         ids = snapshot.teamId ? [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)] : []
         visibilityKey = key
+      } catch {
+        // Missing, malformed or temporarily unavailable blobs only suspend
+        // triage. Retry visibility on the next poll, even for the same key.
+        publish('triage', undefined)
+        return
       }
-      if (snapshot.teamId) triage = JSON.stringify([key, await deps.db.getAnnotationRevision(ids)])
-      const current = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
-      // A concurrent access/content change discards this poll. The next one
-      // recomputes visibility, without ever notifying under an old grant.
-      checkUser(current)
-      if (!current || teamSnapshotKey(current) !== key) return null
-    } else {
-      checkUser(await deps.db.getReportAccessSnapshot(sessionId, Date.now(), []))
     }
-    return { teams: catalog!.revision, triage }
+    if (snapshot.teamId) triage = JSON.stringify([key, await deps.db.getAnnotationRevision(ids)])
+    const current = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+    // A concurrent access/content change discards only the annotation read.
+    checkUser(current)
+    if (!current || teamSnapshotKey(current) !== key) return
+    publish('triage', triage)
   }, options)
 }
 
-async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: () => Promise<Revisions | null>,
+async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: (publish: Publish) => Promise<void>,
   { pollMs = TEAM_FEED_POLL_MS, lifetimeMs = TEAM_FEED_LIFETIME_MS }: FeedOptions): Promise<void> {
   const controller = new AbortController()
   const close = () => controller.abort()
@@ -87,17 +94,18 @@ async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: () =>
     res.flushHeaders()
     let heartbeat = Date.now()
     const previous = new Map<string, string>()
+    const publish: Publish = (event, revision) => {
+      if (stopped()) return false
+      if (revision === undefined) { previous.delete(event); return true }
+      if (revision === previous.get(event)) return true
+      if (!write(`event: ${event}\ndata: {}\n\n`)) return false
+      previous.set(event, revision)
+      heartbeat = Date.now()
+      return true
+    }
     while (!stopped()) {
-      const revisions = await read()
+      await read(publish)
       if (stopped()) break
-      for (const event of revisions ? ['teams', 'triage'] as const : []) {
-        const revision = revisions![event]
-        if (revision === undefined) { previous.delete(event); continue }
-        if (revision === previous.get(event)) continue
-        if (!write(`event: ${event}\ndata: {}\n\n`)) return
-        previous.set(event, revision)
-        heartbeat = Date.now()
-      }
       if (Date.now() - heartbeat >= HEARTBEAT_MS) {
         if (!write(': keepalive\n\n')) break
         heartbeat = Date.now()

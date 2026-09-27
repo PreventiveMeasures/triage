@@ -74,3 +74,18 @@ test('empty-team grant changes invalidate the workspace and its bundle metadata'
   assert.equal(cache.read('bundle-metadata:bundle'), undefined)
   assert.deepEqual([...cache.setReportCatalog([])], ['team:team', 'bundle:bundle'])
 })
+
+test('bundle assignment changes reload affected team reports and leave other teams alone', () => {
+  const cache = new ManagedAppState()
+  const bundle = { id: 'bundle', filename: 'source.stasis', repoFullName: 'org/repo' }
+  const catalog = owner => ['one', 'two', 'other'].map(id => ({ id, reports: [report(id)], bundles: id === owner ? [bundle] : [] }))
+  cache.setReportCatalog(catalog('one'))
+  const moved = catalog('two')
+  const changed = cache.setReportCatalog(moved)
+  for (const id of ['one', 'two', 'other']) {
+    const view = { ...aggregate, currentManagedTeam: id, managedReports: [report(id)] }
+    assert.equal(managedReportViewChanged(view, moved, changed), id !== 'other')
+    assert.equal(managedReportViewChanged({ ...view, currentManagedReport: id }, moved, changed), id !== 'other')
+  }
+  assert.equal(cache.setReportCatalog(catalog('two')).size, 0)
+})

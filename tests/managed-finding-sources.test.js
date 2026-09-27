@@ -158,3 +158,43 @@ test('local/e2e findings keep their existing full-bundle path', async () => {
   assert.equal(getFocusCode([local]).content, 'local source')
   assert.equal(fullBundleLoads, 1); assert.equal(calls.length, 0)
 })
+
+const sourceCatalog = (bundles = []) => [
+  { id: 'team', reports: [{ id: 'report/id', cacheKey: 'unchanged' }], bundles },
+  { id: 'unrelated', reports: [{ id: 'other', cacheKey: 'unchanged' }], bundles: [] },
+]
+const sourceBundle = { id: 'bundle', filename: 'source.stasis', repoFullName: 'org/repo' }
+
+for (const status of [204, 404]) {
+  test(`a bundle upload clears a cached ${status} and fetches newly linked report sources`, async t => {
+    let available = false, reads = 0
+    t.mock.method(globalThis, 'fetch', () => {
+      reads++
+      return Promise.resolve(available ? Response.json(payload) : new Response(null, { status }))
+    })
+    managedAppState.setReportCatalog(sourceCatalog())
+    assert.equal(await fetchReportSources('report/id', 'team'), null)
+    available = true
+    managedAppState.setReportCatalog(sourceCatalog([sourceBundle]))
+    assert.equal(readReportSources('report/id', 'team'), undefined)
+    assert.equal((await fetchReportSources('report/id', 'team')).sources.get('src/main.js'), 'main source')
+    assert.equal(reads, 2)
+  })
+}
+
+test('bundle removal evicts scoped and privileged source caches and cancels stale reads', async () => {
+  managedAppState.setReportCatalog(sourceCatalog([sourceBundle]))
+  await fetchReportSources('report/id')
+  await fetchReportSources('other', 'unrelated')
+  gate = Promise.withResolvers()
+  const loading = fetchReportSources('report/id', 'team')
+  const rejected = assert.rejects(loading, { name: 'AbortError' })
+  const pendingSignal = calls.at(-1).options.signal
+  managedAppState.setReportCatalog(sourceCatalog())
+  assert.equal(pendingSignal.aborted, true)
+  assert.equal(readReportSources('report/id'), undefined)
+  assert.equal(readReportSources('report/id', 'team'), undefined)
+  assert.ok(readReportSources('other', 'unrelated').data, 'other team sources stay cached')
+  gate.resolve(); await rejected
+  assert.equal(readReportSources('report/id', 'team'), undefined, 'old bytes cannot repopulate the cache')
+})

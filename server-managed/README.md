@@ -230,15 +230,17 @@ The feed checks shared database state every three seconds, so instances using
 SQLite or Postgres see each other's writes. Transactions finish before each
 wait; catalog reads do not write session timestamps. Visibility is recomputed
 when the focused team's reports or grants change, and concurrent access changes
-discard stale annotation reads. Losing that team removes its triage subscription
-while the membership/catalog feed continues. Logout, session expiry or a role
+discard stale annotation reads. Catalog notifications are sent before report
+parsing; unreadable report blobs suspend only triage, which retries on later
+polls. Losing that team removes its triage subscription while the
+membership/catalog feed continues. Logout, session expiry or a role
 change sends terminal `event: close` and requires session revalidation.
 
 The UI keeps one feed, replacing it on navigation. Home, bundles and Manage use
 the catalog-only feed; the focused team's triage subscription starts after its
 reports hydrate. Catalog updates refresh the sidebar and landing links, evict
-changed report/bundle caches, and reload affected open content if still
-accessible. Logout and local mode close the subscription. Live annotation reads
+changed report, source and bundle caches, and reload affected open content if
+still accessible. Logout and local mode close the subscription. Live annotation reads
 preserve pending local edits and refresh Fix metadata when needed.
 
 Public-share feeds remain limited to the single capability workspace. They

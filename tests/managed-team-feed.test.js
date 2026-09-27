@@ -311,3 +311,59 @@ test('focused visibility is recomputed after grant and report publication change
   assert.equal(triageEvents(res), 4)
   assert.equal(res.ended, undefined)
 })
+
+test('catalog invalidation arrives before a focused report finishes loading', async t => {
+  const gate = Promise.withResolvers(), h = await fixture(t)
+  const bytes = await h.deps.reportStore.get('report')
+  h.deps.reportStore.get = () => gate.promise
+  try {
+    const { res } = await h.userFeed()
+    assert.deepEqual(res.frames, ['event: teams\ndata: {}\n\n'])
+    gate.resolve(bytes)
+    await until(() => triageEvents(res) === 1)
+  } finally { gate.resolve(bytes) }
+})
+
+for (const failure of ['missing', 'malformed', 'storage error']) {
+  test(`${failure} report blobs suspend triage but preserve catalog updates and recover on repair`, async t => {
+    const h = await fixture(t), original = h.deps.reportStore.get
+    let broken = true
+    h.deps.reportStore.get = id => {
+      if (id !== 'broken' || !broken) return original(id)
+      if (failure === 'storage error') return Promise.reject(new Error('Blob store unavailable'))
+      return Promise.resolve(failure === 'missing' ? null : Buffer.from('{broken json'))
+    }
+    const { res } = await h.userFeed()
+    await until(() => triageEvents(res) === 1)
+    await h.writer.insertReport({ id: 'broken', filename: 'broken.json', contentType: 'application/json',
+      byteSize: 12, sha256: 'broken', uploadedBy: h.session.userId, repoId: 1, visible: true }, 1)
+    await until(() => teamEvents(res) === 2)
+    await h.writer.createTeam('new', 'New team', 1)
+    await h.writer.setTeamMember('new', h.session.userId, { security: false, dependencies: false })
+    await until(() => teamEvents(res) === 3)
+    await h.writer.insertBundle({ id: 'bundle', integrity: 'bundle-hash', filename: 'bundle.stasis', kind: 'stasis',
+      byteSize: 1, uploadedBy: h.session.userId, repoId: 1 }, 1)
+    await until(() => teamEvents(res) === 4)
+    assert.equal(triageEvents(res), 1)
+    assert.equal(res.ended, undefined)
+    assert.ok(res.frames.every(frame => !frame.includes('event: close')))
+    broken = false
+    await until(() => triageEvents(res) === 2)
+    assert.equal(teamEvents(res), 4, 'repair needs no catalog change or reconnect')
+    await h.writer.deleteSession(h.session.id)
+    await until(() => res.ended)
+    assert.equal(res.frames.at(-1), 'event: close\ndata: {}\n\n')
+  })
+}
+
+test('session revocation during a catalog read prevents its early invalidation', async t => {
+  const h = await fixture(t), original = h.db.getUserTeamFeedSnapshot
+  h.db.getUserTeamFeedSnapshot = async (...args) => {
+    const catalog = await original(...args)
+    await h.writer.deleteSession(h.session.id)
+    return catalog
+  }
+  const { res, done } = await h.userFeed()
+  await done
+  assert.deepEqual(res.frames, ['event: close\ndata: {}\n\n'])
+})
