@@ -77,6 +77,11 @@
   margin-block: auto;
 }
 
+#drop-zone[data-server-mode='managed'] > .managed-landing:has(#managed-no-access-title) {
+  width: max-content;
+  max-width: 100%;
+}
+
 .managed-login {
   padding-block: 2rem;
 

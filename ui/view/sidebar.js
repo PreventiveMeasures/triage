@@ -1261,7 +1261,7 @@ function renderAuthStatus() {
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
         </span>
       </div>
-      <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'E2E mode' : 'Local mode'}</button>
+      <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'e2e mode' : 'Local mode'}</button>
       <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
   }
