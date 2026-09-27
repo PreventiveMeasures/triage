@@ -3,12 +3,12 @@
 // loud on malformed values so a typo surfaces at startup rather than
 // deep in `node:net` / at the first token verification. Pure parsing —
 // no backends opened, no crypto keys derived, no side effects beyond
-// `--help` / fail-fast `process.exit`. index.ts destructures the
+// fail-fast `process.exit`. index.ts destructures the
 // result and does the wiring (backend selection, password HMAC, …).
 
 import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
-import { argv, env } from 'node:process'
+import { env } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { configuredScanServer } from '../server-common/scan-config.ts'
@@ -48,7 +48,7 @@ function intEnv(name: string, def: number, min: number, max: number, hint = ''):
   return n
 }
 
-const HELP = `Usage: node server-e2e/index.ts
+export const HELP = `Usage: node server-e2e/index.ts
 Environment:
   PORT                       listen port (default 8765)
   HOST                       bind host (default 127.0.0.1)
@@ -201,11 +201,6 @@ export function loadConfig(): Config {
   // here, after the config.json / password parse, to keep the
   // error-precedence order.
   const maxInflightPerSocket = intEnv('MAX_INFLIGHT_PER_SOCKET', 64, 1, 65_536)
-
-  if (argv.includes('--help') || argv.includes('-h')) {
-    console.log(HELP)
-    process.exit(0)
-  }
 
   const neonUrl = databaseUrls().e2e
   const blobToken = env['BLOB_READ_WRITE_TOKEN'] ?? null

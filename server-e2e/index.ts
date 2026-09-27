@@ -86,7 +86,7 @@ import { installWsServer } from './ws-server.ts'
 import { SSE_OPEN_PATH, installSseServer } from './sse-server.ts'
 import type { ServerInfo } from '../common/server-info.ts'
 import { createLifecycle } from './lifecycle.ts'
-import { loadConfig } from './config.ts'
+import { HELP, loadConfig } from './config.ts'
 import { type Handle, openDb } from './db.ts'
 import { openNeonDb } from './db-neon.ts'
 import { initObjstore } from './objstore/init.ts'
@@ -99,6 +99,13 @@ import {
 } from './pubsub.ts'
 import { createBusReceiver } from './bus-receiver.ts'
 import { e2eStorageLines } from '../server-common/storage-log.ts'
+
+// Help belongs to the standalone entry point, never to an embedding host's
+// arguments. Handle it before configuration or storage is initialized.
+if (import.meta.main && (process.argv.includes('--help') || process.argv.includes('-h'))) {
+  console.log(HELP)
+  process.exit(0)
+}
 
 // All external inputs (env vars + optional config.json) are parsed
 // and validated in ./config.ts; destructure into the uppercase names

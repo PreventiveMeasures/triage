@@ -177,6 +177,47 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
   })
 }
 
+for (const mode of ['e2e', 'managed', 'managed-e2e', 'e2e-managed']) {
+  for (const flag of ['--help', '-h']) {
+    test(`init(${mode}) ignores the embedding host's ${flag} argument`, () => {
+      const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-host-help-'))
+      try {
+        const proc = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+          import assert from 'node:assert/strict'
+          import { init } from './server.ts'
+          const server = await init(${JSON.stringify(mode)})
+          assert.equal(server.listening, false)
+          assert.equal(server.address(), null)
+          assert.equal(server.listenerCount('request'), 1)
+          assert.equal(server.listenerCount('upgrade'), ${mode === 'managed' ? 0 : 1})
+          console.log('initialized')
+          process.kill(process.pid, 'SIGTERM')
+        `, '--', flag], { env: environment(dir), encoding: 'utf8', timeout: 15000 })
+        assert.equal(proc.status, 0, proc.stderr)
+        assert.match(proc.stdout, /^initialized$/mu, 'init must return to its host')
+        assert.doesNotMatch(proc.stdout, /Usage:/u)
+      } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
+  }
+}
+
+test('standalone e2e entry points handle both help flags without opening storage', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-e2e-help-'))
+  try {
+    const env = environment(dir)
+    for (const entry of ['server-e2e/cli.js', 'server-e2e/index.ts']) {
+      for (const flag of ['--help', '-h']) {
+        const proc = spawnSync(process.execPath, [entry, flag], { env, encoding: 'utf8', timeout: 5000 })
+        assert.equal(proc.status, 0, proc.stderr)
+        assert.match(proc.stdout, /Usage: node server-e2e\/index.ts/u)
+        assert.match(proc.stdout, /DB_PATH/u)
+        assert.equal(existsSync(env.DB_PATH), false)
+        assert.equal(existsSync(env.OBJSTORE_DIR), false)
+      }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('launcher validates arguments before opening stores; help needs no managed credentials', () => {
   const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-cli-'))
   try {
