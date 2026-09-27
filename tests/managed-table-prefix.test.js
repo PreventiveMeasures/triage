@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
@@ -13,6 +13,10 @@ const renamed = ['selected_repo', 'team_repo', 'team_user', 'finding_triage',
   'finding_triage_event', 'finding_comment', 'finding_comment_event']
 const tables = ['managed_user', 'managed_session', 'managed_bundle', 'managed_report',
   'managed_team', 'managed_activity', ...renamed.map(name => `managed_${name}`)]
+
+// These tests run sequentially; only the engine is shared, never the schema.
+let sharedPg
+after(async () => { await sharedPg?.close() })
 
 async function database(t, backend) {
   if (backend === 'sqlite') {
@@ -25,8 +29,8 @@ async function database(t, backend) {
       names: () => raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map(row => row.name),
     }
   }
-  const pg = new PGlite()
-  t.after(() => pg.close())
+  const pg = sharedPg ??= new PGlite()
+  await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   let tail = Promise.resolve()
   const connect = async () => {
     const previous = tail

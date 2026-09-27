@@ -47,6 +47,7 @@ const sessions = new Map()
 // for saves nobody announced (`holdLocalChangeChecks`), so an upload
 // that promptly follows one isn't flagged in between.
 const LOCAL_CHANGE_SETTLE_MS = 2_000
+const localChangeTimer = { setTimeout: (callback, ms) => setTimeout(callback, ms) }
 
 // fileName → number of holds (`holdLocalChangeChecks`). While held, a
 // change to the local copy is not flagged anywhere: its upload is on the
@@ -1082,7 +1083,7 @@ async function saveOwnBytes(entry, fileName, bytes) {
 // Re-check a report's local copy once a save has settled — long enough
 // for the writer (an upload recording its baseline, say) to finish.
 function scheduleLocalCheck(entry, tag, fileName) {
-  setTimeout(() => { checkLocalCopy(entry, tag, fileName).catch(() => {}) }, LOCAL_CHANGE_SETTLE_MS)
+  localChangeTimer.setTimeout(() => checkLocalCopy(entry, tag, fileName).catch(() => {}), LOCAL_CHANGE_SETTLE_MS)
 }
 
 // Re-hash the local copy of `fileName` against its synced baseline and
@@ -2651,8 +2652,7 @@ async function safeListBundles() {
 // dragging a bundle into a workspace + then explicitly clicking
 // upload) also exists above.
 
-// Test-only window into the per-workspace session entry (the in-memory
-// `remoteTags` / version maps). Not part of the public API — used by the
-// recovery tests to simulate the in-memory view lagging the authoritative
-// remote listing.
-export const __test__ = { getEntry: (workspaceId) => sessions.get(workspaceId) }
+// Test-only access to session state and the local-change debounce clock.
+// Recovery tests can simulate stale remote listings, and debounce tests can
+// advance the settle delay without changing network or storage deadlines.
+export const __test__ = { getEntry: (workspaceId) => sessions.get(workspaceId), localChangeTimer }

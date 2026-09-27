@@ -67,7 +67,9 @@ describe('npm-proxy: dispatcher gates + handler', () => {
 
   after(async () => {
     globalThis.fetch = originalFetch
-    await new Promise((resolve) => { server.close(resolve) })
+    const stopping = new Promise((resolve) => { server.close(resolve) })
+    server.closeAllConnections()
+    await stopping
   })
 
   beforeEach(() => {

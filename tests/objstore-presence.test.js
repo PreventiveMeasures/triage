@@ -34,6 +34,26 @@ const {
   resolveReportDifference, differingReports, holdLocalChangeChecks,
 } = await import('../client/sync/objstore-presence.js')
 
+// Advance only the local-change debounce. Real network, storage, and test
+// deadlines keep their clocks; await the checks themselves before asserting.
+function localChangeClock(t) {
+  let now = 0
+  const pending = new Set()
+  t.mock.method(__test__.localChangeTimer, 'setTimeout', (callback, ms) => {
+    pending.add({ callback, at: now + ms })
+  })
+  return async ms => {
+    now += ms
+    const due = [...pending].filter(timer => timer.at <= now)
+    for (const timer of due) pending.delete(timer)
+    await Promise.all(due.map(timer => timer.callback()))
+  }
+}
+
+async function localChecksFinished(workspaceId) {
+  await Promise.all([...__test__.getEntry(workspaceId).tagLocks.values()])
+}
+
 async function createWorkspaceWithReports(name, reports) {
   const ws = await createWorkspace(name)
   for (const r of reports) await setReportWorkspace(r, ws.id)
@@ -2363,7 +2383,8 @@ describe('client/sync/objstore-presence', () => {
     return { ws, put }
   }
 
-  it('a local Replace that never uploaded is flagged for a re-check, which uploads it', async () => {
+  it('a local Replace that never uploaded is flagged for a re-check, which uploads it', async t => {
+    const tick = localChangeClock(t)
     const fileName = 'flag-local-change.json'
     const cloudText = reportJson('synced')
     const localText = reportJson('local-replace')
@@ -2372,7 +2393,10 @@ describe('client/sync/objstore-presence', () => {
       assert.deepEqual(differingReports(ws.id), [])
       // A Replace whose upload never happened (saveFile without putFile).
       await saveFileBytes(fileName, await gzipBytes(encodeUtf8(localText)))
-      await awaitPresence(() => differingReports(ws.id).length === 1, 'flagged after the save settles', 8_000)
+      await tick(1_999)
+      assert.deepEqual(differingReports(ws.id), [], 'not flagged before the settle delay')
+      await tick(1)
+      assert.deepEqual(differingReports(ws.id), [fileName], 'flagged once the save settles')
       const r = await recheckRemoteStorage(ws.id)
       assert.equal(r.items[0].status, 'uploaded', `row: ${JSON.stringify(r.items[0])}`)
       assert.deepEqual(differingReports(ws.id), [], 'cleared once uploaded')
@@ -2383,14 +2407,15 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('a Replace that does upload is not flagged', async () => {
+  it('a Replace that does upload is not flagged', async t => {
+    const tick = localChangeClock(t)
     const fileName = 'flag-uploaded-replace.json'
     const { ws } = await openSyncedReport('presence-flag-uploaded', fileName, reportJson('synced'))
     try {
       const bytes = await gzipBytes(encodeUtf8(reportJson('replaced-and-uploaded')))
       await saveFileBytes(fileName, bytes)
       assert.equal((await putFile(ws.id, fileName, bytes)).ok, true)
-      await new Promise((resolve) => { setTimeout(resolve, 2_600) })
+      await tick(2_600)
       assert.deepEqual(differingReports(ws.id), [])
     } finally {
       closeWorkspace(ws.id)
@@ -2535,7 +2560,8 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('a Replace whose upload outlasts the settle delay is not flagged while the upload is pending (review r4099103896)', async () => {
+  it('a Replace whose upload outlasts the settle delay is not flagged while the upload is pending (review r4099103896)', async t => {
+    const tick = localChangeClock(t)
     // The Replace flow (ingest.js) saves, then uploads to each workspace
     // in turn — easily longer than the fixed settle delay. Until those
     // uploads are done the report must not be flagged (the badge's
@@ -2546,12 +2572,13 @@ describe('client/sync/objstore-presence', () => {
     const off = onChange(() => { if (differingReports(ws.id).length > 0) flagged = true })
     try {
       const bytes = await gzipBytes(encodeUtf8(reportJson('replaced')))
-      const release = typeof holdLocalChangeChecks === 'function' ? holdLocalChangeChecks(fileName) : () => {}
+      const release = holdLocalChangeChecks(fileName)
+      t.after(release)
       await saveFileBytes(fileName, bytes)
-      await new Promise((resolve) => { setTimeout(resolve, 2_600) })
+      await tick(2_600)
       assert.equal((await putFile(ws.id, fileName, bytes)).ok, true)
       release()
-      await new Promise((resolve) => { setTimeout(resolve, 300) })
+      await localChecksFinished(ws.id)
       assert.equal(flagged, false, 'never flagged while the upload was on its way')
       assert.deepEqual(differingReports(ws.id), [])
     } finally {
@@ -2578,7 +2605,8 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('opening a workspace mid-Replace does not flag the report its upload is about to replace', async () => {
+  it('opening a workspace mid-Replace does not flag the report its upload is about to replace', async t => {
+    const tick = localChangeClock(t)
     // uploadReportToWorkspaces opens each target workspace's session just
     // before its putFile — the open-time scan must not jump the upload.
     const fileName = 'open-mid-replace.json'
@@ -2588,14 +2616,17 @@ describe('client/sync/objstore-presence', () => {
       closeWorkspace(ws.id)
       const bytes = await gzipBytes(encodeUtf8(reportJson('replaced')))
       const release = holdLocalChangeChecks(fileName)
+      t.after(release)
       await saveFileBytes(fileName, bytes)
       openWorkspace(ws.id)
       const off = onChange(() => { if (differingReports(ws.id).length > 0) flagged = true })
       try {
-        await new Promise((resolve) => { setTimeout(resolve, 500) })
+        await __test__.getEntry(ws.id).ready
+        await localChecksFinished(ws.id)
+        await tick(2_600)
         assert.equal((await putFile(ws.id, fileName, bytes)).ok, true)
         release()
-        await new Promise((resolve) => { setTimeout(resolve, 300) })
+        await localChecksFinished(ws.id)
       } finally { off() }
       assert.equal(flagged, false)
       assert.deepEqual(differingReports(ws.id), [])
@@ -2698,7 +2729,8 @@ describe('client/sync/objstore-presence', () => {
     }
   })
 
-  it('two workspaces writing a shared report at once still check each other\'s write (review r4099568472)', async () => {
+  it('two workspaces writing a shared report at once still check each other\'s write (review r4099568472)', async t => {
+    const tick = localChangeClock(t)
     // One report in two open workspaces; both clouds get a Replace and
     // both writes are in flight together. The file-mutation hook skipped
     // an entry for ANY save while that entry had a write of its own in
@@ -2738,7 +2770,9 @@ describe('client/sync/objstore-presence', () => {
         await new Promise((resolve) => { setTimeout(resolve, 20) })
       }
       // Past the settle delay of any check a save scheduled.
-      await new Promise((resolve) => { setTimeout(resolve, 2_600) })
+      await localChecksFinished(ws1.id)
+      await localChecksFinished(ws2.id)
+      await tick(2_600)
       const onDisk = await localReportText(fileName)
       assert.ok(onDisk === text1 || onDisk === text2, 'one of the two writes is on disk')
       for (const [ws, cloud] of [[ws1, text1], [ws2, text2]]) {

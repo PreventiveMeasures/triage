@@ -142,16 +142,22 @@ export function awaitListeningPort(proc, timeoutMs = 5_000) {
 // sync-server.test.js about `ws`'s ~30 s `closeTimeout` when a peer
 // doesn't ack the close frame. `terminate()` is an immediate socket
 // destroy, not a close handshake, so it can't wait on the peer. The
-// timed fallback is pure belt-and-braces: teardown must never be the
-// reason a suite hangs.
-// `.unref()` on the fallback timer so the guard itself can never be
-// what keeps the process alive; a race of two single-resolve promises
-// also keeps the linter's no-multiple-resolved rule satisfied.
-export function closeWebSocketServer(wss, timeoutMs = 5_000) {
+// deadline reports incomplete teardown rather than silently passing it.
+// Clear the guard on either outcome so successful shutdown leaves no timer.
+export async function closeWebSocketServer(wss, timeoutMs = 5_000) {
   for (const sock of wss.clients) sock.terminate()
-  const closed = new Promise((resolve) => { wss.close(resolve) })
-  const timed = new Promise((resolve) => { setTimeout(resolve, timeoutMs).unref() })
-  return Promise.race([closed, timed])
+  let timer
+  const closed = new Promise((resolve, reject) => {
+    wss.close(err => {
+      // ws reports an already closed server through the callback as an error.
+      if (err && err.message !== 'The server is not running') reject(err)
+      else resolve()
+    })
+  })
+  const timed = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('WebSocketServer close timeout')), timeoutMs)
+  })
+  try { await Promise.race([closed, timed]) } finally { clearTimeout(timer) }
 }
 
 // Await a WebSocketServer's `listening` event with an error path.
