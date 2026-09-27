@@ -43,6 +43,7 @@ class ManagedFixLink extends StateElement {
       box-shadow: 0 8px 28px rgb(0 0 0 / .25); font: 13px/1.45 system-ui, sans-serif;
       text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal; cursor: default;
     }
+    .preview.wide { width: min(36rem, calc(100vw - 24px)); }
     .preview-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
     .preview-ref { display: inline-flex; align-items: baseline; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; }
     .preview-ref svg { align-self: start; margin-top: .2em; }
@@ -170,6 +171,7 @@ class ManagedFixLink extends StateElement {
     const status = issue && data.status === 'closed' ? data.stateReason ?? 'unknown' : data.status
     const icon = pr ? prIcon : issue ? issueIcons[status] ?? issueIcon : null
     const name = ref ? `${ref.repo}#${ref.number}` : ''
+    const widePreview = data.title.length > 40 || (data.description ?? '').split(/[\r\n]/u).some(line => line.length > 100)
     const description = data ? `${labels[status]} ${pr ? 'pull request' : 'issue'}: ${data.title} (${name})`
       : ref ? `Open ${pr ? 'pull request' : 'issue'}: ${name}` : `Open fix link: ${this.url}`
     return html`<a class="fix-link" href=${this.url} target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${description}
@@ -181,7 +183,7 @@ class ManagedFixLink extends StateElement {
         : html`${icon ? html`<span class=${`link-icon ${status}`}>${icon}</span>` : nothing}
           <span class="link-title">${data?.title ?? this.url}</span>
           ${data ? html`<span class="ref">${name}</span><span class=${`link-status ${status}`}>${labels[status]}</span>` : nothing}`}
-    </a>${this.compact && ref ? html`<a class="preview" id="fix-preview" popover="manual" href=${this.url}
+    </a>${this.compact && ref ? html`<a class=${widePreview ? 'preview wide' : 'preview'} id="fix-preview" popover="manual" href=${this.url}
       target="_blank" rel="noopener noreferrer" draggable="false" aria-label=${`Open ${pr ? 'pull request' : 'issue'} ${name} on GitHub`}
       @mouseenter=${this._keepPreview} @mouseleave=${this._leavePreview}
       @focusin=${this._keepPreview} @focusout=${this._leavePreview}
