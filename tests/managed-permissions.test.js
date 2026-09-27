@@ -40,7 +40,7 @@ function harness(db, extra = {}) {
 // Include real resource-shaped paths and invalid methods: approval is checked
 // before dispatch, validation, reading a body, loading blobs, or calling GitHub.
 const dataPaths = [
-  '/api/teams', `/api/teams/${id}/reports`, `/api/avatar/${id}`, '/api/github/pull-requests',
+  '/api/teams', `/api/teams/${id}/reports`, `/api/teams/${id}/pull-requests`, `/api/avatar/${id}`, '/api/github/pull-requests',
   '/api/admin/users', '/api/admin/set-role', '/api/admin/history', '/api/admin/models',
   '/api/admin/repositories', '/api/admin/repositories/select', '/api/admin/repositories/add-public',
   '/api/admin/repositories/impact', '/api/admin/repositories/remove',

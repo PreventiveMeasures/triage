@@ -20,7 +20,7 @@ const state = {
 let notifier = () => {}
 let renders = 0, saves = 0
 // The wire, in call order: { fetch: reportId } and { id, entries, csrfToken }.
-let calls = []
+let calls = [], invalidations = []
 let pushStatus = 200
 // What GET /api/reports/<id>/triage answers, per report id; null = failure.
 // A function answers with a promise the test controls.
@@ -40,6 +40,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   },
   pushReportTriage: (id, entries, csrfToken, teamId) => { calls.push({ id, entries, csrfToken, ...(teamId ? { teamId } : {}) }); return Promise.resolve(pushStatus) },
 } })
+mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedPullRequests: teamId => { invalidations.push(teamId) } } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.method(console, 'warn', () => {})
 const { hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } = await import('../ui/view/managed-triage.js')
@@ -73,7 +74,7 @@ beforeEach(async () => {
   state.localMode = false
   state.currentManagedTeam = null
   state.managedSession = { role: 'triage', csrfToken: 'tok' }
-  saves = 0; renders = 0; calls = []; pushStatus = 200; serverEntries = {}
+  saves = 0; renders = 0; calls = []; invalidations = []; pushStatus = 200; serverEntries = {}
   initManagedTriagePush()
 })
 
@@ -379,4 +380,20 @@ test('pending triage keeps its original team authorization when the same report 
   await drain()
   assert.equal(pushes()[0].teamId, 'one')
   assert.equal(pushes()[0].entries.x.color, 'red')
+})
+
+
+test('saved triage invalidates PR metadata for the captured workspace only after the save lands', async () => {
+  state.currentManagedTeam = 'first'
+  await open('B', ['y'])
+  await edit('y', { fix: 'https://github.com/org/repo/pull/1' })
+  assert.deepEqual(invalidations, [])
+  state.currentManagedTeam = 'second'
+  await drain()
+  assert.deepEqual(invalidations, ['first'])
+  await open('C', ['z'])
+  pushStatus = 400
+  await edit('z', { fix: 'https://github.com/org/repo/pull/2' })
+  await drain()
+  assert.deepEqual(invalidations, ['first'], 'a refused save does not change the server PR source')
 })

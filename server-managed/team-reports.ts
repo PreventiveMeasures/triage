@@ -39,7 +39,7 @@ export class TeamReportsError extends Error {
   constructor(status: number, error: string) { super(error); this.status = status }
 }
 export function teamSnapshotKey(snapshot: TeamReportAccessSnapshot): string {
-  return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.reports])
+  return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.reports, snapshot.repositories])
 }
 export async function teamSnapshot(db: ManagedDb, sessionId: string, teamId: string): Promise<TeamReportAccessSnapshot> {
   const snapshot = await db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
@@ -122,9 +122,7 @@ async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Team
 export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
   return (await loadTeamWorkspace(db, store, snapshot)).reports
 }
-async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<ReportVisibility> {
-  const snapshot = await teamSnapshot(db, sessionId, teamId)
-  if (!snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
+async function teamVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Visibility> {
   const key = teamSnapshotKey(snapshot)
   let visible = caches.get(db)?.get(key)
   if (!visible) {
@@ -132,6 +130,17 @@ async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: 
     // another request. Authorization uses this load's result in either case.
     visible = (await loadTeamWorkspace(db, store, snapshot)).visible
   }
+  return visible
+}
+export async function teamWorkspaceFindingIds(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Set<string>> {
+  const ids = new Set<string>()
+  for (const report of (await teamVisibility(db, store, snapshot)).values()) for (const id of report.ids) ids.add(id)
+  return ids
+}
+async function teamReportVisibility(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<ReportVisibility> {
+  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  if (!snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
+  const visible = await teamVisibility(db, store, snapshot)
   await recheckTeam(db, sessionId, snapshot)
   return visible.get(reportId)!
 }

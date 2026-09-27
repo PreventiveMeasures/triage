@@ -18,6 +18,7 @@ import { clearManagedWorkspace } from '../../client/managed/workspace.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_COLOR, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_TEXT } from '../../common/managed/triage.ts'
 import { fetchReportTriage, pushReportTriage } from './client-managed.js'
+import { invalidateManagedPullRequests } from './managed-pull-requests.js'
 import { render } from './render.js'
 
 const PUSH_DEBOUNCE_MS = 500
@@ -182,6 +183,7 @@ async function flush(p) {
     // until they change (the other batches still go).
     if (!landed) console.warn('managed: the server refused a triage batch', p.report.id, status, Object.keys(batch))
     for (const id of Object.keys(batch)) baseline.set(id, wireKey(batch[id]))
+    if (landed) invalidateManagedPullRequests(p.teamId)
   }
 }
 

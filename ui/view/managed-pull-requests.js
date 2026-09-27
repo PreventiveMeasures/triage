@@ -6,13 +6,13 @@ const listeners = new Set()
 export const managedPullRequests = new PullRequestCache({
   context: () => {
     const session = state.managedSession
-    return isManagedUiMode() && session?.id ? {
+    return isManagedUiMode() && session?.id && state.currentManagedTeam ? {
       key: JSON.stringify([session.id, session.role, session.csrfToken]),
-      csrfToken: session.csrfToken,
+      teamId: state.currentManagedTeam,
       teams: state.managedTeams,
     } : null
   },
-  fetchBatch: fetchPullRequests,
+  fetchWorkspace: fetchPullRequests,
   changed: () => { for (const notify of listeners) notify() },
 })
 
@@ -24,4 +24,8 @@ export function subscribePullRequests(notify) {
 export function resetManagedPullRequests() {
   managedPullRequests.reset()
   for (const notify of listeners) notify()
+}
+
+export function invalidateManagedPullRequests(teamId) {
+  if (state.currentManagedTeam === teamId) resetManagedPullRequests()
 }

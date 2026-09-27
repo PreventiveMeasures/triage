@@ -1,15 +1,15 @@
-import { MAX_PULL_REQUESTS, parseGithubPrUrl, pullRequestKey } from '../../common/github-pr.ts'
+import { parseGithubPrUrl, pullRequestKey } from '../../common/github-pr.ts'
 
-// In-memory, per-session metadata. Reads in the same render turn coalesce into
-// batches; failed lookups also get a short TTL instead of retrying per card.
+// One in-memory response per active workspace/session. A rendered URL is only
+// a local lookup key; it never becomes input to the server or GitHub request.
 export class PullRequestCache {
-  constructor({ context, fetchBatch, changed = () => {}, now = Date.now }) {
+  constructor({ context, fetchWorkspace, changed = () => {}, now = Date.now }) {
     this.getContext = context
-    this.fetchBatch = fetchBatch
+    this.fetchWorkspace = fetchWorkspace
     this.changed = changed
     this.now = now
     this.entries = new Map()
-    this.queue = new Map()
+    this.expires = 0
     this.context = null
     this.timer = null
     this.run = null
@@ -21,13 +21,13 @@ export class PullRequestCache {
     clearTimeout(this.timer)
     this.timer = null
     this.entries.clear()
-    this.queue.clear()
+    this.expires = 0
     this.context = null
   }
 
   syncContext() {
     const next = this.getContext()
-    if (next?.key !== this.context?.key || next?.teams !== this.context?.teams) {
+    if (next?.key !== this.context?.key || next?.teamId !== this.context?.teamId || next?.teams !== this.context?.teams) {
       this.reset()
       this.context = next
     }
@@ -36,38 +36,31 @@ export class PullRequestCache {
 
   read(url) {
     const context = this.syncContext()
-    const ref = context && parseGithubPrUrl(url)
+    const ref = context?.teamId && parseGithubPrUrl(url)
     if (!ref) return null
-    const key = pullRequestKey(ref)
-    const entry = this.entries.get(key)
-    if (entry && entry.expires > this.now()) return entry.value
-    this.entries.set(key, { value: null, expires: Infinity })
-    this.queue.set(key, url)
+    if (this.expires > this.now()) return this.entries.get(pullRequestKey(ref)) ?? null
     if (!this.timer && !this.run) this.timer = setTimeout(() => { this.timer = null; void this.flush() }, 0)
     return null
   }
 
   async flush() {
     const context = this.syncContext()
-    if (!context || this.run || this.queue.size === 0) return
+    if (!context?.teamId || this.run || this.expires > this.now()) return
     const controller = this.run = new AbortController()
-    while (this.queue.size > 0) {
-      const batch = [...this.queue.entries()].slice(0, MAX_PULL_REQUESTS)
-      for (const [key] of batch) this.queue.delete(key)
-      let results
-      try { results = await this.fetchBatch(batch.map(([, url]) => url), context.csrfToken, controller.signal) }
-      catch { results = null }
-      this.syncContext()
-      if (this.run !== controller || controller.signal.aborted) return
-      const byUrl = new Map((Array.isArray(results) ? results : []).map(result => [result?.url, result]))
-      for (const [key, url] of batch) {
-        const result = byUrl.get(url)
-        const value = typeof result?.title === 'string' && ['open', 'draft', 'closed', 'merged'].includes(result.status)
-          ? { title: result.title, status: result.status } : null
-        this.entries.set(key, { value, expires: this.now() + 60_000 })
+    let results
+    try { results = await this.fetchWorkspace(context.teamId, controller.signal) }
+    catch { results = null }
+    this.syncContext()
+    if (this.run !== controller || controller.signal.aborted) return
+    this.entries.clear()
+    for (const result of Array.isArray(results) ? results : []) {
+      const ref = parseGithubPrUrl(result?.url)
+      if (ref && typeof result.title === 'string' && ['open', 'draft', 'closed', 'merged'].includes(result.status)) {
+        this.entries.set(pullRequestKey(ref), { title: result.title, status: result.status })
       }
-      this.changed()
     }
-    if (this.run === controller) this.run = null
+    this.expires = this.now() + 60_000
+    this.run = null
+    this.changed()
   }
 }

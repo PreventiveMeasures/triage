@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { Readable } from 'node:stream'
 import { test } from 'node:test'
-import { MAX_PULL_REQUESTS, parseGithubIssueUrl, parseGithubPrUrl } from '../common/github-pr.ts'
+import { parseGithubIssueUrl, parseGithubPrUrl } from '../common/github-pr.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { lookupPullRequests } from '../server-managed/github-pulls.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { createSession } from '../server-managed/session.ts'
+import { createSession, endSession, readSession } from '../server-managed/session.ts'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -29,7 +28,8 @@ async function fixture(t) {
   await db.createTeam('team', 'Team', Date.now())
   await db.setTeamRepo('team', 7, 'src')
   await db.setTeamMember('team', session.userId, { dependencies: false, security: false })
-  const lookup = (urls, fetchImpl) => lookupPullRequests(config, db, session.userId, urls, fetchImpl)
+  const stored = await readSession(config, db, session.setCookie.split(';')[0], Date.now())
+  const lookup = async (urls, fetchImpl) => lookupPullRequests(config, db, await db.getTeamReportAccessSnapshot(stored.session.id, Date.now(), 'team'), urls, fetchImpl)
   return { db, session, lookup }
 }
 
@@ -92,53 +92,6 @@ test('known malformed repository names cannot supply an upstream path', async t 
   assert.equal((await f.lookup([link(123)], () => assert.fail('no upstream call')))[0].error, 'forbidden')
 })
 
-test('team and repository revocation during a later batch discards earlier PR results', async t => {
-  for (const revocation of ['membership', 'repository', 'team']) {
-    await t.test(revocation, async st => {
-      const f = await fixture(st)
-      await f.db.createTeam('other', 'Other team', Date.now())
-      await f.db.setTeamRepo('other', 8, null)
-      await f.db.setTeamMember('other', f.session.userId, { dependencies: false, security: false })
-      const otherUrl = 'https://github.com/OtherOrg/OtherRepo/pull/1'
-      const urls = [link(1), link(2), link(3), link(4), otherUrl, link('0001'), 'invalid']
-      const fetched = []
-      const results = await f.lookup(urls, async url => {
-        fetched.push(url)
-        if (url.includes('/OtherOrg/OtherRepo/')) {
-          assert.equal(fetched.length, 5, 'the first batch already finished')
-          if (revocation === 'membership') await f.db.removeTeamMember('team', f.session.userId)
-          else if (revocation === 'repository') await f.db.removeTeamRepo('team', 7)
-          else await f.db.deleteTeam('team')
-          return Response.json(payload(1, { base: { repo: { full_name: 'OtherOrg/OtherRepo' } } }))
-        }
-        return Response.json(payload(Number(url.split('/').at(-1))))
-      })
-      assert.deepEqual(results, urls.map(url => url === otherUrl ? { url, title: 'Fix 1', status: 'open' }
-        : { url, error: url === 'invalid' ? 'invalid-url' : 'forbidden' }))
-    })
-  }
-})
-
-test('PR authorization uses all remaining team grants after token refresh', async t => {
-  const f = await fixture(t)
-  await f.db.createTeam('second', 'Second team', Date.now())
-  await f.db.setTeamRepo('second', 7, 'other-path')
-  await f.db.setTeamMember('second', f.session.userId, { dependencies: false, security: false })
-  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
-  const fetchImpl = async url => {
-    if (url === 'https://github.com/login/oauth/access_token') {
-      await f.db.removeTeamMember('team', f.session.userId)
-      return Response.json({ access_token: 'refreshed', expires_in: 3600 })
-    }
-    return Response.json(payload(1))
-  }
-  assert.deepEqual(await f.lookup([link(1)], fetchImpl), [{ url: link(1), title: 'Fix 1', status: 'open' }])
-  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
-  await f.db.removeTeamMember('second', f.session.userId)
-  await f.db.setTeamMember('team', f.session.userId, { dependencies: false, security: false })
-  assert.deepEqual(await f.lookup([link(1)], fetchImpl), [{ url: link(1), error: 'forbidden' }])
-})
-
 test('missing or expired user credentials never fall back to the installed app; expiring tokens can refresh', async t => {
   const f = await fixture(t)
   await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: null, expiresAt: 1 })
@@ -172,67 +125,171 @@ test('partial failures, redirects, wrong upstream identity, and malformed respon
 test('upstream concurrency is bounded for a full batch', async t => {
   const f = await fixture(t)
   let active = 0, maximum = 0
-  const result = await f.lookup(Array.from({ length: MAX_PULL_REQUESTS }, (_, i) => link(i + 1)), async url => {
+  const result = await f.lookup(Array.from({ length: 64 }, (_, i) => link(i + 1)), async url => {
     maximum = Math.max(maximum, ++active)
     await new Promise(resolve => { setImmediate(resolve) })
     active--
     return Response.json(payload(Number(url.split('/').at(-1))))
   })
-  assert.equal(result.length, MAX_PULL_REQUESTS)
+  assert.equal(result.length, 64)
   assert.equal(maximum, 4)
 })
 
-test('HTTP batch endpoint authenticates, checks CSRF/origin, bounds input, and returns per-item results without caching', async t => {
+async function workspaceFixture(t) {
   const f = await fixture(t)
-  let allowedOrigin = true, githubCalls = 0, pending
-  t.mock.method(globalThis, 'fetch', () => { githubCalls++; return Response.json(payload(123)) })
-  const handler = createManagedRequestHandler({
-    config, db: f.db, originGate: { isOriginAllowed: () => allowedOrigin },
-    isShuttingDown: () => false, track: promise => { pending = promise },
-  })
-  const send = async (body, { cookie = f.session.setCookie.split(';')[0], csrf = f.session.csrfToken, method = 'POST', raw } = {}) => {
-    const req = Readable.from([Buffer.from(raw ?? JSON.stringify(body))])
-    req.method = method; req.url = '/api/github/pull-requests'
-    req.headers = { cookie, 'x-csrf-token': csrf }
+  const blobs = new Map()
+  async function seed(id, data, { directory = 'src', visible = true } = {}) {
+    const bytes = Buffer.from(JSON.stringify(data))
+    blobs.set(id, bytes)
+    await f.db.insertReport({ id, filename: `${id}.json`, repoId: 7, repoDirectory: directory, visible,
+      byteSize: bytes.length, sha256: id, contentType: 'application/json', uploadedBy: f.session.userId,
+      bundleId: null, bundleIntegrity: null }, Date.now())
+  }
+  await seed('main', { findings: [
+    { id: 'own', file: 'src/a.js' }, { id: 'dependency', file: 'node_modules/other/x.js' },
+    [{ id: 'row', file: 'src/row.js' }, { id: 'security-sibling', security: true }],
+    { id: 'linked', file: 'src/linked.js' }, { id: 'foreign-repo', file: 'src/a.js' },
+    { id: 'issue', file: 'src/a.js' }, { id: 'malformed', file: 'src/a.js' },
+  ] })
+  await seed('security', { type: 'security', findings: [{ id: 'secret' }, { id: 'downgraded', security: false }] })
+  await seed('links', [[{ id: 'linked' }, { id: 'secret' }]])
+  await seed('draft', { findings: [{ id: 'draft' }] }, { visible: false })
+  await seed('outside', { findings: [{ id: 'outside' }] }, { directory: 'other' })
+  const entries = ['own', 'dependency', 'row', 'linked', 'secret', 'downgraded', 'draft', 'outside'].map((id, i) => [id, { fix: link(i + 1) }])
+  entries.push(['foreign-repo', { fix: 'https://github.com/OtherOrg/OtherRepo/pull/1' }], ['issue', { fix: 'https://github.com/ExampleOrg/ExampleRepo/issues/1' }], ['malformed', { fix: 'not a URL' }])
+  await f.db.setTriageEntries(entries, f.session.userId, 'alice', Date.now())
+  await f.db.createTeam('broad', 'Broad', Date.now())
+  await f.db.setTeamRepo('broad', 7, 'src')
+  await f.db.setTeamRepo('broad', 8, null)
+  await f.db.setTeamMember('broad', f.session.userId, { dependencies: true, security: true })
+  let pending
+  const store = { get: id => Promise.resolve(blobs.get(id)) }
+  const handler = createManagedRequestHandler({ config, db: f.db, reportStore: store,
+    originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track: job => { pending = job } })
+  const send = async ({ path = '/api/teams/team/pull-requests', cookie = f.session.setCookie.split(';')[0], method = 'GET' } = {}) => {
+    const req = { url: path, method, headers: { cookie }, [Symbol.asyncIterator]() { assert.fail('workspace PR requests must not read user input') } }
     const res = { writeHead(status, headers) { this.status = status; this.headers = headers }, end(text) { this.body = JSON.parse(text) } }
-    handler(req, res)
-    await pending
+    handler(req, res); await pending
     return res
   }
-  assert.equal((await send({ urls: [link(123)] }, { cookie: '' })).status, 401)
-  assert.equal((await send({ urls: [link(123)] }, { csrf: '' })).status, 403)
-  allowedOrigin = false
-  assert.equal((await send({ urls: [link(123)] })).status, 403)
-  allowedOrigin = true
-  assert.equal((await send({}, { method: 'GET' })).status, 405)
-  for (const body of [null, {}, { urls: link(123) }, { urls: [123] }, { urls: ['x'.repeat(2049)] }, { urls: Array.from({ length: 51 }, () => link(123)) }]) assert.equal((await send(body)).status, 400)
-  assert.equal((await send({}, { raw: '{bad' })).status, 400)
-  assert.equal(githubCalls, 0)
-  const response = await send({ urls: [link(123), 'https://github.com/OtherOrg/OtherRepo/pull/1', 'invalid'] })
+  return { ...f, seed, send, store }
+}
+
+test('workspace GET derives only saved Fix PRs surviving the complete security/dependency filters', async t => {
+  const calls = [], f = await workspaceFixture(t)
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(url)
+    return Response.json(payload(Number(url.split('/').at(-1))))
+  })
+  const response = await f.send({ path: `/api/teams/team/pull-requests?url=${encodeURIComponent(link(999))}` })
   assert.equal(response.status, 200)
   assert.equal(response.headers['cache-control'], 'no-store')
   assert.deepEqual(response.body.pullRequests, [
-    { url: link(123), title: 'Fix 123', status: 'open' },
-    { url: 'https://github.com/OtherOrg/OtherRepo/pull/1', error: 'forbidden' }, { url: 'invalid', error: 'invalid-url' },
+    { url: 'https://github.com/OtherOrg/OtherRepo/pull/1', error: 'forbidden' },
+    { url: link(1), title: 'Fix 1', status: 'open' }, { url: link(6), title: 'Fix 6', status: 'open' },
   ])
-  assert.equal(githubCalls, 1)
+  assert.deepEqual(calls.map(url => Number(url.split('/').at(-1))), [1, 6], 'hidden rows, linked security, dependencies, drafts and arbitrary input never reach GitHub')
+  const broad = await f.send({ path: '/api/teams/broad/pull-requests' })
+  assert.equal(broad.body.pullRequests.length, 7, 'another team gets its own permitted findings')
+  for (const role of ['admin', 'manage']) {
+    await f.db.setUserRole(f.session.userId, role)
+    const whole = await f.send()
+    assert.equal(whole.body.pullRequests.length, 8, `${role} retains the report filtering bypass`)
+    assert.ok(!whole.body.pullRequests.some(row => row.url === link(8)), 'outside report paths stay excluded')
+  }
+})
+
+test('workspace PR reads require approved team membership; the arbitrary-input POST is removed', async t => {
+  const f = await workspaceFixture(t)
+  t.mock.method(globalThis, 'fetch', () => assert.fail('denied request reached GitHub'))
+  assert.equal((await f.send({ cookie: '' })).status, 401)
+  assert.equal((await f.send({ method: 'POST' })).status, 405)
+  assert.equal((await f.send({ path: '/api/github/pull-requests', method: 'POST' })).status, 404)
+  assert.equal((await f.send({ path: '/api/teams/missing/pull-requests' })).status, 404)
   await f.db.setUserRole(f.session.userId, 'none')
-  assert.equal((await send({ urls: [link(123)] })).status, 403, 'team grants and stored tokens cannot bypass No access')
-  assert.equal(githubCalls, 1, 'No access must not read or refresh GitHub data')
-  await f.db.setUserRole(f.session.userId, 'view')
-  t.mock.method(globalThis, 'fetch', async () => {
-    await f.db.setUserRole(f.session.userId, 'none')
-    return Response.json(payload(123))
+  assert.equal((await f.send()).status, 403)
+  await f.db.setUserRole(f.session.userId, 'admin')
+  await f.db.removeTeamMember('team', f.session.userId)
+  assert.equal((await f.send()).status, 404, 'admins also need this workspace membership')
+})
+
+for (const change of ['membership', 'repository', 'repository-without-reports', 'team', 'security', 'links', 'publication', 'fix', 'role', 'logout', 'refresh']) {
+  test(`workspace PR metadata is discarded when ${change} changes during upstream reads`, async t => {
+    const f = await workspaceFixture(t)
+    await f.db.setTeamMember('team', f.session.userId, { dependencies: true, security: true })
+    if (change === 'repository-without-reports') await f.db.setTeamRepo('team', 8, null)
+    if (change === 'refresh') await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
+    let changed = false
+    t.mock.method(globalThis, 'fetch', async url => {
+      if (!changed) {
+        changed = true
+        if (change === 'membership' || change === 'refresh') await f.db.removeTeamMember('team', f.session.userId)
+        if (change === 'repository') await f.db.removeTeamRepo('team', 7)
+        if (change === 'repository-without-reports') await f.db.removeTeamRepo('team', 8)
+        if (change === 'logout') await endSession(config, f.db, f.session.setCookie.split(';')[0])
+        if (change === 'team') await f.db.deleteTeam('team')
+        if (change === 'security') await f.db.setTeamMember('team', f.session.userId, { dependencies: true, security: false })
+        if (change === 'links') await f.seed('new-links', [[{ id: 'own' }, { id: 'secret' }]])
+        if (change === 'publication') await f.db.setReportVisible('main', false)
+        if (change === 'fix') await f.db.setTriageEntries([['own', { fix: link(999) }]], f.session.userId, 'alice', Date.now())
+        if (change === 'role') await f.db.setUserRole(f.session.userId, 'none')
+      }
+      return url.includes('/oauth/') ? Response.json({ access_token: 'refreshed', expires_in: 3600 }) : Response.json(payload(Number(url.split('/').at(-1))))
+    })
+    const response = await f.send()
+    assert.equal(response.status, change === 'role' ? 403 : change === 'logout' ? 401 : 404)
+    assert.equal(response.body.pullRequests, undefined)
   })
-  const revoked = await send({ urls: [link(123)] })
-  assert.equal(revoked.status, 403, 'revocation while GitHub responds must discard its result')
-  assert.deepEqual(revoked.body, { error: 'forbidden' })
-  await f.db.setUserRole(f.session.userId, 'view')
-  t.mock.method(globalThis, 'fetch', async () => {
+}
+
+
+test('a workspace with no eligible Fix PRs does not read credentials or contact GitHub', async t => {
+  const f = await workspaceFixture(t)
+  await f.db.setTriageEntries(['own', 'downgraded', 'foreign-repo'].map(id => [id, null]), f.session.userId, 'alice', Date.now())
+  t.mock.method(f.db, 'getUserTokens', () => assert.fail('hidden Fix links must not access credentials'))
+  t.mock.method(globalThis, 'fetch', () => assert.fail('hidden Fix links must not reach GitHub'))
+  const response = await f.send()
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body.pullRequests, [])
+})
+
+test('a whole workspace returns more than the old 50-link batch limit without accepting client URLs', async t => {
+  const f = await workspaceFixture(t)
+  const findings = Array.from({ length: 64 }, (_, i) => ({ id: `extra-${i}`, file: 'src/many.js' }))
+  await f.seed('many', { findings })
+  await f.db.setTriageEntries(findings.map((finding, i) => [finding.id, { fix: link(100 + i) }]), f.session.userId, 'alice', Date.now())
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', url => { requests++; return Response.json(payload(Number(url.split('/').at(-1)))) })
+  const response = await f.send()
+  assert.equal(response.status, 200)
+  assert.equal(response.body.pullRequests.length, 67)
+  assert.equal(requests, 66)
+  assert.equal(response.body.pullRequests.find(row => row.url === link(163)).title, 'Fix 163')
+})
+
+test('a cold report read rechecks workspace access before contacting GitHub', async t => {
+  const f = await workspaceFixture(t)
+  const get = f.store.get
+  t.mock.method(f.store, 'get', async id => {
     await f.db.removeTeamMember('team', f.session.userId)
-    return Response.json(payload(123))
+    return get(id)
   })
-  const removed = await send({ urls: [link(123)] })
-  assert.equal(removed.status, 200)
-  assert.deepEqual(removed.body, { pullRequests: [{ url: link(123), error: 'forbidden' }] })
+  t.mock.method(globalThis, 'fetch', () => assert.fail('revoked workspace must not reach GitHub'))
+  assert.equal((await f.send()).status, 404)
+})
+
+
+test('access is rechecked after the final persisted Fix read', async t => {
+  const f = await workspaceFixture(t)
+  const listTriage = f.db.listTriage
+  let reads = 0
+  t.mock.method(f.db, 'listTriage', async ids => {
+    const entries = await listTriage(ids)
+    if (++reads === 2) await f.db.removeTeamMember('team', f.session.userId)
+    return entries
+  })
+  t.mock.method(globalThis, 'fetch', url => Response.json(payload(Number(url.split('/').at(-1)))))
+  const response = await f.send()
+  assert.equal(response.status, 404)
+  assert.equal(response.body.pullRequests, undefined)
 })

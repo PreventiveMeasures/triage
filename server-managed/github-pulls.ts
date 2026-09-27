@@ -1,12 +1,12 @@
 import { type PullRequestRef, type PullRequestResult, type PullRequestStatus, isGithubRepoName, parseGithubPrUrl } from '../common/github-pr.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb } from './db.ts'
+import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
 
 type Metadata = { title: string; status: PullRequestStatus }
 
 // The repo argument is always the canonical name read from managed_selected_repo,
-// never an owner/repo/path taken from the submitted URL. Redirects cannot
+// never an owner/repo/path taken from a Fix URL. Redirects cannot
 // move this authenticated request outside that authorized repository.
 async function fetchPullRequest(repo: string, number: number, token: string, fetchImpl: typeof fetch): Promise<Metadata | null> {
   try {
@@ -30,20 +30,18 @@ async function fetchPullRequest(repo: string, number: number, token: string, fet
 // Team membership is the local authorization gate, including for admins.
 // GitHub independently decides whether the caller's user token can read a PR.
 // Never substitute an installation token or another user's credentials.
-export async function lookupPullRequests(config: ManagedConfig, db: ManagedDb, userId: string, urls: string[], fetchImpl: typeof fetch = globalThis.fetch): Promise<PullRequestResult[]> {
-  const [scopes, repos] = await Promise.all([db.listRepoScopesForUser(userId), db.listAllRepos()])
-  const allowedIds = new Set(scopes.map(scope => scope.repoId))
-  const allowed = new Map(repos.filter(repo => allowedIds.has(repo.repoId) && isGithubRepoName(repo.fullName))
-    .map(repo => [repo.fullName.toLowerCase(), repo]))
+export async function lookupPullRequests(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot, urls: string[], fetchImpl: typeof fetch = globalThis.fetch): Promise<PullRequestResult[]> {
+  const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github))
+    .map(repo => [repo.github.toLowerCase(), repo.github]))
   const parsed = urls.map(parseGithubPrUrl)
   const jobs = new Map<string, PullRequestRef>()
   for (const ref of parsed) {
     const repo = ref && allowed.get(ref.repo.toLowerCase())
-    if (ref && repo) jobs.set(`${repo.fullName}#${ref.number}`, { repo: repo.fullName, number: ref.number })
+    if (ref && repo) jobs.set(`${repo}#${ref.number}`, { repo, number: ref.number })
   }
   const metadata = new Map<string, Metadata | null>()
   // Forbidden/invalid-only batches do not even read or refresh a GitHub token.
-  const token = jobs.size > 0 ? await ensureUserAccessToken(config, db, userId, Date.now(), fetchImpl) : null
+  const token = jobs.size > 0 ? await ensureUserAccessToken(config, db, snapshot.user.id, Date.now(), fetchImpl) : null
   if (token) {
     const pending = [...jobs.entries()]
     // Bound upstream concurrency; duplicate and differently-cased links share a read.
@@ -53,15 +51,18 @@ export async function lookupPullRequests(config: ManagedConfig, db: ManagedDb, u
       }))
     }
   }
-  // Token refresh and multiple upstream batches can outlast a team or repo
-  // grant. Discard even early results when their repository is no longer allowed.
-  const currentIds = new Set((await db.listRepoScopesForUser(userId)).map(scope => scope.repoId))
+  // The workspace handler rechecks this snapshot and its stored Fix links after
+  // all upstream reads, before releasing any metadata.
   return urls.map((url, index) => {
     const ref = parsed[index]
     if (!ref) return { url, error: 'invalid-url' }
     const repo = allowed.get(ref.repo.toLowerCase())
-    if (!repo || !currentIds.has(repo.repoId)) return { url, error: 'forbidden' }
-    const found = metadata.get(`${repo.fullName}#${ref.number}`)
+    if (!repo) return { url, error: 'forbidden' }
+    const found = metadata.get(`${repo}#${ref.number}`)
     return found ? { url, ...found } : { url, error: 'unavailable' }
   })
+}
+
+export function storedPullRequestUrls(entries: { fix: string | null }[]): string[] {
+  return [...new Set(entries.flatMap(entry => entry.fix && parseGithubPrUrl(entry.fix) ? [entry.fix] : []))].toSorted()
 }

@@ -137,25 +137,34 @@ across teams; the team is only the authorization context.
 
 # Fix pull requests
 
-`POST /api/github/pull-requests` accepts `{ "urls": ["https://github.com/Owner/Repo/pull/123"] }`
-with at most 50 links. An approved managed session (at least `view`), same-origin request, and `X-CSRF-Token`
-are required. Results preserve input order in `{ pullRequests: [...] }`, with
-`{ url, title, status }` on success (`open`, `draft`, `closed`, or `merged`), or
-`{ url, error }` (`invalid-url`, `forbidden`, or `unavailable`) per failed item.
-Malformed batches return 400; empty batches return an empty list.
+`GET /api/teams/:id/pull-requests` returns PR metadata for the workspace. It
+requires an approved managed session (at least `view`) and membership in that
+team. The server derives URLs from persisted Fix links on findings surviving the
+same workspace security and dependency filters as report reads, including
+whole-row and linked security propagation. Admins and managers retain their
+report-filter bypass. The caller supplies only the team ID, never a URL list.
+
+Results are returned as `{ pullRequests: [...] }`, with `{ url, title, status }`
+on success (`open`, `draft`, `closed`, or `merged`), or `{ url, error }`
+(`forbidden` or `unavailable`) per failed item. Non-PR Fix values are skipped.
+An empty workspace returns an empty list.
 
 Each link's repository is matched case-insensitively against the repositories
-assigned to the user's teams, including for administrators. A directory grant
-counts as membership in its repository. GitHub requests use that repository's
-stored full name and only the validated positive safe integer from the link;
-other link components never supply the upstream path. Duplicates share a lookup.
+assigned to this team, including for administrators. A directory grant counts
+as membership in its repository. GitHub requests use that repository's stored
+full name and only the validated positive safe integer from the Fix link;
+other link components never supply the upstream path. Duplicates share a
+lookup, with at most four upstream requests in flight. Workspace access is
+rechecked after report reads and again after GitHub responds; changes to the
+session, grants, reports, links, or persisted Fix URLs discard stale results.
 
 Team access is not GitHub access. Requests use only the signed-in user's stored
 GitHub token, refreshing it when possible. Missing credentials, denied GitHub
 access, redirects, and upstream failures leave the Fix link usable without
 metadata. Installation credentials are never substituted. Responses are not
-HTTP-cached; the UI batches links and keeps metadata in memory for one minute,
-invalidating it on account, team, or mode changes.
+HTTP-cached; the UI keeps the whole workspace's metadata in JS memory for one
+minute, invalidating it on account, workspace, catalogue, or mode changes and
+successful triage saves. Nothing is written to browser storage.
 
 # Managed comments
 

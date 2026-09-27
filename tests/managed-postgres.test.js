@@ -98,7 +98,8 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
   }
   queries.length = 0
   const app = await db.getTeamReportAccessSnapshot('session', 10, 'app')
-  assert.equal(queries.length, 5, 'one transaction: session, membership, whole-team report query')
+  assert.equal(queries.length, 6, 'one transaction: session, membership, reports and repository scopes')
+  assert.deepEqual(app.repositories, [{ repoId: 7, github: 'org/repo', path: 'packages/app' }])
   assert.equal(app.reports.length, 32)
   assert.ok(app.reports.every(report => !report.permissions.dependencies && report.permissions.security))
   const sub = await db.getTeamReportAccessSnapshot('session', 10, 'sub')

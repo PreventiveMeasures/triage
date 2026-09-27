@@ -1,4 +1,3 @@
-export const MAX_PULL_REQUESTS = 50
 export const MAX_PULL_REQUEST_URL = 2048
 
 export interface PullRequestRef { repo: string; number: number }

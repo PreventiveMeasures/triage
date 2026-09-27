@@ -55,8 +55,8 @@ export async function fetchReportTriage(id, teamId = state.currentManagedTeam) {
   return (await loadManagedBundle()).fetchReportTriage(id, teamId)
 }
 
-export async function fetchPullRequests(urls, csrfToken, signal) {
-  return (await loadManagedBundle()).fetchPullRequests(urls, csrfToken, signal)
+export async function fetchPullRequests(teamId, signal) {
+  return (await loadManagedBundle()).fetchPullRequests(teamId, signal)
 }
 
 export async function fetchReportComments(id, teamId = state.currentManagedTeam) {
