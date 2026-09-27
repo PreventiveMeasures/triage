@@ -22,6 +22,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
+import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
 const findingsForFileHash = hash => isManagedUiMode() ? [] : localFindingsForFileHash(hash)
 const indexedHashFindingCount = () => isManagedUiMode() ? 0 : localIndexedHashFindingCount()
@@ -1756,13 +1757,13 @@ function renderBundleSlide(entry) {
   if (state.bundleDetailsTab === 'advisories' && !showAdvisories) {
     state.bundleDetailsTab = 'overview'
   }
-  // Compare needs a second bundle on disk to diff against. With only
+  // Compare needs a second eligible bundle (the same repo in managed). With only
   // the open bundle present the picker would have nothing to offer, so
   // the tab is hidden and a persisted 'compare' selection (carried
   // over from when a second bundle existed, or from another bundle's
   // state) coerces back to Overview — same pattern as the advisories
   // coercion above.
-  const canCompare = (state.bundles?.length ?? 0) >= 2
+  const canCompare = bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).length > 0
   if (state.bundleDetailsTab === 'compare' && !canCompare) {
     state.bundleDetailsTab = 'overview'
   }

@@ -1,6 +1,12 @@
 import { managedFetch } from '../../client/managed/request.js'
 import { managedAppState } from './state.js'
 
+export async function fetchManagedBundleCatalog() {
+  const response = await managedFetch('/api/admin/bundles', { credentials: 'same-origin', signal: managedAppState.sessionController.signal })
+  if (!response.ok) throw new Error(`Bundle catalogue request failed (${response.status})`)
+  return (await response.json()).bundles ?? []
+}
+
 // Metadata may survive navigation in managed app memory. Source bodies belong
 // only to the active view; neither is persisted to browser storage.
 async function requestBundle(id, part, signal) {

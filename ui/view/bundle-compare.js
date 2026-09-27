@@ -31,6 +31,7 @@ import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundleFileKinds, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails } from './bundle-load.js'
+import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { computeBundleDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { bundleCompareFiles, bundleCompareScopes } from './bundle-compare-inputs.js'
 import { openBundleFileDialog } from './dialogs/bundle-file-dialog.js'
@@ -163,7 +164,7 @@ class BundleCompare extends LitElement {
   _swap() {
     const newBase = this._targetIntegrity
     if (!newBase || newBase === this.integrity) return
-    if (!(state.bundles ?? []).some((b) => b.integrity === newBase)) return
+    if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
     _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope }
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
@@ -196,7 +197,7 @@ class BundleCompare extends LitElement {
   }
 
   async _loadOther(integrity) {
-    const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
+    const entry = bundleComparisonCandidates(state.bundles ?? [], this.integrity).find(b => b.integrity === integrity)
     if (!entry) { this._status = 'idle'; this._targetIntegrity = null; return }
     let details
     try { details = await buildBundleDetails(integrity, entry) }
@@ -449,7 +450,7 @@ class BundleCompare extends LitElement {
   // Build the picker option list, disambiguating duplicate names with a
   // short integrity suffix so two same-named bundles are tellable apart.
   _otherOptions() {
-    const others = (state.bundles ?? []).filter((b) => b.integrity !== this.integrity)
+    const others = bundleComparisonCandidates(state.bundles ?? [], this.integrity)
     const nameCounts = new Map()
     for (const b of others) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1)
     return others.map((b) => ({
