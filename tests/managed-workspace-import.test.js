@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib'
 import { decodeWorkspaceFile, prepareWorkspaceImport, runWorkspaceImport, workspaceImportApi } from '../client/managed/workspace-import.js'
 import { localWorkspaceReader } from '../client/managed/workspace-import-local.js'
 import { encryptBundle } from '../client/workspace-bundle-crypto.js'
-import { MAX_TRIAGE_BODY_BYTES } from '../common/managed/triage.ts'
+import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES } from '../common/managed/triage.ts'
 
 const repos = [{ repoId: 7, fullName: 'org/repo' }]
 const session = { id: 'admin', role: 'admin', csrfToken: 'csrf' }
@@ -204,6 +204,37 @@ test('oversized local triage can be skipped; importing it fails before creating 
   assert.equal(mock.calls.length, 0)
   await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: false })
   assert.equal(plan.team.id, 'team')
+})
+
+test('oversized triage finding IDs fail before mutations and can be skipped on retry', async () => {
+  const id = 'f'.repeat(MAX_FINDING_ID + 1)
+  const data = exported()
+  data.reports = [{ ...report, content: JSON.stringify({ repo: { github: 'org/repo' }, findings: [{ id, file: 'a.js' }] }) }]
+  data.triage = { [id]: { color: 'red' } }
+  const plan = await prepareWorkspaceImport(data, repos)
+  assert.deepEqual(plan.triage[id], { color: 'red' })
+  const mock = serverMock()
+  await assert.rejects(runWorkspaceImport(plan, { api: mock.api, session, includeTriage: true }), /finding IDs.*Skip triage/u)
+  assert.equal(mock.calls.length, 0)
+  assert.equal(plan.team, null)
+  assert.equal(plan.reports[0].uploaded, null)
+  await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: false })
+  assert.equal(plan.team.id, 'team')
+  assert.equal(mock.calls.some(call => call.path.endsWith('/import-triage')), false)
+})
+
+test('triage finding IDs at the server character limit import successfully', async () => {
+  const id = 'é'.repeat(MAX_FINDING_ID)
+  const data = exported()
+  data.reports = [{ ...report, content: JSON.stringify({ repo: { github: 'org/repo' }, findings: [{ id, file: 'a.js' }] }) }]
+  data.triage = { [id]: { color: 'red' } }
+  const plan = await prepareWorkspaceImport(data, repos)
+  const mock = serverMock()
+  await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: true })
+  const calls = mock.calls.filter(call => call.path.endsWith('/import-triage'))
+  assert.deepEqual(calls[0].body.findingIds, [id])
+  assert.deepEqual(calls[1].body.entries, { [id]: { color: 'red' } })
+  assert.equal(plan.importedIds.has(id), true)
 })
 
 test('a missing bundle catalog row stops publication and a retry reuses its completed upload', async () => {

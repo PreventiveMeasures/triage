@@ -3,7 +3,7 @@ import { isEncryptedBundle } from '../workspace-bundle-crypto.js'
 import { loadManagedFindings, readManagedReport } from '../../common/managed/report-content.ts'
 import { reportRepoGithub } from '../../report/index.js'
 import { normalizeEntry } from '../triage-entry.ts'
-import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, parseTriageEntryPatch } from '../../common/managed/triage.ts'
+import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, parseTriageEntryPatch } from '../../common/managed/triage.ts'
 import { normalizeTeamPath } from '../../server-managed/repo-path.ts'
 
 export async function decodeWorkspaceFile(file, promptPassword) {
@@ -166,6 +166,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
   if (!plan.name.trim() || plan.name.trim().length > 100) throw new Error('Enter a team name of up to 100 characters.')
   if (includeTriage) {
     for (const [id, entry] of Object.entries(plan.triage)) {
+      if (!id || id.length > MAX_FINDING_ID) throw new Error(`Triage finding IDs must be between 1 and ${MAX_FINDING_ID} characters. Choose Skip triage to import the files without it.`)
       if (parseTriageEntryPatch(entry) === 'invalid') throw new Error(`Triage for ${id} exceeds the managed server limits. Choose Skip triage to import the files without it.`)
     }
   }
