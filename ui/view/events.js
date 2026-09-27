@@ -1,4 +1,5 @@
 import { managedRouteForIds } from '../../common/managed/routes.js'
+import { managedBundleRoute } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
@@ -2510,7 +2511,7 @@ report.addEventListener('bundle-swap', (e) => {
   if (!integrity || !(state.bundles ?? []).some((b) => b.integrity === integrity)) return
   const entry = state.bundles.find(b => b.integrity === integrity)
   if (entry.managedId) {
-    void managedHistory.navigate({ view: 'bundles', bundleId: entry.managedId, bundleTab: 'compare' })
+    void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare'))
     return
   }
   selectBundle(integrity, 'compare')

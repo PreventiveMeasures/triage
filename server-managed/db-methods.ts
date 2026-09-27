@@ -209,6 +209,7 @@ export interface TriageEventRow {
 // matched against a report's bundleHashes to auto-link.
 export interface ManagedBundle {
   id: string
+  slug: string
   integrity: string
   filename: string
   kind: string | null
@@ -220,12 +221,13 @@ export interface ManagedBundle {
 
 // What the upload handler supplies to record a bundle; the store stamps
 // uploaded_at. `uploadedByLogin` is the durable uploader-login snapshot.
-export type BundleInput = Omit<ManagedBundle, 'uploadedAt'> & { uploadedByLogin: string | null }
+export type BundleInput = Omit<ManagedBundle, 'uploadedAt' | 'slug'> & { uploadedByLogin: string | null }
 
 // A bundle row for the "Manage bundles" list — adds the uploader login + repo
 // full name display joins (null when absent / since removed).
 export interface AdminBundle {
   id: string
+  slug: string
   integrity: string
   filename: string
   kind: string | null
@@ -278,7 +280,11 @@ export interface UserTeamReport {
 }
 export interface UserTeamBundle {
   id: string
+  slug: string
+  integrity: string
   filename: string
+  byteSize: number
+  repoId: number
   repoFullName: string
 }
 export interface UserTeam {
@@ -636,21 +642,23 @@ function prepareStatements(db: ManagedSql) {
       SELECT id, version FROM managed_finding_comment
       WHERE finding_id IN (SELECT value FROM json_each(?)) ORDER BY id`),
     insertBundleStmt: db.prepare(
-      `INSERT INTO managed_bundle (id, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `WITH candidate(id, slug) AS (VALUES (?, ?))
+       INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, uploaded_at)
+       SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_bundle WHERE slug = candidate.slug) THEN id ELSE slug END,
+              ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
     ),
     selectBundleByIntegrityStmt: db.prepare(
-      `SELECT id, integrity, filename, kind, byte_size AS byteSize,
+      `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
               uploaded_by AS uploadedBy, repo_id AS repoId, uploaded_at AS uploadedAt
          FROM managed_bundle WHERE integrity = ?`,
     ),
     selectBundleStmt: db.prepare(
-      `SELECT id, integrity, filename, kind, byte_size AS byteSize,
+      `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
               uploaded_by AS uploadedBy, repo_id AS repoId, uploaded_at AS uploadedAt
          FROM managed_bundle WHERE id = ?`,
     ),
     selectBundlesStmt: db.prepare(
-      `SELECT b.id AS id, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
+      `SELECT b.id AS id, b.slug AS slug, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
               b.byte_size AS byteSize, COALESCE(u.login, b.uploaded_by_login) AS uploadedByLogin,
               b.repo_id AS repoId, sr.full_name AS repoFullName, b.uploaded_at AS uploadedAt
          FROM managed_bundle b
@@ -718,7 +726,8 @@ function prepareStatements(db: ManagedSql) {
     // They have no visibility flag: membership in a team that can see the repo
     // is the visibility decision for the bundle row in the sidebar.
     selectUserTeamBundlesStmt: db.prepare(
-      `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.filename AS filename, sr.full_name AS repoFullName, b.uploaded_at
+      `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.slug AS slug, b.integrity AS integrity,
+              b.filename AS filename, b.byte_size AS byteSize, b.repo_id AS repoId, sr.full_name AS repoFullName, b.uploaded_at
          FROM managed_team_user tu
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_bundle b ON b.repo_id = tr.repo_id
@@ -1026,17 +1035,17 @@ function triageMethods( stmts: ReturnType<typeof prepareStatements>, historyLimi
 }
 
 type BundleRow = {
-  id: string; integrity: string; filename: string; kind: string | null; byteSize: number
+  id: string; slug: string; integrity: string; filename: string; kind: string | null; byteSize: number
   uploadedBy: string | null; repoId: number | null; uploadedAt: number
 }
 type BundleListRow = {
-  id: string; integrity: string; filename: string; kind: string | null; byteSize: number
+  id: string; slug: string; integrity: string; filename: string; kind: string | null; byteSize: number
   uploadedByLogin: string | null; repoId: number | null; repoFullName: string | null; uploadedAt: number
 }
 
 function mapBundle(r: BundleRow): ManagedBundle {
   return {
-    id: r.id, integrity: r.integrity, filename: r.filename, kind: r.kind,
+    id: r.id, slug: r.slug, integrity: r.integrity, filename: r.filename, kind: r.kind,
     byteSize: r.byteSize, uploadedBy: r.uploadedBy, repoId: r.repoId, uploadedAt: r.uploadedAt,
   }
 }
@@ -1050,7 +1059,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
   return {
     async insertBundle(bundle: BundleInput, now: number): Promise<void> {
       await insertBundleStmt.run(
-        bundle.id, bundle.integrity, bundle.filename, bundle.kind,
+        bundle.id, preferredSlug(bundle.id), bundle.integrity, bundle.filename, bundle.kind,
         bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, now,
       )
     },
@@ -1065,7 +1074,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     async listBundles(userId?: string): Promise<AdminBundle[]> {
       const rows = (await selectBundlesStmt.all(userId ?? null, userId ?? null, userId ?? null)) as BundleListRow[]
       return rows.map((r) => ({
-        id: r.id, integrity: r.integrity, filename: r.filename, kind: r.kind, byteSize: r.byteSize,
+        id: r.id, slug: r.slug, integrity: r.integrity, filename: r.filename, kind: r.kind, byteSize: r.byteSize,
         uploadedByLogin: r.uploadedByLogin, repoId: r.repoId, repoFullName: r.repoFullName,
         uploadedAt: r.uploadedAt,
       }))
@@ -1145,9 +1154,10 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
         reportsByTeam.set(r.teamId, list)
       }
       const bundlesByTeam = new Map<string, UserTeamBundle[]>()
-      for (const b of (await selectUserTeamBundlesStmt.all(userId)) as { teamId: string; id: string; filename: string; repoFullName: string }[]) {
+      for (const b of (await selectUserTeamBundlesStmt.all(userId)) as (UserTeamBundle & { teamId: string })[]) {
         const list = bundlesByTeam.get(b.teamId) ?? []
-        list.push({ id: b.id, filename: b.filename, repoFullName: b.repoFullName })
+        list.push({ id: b.id, slug: b.slug, integrity: b.integrity, filename: b.filename,
+          byteSize: b.byteSize, repoId: b.repoId, repoFullName: b.repoFullName })
         bundlesByTeam.set(b.teamId, list)
       }
       return teams.map((t) => ({

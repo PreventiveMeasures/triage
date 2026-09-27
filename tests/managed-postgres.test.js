@@ -38,6 +38,24 @@ async function database(t) {
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
 
+test('Postgres bundle slugs migrate deterministically, persist, and resolve upload collisions', async t => {
+  const { db, connect } = await database(t)
+  const ids = ['11111111-1111-4111-8111-123456789abc', '22222222-2222-4222-8222-123456789abc']
+  for (const id of ids) await db.insertBundle({ id, integrity: id, filename: `${id}.map`, kind: 'sourcemap', byteSize: 1, repoId: null, uploadedBy: null }, 100)
+  assert.deepEqual((await db.listBundles()).map(bundle => bundle.slug), ['123456789abc', ids[1]])
+  const old = await connect()
+  try { await old.query('ALTER TABLE managed_bundle DROP COLUMN slug; DELETE FROM managed_schema_version WHERE version = 6;') }
+  finally { await old.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  try {
+    assert.deepEqual((await upgraded.listBundles()).map(bundle => bundle.slug), ['123456789abc', ids[1]])
+    await upgraded.deleteBundle(ids[0])
+  } finally { await upgraded.close() }
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.equal((await reopened.getBundle(ids[1])).slug, ids[1]) }
+  finally { await reopened.close() }
+})
+
 test('Postgres upgrades existing databases for durable, revocable workspace shares', async t => {
   const { db, connect } = await database(t)
   const userId = await db.upsertUser(identity(1), 1)

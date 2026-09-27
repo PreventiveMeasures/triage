@@ -113,11 +113,12 @@ window also navigate to their managed page URL.
 | URL | Page |
 | --- | --- |
 | `/` | Team landing / login |
-| `/teams/:teamId` | Team findings |
-| `/teams/:teamId/files` | Team files |
-| `/teams/:teamId/reports/:reportId` | Report findings |
-| `/teams/:teamId/reports/:reportId/files` | Report files |
-| `/bundles/:bundleId` | Bundle overview, files and dependency graph |
+| `/teams/:teamSlug` | Team findings |
+| `/teams/:teamSlug/files` | Team files |
+| `/teams/:teamSlug/reports/:reportSlug` | Report findings |
+| `/teams/:teamSlug/reports/:reportSlug/files` | Report files |
+| `/teams/:teamSlug/bundles/:bundleSlug[/:tab]` | Team bundle; active tab is part of the URL |
+| `/manage/bundles/:bundleSlug[/:tab]` | Bundle opened without an accessible team (manager/admin) |
 | `/manage` | Manage overview |
 | `/manage/bundles` | Bundles |
 | `/manage/scans` | Scans |
@@ -127,8 +128,19 @@ window also navigate to their managed page URL.
 | `/manage/teams` | Teams (admin) |
 | `/manage/history` | Activity history; optional `?actor=<login>` |
 
-Manage pages require a manager or admin. Team and report URLs require the
-current user's team access. Unavailable pages return to the landing page;
+Page tokens are persistent server-assigned slugs: the last UUID component when
+unique, otherwise the full ID, with the same allocation rules for teams, reports,
+and bundles. API requests and database relationships continue to use full IDs.
+Existing bundle rows receive stable slugs during the SQLite/PostgreSQL upgrade.
+
+Bundle links retain the clicked team, even when several teams share a repository.
+The optional tab suffix is omitted for Overview. Reload and Back/Forward restore
+the tab; switching bundles retains it when available. Compare offers accessible
+bundles assigned to the same repository, including bundles not previously opened.
+Unattached bundles cannot be compared with each other.
+
+Manage pages require a manager or admin. Team, report, and team bundle URLs require
+the current user's team access. Unavailable pages return to the landing page;
 Files falls back to Findings when the reports have no multi-file source tree.
 Switching between Findings and Files reuses the loaded reports and filters.
 

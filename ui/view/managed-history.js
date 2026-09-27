@@ -143,6 +143,11 @@ export function createManagedHistory(browser) {
       return navigate(route, { replace: true })
     },
     navigate,
+    replaceRoute(route) {
+      if (!active || !route || shareChanged()) return
+      const path = managedRoutePath(route)
+      if (path != null) replace(path)
+    },
     reset({ force = false } = {}) {
       ++revision
       if (active || force) {

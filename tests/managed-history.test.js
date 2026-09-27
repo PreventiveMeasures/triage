@@ -20,9 +20,9 @@ for (const id of ['link0001', 'legacy-team-id']) {
     assert.equal(browser.location.hash, hash)
     nav = createManagedHistory(browser)
     await nav.start(() => true)
-    await nav.navigate({ view: 'bundles', bundleId: 'bundle' })
+    await nav.navigate({ view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle', bundleTab: 'code' })
     assert.equal(browser.location.hash, hash)
-    assert.equal(browser.location.pathname, '/bundles/bundle')
+    assert.equal(browser.location.pathname, '/teams/team/bundles/bundle/code')
   })
 }
 
@@ -49,7 +49,7 @@ test('pasting a new public fragment cannot restore the previous credential befor
 })
 
 test('all managed pages and team/report Files routes round-trip', () => {
-  const routes = [{ view: 'bundles', bundleId: 'bundle-id' }, { view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
+  const routes = [{ view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'overview' }, { view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
     { view: 'manage-history', actor: 'user name & repo' }, { view: 'manage-scans', bundleId: 'bundle-id' }]
   for (const view of ['findings', 'files']) for (const reportSlug of [null, 'report-id']) routes.push({ view, teamSlug: 'team-id', reportSlug })
   for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)

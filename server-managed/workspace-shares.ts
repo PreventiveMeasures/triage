@@ -79,7 +79,7 @@ function shareQueries(db: ManagedSql) {
       OR substr(r.repo_directory, 1, length(tr.path) + 1) = tr.path || '/') ORDER BY r.id`)
   // Raw bundles cover a whole repository. Directory-only grants expose cited
   // source files through the report endpoint, never the entire archive.
-  const bundles = db.prepare(`SELECT DISTINCT b.id, b.integrity, b.filename, b.kind, b.byte_size AS byteSize,
+  const bundles = db.prepare(`SELECT DISTINCT b.id, b.slug, b.integrity, b.filename, b.kind, b.byte_size AS byteSize,
     b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.uploaded_at AS uploadedAt, sr.full_name AS repoFullName
     FROM managed_team_repo tr JOIN managed_bundle b ON b.repo_id = tr.repo_id
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
@@ -139,7 +139,8 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
         team: { ...team,
           reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename,
             cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions]) })),
-          bundles: bundleRows.map(row => ({ id: row.id, filename: row.filename, repoFullName: row.repoFullName })),
+          bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
+            filename: row.filename, byteSize: row.byteSize, repoId: row.repoId!, repoFullName: row.repoFullName })),
         },
         bundles: bundleRows,
       }

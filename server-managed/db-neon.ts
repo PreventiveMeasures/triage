@@ -9,6 +9,7 @@ import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
+import { allocateMissingSlugs } from './slugs.ts'
 
 export interface PgConnection {
   query(sql: string, params?: unknown[]): Promise<{
@@ -62,6 +63,16 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(`ALTER TABLE managed_workspace_share ADD COLUMN IF NOT EXISTS dependencies INTEGER NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS security INTEGER NOT NULL DEFAULT 0`)
       await db.query('INSERT INTO managed_schema_version VALUES (5)')
+    }
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 6')).rows.length === 0) {
+      await db.query('ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS slug TEXT')
+      const { rows } = await db.query('SELECT id, slug FROM managed_bundle ORDER BY id')
+      for (const row of allocateMissingSlugs(rows as { id: string; slug: string | null }[])) {
+        await db.query('UPDATE managed_bundle SET slug = $1 WHERE id = $2', [row.slug, row.id])
+      }
+      await db.query(`ALTER TABLE managed_bundle ALTER COLUMN slug SET NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS managed_bundle_slug_idx ON managed_bundle(slug);
+        INSERT INTO managed_schema_version VALUES (6)`)
     }
     await db.query('COMMIT')
   } catch (err) {

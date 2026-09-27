@@ -63,6 +63,7 @@ CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON managed_selected_repo(
 -- cascaded) when the referenced user / selected repo goes away.
 CREATE TABLE IF NOT EXISTS managed_bundle (
   id           TEXT PRIMARY KEY,
+  slug         TEXT NOT NULL,
   integrity    TEXT NOT NULL UNIQUE,
   filename     TEXT NOT NULL,
   kind         TEXT,
