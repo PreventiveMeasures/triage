@@ -2,6 +2,10 @@
 // The runtime import in view/client-managed.js keeps this entire surface out of
 // view.js. It loads when a managed session or page is first requested.
 import './managed/pages.js'
+import './managed/links.js'
+export async function openManagedShareDialog(...args) {
+  return (await import('./view/dialogs/managed-share-dialog.js')).openManagedShareDialog(...args)
+}
 export * from '../client/managed/session.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
 export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-data.js'

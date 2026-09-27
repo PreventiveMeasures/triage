@@ -94,6 +94,7 @@ for (const [tag, field, path, payload] of [
   ['reports', '_data', '/api/admin/reports', { reports: [{ id: 'r' }], repos: [] }],
   ['bundles', '_data', '/api/admin/bundles', { bundles: [{ id: 'b' }], repos: [] }],
   ['teams', '_data', '/api/admin/teams', { teams: [{ id: 't' }] }],
+  ['links', '_data', '/api/admin/links', { shares: [{ id: 'link', teamId: 't', teamName: 'Team', createdBy: 'manager', permissions: { security: false, dependencies: false } }] }],
   ['repos', '_data', '/api/admin/repositories', { repositories: [repo], total: 1 }],
   ['history', '_history', '/api/admin/history', { history: [{ id: 'h', kind: 'triage', reportId: 'r' }], total: 1, page: 1, limit: 100 }],
 ]) {

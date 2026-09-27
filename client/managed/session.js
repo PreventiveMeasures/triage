@@ -224,11 +224,20 @@ export async function logout(csrfToken) {
   location.reload()
 }
 
-export async function changeWorkspaceShare(teamId, csrfToken, revoke = false) {
-  const response = await managedFetch(`/api/teams/${encodeURIComponent(teamId)}/share`, {
-    method: revoke ? 'DELETE' : 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken },
+export async function listWorkspaceShares(teamId) {
+  const response = await managedFetch(`/api/teams/${encodeURIComponent(teamId)}/share`, { credentials: 'same-origin' })
+  if (!response.ok) throw new Error(`Could not load public links (${response.status})`)
+  return (await response.json()).shares
+}
+
+export async function changeWorkspaceShare(teamId, csrfToken, { id, revoke = false, dependencies = false, security = false } = {}) {
+  const suffix = id ? `/${encodeURIComponent(id)}` : ''
+  const response = await managedFetch(`/api/teams/${encodeURIComponent(teamId)}/share${suffix}`, {
+    method: revoke ? 'DELETE' : id ? 'PATCH' : 'POST', credentials: 'same-origin',
+    headers: { 'x-csrf-token': csrfToken, 'content-type': 'application/json' },
+    ...(revoke ? {} : { body: JSON.stringify({ dependencies, security }) }),
   })
-  if (!response.ok) throw new Error(`Could not ${revoke ? 'revoke' : 'create'} public link (${response.status})`)
+  if (!response.ok) throw new Error(`Could not ${revoke ? 'revoke' : id ? 'update' : 'create'} public link (${response.status})`)
   return response.json()
 }
 

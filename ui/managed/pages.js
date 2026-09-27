@@ -69,7 +69,7 @@ class ManagedAdminHome extends ManagedPage {
       ['admin-users', 'Users', 'Manage accounts, roles, and workspace access.', 'users'],
       ['manage-teams', 'Teams', 'Bring people and repositories together.', 'team'],
     ]
-    return html`<div class="wrap">${adminNavigation('manage', this._role)}
+    return html`<div class="wrap">${adminNavigation('manage', this._role, this.allowShare)}
       <h1 class="sr-only">Manage</h1>
       ${this._role == null ? html`<p class="msg" role="status">Loading management pages…</p>` : html`
         <section class="home-section" aria-labelledby="content-heading">
@@ -212,7 +212,7 @@ class ManagedAdminHistory extends ManagedPage {
     const history = this._history ?? []
     const page = this._page
     const start = (page - 1) * 100
-    return html`<div class="wrap">${adminNavigation('manage-history', this._role)}
+    return html`<div class="wrap">${adminNavigation('manage-history', this._role, this.allowShare)}
       <h1 class="sr-only">History</h1>
       <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
       <div class="toolbar" role="search">
@@ -309,7 +309,7 @@ class ManagedAdminUsers extends ManagedPage {
   }
 
   render() {
-    return html`<div class="wrap">${adminNavigation('admin-users', this._role)}
+    return html`<div class="wrap">${adminNavigation('admin-users', this._role, this.allowShare)}
       <h1 class="sr-only">Users</h1>
       <div class="page-intro"><p class="intro">Manage workspace access and roles.</p><span class="result-count">${this._users?.length ?? '…'} users</span></div>
       <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div>
@@ -597,7 +597,7 @@ class ManagedAdminRepos extends ManagedPage {
     const connected = this._scope === 'connected'
     const title = connected ? 'Repositories' : `Add ${this._scope} repository`
     const choices = this._repositoryChoices()
-    return html`<div class="wrap">${adminNavigation('manage-repos', this._role)}
+    return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       ${connected ? html`<h1 class="sr-only">${title}</h1>` : this._back(title)}
       <div class="page-intro"><p class="intro">${connected
         ? 'Manage connected repositories and their settings.'
@@ -706,7 +706,7 @@ class ManagedAdminRepos extends ManagedPage {
     const active = repo.active !== false
     const reports = this._impact?.reports ?? []
     const bundles = this._impact?.bundles ?? []
-    return html`<div class="wrap">${adminNavigation('manage-repos', this._role)}
+    return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       <div class="head">${this._back()}<h1>${repo.fullName}</h1></div>
       <p class="intro">Repository settings and stored data.</p>
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
@@ -1023,7 +1023,7 @@ class ManagedAdminReports extends ManagedPage {
   render() {
     return html`
       ${this._dragOver ? html`<div class="dropzone">Drop reports to upload</div>` : nothing}
-      <div class="wrap">${adminNavigation('manage-reports', this._role)}
+      <div class="wrap">${adminNavigation('manage-reports', this._role, this.allowShare)}
         <h1 class="sr-only">Reports</h1>
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
@@ -1248,7 +1248,7 @@ class ManagedAdminBundles extends ManagedPage {
   render() {
     return html`
       ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
-      <div class="wrap">${adminNavigation('manage-bundles', this._role)}
+      <div class="wrap">${adminNavigation('manage-bundles', this._role, this.allowShare)}
         <h1 class="sr-only">Bundles</h1>
         <div class="page-intro"><p class="intro">Source bundles for your repositories.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
@@ -1372,7 +1372,7 @@ class ManagedAdminScans extends ManagedPage {
   }
 
   render() {
-    return html`<div class="wrap">${adminNavigation('manage-scans', this._role)}
+    return html`<div class="wrap">${adminNavigation('manage-scans', this._role, this.allowShare)}
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load scan sources: ${this._error} <button type="button" class="btn" @click=${() => void this._load()}>Retry</button></p>` : nothing}
       <deepview-scan-page hide-heading .selection=${this.selection} .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
     </div>`
@@ -1443,7 +1443,7 @@ class ManagedAdminTeams extends ManagedPage {
   }
 
   render() {
-    return html`<div class="wrap">${adminNavigation('manage-teams', this._role)}
+    return html`<div class="wrap">${adminNavigation('manage-teams', this._role, this.allowShare)}
       <h1 class="sr-only">Teams</h1>
       <div class="page-intro"><p class="intro">Group repositories and give members access to the findings they need.</p><span class="result-count">${this._data?.teams?.length ?? '…'} teams</span></div>
       <div class="create-team">

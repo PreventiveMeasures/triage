@@ -58,6 +58,11 @@ async function initialize(db: PgConnection): Promise<void> {
     await db.query(postgresSchema(GITHUB_METADATA_SCHEMA))
     await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
     await db.query('ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS attempted_at BIGINT')
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 5')).rows.length === 0) {
+      await db.query(`ALTER TABLE managed_workspace_share ADD COLUMN IF NOT EXISTS dependencies INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS security INTEGER NOT NULL DEFAULT 0`)
+      await db.query('INSERT INTO managed_schema_version VALUES (5)')
+    }
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

@@ -1686,6 +1686,37 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true })
 }
 
+async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string, id?: string) {
+  if (!deps.config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
+  const method = req.method ?? 'GET'
+  const allowed = id ? ['PATCH', 'DELETE'] : ['GET', 'POST', 'DELETE']
+  if (!allowed.includes(method)) { send405(res, allowed.join(', ')); return }
+  const s = method === 'GET' ? await readSession(deps.config, deps.db, cookie, Date.now()) : await checkMutation(req, res, deps, cookie)
+  if (!s) { if (method === 'GET') sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!requireManageRole(res, s.user)) return
+  const { db } = deps
+  if (method === 'GET') {
+    const shares = await db.listWorkspaceShares(s.session.id, Date.now(), teamId)
+    sendJson(res, shares ? 200 : 404, shares ? { shares } : { error: 'no-team' }); return
+  }
+  let body
+  if (method === 'POST' || method === 'PATCH') {
+    try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  }
+  const permissions = parseTeamUserPermissions(body), token = method === 'POST' ? randomToken() : ''
+  const shareId = id ?? hashToken(token)
+  const ok = method === 'POST' ? await db.createWorkspaceShare(s.session.id, Date.now(), teamId, shareId, permissions)
+    : method === 'PATCH' ? await db.updateWorkspaceShare(s.session.id, Date.now(), teamId, shareId, permissions)
+    : await db.revokeWorkspaceShares(s.session.id, Date.now(), teamId, id)
+  if (!ok) { sendJson(res, 404, { error: 'no-share' }); return }
+  const team = await db.getTeam(teamId)
+  if (!team) { sendJson(res, 404, { error: 'no-team' }); return }
+  const action = method === 'POST' ? 'created a public link' : method === 'PATCH' ? 'updated a public link' : id ? 'revoked a public link' : 'revoked public links'
+  const access = method === 'DELETE' ? '' : ` (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`
+  await activity(deps, s.user, 'access', `${action} for team ${team.name}${access}`)
+  sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/teams/${team.slug}#public=${teamId}.${token}` } : { ok: true })
+}
+
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   const { config, db, avatarStore, isShuttingDown, track } = deps
   const repositoryDiscovery = new RepositoryDiscovery(config)
@@ -1743,23 +1774,18 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const managedDataPath = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
       .some(prefix => path === prefix || path.startsWith(prefix + '/'))
     if (managedDataPath && await readWorkspaceSession(res, deps, cookie) == null) return
-    const shareRoute = /^\/api\/teams\/([^/]+)\/share$/u.exec(path)
-    if (shareRoute) {
+    if (path === '/api/admin/links') {
       if (!config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
-      if (method !== 'POST' && method !== 'DELETE') { send405(res, 'POST, DELETE'); return }
-      const s = await checkMutation(req, res, deps, cookie)
-      if (!s || !requireManageRole(res, s.user)) return
-      const teamId = shareRoute[1]!
-      const token = randomToken()
-      const allowed = method === 'POST'
-        ? await db.createWorkspaceShare(s.session.id, Date.now(), teamId, hashToken(token))
-        : await db.revokeWorkspaceShares(s.session.id, Date.now(), teamId)
-      if (!allowed) { sendJson(res, 404, { error: 'no-team' }); return }
-      const team = await db.getTeam(teamId)
-      if (!team) { sendJson(res, 404, { error: 'no-team' }); return }
-      await activity(deps, s.user, 'access', `${method === 'POST' ? 'created a public link for' : 'revoked public links for'} team ${team.name}`)
-      sendJson(res, 200, method === 'POST' ? { path: `/teams/${team.slug}#public=${teamId}.${token}` } : { ok: true })
-      return
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readSession(config, db, cookie, Date.now())
+      if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+      if (!requireManageRole(res, s.user)) return
+      const shares = await db.listManagedWorkspaceShares(s.session.id, Date.now())
+      sendJson(res, shares ? 200 : 403, shares ? { shares } : { error: 'forbidden' }); return
+    }
+    const shareRoute = /^\/api\/teams\/([^/]+)\/share(?:\/([A-Za-z0-9_-]{43}))?$/u.exec(path)
+    if (shareRoute) {
+      await handleWorkspaceShare(req, res, deps, cookie, shareRoute[1]!, shareRoute[2]); return
     }
     if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
     // Cached avatar by user id, served same-origin (the page CSP forbids the

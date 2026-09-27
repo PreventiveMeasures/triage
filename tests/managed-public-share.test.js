@@ -24,8 +24,8 @@ async function fixture(t) {
     await db.setTeamRepo(team, repoId, path)
     for (const [role, session] of Object.entries(sessions)) if (role !== 'outsider') await db.setTeamMember(team, session.userId, { dependencies: true, security: true })
   }
-  async function seed(id, { repoId = 1, directory = 'app', visible = true } = {}) {
-    const body = Buffer.from(JSON.stringify({ findings: [{ id: `${id}-finding`, file: 'src/a.js' }] }))
+  async function seed(id, { repoId = 1, directory = 'app', visible = true, findings = [{ id: `${id}-finding`, file: 'src/a.js' }] } = {}) {
+    const body = Buffer.from(JSON.stringify({ findings }))
     blobs.set(id, body)
     await db.insertReport({ id, filename: `${id}.json`, contentType: 'application/json', repoId, repoDirectory: directory, visible,
       byteSize: body.length, sha256: body.toString('base64'), uploadedBy: sessions.manage.userId, bundleId: 'bundle', bundleIntegrity: null }, Date.now())
@@ -38,9 +38,9 @@ async function fixture(t) {
     next() { throw new Error('Share escaped to the combined server') },
     bundleStore: { open() { reads.push('bundle'); return Promise.resolve({ stream: Readable.from(['{}']), size: 2 }) } },
   }
-  const request = async (path, { role, token, method = 'GET', headers = {} } = {}) => {
+  const request = async (path, { role, token, method = 'GET', headers = {}, body } = {}) => {
     const session = sessions[role]
-    const req = Readable.from([])
+    const req = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))])
     Object.assign(req, { url: path, method, headers: { cookie: session?.setCookie.split(';')[0], 'x-csrf-token': session?.csrfToken,
       ...(token === undefined ? {} : { 'x-deepview-share': token }), ...headers } })
     const chunks = []
@@ -50,12 +50,12 @@ async function fixture(t) {
     const text = Buffer.concat(chunks).toString()
     return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null }
   }
-  const mint = async (team = 'team') => {
-    const response = await request(`/api/teams/${team}/share`, { role: 'manage', method: 'POST' })
+  const mint = async (team = 'team', permissions) => {
+    const response = await request(`/api/teams/${team}/share`, { role: 'manage', method: 'POST', body: permissions })
     assert.equal(response.status, 200)
     return response.body.path.split('.').at(-1)
   }
-  return { db, config, sessions, reads, store, deps, request, mint }
+  return { db, config, sessions, reads, store, deps, request, mint, seed }
 }
 
 test('public sharing is opt-in, requires team management and CSRF; the token is not a login session', async t => {
@@ -75,6 +75,7 @@ test('public sharing is opt-in, requires team management and CSRF; the token is 
   assert.ok(await h.db.getWorkspaceShare(hashToken(token)))
   assert.equal(await h.db.getWorkspaceShare(token), null, 'only a hash is stored')
   assert.equal((await h.request('/api/auth/session', { headers: { cookie: `sid=${token}` } })).status, 401)
+  assert.deepEqual((await h.db.getWorkspaceShare(hashToken(token))).permissions, { dependencies: false, security: false })
   h.config.allowShare = false
   assert.equal((await h.request('/api/teams/team/reports', { token })).status, 401)
 })
@@ -87,9 +88,11 @@ test('disabling sharing blocks every public route even when valid links remain i
   for (const enabled of [false, undefined]) {
     h.config.allowShare = enabled
     assert.equal((await h.request('/api/config')).body.managed.allowShare, undefined)
-    for (const method of ['POST', 'DELETE']) {
+    for (const method of ['GET', 'POST', 'DELETE']) {
       assert.equal((await h.request('/api/teams/whole/share', { role: 'manage', method })).status, 404)
     }
+    assert.equal((await h.request('/api/admin/links', { role: 'admin' })).status, 404)
+    assert.equal((await h.request(`/api/teams/whole/share/${hashToken(token)}`, { role: 'admin', method: 'PATCH', body: { security: true } })).status, 404)
     for (const path of ['/api/teams/whole/shared', '/api/teams/whole/reports',
       '/api/reports/visible/triage', '/api/reports/visible/triage/history?finding=visible-finding',
       '/api/reports/visible/comments', '/api/reports/visible/sources',
@@ -130,7 +133,7 @@ test('an anonymous token sees one published workspace, its annotations and no gl
     '/api/reports/foreign/triage', '/api/reports/draft/comments', '/api/reports/sibling/sources',
     '/api/reports/visible', '/api/reports/visible/triage?team=other', '/api/reports/visible/triage?team=team&team=other',
     '/api/reports/query', '/api/auth/session', '/api/auth/logout', '/api/config', '/api/oauth/github/login', '/api/oauth/github/callback', '/api/teams/team/fixes',
-    '/api/admin/users', '/api/admin/reports', '/api/admin/history', '/api/admin/bundles', '/api/admin/teams', '/api/admin/scan/models',
+    '/api/admin/users', '/api/admin/reports', '/api/admin/history', '/api/admin/bundles', '/api/admin/teams', '/api/admin/scan/models', '/api/admin/links',
     '/api/avatar/user', '/api/github/repos', '/api/sync', '/api/sync/events', '/api/objstore/mint', '/api/npm/advisories', '/api/future-route',
     '/api/bundles/bundle/download', '/api/bundles/foreign-bundle/metadata', '/api/reap', '/', '/api/teams/team/share']
   for (const path of denied) {
@@ -188,4 +191,98 @@ test('public capabilities cannot enter the WebSocket upgrade transport', () => {
   server.emit('upgrade', { url: '/api/sync', headers: { 'x-deepview-share': 'A'.repeat(43) } }, { end(value) { response = value } }, Buffer.alloc(0))
   assert.match(response, /^HTTP\/1\.1 403 /u)
   server.close()
+})
+
+test('link permissions are independent opt-ins and edits filter cached findings, annotations and sources', async t => {
+  const h = await fixture(t)
+  const findings = [
+    { id: 'own', file: 'src/own.js' }, { id: 'secure', file: 'src/security.js', security: true },
+    { id: 'dep', file: 'node_modules/third/dep.js' }, { id: 'secure-dep', file: 'node_modules/third/security.js', security: true },
+  ]
+  await h.seed('mixed', { findings })
+  for (const finding of findings) {
+    await h.db.setTriage(finding.id, { color: 'red' }, null, 'manager', Date.now())
+    await h.db.createComment({ findingId: finding.id, body: finding.id, authorId: h.sessions.manage.userId, authorLogin: 'manage', reportId: 'mixed' }, Date.now())
+  }
+  const token = await h.mint()
+  const id = hashToken(token), separate = await h.mint()
+  const cacheKeys = new Set()
+  for (const [security, dependencies, expected] of [
+    [false, false, ['own']], [true, false, ['own', 'secure']], [false, true, ['own', 'dep']],
+    [true, true, ['own', 'secure', 'dep', 'secure-dep']], [false, false, ['own']],
+  ]) {
+    assert.equal((await h.request(`/api/teams/team/share/${id}`, { role: 'manage', method: 'PATCH', body: { security, dependencies } })).status, 200)
+    const bootstrap = await h.request('/api/teams/team/shared', { token })
+    cacheKeys.add(bootstrap.body.team.reports.find(report => report.id === 'mixed').cacheKey)
+    const reports = await h.request('/api/teams/team/reports', { token })
+    assert.deepEqual(reports.body.reports.find(report => report.id === 'mixed').data.findings.map(finding => finding.id), expected)
+    assert.deepEqual(Object.keys((await h.request('/api/reports/mixed/triage', { token })).body.entries).toSorted(), [...expected].toSorted())
+    assert.deepEqual((await h.request('/api/reports/mixed/comments', { token })).body.comments.map(comment => comment.body).toSorted(), [...expected].toSorted())
+    assert.equal((await h.request('/api/reports/mixed/triage/history?finding=secure-dep', { token })).status, security && dependencies ? 200 : 404)
+    h.deps.reportSourcesCache = { open(_report, _bundle, permissions, paths) {
+      assert.deepEqual(permissions, { security, dependencies })
+      assert.deepEqual([...paths].toSorted(), findings.filter(finding => expected.includes(finding.id)).map(finding => finding.file).toSorted())
+      return Promise.resolve({ stream: Readable.from(['{}']), size: 2, repo: { github: 'org/repo1' } })
+    } }
+    assert.equal((await h.request('/api/reports/mixed/sources', { token })).status, 200)
+    assert.deepEqual((await h.db.getWorkspaceShare(hashToken(separate))).permissions, { dependencies: false, security: false })
+  }
+  assert.equal(cacheKeys.size, 4, 'permission edits change the client report cache key')
+  const notOptedIn = await h.mint('team', { security: 'true', dependencies: 1 })
+  assert.deepEqual((await h.db.getWorkspaceShare(hashToken(notOptedIn))).permissions, { dependencies: false, security: false })
+})
+
+test('link listings include creators, scope managers to their teams, and let admins manage all links', async t => {
+  const h = await fixture(t), other = await h.mint('other'), own = await h.mint()
+  await h.db.removeTeamMember('other', h.sessions.manage.userId)
+  await h.db.removeTeamMember('other', h.sessions.admin.userId)
+  const listing = await h.request('/api/admin/links', { role: 'manage' })
+  assert.equal(listing.status, 200)
+  assert.deepEqual(listing.body.shares.map(link => link.teamId), ['team'])
+  const link = listing.body.shares[0]
+  assert.equal(link.createdBy, 'manage')
+  assert.ok(link.createdAt > 0)
+  assert.equal(link.id, hashToken(own))
+  assert.ok(!JSON.stringify(listing.body).includes(own), 'list never reveals a bearer token')
+  assert.deepEqual((await h.request('/api/admin/links', { role: 'outsider' })).body.shares, [])
+  for (const role of ['view', 'triage', 'none', undefined]) assert.notEqual((await h.request('/api/admin/links', { role })).status, 200)
+  assert.deepEqual(new Set((await h.request('/api/admin/links', { role: 'admin' })).body.shares.map(share => share.teamId)), new Set(['team', 'other']))
+  const path = `/api/teams/other/share/${hashToken(other)}`
+  assert.equal((await h.request('/api/teams/other/share', { role: 'manage' })).status, 404)
+  assert.equal((await h.request('/api/teams/other/share', { role: 'admin' })).body.shares.length, 1)
+  assert.equal((await h.request(path, { role: 'manage', method: 'PATCH', body: { security: true } })).status, 404)
+  assert.equal((await h.request(path, { role: 'manage', method: 'DELETE' })).status, 404)
+  assert.equal((await h.request(`/api/teams/team/share/${hashToken(other)}`, { role: 'manage', method: 'PATCH' })).status, 404)
+  for (const method of ['PATCH', 'DELETE']) {
+    assert.equal((await h.request(path, { role: 'admin', method, headers: { 'x-csrf-token': 'bad' } })).status, 403)
+    assert.equal((await h.request(path, { role: 'admin', method, token: own })).status, 403)
+  }
+  assert.equal((await h.request(path, { role: 'admin', method: 'PATCH', body: { security: true } })).status, 200)
+  assert.deepEqual((await h.request('/api/teams/other/share', { role: 'admin' })).body.shares[0].permissions, { dependencies: false, security: true })
+  assert.equal((await h.request(path, { role: 'admin', method: 'DELETE' })).status, 200)
+  assert.equal((await h.request('/api/admin/links', { role: 'admin' })).body.shares.length, 1)
+  assert.equal((await h.request('/api/teams/team/shared', { token: own })).status, 200)
+})
+
+test('public security advisories require security opt-in and permission changes invalidate slow reads', async t => {
+  const h = await fixture(t), token = await h.mint('whole')
+  const id = hashToken(token)
+  let inventories = 0
+  h.deps.bundleCache = { packageVersions() { inventories++; return Promise.resolve({}) } }
+  await h.db.insertBundle({ id: 'stasis', integrity: 'stasis', filename: 'sources.stasis', kind: 'stasis', byteSize: 2, uploadedBy: h.sessions.manage.userId, uploadedByLogin: 'manage', repoId: 1 }, Date.now())
+  assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 403)
+  assert.equal(inventories, 0)
+  assert.equal((await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: true } })).status, 200)
+  assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 200, 'security is independent of dependency access')
+  h.store.afterRead = async () => {
+    h.store.afterRead = null
+    await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
+  }
+  assert.equal((await h.request('/api/teams/whole/reports', { token })).status, 404)
+  h.deps.bundleCache.packageVersions = async () => {
+    await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
+    return {}
+  }
+  await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: true } })
+  assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 404)
 })

@@ -41,6 +41,7 @@ function previewResponse(url, options) {
   const data = {
     '/api/admin/users': { users: [preview.user] },
     '/api/admin/teams': { teams: [], users: [preview.user], repos: [], permissions: VISIBILITY_PERMISSIONS },
+    '/api/admin/links': { shares: [] },
     '/api/admin/repositories': { repositories: [], total: 0, connectedCount: 0, installUrl: null, tokenMissing: false },
     '/api/admin/reports': { reports: [], repos: [], maxBytes: 10_485_760 },
     '/api/admin/bundles': { bundles: [], repos: [], maxBytes: 104_857_600 },

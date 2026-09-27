@@ -1,5 +1,5 @@
 import { getPublicShare } from '../../client/managed/public-share.js'
-import { openManagedShareDialog } from './dialogs/managed-share-dialog.js'
+import { openManagedShareDialog } from './client-managed.js'
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -2024,6 +2024,7 @@ const ADMIN_PAGES = {
   'manage-bundles': 'admin: bundles bundle load failed:',
   'manage-history': 'admin: history bundle load failed:',
   'manage-teams': 'admin: teams bundle load failed:',
+  'manage-links': 'admin: links bundle load failed:',
   'manage-scans': 'admin: scans bundle load failed:',
 }
 const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams'])
@@ -2031,6 +2032,7 @@ let readyManagedView = null
 
 function canAccessManagedPage(view) {
   const role = state.managedSession?.role
+  if (view === 'manage-links' && !state.managed?.allowShare) return false
   return ['admin', 'manage'].includes(role) && (!ADMIN_ONLY_PAGES.has(view) || role === 'admin')
 }
 
