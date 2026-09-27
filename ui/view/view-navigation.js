@@ -1,5 +1,5 @@
-// Source downloads and the team feed belong to one active view. Abort as soon as
-// navigation starts, including while the next page is still loading.
+// Source downloads and annotation reads belong to one active view. Abort as
+// soon as navigation starts; the account/team feed survives same-scope changes.
 let generation = 0
 let controller = new AbortController()
 

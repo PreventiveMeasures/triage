@@ -2029,7 +2029,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
         && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role && isManagedUiMode()) {
         await managedHistory.navigate(route ?? { view: 'home' }, { replace: true })
       }
-      return false // the old feed was aborted by navigation
+      return isCurrent() // Same-team navigation can retain the catalog stream.
     }
     if (!isCurrent()) return false
   }
@@ -2081,7 +2081,7 @@ async function restoreManagedPage(route, isCurrent) {
 
 async function restoreManagedPageContent(route, isCurrent) {
   const reusableView = readyManagedView === currentViewGeneration() ? readyManagedView : null
-  // Cancel the previous feed and catalog read before checking the destination.
+  // Cancel the previous view's reads before checking the destination.
   beginViewNavigation()
   // The shared catalog is kept current by feed revisions. Do not read it again
   // just to resolve another route; changed versions invalidate cached content.
