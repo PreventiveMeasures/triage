@@ -40,7 +40,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   },
   pushReportTriage: (id, entries, csrfToken, teamId) => { calls.push({ id, entries, csrfToken, ...(teamId ? { teamId } : {}) }); return Promise.resolve(pushStatus) },
 } })
-mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedPullRequests: teamId => { invalidations.push(teamId) } } })
+mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedFixes: teamId => { invalidations.push(teamId) } } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.method(console, 'warn', () => {})
 const { hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } = await import('../ui/view/managed-triage.js')

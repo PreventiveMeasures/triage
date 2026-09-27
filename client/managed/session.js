@@ -143,9 +143,9 @@ export async function fetchReportTriage(id, teamId) {
   return entries != null && typeof entries === 'object' && !Array.isArray(entries) ? entries : null
 }
 
-export async function fetchPullRequests(teamId, signal) {
-  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/pull-requests`, null, { signal })
-  return Array.isArray(body?.pullRequests) ? body.pullRequests : null
+export async function fetchFixes(teamId, signal) {
+  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/fixes`, null, { signal })
+  return Array.isArray(body?.fixes) ? body.fixes : null
 }
 
 export async function fetchReportComments(id, teamId) {

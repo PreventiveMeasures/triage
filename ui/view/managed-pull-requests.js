@@ -1,9 +1,9 @@
 import { isManagedUiMode, state } from '#client/index.js'
-import { PullRequestCache } from '../../client/managed/pull-request-cache.js'
-import { fetchPullRequests } from './client-managed.js'
+import { FixCache } from '../../client/managed/pull-request-cache.js'
+import { fetchFixes } from './client-managed.js'
 
 const listeners = new Set()
-export const managedPullRequests = new PullRequestCache({
+export const managedFixes = new FixCache({
   context: () => {
     const session = state.managedSession
     return isManagedUiMode() && session?.id && state.currentManagedTeam ? {
@@ -12,20 +12,20 @@ export const managedPullRequests = new PullRequestCache({
       teams: state.managedTeams,
     } : null
   },
-  fetchWorkspace: fetchPullRequests,
+  fetchWorkspace: fetchFixes,
   changed: () => { for (const notify of listeners) notify() },
 })
 
-export function subscribePullRequests(notify) {
+export function subscribeFixes(notify) {
   listeners.add(notify)
   return () => listeners.delete(notify)
 }
 
-export function resetManagedPullRequests() {
-  managedPullRequests.reset()
+export function resetManagedFixes() {
+  managedFixes.reset()
   for (const notify of listeners) notify()
 }
 
-export function invalidateManagedPullRequests(teamId) {
-  if (state.currentManagedTeam === teamId) resetManagedPullRequests()
+export function invalidateManagedFixes(teamId) {
+  if (state.currentManagedTeam === teamId) resetManagedFixes()
 }

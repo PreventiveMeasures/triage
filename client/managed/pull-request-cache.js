@@ -1,8 +1,8 @@
-import { parseGithubPrUrl, pullRequestKey } from '../../common/github-pr.ts'
+import { githubFixKey, parseGithubFixUrl } from '../../common/github-pr.ts'
 
 // One in-memory response per active workspace/session. A rendered URL is only
 // a local lookup key; it never becomes input to the server or GitHub request.
-export class PullRequestCache {
+export class FixCache {
   constructor({ context, fetchWorkspace, changed = () => {}, now = Date.now }) {
     this.getContext = context
     this.fetchWorkspace = fetchWorkspace
@@ -36,9 +36,9 @@ export class PullRequestCache {
 
   read(url) {
     const context = this.syncContext()
-    const ref = context?.teamId && parseGithubPrUrl(url)
+    const ref = context?.teamId && parseGithubFixUrl(url)
     if (!ref) return null
-    if (this.expires > this.now()) return this.entries.get(pullRequestKey(ref)) ?? null
+    if (this.expires > this.now()) return this.entries.get(githubFixKey(ref)) ?? null
     if (!this.timer && !this.run) this.timer = setTimeout(() => { this.timer = null; void this.flush() }, 0)
     return null
   }
@@ -54,9 +54,9 @@ export class PullRequestCache {
     if (this.run !== controller || controller.signal.aborted) return
     this.entries.clear()
     for (const result of Array.isArray(results) ? results : []) {
-      const ref = parseGithubPrUrl(result?.url)
+      const ref = parseGithubFixUrl(result?.url)
       if (ref && typeof result.title === 'string' && ['open', 'draft', 'closed', 'merged'].includes(result.status)) {
-        this.entries.set(pullRequestKey(ref), { title: result.title, status: result.status })
+        this.entries.set(githubFixKey(ref), { title: result.title, description: typeof result.description === 'string' ? result.description : null, status: result.status })
       }
     }
     this.expires = this.now() + 60_000

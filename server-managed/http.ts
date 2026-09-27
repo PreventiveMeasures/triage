@@ -8,7 +8,7 @@
 //   GET  /api/oauth/github/callback → the OAuth hook (see github-oauth.ts)
 //   GET  /api/auth/session       → { user, csrfToken } | 401
 //   GET  /api/teams              → the current user's teams + their reports and bundles | 401
-//   GET  /api/teams/<id>/pull-requests → PR metadata from visible findings' stored Fix links
+//   GET  /api/teams/<id>/fixes → PR/issue metadata from visible findings' stored Fix links
 //   GET  /api/teams/<id>/reports → all reports and links filtered through this team | 401/404
 //   GET  /api/reports/<id>       → admin/manager report preview | 401/403/404
 //   POST /api/reports/query      → admin/manager batch preview, with repository metadata | 400/401/403/404/503
@@ -78,7 +78,7 @@ import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
-import { lookupPullRequests, storedPullRequestUrls } from './github-pulls.ts'
+import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 
 const SESSION_PATH = '/api/auth/session'
@@ -113,23 +113,23 @@ const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
 
-async function handlePullRequests(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<void> {
+async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<void> {
   const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return
   const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
   const ids = [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
-  const urls = storedPullRequestUrls(await deps.db.listTriage(ids))
+  const urls = storedFixUrls(await deps.db.listTriage(ids))
   await recheckTeam(deps.db, s.session.id, snapshot)
-  const pullRequests = await lookupPullRequests(deps.config, deps.db, snapshot, urls)
+  const fixes = await lookupFixes(deps.config, deps.db, snapshot, urls)
   // Cold report reads, token refresh and upstream batches can outlive changes
   // to security/links, team grants, publication, sessions or the Fix links.
-  const currentUrls = storedPullRequestUrls(await deps.db.listTriage(ids))
+  const currentUrls = storedFixUrls(await deps.db.listTriage(ids))
   if (await readWorkspaceSession(res, deps, cookie) == null) return
   await recheckTeam(deps.db, s.session.id, snapshot)
   if (JSON.stringify(currentUrls) !== JSON.stringify(urls)) {
     sendJson(res, 404, { error: 'workspace-changed' }); return
   }
-  sendJson(res, 200, { pullRequests })
+  sendJson(res, 200, { fixes })
 }
 
 function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'bundleId' | 'report' | 'repoId' | 'repoDirectory'> = {}): Promise<void> {
@@ -1857,10 +1857,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }
-    const teamPullRequests = /^\/api\/teams\/([^/]+)\/pull-requests$/u.exec(path)
-    if (teamPullRequests) {
+    const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
+    if (teamFixes) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handlePullRequests(res, deps, cookie, teamPullRequests[1]!); return
+      await handleWorkspaceFixes(res, deps, cookie, teamFixes[1]!); return
     }
     const teamReports = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
     if (teamReports) {

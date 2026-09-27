@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { parseGithubIssueUrl, parseGithubPrUrl } from '../common/github-pr.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { lookupPullRequests } from '../server-managed/github-pulls.ts'
+import { lookupFixes } from '../server-managed/github-pulls.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
 
@@ -14,7 +14,10 @@ const config = {
   maxReportBytes: 10_485_760, maxBundleBytes: 104_857_600,
 }
 const link = number => `https://github.com/exampleorg/eXamplerEpo/pull/${number}`
-const payload = (number, extra = {}) => ({ number, title: `Fix ${number}`, state: 'open', merged: false, draft: false, base: { repo: { full_name: 'ExampleOrg/ExampleRepo' } }, ...extra })
+const payload = (number, extra = {}) => ({ number, title: `Fix ${number}`, body: `Description ${number}`, state: 'open', merged: false, draft: false, base: { repo: { full_name: 'ExampleOrg/ExampleRepo' } }, ...extra })
+
+const issuePayload = (number, extra = {}) => ({ number, title: `Issue ${number}`, body: `Issue description ${number}`, state: 'open', repository_url: 'https://api.github.com/repos/ExampleOrg/ExampleRepo', ...extra })
+const responseFor = url => Response.json((url.includes('/issues/') ? issuePayload : payload)(Number(url.split('/').at(-1))))
 
 async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
@@ -29,7 +32,7 @@ async function fixture(t) {
   await db.setTeamRepo('team', 7, 'src')
   await db.setTeamMember('team', session.userId, { dependencies: false, security: false })
   const stored = await readSession(config, db, session.setCookie.split(';')[0], Date.now())
-  const lookup = async (urls, fetchImpl) => lookupPullRequests(config, db, await db.getTeamReportAccessSnapshot(stored.session.id, Date.now(), 'team'), urls, fetchImpl)
+  const lookup = async (urls, fetchImpl) => lookupFixes(config, db, await db.getTeamReportAccessSnapshot(stored.session.id, Date.now(), 'team'), urls, fetchImpl)
   return { db, session, lookup }
 }
 
@@ -43,7 +46,7 @@ test('PR links require an exact GitHub URL and a positive safe integer', () => {
     'https://github.com/Kernel/r/pull/1', 'https://github.com/o/r/pull/1\n']) assert.equal(parseGithubPrUrl(url), null, url)
 })
 
-test('issue links are recognized for display without becoming PR lookup inputs', async t => {
+test('ordinary issue links fetch validated titles, descriptions and status from the issues API', async t => {
   const url = 'https://github.com/exampleorg/eXamplerEpo/issues/00123#issuecomment-1'
   assert.deepEqual(parseGithubIssueUrl(url), { repo: 'exampleorg/eXamplerEpo', number: 123 })
   assert.equal(parseGithubIssueUrl(link(123)), null)
@@ -51,7 +54,12 @@ test('issue links are recognized for display without becoming PR lookup inputs',
     'https://github.com/o/r/issues/0', 'https://github.com/o/r/issues/9007199254740992',
     'https://github.com/o/r/issues/1/files', 'https://github.com/o/r/issues/%31']) assert.equal(parseGithubIssueUrl(invalid), null)
   const f = await fixture(t)
-  assert.equal((await f.lookup([url], () => assert.fail('issue links must not trigger PR API calls')))[0].error, 'invalid-url')
+  const results = await f.lookup([url], (target, options) => {
+    assert.equal(target, 'https://api.github.com/repos/ExampleOrg/ExampleRepo/issues/123')
+    assert.equal(options.headers.authorization, 'Bearer alice-token')
+    return Response.json(issuePayload(123, { state: 'closed' }))
+  })
+  assert.deepEqual(results, [{ url, title: 'Issue 123', description: 'Issue description 123', status: 'closed' }])
 })
 
 test('batch reads use the registered repo casing and only the numeric link ID, deduplicate, and return all four statuses', async t => {
@@ -71,7 +79,7 @@ test('batch reads use the registered repo casing and only the numeric link ID, d
   assert.equal(requests[0], 'https://api.github.com/repos/ExampleOrg/ExampleRepo/pulls/123')
   assert.deepEqual(results.map(result => result.status), ['open', 'open', 'draft', 'closed', 'merged'])
   assert.deepEqual(results.map(result => result.url), urls)
-  assert.deepEqual(Object.keys(results[0]).toSorted(), ['status', 'title', 'url'])
+  assert.deepEqual(Object.keys(results[0]).toSorted(), ['description', 'status', 'title', 'url'])
 })
 
 test('team grants are required even for admins and are rechecked on each request before any token access', async t => {
@@ -80,16 +88,16 @@ test('team grants are required even for admins and are rechecked on each request
   t.mock.method(f.db, 'getUserTokens', () => assert.fail('unauthorized URLs must not access credentials'))
   await f.db.setUserRole(f.session.userId, 'admin')
   const result = await f.lookup(['https://github.com/OtherOrg/OtherRepo/pull/123', 'https://github.com/Unknown/Repo/pull/123', link(0)], noFetch)
-  assert.deepEqual(result.map(row => row.error), ['forbidden', 'forbidden', 'invalid-url'])
+  assert.deepEqual(result, [])
   await f.db.removeTeamMember('team', f.session.userId)
-  assert.equal((await f.lookup([link(123)], noFetch))[0].error, 'forbidden')
+  assert.deepEqual(await f.lookup([link(123)], noFetch), [])
   assert.deepEqual(await f.lookup([], noFetch), [])
 })
 
 test('known malformed repository names cannot supply an upstream path', async t => {
   const f = await fixture(t)
   await f.db.selectRepo({ repoId: 7, fullName: 'ExampleOrg/ExampleRepo/../other', private: true, installationId: 99, defaultBranch: 'main', htmlUrl: '', addedBy: f.session.userId }, Date.now())
-  assert.equal((await f.lookup([link(123)], () => assert.fail('no upstream call')))[0].error, 'forbidden')
+  assert.deepEqual(await f.lookup([link(123)], () => assert.fail('no upstream call')), [])
 })
 
 test('missing or expired user credentials never fall back to the installed app; expiring tokens can refresh', async t => {
@@ -119,20 +127,24 @@ test('partial failures, redirects, wrong upstream identity, and malformed respon
   const result = await f.lookup(responses.map((_, i) => link(i + 1)), url => responses[Number(url.split('/').at(-1)) - 1])
   assert.equal(result[0].status, 'open')
   assert.ok(result.slice(1).every(row => row.error === 'unavailable'))
-  assert.equal((await f.lookup([link(1)], () => { throw new Error('network') }))[0].error, 'unavailable')
+  assert.equal((await f.lookup([link(9)], () => { throw new Error('network') }))[0].error, 'unavailable')
 })
 
-test('upstream concurrency is bounded for a full batch', async t => {
+test('workspace PR lookups have both a total request cap and bounded concurrency', async t => {
   const f = await fixture(t)
-  let active = 0, maximum = 0
-  const result = await f.lookup(Array.from({ length: 64 }, (_, i) => link(i + 1)), async url => {
+  let active = 0, maximum = 0, requests = 0
+  const result = await f.lookup(Array.from({ length: 256 }, (_, i) => link(i + 1)), async url => {
+    requests++
     maximum = Math.max(maximum, ++active)
     await new Promise(resolve => { setImmediate(resolve) })
     active--
-    return Response.json(payload(Number(url.split('/').at(-1))))
+    return responseFor(url)
   })
-  assert.equal(result.length, 64)
+  assert.equal(result.length, 256)
   assert.equal(maximum, 4)
+  assert.equal(requests, 200)
+  assert.ok(result.slice(0, 200).every(row => row.status === 'open'))
+  assert.ok(result.slice(200).every(row => row.error === 'unavailable'))
 })
 
 async function workspaceFixture(t) {
@@ -166,7 +178,7 @@ async function workspaceFixture(t) {
   const store = { get: id => Promise.resolve(blobs.get(id)) }
   const handler = createManagedRequestHandler({ config, db: f.db, reportStore: store,
     originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track: job => { pending = job } })
-  const send = async ({ path = '/api/teams/team/pull-requests', cookie = f.session.setCookie.split(';')[0], method = 'GET' } = {}) => {
+  const send = async ({ path = '/api/teams/team/fixes', cookie = f.session.setCookie.split(';')[0], method = 'GET' } = {}) => {
     const req = { url: path, method, headers: { cookie }, [Symbol.asyncIterator]() { assert.fail('workspace PR requests must not read user input') } }
     const res = { writeHead(status, headers) { this.status = status; this.headers = headers }, end(text) { this.body = JSON.parse(text) } }
     handler(req, res); await pending
@@ -179,23 +191,24 @@ test('workspace GET derives only saved Fix PRs surviving the complete security/d
   const calls = [], f = await workspaceFixture(t)
   t.mock.method(globalThis, 'fetch', url => {
     calls.push(url)
-    return Response.json(payload(Number(url.split('/').at(-1))))
+    return responseFor(url)
   })
-  const response = await f.send({ path: `/api/teams/team/pull-requests?url=${encodeURIComponent(link(999))}` })
+  const response = await f.send({ path: `/api/teams/team/fixes?url=${encodeURIComponent(link(999))}` })
   assert.equal(response.status, 200)
   assert.equal(response.headers['cache-control'], 'no-store')
-  assert.deepEqual(response.body.pullRequests, [
-    { url: 'https://github.com/OtherOrg/OtherRepo/pull/1', error: 'forbidden' },
-    { url: link(1), title: 'Fix 1', status: 'open' }, { url: link(6), title: 'Fix 6', status: 'open' },
+  assert.deepEqual(response.body.fixes, [
+    { url: 'https://github.com/ExampleOrg/ExampleRepo/issues/1', title: 'Issue 1', description: 'Issue description 1', status: 'open' },
+    { url: link(1), title: 'Fix 1', description: 'Description 1', status: 'open' },
+    { url: link(6), title: 'Fix 6', description: 'Description 6', status: 'open' },
   ])
-  assert.deepEqual(calls.map(url => Number(url.split('/').at(-1))), [1, 6], 'hidden rows, linked security, dependencies, drafts and arbitrary input never reach GitHub')
-  const broad = await f.send({ path: '/api/teams/broad/pull-requests' })
-  assert.equal(broad.body.pullRequests.length, 7, 'another team gets its own permitted findings')
+  assert.deepEqual(calls.map(url => Number(url.split('/').at(-1))), [1, 1, 6], 'hidden rows, linked security, dependencies, drafts and arbitrary input never reach GitHub')
+  const broad = await f.send({ path: '/api/teams/broad/fixes' })
+  assert.equal(broad.body.fixes.length, 8, 'another team gets its own permitted findings')
   for (const role of ['admin', 'manage']) {
     await f.db.setUserRole(f.session.userId, role)
     const whole = await f.send()
-    assert.equal(whole.body.pullRequests.length, 8, `${role} retains the report filtering bypass`)
-    assert.ok(!whole.body.pullRequests.some(row => row.url === link(8)), 'outside report paths stay excluded')
+    assert.equal(whole.body.fixes.length, 8, `${role} retains the report filtering bypass`)
+    assert.ok(!whole.body.fixes.some(row => row.url === link(8)), 'outside report paths stay excluded')
   }
 })
 
@@ -205,7 +218,9 @@ test('workspace PR reads require approved team membership; the arbitrary-input P
   assert.equal((await f.send({ cookie: '' })).status, 401)
   assert.equal((await f.send({ method: 'POST' })).status, 405)
   assert.equal((await f.send({ path: '/api/github/pull-requests', method: 'POST' })).status, 404)
-  assert.equal((await f.send({ path: '/api/teams/missing/pull-requests' })).status, 404)
+  assert.equal((await f.send({ path: '/api/github/pull-requests' })).status, 404)
+  assert.equal((await f.send({ path: '/api/teams/team/pull-requests' })).status, 404)
+  assert.equal((await f.send({ path: '/api/teams/missing/fixes' })).status, 404)
   await f.db.setUserRole(f.session.userId, 'none')
   assert.equal((await f.send()).status, 403)
   await f.db.setUserRole(f.session.userId, 'admin')
@@ -238,33 +253,34 @@ for (const change of ['membership', 'repository', 'repository-without-reports', 
     })
     const response = await f.send()
     assert.equal(response.status, change === 'role' ? 403 : change === 'logout' ? 401 : 404)
-    assert.equal(response.body.pullRequests, undefined)
+    assert.equal(response.body.fixes, undefined)
   })
 }
 
 
 test('a workspace with no eligible Fix PRs does not read credentials or contact GitHub', async t => {
   const f = await workspaceFixture(t)
-  await f.db.setTriageEntries(['own', 'downgraded', 'foreign-repo'].map(id => [id, null]), f.session.userId, 'alice', Date.now())
+  await f.db.setTriageEntries(['own', 'downgraded', 'foreign-repo', 'issue'].map(id => [id, null]), f.session.userId, 'alice', Date.now())
   t.mock.method(f.db, 'getUserTokens', () => assert.fail('hidden Fix links must not access credentials'))
   t.mock.method(globalThis, 'fetch', () => assert.fail('hidden Fix links must not reach GitHub'))
   const response = await f.send()
   assert.equal(response.status, 200)
-  assert.deepEqual(response.body.pullRequests, [])
+  assert.deepEqual(response.body.fixes, [])
 })
 
-test('a whole workspace returns more than the old 50-link batch limit without accepting client URLs', async t => {
+test('a whole workspace keeps all Fix URLs but caps the derived upstream lookup list', async t => {
   const f = await workspaceFixture(t)
-  const findings = Array.from({ length: 64 }, (_, i) => ({ id: `extra-${i}`, file: 'src/many.js' }))
+  const findings = Array.from({ length: 256 }, (_, i) => ({ id: `extra-${i}`, file: 'src/many.js' }))
   await f.seed('many', { findings })
   await f.db.setTriageEntries(findings.map((finding, i) => [finding.id, { fix: link(100 + i) }]), f.session.userId, 'alice', Date.now())
   let requests = 0
-  t.mock.method(globalThis, 'fetch', url => { requests++; return Response.json(payload(Number(url.split('/').at(-1)))) })
+  t.mock.method(globalThis, 'fetch', url => { requests++; return responseFor(url) })
   const response = await f.send()
   assert.equal(response.status, 200)
-  assert.equal(response.body.pullRequests.length, 67)
-  assert.equal(requests, 66)
-  assert.equal(response.body.pullRequests.find(row => row.url === link(163)).title, 'Fix 163')
+  assert.equal(response.body.fixes.length, 259)
+  assert.equal(requests, 200)
+  assert.equal(response.body.fixes.filter(row => row.status === 'open').length, 200)
+  assert.equal(response.body.fixes.find(row => row.url === link(355)).error, 'unavailable')
 })
 
 test('a cold report read rechecks workspace access before contacting GitHub', async t => {
@@ -291,5 +307,197 @@ test('access is rechecked after the final persisted Fix read', async t => {
   t.mock.method(globalThis, 'fetch', url => Response.json(payload(Number(url.split('/').at(-1)))))
   const response = await f.send()
   assert.equal(response.status, 404)
-  assert.equal(response.body.pullRequests, undefined)
+  assert.equal(response.body.fixes, undefined)
 })
+
+
+test('duplicate and forbidden Fix URLs do not consume the upstream request budget', async t => {
+  const f = await fixture(t)
+  const urls = ['https://github.com/OtherOrg/OtherRepo/pull/1', ...Array.from({ length: 250 }, (_, i) => `${link(1)}/files#diff-${i}`),
+    ...Array.from({ length: 250 }, (_, i) => link(i + 1))]
+  let requests = 0
+  const result = await f.lookup(urls, url => { requests++; return responseFor(url) })
+  assert.equal(requests, 200)
+  assert.equal(result.length, 500, 'the foreign repository is never returned')
+  assert.ok(result.slice(0, 450).every(row => row.status === 'open'))
+  assert.ok(result.slice(450).every(row => row.error === 'unavailable'))
+})
+
+test('one deadline aborts pending GitHub reads and prevents further waves while retaining completed metadata', async t => {
+  const f = await fixture(t)
+  const controller = new AbortController()
+  const timeout = t.mock.method(AbortSignal, 'timeout', ms => { assert.equal(ms, 10_000); return controller.signal })
+  let requests = 0
+  const result = await f.lookup(Array.from({ length: 256 }, (_, i) => link(i + 1)), (url, options) => {
+    requests++
+    options.signal.throwIfAborted()
+    const number = Number(url.split('/').at(-1))
+    if (number <= 4) return Response.json(payload(number))
+    setImmediate(() => controller.abort(new DOMException('Deadline reached', 'TimeoutError')))
+    return new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }) })
+  })
+  assert.equal(timeout.mock.callCount(), 1, 'all waves share one deadline')
+  assert.equal(requests, 8, 'no more GitHub requests start after the shared timeout')
+  assert.ok(result.slice(0, 4).every(row => row.status === 'open'))
+  assert.ok(result.slice(4).every(row => row.error === 'unavailable'))
+})
+
+test('the shared upstream deadline also bounds OAuth token refresh', async t => {
+  const f = await fixture(t)
+  const controller = new AbortController()
+  const timeout = t.mock.method(AbortSignal, 'timeout', ms => { assert.equal(ms, 10_000); return controller.signal })
+  t.mock.method(console, 'warn', () => {})
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 1 })
+  const requests = []
+  const result = await f.lookup([link(1)], (url, options) => {
+    requests.push([url, options.signal])
+    if (!options.signal) return Promise.reject(new Error('missing deadline'))
+    setImmediate(() => controller.abort(new DOMException('Deadline reached', 'TimeoutError')))
+    return new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }) })
+  })
+  assert.equal(timeout.mock.callCount(), 1)
+  assert.equal(requests.length, 1, 'an expired token cannot start PR reads after the refresh deadline')
+  assert.equal(requests[0][0], 'https://github.com/login/oauth/access_token')
+  assert.equal(requests[0][1], controller.signal)
+  assert.equal(result[0].error, 'unavailable')
+})
+
+test('successful PR metadata is persisted, reused for one minute, refreshed, and retained on failures', async t => {
+  const f = await fixture(t)
+  let now = Date.now(), requests = 0
+  t.mock.method(Date, 'now', () => now)
+  const read = () => f.lookup([link(1)], () => { requests++; return Response.json(payload(1, { title: `Revision ${requests}` })) })
+  assert.equal((await read())[0].title, 'Revision 1')
+  assert.equal((await f.db.listGithubMetadata(['7:pull:1']))[0].description, 'Description 1')
+  now += 59_999
+  assert.equal((await read())[0].title, 'Revision 1')
+  assert.equal(requests, 1)
+  now++
+  assert.equal((await read())[0].title, 'Revision 2')
+  now += 60_000
+  for (const fail of [() => { throw new Error('offline') }, () => new Response(null, { status: 429 }), () => new Response('bad json'), () => Response.json(payload(99))]) {
+    const cached = (await f.lookup([link(1)], fail))[0]
+    assert.equal(cached.title, 'Revision 2')
+    assert.equal(cached.description, 'Description 1')
+    assert.equal(cached.status, 'open')
+  }
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: null, expiresAt: 1 })
+  assert.equal((await f.lookup([link(1)], () => assert.fail('expired credentials')))[0].title, 'Revision 2')
+  assert.equal((await f.db.listGithubMetadata(['7:pull:1']))[0].fetchedAt, now - 60_000, 'failure neither evicts nor freshens cached data')
+})
+
+test('merged and closed entries are retained indefinitely without reading a token or querying GitHub', async t => {
+  const f = await fixture(t)
+  await f.db.setGithubMetadata([
+    { key: '7:pull:1', title: 'Merged', description: 'Permanent merged body', status: 'merged', fetchedAt: 1 },
+    { key: '7:pull:2', title: 'Closed', description: null, status: 'closed', fetchedAt: 1 },
+    { key: '7:issue:3', title: 'Closed issue', description: 'Done', status: 'closed', fetchedAt: 1 },
+  ])
+  t.mock.method(f.db, 'getUserTokens', () => assert.fail('cached completed items must not read credentials'))
+  const result = await f.lookup([link(1), link(2), 'https://github.com/ExampleOrg/ExampleRepo/issues/3'], () => assert.fail('completed items must not reach GitHub'))
+  assert.deepEqual(result.map(row => row.status), ['merged', 'closed', 'closed'])
+  assert.equal(result[0].description, 'Permanent merged body')
+})
+
+test('missing entries take priority, then oldest stale open/draft entries fill the 200-item queue', async t => {
+  const f = await fixture(t), now = Date.now()
+  const entries = [
+    { key: '7:pull:1', title: 'Younger', description: 'Old younger body', status: 'open', fetchedAt: now - 70_000 },
+    { key: '7:pull:2', title: 'Oldest', description: 'Oldest body', status: 'open', fetchedAt: now - 90_000 },
+    { key: '7:pull:3', title: 'Draft', description: null, status: 'draft', fetchedAt: now - 80_000 },
+    { key: '7:pull:4', title: 'Fresh', description: null, status: 'open', fetchedAt: now },
+    { key: '7:pull:5', title: 'Merged', description: null, status: 'merged', fetchedAt: 1 },
+    { key: '7:pull:6', title: 'Closed', description: null, status: 'closed', fetchedAt: 1 },
+  ]
+  await f.db.setGithubMetadata(entries)
+  const calls = [], missing = Array.from({ length: 198 }, (_, i) => link(100 + i))
+  const result = await f.lookup([link(1), link(2), link(3), link(4), link(5), link(6), ...missing], url => { calls.push(url); return responseFor(url) })
+  assert.equal(calls.length, 200)
+  assert.deepEqual(calls.slice(-2).map(url => Number(url.split('/').at(-1))), [2, 3], 'the oldest open and draft fill the spare slots')
+  assert.equal(result[0].title, 'Younger', 'stale entries outside the refresh budget are still returned')
+  assert.equal(result[0].description, 'Old younger body')
+  assert.equal(result[1].title, 'Fix 2', 'successful refresh overrides the old cached value')
+  assert.equal(result[2].title, 'Fix 3')
+  assert.equal(result[3].title, 'Fresh')
+  assert.equal(result[4].status, 'merged')
+  assert.equal(result[5].status, 'closed')
+  assert.ok(result.slice(6).every(row => row.status === 'open'))
+})
+
+test('large workspaces return all cached entries and progress through missing metadata across reads', async t => {
+  const f = await fixture(t)
+  await f.db.setGithubMetadata([{ key: '7:pull:1', title: 'Stale open', description: 'Fallback', status: 'open', fetchedAt: 1 }])
+  const urls = Array.from({ length: 250 }, (_, i) => link(i + 1))
+  let calls = 0
+  const fetchMetadata = url => { calls++; return responseFor(url) }
+  const first = await f.lookup(urls, fetchMetadata)
+  assert.equal(first.length, 250)
+  assert.equal(calls, 200)
+  assert.equal(first[0].title, 'Stale open', 'missing records use the whole budget, but old open records are returned')
+  assert.ok(first.slice(201).every(row => row.error === 'unavailable'))
+  const second = await f.lookup(urls, fetchMetadata)
+  assert.equal(calls, 250, '49 remaining misses and one stale open record; fresh cached entries use no budget')
+  assert.ok(second.every(row => row.status === 'open'))
+  assert.equal((await f.db.listGithubMetadata(Array.from({ length: 250 }, (_, i) => `7:pull:${i + 1}`))).length, 250, 'nothing is evicted to enforce the per-request limit')
+})
+
+test('shared cache reads require current user membership, team repos and visible Fix links', async t => {
+  const f = await workspaceFixture(t)
+  const cached = { title: 'Private merged metadata', description: 'Private body', status: 'merged', fetchedAt: 1 }
+  await f.db.setGithubMetadata([{ key: '7:pull:5', ...cached }, { key: '8:pull:1', ...cached }])
+  t.mock.method(globalThis, 'fetch', responseFor)
+  const response = await f.send()
+  assert.equal(response.status, 200)
+  assert.ok(!response.body.fixes.some(row => row.url === link(5)), 'security-hidden metadata cannot leak from the cache')
+  assert.ok(!response.body.fixes.some(row => row.url.includes('OtherOrg')), 'foreign-repository items are never returned, even when cached')
+  const bob = await createSession(config, f.db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, Date.now())
+  await f.db.setUserRole(bob.userId, 'view')
+  const bobCookie = bob.setCookie.split(';')[0]
+  assert.equal((await f.send({ path: '/api/teams/broad/fixes', cookie: bobCookie })).status, 404, 'an unrelated user cannot read cached metadata by guessing a team ID')
+  await f.db.setTeamMember('team', bob.userId, { dependencies: false, security: false })
+  const limited = await f.send({ cookie: bobCookie })
+  assert.equal(limited.status, 200)
+  assert.ok(!limited.body.fixes.some(row => row.url === link(5)), 'a member still cannot see cached security-hidden items')
+  assert.ok(!limited.body.fixes.some(row => row.url.includes('OtherOrg')), 'another team granting the repo cannot widen this response')
+  assert.equal(limited.body.fixes.find(row => row.url === link(1)).title, 'Fix 1', 'authorized users share cached metadata without their own GitHub request')
+  await f.db.setTeamMember('broad', bob.userId, { dependencies: true, security: true })
+  const other = await f.send({ path: '/api/teams/broad/fixes', cookie: bob.setCookie.split(';')[0] })
+  assert.equal(other.body.fixes.find(row => row.url === link(5)).title, cached.title, 'a currently authorized user shares existing cache records')
+  await f.db.removeTeamMember('broad', bob.userId)
+  assert.equal((await f.send({ path: '/api/teams/broad/fixes', cookie: bobCookie })).status, 404, 'revoked users cannot keep reading the shared cache')
+})
+
+test('issue metadata preserves descriptions, refreshes open issues and rejects wrong identities or PR issue aliases', async t => {
+  const f = await fixture(t)
+  const url = 'https://github.com/ExampleOrg/ExampleRepo/issues/1'
+  await f.db.setGithubMetadata([{ key: '7:issue:1', title: 'Old issue', description: 'Old description', status: 'open', fetchedAt: 1 }])
+  for (const body of [issuePayload(99), issuePayload(1, { repository_url: 'https://api.github.com/repos/Other/Repo' }),
+    issuePayload(1, { pull_request: {} }), issuePayload(1, { body: {} })]) {
+    assert.equal((await f.lookup([url], () => Response.json(body)))[0].title, 'Old issue')
+  }
+  const result = await f.lookup([url], () => Response.json(issuePayload(1, { state: 'closed', body: 'Resolved issue description' })))
+  assert.equal(result[0].status, 'closed')
+  assert.equal(result[0].description, 'Resolved issue description')
+  assert.equal((await f.db.listGithubMetadata(['7:issue:1']))[0].description, 'Resolved issue description')
+})
+
+for (const change of ['membership', 'repo', 'security']) {
+  test(`a shared cache hit is discarded if ${change} changes while cached metadata is read`, async t => {
+    const f = await workspaceFixture(t)
+    await f.db.setTeamMember('team', f.session.userId, { dependencies: true, security: true })
+    t.mock.method(globalThis, 'fetch', responseFor)
+    assert.equal((await f.send()).status, 200)
+    const list = f.db.listGithubMetadata
+    t.mock.method(f.db, 'listGithubMetadata', async keys => {
+      const entries = await list(keys)
+      if (change === 'membership') await f.db.removeTeamMember('team', f.session.userId)
+      if (change === 'repo') await f.db.removeTeamRepo('team', 7)
+      if (change === 'security') await f.db.setTeamMember('team', f.session.userId, { dependencies: true, security: false })
+      return entries
+    })
+    t.mock.method(globalThis, 'fetch', () => assert.fail('a fresh cache hit must not fetch GitHub'))
+    const response = await f.send()
+    assert.equal(response.status, 404)
+    assert.equal(response.body.fixes, undefined)
+  })
+}

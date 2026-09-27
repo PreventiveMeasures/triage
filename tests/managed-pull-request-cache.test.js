@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
-import { PullRequestCache } from '../client/managed/pull-request-cache.js'
-import { fetchPullRequests } from '../client/managed/session.js'
+import { FixCache } from '../client/managed/pull-request-cache.js'
+import { fetchFixes } from '../client/managed/session.js'
 import { setPreviewRole } from '../client/managed/request.js'
 
 const link = n => `https://github.com/Org/Repo/pull/${n}`
@@ -13,7 +13,7 @@ function fixture(t, fetchWorkspace = () => Array.from({ length: 64 }, (_, i) => 
   t.mock.timers.enable({ apis: ['setTimeout'] })
   let changes = 0, context = { key: 'alice', teamId: 'team', teams: [] }, time = 0
   const calls = []
-  const cache = new PullRequestCache({
+  const cache = new FixCache({
     context: () => context, now: () => time, changed: () => { changes++ },
     fetchWorkspace: (...args) => { calls.push(args); return fetchWorkspace(...args) },
   })
@@ -129,12 +129,12 @@ test('client sends an authenticated uncached GET with only the workspace ID, and
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
     calls.push([url, options])
-    return Response.json({ pullRequests: [result(1)] })
+    return Response.json({ fixes: [result(1)] })
   })
   const controller = new AbortController()
-  assert.equal((await fetchPullRequests('team/name', controller.signal))[0].status, 'merged')
+  assert.equal((await fetchFixes('team/name', controller.signal))[0].status, 'merged')
   const [url, options] = calls[0]
-  assert.equal(url, '/api/teams/team%2Fname/pull-requests')
+  assert.equal(url, '/api/teams/team%2Fname/fixes')
   assert.equal(options.method ?? 'GET', 'GET')
   assert.equal(options.credentials, 'same-origin')
   assert.equal(options.cache, 'no-store')
@@ -143,6 +143,16 @@ test('client sends an authenticated uncached GET with only the workspace ID, and
   assert.equal(options.signal, controller.signal)
   setPreviewRole('admin')
   t.after(() => setPreviewRole(null))
-  assert.equal(await fetchPullRequests('team'), null)
+  assert.equal(await fetchFixes('team'), null)
   assert.equal(calls.length, 1)
+})
+
+test('workspace results include ordinary issue metadata and descriptions under separate keys', async t => {
+  const url = 'https://github.com/Org/Repo/issues/1'
+  const f = fixture(t, () => [{ ...result(1), description: 'PR description' }, { url, title: 'Issue title', description: 'Issue description', status: 'closed' }])
+  f.cache.read(url)
+  await f.flush()
+  assert.deepEqual(f.cache.read(url), { title: 'Issue title', description: 'Issue description', status: 'closed' })
+  assert.equal(f.cache.read(link(1)).description, 'PR description')
+  assert.equal(f.calls.length, 1)
 })

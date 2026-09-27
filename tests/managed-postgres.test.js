@@ -289,3 +289,17 @@ test('Postgres bundle advisories use only security grants on the bundle reposito
   await db.removeTeamRepo('security', 7)
   assert.equal(await db.userCanReadBundleAdvisories(user, 'bundle', null), false)
 })
+
+test('Postgres upgrades existing databases and retains GitHub metadata across restarts without eviction', async t => {
+  const { connect, db } = await database(t)
+  await db.close()
+  const connection = await connect()
+  try { await connection.query('DROP TABLE managed_github_metadata') } finally { await connection.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  const { checkGithubMetadataStore } = await import('./_managed-github-metadata.js')
+  const merged = await checkGithubMetadataStore(upgraded)
+  await upgraded.close()
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.deepEqual(await reopened.listGithubMetadata([merged.key]), [merged]) }
+  finally { await reopened.close() }
+})

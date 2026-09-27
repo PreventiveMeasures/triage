@@ -5,6 +5,7 @@ import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { preferredSlug } from './slugs.ts'
 import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
+import { type GithubMetadataStore, githubMetadataMethods } from './github-metadata.ts'
 import type { ManagedSql } from './sql.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
@@ -288,7 +289,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted server configuration and
   // applies exclusively to the first insertion into an empty user table.
@@ -1245,6 +1246,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       const row = (await selectGithubIdStmt.get(id)) as { githubId: number } | undefined
       return row?.githubId ?? null
     },
+    ...githubMetadataMethods(db),
     ...selectedRepoMethods(stmts),
     ...activity,
     ...comments,
