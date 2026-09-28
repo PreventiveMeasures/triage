@@ -433,8 +433,11 @@ lost response, and concurrent uploads. A reused upload returns HTTP 200 with
 repository assignment, publication state, and source-bundle link. CSV parsing
 must also agree, so an earlier unrecognized upload cannot hide a valid CSV report.
 
-Workspace imports grant the new team access through the stored repository and
-directory, assign unattached content when needed, and publish the reports.
+Workspace imports grant the new team access through the stored active repository
+and directory, assign unattached content when needed, and publish the reports.
+Non-embedded reports and bundles assigned to inactive repositories are moved to
+the import's selected active repository, preserving their IDs and stored bytes.
+Reports with embedded repository metadata still require that repository to be active.
 Triage remains shared by finding ID and follows the usual import conflict dialog.
 Existing duplicate report rows are preserved; subsequent imports reuse the oldest
 matching record without creating another copy.

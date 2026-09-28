@@ -1236,6 +1236,48 @@ test('reimporting a workspace reuses reports and bundles, including renamed copi
   }
 })
 
+for (const withBundleBytes of [true, false]) {
+  test(`workspace import reuses content from inactive repositories with ${withBundleBytes ? 'uploaded' : 'reference-only'} bundles`, async t => {
+    const { prepareWorkspaceImport, runWorkspaceImport } = await import('../client/managed/workspace-import.js')
+    const f = await managerContentFixture(t)
+    const sourcemaps = fakeBlobStore()
+    const harness = bundleHarness(f.db, config, f.reportStore, createBundleStore(fakeBlobStore(), sourcemaps))
+    const bundleBytes = Buffer.from('{"version":3,"sources":["a.js"],"sourcesContent":["code"],"mappings":""}')
+    const integrity = bundleIntegrity(bundleBytes)
+    const content = JSON.stringify({ repo: { directory: 'new/path' }, bundleHashes: [integrity], findings: [{ id: 'reassigned-finding', file: 'a.js' }] })
+    const api = { async send(path, body, headers) {
+      const response = body === undefined ? await harness.send('GET', path, f.adminCookie)
+        : await harness.upload(path, f.adminCookie, f.adminSess.csrfToken, body instanceof File ? Buffer.from(await body.arrayBuffer()) : JSON.stringify(body), headers)
+      assert.ok(response.statusCode < 300, response.body)
+      return JSON.parse(response.body)
+    } }
+    const bundle = await api.send('/api/admin/bundles', new File([bundleBytes], 'source.map'),
+      { 'x-bundle-filename': 'source.map', 'x-repo-id': '7', 'x-repo-directory': 'old/path' })
+    const report = await api.send('/api/admin/reports', new File([content], 'report.json'),
+      { 'x-report-filename': 'report.json', 'x-repo-id': '7', 'x-repo-directory': 'old/path' })
+    await f.db.setTriage('reassigned-finding', { color: 'red' }, f.admin.id, f.admin.login, Date.now())
+    const triage = await f.db.listTriage(['reassigned-finding'])
+    const before = f.reportStore.map.size
+    await f.db.deactivateRepo(7)
+    const plan = await prepareWorkspaceImport({ workspace: { name: 'Import inactive content' }, reports: [{ name: 'renamed.json', content }],
+      bundles: [integrity], bundleBlobs: withBundleBytes ? [{ name: 'renamed.map', integrity, data: bundleBytes.toString('base64') }] : [],
+    }, [{ repoId: 8, fullName: 'o/other' }])
+    const team = await runWorkspaceImport(plan, { api, session: { id: f.admin.id, role: 'admin', csrfToken: f.adminSess.csrfToken }, defaultRepo: 8, includeTriage: false })
+    assert.equal(plan.reports[0].uploaded.id, report.id)
+    const storedBundle = await f.db.getBundle(bundle.id), storedReport = await f.db.getReport(report.id)
+    assert.deepEqual([storedReport.repoId, storedReport.repoDirectory, storedReport.visible, storedReport.bundleId], [8, 'new/path', true, bundle.id])
+    assert.deepEqual([storedBundle.repoId, storedBundle.repoDirectory], [8, ''])
+    assert.equal(f.reportStore.map.size, before)
+    assert.equal((await f.db.listBundles()).length, 1)
+    assert.equal(sourcemaps.map.size, 1)
+    assert.deepEqual(await f.db.listTriage(['reassigned-finding']), triage)
+    assert.equal((await f.db.listAllRepos()).find(repo => repo.repoId === 7).active, false, 'import does not reactivate the old repository')
+    const imported = (await f.db.listTeamsForUser(f.admin.id)).find(row => row.id === team.id)
+    assert.equal(imported.reports.filter(row => row.id === report.id).length, 1)
+    assert.deepEqual(imported.bundles.map(row => row.id), [bundle.id])
+  })
+}
+
 test('concurrent bundle uploads keep only one record and stored blob', async t => {
   const f = await managerContentFixture(t)
   const archives = fakeBlobStore(), sourcemaps = fakeBlobStore()

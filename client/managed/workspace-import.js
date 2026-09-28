@@ -144,8 +144,9 @@ async function importReportTriage(plan, report, { api, resolveConflicts, signal 
 
 // Deduplication preserves the stored bundle's repository, ignoring the upload's
 // repository header. Resolve access from the stored rows, including references
-// whose bytes were omitted from the export. Never reassign an attached bundle.
-async function grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles) {
+// whose bytes were omitted from the export. Keep active assignments; inactive
+// repositories cannot be granted to teams, so use the selected fallback there.
+async function grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles, activeRepos) {
   if (plan.bundles.length === 0 && plan.references.length === 0) return
   const bundles = knownBundles ?? (await api.send('/api/admin/bundles')).bundles
   const uploadedIds = new Set(plan.bundles.map(bundle => bundle.uploaded.id))
@@ -153,11 +154,12 @@ async function grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles)
   const references = new Set(plan.references)
   for (const bundle of bundles) {
     if (!uploadedIds.has(bundle.id) && !references.has(bundle.integrity)) continue
-    const repoId = bundle.repoId ?? defaultRepo
-    if (bundle.repoId == null) {
-      await step(`bundle-repo:${bundle.id}`, () => api.send('/api/admin/bundles/set-repo', { bundleId: bundle.id, repoId }))
+    const reassign = !activeRepos.has(bundle.repoId)
+    const repoId = reassign ? defaultRepo : bundle.repoId
+    if (reassign) {
+      await step(`bundle-repo:${bundle.id}:${repoId}`, () => api.send('/api/admin/bundles/set-repo', { bundleId: bundle.id, repoId }))
     }
-    const path = bundle.repoId == null ? '' : bundle.repoDirectory ?? ''
+    const path = reassign ? '' : bundle.repoDirectory ?? ''
     await step(`repo:${repoId}:${path}`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId, path }))
   }
 }
@@ -186,11 +188,14 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
       ? 'None of the referenced source bundles are available on the server. Export with bundle bytes included and try again.'
       : 'This workspace contains no report or bundle files.')
   }
+  // Refresh the active set at execution time: the preview's catalogue may be
+  // stale, and content deduplication can return records from inactive repos.
+  const activeRepos = new Set((await api.send('/api/admin/repositories/browsable')).repos.map(repo => repo.repoId))
   for (const report of plan.reports) {
-    if (report.embedded && report.repoId == null) throw new Error(`Connect ${report.embedded} in Repositories before importing ${report.name}.`)
-    if ((report.repoId ?? defaultRepo) == null) throw new Error(`Choose a repository for ${report.name}.`)
+    if (report.embedded && !activeRepos.has(report.repoId)) throw new Error(`Connect ${report.embedded} in Repositories before importing ${report.name}.`)
+    if (!activeRepos.has(report.repoId) && !activeRepos.has(defaultRepo)) throw new Error(`Choose an active repository for ${report.name}.`)
   }
-  if ((plan.bundles.length > 0 || knownBundles.some(bundle => bundle.repoId == null)) && defaultRepo == null) throw new Error('Choose a repository for the source bundles.')
+  if ((plan.bundles.length > 0 || knownBundles.some(bundle => !activeRepos.has(bundle.repoId))) && !activeRepos.has(defaultRepo)) throw new Error('Choose an active repository for the source bundles.')
   const check = () => signal?.throwIfAborted()
   const step = async (key, work) => {
     check()
@@ -211,10 +216,10 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
       })
     }
   }
-  await grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles)
+  await grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles, activeRepos)
   for (const report of plan.reports) {
     check(); progress(`Importing ${report.name}…`)
-    const repoId = report.repoId ?? defaultRepo
+    const repoId = activeRepos.has(report.repoId) ? report.repoId : defaultRepo
     if (!report.uploaded) {
       const uploaded = await api.send('/api/admin/reports', new File([report.content], report.name), {
         'x-report-filename': encodeURIComponent(report.name), 'x-repo-id': String(repoId), 'x-repo-directory': encodeURIComponent(report.directory),
@@ -223,10 +228,10 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
       report.uploaded = uploaded
     }
     // Reused reports keep their stored location, just like source bundles.
-    // Only an unattached report needs the import's repository assignment.
+    // Unattached reports and inactive assignments use the import's active repo.
     const stored = report.uploaded
-    if (stored.repoId == null) {
-      await step(`report-repo:${stored.id}`, async () => {
+    if (!activeRepos.has(stored.repoId)) {
+      await step(`report-repo:${stored.id}:${repoId}:${report.directory}`, async () => {
         const assigned = await api.send('/api/admin/reports/set-repo', { reportId: stored.id, repoId, directory: report.directory })
         if (assigned.conflict) throw new Error(`Could not assign the stored report ${report.name} to its repository.`)
         stored.repoId = repoId
