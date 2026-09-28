@@ -195,7 +195,7 @@ function buildStatStaging(sdk: VercelBlobSdk, token: string): BlobBackend['statS
       const h = await sdk.head(stagingBlobPath(tag, stagingId), { token })
       return h.size
     } catch (err) {
-      if (isNotFound(err)) return null
+      if (isNotFound(err, sdk)) return null
       throw err
     }
   }
@@ -266,7 +266,7 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
       // same condition (blob-fs.ts maps ENOENT → `unavailable`), telling
       // the client the resource is gone for good when it should refetch.
       // See server-e2e/README.md's GET status table.
-      if (isNotFound(err)) return { ok: false, reason: 'unavailable', detail: 'vercel-get-not-found' }
+      if (isNotFound(err, sdk)) return { ok: false, reason: 'unavailable', detail: 'vercel-get-not-found' }
       throw err
     }
     // SDK returned null (no blob) — same "bytes missing for a live row"
@@ -297,7 +297,7 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
         // Blob vanished between get() and the head() size fallback (a
         // racing reaper GC) — still the "live row present, bytes gone"
         // transient, so `unavailable` (503), matching the get() path above.
-        if (isNotFound(headErr)) return { ok: false, reason: 'unavailable', detail: 'vercel-head-not-found' }
+        if (isNotFound(headErr, sdk)) return { ok: false, reason: 'unavailable', detail: 'vercel-head-not-found' }
         throw headErr
       }
     }
@@ -328,7 +328,7 @@ function buildOpenLiveReader(sdk: VercelBlobSdk, token: string): BlobBackend['op
 function buildUnlink(sdk: VercelBlobSdk, token: string, op: 'staging' | 'live', toPath: (tag: string, id: string) => string): (tag: string, id: string) => Promise<void> {
   return async (tag, id) => {
     try { await sdk.del(toPath(tag, id), { token }) } catch (err) {
-      if (isNotFound(err)) return
+      if (isNotFound(err, sdk)) return
       // Don't propagate — the DB-side row drop has already
       // committed by the time the caller reaches here, and the
       // reaper picks up the stranded blob on its next sweep. Same

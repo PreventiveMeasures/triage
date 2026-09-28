@@ -64,7 +64,7 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
       // Content-Length in that case so HTTP clients do not truncate the body.
       const size = result.blob.size === 0 ? null : result.blob.size
       return { size, stream: Readable.fromWeb(result.stream as Parameters<typeof Readable.fromWeb>[0]) }
-    } catch (err) { if (isNotFound(err)) return null; throw err }
+    } catch (err) { if (isNotFound(err, blobs)) return null; throw err }
   }
   async function get(path: string) {
     const result = await open(path)
@@ -74,7 +74,7 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
     return Buffer.concat(parts)
   }
   async function remove(path: string) {
-    try { await blobs.del(path, { token }) } catch (err) { if (!isNotFound(err)) throw err }
+    try { await blobs.del(path, { token }) } catch (err) { if (!isNotFound(err, blobs)) throw err }
   }
   function store(name: string, suffix = ''): BlobStore {
     const path = (id: string) => `.managed/${name}/${validate(id)}${suffix}`
@@ -90,7 +90,7 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
   const cacheStorage: BundleCacheStorage = {
     async exists(id, file) {
       try { await blobs.head(cachePath(id, file), { token }); return true }
-      catch (err) { if (isNotFound(err)) return false; throw err }
+      catch (err) { if (isNotFound(err, blobs)) return false; throw err }
     },
     put: (id, file, bytes) => put(cachePath(id, file), bytes),
     async open(id, file) {
@@ -110,7 +110,7 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
   const reportSourcesStorage: CacheStorage = {
     async exists(key) {
       try { await blobs.head(sourcesPath(key), { token }); return true }
-      catch (err) { if (isNotFound(err)) return false; throw err }
+      catch (err) { if (isNotFound(err, blobs)) return false; throw err }
     },
     put: (key, bytes) => put(sourcesPath(key), bytes),
     async open(key) {

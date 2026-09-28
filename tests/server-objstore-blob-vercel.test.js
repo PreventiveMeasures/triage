@@ -40,7 +40,7 @@ function liveName(tag, resourceTag) { return `${tag}/${chash(resourceTag)}.bin` 
 // shape matches what `blob-vercel.ts` actually uses; new SDK
 // methods would need to be added here as the backend grows.
 class MockBlobNotFoundError extends Error {
-  constructor() { super('Blob not found'); this.name = 'BlobNotFoundError' }
+  constructor() { super('Vercel Blob: The requested blob does not exist') }
 }
 
 function mockSdk() {
@@ -62,6 +62,7 @@ function mockSdk() {
   return {
     blobs, calls,
     sdk: {
+      BlobNotFoundError: MockBlobNotFoundError,
       put: async (pathname, body, options) => {
         calls.push({ fn: 'put', pathname, options })
         // Respect AbortSignal — if aborted before/while reading the body,
