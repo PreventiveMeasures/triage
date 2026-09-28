@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, it, mock } from 'node:test'
 import { createBundleMetadata } from '../ui/view/bundle-metadata.js'
+import { bundleFileHistory, stepBundleFile, visitBundleFile } from '../ui/view/bundle-code-history.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
 const json = { version: 3, sources: ['src/main.js'], sourcesContent: ['export default 1'], names: [] }
@@ -209,6 +210,36 @@ it('resets to Overview after a non-bundle view, but honors explicit tab restores
   assert.equal(state.bundleDetailsTab, 'graph', 'boot restores the saved tab')
   selectBundle('second-bundle', 'compare')
   assert.equal(state.bundleDetailsTab, 'compare', 'explicit navigation wins')
+})
+
+it('keeps the origin and earlier visits when an import moves from Search to Code', () => {
+  const earlier = visitBundleFile(bundleFileHistory(null, entry.integrity, 'src/first.js'), 'src/main.js')
+  for (const history of [null, earlier]) {
+    selectBundle(entry.integrity, 'search')
+    state.bundleSourceFile = 'src/main.js'
+    state.bundleCodeHistory = history
+    selectBundleTab('code', { preserveSource: true })
+    assert.equal(state.bundleDetailsTab, 'code')
+    assert.equal(state.bundleSourceFile, 'src/main.js')
+    assert.equal(state.bundleCodeHistory, history)
+    const visited = visitBundleFile(bundleFileHistory(state.bundleCodeHistory, entry.integrity, state.bundleSourceFile), 'src/imported.js')
+    assert.deepEqual(visited.files, [...(history?.files ?? ['src/main.js']), 'src/imported.js'])
+    const back = stepBundleFile(visited, -1)
+    assert.equal(back.files[back.at], 'src/main.js')
+    const forward = stepBundleFile(back, 1)
+    assert.equal(forward.files[forward.at], 'src/imported.js')
+  }
+})
+
+it('ordinary tab changes still clear the source selection and file history', () => {
+  selectBundle(entry.integrity, 'code')
+  state.bundleSourceFile = 'src/main.js'
+  state.bundleCodeHistory = bundleFileHistory(null, entry.integrity, 'src/main.js')
+  state.bundleSourceFindingIdx = 0
+  selectBundleTab('search')
+  assert.equal(state.bundleSourceFile, null)
+  assert.equal(state.bundleCodeHistory, null)
+  assert.equal(state.bundleSourceFindingIdx, null)
 })
 
 

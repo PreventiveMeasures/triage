@@ -305,7 +305,7 @@ function handleBundleSourceClick(e) {
     // Search results can hide a target that doesn't contain the query.
     // Continue following source references in Code, with its file tree visible.
     if (state.currentView === 'bundles' && state.bundleDetailsTab === 'search') {
-      selectBundleTab('code')
+      selectBundleTab('code', { preserveSource: true })
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'code')
     }
     selectBundleSourceFile(path)
