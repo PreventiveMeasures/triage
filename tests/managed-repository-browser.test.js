@@ -12,7 +12,7 @@ const commit = 'a'.repeat(40)
 const anonymous = { githubUserId: 1, token: null }
 const appConfig = { ...config, githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) }
 const privateRepo = { ...repo, private: true, installationId: 7 }
-const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public' }
+const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
 
 test('repository reader pins branches/tags to commits and only returns directory metadata', async () => {
   const calls = []
@@ -51,6 +51,37 @@ test('directory grants expose ancestors but no sibling names or prefix collision
   assert.equal(scopedDirectory('packages/app/src', ['packages/app']), null)
   assert.equal(scopedDirectory('', [null]), null)
   assert.deepEqual(scopedDirectory('packages/application', ['packages/app']), [])
+})
+
+test('renamed default branches come from live metadata even outside the first page of suggestions', async t => {
+  const { request } = await fixture(t, { selectedRepo: { ...repo, defaultBranch: 'old-default' } })
+  const commits = []
+  let defaultBranch = 'release/current'
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url).pathname
+    if (path === '/repos/org/repo') return Promise.resolve(Response.json({ ...publicMetadata, default_branch: defaultBranch }))
+    if (path === '/repos/org/repo/branches') return Promise.resolve(Response.json(Array.from({ length: 100 }, (_, i) => ({ name: `feature-${i}` }))))
+    if (path === '/repos/org/repo/tags') return Promise.resolve(Response.json([]))
+    if (path.startsWith('/repos/org/repo/commits/')) {
+      commits.push(decodeURIComponent(path.slice('/repos/org/repo/commits/'.length)))
+      return Promise.resolve(Response.json({ sha: commit }))
+    }
+    assert.equal(path, '/repos/org/repo/contents/src/allowed')
+    return Promise.resolve(Response.json([{ name: 'entry.ts', path: 'src/allowed/entry.ts', type: 'file' }]))
+  })
+  const refs = await request({ repoId: '1' }, { route: 'refs' })
+  assert.equal(refs.status, 200)
+  assert.equal(refs.body.defaultBranch, 'release/current')
+  assert.equal(refs.body.branches.length, 100)
+  assert.ok(!refs.body.branches.includes(refs.body.defaultBranch))
+  assert.equal((await request({ repoId: '1', ref: `heads/${refs.body.defaultBranch}`, path: 'src/allowed' })).status, 200)
+  assert.equal((await request({ repoId: '1', path: 'src/allowed' })).status, 200)
+  assert.deepEqual(commits, ['heads/release/current', 'heads/release/current'])
+
+  defaultBranch = undefined
+  assert.equal((await request({ repoId: '1' }, { route: 'refs' })).body.defaultBranch, '')
+  assert.equal((await request({ repoId: '1', path: 'src/allowed' })).status, 200)
+  assert.equal(commits.at(-1), 'HEAD', 'missing live metadata never falls back to a stale stored branch')
 })
 
 async function fixture(t, { role = 'manage', selectedRepo = repo, member = true, tokens = null, fixtureConfig = config } = {}) {

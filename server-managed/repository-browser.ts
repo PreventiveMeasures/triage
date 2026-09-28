@@ -64,17 +64,19 @@ async function repositoryReader(repo: SelectedRepo, token: string | null, getIde
   const checkAccess = async (freshIdentity = false) => {
     // Stored visibility can be stale (or internal with private=false). Require
     // current, explicit public visibility or the caller's effective permission.
-    const data = await metadata() as { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown }
+    const data = await metadata() as { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; default_branch?: unknown }
     if (data?.id !== repo.repoId || typeof data.full_name !== 'string' || data.full_name.toLowerCase() !== repo.fullName.toLowerCase()) {
       throw new GithubApiError(404, 'no-repository')
     }
-    if (data.private === false && data.visibility === 'public') return
+    if (data.private === false && data.visibility === 'public') return data
     if (!token) throw new GithubApiError(404, 'no-repository')
     if (!(await githubRepoReadPermission(repo.fullName, token, await getIdentity(freshIdentity), fetchImpl))) {
       throw new GithubApiError(404, 'no-repository')
     }
+    return data
   }
-  await checkAccess()
+  const current = await checkAccess()
+  const defaultBranch = typeof current.default_branch === 'string' ? current.default_branch : ''
   return {
     recheckAccess: () => checkAccess(true),
     async refs() {
@@ -84,11 +86,11 @@ async function repositoryReader(repo: SelectedRepo, token: string | null, getIde
         if (!Array.isArray(data)) throw new GithubApiError(502, 'github-malformed')
         return data.flatMap(item => typeof item?.name === 'string' ? [item.name] : [])
       }))
-      return { defaultBranch: repo.defaultBranch, branches: results[0], tags: results[1] }
+      return { defaultBranch, branches: results[0], tags: results[1] }
     },
     async commit(ref: string) {
       if (/^[a-f\d]{40}$/iu.test(ref)) return ref
-      const data = await read(`/commits/${encodeURIComponent(ref || repo.defaultBranch || 'HEAD')}`) as { sha?: unknown }
+      const data = await read(`/commits/${encodeURIComponent(ref || (defaultBranch ? `heads/${defaultBranch}` : 'HEAD'))}`) as { sha?: unknown }
       if (typeof data?.sha !== 'string' || !/^[a-f\d]{40}$/iu.test(data.sha)) throw new GithubApiError(502, 'github-malformed')
       return data.sha
     },
