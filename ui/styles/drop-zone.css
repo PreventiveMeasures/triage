@@ -23,7 +23,7 @@
   }
 }
 
-#drop-zone:has(.local-scan-button:not([hidden])):not([data-server-mode='managed']) { padding-bottom: 5rem; }
+#drop-zone:not([data-server-mode='managed']) { padding-bottom: 5rem; }
 .local-scan-button, .managed-scan-button {
   position: absolute; right: 1.5rem; bottom: 1.5rem;
   align-items: center; gap: .4rem;
@@ -38,6 +38,19 @@
 }
 #drop-zone[data-server-mode='managed'] > .local-scan-button { display: none; }
 #drop-zone[data-server-mode='managed']:has(.managed-scan-button) { padding-bottom: 5rem; }
+
+.landing-github-link {
+  position: absolute; right: 1.5rem; bottom: 1.5rem;
+  display: inline-flex; align-items: center; gap: .4rem;
+  color: var(--muted); font-size: .85rem; line-height: 1.4;
+
+  & svg { width: 1rem; height: 1rem; }
+  &:hover { color: var(--text); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+}
+
+#drop-zone:not([data-server-mode='managed']):has(.local-scan-button:not([hidden])) > .landing-github-link,
+#drop-zone[data-server-mode='managed']:not(:has(.managed-login-button)) > .landing-github-link { display: none; }
 
 @keyframes welcome-reveal {
   0% { opacity: 0; }
@@ -62,6 +75,8 @@
   overflow-y: auto;
   padding: clamp(2.5rem, 9vh, 5.5rem) clamp(1.25rem, 5vw, 5rem);
 }
+
+#drop-zone[data-server-mode='managed']:has(.managed-login-button) { padding-bottom: 5rem; }
 
 #drop-zone[data-server-mode='managed'] > .drop-prompt,
 #drop-zone[data-server-mode='managed'] > #landing-workspaces { display: none; }

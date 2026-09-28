@@ -11,7 +11,7 @@
 // boot is enough.
 
 import { FILE_ICONS } from './file-display.js'
-import { BUNDLE_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 
 // `data-icon` value → raw SVG string. Sourcemaps keep the generic
 // bundle glyph shared with the sidebar.
@@ -24,6 +24,7 @@ const ICONS = {
   'bundle': BUNDLE_ICON_SVG,
   'workspace': WORKSPACE_ICON_SVG,
   'links': LINKS_ICON_SVG,
+  'github': GITHUB_ICON_SVG,
 }
 
 for (const el of document.querySelectorAll('.drop-supported-icon[data-icon]')) {
