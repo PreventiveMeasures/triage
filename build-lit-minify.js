@@ -49,6 +49,10 @@ const litStrategy = {
 export function minifyLitSource(source, fileName) {
   const result = minifyHTMLLiterals(source, {
     fileName, strategy: litStrategy,
+    // SVG fragments have no <svg> wrapper here. Parsing them as HTML turns
+    // self-closing shapes into parents and appends '/' to unquoted fills.
+    // Leave svg`…` alone; complete SVGs inside html`…` remain safe to minify.
+    shouldMinify: (template) => !!template.tag?.toLowerCase().includes('html'),
     shouldMinifyCSS: (template) => template.parts.length === 1 && defaultShouldMinifyCSS(template),
   })
   return result ? result.code : null
