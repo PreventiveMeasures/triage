@@ -1005,7 +1005,10 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
       ...result, ...(current.virtualEntries ? { entries: current.virtualEntries, limited: false } : {}), path, commit,
     })
   } catch (err) {
-    if (err instanceof GithubApiError) { sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }); return }
+    if (err instanceof GithubApiError) {
+      sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })
+      return
+    }
     throw err
   }
 }

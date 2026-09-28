@@ -16,6 +16,10 @@ export function scopedDirectory(path: string, scopes: (string | null)[]): Reposi
 export interface RepositoryBrowserUser { githubUserId: number | null; token: string | null }
 type GithubIdentity = Awaited<ReturnType<typeof githubUserIdentity>>
 
+function credentialFailure(err: unknown): err is GithubApiError {
+  return err instanceof GithubApiError && ([401, 404].includes(err.status) || err.message === 'github-status-403')
+}
+
 // Create once per HTTP request. Coalesce concurrent credential lookups without
 // caching repository visibility or permissions, or sharing credentials across users.
 export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryBrowserUser, fetchImpl: typeof fetch = globalThis.fetch) {
@@ -32,31 +36,40 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
     return identity
   }
   return {
-    async reader(repo: SelectedRepo) {
-      let token = Promise.resolve<string | null>(null)
-      if (repo.installationId != null) {
+    reader(repo: SelectedRepo) {
+      const installationToken = () => {
+        if (repo.installationId == null) return Promise.resolve(null)
         const cached = tokens.get(repo.installationId)
-        token = cached ?? repoAccessToken(config, repo.installationId, fetchImpl).catch((err: unknown) => {
-          if (!(err instanceof GithubApiError)) throw err
-          // Stale installations cannot prevent verified anonymous public access.
+        const token = cached ?? repoAccessToken(config, repo.installationId, fetchImpl).catch((err: unknown) => {
+          if (!credentialFailure(err)) throw err
+          // Stale installations cannot prevent verified public access.
           return null
         })
         if (!cached) tokens.set(repo.installationId, token)
+        return token
       }
-      return repositoryReader(repo, await token, getIdentity, fetchImpl)
+      return repositoryReader(repo, user.token, installationToken, getIdentity, fetchImpl)
     },
   }
 }
 
-async function repositoryReader(repo: SelectedRepo, token: string | null, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch) {
+async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch) {
   const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
+  // Public reads can use the signed-in user's quota without repository grants.
+  // Nonpublic reads still require the repository App and the effective-user gate.
+  let token = userToken ?? await installationToken()
   const read = (suffix: string) => githubJson(base + suffix, token, fetchImpl)
   const metadata = async () => {
     try { return await read('') }
     catch (err) {
-      if (!token || !(err instanceof GithubApiError)) throw err
-      // A valid installation token may have lost this particular repository.
-      // After falling back, all reads and rechecks stay anonymous.
+      if (!token || !credentialFailure(err)) throw err
+      const fallback = await installationToken()
+      if (fallback && fallback !== token) {
+        token = fallback
+        try { return await read('') } catch (fallbackError) { if (!credentialFailure(fallbackError)) throw fallbackError }
+      }
+      // Anonymous fallback is only for unavailable credentials, never rate
+      // limits, network errors, or GitHub outages.
       token = null
       return read('')
     }
@@ -70,9 +83,12 @@ async function repositoryReader(repo: SelectedRepo, token: string | null, getIde
     }
     if (data.private === false && data.visibility === 'public') return data
     if (!token) throw new GithubApiError(404, 'no-repository')
-    if (!(await githubRepoReadPermission(repo.fullName, token, await getIdentity(freshIdentity), fetchImpl))) {
+    const appToken = await installationToken()
+    if (!appToken) throw new GithubApiError(404, 'no-repository')
+    if (!(await githubRepoReadPermission(repo.fullName, appToken, await getIdentity(freshIdentity), fetchImpl))) {
       throw new GithubApiError(404, 'no-repository')
     }
+    token = appToken
     return data
   }
   const current = await checkAccess()

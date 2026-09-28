@@ -182,3 +182,21 @@ test('late directory results and failures cannot overwrite a newer repository or
   await detached
   assert.equal(page._entries, null)
 })
+
+for (const [code, status, message] of [
+  ['github-rate-limited', 429, /rate limit.*2 minute/u],
+  ['github-status-403', 502, /GitHub denied.*read permissions/u],
+  ['github-unauthorized', 502, /authentication.*expired/u],
+  ['github-unreachable', 502, /connect to GitHub/u],
+]) {
+  test(`refs and directory errors explain ${code}`, async t => {
+    t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ error: code }, { status, headers: { 'retry-after': '120' } })))
+    const page = new ManagedCreateBundle()
+    await page.selectRepository(1)
+    assert.match(page._refsError, message)
+    page.changeRevision('branch', 'main')
+    await page.loadDirectory('')
+    assert.match(page._error, message)
+    assert.equal(page._entries, null)
+  })
+}
