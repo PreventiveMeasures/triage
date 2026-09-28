@@ -120,6 +120,7 @@
     "server-managed/import-triage.ts",
     "server-managed/managed-issues.ts",
     "server-managed/index.ts",
+    "server-managed/package-entry-points.ts",
     "server-managed/public-workspace.ts",
     "server-managed/repo-path.ts",
     "server-managed/report-migration.ts",

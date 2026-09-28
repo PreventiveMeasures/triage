@@ -1057,7 +1057,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     if (!current) return
     if (JSON.stringify(current.repo) !== JSON.stringify(access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
     sendJson(res, 200, refs ? result : {
-      ...result, ...(current.virtualEntries ? { entries: current.virtualEntries, limited: false } : {}), path, commit,
+      ...result, ...(current.virtualEntries ? { entries: current.virtualEntries, limited: false, packageEntryPoints: [] } : {}), path, commit,
     })
   } catch (err) {
     if (err instanceof GithubApiError) {

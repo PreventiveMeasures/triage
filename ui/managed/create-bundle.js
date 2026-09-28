@@ -5,6 +5,7 @@ import { sourceFileIcon, sourceFolderIcon } from '../view/source-file-icon.js'
 import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import styles from './styles/create-bundle.css'
+import { packageEntryPointSuggestions } from './package-entry-points.js'
 
 const commitIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/></svg>`
 const MAX_CACHED_DIRECTORIES = 100
@@ -44,6 +45,7 @@ export class ManagedCreateBundle extends LitElement {
     initialRepoId: { attribute: false }, _repos: { state: true }, _loadingRepos: { state: true }, _reposError: { state: true },
     _repoId: { state: true }, _refs: { state: true }, _refKind: { state: true }, _refName: { state: true },
     _path: { state: true }, _entries: { state: true }, _selected: { state: true }, _commit: { state: true },
+    _packageEntryPoints: { state: true },
     _loadingRefs: { state: true }, _loading: { state: true }, _error: { state: true }, _refsError: { state: true }, _limited: { state: true },
     _revisionOpen: { state: true }, _revisionQuery: { state: true }, _activeRevision: { state: true },
   }
@@ -61,6 +63,7 @@ export class ManagedCreateBundle extends LitElement {
     this._path = ''
     this._entries = null
     this._selected = new Set()
+    this._packageEntryPoints = []
     this._commit = ''
     this._directories = new Map()
     this._loadingRefs = false
@@ -117,6 +120,7 @@ export class ManagedCreateBundle extends LitElement {
     this._refsRequest?.abort()
     this._request?.abort()
     this._directories.clear()
+    this._packageEntryPoints = []
     super.disconnectedCallback()
   }
 
@@ -129,6 +133,7 @@ export class ManagedCreateBundle extends LitElement {
     this._path = ''
     this._commit = ''
     this._selected = new Set()
+    this._packageEntryPoints = []
     this._error = ''
     this._limited = false
   }
@@ -265,6 +270,7 @@ export class ManagedCreateBundle extends LitElement {
     this._entries = null
     this._error = ''
     this._limited = false
+    this._packageEntryPoints = []
     this._loading = false
     const name = this._refName.trim()
     if (this._refKind === 'commit' && !/^[a-f\d]{7,40}$/iu.test(name)) {
@@ -281,6 +287,7 @@ export class ManagedCreateBundle extends LitElement {
       this._directories.set(key, cached)
       this._entries = cached.entries
       this._limited = cached.limited
+      this._packageEntryPoints = cached.packageEntryPoints
       return
     }
     this._loading = true
@@ -290,9 +297,10 @@ export class ManagedCreateBundle extends LitElement {
       this._commit = data.commit
       this._entries = data.entries.toSorted((a, b) => Number(b.type === 'dir') - Number(a.type === 'dir') || a.name.localeCompare(b.name))
       this._limited = data.limited
+      this._packageEntryPoints = data.packageEntryPoints ?? []
       if (/^[a-f\d]{40}$/iu.test(data.commit)) {
         const cacheKey = JSON.stringify([this._repoId, data.commit, path])
-        this._directories.set(cacheKey, { entries: this._entries, limited: this._limited })
+        this._directories.set(cacheKey, { entries: this._entries, limited: this._limited, packageEntryPoints: this._packageEntryPoints })
         if (this._directories.size > MAX_CACHED_DIRECTORIES) this._directories.delete(this._directories.keys().next().value)
       }
     } catch (error) {
@@ -346,6 +354,7 @@ export class ManagedCreateBundle extends LitElement {
         </div>
         ${this._limited ? html`<p class="message">Showing GitHub’s first 1,000 entries in this directory.</p>` : nothing}
       </section>
+      ${packageEntryPointSuggestions(this._packageEntryPoints, this._selected, paths => { this._selected = new Set([...this._selected, ...paths]) })}
       <section class="entry-points" aria-label="Selected entry points"><div class="selection"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="btn clear-selection" @click=${() => { this._selected = new Set() }}>Clear all</button>` : nothing}</div>
         ${this._selected.size > 0 ? html`<ul>${[...this._selected].map(path => html`<li>${sourceFileIcon(path)}<span data-tooltip=${path}>${path}</span><button type="button" aria-label=${`Remove ${path}`} @click=${() => this.toggleFile(path)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>` : html`<p class="note">Select files above. You can choose entry points from multiple directories.</p>`}
         </div><button type="button" class="btn primary" disabled>Create a bundle</button>

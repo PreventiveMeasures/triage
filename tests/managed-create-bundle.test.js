@@ -7,6 +7,11 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
+function templates(value) {
+  if (Array.isArray(value)) return value.flatMap(templates)
+  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
+}
+
 test('the picker installs the host-provided shared tooltip listener on its own root', () => {
   const page = new ManagedCreateBundle()
   const root = {}
@@ -21,10 +26,6 @@ test('the picker installs the host-provided shared tooltip listener on its own r
 })
 
 test('the commit link opens the current directory at the pinned commit on GitHub', () => {
-  function templates(value) {
-    if (Array.isArray(value)) return value.flatMap(templates)
-    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
-  }
   const page = new ManagedCreateBundle()
   page._repos = [{ repoId: 1, fullName: 'org/repo' }]
   page._repoId = 1
@@ -228,6 +229,41 @@ test('directory navigation reuses pinned listings with their sorting, limits, an
   assert.equal(calls[1].get('ref'), commit)
 })
 
+test('package suggestions are opt-in, additive, deduplicated, and cached with the pinned directory', async t => {
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', url => {
+    calls++
+    const path = new URL(url, 'https://test.invalid').searchParams.get('path')
+    return Promise.resolve(Response.json({ commit, entries, ...(path === '' ? { packageEntryPoints: ['src/entry.ts', 'cli.js'] } : {}) }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('')
+  assert.equal(page._selected.size, 0, 'discovery never selects files automatically')
+  assert.deepEqual(page._packageEntryPoints, ['src/entry.ts', 'cli.js'])
+  page.toggleFile('src/entry.ts')
+  page.toggleFile('manual.js')
+  const suggestion = () => templates(page.render()).find(template => template.strings[0].includes('class="package-suggestions"'))
+  assert.ok(suggestion())
+  suggestion().values.find(value => typeof value === 'function')()
+  assert.deepEqual([...page._selected], ['src/entry.ts', 'manual.js', 'cli.js'])
+  assert.equal(suggestion(), undefined, 'the prompt disappears once all suggested paths are selected')
+  page.toggleFile('cli.js')
+  assert.ok(suggestion(), 'removed suggestions can be added again')
+  await page.loadDirectory('src')
+  assert.deepEqual(page._packageEntryPoints, [])
+  await page.loadDirectory('')
+  assert.deepEqual(page._packageEntryPoints, ['src/entry.ts', 'cli.js'])
+  assert.equal(calls, 2, 'returning to the directory does not fetch its package again')
+  page.changeRevision('tag', 'v1')
+  assert.deepEqual(page._packageEntryPoints, [])
+  await page.loadDirectory('')
+  assert.equal(calls, 3)
+  page.disconnectedCallback()
+  assert.deepEqual(page._packageEntryPoints, [])
+})
+
 test('refresh, revision/repository changes, and leaving the view discard directory caches', async t => {
   const calls = []
   let currentCommit = commit
@@ -267,7 +303,7 @@ test('cached navigation cancels in-flight reads, and failures invalidate cached 
     const path = new URL(url, 'https://test.invalid').searchParams.get('path')
     directoryReads++
     if (path === 'src') return new Promise(resolve => { finish = resolve })
-    return Promise.resolve(fail ? Response.json({}, { status: 403 }) : Response.json({ commit, entries: [] }))
+    return Promise.resolve(fail ? Response.json({}, { status: 403 }) : Response.json({ commit, entries: [], packageEntryPoints: ['root.js'] }))
   })
   const page = new ManagedCreateBundle()
   page._repoId = 1
@@ -277,9 +313,10 @@ test('cached navigation cancels in-flight reads, and failures invalidate cached 
   assert.equal(page._loading, true)
   await page.loadDirectory('')
   assert.equal(page._loading, false)
-  finish(Response.json({ commit, entries }))
+  finish(Response.json({ commit, entries, packageEntryPoints: ['src/late.js'] }))
   await pending
   assert.deepEqual(page._entries, [])
+  assert.deepEqual(page._packageEntryPoints, ['root.js'])
   const retry = page.loadDirectory('src')
   assert.equal(directoryReads, 3, 'cancelled reads cannot populate the cache')
   finish(Response.json({ commit, entries }))
@@ -287,6 +324,7 @@ test('cached navigation cancels in-flight reads, and failures invalidate cached 
   fail = true
   await page.loadDirectory('other')
   assert.match(page._error, /access is required/u)
+  assert.deepEqual(page._packageEntryPoints, [])
   await page.loadDirectory('')
   assert.equal(directoryReads, 5, 'known access failure prevents redisplaying an old cached listing')
   assert.equal(page._entries, null)

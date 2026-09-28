@@ -133,6 +133,90 @@ test('browser endpoints require manage access, honor path grants, and recheck ch
 
 const userTokens = { accessToken: 'login-token', refreshToken: null, expiresAt: null }
 
+function packageFixture(t) {
+  const bytes = Buffer.from(JSON.stringify({ main: './index.js', exports: { './cli': './bin/cli.js' }, bin: { cli: './bin/cli.js' }, description: 'do not return raw contents' }))
+  const state = {
+    metadata: publicMetadata, duringBlob: async () => {},
+    entry: { name: 'package.json', path: 'src/allowed/package.json', type: 'file', size: bytes.length, sha: 'b'.repeat(40), download_url: 'https://untrusted.invalid/package.json' },
+    blob: { encoding: 'base64', size: bytes.length, content: bytes.toString('base64') },
+  }
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const parsed = new URL(url)
+    calls.push(parsed.pathname)
+    assert.equal(parsed.origin, 'https://api.github.com')
+    assert.equal(options.headers.authorization, 'Bearer login-token')
+    if (parsed.pathname === '/repos/org/repo') return Response.json(state.metadata)
+    if (parsed.pathname === '/repos/org/repo/contents/src/allowed') {
+      assert.equal(parsed.searchParams.get('ref'), commit)
+      return Response.json(state.entry ? [state.entry] : [])
+    }
+    assert.equal(parsed.pathname, `/repos/org/repo/git/blobs/${'b'.repeat(40)}`)
+    await state.duringBlob()
+    return Response.json(state.blob)
+  })
+  return { state, calls }
+}
+
+test('authorized package suggestions use the user token and the blob from the pinned directory', async t => {
+  const { request } = await fixture(t, { tokens: userTokens })
+  const { calls } = packageFixture(t)
+  const response = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body.packageEntryPoints, ['src/allowed/index.js', 'src/allowed/bin/cli.js'])
+  assert.equal(response.body.commit, commit)
+  assert.ok(!JSON.stringify(response.body).includes('do not return raw contents'))
+  assert.deepEqual(calls, ['/repos/org/repo', '/repos/org/repo/contents/src/allowed', `/repos/org/repo/git/blobs/${'b'.repeat(40)}`, '/repos/org/repo'])
+})
+
+test('virtual directories and absent, oversized, or non-file manifests never trigger a blob read', async t => {
+  const { request } = await fixture(t, { tokens: userTokens })
+  const { state, calls } = packageFixture(t)
+  const params = { repoId: '1', ref: commit }
+  assert.equal((await request(params)).status, 200)
+  assert.deepEqual(calls, ['/repos/org/repo', '/repos/org/repo'])
+  const entry = state.entry
+  for (const invalid of [null, { ...entry, size: 256 * 1024 + 1 }, { ...entry, type: 'symlink' }, { ...entry, submodule_git_url: 'https://example.com' }, { ...entry, sha: '../untrusted' }, { ...entry, path: 'src/private/package.json' }]) {
+    state.entry = invalid
+    const response = await request({ ...params, path: 'src/allowed' })
+    assert.equal(response.status, 200)
+    assert.equal(response.body.packageEntryPoints, undefined)
+  }
+  assert.ok(!calls.some(path => path.includes('/git/blobs/')))
+})
+
+test('package reads recheck membership, narrowed path grants, and live GitHub visibility', async t => {
+  const { request, db, userId } = await fixture(t, { tokens: userTokens })
+  const { state } = packageFixture(t)
+  const params = { repoId: '1', ref: commit, path: 'src/allowed' }
+  state.duringBlob = () => db.removeTeamMember('team', userId)
+  assert.equal((await request(params)).status, 404)
+  await db.setTeamMember('team', userId, { dependencies: true, security: true })
+  state.duringBlob = async () => {
+    await db.removeTeamRepo('team', 1)
+    await db.setTeamRepo('team', 1, 'src/allowed/nested')
+  }
+  const narrowed = await request(params)
+  assert.equal(narrowed.status, 200)
+  assert.deepEqual(narrowed.body.entries, [{ name: 'nested', path: 'src/allowed/nested', type: 'dir' }])
+  assert.deepEqual(narrowed.body.packageEntryPoints, [])
+  await db.removeTeamRepo('team', 1)
+  await db.setTeamRepo('team', 1, 'src/allowed')
+  state.duringBlob = () => { state.metadata = { ...publicMetadata, private: true, visibility: 'private' } }
+  assert.equal((await request(params)).status, 404)
+})
+
+test('invalid package JSON leaves the authorized file listing usable', async t => {
+  const { request } = await fixture(t, { tokens: userTokens })
+  const { state, calls } = packageFixture(t)
+  state.blob = { encoding: 'base64', size: 1, content: 'ew==' }
+  const response = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body.entries, [{ name: 'package.json', path: 'src/allowed/package.json', type: 'file' }])
+  assert.deepEqual(response.body.packageEntryPoints, [])
+  assert.equal(calls.at(-1), '/repos/org/repo', 'optional reads still finish with the live access check')
+})
+
 function githubFixture(t, { publicRepo = false, permission = 'read', identityId = 1, permissionUserId = 1 } = {}) {
   const state = { metadata: { ...publicMetadata, private: !publicRepo, visibility: publicRepo ? 'public' : 'private' }, permission, identityId, permissionUserId, duringRead: async () => {} }
   const calls = []

@@ -332,7 +332,9 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
     const name = rest.split('/')[0]!
     entries.set(name, { name, path: prefix + name, type: rest.includes('/') ? 'dir' : 'file' })
   }
-  sendJson(res, 200, { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false })
+  sendJson(res, 200, { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false,
+    ...(entries.has('package.json') ? { packageEntryPoints: ['src/index.ts', 'src/app.tsx', 'src/utils/format.js'] } : {}),
+  })
 }
 
 async function connectAppFixture(req: IncomingMessage, res: ServerResponse): Promise<void> {
