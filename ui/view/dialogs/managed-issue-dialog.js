@@ -10,6 +10,7 @@ const ERRORS = {
   'github-create-failed': 'GitHub could not create the issue. Check the title and description before trying again.',
   'unauthenticated': 'Your session expired. Sign in again before creating an issue.',
   'workspace-changed': 'Your workspace access changed. Reopen the finding before creating an issue.',
+  'bad-issue-repository': 'The finding’s repository changed. Reopen the finding before creating an issue.',
   'no-finding': 'This finding is no longer available in this workspace.',
 }
 
@@ -64,7 +65,7 @@ class ManagedIssueDialog extends AppDialog {
         this.prepared = { mode: 'authorize', authorizationPath: '/api/oauth/github/issues/login' }
       } else {
         this.uncertain = error.message === 'github-create-uncertain'
-        if (['workspace-changed', 'no-team', 'no-report', 'no-finding', 'unauthenticated', 'forbidden'].includes(error.message)) this.prepared = null
+        if (['workspace-changed', 'bad-issue-repository', 'no-team', 'no-report', 'no-finding', 'unauthenticated', 'forbidden'].includes(error.message)) this.prepared = null
         this.message = ERRORS[error.message] ?? 'Could not create this issue. Check the title, description, and repository access.'
       }
     } finally { this.busy = false; this.creating = false }

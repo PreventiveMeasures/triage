@@ -4,7 +4,7 @@ import type { BlobStore } from './blob-store.ts'
 import type { ManagedIssue } from './managed-issues.ts'
 import { randomToken } from './crypto.ts'
 import { githubIssueClosedReason } from '../common/github-pr.ts'
-import { reportEntries } from '../report/index.js'
+import { reportEntries, reportRepoGithub } from '../report/index.js'
 import { newIssueLabels } from '../common/github-issue-labels.js'
 import { appJwt, githubAppConfigured, installUrl, publicRepositoryName } from './github-app.ts'
 import { ISSUE_LOGIN_PATH, issueUserToken } from './github-issue-oauth.ts'
@@ -73,9 +73,15 @@ export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, s
   const repoIds = snapshot.repositories.map(repo => repo.repoId)
   const stored = await db.getManagedIssue(context.findingId)
   if (stored) return { ...referenceResult(stored, repoIds), labels, recheck }
-  const repository = snapshot.repositories.find(repo => repo.github.toLowerCase() === context.repository.toLowerCase())
+  // The target comes from this finding's own source, or the report's managed
+  // assignment. Team membership alone must not let a caller claim an unrelated
+  // repository's issue as the permanent reference for this finding.
+  const findingRepo = finding['repo'] as { github?: unknown } | null | undefined
+  const targetRepository = publicRepositoryName(reportRepoGithub({ repo: { github: findingRepo?.github || report.repo.github } }))
+  if (!targetRepository || targetRepository.toLowerCase() !== context.repository.toLowerCase()) throw new IssueError(400, 'bad-issue-repository')
+  const repository = snapshot.repositories.find(repo => repo.github.toLowerCase() === targetRepository.toLowerCase())
   if (!repository || !githubAppConfigured(config)) return { mode: 'form' as const, labels, recheck }
-  const path = `/repos/${context.repository.split('/').map(encodeURIComponent).join('/')}`
+  const path = `/repos/${targetRepository.split('/').map(encodeURIComponent).join('/')}`
   const installation = await github(`${path}/installation`, appJwt(config.githubAppId!, config.githubAppPrivateKey!), fetchImpl)
   if (installation.status === 404) return { mode: 'form' as const, labels, recheck }
   if (!installation.ok) throw new IssueError(502, 'github-unavailable')
@@ -95,7 +101,7 @@ export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, s
     existingLabels.push(name)
   }
   return { mode: 'api' as const, token, path, labels: existingLabels, recheck,
-    db, findingId: context.findingId, repoId: repository.repoId, repository: context.repository, repoIds, userId: session.userId }
+    db, findingId: context.findingId, repoId: repository.repoId, repository: targetRepository, repoIds, userId: session.userId }
 }
 
 export async function createGithubIssue(prepared: Awaited<ReturnType<typeof prepareGithubIssue>>, input: unknown, fetchImpl: typeof fetch = fetch) {

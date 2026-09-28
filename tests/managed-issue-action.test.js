@@ -6,6 +6,7 @@ import '../ui/view/frontend-install.js'
 // Render the actual card without the page renderer and source-preview DOM.
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: null } })
+const { getPackagesIndex } = await import('../client/bundle-finding-index.js')
 const { state } = await import('../client/state.ts')
 const { findingCardInnerTemplate } = await import('../ui/view/render-finding.js')
 
@@ -14,14 +15,14 @@ function templates(value) {
   return value?.strings ? [value, ...value.values.flatMap(templates)] : []
 }
 
-function issueAction(t, overrides = {}) {
+function issueAction(t, overrides = {}, findingOverrides = {}) {
   const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team',
     managedSession: { id: 'user', login: 'author', role: 'view', csrfToken: 'csrf' }, ...overrides }
   const previous = Object.fromEntries(Object.keys(next).map(key => [key, state[key]]))
   Object.assign(state, next)
   t.after(() => Object.assign(state, previous))
   const finding = { id: 'finding', severity: 'high', title: 'Finding title', description: 'Finding description',
-    file: 'src/file.js', repo: { github: 'https://github.com/o/r' }, _managedReportId: 'report' }
+    file: 'src/file.js', repo: { github: 'https://github.com/o/r' }, _managedReportId: 'report', ...findingOverrides }
   return templates(findingCardInnerTemplate([finding])).find(template => template.strings[0].includes('class="mark-issue"'))
 }
 
@@ -51,3 +52,17 @@ for (const [mode, overrides] of [
     assert.equal(new URL(action.values[0]).pathname, '/o/r/issues/new')
   })
 }
+
+
+test('managed issue targets use finding/report metadata rather than unrelated local package inference', t => {
+  const index = getPackagesIndex(), key = 'issue-target-test'
+  const previous = index.get(key)
+  index.set(key, { files: new Set(['node_modules/pkg/a.js']), repos: new Set(['o/local-only']) })
+  t.after(() => { if (previous) index.set(key, previous); else index.delete(key) })
+  const finding = { file: 'node_modules/pkg/a.js', _repoFallback: 'o/assigned' }
+  const upstream = issueAction(t, {}, { ...finding, repo: { github: 'https://github.com/o/upstream.git/tree/main' } })
+  assert.equal(new URL(upstream.values[0]).pathname, '/o/upstream/issues/new')
+  const assigned = issueAction(t, {}, { ...finding, repo: undefined })
+  assert.equal(new URL(assigned.values[0]).pathname, '/o/assigned/issues/new')
+  assert.equal(issueAction(t, { repoUrl: 'o/global' }, { ...finding, repo: undefined, _repoFallback: null }), undefined)
+})

@@ -562,7 +562,10 @@ permissions are configured on the app, rather than requested as incremental
 OAuth scopes. See [GitHub's permission model](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
 
 API creation is limited to a visible finding in the current team and a repository
-assigned to that team where the app is installed. Other repositories, public
+assigned to that team where the app is installed. The target must match the
+finding's declared repository, or the report's managed assignment when the
+finding has no repository; a different repository in the same team is rejected.
+Other repositories, public
 workspace views, and E2E/local mode use GitHub's prefilled issue form. The dialog
 offers that form only when the server selects the repository fallback. No issue
 is posted by signing in, checking authorization, or connecting a repository.
@@ -578,7 +581,9 @@ the server's team-wide classification, including hidden siblings and links.
 checks availability. `POST` to the same path takes these fields plus `title`
 and `body`, requires the session's CSRF token, and rechecks current workspace
 access before creating. A lost GitHub response is not retried automatically,
-since the issue may already exist.
+since the issue may already exist. Explicit preflight failures (for example, a
+failed label lookup) remain retryable by the user. Unknown server failures and
+lost or malformed responses remain uncertain.
 
 The `managed_finding_issue.issue_url` field stores one permanent reference per
 finding ID, shared across reports and teams. No triage, import, or management

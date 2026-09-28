@@ -4,6 +4,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
 import { publicSharePath } from '../../client/managed/public-share.js'
+import { reportRepoGithub } from '../../report/index.js'
 import { newIssueLabels } from '../../common/github-issue-labels.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
@@ -964,7 +965,11 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // gitlab / self-hosted / unknown base), so non-GitHub findings show
   // the group without it. Third in the handoff group:
   // copy | link | issue | claude.
-  const findingRepoId = findingRepo(activeTab)
+  // Match the server's finding/report target; local package-index inference
+  // is not authoritative for creating a permanent managed issue reference.
+  const findingRepoId = isManagedUiMode()
+    ? reportRepoGithub({ repo: { github: activeTab.repo?.github || activeTab._repoFallback } })
+    : findingRepo(activeTab)
   const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab),
     labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
   const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam

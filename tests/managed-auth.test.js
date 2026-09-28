@@ -2954,7 +2954,7 @@ test('issue API uses acting user, server-classified labels, and ignores missing 
 test('issue API falls back outside team/installations and requests permissions only for issue action', async t => {
   const { db, store, team, session, cfg, context } = await issueFixture(t)
   const unexpected = () => { throw new Error('must not fetch') }
-  assert.equal((await prepareGithubIssue(cfg, db, store, session, team.id, { ...context, repository: 'outside/repo' }, unexpected)).mode, 'form')
+  await assert.rejects(prepareGithubIssue(cfg, db, store, session, team.id, { ...context, repository: 'outside/repo' }, unexpected), /bad-issue-repository/u)
   assert.equal((await prepareGithubIssue(config, db, store, session, team.id, context, unexpected)).mode, 'form')
   assert.equal((await prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({}, 404))).mode, 'form')
   const permissions = await prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'read' } }))
@@ -3236,3 +3236,94 @@ for (const status of [401, 403, 429, 503]) {
     assert.equal(await db.getManagedIssue('sec'), null)
   })
 }
+
+test('issue targets are bound to the finding/report rather than any repository in the team', async t => {
+  const { db, store, fx, team, cfg, context } = await issueFixture(t)
+  await db.setTeamRepo(team.id, 8, null)
+  // The managed assignment remains o/r despite client-like fallback fields and
+  // an embedded report header naming another repository in the same team.
+  await store.put(context.reportId, Buffer.from(JSON.stringify({ source: 'native', repo: { github: 'o/other' },
+    findings: [{ id: 'own', file: 'src/a.js', _repoFallback: 'o/other' }] })))
+  const { send, upload } = bundleHarness(db, cfg, store)
+  const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/teams/${team.id}/issues`
+  const targets = []
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    targets.push(url)
+    assert.ok(url.startsWith('https://api.github.com/repos/o/r/'))
+    if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+    return jsonResponse(init.method === 'POST' ? { number: 95 } : {}, init.method === 'POST' ? 201 : 200)
+  })
+  const forged = { ...context, repository: 'o/other' }
+  for (const response of [await send('GET', `${path}?${new URLSearchParams(forged)}`, cookie),
+    await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ ...forged, title: 'Wrong repository', body: '' }))]) {
+    assert.equal(response.statusCode, 400)
+    assert.deepEqual(JSON.parse(response.body), { error: 'bad-issue-repository' })
+  }
+  assert.deepEqual(targets, [], 'reject before installation, label, or issue API requests')
+  assert.equal(await db.getManagedIssue('own'), null, 'forged target cannot reserve the global finding ID')
+  const response = await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ ...context, repository: 'O/R', title: 'Correct repository', body: '' }))
+  assert.equal(response.statusCode, 201)
+  assert.equal(JSON.parse(response.body).url, 'https://github.com/o/r/issues/95')
+  assert.equal((await db.getManagedIssue('own')).repoId, 7)
+})
+
+for (const linked of [false, true]) {
+  test(`finding-specific upstream repository ${linked ? 'can create when linked to the team' : 'uses the form outside the team'}`, async t => {
+    const { db, store, team, session, cfg, context } = await issueFixture(t)
+    if (linked) await db.setTeamRepo(team.id, 8, null)
+    await store.put(context.reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
+      { id: 'own', file: 'node_modules/pkg/a.js', repo: { github: 'https://github.com/O/Other.git/tree/main' } },
+    ] })))
+    const calls = []
+    const fetchImpl = (url, init) => {
+      calls.push(url)
+      assert.ok(url.startsWith('https://api.github.com/repos/O/Other/'))
+      if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+      return jsonResponse(init.method === 'POST' ? { number: 96 } : {}, init.method === 'POST' ? 201 : 200)
+    }
+    await assert.rejects(prepareGithubIssue(cfg, db, store, session, team.id, context, fetchImpl), /bad-issue-repository/u)
+    const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, { ...context, repository: 'o/other' }, fetchImpl)
+    assert.equal(prepared.mode, linked ? 'api' : 'form')
+    if (linked) {
+      const result = await createGithubIssue(prepared, { title: 'Upstream finding', body: '' }, fetchImpl)
+      assert.equal(result.url, 'https://github.com/O/Other/issues/96')
+      assert.equal((await db.getManagedIssue('own')).repoId, 8)
+    } else {
+      assert.deepEqual(calls, [])
+      assert.equal(await db.getManagedIssue('own'), null)
+    }
+  })
+}
+
+test('an unsupported explicit finding repository cannot be replaced with the report assignment', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  await store.put(context.reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
+    { id: 'own', file: 'src/a.js', repo: { github: 'https://gitlab.com/o/other' } },
+  ] })))
+  await assert.rejects(prepareGithubIssue(cfg, db, store, session, team.id, context, () => assert.fail('no upstream call')), /bad-issue-repository/u)
+  assert.equal(await db.getManagedIssue('own'), null)
+})
+
+test('POST label preflight failures explicitly report no GitHub write and can be retried', async t => {
+  const { db, store, fx, team, cfg, context } = await issueFixture(t)
+  const { upload } = bundleHarness(db, cfg, store)
+  const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/teams/${team.id}/issues`
+  const body = JSON.stringify({ ...context, title: 'Retry preflight', body: '' })
+  let labelsAvailable = false, writes = 0
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+    if (url.includes('/labels/')) return jsonResponse({}, labelsAvailable ? 200 : 503)
+    if (init.method === 'POST') { writes++; return jsonResponse({ number: 97 }, 201) }
+    return jsonResponse({ number: 97 })
+  })
+  const failed = await upload(path, cookie, fx.bobSess.csrfToken, body)
+  assert.equal(failed.statusCode, 502)
+  assert.deepEqual(JSON.parse(failed.body), { error: 'github-unavailable' })
+  assert.equal(await db.getManagedIssue('own'), null)
+  assert.equal(writes, 0)
+  labelsAvailable = true
+  const retried = await upload(path, cookie, fx.bobSess.csrfToken, body)
+  assert.equal(retried.statusCode, 201)
+  assert.equal(JSON.parse(retried.body).url, 'https://github.com/o/r/issues/97')
+  assert.equal(writes, 1)
+})

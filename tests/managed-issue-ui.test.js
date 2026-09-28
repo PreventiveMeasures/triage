@@ -205,3 +205,44 @@ test('installed repositories keep creation in the managed flow, including during
   dialog.prepared = { mode: 'form' }
   assert.equal(new URL(dialogLinks(dialog)[0]).pathname, '/o/r/issues/new', 'server-approved form fallback remains available')
 })
+
+for (const error of ['github-unavailable', 'unavailable', 'shutting-down', 'github-create-failed']) {
+  test(`definite POST failure ${error} permits an explicit retry without claiming uncertain creation`, async t => {
+    const dialog = dialogFixture(t)
+    dialog.prepared = { mode: 'api' }
+    let calls = 0
+    t.mock.method(globalThis, 'fetch', () => ++calls === 1
+      ? Response.json({ error }, { status: 502 }) : Response.json({ url: 'https://github.com/o/r/issues/98' }, { status: 201 }))
+    await dialog.create()
+    assert.equal(dialog.uncertain, false)
+    assert.doesNotMatch(dialog.message, /may have created/u)
+    assert.equal(canCreate(dialog), true)
+    assert.equal(calls, 1, 'do not automatically retry even definite failures')
+    await dialog.create()
+    assert.equal(calls, 2)
+    assert.equal(dialog.createdUrl, 'https://github.com/o/r/issues/98')
+  })
+}
+
+for (const payload of [null, {}, { error: 'internal' }, { error: 'github-create-uncertain' }, { error: 'unknown-proxy-error' }, { error: 42 }]) {
+  test(`unclassified POST failure ${JSON.stringify(payload)} still blocks a blind retry`, async t => {
+    const dialog = dialogFixture(t)
+    dialog.prepared = { mode: 'api' }
+    let calls = 0
+    t.mock.method(globalThis, 'fetch', () => { calls++; return Response.json(payload, { status: 502 }) })
+    await dialog.create(); await dialog.create()
+    assert.equal(dialog.uncertain, true)
+    assert.equal(canCreate(dialog), false)
+    assert.equal(calls, 1)
+  })
+}
+
+test('malformed POST response remains uncertain and blocks a blind retry', async t => {
+  const dialog = dialogFixture(t)
+  dialog.prepared = { mode: 'api' }
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', () => { calls++; return new Response('<html>timeout</html>', { status: 502 }) })
+  await dialog.create(); await dialog.create()
+  assert.equal(dialog.uncertain, true)
+  assert.equal(calls, 1)
+})
