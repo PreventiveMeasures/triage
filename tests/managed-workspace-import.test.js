@@ -22,7 +22,7 @@ function serverMock() {
     calls.push({ path, body, headers })
     if (path.endsWith('/import-triage')) return onTriage(body)
     if (path === '/api/admin/teams') return { id: 'team', name: body.name }
-    if (path === '/api/admin/reports') return { id: `report-${calls.length}` }
+    if (path === '/api/admin/reports') return { id: `report-${calls.length}`, repoId: Number(headers['x-repo-id']), repoDirectory: decodeURIComponent(headers['x-repo-directory']) }
     if (path === '/api/admin/bundles') return body ? { id: 'bundle' } : { bundles: [{ id: 'bundle', repoId: 7 }] }
     if (path.endsWith('/set-visible') && failPublish) throw new Error('temporarily unavailable')
     return { ok: true }
@@ -112,6 +112,49 @@ test('retry resumes a partially completed import without duplicating its team, u
   assert.equal(mock.calls.filter(call => call.path === '/api/admin/teams').length, 1)
   assert.equal(mock.calls.filter(call => call.path === '/api/admin/reports').length, 1)
   assert.equal(mock.calls.filter(call => call.path.endsWith('/import-triage')).length, 2)
+})
+
+test('reused reports grant their stored repository path and import triage using the existing ID', async () => {
+  const plan = await prepareWorkspaceImport(exported(), repos)
+  const mock = serverMock()
+  const send = mock.api.send
+  mock.api.send = (path, body, headers) => path === '/api/admin/reports'
+    ? { id: 'existing', deduped: true, repoId: 9, repoDirectory: 'stored/path' } : send(path, body, headers)
+  await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: true })
+  assert.deepEqual(mock.calls.filter(c => c.path.endsWith('/teams/set-repo')).map(c => c.body), [
+    { teamId: 'team', repoId: 9, path: 'stored/path' },
+  ])
+  assert.ok(mock.calls.some(c => c.path === '/api/admin/reports/existing/import-triage'))
+  assert.ok(!mock.calls.some(c => c.path.endsWith('/reports/set-repo')), 'attached reports are never moved')
+  assert.deepEqual(mock.calls.find(c => c.path.endsWith('/set-visible')).body, { reportId: 'existing', visible: true })
+})
+
+test('reused unattached reports are assigned before granting the imported team access', async () => {
+  const plan = await prepareWorkspaceImport(exported(), repos)
+  const mock = serverMock()
+  const send = mock.api.send
+  mock.api.send = (path, body, headers) => path === '/api/admin/reports'
+    ? { id: 'unattached', deduped: true, repoId: null, repoDirectory: '' } : send(path, body, headers)
+  await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: false })
+  const calls = mock.calls.filter(c => c.path.endsWith('/set-repo'))
+  assert.deepEqual(calls.map(c => c.body), [
+    { reportId: 'unattached', repoId: 7, directory: 'src' },
+    { teamId: 'team', repoId: 7, path: 'src' },
+  ])
+})
+
+test('a conflicting report upload remains retryable and does not grant access or publish', async () => {
+  const plan = await prepareWorkspaceImport(exported(), repos)
+  const mock = serverMock()
+  const send = mock.api.send
+  mock.api.send = (path, body, headers) => path === '/api/admin/reports' ? { conflict: true } : send(path, body, headers)
+  const options = { api: mock.api, session, includeTriage: false }
+  await assert.rejects(runWorkspaceImport(plan, options), /Could not reuse/u)
+  assert.equal(plan.reports[0].uploaded, null)
+  assert.ok(!mock.calls.some(c => c.path.endsWith('/set-repo') || c.path.endsWith('/set-visible')))
+  mock.api.send = send
+  await runWorkspaceImport(plan, options)
+  assert.ok(plan.reports[0].uploaded.id)
 })
 
 test('session cancellation while resolving prevents triage writes and publication', async () => {

@@ -216,11 +216,25 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
     check(); progress(`Importing ${report.name}…`)
     const repoId = report.repoId ?? defaultRepo
     if (!report.uploaded) {
-      report.uploaded = await api.send('/api/admin/reports', new File([report.content], report.name), {
+      const uploaded = await api.send('/api/admin/reports', new File([report.content], report.name), {
         'x-report-filename': encodeURIComponent(report.name), 'x-repo-id': String(repoId), 'x-repo-directory': encodeURIComponent(report.directory),
       })
+      if (uploaded.conflict) throw new Error(`Could not reuse the stored report ${report.name}. Retry the import.`)
+      report.uploaded = uploaded
     }
-    await step(`repo:${repoId}:${report.directory}`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId, path: report.directory }))
+    // Reused reports keep their stored location, just like source bundles.
+    // Only an unattached report needs the import's repository assignment.
+    const stored = report.uploaded
+    if (stored.repoId == null) {
+      await step(`report-repo:${stored.id}`, async () => {
+        const assigned = await api.send('/api/admin/reports/set-repo', { reportId: stored.id, repoId, directory: report.directory })
+        if (assigned.conflict) throw new Error(`Could not assign the stored report ${report.name} to its repository.`)
+        stored.repoId = repoId
+        stored.repoDirectory = report.directory
+      })
+    }
+    const path = stored.repoDirectory ?? ''
+    await step(`repo:${stored.repoId}:${path}`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId: stored.repoId, path }))
     if (includeTriage) await importReportTriage(plan, report, { api, resolveConflicts, signal })
     await step(`publish:${report.uploaded.id}`, () => api.send('/api/admin/reports/set-visible', { reportId: report.uploaded.id, visible: true }))
   }
