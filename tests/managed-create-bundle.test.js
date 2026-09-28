@@ -7,6 +7,19 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
+test('the picker installs the host-provided shared tooltip listener on its own root', () => {
+  const page = new ManagedCreateBundle()
+  const root = {}
+  page.renderRoot = root
+  const roots = []
+  page.updated(new Map())
+  page.installTooltips = target => roots.push(target)
+  page.updated(new Map([['installTooltips', undefined]]))
+  assert.deepEqual(roots, [root])
+  page.updated(new Map([['_selected', new Set()]]))
+  assert.deepEqual(roots, [root], 'ordinary selection renders do not reinstall listeners')
+})
+
 test('the commit link opens the current directory at the pinned commit on GitHub', () => {
   function templates(value) {
     if (Array.isArray(value)) return value.flatMap(templates)

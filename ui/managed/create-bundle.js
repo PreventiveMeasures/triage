@@ -30,6 +30,7 @@ async function browseRepository(route, params, signal) {
 export class ManagedCreateBundle extends LitElement {
   static styles = [unsafeCSS(commonStyles), unsafeCSS(styles)]
   static properties = {
+    installTooltips: { attribute: false },
     initialRepoId: { attribute: false }, _repos: { state: true }, _loadingRepos: { state: true }, _reposError: { state: true },
     _repoId: { state: true }, _refs: { state: true }, _refKind: { state: true }, _refName: { state: true },
     _path: { state: true }, _entries: { state: true }, _selected: { state: true }, _commit: { state: true },
@@ -69,7 +70,8 @@ export class ManagedCreateBundle extends LitElement {
     globalThis.addEventListener('scroll', this._onViewport, true)
   }
 
-  updated() {
+  updated(changed) {
+    if (changed.has('installTooltips')) this.installTooltips?.(this.renderRoot)
     this.positionRevisionSuggestions()
   }
 

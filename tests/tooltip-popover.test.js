@@ -105,26 +105,41 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.style.transform, 'none')
       hideTooltip()
     }
-    await t.test('the managed-page listener reaches tooltips inside a nested picker shadow root', nested => {
+    await t.test('picker tooltips update when internal transitions never reach the outer root', nested => {
       nested.mock.timers.enable({ apis: ['setTimeout'] })
       const outerListeners = {}
       const pageRoot = { nodeType: 11, addEventListener(type, listener) { outerListeners[type] = listener } }
       const pickerHost = { nodeType: 1, dataset: {} }
-      const pickerRoot = { nodeType: 11 }
+      const innerListeners = {}
+      const pickerRoot = { nodeType: 11, addEventListener(type, listener) { innerListeners[type] = listener } }
       const file = { nodeType: 1, dataset: { tooltip: 'src/entry.ts' } }
       const label = { nodeType: 1, dataset: {}, closest: () => file }
       const event = { target: pickerHost, composedPath: () => [label, file, pickerRoot, pickerHost, pageRoot] }
       installShadowTooltipListener(pageRoot)
+      installShadowTooltipListener(pickerRoot)
       outerListeners.mouseover(event)
       nested.mock.timers.tick(100)
-      assert.equal(open, true, 'the outer listener opens the shared tooltip without an inner listener')
-      assert.equal(node.textContent, 'src/entry.ts', 'the composed path identifies the file despite event retargeting')
-      outerListeners.mouseout({ ...event, relatedTarget: label })
+      assert.equal(open, true)
+      assert.equal(node.textContent, 'src/entry.ts')
+      // The browser trims transitions whose target and relatedTarget both
+      // retarget to pickerHost. Deliver these only to the picker listener.
+      const otherFile = { nodeType: 1, dataset: { tooltip: 'src/other.ts' }, closest() { return this } }
+      const otherEvent = { target: otherFile, composedPath: () => [otherFile, pickerRoot] }
+      innerListeners.mouseout({ ...event, relatedTarget: otherFile })
+      innerListeners.mouseover(otherEvent)
+      nested.mock.timers.tick(100)
+      assert.equal(node.textContent, 'src/other.ts', 'moving between tiles replaces the tooltip')
+      innerListeners.mouseout({ ...otherEvent, relatedTarget: otherFile })
       assert.equal(open, true, 'moving within the file keeps its tooltip visible')
-      outerListeners.mouseout({ ...event, relatedTarget: null })
-      assert.equal(open, false, 'leaving the nested control closes the tooltip')
-      outerListeners.mouseover(event)
-      outerListeners.mouseout({ ...event, relatedTarget: null })
+      const gap = { nodeType: 1, dataset: {} }
+      innerListeners.mouseout({ ...otherEvent, relatedTarget: gap })
+      assert.equal(open, false, 'moving into a grid gap closes the tooltip')
+      innerListeners.mouseover(otherEvent)
+      nested.mock.timers.tick(100)
+      assert.equal(open, true, 'entering a tile from a grid gap opens its tooltip')
+      innerListeners.mouseout({ ...otherEvent, relatedTarget: gap })
+      innerListeners.mouseover(event)
+      innerListeners.mouseout({ ...event, relatedTarget: null })
       nested.mock.timers.tick(100)
       assert.equal(open, false, 'leaving before the delay cancels the tooltip')
     })
