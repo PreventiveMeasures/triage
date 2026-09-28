@@ -2206,6 +2206,7 @@ export async function navigateToAdminPage(view, options = {}) {
   if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view
   state.scanSelection = view === 'manage-scans' && options.bundleId ? { bundleId: options.bundleId } : null
+  state.bundleCreationRepoId = view === 'manage-bundles' ? options.createRepoId ?? null : null
   render({ animate: false })
   renderSidebar()
   // Use the known role and CSRF token immediately; apply session changes when
