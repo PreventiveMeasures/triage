@@ -439,6 +439,36 @@ cannot be safely assigned to an account after a rename or login reuse. Users
 without attributable history show Unknown. Triage retention/deletion still
 applies because Last Activity is derived from the retained history.
 
+# Bundle creation preview
+
+Manage → Bundles → Create opens a page for choosing a connected repository,
+branch, tag, or commit SHA and selecting entry-point files across directories.
+The final **Create a bundle** action is disabled; selections are not saved.
+
+`GET /api/admin/repositories/browsable` provides the creation page's repository
+picker. A repository must be active, and both access gates must pass: the caller
+is an admin or a manager with a team grant for the repository, and the caller has
+GitHub read permission or the repository is currently public. Public visibility
+is verified with GitHub, not inferred from stored flags; internal repositories
+require a user permission check. Admin status does not bypass the GitHub gate.
+
+`GET /api/admin/repositories/refs?repoId=…` returns the default branch and up to
+100 branch/tag suggestions; any branch or tag name can also be entered.
+`GET /api/admin/repositories/contents?repoId=…&ref=…&path=…` returns directory
+entries and a resolved commit SHA, which pins subsequent navigation. These
+read-only endpoints independently enforce the same two gates.
+Managers see only their team directory grants and the ancestors needed to reach
+them; both managed access and GitHub access are rechecked after source reads.
+Private repositories use the configured repository App, but its installation
+access alone is never a user grant. Existing upload/link pickers retain their
+managed-data permissions; they do not grant live source browsing.
+The picker shares installation tokens and the GitHub identity lookup within one
+request, but checks every repository's current visibility and permission. Stale
+installation access falls back to anonymous source reads only after GitHub confirms
+that the repository is public; private and internal repositories remain gated.
+The GitHub Contents API limits directory listings to
+1,000 entries, and the page displays a notice when that limit is reached.
+
 # Bundle metadata and contents
 
 `GET /api/bundles/:id/metadata` returns the shared `common/bundle-metadata.js`

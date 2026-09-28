@@ -70,7 +70,7 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
 // One GitHub API call returning parsed JSON, optionally Bearer-authed by a
 // user token, App JWT, or installation token. Network / non-2xx / malformed
 // fold into a GithubApiError (401 passes through for the caller to handle).
-async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
+export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
   let res: Response
   try {
     res = await fetchImpl(url, {
@@ -260,9 +260,25 @@ async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>
 // https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user
 // Resolve the current login from /user so renamed handles cannot check someone
 // else's access. All repo paths come from GitHub's installation catalogue.
-export async function filterInstalledRepos(config: ManagedConfig, repositories: ConnectedRepo[], userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
+export async function githubUserIdentity(userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<{ id: number; login: string }> {
   const identity = await githubJson(`${GITHUB_API}/user`, userToken, fetchImpl) as { id?: unknown; login?: unknown }
   if (typeof identity?.login !== 'string' || !identity.login || typeof identity.id !== 'number' || !Number.isSafeInteger(identity.id) || identity.id <= 0) throw new GithubApiError(502, 'github-malformed')
+  return { id: identity.id, login: identity.login }
+}
+
+export async function githubRepoReadPermission(fullName: string, token: string, identity: { id: number; login: string }, fetchImpl: typeof fetch = globalThis.fetch): Promise<boolean> {
+  const path = fullName.split('/').map(encodeURIComponent).join('/')
+  try {
+    const body = await githubJson(`${GITHUB_API}/repos/${path}/collaborators/${encodeURIComponent(identity.login)}/permission`, token, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
+    return body?.user?.id === identity.id && ['read', 'write', 'admin'].includes(String(body?.permission))
+  } catch (err) {
+    if (err instanceof GithubApiError && err.status === 404) return false
+    throw err // Never broaden access when GitHub cannot verify permission.
+  }
+}
+
+export async function filterInstalledRepos(config: ManagedConfig, repositories: ConnectedRepo[], userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
+  const identity = await githubUserIdentity(userToken, fetchImpl)
   const tokens = new Map<number, Promise<string | null>>()
   const allowed = await mapGithubRequests(repositories, async (repo) => {
     // Internal repos may have private=false; missing visibility is not proof
@@ -276,14 +292,7 @@ export async function filterInstalledRepos(config: ManagedConfig, repositories: 
     }
     const accessToken = await token
     if (!accessToken) return false
-    const path = repo.fullName.split('/').map(encodeURIComponent).join('/')
-    try {
-      const body = await githubJson(`${GITHUB_API}/repos/${path}/collaborators/${encodeURIComponent(identity.login as string)}/permission`, accessToken, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
-      return body?.user?.id === identity.id && ['read', 'write', 'admin'].includes(String(body?.permission))
-    } catch (err) {
-      if (err instanceof GithubApiError && err.status === 404) return false
-      throw err // Never broaden the list when GitHub cannot verify access.
-    }
+    return githubRepoReadPermission(repo.fullName, accessToken, identity, fetchImpl)
   })
   return repositories.filter((_, index) => allowed[index])
 }

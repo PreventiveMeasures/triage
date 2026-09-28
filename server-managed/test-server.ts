@@ -298,12 +298,39 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
   return false
 }
 
+function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerResponse): void {
+  if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (url.pathname.endsWith('/browsable')) {
+    sendJson(res, 200, { repos: repositories.filter(repo => repo.selected).map(repo => ({ repoId: repo.id, fullName: repo.fullName })) }); return
+  }
+  const repo = repoById(Number(url.searchParams.get('repoId')))
+  if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
+  if (url.pathname.endsWith('/refs')) {
+    sendJson(res, 200, { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', 'v0.9.0'] }); return
+  }
+  const path = url.searchParams.get('path') ?? ''
+  const ref = url.searchParams.get('ref') ?? 'heads/main'
+  const files = repo.id === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
+    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'native/src/lib.rs', 'test/index.test.ts', 'package.json', 'README.md']
+  if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
+  const prefix = path ? path + '/' : ''
+  const entries = new Map()
+  for (const file of files.filter(candidate => candidate.startsWith(prefix))) {
+    const rest = file.slice(prefix.length)
+    const name = rest.split('/')[0]!
+    entries.set(name, { name, path: prefix + name, type: rest.includes('/') ? 'dir' : 'file' })
+  }
+  sendJson(res, 200, { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false })
+}
+
 function handleAdmin(url: URL, method: string, res: ServerResponse): void {
-  const adminOnly = /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
+  const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
+  const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return
   }
   if (handleAdminCatalog(url, method, res)) return
+  if (repositoryBrowser) { handleRepositoryBrowserFixture(url, method, res); return }
   if (url.pathname === '/api/admin/reports/set-visible' && method === 'POST') {
     sendJson(res, 200, { ok: true })
     return
@@ -506,6 +533,17 @@ function serveTeamReports(path: string, res: ServerResponse): boolean {
   return true
 }
 
+// Keep the idle fixture feed open; a 404 tells the client its access was revoked.
+function serveFixtureFeed(path: string, res: ServerResponse): boolean {
+  if (!/^\/api\/teams(?:\/[^/]+)?\/feed$/u.test(path)) return false
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
+  res.write(': fixture\n\n')
+  const heartbeat = setInterval(() => { res.write(': fixture\n\n') }, 20_000)
+  heartbeat.unref()
+  res.on('close', () => { clearInterval(heartbeat) })
+  return true
+}
+
 function handle(req: IncomingMessage, res: ServerResponse): void {
   const method = req.method ?? 'GET', url = new URL(req.url ?? '/', `http://${host}`)
 
@@ -533,7 +571,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) })
     return
   }
-  if (serveTeamReports(url.pathname, res)) return
+  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url.pathname, res)) return
   if (url.pathname === '/api/reports/query') {
     if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })

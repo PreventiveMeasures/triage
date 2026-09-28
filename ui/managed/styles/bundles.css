@@ -320,8 +320,12 @@ select:focus-visible {
   }
 }
 
+.bundle-actions { display: flex; align-items: center; gap: .5rem; }
 .bundle-open { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
 .bundle-open:hover { color: var(--accent); text-decoration: underline; }
 
 .bundle-row > .location-editor { grid-column: 1 / -1; }
 .upload-directory { width: 12rem; }
+
+.breadcrumb { flex-wrap: wrap; }
+.breadcrumb .breadcrumb-current { margin: 0; color: var(--text); font-size: .85rem; font-weight: 500; }
