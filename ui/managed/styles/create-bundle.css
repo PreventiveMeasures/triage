@@ -70,7 +70,7 @@ button:disabled, input:disabled { opacity: .5; }
 .file-browser:has(> .empty) { display: grid; place-items: center; }
 .file-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); gap: .5rem; }
 .file-tile {
-  display: flex; align-items: center; gap: .5rem; min-width: 0; height: 2.2rem; padding: .4rem .6rem;
+  display: flex; align-items: center; gap: .5rem; min-width: 0; height: 2.05rem; padding: .4rem .6rem;
   border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font-size: .75rem;
 }
 .file-tile > span:not(.arrow) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
@@ -90,7 +90,7 @@ button:disabled, input:disabled { opacity: .5; }
 .entry-points > .btn { flex: none; }
 .selection { flex: 1; min-width: 0; }
 .selection .note { margin: .5rem 0 0; }
-.selection-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.selection-head { display: flex; align-items: center; gap: .75rem; }
 .btn.clear-selection { min-height: 1.65rem; padding: .2rem .5rem; font-size: .72rem; }
 h2 { margin: 0; font-size: .8rem; font-weight: 500; }
 h2 span { color: var(--muted); margin-left: .4rem; }
