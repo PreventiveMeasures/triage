@@ -1249,6 +1249,7 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 class ManagedAdminBundles extends ManagedPage {
   static properties = {
     createRepoId: { attribute: false },
+    installTooltips: { attribute: false },
     localImportSource: { attribute: false },
     _query: { state: true },
     _creating: { state: true },
@@ -1330,7 +1331,7 @@ class ManagedAdminBundles extends ManagedPage {
         <button type="button" class="breadcrumb-manage" aria-label="Back to bundles" @click=${() => this._showCreate(false)}>Bundles</button>
         <span class="breadcrumb-separator" aria-hidden="true">›</span><h1 class="breadcrumb-current">Create a bundle</h1>
       </div>
-      <managed-create-bundle .initialRepoId=${this._repoId}></managed-create-bundle>
+      <managed-create-bundle .initialRepoId=${this._repoId} .installTooltips=${this.installTooltips}></managed-create-bundle>
     </div>`
     }
     return html`

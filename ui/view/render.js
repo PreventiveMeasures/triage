@@ -1958,6 +1958,9 @@ function renderImpl() {
     if (previous?.id !== state.managedSession?.id || previous?.role !== state.managedSession?.role) slot?.replaceChildren()
     if (slot && !slot.firstElementChild) {
       const el = document.createElement(adminView.tag)
+      const installTooltips = root => installShadowTooltipListener(root, {
+        gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
+      })
       el.localImportSource = createManagedLocalImportSource()
       if (state.currentView === 'manage-import') {
         el.localDeps = managedWorkspaceImportDeps()
@@ -1967,7 +1970,10 @@ function renderImpl() {
       el.session = state.managedSession
       el.allowShare = state.managed?.allowShare === true
       if (state.currentView === 'manage-scans') el.selection = state.scanSelection
-      if (state.currentView === 'manage-bundles') el.createRepoId = state.bundleCreationRepoId
+      if (state.currentView === 'manage-bundles') {
+        el.createRepoId = state.bundleCreationRepoId
+        el.installTooltips = installTooltips
+      }
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -1975,13 +1981,13 @@ function renderImpl() {
       // role pickers / repo checkboxes carry `data-tooltip` inside
       // shadow roots the document-level handler can't see, so wire the
       // listener from here instead, on this bundle's instance, once
-      // the element has upgraded and painted.
+      // the element has upgraded and painted. Pass the same installer
+      // to nested pickers: pointer transitions within their shadow root
+      // are trimmed before reaching this outer root.
       void (async () => {
         await customElements.whenDefined(adminView.tag)
         await el.updateComplete
-        installShadowTooltipListener(el.renderRoot, {
-          gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
-        })
+        installTooltips(el.renderRoot)
       })().catch(() => {})
     }
     if (slot?.firstElementChild) {

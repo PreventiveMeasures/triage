@@ -7,7 +7,7 @@ import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG } from '../ui/view/icons.js'
 // one still matches `:popover-open`, which other code reads as "a
 // popover is up" — Escape in events.js stopped dismissing the links
 // preview after the first tooltip (review r4099015016).
-test('tooltips preserve popover lifecycle and keep repository paths inside the viewport', async () => {
+test('tooltips preserve popover lifecycle and keep repository paths inside the viewport', async t => {
   const originalDocument = globalThis.document
   const originalWindow = globalThis.window
   let open = false
@@ -32,7 +32,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
   }, body: { append() {} } }
   globalThis.window = { innerWidth: 1000, innerHeight: 800 }
   try {
-    const { showTooltip, hideTooltip } = await import('../ui/view/tooltip.js')
+    const { showTooltip, hideTooltip, installShadowTooltipListener } = await import('../ui/view/tooltip.js')
     const target = { dataset: { tooltip: 'hello' } }
     showTooltip(target)
     assert.equal(open, true, 'shown as a popover')
@@ -105,6 +105,44 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.style.transform, 'none')
       hideTooltip()
     }
+    await t.test('picker tooltips update when internal transitions never reach the outer root', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const outerListeners = {}
+      const pageRoot = { nodeType: 11, addEventListener(type, listener) { outerListeners[type] = listener } }
+      const pickerHost = { nodeType: 1, dataset: {} }
+      const innerListeners = {}
+      const pickerRoot = { nodeType: 11, addEventListener(type, listener) { innerListeners[type] = listener } }
+      const file = { nodeType: 1, dataset: { tooltip: 'src/entry.ts' } }
+      const label = { nodeType: 1, dataset: {}, closest: () => file }
+      const event = { target: pickerHost, composedPath: () => [label, file, pickerRoot, pickerHost, pageRoot] }
+      installShadowTooltipListener(pageRoot)
+      installShadowTooltipListener(pickerRoot)
+      outerListeners.mouseover(event)
+      nested.mock.timers.tick(100)
+      assert.equal(open, true)
+      assert.equal(node.textContent, 'src/entry.ts')
+      // The browser trims transitions whose target and relatedTarget both
+      // retarget to pickerHost. Deliver these only to the picker listener.
+      const otherFile = { nodeType: 1, dataset: { tooltip: 'src/other.ts' }, closest() { return this } }
+      const otherEvent = { target: otherFile, composedPath: () => [otherFile, pickerRoot] }
+      innerListeners.mouseout({ ...event, relatedTarget: otherFile })
+      innerListeners.mouseover(otherEvent)
+      nested.mock.timers.tick(100)
+      assert.equal(node.textContent, 'src/other.ts', 'moving between tiles replaces the tooltip')
+      innerListeners.mouseout({ ...otherEvent, relatedTarget: otherFile })
+      assert.equal(open, true, 'moving within the file keeps its tooltip visible')
+      const gap = { nodeType: 1, dataset: {} }
+      innerListeners.mouseout({ ...otherEvent, relatedTarget: gap })
+      assert.equal(open, false, 'moving into a grid gap closes the tooltip')
+      innerListeners.mouseover(otherEvent)
+      nested.mock.timers.tick(100)
+      assert.equal(open, true, 'entering a tile from a grid gap opens its tooltip')
+      innerListeners.mouseout({ ...otherEvent, relatedTarget: gap })
+      innerListeners.mouseover(event)
+      innerListeners.mouseout({ ...event, relatedTarget: null })
+      nested.mock.timers.tick(100)
+      assert.equal(open, false, 'leaving before the delay cancels the tooltip')
+    })
   } finally {
     globalThis.document = originalDocument
     globalThis.window = originalWindow
