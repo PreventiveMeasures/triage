@@ -97,9 +97,9 @@ async function fixture(t, { role = 'manage', selectedRepo = repo, member = true,
   if (member) await db.setTeamMember('team', userId, { dependencies: true, security: true })
   const handler = createManagedRequestHandler({ config: fixtureConfig, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
   const request = async (query, { method = 'GET', signedIn = true, route = 'contents' } = {}) => {
-    const res = { status: 0, body: '', writeHead(status) { this.status = status }, end(body) { this.body = body } }
+    const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
     await handler({ method, url: `/api/admin/repositories/${route}?${new URLSearchParams(query)}`, headers: { cookie: signedIn ? session.setCookie.split(';')[0] : undefined } }, res)
-    return { status: res.status, body: JSON.parse(res.body) }
+    return { status: res.status, body: JSON.parse(res.body), headers: res.headers }
   }
   return { db, userId, request }
 }
@@ -386,4 +386,126 @@ test('source reads refresh the cached GitHub identity before returning data', as
   assert.equal(response.status, 404)
   assert.equal(calls.filter(path => path === '/user').length, 2)
   assert.ok(!JSON.stringify(response.body).includes('entry.ts'))
+})
+
+for (const installationId of [null, 7]) {
+  test(`public refs and files use the user token without minting installation ${installationId}`, async t => {
+    const { request } = await fixture(t, { selectedRepo: { ...repo, installationId }, tokens: userTokens, fixtureConfig: appConfig })
+    const calls = []
+    t.mock.method(globalThis, 'fetch', (url, options) => {
+      const path = new URL(url).pathname
+      calls.push(path)
+      assert.equal(options.headers.authorization, 'Bearer login-token')
+      if (path === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+      if (path.endsWith('/commits/heads%2Fmain')) return Promise.resolve(Response.json({ sha: commit }))
+      if (path.endsWith('/branches')) return Promise.resolve(Response.json([{ name: 'main' }]))
+      if (path.endsWith('/tags')) return Promise.resolve(Response.json([{ name: 'v1' }]))
+      assert.equal(path, '/repos/org/repo/contents/src/allowed')
+      return Promise.resolve(Response.json([{ name: 'entry.ts', path: 'src/allowed/entry.ts', type: 'file' }]))
+    })
+    assert.equal((await request({ repoId: '1' }, { route: 'refs' })).status, 200)
+    assert.equal((await request({ repoId: '1', ref: 'heads/main', path: 'src/allowed' })).status, 200)
+    assert.equal(calls.length, 8, 'no installation or identity lookups for live public access')
+  })
+}
+
+test('a user token that can read private metadata does not bypass repository App authorization', async t => {
+  const { request } = await fixture(t, { selectedRepo: repo, tokens: userTokens })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    calls.push(new URL(url).pathname)
+    assert.equal(options.headers.authorization, 'Bearer login-token')
+    return Promise.resolve(Response.json({ ...publicMetadata, private: true, visibility: 'private' }))
+  })
+  for (const route of ['refs', 'contents']) assert.equal((await request({ repoId: '1', ref: commit }, { route })).status, 404)
+  assert.deepEqual(calls, ['/repos/org/repo', '/repos/org/repo'])
+})
+
+test('an unavailable login token can use the installation for public reads', async t => {
+  const { request } = await fixture(t, { selectedRepo: { ...repo, installationId: 7 }, tokens: userTokens, fixtureConfig: appConfig })
+  let userRequests = 0
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/access_tokens')) return Promise.resolve(Response.json({ token: 'installation-token' }))
+    if (options.headers.authorization === 'Bearer login-token') {
+      userRequests++
+      assert.equal(path, '/repos/org/repo')
+      return Promise.resolve(Response.json({}, { status: 401 }))
+    }
+    assert.equal(options.headers.authorization, 'Bearer installation-token')
+    return Promise.resolve(Response.json(path === '/repos/org/repo' ? publicMetadata : [{ name: 'main' }]))
+  })
+  assert.equal((await request({ repoId: '1' }, { route: 'refs' })).status, 200)
+  assert.equal(userRequests, 1)
+})
+
+for (const failure of [
+  { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 300) }, message: 'API rate limit exceeded' },
+  { status: 403, headers: { 'retry-after': '120' }, message: 'Secondary rate limit' },
+  { status: 403, headers: {}, message: 'You have exceeded a secondary rate limit.' },
+  { status: 429, headers: {}, message: 'Too many requests' },
+]) {
+  test(`rate limiting is surfaced without trying other credentials: ${failure.status}, ${failure.message}`, async t => {
+    const { request } = await fixture(t, { selectedRepo: { ...repo, installationId: 7 }, tokens: userTokens, fixtureConfig: appConfig })
+    const calls = []
+    t.mock.method(globalThis, 'fetch', (url, options) => {
+      calls.push(url)
+      assert.equal(options.headers.authorization, 'Bearer login-token')
+      return Promise.resolve(Response.json({ message: failure.message }, { status: failure.status, headers: failure.headers }))
+    })
+    for (const route of ['refs', 'contents']) {
+      const response = await request({ repoId: '1', ref: commit }, { route })
+      assert.equal(response.status, 429)
+      assert.equal(response.body.error, 'github-rate-limited')
+      assert.ok(Number(response.headers['retry-after']) >= 60)
+    }
+    assert.equal(calls.length, 2, 'one attempt per request, with no installation or anonymous retry')
+  })
+}
+
+test('GitHub outages do not cause anonymous fallback or token minting', async t => {
+  const { request } = await fixture(t, { selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', () => { calls++; return Promise.resolve(Response.json({}, { status: 503 })) })
+  const response = await request({ repoId: '1' }, { route: 'refs' })
+  assert.equal(response.status, 502)
+  assert.equal(response.body.error, 'github-status-503')
+  assert.equal(calls, 1)
+})
+
+test('private refs fall back from the login token to installation reads and effective permission checks', async t => {
+  const { request } = await fixture(t, { selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const path = new URL(url).pathname
+    const auth = options.headers.authorization
+    calls.push({ path, auth })
+    if (path.endsWith('/access_tokens')) return Promise.resolve(Response.json({ token: 'installation-token' }))
+    if (path === '/user') {
+      assert.equal(auth, 'Bearer login-token')
+      return Promise.resolve(Response.json({ id: 1, login: 'user' }))
+    }
+    if (path === '/repos/org/repo' && auth === 'Bearer login-token') return Promise.resolve(Response.json({}, { status: 404 }))
+    assert.equal(auth, 'Bearer installation-token')
+    if (path === '/repos/org/repo') return Promise.resolve(Response.json({ ...publicMetadata, private: true, visibility: 'private' }))
+    if (path.endsWith('/permission')) return Promise.resolve(Response.json({ permission: 'read', user: { id: 1 } }))
+    assert.ok(path.endsWith('/branches') || path.endsWith('/tags'))
+    return Promise.resolve(Response.json([{ name: 'main' }]))
+  })
+  assert.equal((await request({ repoId: '1' }, { route: 'refs' })).status, 200)
+  assert.equal(calls.filter(call => call.path.endsWith('/permission')).length, 2)
+  assert.equal(calls.filter(call => call.path.endsWith('/access_tokens')).length, 1)
+})
+
+test('rate limiting during installation-token minting is not retried anonymously', async t => {
+  const { request } = await fixture(t, { selectedRepo: privateRepo, fixtureConfig: appConfig })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(new URL(url).pathname)
+    return Promise.resolve(Response.json({ message: 'rate limit exceeded' }, { status: 403, headers: { 'retry-after': '120' } }))
+  })
+  const response = await request({ repoId: '1' }, { route: 'refs' })
+  assert.equal(response.status, 429)
+  assert.equal(response.headers['retry-after'], '120')
+  assert.deepEqual(calls, ['/app/installations/7/access_tokens'])
 })

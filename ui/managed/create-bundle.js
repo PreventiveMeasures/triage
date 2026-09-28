@@ -20,6 +20,16 @@ async function browseRepository(route, params, signal) {
     credentials: 'same-origin', headers: { accept: 'application/json' }, signal,
   })
   if (!response.ok) {
+    const data = await response.json().catch(() => null)
+    if (data?.error === 'github-rate-limited') {
+      const seconds = Number(response.headers.get('retry-after'))
+      const minutes = Math.ceil(seconds / 60)
+      const wait = Number.isFinite(seconds) && seconds > 0 ? ` Try again in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.` : ' Try again after the limit resets.'
+      throw new Error(`GitHub’s API rate limit has been reached.${wait}`)
+    }
+    if (data?.error === 'github-status-403') throw new Error('GitHub denied this request. Check repository access and the GitHub App’s read permissions.')
+    if (data?.error === 'github-unauthorized') throw new Error('GitHub authentication has expired or was revoked. Sign in again and check the repository App installation.')
+    if (data?.error === 'github-unreachable') throw new Error('Could not connect to GitHub. Try again shortly.')
     if (response.status === 404) throw new Error('This repository, revision, or directory is unavailable.')
     if (response.status === 403) throw new Error('Repository access is required to browse files.')
     throw new Error('Could not load repository files from GitHub. Try again.')
@@ -142,8 +152,8 @@ export class ManagedCreateBundle extends LitElement {
       this._refs = refs
       this._refName = refs.defaultBranch || refs.branches[0] || ''
       if (this._refName) void this.loadDirectory('')
-    } catch {
-      if (!request.signal.aborted) this._refsError = 'Could not load branch and tag suggestions. Enter a revision to browse, or retry.'
+    } catch (error) {
+      if (!request.signal.aborted) this._refsError = error.message
     } finally {
       if (!request.signal.aborted) this._loadingRefs = false
     }

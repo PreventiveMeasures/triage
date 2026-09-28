@@ -109,6 +109,7 @@
     "server-managed/db-table-names.ts",
     "server-managed/db.ts",
     "server-managed/github-app.ts",
+    "server-managed/github-errors.ts",
     "server-managed/github-metadata.ts",
     "server-managed/github-issue-oauth.ts",
     "server-managed/github-issues.ts",

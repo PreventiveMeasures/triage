@@ -5,6 +5,9 @@
 import { Buffer } from 'node:buffer'
 import { createHash, createSign } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
+import { GithubApiError, throwGithubResponseError } from './github-errors.ts'
+
+export { GithubApiError } from './github-errors.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
@@ -37,17 +40,6 @@ export interface ConnectedRepo {
   htmlUrl: string
   defaultBranch: string
   installationId: number | null
-}
-
-// A failure carrying the HTTP status the router should surface. 401 passes
-// through so the user-token path can map it to "log in again".
-export class GithubApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.name = 'GithubApiError'
-    this.status = status
-  }
 }
 
 // App installation credentials are configured (id + private key present) →
@@ -89,12 +81,8 @@ export async function githubJson(url: string, token: string | null, fetchImpl: t
       },
     })
   } catch { throw new GithubApiError(502, 'github-unreachable') }
-  if (res.status === 401) {
-    discardInstallationToken(token, fetchImpl)
-    throw new GithubApiError(401, 'github-unauthorized')
-  }
-  if (res.status === 404) throw new GithubApiError(404, 'github-not-found')
-  if (!res.ok) throw new GithubApiError(502, `github-status-${res.status}`)
+  if (res.status === 401) discardInstallationToken(token, fetchImpl)
+  if (!res.ok) await throwGithubResponseError(res)
   try { return await res.json() } catch { throw new GithubApiError(502, 'github-malformed') }
 }
 
