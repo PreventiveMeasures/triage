@@ -185,6 +185,118 @@ test('entry points persist across directories, requests use the pinned commit, a
   assert.equal(calls.length, 3)
 })
 
+test('directory navigation reuses pinned listings with their sorting, limits, and selection', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    const query = new URL(url, 'https://test.invalid').searchParams
+    calls.push(query)
+    return Promise.resolve(Response.json({ commit, limited: query.get('path') === '', entries: query.get('path') ? entries : [
+      { name: 'z.ts', path: 'z.ts', type: 'file' }, { name: 'src', path: 'src', type: 'dir' },
+    ] }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('')
+  const root = page._entries
+  assert.deepEqual(root.map(entry => entry.name), ['src', 'z.ts'])
+  await page.loadDirectory('src')
+  page.toggleFile('src/entry.ts')
+  await page.loadDirectory('')
+  assert.deepEqual(page._entries, root)
+  assert.equal(page._limited, true)
+  assert.equal(page._loading, false)
+  await page.loadDirectory('src')
+  assert.deepEqual(page._entries, entries)
+  assert.equal(page._limited, false)
+  assert.deepEqual([...page._selected], ['src/entry.ts'])
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].get('ref'), 'heads/main')
+  assert.equal(calls[1].get('ref'), commit)
+})
+
+test('refresh, revision/repository changes, and leaving the view discard directory caches', async t => {
+  const calls = []
+  let currentCommit = commit
+  t.mock.method(globalThis, 'fetch', url => {
+    const request = new URL(url, 'https://test.invalid')
+    if (request.pathname.endsWith('/refs')) return Promise.resolve(Response.json({ defaultBranch: 'main', branches: [], tags: [] }))
+    calls.push(request.searchParams)
+    return Promise.resolve(Response.json({ commit: currentCommit, entries }))
+  })
+  const page = new ManagedCreateBundle()
+  await page.selectRepository(1)
+  await setImmediate()
+  await page.loadDirectory('')
+  assert.equal(calls.length, 1)
+  currentCommit = 'b'.repeat(40)
+  await page.loadDirectory('', true)
+  assert.equal(calls[1].get('ref'), 'heads/main', 'refresh resolves the branch again')
+  assert.equal(page._commit, currentCommit)
+  page.changeRevision('tag', 'v1')
+  await page.loadDirectory('')
+  assert.equal(calls[2].get('ref'), 'tags/v1')
+  await page.selectRepository(2)
+  await setImmediate()
+  assert.equal(calls[3].get('repoId'), '2', 'same SHA/path in a different repository is not a cache hit')
+  page.disconnectedCallback()
+  await page.loadDirectory('')
+  assert.equal(calls.length, 5, 'a detached view retains no reusable directory data')
+  const other = new ManagedCreateBundle()
+  await other.selectRepository(2)
+  await setImmediate()
+  assert.equal(calls.length, 6, 'new views and sessions never inherit directory caches')
+})
+
+test('cached navigation cancels in-flight reads, and failures invalidate cached directories', async t => {
+  let directoryReads = 0, fail = false, finish
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url, 'https://test.invalid').searchParams.get('path')
+    directoryReads++
+    if (path === 'src') return new Promise(resolve => { finish = resolve })
+    return Promise.resolve(fail ? Response.json({}, { status: 403 }) : Response.json({ commit, entries: [] }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('')
+  const pending = page.loadDirectory('src')
+  assert.equal(page._loading, true)
+  await page.loadDirectory('')
+  assert.equal(page._loading, false)
+  finish(Response.json({ commit, entries }))
+  await pending
+  assert.deepEqual(page._entries, [])
+  const retry = page.loadDirectory('src')
+  assert.equal(directoryReads, 3, 'cancelled reads cannot populate the cache')
+  finish(Response.json({ commit, entries }))
+  await retry
+  fail = true
+  await page.loadDirectory('other')
+  assert.match(page._error, /access is required/u)
+  await page.loadDirectory('')
+  assert.equal(directoryReads, 5, 'known access failure prevents redisplaying an old cached listing')
+  assert.equal(page._entries, null)
+})
+
+test('the directory cache is bounded and keeps recently visited paths', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(new URL(url, 'https://test.invalid').searchParams.get('path'))
+    return Promise.resolve(Response.json({ commit, entries: [] }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.changeRevision('commit', commit)
+  for (let i = 0; i < 100; i++) await page.loadDirectory(`dir-${i}`)
+  await page.loadDirectory('dir-0')
+  await page.loadDirectory('dir-100')
+  await page.loadDirectory('dir-0')
+  assert.equal(calls.length, 101)
+  await page.loadDirectory('dir-1')
+  assert.equal(calls.length, 102)
+})
+
 test('late directory results and failures cannot overwrite a newer repository or revision', async t => {
   const pending = []
   t.mock.method(globalThis, 'fetch', (_url, { signal }) => new Promise((resolve, reject) => { pending.push({ resolve, reject, signal }) }))

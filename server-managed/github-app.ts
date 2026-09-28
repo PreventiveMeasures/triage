@@ -3,13 +3,27 @@
 // authorization requests account permissions, installation grants repository
 // permissions. Discovery itself is read-only and skips archived repositories.
 import { Buffer } from 'node:buffer'
-import { createSign } from 'node:crypto'
+import { createHash, createSign } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
+const INSTALLATION_TOKEN_TTL_MS = 5 * 60_000
+const INSTALLATION_TOKEN_EXPIRY_MARGIN_MS = 60_000
+const MAX_INSTALLATION_TOKENS = 256
+interface InstallationTokenEntry { token: string | null; expiresAt: number; pending: Promise<string> | null }
+// Credentials only: visibility, user identities, and permissions are never
+// cached here. Bound memory per transport and separate App/key/install scopes.
+const installationTokens = new WeakMap<typeof fetch, Map<string, InstallationTokenEntry>>()
+
+function discardInstallationToken(token: string | null, fetchImpl: typeof fetch): void {
+  if (!token) return
+  const cache = installationTokens.get(fetchImpl)
+  if (!cache) return
+  for (const [key, entry] of cache) if (entry.token === token) cache.delete(key)
+}
 
 // One listed repository. Carries the context to read its contents later:
 // `installationId` mints an App installation token (Contents: Read) for a repo
@@ -75,7 +89,10 @@ export async function githubJson(url: string, token: string | null, fetchImpl: t
       },
     })
   } catch { throw new GithubApiError(502, 'github-unreachable') }
-  if (res.status === 401) throw new GithubApiError(401, 'github-unauthorized')
+  if (res.status === 401) {
+    discardInstallationToken(token, fetchImpl)
+    throw new GithubApiError(401, 'github-unauthorized')
+  }
   if (res.status === 404) throw new GithubApiError(404, 'github-not-found')
   if (!res.ok) throw new GithubApiError(502, `github-status-${res.status}`)
   try { return await res.json() } catch { throw new GithubApiError(502, 'github-malformed') }
@@ -180,13 +197,41 @@ async function listInstallationIds(jwt: string, fetchImpl: typeof fetch): Promis
   return ids
 }
 
-// Exchange the App JWT for a scoped installation access token (inherits the
-// App's Contents: Read).
-async function mintInstallationToken(jwt: string, installId: number, fetchImpl: typeof fetch): Promise<string> {
-  const body = await githubJson(`${GITHUB_API}/app/installations/${installId}/access_tokens`, jwt, fetchImpl, 'POST')
-  const token = (body as { token?: unknown }).token
-  if (typeof token !== 'string' || token === '') throw new GithubApiError(502, 'github-install-token-denied')
-  return token
+// Reuse installation credentials only in this process. Refresh well before
+// expiry and coalesce concurrent mints; failed or undated tokens are not cached.
+async function installationAccessToken(appId: string, privateKey: string, installId: number, fetchImpl: typeof fetch): Promise<string> {
+  let cache = installationTokens.get(fetchImpl)
+  if (!cache) { cache = new Map(); installationTokens.set(fetchImpl, cache) }
+  const now = Date.now()
+  for (const [key, entry] of cache) if (!entry.pending && entry.expiresAt <= now) cache.delete(key)
+  const key = JSON.stringify([appId, createHash('sha256').update(privateKey).digest('hex'), installId])
+  const cached = cache.get(key)
+  if (cached) {
+    cache.delete(key)
+    cache.set(key, cached)
+    if (cached.pending) return cached.pending
+    return cached.token!
+  }
+  const entry: InstallationTokenEntry = { token: null, expiresAt: 0, pending: null }
+  const pending = Promise.resolve().then(async () => {
+    try {
+      const jwt = appJwt(appId, privateKey)
+      const body = await githubJson(`${GITHUB_API}/app/installations/${installId}/access_tokens`, jwt, fetchImpl, 'POST') as { token?: unknown; expires_at?: unknown }
+      if (typeof body?.token !== 'string' || body.token === '') throw new GithubApiError(502, 'github-install-token-denied')
+      entry.token = body.token
+      const expiresAt = typeof body.expires_at === 'string' ? Date.parse(body.expires_at) : NaN
+      entry.expiresAt = Number.isFinite(expiresAt) ? Math.min(now + INSTALLATION_TOKEN_TTL_MS, expiresAt - INSTALLATION_TOKEN_EXPIRY_MARGIN_MS) : 0
+      if (entry.expiresAt <= Date.now() && cache.get(key) === entry) cache.delete(key)
+      return body.token
+    } catch (err) {
+      if (cache.get(key) === entry) cache.delete(key)
+      throw err
+    } finally { entry.pending = null }
+  })
+  entry.pending = pending
+  cache.set(key, entry)
+  if (cache.size > MAX_INSTALLATION_TOKENS) cache.delete(cache.keys().next().value!)
+  return await pending
 }
 
 // Resolve this exact repository with the App's identity, then confirm the
@@ -207,7 +252,7 @@ export async function repositoryInstallation(config: ManagedConfig, repoId: numb
   const id = installation?.id
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new GithubApiError(502, 'github-malformed')
   if (installation?.suspended_at != null || !['read', 'write'].includes(String(installation?.permissions?.contents))) return null
-  const token = await mintInstallationToken(jwt, id, fetchImpl)
+  const token = await installationAccessToken(githubAppId, githubAppPrivateKey, id, fetchImpl)
   const repo = parseRepo(await githubJson(`${GITHUB_API}/repos/${path}`, token, fetchImpl), id)
   if (repo == null || repo.id !== repoId || repo.fullName.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(409, 'repo-identity-changed')
   return id
@@ -248,7 +293,7 @@ export async function listInstalledRepos(config: ManagedConfig, fetchImpl: typeo
   if (githubAppId == null || githubAppPrivateKey == null) return []
   const jwt = appJwt(githubAppId, githubAppPrivateKey)
   const lists = await mapGithubRequests(await listInstallationIds(jwt, fetchImpl), async (id) => {
-    const token = await mintInstallationToken(jwt, id, fetchImpl)
+    const token = await installationAccessToken(githubAppId, githubAppPrivateKey, id, fetchImpl)
     return listInstallationRepos(token, id, fetchImpl)
   })
   return mergeRepos(...lists)
@@ -313,14 +358,14 @@ export async function filterInstalledRepos(config: ManagedConfig, repositories: 
   return repositories.filter((_, index) => allowed[index])
 }
 
-// Mint a token to READ a selected repo's contents: an installation token (the
+// Get a token to READ a selected repo's contents: an installation token (the
 // App's Contents: Read) when the repo was reached through an installation, or
 // null for a public repo readable unauthenticated. This is the whole point of
 // persisting `installationId` — the stored context is enough to read.
 export async function repoAccessToken(config: ManagedConfig, installationId: number | null, fetchImpl: typeof fetch = globalThis.fetch): Promise<string | null> {
   const { githubAppId, githubAppPrivateKey } = config
   if (installationId == null || githubAppId == null || githubAppPrivateKey == null) return null
-  return await mintInstallationToken(appJwt(githubAppId, githubAppPrivateKey), installationId, fetchImpl)
+  return await installationAccessToken(githubAppId, githubAppPrivateKey, installationId, fetchImpl)
 }
 
 // ── merged listing ──
