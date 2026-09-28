@@ -711,9 +711,9 @@ class ManagedAdminRepos extends ManagedPage {
     const access = `${this._accessLabel(repo)}${this._scope === 'connected' && repo.active === false ? ' · Deactivated' : ''}`
     const copy = html`${REPO_ICON}<span class="repo-copy"><span class="repo-name">${label}</span><span class="repo-meta">${access}</span></span>`
     if (this._scope === 'connected') {
-      return html`<li class="connected-repo"><button type="button" class="repo-row" aria-label=${`Manage ${repo.fullName}`} @click=${() => this._openDetail(repo)}>
+      return html`<li><button type="button" class="repo-row" aria-label=${`Manage ${repo.fullName}`} @click=${() => this._openDetail(repo)}>
         ${copy}<svg class="arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
-      </button>${this._connectAppButton(repo)}</li>`
+      </button></li>`
     }
     return html`<li class="repo-row">${copy}
       ${repo.selected ? html`<span class="connected"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>Connected</span>`

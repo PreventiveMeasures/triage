@@ -965,7 +965,7 @@ bundle-code-search {
   user-select: none;
   scroll-margin-block: 1.5rem;
 }
-.bundle-code-tree-dir > details > summary { list-style: none; cursor: pointer; }
+.bundle-code-tree-dir > details > summary { list-style: none; cursor: default; }
 .bundle-code-tree-dir > details > summary::-webkit-details-marker { display: none; }
 .bundle-code-tree-chevron {
   display: grid; place-items: center;
@@ -2397,7 +2397,7 @@ body.report-fullscreen {
   text-align: inherit;
   text-decoration: underline dotted;
   text-underline-offset: 3px;
-  cursor: pointer;
+  cursor: default;
   user-select: text;
 }
 .bundle-source-link:hover { background: var(--surface-active); text-decoration-style: solid; }

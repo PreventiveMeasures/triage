@@ -56,7 +56,12 @@ button:disabled, input:disabled { opacity: .5; }
   display: flex; align-items: center; gap: .75rem; padding: .65rem .8rem; border-bottom: 1px solid var(--border);
   background: var(--bg); font-size: .75rem;
 }
-.browser-head code { margin-left: auto; color: var(--muted); }
+.commit-link {
+  display: inline-flex; align-items: center; flex: none; gap: .3rem; margin-left: auto; color: var(--muted); text-decoration: none;
+}
+.commit-link svg { width: 1rem; height: 1rem; }
+.commit-link:hover { color: var(--accent); }
+.commit-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
 .breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; min-width: 0; }
 .breadcrumbs button { border: 0; padding: .1rem; background: transparent; color: var(--muted); overflow-wrap: anywhere; }
 .breadcrumbs button[aria-current] { color: var(--text); }
@@ -99,7 +104,7 @@ h2 span { color: var(--muted); margin-left: .4rem; }
 .entry-points li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry-points li button {
   display: grid; place-items: center; flex: none; width: 1.3rem; height: 1.3rem; padding: 0;
-  border: 0; border-radius: 3px; background: transparent; color: var(--muted); font-size: 1rem; cursor: pointer;
+  border: 0; border-radius: 3px; background: transparent; color: var(--muted); font-size: 1rem; cursor: default;
 }
 .entry-points li button:hover { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, transparent); }
 .entry-points li button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
