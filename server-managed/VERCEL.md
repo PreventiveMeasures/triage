@@ -104,7 +104,7 @@ after 24 hours, so removal is not immediate at the 24-hour mark.
 | Bound | Configured value |
 | --- | --- |
 | Report upload | 10 MiB by default (`MAX_REPORT_BYTES`) |
-| Bundle upload | 100 MiB by default (`MAX_BUNDLE_BYTES`) |
+| Bundle upload | 200 MiB by default (`MAX_BUNDLE_BYTES`) |
 | Upload part | 3 MiB |
 | Decoded bundle | 512 MiB |
 | App invocation | 300 seconds (`api/managed.ts` in the deployment configuration) |

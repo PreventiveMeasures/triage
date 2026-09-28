@@ -44,7 +44,7 @@ function previewResponse(url, options) {
     '/api/admin/links': { shares: [] },
     '/api/admin/repositories': { repositories: [], total: 0, connectedCount: 0, installUrl: null, tokenMissing: false },
     '/api/admin/reports': { reports: [], repos: [], maxBytes: 10_485_760 },
-    '/api/admin/bundles': { bundles: [], repos: [], maxBytes: 104_857_600 },
+    '/api/admin/bundles': { bundles: [], repos: [], maxBytes: 209_715_200 },
     '/api/admin/history': { history: [], total: 0, page: 1, limit: 100, filters: { repos: [], users: [] } },
     '/api/admin/scan/models': { models: MANAGED_SCAN_MODELS, defaultModel: DEFAULT_MANAGED_SCAN_MODEL },
     '/api/admin/scan-results': { bundles: [], results: [] },

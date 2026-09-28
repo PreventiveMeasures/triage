@@ -41,8 +41,7 @@ export interface ManagedConfig {
   // page. Reports are findings dumps (JSON / markdown / CSV), small to a few MB.
   maxReportBytes: number
   // Max accepted size (bytes) for an uploaded bundle (sourcemap / stasis
-  // archive). Bundles run larger than reports, so a higher cap (default 100 MiB,
-  // matching the e2e objstore per-upload cap).
+  // archive). Bundles run larger than reports, so a higher cap (default 200 MiB).
   maxBundleBytes: number
   // How many triage-trail events to keep per finding (managed_finding_triage_event):
   // 0, the default, keeps everything — the trail is the record. An operator
@@ -125,7 +124,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
     githubNewIssueLabels: env['GITHUB_NEW_ISSUE_LABELS'] ?? '',
     maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
-    maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 104_857_600, 1, 1_073_741_824),
+    maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 209_715_200, 1, 1_073_741_824),
     triageHistoryLimit: intEnv('TRIAGE_HISTORY_LIMIT', 0, 0, 1_000_000_000),
   }
 }
