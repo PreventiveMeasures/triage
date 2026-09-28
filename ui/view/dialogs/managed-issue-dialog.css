@@ -1,6 +1,18 @@
-dialog { max-width: 680px; width: min(680px, calc(100vw - 48px)); }
+dialog {
+  max-width: 1040px; width: min(1040px, calc(100vw - 32px));
+  margin-top: 2rem; max-height: calc(100dvh - 4rem); overflow: auto;
+}
 label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
-textarea { min-height: 220px; resize: vertical; }
+textarea { min-height: clamp(240px, 45dvh, 540px); resize: vertical; }
+.description-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 6px; }
+.description-heading label { margin: 0; }
+.description-sections { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; margin-left: auto; }
+.description-sections label { flex-direction: row; align-items: center; font-size: .8rem; cursor: pointer; }
+.description-sections input { accent-color: var(--accent); }
+@media (width <= 600px) {
+  dialog { margin-top: 1rem; max-height: calc(100dvh - 2rem); }
+  .description-sections { justify-content: flex-start; margin-left: 0; }
+}
 a { color: var(--accent); }
 .created-issue { padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
 .issue-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }

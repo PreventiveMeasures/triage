@@ -1,6 +1,7 @@
 import { html, nothing, unsafeCSS } from 'lit'
 import { requestGithubIssue } from '../../../client/managed/issues.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
+import { createIssueDraft, editIssueDraft, toggleIssueDraftSection } from './issue-draft.js'
 import styles from './managed-issue-dialog.css'
 
 const ERRORS = {
@@ -19,12 +20,18 @@ class ManagedIssueDialog extends AppDialog {
   static properties = { teamId: { attribute: false }, context: { attribute: false }, session: { attribute: false },
     formUrl: { attribute: false }, title: { state: true }, body: { state: true }, prepared: { state: true },
     busy: { state: true }, creating: { state: true }, message: { state: true }, uncertain: { state: true }, createdUrl: { state: true },
-    createdIssue: { state: true }, detailsUnavailable: { state: true } }
+    createdIssue: { state: true }, detailsUnavailable: { state: true }, sections: { state: true } }
   constructor() {
     super(); this.title = ''; this.body = ''; this.prepared = null; this.busy = false
     this.creating = false; this.message = ''; this.uncertain = false; this.createdUrl = ''; this.createdIssue = null; this.detailsUnavailable = false
+    this.sections = []
   }
-  beforeOpen() { void this.check(true) }
+  beforeOpen() {
+    if (this.finding) Object.assign(this, createIssueDraft(this.finding, this.sourceRepo, this.showRevalidation))
+    void this.check(true)
+  }
+  editBody(body) { Object.assign(this, editIssueDraft(this, body)) }
+  toggleSection(id, selected) { Object.assign(this, toggleIssueDraftSection(this, id, selected)) }
   current() {
     return !this._settled && this.isCurrent()
   }
@@ -90,7 +97,15 @@ class ManagedIssueDialog extends AppDialog {
         ${this.detailsUnavailable ? html`<p class="nwd-note">GitHub’s latest details could not be loaded. The issue was created and its link is saved.</p>` : nothing}
       </section>` : savedWithoutAccess ? html`<p role="status">The issue was created and linked permanently to this finding. Its details cannot be shown because workspace access could not be confirmed. Check its status again once workspace access is available.</p>` : html`
         <label>Title<input class="nwd-input" maxlength="256" .value=${this.title} ?disabled=${this.busy || pending} @input=${event => { this.title = event.target.value }}></label>
-        <label>Description<textarea class="nwd-input" maxlength="65536" .value=${this.body} ?disabled=${this.busy || pending} @input=${event => { this.body = event.target.value }}></textarea></label>
+        <div class="description-heading">
+          <label for="issue-description">Description</label>
+          ${this.sections.length > 0 ? html`<div class="description-sections" role="group" aria-label="Include in description">
+            ${this.sections.map(section => html`<label><input type="checkbox" .checked=${section.selected}
+              ?disabled=${this.busy || pending} @change=${event => this.toggleSection(section.id, event.target.checked)}>${section.label}</label>`)}
+          </div>` : nothing}
+        </div>
+        <textarea id="issue-description" class="nwd-input" maxlength="65536" .value=${this.body}
+          ?disabled=${this.busy || pending} @input=${event => this.editBody(event.target.value)}></textarea>
         ${prepared?.labels?.length ? html`<p class="nwd-note">Labels: ${prepared.labels.join(', ')}</p>` : nothing}
         ${prepared?.mode === 'permissions' ? html`<p>Ask a repository owner to approve the app’s Issues read and write permission.
           ${prepared.authorizationPath ? html`<a href=${prepared.authorizationPath} target="_blank" rel="noopener">Review repository permissions</a>` : nothing}</p>` : nothing}
