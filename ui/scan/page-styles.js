@@ -34,8 +34,8 @@ export const SCAN_PAGE_STYLES = css`
   .field { display: grid; gap: .3rem; min-width: 0; }
   .source-choice > .field > span, .bundle-label { height: 1.25rem; }
   .bundle-label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; }
-  .create-bundle-button { display: inline-flex; align-items: center; flex: none; height: 1.25rem; padding: 0 .4rem; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: var(--bg); font-size: .65rem; white-space: nowrap; }
-  .create-bundle-button:hover { color: var(--text); border-color: var(--muted); background: var(--surface-active); }
+  .create-bundle-button { display: inline-flex; align-items: center; flex: none; height: 1.25rem; padding: 0 calc(.4rem + 1px); border: 0; border-radius: 4px; color: var(--muted); background: transparent; font-size: .65rem; white-space: nowrap; }
+  .create-bundle-button:hover { color: var(--text); background: var(--surface-active); }
   .create-bundle-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .field label, .scope-field > span { color: var(--muted); font-size: .68rem; }
   select { min-width: 0; height: 2rem; padding: .28rem .5rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font-size: .76rem; }
