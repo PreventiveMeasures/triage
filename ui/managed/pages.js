@@ -1268,7 +1268,7 @@ class ManagedAdminBundles extends ManagedPage {
         <button type="button" class="breadcrumb-manage" aria-label="Back to bundles" @click=${() => this._showCreate(false)}>Bundles</button>
         <span class="breadcrumb-separator" aria-hidden="true">›</span><h1 class="breadcrumb-current">Create a bundle</h1>
       </div>
-      <managed-create-bundle .repos=${this._data?.repos ?? []} .initialRepoId=${this._repoId} @cancel=${() => this._showCreate(false)}></managed-create-bundle>
+      <managed-create-bundle .repos=${this._data?.repos ?? []} .initialRepoId=${this._repoId}></managed-create-bundle>
     </div>`
     }
     return html`

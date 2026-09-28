@@ -7,6 +7,85 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
+test('selecting a repository browses its default branch and revision selections browse automatically', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    const request = new URL(url, 'https://test.invalid')
+    calls.push(request)
+    return Promise.resolve(Response.json(request.pathname.endsWith('/refs')
+      ? { defaultBranch: 'release', branches: ['develop', 'main'], tags: ['v1'] }
+      : { commit, entries }))
+  })
+  const page = new ManagedCreateBundle()
+  await page.selectRepository(1)
+  await setImmediate()
+  assert.equal(page._refKind, 'branch')
+  assert.equal(page._refName, 'release')
+  assert.equal(calls[1].searchParams.get('ref'), 'heads/release')
+  assert.deepEqual(page._entries, entries)
+
+  page.toggleFile('src/entry.ts')
+  page.editRevision('develop')
+  await setImmediate()
+  assert.equal(calls[2].searchParams.get('ref'), 'heads/develop')
+  assert.equal(page._selected.size, 0)
+  page.selectRevisionType('tag')
+  assert.equal(page._entries, null)
+  page.editRevision('v1')
+  await setImmediate()
+  assert.equal(calls[3].searchParams.get('ref'), 'tags/v1')
+  page.selectRevisionType('branch')
+  await setImmediate()
+  assert.equal(calls[4].searchParams.get('ref'), 'heads/release')
+  page.toggleFile('src/entry.ts')
+  page.selectRevisionType('branch')
+  assert.equal(calls.length, 5)
+  assert.equal(page._selected.size, 1)
+})
+
+test('typed revisions browse after a pause and pending browsing is cancelled when context changes', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(new URL(url, 'https://test.invalid').searchParams.get('ref'))
+    return Promise.resolve(Response.json({ commit, entries }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.editRevision('feature/o')
+  t.mock.timers.tick(300)
+  page.editRevision('feature/one')
+  t.mock.timers.tick(349)
+  assert.equal(calls.length, 0)
+  t.mock.timers.tick(1)
+  await setImmediate()
+  assert.deepEqual(calls, ['heads/feature/one'])
+
+  page.selectRevisionType('commit')
+  page.editRevision('abc')
+  t.mock.timers.tick(350)
+  assert.match(page._error, /commit SHA/u)
+  assert.equal(calls.length, 1)
+  page.editRevision(commit)
+  t.mock.timers.tick(350)
+  await setImmediate()
+  assert.equal(calls[1], commit)
+
+  page.editRevision('b'.repeat(40))
+  await page.selectRepository(null)
+  t.mock.timers.tick(350)
+  assert.equal(calls.length, 2)
+  page._repoId = 1
+  page.editRevision('feature/two')
+  page.selectRevisionType('tag')
+  t.mock.timers.tick(350)
+  assert.equal(calls.length, 2)
+  page.editRevision('v2')
+  page.disconnectedCallback()
+  t.mock.timers.tick(350)
+  assert.equal(calls.length, 2)
+})
+
 test('entry points persist across directories, requests use the pinned commit, and revision changes reset selection', async t => {
   const calls = []
   t.mock.method(globalThis, 'fetch', url => {

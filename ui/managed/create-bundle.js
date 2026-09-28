@@ -6,6 +6,12 @@ import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import styles from './styles/create-bundle.css'
 
+const REVISION_TYPES = [
+  { kind: 'branch', label: 'Branch', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="3" r="1.5"/><path d="M4 4.5v7m0-3h3a5 5 0 0 0 5-4"/></svg>` },
+  { kind: 'tag', label: 'Tag', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5Z"/><circle cx="5" cy="5" r="1"/></svg>` },
+  { kind: 'commit', label: 'Commit SHA', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/></svg>` },
+]
+
 async function browseRepository(route, params, signal) {
   const response = await managedFetch(`/api/admin/repositories/${route}?${new URLSearchParams(params)}`, {
     credentials: 'same-origin', headers: { accept: 'application/json' }, signal,
@@ -52,12 +58,14 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   disconnectedCallback() {
+    clearTimeout(this._browseTimer)
     this._refsRequest?.abort()
     this._request?.abort()
     super.disconnectedCallback()
   }
 
   resetFiles() {
+    clearTimeout(this._browseTimer)
     this._request?.abort()
     this._loading = false
     this._entries = null
@@ -99,7 +107,26 @@ export class ManagedCreateBundle extends LitElement {
     this._refName = name
   }
 
+  selectRevisionType(kind) {
+    if (this._refKind === kind) return
+    this.changeRevision(kind, kind === 'branch' ? this._refs.defaultBranch || '' : '')
+    if (this._refName) void this.loadDirectory('')
+  }
+
+  editRevision(name) {
+    this.changeRevision(this._refKind, name)
+    const ref = name.trim()
+    if (!ref) return
+    const choices = this._refKind === 'branch' ? this._refs.branches : this._refs.tags
+    if (this._refKind !== 'commit' && (choices.includes(ref) || (this._refKind === 'branch' && ref === this._refs.defaultBranch))) {
+      void this.loadDirectory('')
+    } else {
+      this._browseTimer = setTimeout(() => { void this.loadDirectory('') }, 350)
+    }
+  }
+
   async loadDirectory(path, fresh = false) {
+    clearTimeout(this._browseTimer)
     if (this._repoId == null || !this._refName.trim()) return
     if (fresh) this.resetFiles()
     this._request?.abort()
@@ -145,10 +172,9 @@ export class ManagedCreateBundle extends LitElement {
       <div class="source-fields">
         <div class="field"><span>Repository</span><repository-selector label="Repository" .options=${this.repos.map(item => ({ value: item.repoId, label: item.fullName }))} .value=${this._repoId} @repository-change=${event => this.selectRepository(event.detail.value)}></repository-selector></div>
         <form class="revision" @submit=${event => { event.preventDefault(); void this.loadDirectory('', true) }}>
-          <label class="field"><span>Revision</span><select ?disabled=${!repo || this._loadingRefs} .value=${this._refKind} @change=${event => this.changeRevision(event.target.value, event.target.value === 'branch' ? this._refs.defaultBranch || '' : '')}><option value="branch">Branch</option><option value="tag">Tag</option><option value="commit">Commit</option></select></label>
-          <label class="field revision-name"><span>${revisionLabel}</span><input type="text" aria-label=${revisionLabel} list=${ifDefined(this._refKind === 'commit' ? undefined : 'bundle-revisions')} placeholder=${this._refKind === 'commit' ? 'Commit SHA…' : `Choose or enter a ${this._refKind}…`} .value=${this._refName} ?disabled=${!repo || this._loadingRefs} @input=${event => this.changeRevision(this._refKind, event.target.value)}></label>
+          <div class="revision-switch" role="group" aria-label="Revision type">${REVISION_TYPES.map(({ kind, label, icon }) => html`<button type="button" aria-label=${label} title=${label} aria-pressed=${this._refKind === kind} ?disabled=${!repo || this._loadingRefs} @click=${() => this.selectRevisionType(kind)}>${icon}</button>`)}</div>
+          <input class="revision-name" type="text" aria-label=${revisionLabel} list=${ifDefined(this._refKind === 'commit' ? undefined : 'bundle-revisions')} placeholder=${this._refKind === 'commit' ? 'Commit SHA…' : `Choose or enter a ${this._refKind}…`} .value=${this._refName} ?disabled=${!repo || this._loadingRefs} @input=${event => this.editRevision(event.target.value)}>
           <datalist id="bundle-revisions">${(choices ?? []).map(name => html`<option value=${name}></option>`)}</datalist>
-          <button type="submit" class="browse" ?disabled=${!repo || this._loadingRefs || this._loading || !this._refName.trim()}>Browse</button>
         </form>
       </div>
       ${this._refsError ? html`<p class="message" role="status">${this._refsError} <button type="button" class="text-action" @click=${() => this.selectRepository(this._repoId)}>Retry</button></p>` : nothing}
@@ -157,7 +183,7 @@ export class ManagedCreateBundle extends LitElement {
         <div class="file-browser">
           ${this._loading || this._loadingRefs ? html`<p class="empty" role="status">${this._loadingRefs ? 'Loading revisions…' : 'Loading files…'}</p>`
             : this._error ? html`<p class="empty error" role="alert">${this._error} <button type="button" class="text-action" @click=${() => this.loadDirectory(this._path)}>Retry</button></p>`
-              : this._entries == null ? html`<p class="empty">${repo ? 'Choose a revision and click Browse.' : this.repos.length > 0 ? 'Select a repository to browse its files.' : 'No connected repositories available.'}</p>`
+              : this._entries == null ? html`<p class="empty">${repo ? 'Choose a revision to browse its files.' : this.repos.length > 0 ? 'Select a repository to browse its files.' : 'No connected repositories available.'}</p>`
                 : this._entries.length === 0 ? html`<p class="empty">This directory is empty.</p>`
                   : html`<div class="file-grid">${this._entries.map(entry => entry.type === 'dir'
                     ? html`<button type="button" class="file-tile directory" title=${entry.path} @click=${() => this.loadDirectory(entry.path)}>${sourceFolderIcon}<span>${entry.name}</span><span class="arrow" aria-hidden="true">›</span></button>`
@@ -165,10 +191,10 @@ export class ManagedCreateBundle extends LitElement {
         </div>
         ${this._limited ? html`<p class="message">Showing GitHub’s first 1,000 entries in this directory.</p>` : nothing}
       </section>
-      <section class="entry-points" aria-label="Selected entry points"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="text-action" @click=${() => { this._selected = new Set() }}>Clear all</button>` : nothing}</div>
+      <section class="entry-points" aria-label="Selected entry points"><div class="selection"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="text-action" @click=${() => { this._selected = new Set() }}>Clear all</button>` : nothing}</div>
         ${this._selected.size > 0 ? html`<ul>${[...this._selected].map(path => html`<li>${sourceFileIcon(path)}<span title=${path}>${path}</span><button type="button" aria-label=${`Remove ${path}`} @click=${() => this.toggleFile(path)}>×</button></li>`)}</ul>` : html`<p class="note">Select files above. You can choose entry points from multiple directories.</p>`}
+        </div><button type="button" class="btn primary" disabled>Create a bundle</button>
       </section>
-      <footer class="create-actions"><span class="note">Bundle creation is not available yet.</span><span class="spacer"></span><button type="button" class="btn" @click=${() => this.dispatchEvent(new CustomEvent('cancel'))}>Cancel</button><button type="button" class="btn primary" disabled>Create a bundle</button></footer>
     `
   }
 }

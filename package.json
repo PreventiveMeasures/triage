@@ -122,6 +122,7 @@
     "server-managed/report-query.ts",
     "server-managed/report-response.ts",
     "server-managed/report-sources.ts",
+    "server-managed/repository-browser.ts",
     "server-managed/repository-discovery.ts",
     "server-managed/repository-policy.ts",
     "server-managed/session.ts",
