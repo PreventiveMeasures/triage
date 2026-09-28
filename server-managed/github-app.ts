@@ -70,7 +70,7 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
 // One GitHub API call returning parsed JSON, optionally Bearer-authed by a
 // user token, App JWT, or installation token. Network / non-2xx / malformed
 // fold into a GithubApiError (401 passes through for the caller to handle).
-async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
+export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
   let res: Response
   try {
     res = await fetchImpl(url, {

@@ -22,6 +22,7 @@ import bundlesStyles from './styles/bundles.css'
 import locationStyles from './styles/location.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
+import './create-bundle.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
@@ -1199,6 +1200,7 @@ class ManagedAdminBundles extends ManagedPage {
   static properties = {
     localImportSource: { attribute: false },
     _query: { state: true },
+    _creating: { state: true },
     _data: { state: true },
     _repoId: { state: true },
     _repoDirectory: { state: true },
@@ -1216,6 +1218,7 @@ class ManagedAdminBundles extends ManagedPage {
   constructor() {
     super()
     this._query = ''
+    this._creating = false
     this._data = null
     this._error = null
     this._busy = false
@@ -1235,7 +1238,7 @@ class ManagedAdminBundles extends ManagedPage {
   connectedCallback() {
     super.connectedCallback()
     void this._load()
-    this._teardownDrop = installFileDropZone(this, (files) => void this._upload(files), (active) => { this._dragOver = active })
+    this._teardownDrop = installFileDropZone(this, (files) => { if (!this._creating) void this._upload(files) }, (active) => { this._dragOver = !this._creating && active })
   }
 
   disconnectedCallback() {
@@ -1250,12 +1253,29 @@ class ManagedAdminBundles extends ManagedPage {
     })
   }
 
+  _showCreate(open) {
+    this._creating = open
+    this._dragOver = false
+    if (!open) void this.updateComplete.then(() => this.renderRoot.querySelector('.create-bundle-action')?.focus())
+  }
+
   render() {
+    if (this._creating) {
+      return html`<div class="wrap">${adminNavigation('manage-bundles', this._role, this.allowShare)}
+      <div class="breadcrumb">
+        <button type="button" class="breadcrumb-manage" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage' }, bubbles: true, composed: true }))}>Manage</button>
+        <span class="breadcrumb-separator" aria-hidden="true">›</span>
+        <button type="button" class="breadcrumb-manage" aria-label="Back to bundles" @click=${() => this._showCreate(false)}>Bundles</button>
+        <span class="breadcrumb-separator" aria-hidden="true">›</span><h1 class="breadcrumb-current">Create a bundle</h1>
+      </div>
+      <managed-create-bundle .repos=${this._data?.repos ?? []} .initialRepoId=${this._repoId} @cancel=${() => this._showCreate(false)}></managed-create-bundle>
+    </div>`
+    }
     return html`
       ${this._dragOver ? html`<div class="dropzone">Drop bundles to upload</div>` : nothing}
       <div class="wrap">${adminNavigation('manage-bundles', this._role, this.allowShare)}
         <h1 class="sr-only">Bundles</h1>
-        <div class="page-intro"><p class="intro">Source bundles for your repositories.</p>${this._localImport.renderAction()}</div>
+        <div class="page-intro"><p class="intro">Source bundles for your repositories.</p><div class="bundle-actions">${this._localImport.renderAction()}<button type="button" class="local-import-toggle create-bundle-action" ?disabled=${!this._data} @click=${() => this._showCreate(true)}>Create</button></div></div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>

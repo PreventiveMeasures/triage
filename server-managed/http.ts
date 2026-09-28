@@ -23,6 +23,7 @@
 //   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
 //   GET /api/admin/repositories/impact → admin attached data summary
+//   GET /api/admin/repositories/{refs,contents} → admin|manage scoped source browsing
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/reports      → admin|manage list of uploaded reports | 401/403
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
@@ -75,6 +76,7 @@ import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, public
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
+import { repositoryReader, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
@@ -97,6 +99,8 @@ const ADMIN_HISTORY_PATH = '/api/admin/history'
 const ADMIN_SCAN_MODELS_PATH = '/api/admin/scan/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
+const REPO_REFS_PATH = '/api/admin/repositories/refs'
+const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const REPO_IMPACT_PATH = '/api/admin/repositories/impact'
@@ -923,6 +927,44 @@ async function bundleRepos(deps: ManagedHttpDeps, user: StoredUser) {
   if (user.role === 'admin') return repos
   const allowed = await Promise.all(repos.map(repo => deps.db.userCanReadRepo(user.id, repo.repoId)))
   return repos.filter((_, index) => allowed[index])
+}
+
+// Recheck repository/path grants after upstream reads, before returning names.
+async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams, refs: boolean): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  const normalized = normalizeTeamPath(query.get('path') ?? '')
+  const ref = query.get('ref') ?? ''
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  const path = normalized.path ?? ''
+  const authorize = async () => {
+    const s = await readManageSession(res, deps, cookie)
+    if (!s) return null
+    const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
+    if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
+    const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
+    const virtualEntries = scopedDirectory(path, scopes)
+    if (!refs && virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    return { repo, virtualEntries }
+  }
+  const access = await authorize()
+  if (!access) return
+  try {
+    const reader = await repositoryReader(deps.config, access.repo)
+    const commit = refs ? '' : await reader.commit(ref)
+    const result = refs ? await reader.refs() : access.virtualEntries
+      ? { entries: access.virtualEntries, limited: false } : await reader.directory(path, commit)
+    const current = await authorize()
+    if (!current) return
+    if (JSON.stringify(current.repo) !== JSON.stringify(access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    sendJson(res, 200, refs ? result : {
+      ...result, ...(current.virtualEntries ? { entries: current.virtualEntries, limited: false } : {}), path, commit,
+    })
+  } catch (err) {
+    if (err instanceof GithubApiError) { sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }); return }
+    throw err
+  }
 }
 
 function prebuildBundle(deps: ManagedHttpDeps, id: string) {
@@ -1886,6 +1928,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REMOVE_REPO_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleRemoveRepository(req, res, deps, cookie); return
+    }
+    if (path === REPO_REFS_PATH || path === REPO_CONTENTS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryBrowser(res, deps, cookie, url.searchParams, path === REPO_REFS_PATH); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }

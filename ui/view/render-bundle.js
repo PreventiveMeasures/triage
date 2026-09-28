@@ -20,6 +20,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
+import { sourceFileIcon, sourceFolderIcon } from './source-file-icon.js'
 import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -969,6 +970,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       return html`<li class="bundle-code-tree-dir">
         <details ?open=${computeOpen(childPath, child)}>
           <summary @click=${onSummaryClick(childPath)}>
+            ${sourceFolderIcon}
             <span class="bundle-code-tree-dirname">${name}</span>
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
           </summary>
@@ -990,7 +992,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
           data-bundle-view-source=${full}
           data-tooltip=${full}
         >
-          <span class="bundle-code-tree-name">${name}</span>
+          ${sourceFileIcon(name)}<span class="bundle-code-tree-name">${name}</span>
           ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} title=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
         </button>
       </li>`
@@ -1383,6 +1385,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
   return html`<header class="bundle-code-main-bar">
+      ${sourceFileIcon(path)}
       <span class="bundle-code-main-path mono" title=${path}>${path}</span>
       <button
         type="button"

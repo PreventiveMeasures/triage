@@ -439,6 +439,22 @@ cannot be safely assigned to an account after a rename or login reuse. Users
 without attributable history show Unknown. Triage retention/deletion still
 applies because Last Activity is derived from the retained history.
 
+# Bundle creation preview
+
+Manage → Bundles → Create opens a page for choosing a connected repository,
+branch, tag, or commit SHA and selecting entry-point files across directories.
+The final **Create a bundle** action is disabled; selections are not saved.
+
+`GET /api/admin/repositories/refs?repoId=…` returns the default branch and up to
+100 branch/tag suggestions; any branch or tag name can also be entered.
+`GET /api/admin/repositories/contents?repoId=…&ref=…&path=…` returns directory
+entries and a resolved commit SHA, which pins subsequent navigation. These
+read-only endpoints require admin/manage access and an active repository.
+Managers see only their team directory grants and the ancestors needed to reach
+them; access is rechecked after GitHub reads. Private repositories use the
+configured repository App. The GitHub Contents API limits directory listings to
+1,000 entries, and the page displays a notice when that limit is reached.
+
 # Bundle metadata and contents
 
 `GET /api/bundles/:id/metadata` returns the shared `common/bundle-metadata.js`
