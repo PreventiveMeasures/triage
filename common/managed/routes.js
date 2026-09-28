@@ -34,6 +34,7 @@ export function managedRoutePath(route) {
   }
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
+    if (route.view === 'manage-bundles' && Number.isSafeInteger(route.createRepoId) && route.createRepoId > 0) return `${path}?createRepo=${route.createRepoId}`
     if (route.view === 'manage-scans' && route.bundleId) return `${path}?bundle=${encodeURIComponent(route.bundleId)}`
     return route.view === 'manage-history' && route.actor ? `${path}?actor=${encodeURIComponent(route.actor)}` : path
   }
@@ -53,7 +54,9 @@ export function parseManagedRoute(url) {
   if (path === '/' || path === '/index.html') return { view: 'home' }
   const view = Object.keys(MANAGED_PAGES).find(key => MANAGED_PAGES[key] === path)
   if (view) {
+    const createRepoId = Number(url.searchParams.get('createRepo'))
     return { view,
+      ...(view === 'manage-bundles' && Number.isSafeInteger(createRepoId) && createRepoId > 0 ? { createRepoId } : {}),
       ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}),
       ...(view === 'manage-scans' && url.searchParams.get('bundle') ? { bundleId: url.searchParams.get('bundle') } : {}),
     }

@@ -2404,7 +2404,7 @@ body.report-fullscreen {
   text-align: inherit;
   text-decoration: underline dotted;
   text-underline-offset: 3px;
-  cursor: text;
+  cursor: default;
   user-select: text;
 }
 .bundle-source-link:hover { background: var(--surface-active); text-decoration-style: solid; }

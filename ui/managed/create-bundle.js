@@ -6,10 +6,12 @@ import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import styles from './styles/create-bundle.css'
 
+const commitIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/></svg>`
+
 const REVISION_TYPES = [
   { kind: 'branch', label: 'Branch', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="3" r="1.5"/><path d="M4 4.5v7m0-3h3a5 5 0 0 0 5-4"/></svg>` },
   { kind: 'tag', label: 'Tag', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5Z"/><circle cx="5" cy="5" r="1"/></svg>` },
-  { kind: 'commit', label: 'Commit SHA', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/></svg>` },
+  { kind: 'commit', label: 'Commit SHA', icon: commitIcon },
 ]
 
 async function browseRepository(route, params, signal) {
@@ -277,6 +279,7 @@ export class ManagedCreateBundle extends LitElement {
   render() {
     const repo = this._repos.find(item => item.repoId === this._repoId)
     const parts = this._path.split('/').filter(Boolean)
+    const treeUrl = repo && this._commit ? `https://github.com/${[...repo.fullName.split('/'), 'tree', this._commit, ...parts].map(encodeURIComponent).join('/')}` : null
     const choices = this.revisionSuggestions()
     const revisionLabel = this._refKind === 'commit' ? 'Commit SHA' : this._refKind === 'tag' ? 'Tag' : 'Branch'
     return html`<p class="intro">Choose a repository and revision, then select files to use as entry points.</p>
@@ -295,7 +298,7 @@ export class ManagedCreateBundle extends LitElement {
       ${this._reposError ? html`<p class="message" role="alert">${this._reposError} <button type="button" class="text-action" @click=${() => this.loadRepositories()}>Retry</button></p>` : nothing}
       ${this._refsError ? html`<p class="message" role="status">${this._refsError} <button type="button" class="text-action" @click=${() => this.selectRepository(this._repoId)}>Retry</button></p>` : nothing}
       <section class="browser" aria-label="Repository files" aria-busy=${this._loadingRepos || this._loading || this._loadingRefs}>
-        <div class="browser-head"><nav class="breadcrumbs" aria-label="Repository directory"><button type="button" ?disabled=${!this._commit} aria-current=${ifDefined(this._path ? undefined : 'location')} @click=${() => this.loadDirectory('')}>${repo?.fullName ?? 'Repository'}</button>${parts.map((part, i) => html`<span aria-hidden="true">/</span><button type="button" aria-current=${ifDefined(i === parts.length - 1 ? 'location' : undefined)} @click=${() => this.loadDirectory(parts.slice(0, i + 1).join('/'))}>${part}</button>`)}</nav>${this._commit ? html`<code title=${this._commit}>${this._commit.slice(0, 7)}</code>` : nothing}</div>
+        <div class="browser-head"><nav class="breadcrumbs" aria-label="Repository directory"><button type="button" ?disabled=${!this._commit} aria-current=${ifDefined(this._path ? undefined : 'location')} @click=${() => this.loadDirectory('')}>${repo?.fullName ?? 'Repository'}</button>${parts.map((part, i) => html`<span aria-hidden="true">/</span><button type="button" aria-current=${ifDefined(i === parts.length - 1 ? 'location' : undefined)} @click=${() => this.loadDirectory(parts.slice(0, i + 1).join('/'))}>${part}</button>`)}</nav>${treeUrl ? html`<a class="commit-link" href=${treeUrl} target="_blank" rel="noopener noreferrer" title=${this._commit} aria-label=${`View directory at commit ${this._commit.slice(0, 7)} on GitHub`}>${commitIcon}<code>${this._commit.slice(0, 7)}</code></a>` : nothing}</div>
         <div class="file-browser">
           ${this._loadingRepos || this._loading || this._loadingRefs ? html`<p class="empty" role="status">${this._loadingRepos ? 'Loading repositories…' : this._loadingRefs ? 'Loading revisions…' : 'Loading files…'}</p>`
             : this._error ? html`<p class="empty error" role="alert">${this._error} <button type="button" class="text-action" @click=${() => this.loadDirectory(this._path)}>Retry</button></p>`

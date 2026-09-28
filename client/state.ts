@@ -114,6 +114,7 @@ export interface State {
   selectedBundle: string | null
   selectedBundleWorkspace: string | null
   scanSelection: { bundleId: string, repoId?: string | number } | null
+  bundleCreationRepoId: number | null
   bundleDetails: unknown
   bundleDetailsTab: string
   selectedPackage: string | null
@@ -540,6 +541,7 @@ export const state: State = store<State>({
   selectedBundle: null,
   selectedBundleWorkspace: null,
   scanSelection: null,
+  bundleCreationRepoId: null,
   bundleDetails: null,
   // Active tab in the bundle view's tab strip: 'overview' (the
   // metadata + Packages / Files / Reports nested view), 'terminal',
