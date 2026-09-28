@@ -35,10 +35,9 @@
 }
 .list-head {
   color: var(--muted);
-  font-size: .72rem;
+  font-size: .7rem;
   font-weight: 500;
-  padding-top: .75rem;
-  padding-bottom: .75rem;
+  min-height: 2.25rem;
   border-bottom: 1px solid var(--border);
   background: rgb(from var(--text) r g b / .025);
 }
@@ -150,10 +149,8 @@
   display: grid;
   grid-template-columns: minmax(11rem, 1fr) minmax(14rem, 1.2fr) 6.2rem 6.2rem 6.5rem;
   gap: .7rem;
-  padding: 1rem 1.25rem;
+  padding: .5rem .85rem;
   align-items: center;
-  padding-left: .85rem;
-  padding-right: .85rem;
 }
 .users li {
   padding-top: .6rem;
