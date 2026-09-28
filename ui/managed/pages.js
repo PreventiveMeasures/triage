@@ -1468,14 +1468,14 @@ class ManagedAdminTeams extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-teams', this._role, this.allowShare)}
       <h1 class="sr-only">Teams</h1>
-      <div class="page-intro"><p class="intro">Group repositories and give members access to the findings they need.</p><span class="result-count">${this._data?.teams?.length ?? '…'} teams</span></div>
+      <div class="page-intro"><p class="intro">Manage repository and finding access for each team.</p><span class="result-count">${this._data?.teams?.length ?? '…'} teams</span></div>
       <div class="create-team">
-        <div class="create-copy"><strong>Create a team</strong><span>Share the right findings with the right people.</span></div>
         <label class="sr-only" for="new-team-name">New team</label>
         <input id="new-team-name" class="new-name" type="text" placeholder="Team name" maxlength="100" ?disabled=${this._busy}
           @keydown=${(e) => { if (e.key === 'Enter') this._create() }}>
         <button class="btn primary" ?disabled=${this._busy} @click=${() => this._create()}>${ADMIN_PLUS_ICON} Create team</button>
       </div>
+      <p class="access-note">All members can view standard findings. Set dependencies and security access per member.</p>
       <div aria-busy=${this._loading}>${this._body()}</div>
     </div>`
   }
@@ -1508,14 +1508,12 @@ class ManagedAdminTeams extends ManagedPage {
       <div class="team-body">
       <div class="sub">
         <h3 class="sub-title">Repositories <span class="count">${team.repos.length}</span></h3>
-        <p class="sub-description">Source repositories included in this team.</p>
         ${team.repos.length === 0 ? html`<p class="muted">No repositories linked.</p>`
           : html`<ul class="links">${team.repos.map((r) => this._repoRow(team, r))}</ul>`}
         ${this._addRepoRow(team)}
       </div>
       <div class="sub">
         <h3 class="sub-title">Members <span class="count">${team.members.length}</span></h3>
-        <p class="sub-description"><span>All members can view standard findings.</span><span>Choose who can also view dependencies and security findings.</span></p>
         ${team.members.length === 0 ? html`<p class="muted">No members.</p>`
           : html`<ul class="links">${team.members.map((m) => this._memberRow(team, m))}</ul>`}
         ${this._addMemberRow(team)}
