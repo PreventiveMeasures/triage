@@ -76,7 +76,7 @@ import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, public
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { repositoryReader, scopedDirectory } from './repository-browser.ts'
+import { createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
@@ -946,10 +946,11 @@ async function handleBrowsableRepositories(res: ServerResponse, deps: ManagedHtt
   const allowed = []
   try {
     const user = await repositoryBrowserUser(deps, s.user.id)
+    const browser = createRepositoryBrowser(deps.config, user)
     // Bound GitHub requests; never consult repositories outside the local gate.
     for (let i = 0; i < candidates.length; i += 4) {
       const batch = await Promise.all(candidates.slice(i, i + 4).map(async repo => {
-        try { await repositoryReader(deps.config, repo, user); return repo }
+        try { await browser.reader(repo); return repo }
         catch (err) {
           if (err instanceof GithubApiError && [401, 404].includes(err.status)) return null
           throw err
@@ -989,7 +990,8 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   const access = await authorize()
   if (!access) return
   try {
-    const reader = await repositoryReader(deps.config, access.repo, await repositoryBrowserUser(deps, access.user.id))
+    const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id))
+    const reader = await browser.reader(access.repo)
     const commit = refs ? '' : await reader.commit(ref)
     const result = refs ? await reader.refs() : access.virtualEntries
       ? { entries: access.virtualEntries, limited: false } : await reader.directory(path, commit)

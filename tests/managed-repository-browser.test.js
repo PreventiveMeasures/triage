@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { repositoryReader, scopedDirectory } from '../server-managed/repository-browser.ts'
+import { createRepositoryBrowser, scopedDirectory } from '../server-managed/repository-browser.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -16,7 +16,7 @@ const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibilit
 
 test('repository reader pins branches/tags to commits and only returns directory metadata', async () => {
   const calls = []
-  const reader = await repositoryReader(config, repo, anonymous, async (url, options) => {
+  const reader = await createRepositoryBrowser(config, anonymous, async (url, options) => {
     await Promise.resolve()
     calls.push(url)
     assert.equal(options.method, 'GET')
@@ -30,7 +30,7 @@ test('repository reader pins branches/tags to commits and only returns directory
       { name: 'external', path: 'src/external', type: 'file', submodule_git_url: 'https://example.com' },
       { name: 'leak', path: 'private/leak', type: 'file' },
     ])
-  })
+  }).reader(repo)
   assert.deepEqual(await reader.refs(), { defaultBranch: 'main', branches: ['main', 'feature/a'], tags: ['v1'] })
   assert.equal(await reader.commit('heads/feature/a'), commit)
   assert.equal(await reader.commit('tags/v1'), commit)
@@ -42,7 +42,7 @@ test('repository reader pins branches/tags to commits and only returns directory
   ], limited: false })
   assert.ok(calls.some(url => url.endsWith('/commits/heads%2Ffeature%2Fa')))
   assert.ok(calls.at(-1).endsWith(`/contents/src?ref=${commit}`))
-  await assert.rejects(repositoryReader(config, privateRepo, anonymous, () => Promise.resolve(Response.json({ ...publicMetadata, private: true, visibility: 'private' }))), /no-repository/u)
+  await assert.rejects(createRepositoryBrowser(config, anonymous, () => Promise.resolve(Response.json({ ...publicMetadata, private: true, visibility: 'private' }))).reader(privateRepo), /no-repository/u)
 })
 
 test('directory grants expose ancestors but no sibling names or prefix collisions', () => {
@@ -218,4 +218,110 @@ test('GitHub failures never yield dropdown names or source data', async t => {
     assert.equal(result.status, 502)
     assert.ok(!JSON.stringify(result.body).includes('org/repo'))
   }
+})
+
+for (const failure of ['token mint', 'authenticated metadata']) {
+  test(`public repositories remain browsable after ${failure} fails, but anonymous fallback never grants nonpublic access`, async t => {
+    const { request } = await fixture(t, { selectedRepo: privateRepo, fixtureConfig: appConfig })
+    let metadata = publicMetadata
+    let sourceReads = 0
+    let revokeDuringRead = false
+    const calls = []
+    t.mock.method(globalThis, 'fetch', (url, options) => {
+      const path = new URL(url).pathname
+      const authorization = options.headers.authorization
+      calls.push({ path, authorization })
+      if (path === '/app/installations/7/access_tokens') {
+        return Promise.resolve(failure === 'token mint' ? Response.json({}, { status: 404 }) : Response.json({ token: 'stale-installation' }))
+      }
+      if (path === '/repos/org/repo') return Promise.resolve(authorization ? Response.json({}, { status: 403 }) : Response.json(metadata))
+      assert.equal(authorization, undefined, 'fallback source reads must be anonymous too')
+      assert.ok(['/repos/org/repo/branches', '/repos/org/repo/tags', '/repos/org/repo/contents/src/allowed'].includes(path), path)
+      sourceReads++
+      if (revokeDuringRead) metadata = { ...publicMetadata, private: true, visibility: 'private' }
+      return Promise.resolve(Response.json(path.includes('/contents/') ? [{ name: 'entry.ts', path: 'src/allowed/entry.ts', type: 'file' }] : [{ name: 'main' }]))
+    })
+    assert.deepEqual((await request({}, { route: 'browsable' })).body.repos, [{ repoId: 1, fullName: 'org/repo' }])
+    for (const route of ['refs', 'contents']) {
+      assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' }, { route })).status, 200)
+    }
+    assert.equal(sourceReads, 3)
+    assert.ok(!calls.some(call => call.path.includes('/collaborators/') || call.path === '/user'))
+
+    for (const denied of [
+      { ...publicMetadata, private: true, visibility: 'private' },
+      { ...publicMetadata, visibility: 'internal' },
+      { ...publicMetadata, visibility: undefined },
+      { ...publicMetadata, id: 999 },
+    ]) {
+      metadata = denied
+      assert.deepEqual((await request({}, { route: 'browsable' })).body.repos, [])
+      for (const route of ['refs', 'contents']) assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' }, { route })).status, 404)
+      assert.equal(sourceReads, 3, 'unverified metadata never grants source reads')
+    }
+    metadata = publicMetadata
+    revokeDuringRead = true
+    assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 404, 'public visibility is still rechecked after source reads')
+  })
+}
+
+test('the picker coalesces credentials for 100 private repositories and checks every repository afresh on each request', async t => {
+  const { request, db } = await fixture(t, { role: 'admin', selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
+  const repos = Array.from({ length: 100 }, (_, i) => ({ ...privateRepo, repoId: i + 1, fullName: i === 0 ? 'org/repo' : `org/repo${i + 1}` }))
+  for (const item of repos.slice(1)) await db.selectRepo(item, Date.now())
+  const counts = { token: 0, identity: 0, metadata: 0, permission: 0 }
+  let allowed = true
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    await Promise.resolve()
+    const path = new URL(url).pathname
+    if (path === '/app/installations/7/access_tokens') { counts.token++; return Response.json({ token: 'installation' }) }
+    if (path === '/user') { counts.identity++; return Response.json({ id: 1, login: 'user' }) }
+    assert.equal(options.headers.authorization, 'Bearer installation')
+    const item = repos.find(candidate => path === `/repos/${candidate.fullName}` || path === `/repos/${candidate.fullName}/collaborators/user/permission`)
+    assert.ok(item, path)
+    if (path.endsWith('/permission')) {
+      counts.permission++
+      return Response.json({ permission: allowed && item.repoId !== 100 ? 'read' : 'none', user: { id: 1 } })
+    }
+    counts.metadata++
+    return Response.json({ id: item.repoId, full_name: item.fullName, private: true, visibility: 'private' })
+  })
+  const listing = await request({}, { route: 'browsable' })
+  assert.equal(listing.status, 200)
+  assert.equal(listing.body.repos.length, 99)
+  assert.ok(!listing.body.repos.some(candidate => candidate.repoId === 100))
+  assert.deepEqual(counts, { token: 1, identity: 1, metadata: 100, permission: 100 })
+  allowed = false
+  assert.deepEqual((await request({}, { route: 'browsable' })).body.repos, [])
+  assert.deepEqual(counts, { token: 2, identity: 2, metadata: 200, permission: 200 }, 'no credentials or permission results survive an HTTP request')
+})
+
+test('request credentials are isolated by installation and failed token lookups also coalesce', async t => {
+  const { request, db } = await fixture(t, { role: 'admin', selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
+  await db.selectRepo({ ...privateRepo, repoId: 2, fullName: 'org/second', installationId: 8 }, Date.now())
+  await db.selectRepo({ ...privateRepo, repoId: 3, fullName: 'org/third' }, Date.now())
+  const minted = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/access_tokens')) {
+      minted.push(path)
+      return Promise.resolve(path.includes('/7/') ? Response.json({}, { status: 404 }) : Response.json({ token: 'installation-8' }))
+    }
+    assert.ok(path.startsWith('/repos/org/'))
+    const id = path.endsWith('/repo') ? 1 : path.endsWith('/second') ? 2 : 3
+    assert.equal(options.headers.authorization, id === 2 ? 'Bearer installation-8' : undefined)
+    return Promise.resolve(Response.json({ ...publicMetadata, id, full_name: path.slice('/repos/'.length) }))
+  })
+  assert.equal((await request({}, { route: 'browsable' })).body.repos.length, 3)
+  assert.deepEqual(minted.toSorted(), ['/app/installations/7/access_tokens', '/app/installations/8/access_tokens'])
+})
+
+test('source reads refresh the cached GitHub identity before returning data', async t => {
+  const { request } = await fixture(t, { selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
+  const { calls, state } = githubFixture(t)
+  state.duringRead = () => { state.identityId = 99 }
+  const response = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(response.status, 404)
+  assert.equal(calls.filter(path => path === '/user').length, 2)
+  assert.ok(!JSON.stringify(response.body).includes('entry.ts'))
 })

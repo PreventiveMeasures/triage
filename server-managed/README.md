@@ -462,6 +462,10 @@ them; both managed access and GitHub access are rechecked after source reads.
 Private repositories use the configured repository App, but its installation
 access alone is never a user grant. Existing upload/link pickers retain their
 managed-data permissions; they do not grant live source browsing.
+The picker shares installation tokens and the GitHub identity lookup within one
+request, but checks every repository's current visibility and permission. Stale
+installation access falls back to anonymous source reads only after GitHub confirms
+that the repository is public; private and internal repositories remain gated.
 The GitHub Contents API limits directory listings to
 1,000 entries, and the page displays a notice when that limit is reached.
 
