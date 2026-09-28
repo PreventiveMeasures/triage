@@ -1,6 +1,7 @@
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
 import { GithubApiError, githubJson, githubRepoReadPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
+import { MAX_PACKAGE_BYTES, readPackageEntryPoints } from './package-entry-points.ts'
 
 export interface RepositoryEntry { name: string; path: string; type: 'dir' | 'file' | 'symlink' | 'submodule' }
 
@@ -121,7 +122,11 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
         const type = item.submodule_git_url ? 'submodule' : item.type
         if (['dir', 'file', 'symlink', 'submodule'].includes(type)) entries.push({ name: item.name, path: expectedPath, type })
       }
-      return { entries, limited: data.length >= 1000 }
+      const manifestPath = path ? `${path}/package.json` : 'package.json'
+      const manifest = data.find(item => item?.path === manifestPath && item.name === 'package.json' && item.type === 'file' && !item.submodule_git_url
+        && typeof item.size === 'number' && item.size >= 0 && item.size <= MAX_PACKAGE_BYTES && typeof item.sha === 'string' && /^[a-f\d]{40}$/iu.test(item.sha))
+      const packageEntryPoints = manifest ? await readPackageEntryPoints(manifest.sha, path, read) : undefined
+      return { entries, limited: data.length >= 1000, ...(packageEntryPoints ? { packageEntryPoints } : {}) }
     },
   }
 }

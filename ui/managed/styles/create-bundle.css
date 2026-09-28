@@ -87,6 +87,15 @@ button:disabled, input:disabled { opacity: .5; }
 .message { padding: .5rem .8rem; color: var(--muted); font-size: .75rem; line-height: 1.5; }
 .text-action { border: 0; padding: .1rem .2rem; color: var(--accent); background: transparent; font-size: .75rem; }
 .entry-points { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+.package-suggestions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; color: var(--muted); font-size: .75rem; }
+.package-suggestions > div { flex: 1; min-width: 0; }
+.package-suggestions p { margin: 0 0 .4rem; }
+.package-suggestions ul {
+  display: flex; flex-wrap: wrap; gap: .4rem .8rem; padding: 0; margin: 0; list-style: none; max-height: 6rem; overflow: auto;
+}
+.package-suggestions li { min-width: 0; max-width: 100%; }
+.package-suggestions li code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.package-suggestions .btn { flex: none; font-size: .72rem; }
 .entry-points > .btn { flex: none; }
 .selection { flex: 1; min-width: 0; }
 .selection .note { margin: .5rem 0 0; }
