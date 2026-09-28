@@ -306,7 +306,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
   if (url.pathname.endsWith('/refs')) {
-    sendJson(res, 200, { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', 'v0.9.0'] }); return
+    sendJson(res, 200, { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] }); return
   }
   const path = url.searchParams.get('path') ?? ''
   const ref = url.searchParams.get('ref') ?? 'heads/main'
