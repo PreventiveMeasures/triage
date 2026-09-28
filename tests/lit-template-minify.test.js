@@ -48,6 +48,13 @@ describe('build: minifying Lit templates', () => {
     assert.equal(out, 'html`<div class="a"><span>hi</span></div>`')
   })
 
+  it('preserves SVG sibling shapes, labels, and dynamic fills in production', () => {
+    const source = 'svg`<rect width="14" height="14" fill=${color}/><text fill=${ink}>${label}</text>`'
+    assert.equal(minify(source), source)
+    const siblings = 'svg`<path d="M0 0h8v8Z"/><circle cx="4" cy="4" r="2"/>`'
+    assert.equal(minify(siblings), siblings)
+  })
+
   it('still minifies a `css` tagged template', () => {
     // These are whole component sheets (ui/managed/pages.js), and the
     // library minifies them down a different path — one the style

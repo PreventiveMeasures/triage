@@ -666,8 +666,8 @@
   background: var(--surface);
 }
 .bundle-code-rail-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  padding: .5rem .75rem;
+  display: flex; align-items: center; gap: .5rem;
+  padding: .35rem .5rem .35rem .75rem;
   border-bottom: 1px solid var(--border);
 }
 .bundle-code-rail-label {
@@ -682,6 +682,20 @@
   font-size: .72rem;
   font-variant-numeric: tabular-nums;
 }
+.bundle-code-rail-actions {
+  display: flex; gap: .15rem;
+  margin-left: auto;
+}
+.bundle-code-rail-action {
+  display: grid; place-items: center;
+  width: 26px; height: 26px;
+  border: 0; border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+.bundle-code-rail-action:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
+.bundle-code-rail-action:disabled { opacity: .35; }
+.bundle-code-rail-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bundle-code-rail-prefix {
   padding: .25rem .75rem;
   font-size: .68rem;
@@ -925,64 +939,62 @@ bundle-code-search {
   -webkit-box-orient: vertical;
   overflow-wrap: anywhere;
 }
-/* Tree — nested `<details>` elements for dirs, buttons for
-   files. Compact monospace; selected file picks up an accent
-   strip on the left edge. */
+/* Matching row geometry keeps folder chevrons and file marks in one column.
+   Short directory chains share a row; nested groups retain a quiet guide. */
 .bundle-code-tree {
   list-style: none;
-  margin: 0;
-  padding: 0 0 0 .6rem;
+  margin: 0 0 0 13px;
+  padding: 0 0 0 3px;
+  border-left: 1px solid var(--border);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .72rem;
+  font-size: .75rem;
+  line-height: 1.5;
 }
-.bundle-code-tree.root { padding-left: 0; }
-.bundle-code-tree-dir > details > summary {
-  display: flex; align-items: center; gap: .35rem;
-  padding: .15rem .35rem .15rem .25rem;
-  color: var(--text);
-  user-select: none;
-  list-style: none;
-}
-.bundle-code-tree-dirname {
-  flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.bundle-code-tree-dir > details > summary::-webkit-details-marker { display: none; }
-.bundle-code-tree-dir > details > summary::before {
-  content: '▸ ';
-  color: var(--muted);
-}
-.bundle-code-tree-dir > details[open] > summary::before { content: '▾ '; }
-.bundle-code-tree-file { padding: 0; }
+.bundle-code-tree.root { margin-left: 0; padding-left: 0; border-left: 0; }
+.bundle-code-tree-dir > details > summary,
 .bundle-code-tree-link {
   display: flex; align-items: center; gap: .35rem;
+  min-height: 22px;
   width: 100%;
-  text-align: left;
+  padding: .1rem .4rem;
+  border: 0; border-radius: 4px;
   background: transparent;
-  border: 0;
-  padding: .15rem .25rem .15rem .9rem;
-  color: var(--muted);
+  color: var(--text);
   font: inherit;
-  border-radius: 3px;
-  /* Breathing room when the reveal-current scrollIntoView (events.js
-     revealBundleCodeCurrent) brings an off-screen row in — without
-     it the row lands flush against the rail edge. */
+  text-align: left;
+  user-select: none;
   scroll-margin-block: 1.5rem;
 }
-.bundle-code-tree-link:hover {
-  background: var(--bg);
-  color: var(--text);
+.bundle-code-tree-dir > details > summary { list-style: none; cursor: pointer; }
+.bundle-code-tree-dir > details > summary::-webkit-details-marker { display: none; }
+.bundle-code-tree-chevron {
+  display: grid; place-items: center;
+  width: 16px; height: 16px;
+  flex: none;
+  color: var(--muted);
 }
-/* Selection — solid accent-tinted background, not an inset
-   box-shadow strip: the strip picks up the button's border-radius
-   and renders as a curved sliver at top/bottom. */
-.bundle-code-tree-link.current {
-  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
-  color: var(--text);
+.bundle-code-tree-chevron::before {
+  content: '';
+  width: 5px; height: 5px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(-45deg);
 }
+.bundle-code-tree-dir > details[open] > summary .bundle-code-tree-chevron::before { transform: translateY(-2px) rotate(45deg); }
+.bundle-code-tree-dirname,
 .bundle-code-tree-name {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bundle-code-tree-separator { color: var(--muted); padding-inline: 1px; }
+.bundle-code-tree-file { padding: 0; }
+.bundle-code-tree-dir > details > summary:hover,
+.bundle-code-tree-link:hover { background: var(--surface-active); }
+.bundle-code-tree-dir > details > summary:focus-visible,
+.bundle-code-tree-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.bundle-code-tree-link.current {
+  background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
+  color: var(--text);
 }
 /* Per-file issue count chip — small severity-tinted pill on the
    row's right edge. Compact: dark text on the severity color
