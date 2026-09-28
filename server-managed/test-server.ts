@@ -300,6 +300,9 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
 
 function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerResponse): void {
   if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (url.pathname.endsWith('/browsable')) {
+    sendJson(res, 200, { repos: repositories.filter(repo => repo.selected).map(repo => ({ repoId: repo.id, fullName: repo.fullName })) }); return
+  }
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
   if (url.pathname.endsWith('/refs')) {
@@ -321,7 +324,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
 }
 
 function handleAdmin(url: URL, method: string, res: ServerResponse): void {
-  const repositoryBrowser = ['/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
+  const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return

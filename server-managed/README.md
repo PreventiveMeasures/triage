@@ -445,14 +445,24 @@ Manage → Bundles → Create opens a page for choosing a connected repository,
 branch, tag, or commit SHA and selecting entry-point files across directories.
 The final **Create a bundle** action is disabled; selections are not saved.
 
+`GET /api/admin/repositories/browsable` provides the creation page's repository
+picker. A repository must be active, and both access gates must pass: the caller
+is an admin or a manager with a team grant for the repository, and the caller has
+GitHub read permission or the repository is currently public. Public visibility
+is verified with GitHub, not inferred from stored flags; internal repositories
+require a user permission check. Admin status does not bypass the GitHub gate.
+
 `GET /api/admin/repositories/refs?repoId=…` returns the default branch and up to
 100 branch/tag suggestions; any branch or tag name can also be entered.
 `GET /api/admin/repositories/contents?repoId=…&ref=…&path=…` returns directory
 entries and a resolved commit SHA, which pins subsequent navigation. These
-read-only endpoints require admin/manage access and an active repository.
+read-only endpoints independently enforce the same two gates.
 Managers see only their team directory grants and the ancestors needed to reach
-them; access is rechecked after GitHub reads. Private repositories use the
-configured repository App. The GitHub Contents API limits directory listings to
+them; both managed access and GitHub access are rechecked after source reads.
+Private repositories use the configured repository App, but its installation
+access alone is never a user grant. Existing upload/link pickers retain their
+managed-data permissions; they do not grant live source browsing.
+The GitHub Contents API limits directory listings to
 1,000 entries, and the page displays a notice when that limit is reached.
 
 # Bundle metadata and contents

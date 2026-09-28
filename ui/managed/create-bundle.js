@@ -27,7 +27,7 @@ async function browseRepository(route, params, signal) {
 export class ManagedCreateBundle extends LitElement {
   static styles = [unsafeCSS(commonStyles), unsafeCSS(styles)]
   static properties = {
-    repos: { attribute: false }, initialRepoId: { attribute: false },
+    initialRepoId: { attribute: false }, _repos: { state: true }, _loadingRepos: { state: true }, _reposError: { state: true },
     _repoId: { state: true }, _refs: { state: true }, _refKind: { state: true }, _refName: { state: true },
     _path: { state: true }, _entries: { state: true }, _selected: { state: true }, _commit: { state: true },
     _loadingRefs: { state: true }, _loading: { state: true }, _error: { state: true }, _refsError: { state: true }, _limited: { state: true },
@@ -35,7 +35,9 @@ export class ManagedCreateBundle extends LitElement {
 
   constructor() {
     super()
-    this.repos = []
+    this._repos = []
+    this._loadingRepos = true
+    this._reposError = ''
     this.initialRepoId = null
     this._repoId = null
     this._refs = { branches: [], tags: [] }
@@ -53,12 +55,32 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   firstUpdated() {
-    this.renderRoot.querySelector('repository-selector')?.shadowRoot?.querySelector('button')?.focus()
-    if (this.repos.some(repo => repo.repoId === this.initialRepoId)) void this.selectRepository(this.initialRepoId)
+    void this.loadRepositories()
+  }
+
+  async loadRepositories() {
+    this._reposRequest?.abort()
+    void this.selectRepository(null)
+    this._repos = []
+    this._reposError = ''
+    this._loadingRepos = true
+    const request = new AbortController()
+    this._reposRequest = request
+    try {
+      const data = await browseRepository('browsable', {}, request.signal)
+      if (request.signal.aborted) return
+      this._repos = data.repos
+      if (this._repos.some(repo => repo.repoId === this.initialRepoId)) void this.selectRepository(this.initialRepoId)
+    } catch {
+      if (!request.signal.aborted) this._reposError = 'Could not verify repository access. Try again.'
+    } finally {
+      if (!request.signal.aborted) this._loadingRepos = false
+    }
   }
 
   disconnectedCallback() {
     clearTimeout(this._browseTimer)
+    this._reposRequest?.abort()
     this._refsRequest?.abort()
     this._request?.abort()
     super.disconnectedCallback()
@@ -164,26 +186,27 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   render() {
-    const repo = this.repos.find(item => item.repoId === this._repoId)
+    const repo = this._repos.find(item => item.repoId === this._repoId)
     const parts = this._path.split('/').filter(Boolean)
     const choices = this._refKind === 'branch' ? this._refs.branches : this._refs.tags
     const revisionLabel = this._refKind === 'commit' ? 'Commit SHA' : this._refKind === 'tag' ? 'Tag' : 'Branch'
     return html`<p class="intro">Choose a repository and revision, then select files to use as entry points.</p>
       <div class="source-fields">
-        <div class="field"><span>Repository</span><repository-selector label="Repository" .options=${this.repos.map(item => ({ value: item.repoId, label: item.fullName }))} .value=${this._repoId} @repository-change=${event => this.selectRepository(event.detail.value)}></repository-selector></div>
+        <div class="field"><span>Repository</span><repository-selector label="Repository" ?disabled=${this._loadingRepos} .options=${this._repos.map(item => ({ value: item.repoId, label: item.fullName }))} .value=${this._repoId} @repository-change=${event => this.selectRepository(event.detail.value)}></repository-selector></div>
         <form class="revision" @submit=${event => { event.preventDefault(); void this.loadDirectory('', true) }}>
           <div class="revision-switch" role="group" aria-label="Revision type">${REVISION_TYPES.map(({ kind, label, icon }) => html`<button type="button" aria-label=${label} title=${label} aria-pressed=${this._refKind === kind} ?disabled=${!repo || this._loadingRefs} @click=${() => this.selectRevisionType(kind)}>${icon}</button>`)}</div>
           <input class="revision-name" type="text" aria-label=${revisionLabel} list=${ifDefined(this._refKind === 'commit' ? undefined : 'bundle-revisions')} placeholder=${this._refKind === 'commit' ? 'Commit SHA…' : `Choose or enter a ${this._refKind}…`} .value=${this._refName} ?disabled=${!repo || this._loadingRefs} @input=${event => this.editRevision(event.target.value)}>
           <datalist id="bundle-revisions">${(choices ?? []).map(name => html`<option value=${name}></option>`)}</datalist>
         </form>
       </div>
+      ${this._reposError ? html`<p class="message" role="alert">${this._reposError} <button type="button" class="text-action" @click=${() => this.loadRepositories()}>Retry</button></p>` : nothing}
       ${this._refsError ? html`<p class="message" role="status">${this._refsError} <button type="button" class="text-action" @click=${() => this.selectRepository(this._repoId)}>Retry</button></p>` : nothing}
-      <section class="browser" aria-label="Repository files" aria-busy=${this._loading || this._loadingRefs}>
+      <section class="browser" aria-label="Repository files" aria-busy=${this._loadingRepos || this._loading || this._loadingRefs}>
         <div class="browser-head"><nav class="breadcrumbs" aria-label="Repository directory"><button type="button" ?disabled=${!this._commit} aria-current=${ifDefined(this._path ? undefined : 'location')} @click=${() => this.loadDirectory('')}>${repo?.fullName ?? 'Repository'}</button>${parts.map((part, i) => html`<span aria-hidden="true">/</span><button type="button" aria-current=${ifDefined(i === parts.length - 1 ? 'location' : undefined)} @click=${() => this.loadDirectory(parts.slice(0, i + 1).join('/'))}>${part}</button>`)}</nav>${this._commit ? html`<code title=${this._commit}>${this._commit.slice(0, 7)}</code>` : nothing}</div>
         <div class="file-browser">
-          ${this._loading || this._loadingRefs ? html`<p class="empty" role="status">${this._loadingRefs ? 'Loading revisions…' : 'Loading files…'}</p>`
+          ${this._loadingRepos || this._loading || this._loadingRefs ? html`<p class="empty" role="status">${this._loadingRepos ? 'Loading repositories…' : this._loadingRefs ? 'Loading revisions…' : 'Loading files…'}</p>`
             : this._error ? html`<p class="empty error" role="alert">${this._error} <button type="button" class="text-action" @click=${() => this.loadDirectory(this._path)}>Retry</button></p>`
-              : this._entries == null ? html`<p class="empty">${repo ? 'Choose a revision to browse its files.' : this.repos.length > 0 ? 'Select a repository to browse its files.' : 'No connected repositories available.'}</p>`
+              : this._entries == null ? html`<p class="empty">${repo ? 'Choose a revision to browse its files.' : this._repos.length > 0 ? 'Select a repository to browse its files.' : 'No accessible repositories available.'}</p>`
                 : this._entries.length === 0 ? html`<p class="empty">This directory is empty.</p>`
                   : html`<div class="file-grid">${this._entries.map(entry => entry.type === 'dir'
                     ? html`<button type="button" class="file-tile directory" title=${entry.path} @click=${() => this.loadDirectory(entry.path)}>${sourceFolderIcon}<span>${entry.name}</span><span class="arrow" aria-hidden="true">›</span></button>`

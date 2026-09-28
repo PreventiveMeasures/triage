@@ -7,6 +7,45 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
+test('the creation picker loads verified repositories and never selects a filtered-out initial repository', async t => {
+  const calls = []
+  const allowed = { repoId: 2, fullName: 'org/allowed' }
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url, 'https://test.invalid').pathname
+    calls.push(path)
+    return Promise.resolve(Response.json(path.endsWith('/browsable') ? { repos: [allowed] }
+      : path.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main'], tags: [] } : { commit, entries }))
+  })
+  const page = new ManagedCreateBundle()
+  page.initialRepoId = 1
+  assert.deepEqual(page._repos, [])
+  await page.loadRepositories()
+  assert.deepEqual(page._repos, [allowed])
+  assert.equal(page._repoId, null)
+  assert.deepEqual(calls, ['/api/admin/repositories/browsable'])
+  page.initialRepoId = 2
+  await page.loadRepositories()
+  await setImmediate()
+  assert.equal(page._repoId, 2)
+  assert.deepEqual(page._entries, entries)
+})
+
+test('failed or cancelled repository authorization does not expose stale picker options', async t => {
+  const page = new ManagedCreateBundle()
+  page._repos = [{ repoId: 1, fullName: 'org/stale' }]
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({}, { status: 502 })))
+  await page.loadRepositories()
+  assert.deepEqual(page._repos, [])
+  assert.match(page._reposError, /verify repository access/u)
+  let finish
+  t.mock.method(globalThis, 'fetch', () => new Promise(resolve => { finish = resolve }))
+  const loading = page.loadRepositories()
+  page.disconnectedCallback()
+  finish(Response.json({ repos: [{ repoId: 1, fullName: 'org/stale' }] }))
+  await loading
+  assert.deepEqual(page._repos, [])
+})
+
 test('selecting a repository browses its default branch and revision selections browse automatically', async t => {
   const calls = []
   t.mock.method(globalThis, 'fetch', url => {

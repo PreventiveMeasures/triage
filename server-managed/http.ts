@@ -23,7 +23,7 @@
 //   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
 //   GET /api/admin/repositories/impact → admin attached data summary
-//   GET /api/admin/repositories/{refs,contents} → admin|manage scoped source browsing
+//   GET /api/admin/repositories/{browsable,refs,contents} → admin|manage + GitHub read access
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
 //   GET  /api/admin/reports      → admin|manage list of uploaded reports | 401/403
 //   POST /api/admin/reports      → admin|manage uploads a report (raw body) | 401/403/413
@@ -99,6 +99,7 @@ const ADMIN_HISTORY_PATH = '/api/admin/history'
 const ADMIN_SCAN_MODELS_PATH = '/api/admin/scan/models'
 const SET_ROLE_PATH = '/api/admin/set-role'
 const ADMIN_REPOS_PATH = '/api/admin/repositories'
+const BROWSABLE_REPOS_PATH = '/api/admin/repositories/browsable'
 const REPO_REFS_PATH = '/api/admin/repositories/refs'
 const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
@@ -929,6 +930,43 @@ async function bundleRepos(deps: ManagedHttpDeps, user: StoredUser) {
   return repos.filter((_, index) => allowed[index])
 }
 
+async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
+  const [githubUserId, token] = await Promise.all([
+    deps.db.getUserGithubId(userId), ensureUserAccessToken(deps.config, deps.db, userId, Date.now()),
+  ])
+  return { githubUserId, token }
+}
+
+// The source picker has an additional GitHub gate. Upload/link pickers retain
+// their existing managed-data permissions and do not grant live source access.
+async function handleBrowsableRepositories(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readManageSession(res, deps, cookie)
+  if (!s) return
+  const candidates = await bundleRepos(deps, s.user)
+  const allowed = []
+  try {
+    const user = await repositoryBrowserUser(deps, s.user.id)
+    // Bound GitHub requests; never consult repositories outside the local gate.
+    for (let i = 0; i < candidates.length; i += 4) {
+      const batch = await Promise.all(candidates.slice(i, i + 4).map(async repo => {
+        try { await repositoryReader(deps.config, repo, user); return repo }
+        catch (err) {
+          if (err instanceof GithubApiError && [401, 404].includes(err.status)) return null
+          throw err
+        }
+      }))
+      allowed.push(...batch.filter(repo => repo !== null))
+    }
+  } catch (err) {
+    if (err instanceof GithubApiError) { sendJson(res, 502, { error: 'repository-access-unavailable' }); return }
+    throw err
+  }
+  const current = await readManageSession(res, deps, cookie)
+  if (!current) return
+  const currentRepos = await bundleRepos(deps, current.user)
+  sendJson(res, 200, { repos: selectableRepos(allowed.filter(repo => currentRepos.some(item => JSON.stringify(item) === JSON.stringify(repo)))) })
+}
+
 // Recheck repository/path grants after upstream reads, before returning names.
 async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams, refs: boolean): Promise<void> {
   const repoId = Number(query.get('repoId'))
@@ -946,15 +984,16 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
     const virtualEntries = scopedDirectory(path, scopes)
     if (!refs && virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
-    return { repo, virtualEntries }
+    return { repo, virtualEntries, user: s.user }
   }
   const access = await authorize()
   if (!access) return
   try {
-    const reader = await repositoryReader(deps.config, access.repo)
+    const reader = await repositoryReader(deps.config, access.repo, await repositoryBrowserUser(deps, access.user.id))
     const commit = refs ? '' : await reader.commit(ref)
     const result = refs ? await reader.refs() : access.virtualEntries
       ? { entries: access.virtualEntries, limited: false } : await reader.directory(path, commit)
+    await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
     if (JSON.stringify(current.repo) !== JSON.stringify(access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
@@ -1928,6 +1967,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REMOVE_REPO_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleRemoveRepository(req, res, deps, cookie); return
+    }
+    if (path === BROWSABLE_REPOS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleBrowsableRepositories(res, deps, cookie); return
     }
     if (path === REPO_REFS_PATH || path === REPO_CONTENTS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }

@@ -1,6 +1,6 @@
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
-import { GithubApiError, githubJson, repoAccessToken } from './github-app.ts'
+import { GithubApiError, githubJson, githubRepoReadPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
 
 export interface RepositoryEntry { name: string; path: string; type: 'dir' | 'file' | 'symlink' | 'submodule' }
 
@@ -13,12 +13,29 @@ export function scopedDirectory(path: string, scopes: (string | null)[]): Reposi
   return [...names].toSorted().map(name => ({ name, path: prefix + name, type: 'dir' }))
 }
 
-export async function repositoryReader(config: ManagedConfig, repo: SelectedRepo, fetchImpl: typeof fetch = globalThis.fetch) {
+export interface RepositoryBrowserUser { githubUserId: number | null; token: string | null }
+
+export async function repositoryReader(config: ManagedConfig, repo: SelectedRepo, user: RepositoryBrowserUser, fetchImpl: typeof fetch = globalThis.fetch) {
   const token = await repoAccessToken(config, repo.installationId, fetchImpl)
-  if (repo.private && !token) throw new GithubApiError(503, 'repository-access-unavailable')
   const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
   const read = (suffix: string) => githubJson(base + suffix, token, fetchImpl)
+  const recheckAccess = async () => {
+    // Stored visibility can be stale (or internal with private=false). Require
+    // current, explicit public visibility or the caller's effective permission.
+    const metadata = await read('') as { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown }
+    if (metadata?.id !== repo.repoId || typeof metadata.full_name !== 'string' || metadata.full_name.toLowerCase() !== repo.fullName.toLowerCase()) {
+      throw new GithubApiError(404, 'no-repository')
+    }
+    if (metadata.private === false && metadata.visibility === 'public') return
+    if (!token || !user.token || user.githubUserId == null) throw new GithubApiError(404, 'no-repository')
+    const identity = await githubUserIdentity(user.token, fetchImpl)
+    if (identity.id !== user.githubUserId || !(await githubRepoReadPermission(repo.fullName, token, identity, fetchImpl))) {
+      throw new GithubApiError(404, 'no-repository')
+    }
+  }
+  await recheckAccess()
   return {
+    recheckAccess,
     async refs() {
       // Suggestions are bounded; the input also accepts any branch or tag name.
       const results = await Promise.all(['branches', 'tags'].map(async kind => {
