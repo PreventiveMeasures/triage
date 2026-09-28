@@ -18,7 +18,6 @@
 .revision input:focus-visible { outline: none; }
 .revision-switch {
   display: flex; flex: none; align-self: stretch; padding: 2px; gap: 2px;
-  border-right: 1px solid var(--border);
 }
 .revision-switch button {
   display: grid; place-items: center; width: 1.8rem; padding: 0; border: 0; border-radius: 3px;
