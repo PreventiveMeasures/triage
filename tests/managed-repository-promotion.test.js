@@ -165,3 +165,19 @@ test('the final database write independently checks current role, expiry, and co
   assert.equal(await db.connectRepoInstallation({ ...stored, fullName: 'other/repo' }, 17, row.id, Date.now()), false)
   assert.equal((await db.listAllRepos())[0].installationId, null)
 })
+
+test('missing installation does not redirect after the repository connection changes during lookup', async t => {
+  const races = {
+    removal: db => db.deleteRepo(7),
+    replacement: async db => { await db.deleteRepo(7); await db.selectRepo({ ...repository, addedBy: null }, Date.now() + 1000) },
+    rename: db => db.selectRepo({ ...repository, fullName: 'other/repo', addedBy: null }, Date.now()),
+    'another connection': db => db.selectRepo({ ...repository, installationId: 18, addedBy: null }, Date.now()),
+  }
+  for (const [name, beforeLookup] of Object.entries(races)) {
+    await t.test(name, async child => {
+      const { send, calls } = await fixture(child, { github: { status: 404, beforeLookup } })
+      assert.deepEqual(await send(), { status: 409, data: { error: 'repo-connection-changed' } })
+      assert.equal(calls.length, 1)
+    })
+  }
+})

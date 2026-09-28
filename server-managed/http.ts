@@ -548,6 +548,10 @@ async function handleConnectRepositoryApp(req: IncomingMessage, res: ServerRespo
   }
   if (await readAdminSession(res, deps, cookie) == null) return
   if (installationId == null) {
+    const current = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
+    if (current == null || current.fullName !== repo.fullName || current.addedAt !== repo.addedAt || current.installationId != null) {
+      sendJson(res, 409, { error: 'repo-connection-changed' }); return
+    }
     const url = installUrl(deps.config)
     if (url == null) { sendJson(res, 503, { error: 'github-app-not-configured' }); return }
     sendJson(res, 200, { connected: false, installUrl: url }); return
