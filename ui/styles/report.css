@@ -2381,6 +2381,22 @@ body.report-fullscreen {
   background: transparent;
   & code { font: inherit; background: transparent; padding: 0; }
 }
+.bundle-source-link {
+  display: inline;
+  padding: 0; border: 0; border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  white-space: inherit;
+  text-align: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  user-select: text;
+}
+.bundle-source-link:hover { background: var(--surface-active); text-decoration-style: solid; }
+.bundle-source-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 /* Prism token theme. The palette is theme.css's `--code-*` custom
    properties rather than literals: the same colours have to reach the
