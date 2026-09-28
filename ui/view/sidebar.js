@@ -62,7 +62,7 @@ import { openDetachBundleDialog } from './dialogs/detach-bundle-dialog.js'
 import { openDetachReportDialog } from './dialogs/detach-report-dialog.js'
 import { openPersistenceDegradedDialog } from './dialogs/persistence-degraded-dialog.js'
 import { openProxyAuthDialog } from './dialogs/proxy-auth-dialog.js'
-import { FILE_ICONS, displayName, groupOf, isLinksFile } from './file-display.js'
+import { FILE_ICONS, displayName, groupOf, isLinksFile, reportGroup } from './file-display.js'
 import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { parseBundleMetadata } from './bundle-metadata.js'
 import { openBundle, selectBundle } from './bundle-load.js'
@@ -280,7 +280,7 @@ function teamReportTemplate(team, r) {
   const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && ['findings', 'links'].includes(state.currentView)
   return html`<li class=${`file-item indented team-report-item${current ? ' current' : ''}`}>
     <button type="button" class="file-name" data-tooltip=${r.filename} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
-      ${unsafeHTML(FILE_ICONS.default)}<span class="file-label">${r.filename}</span>
+      ${unsafeHTML(FILE_ICONS[reportGroup(r.filename, r.analyzer)])}<span class="file-label">${r.filename}</span>
     </button>
   </li>`
 }

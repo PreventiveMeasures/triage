@@ -24,10 +24,10 @@ async function fixture(t) {
     await db.setTeamRepo(team, repoId, path)
     for (const [role, session] of Object.entries(sessions)) if (role !== 'outsider') await db.setTeamMember(team, session.userId, { dependencies: true, security: true })
   }
-  async function seed(id, { repoId = 1, directory = 'app', visible = true, findings = [{ id: `${id}-finding`, file: 'src/a.js' }] } = {}) {
+  async function seed(id, { repoId = 1, directory = 'app', visible = true, analyzer = null, findings = [{ id: `${id}-finding`, file: 'src/a.js' }] } = {}) {
     const body = Buffer.from(JSON.stringify({ findings }))
     blobs.set(id, body)
-    await db.insertReport({ id, filename: `${id}.json`, contentType: 'application/json', repoId, repoDirectory: directory, visible,
+    await db.insertReport({ id, filename: `${id}.json`, analyzer, contentType: 'application/json', repoId, repoDirectory: directory, visible,
       byteSize: body.length, sha256: body.toString('base64'), uploadedBy: sessions.manage.userId, bundleId: 'bundle', bundleIntegrity: null }, Date.now())
   }
   for (const [id, repoId] of [['bundle', 1], ['foreign-bundle', 2]]) await db.insertBundle({ id, integrity: id, filename: `${id}.map`, kind: 'sourcemap', byteSize: 2, uploadedBy: sessions.manage.userId, uploadedByLogin: 'manage', repoId }, Date.now())
@@ -60,6 +60,17 @@ async function fixture(t) {
   }
   return { db, config, sessions, reads, store, deps, request, mint, seed }
 }
+
+test('public workspace catalogs preserve analyzer metadata without loading report content', async t => {
+  const h = await fixture(t)
+  await h.seed('claude', { analyzer: 'claude-security' })
+  const token = await h.mint()
+  const response = await h.request('/api/teams/team/shared', { token })
+  assert.equal(response.status, 200)
+  assert.equal(response.body.team.reports.find(report => report.id === 'claude').analyzer, 'claude-security')
+  assert.equal(response.body.team.reports.find(report => report.id === 'visible').analyzer, null)
+  assert.deepEqual(h.reads, [])
+})
 
 test('directory team links include bundles at or below their scope and immediately lose moved bundles', async t => {
   const h = await fixture(t), token = await h.mint()

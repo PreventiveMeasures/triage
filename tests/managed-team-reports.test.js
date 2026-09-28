@@ -22,10 +22,10 @@ async function fixture(t) {
     for (const s of Object.values(sessions)) await db.setTeamMember(team, s.userId, { security, dependencies })
   }
   const store = { async get(id) { reads.push(id); await store.afterRead?.(id); return blobs.get(id) } }
-  async function seed(id, data, { directory = 'app', visible = true } = {}) {
-    const body = Buffer.from(JSON.stringify(data))
+  async function seed(id, data, { directory = 'app', visible = true, filename = `${id}.json`, analyzer = null } = {}) {
+    const body = Buffer.from(typeof data === 'string' ? data : JSON.stringify(data))
     blobs.set(id, body)
-    await db.insertReport({ id, filename: `${id}.json`, repoId: 1, repoDirectory: directory, contentType: 'application/json', byteSize: body.length, sha256: body.toString('base64'), uploadedBy: sessions.admin.userId, visible, bundleId: null, bundleIntegrity: null }, Date.now())
+    await db.insertReport({ id, filename, analyzer, repoId: 1, repoDirectory: directory, contentType: 'application/json', byteSize: body.length, sha256: body.toString('base64'), uploadedBy: sessions.admin.userId, visible, bundleId: null, bundleIntegrity: null }, Date.now())
   }
   await seed('a', { findings: [
     { id: 'own', file: 'src/a.js' }, { id: 'other', file: 'src/b.js' },
@@ -60,6 +60,21 @@ async function fixture(t) {
 }
 const ids = report => (report.data.findings ?? report.data.groups).flat().map(f => f.id).toSorted()
 const workspace = (h, team, role) => h.request(`/api/teams/${team}/reports`, role)
+
+test('managed catalogs identify Claude Markdown before loading it, and team navigation serves its findings', async t => {
+  const h = await fixture(t)
+  await h.seed('claude', '# Security finding\n\n---\n**Severity:** high\n', { filename: 'report.md', analyzer: 'claude-security' })
+  const catalog = await h.request('/api/teams')
+  assert.equal(catalog.status, 200)
+  const reports = catalog.body.teams.find(team => team.id === 'broad').reports
+  assert.equal(reports.find(report => report.id === 'claude').analyzer, 'claude-security')
+  assert.equal(reports.find(report => report.id === 'a').analyzer, null)
+  assert.deepEqual(h.reads, [], 'sidebar branding needs no report content fetch')
+  const loaded = (await workspace(h, 'broad')).body.reports.find(report => report.id === 'claude')
+  assert.equal(loaded.filename, 'report.md')
+  assert.equal(loaded.data.source, 'claude-security')
+  assert.equal(loaded.data.findings.length, 1)
+})
 
 test('team workspaces use only their own grants and links; security removes rows before dependencies remove components', async t => {
   const h = await fixture(t)

@@ -70,6 +70,7 @@ test('managed preview triage persists in memory and stays scoped to the requeste
         assert.deepEqual(shown, internal)
         if (report) {
           assert.equal(report.slug, exported.reports.find(entry => entry.id === report.id).slug)
+          assert.equal(report.analyzer, exported.reports.find(entry => entry.id === report.id).analyzer)
           assert.ok(await fetchReport(shown.reportId), 'navigation keeps the report API ID')
         }
       }
@@ -86,8 +87,15 @@ test('managed preview triage persists in memory and stays scoped to the requeste
       const raw = await fetch(`${base}/${report.id}`)
       assert.equal(raw.headers.get('content-type'), 'text/plain; charset=utf-8')
       assert.equal(raw.headers.get('vary'), 'Accept')
-      const rawData = JSON.parse(await raw.text())
-      assert.deepEqual(loaded.data.source === 'links' ? rawData.map(group => group.map(entry => entry.id)) : rawData, loaded.data.source === 'links' ? loaded.data.links : loaded.data)
+      const rawText = await raw.text()
+      if (report.filename === 'report.md') {
+        assert.match(rawText, /^# Markdown security finding/u)
+        assert.equal(loaded.data.source, 'claude-security')
+        assert.match(loaded.data.findings[0].description, /Markdown security finding/u)
+      } else {
+        const rawData = JSON.parse(rawText)
+        assert.deepEqual(loaded.data.source === 'links' ? rawData.map(group => group.map(entry => entry.id)) : rawData, loaded.data.source === 'links' ? loaded.data.links : loaded.data)
+      }
       for (const accept of ['application/json, */*', 'application/json; q=1']) {
         const response = await fetch(`${base}/${report.id}`, { headers: { accept } })
         assert.equal(response.headers.get('cache-control'), 'no-store')
@@ -110,7 +118,7 @@ test('managed preview triage persists in memory and stays scoped to the requeste
   const impactUrl = new URL('/api/admin/repositories/impact?repoId=101', base)
   const impact = await (await fetch(impactUrl)).json()
   assert.equal(impact.repoId, 101)
-  assert.equal(impact.reports.length, 3)
+  assert.equal(impact.reports.length, 4)
   assert.equal(impact.bundles.length, 2)
   assert.equal(impact.triageCount, 1, 'the unattributed fixture comment is part of repository annotations')
   assert.equal((await fetch(new URL('/api/admin/repositories/impact?repoId=999', base))).status, 404)

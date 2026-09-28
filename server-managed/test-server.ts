@@ -121,6 +121,18 @@ const reportFixtures = [
     }),
   },
   {
+    id: 'fixture-report-md', slug: 'fixture-report-md', filename: 'report.md', repoId: 101,
+    repoDirectory: '', repoEmbedded: true, analyzer: 'claude-security', visible: true,
+    uploadedByLogin: 'sam-observer', byteSize: 340, bundleFilename: 'managed-fixtures.stasis',
+    bundleIntegrity: 'sha512-fixture-managed-1',
+    content: [
+      '# Markdown security finding',
+      '', '## Details', 'A Claude Security Markdown report for sidebar navigation.',
+      '', '## Location', '[src/example.js](https://github.com/example/managed-fixtures/blob/main/src/example.js#L12)',
+      '', '---', '**Severity:** high', '**Repository:** example/managed-fixtures',
+    ].join('\n'),
+  },
+  {
     id: 'fixture-report-4', slug: 'fixture-report-4', filename: 'detached-preview.json', repoId: null,
     repoDirectory: '', repoEmbedded: false, analyzer: 'deepsec', visible: false,
     uploadedByLogin: 'alex-security', byteSize: 284, bundleFilename: null,
@@ -174,7 +186,7 @@ const bundles = [
 const teamFixtures = [
   {
     id: 'fixture-team', slug: 'fixture-team', name: 'Security fixtures',
-    reportIds: ['fixture-report-1', 'fixture-report-2', 'fixture-report-3', 'fixture-links'],
+    reportIds: ['fixture-report-1', 'fixture-report-2', 'fixture-report-3', 'fixture-report-md', 'fixture-links'],
     repoLinks: [{ repoId: 101, path: '' }, { repoId: 102, path: 'services/worker' }],
     memberIds: ['fixture-user', 'fixture-alex', 'fixture-riley'],
   },
@@ -201,7 +213,7 @@ function teamReportRefs(team: (typeof teamFixtures)[number]) {
   return team.reportIds
     .map((id) => reportMetadata.find((report) => report.id === id))
     .filter((report): report is (typeof reportMetadata)[number] => report != null)
-    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory }))
+    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, analyzer: report.analyzer, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory }))
 }
 
 const teams = teamFixtures.map((team) => ({
