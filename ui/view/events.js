@@ -5,8 +5,8 @@ import { openManagedIssueDialog } from './client-managed.js'
 import { renderHighlighted } from './render-finding.js'
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, configureRevalidation, handoffBlock, isModule, lineRange } from './format.js'
-import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
+import { commonPrefix, configureRevalidation, evidenceMarkdown, findingUrl, handoffBlock, isModule, lineRange, revalidationShown } from './format.js'
+import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, focusCodeLinkPosition, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
@@ -1266,6 +1266,8 @@ report.addEventListener('click', (e) => {
       void openManagedIssueDialog({ teamId: state.currentManagedTeam, session: { ...state.managedSession },
         context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
         formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
+        finding, draftOptions: { sourceUrl: findingUrl(finding, findingRepoTarget(finding)),
+          evidence: evidenceMarkdown(finding), showRevalidation: revalidationShown() },
         renderBody: renderHighlighted,
       }).catch(() => showToast('Could not open issue creation. Please retry.'))
       return
