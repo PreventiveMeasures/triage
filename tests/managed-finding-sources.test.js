@@ -4,30 +4,34 @@ import { setImmediate } from 'node:timers/promises'
 import { managedAppState } from '../ui/managed/state.js'
 import { clearReportSources, fetchReportSources, readReportSources } from '../ui/managed/report-sources.js'
 import { pushed, stepped } from '../ui/view/focus-code-history.js'
+import { Bundle } from '@exodus/stasis-core/bundle'
+import { highlight } from '../ui/prism.js'
 
-let fullBundleLoads = 0, managed = true
+let fullBundleLoads = 0, localDetails, localIntegrity = 'bundle', managed = true
 const state = { focusCodeTick: 0, focusCodeStack: [], focusCodeAt: 0, bundles: [] }
 mock.module('../client/index.js', { namedExports: {
   state, isManagedUiMode: () => managed,
   bundleFilePath: (_integrity, path) => path,
-  bundlesForFileHash: () => [{ integrity: 'bundle', file: 'src/main.js' }],
+  bundlesForFileHash: () => [{ integrity: localIntegrity, file: 'src/main.js' }],
 } })
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchReportSources, readReportSources } })
 mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails: () => {
   fullBundleLoads++
-  return Promise.resolve({ kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent: ['local source'] } })
+  return Promise.resolve(localDetails)
 } } })
 mock.module('../ui/view/group.js', { namedExports: { activeTabFor: group => group[0] } })
 mock.module('../ui/view/format.js', { namedExports: { lineRange: line => line ? { start: Number(line), end: Number(line) } : null } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: { querySelectorAll: () => [] } } })
-mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath: () => null, highlight: () => Promise.resolve(null) } })
-const { attachedBundle, bundleSource, findingSourcePath, focusCodeHistory, focusCodePosition, getFocusCode } = await import('../ui/view/focus-code.js')
+mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath: () => 'javascript', highlight: (...args) => Promise.resolve(highlight(...args)) } })
+const { attachedBundle, bundleSource, findingSourcePath, focusCodeHistory, focusCodeLinkPosition, focusCodePosition, getFocusCode } = await import('../ui/view/focus-code.js')
 const finding = { _managedReportId: 'report/id', _bundleHashes: ['bundle'], file: 'main.js', line: 1, evidence: [{ file: 'evidence.js' }] }
 const payload = { integrity: 'bundle', files: [['src/main.js', 'main source'], ['src/evidence.js', 'proof source']], paths: [['main.js', 'src/main.js'], ['evidence.js', 'src/evidence.js']] }
 let calls, gate
 beforeEach(t => {
   managed = true; fullBundleLoads = 0; calls = []; gate = null
+  localIntegrity = 'bundle'
+  localDetails = { kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent: ['local source'] } }
   state.focusCodeStack = []; state.focusCodeAt = 0
   managedAppState.reset(); managedAppState.setSession({ id: 'alice', role: 'view' })
   t.mock.method(managedAppState, 'notify', () => {})
@@ -156,6 +160,67 @@ test('local/e2e findings keep their existing full-bundle path', async () => {
   assert.deepEqual(getFocusCode([local]), { loading: true })
   await setImmediate()
   assert.equal(getFocusCode([local]).content, 'local source')
+  assert.equal(fullBundleLoads, 1); assert.equal(calls.length, 0)
+})
+
+test('managed panels highlight only available relative paths and unambiguous recorded imports, with history', async t => {
+  const data = {
+    ...payload,
+    files: [['src/main.js', "const a = './evidence.js'; const b = 'proof'; const c = 'platform'; const d = '../hidden.js';"], ...payload.files.slice(1)],
+    imports: [['src/main.js', [['proof', 'src/evidence.js'], ['platform', null], ['../hidden.js', null]]]],
+  }
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json(data)))
+  await fetchReportSources(finding._managedReportId)
+  getFocusCode([finding])
+  await setImmediate()
+  const code = getFocusCode([finding])
+  assert.equal((code.highlighted.match(/data-bundle-source-link="src\/evidence.js"/gu) ?? []).length, 2)
+  assert.equal((code.highlighted.match(/data-bundle-source-link=/gu) ?? []).length, 2)
+  state.bundleDetails = { integrity: 'unrelated-bundle' }
+  const pos = focusCodeLinkPosition([finding], 'bundle', 'src/main.js', 'src/evidence.js')
+  assert.deepEqual(pos, { integrity: 'bundle', file: 'src/evidence.js', range: null })
+  assert.equal(focusCodeLinkPosition([finding], 'unrelated-bundle', 'src/main.js', 'src/evidence.js'), null)
+  assert.equal(focusCodeLinkPosition([finding], 'bundle', 'stale.js', 'src/evidence.js'), null)
+  assert.equal(focusCodeLinkPosition([finding], 'bundle', 'src/main.js', 'hidden.js'), null)
+  const next = pushed(focusCodeHistory([finding]), pos)
+  state.focusCodeStack = next.stack; state.focusCodeAt = next.at
+  assert.equal(getFocusCode([finding]).file, 'src/evidence.js')
+  assert.equal(getFocusCode([finding]).range, null)
+  state.focusCodeAt = stepped(state.focusCodeStack, state.focusCodeAt, -1)
+  assert.equal(getFocusCode([finding]).file, 'src/main.js')
+  assert.deepEqual(getFocusCode([finding]).range, { start: 1, end: 1 })
+  state.focusCodeAt = stepped(state.focusCodeStack, state.focusCodeAt, 1)
+  assert.equal(getFocusCode([finding]).file, 'src/evidence.js')
+  assert.equal(fullBundleLoads, 0)
+})
+
+test('local Stasis focus/fullscreen sources retain imports across chained navigation', async () => {
+  managed = false; localIntegrity = 'source-links-local'
+  state.bundles = [{ integrity: localIntegrity, name: 'links.stasis' }]
+  localDetails = { kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files: {
+      'src/main.js': "import x from 'pkg'; const relative = './other.js'; const conflict = 'conflict';",
+      'src/other.js': "export { x } from 'pkg';",
+      'node_modules/pkg/index.js': "const source = '../../src/other.js';",
+    } }]]),
+    imports: new Map([
+      ['node', new Map([['src/main.js', new Map([['pkg', 'node_modules/pkg/index.js'], ['conflict', 'src/other.js']])], ['src/other.js', new Map([['pkg', 'node_modules/pkg/index.js']])]])],
+      ['browser', new Map([['src/main.js', new Map([['pkg', 'node_modules/pkg/index.js'], ['conflict', 'src/main.js']])]])],
+    ]),
+  }) }
+  const local = { file: 'src/main.js', fileHash: 'hash', _bundleHashes: [localIntegrity], line: 1 }
+  getFocusCode([local]); await setImmediate()
+  getFocusCode([local]); await setImmediate()
+  const code = getFocusCode([local])
+  assert.match(code.highlighted, /data-bundle-source-link="node_modules\/pkg\/index.js"/u)
+  assert.match(code.highlighted, /data-bundle-source-link="src\/other.js"/u)
+  assert.equal((code.highlighted.match(/data-bundle-source-link=/gu) ?? []).length, 2)
+  const pos = focusCodeLinkPosition([local], localIntegrity, code.file, 'node_modules/pkg/index.js')
+  const next = pushed(focusCodeHistory([local]), pos)
+  state.focusCodeStack = next.stack; state.focusCodeAt = next.at
+  await setImmediate()
+  assert.match(getFocusCode([local]).highlighted, /data-bundle-source-link="src\/other.js"/u)
+  assert.equal(focusCodeLinkPosition([local], localIntegrity, pos.file, 'src/other.js').file, 'src/other.js')
   assert.equal(fullBundleLoads, 1); assert.equal(calls.length, 0)
 })
 

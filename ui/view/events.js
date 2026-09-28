@@ -8,8 +8,9 @@ import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, isModule, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
-import { focusCodeHistory, revealFocusCodeLines } from './focus-code.js'
+import { focusCodeHistory, focusCodeLinkPosition, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
+import { bundleFileHistory, stepBundleFile, visitBundleFile } from './bundle-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
@@ -253,26 +254,61 @@ function copyWithPulse(el, text) {
   } catch {}
 }
 
-// Bundle source viewer chrome — close (backdrop click on
-// `.bundle-source-overlay` itself, NOT a descendant, or any
-// data-action="bundle-source-close" element such as the × button),
-// side-panel close, and the per-line gutter dots. Shared by the
-// #report delegate (the Code slide renders the viewer inline, and the
-// Search sidebar's × carries the close action) and the overlay-slot
-// listener below (the modal mounts outside #report). Returns true
-// when the click was one of these so the delegate can stop.
+function selectBundleSourceFile(path) {
+  const history = bundleFileHistory(state.bundleCodeHistory, state.bundleDetails?.integrity ?? null, state.bundleSourceFile)
+  state.bundleCodeHistory = visitBundleFile(history, path)
+  state.bundleSourceFile = path
+}
+
+function resetBundleSourceScroll(focus = false) {
+  queueMicrotask(() => {
+    const source = document.querySelector('.bundle-source-code-wrap')
+    if (source) { source.scrollTop = 0; source.scrollLeft = 0 }
+    if (focus) source?.querySelector('.bundle-source-code')?.focus({ preventScroll: true })
+  })
+}
+
+// Source links, file history, close controls, and gutter dots. Shared by
+// #report (Code and finding panels) and the separate source overlay slot.
+// Return true when this delegate handled the click.
 function handleBundleSourceClick(e) {
+  const historyButton = e.target.closest('[data-bundle-code-history]')
+  if (historyButton) {
+    const history = bundleFileHistory(state.bundleCodeHistory, state.bundleDetails?.integrity ?? null, state.bundleSourceFile)
+    const next = stepBundleFile(history, historyButton.dataset.bundleCodeHistory === 'back' ? -1 : 1)
+    const path = next.files[next.at]
+    if (next.at === history.at || !bundleSourcesAsMap(state.bundleDetails).has(path)) return true
+    state.bundleCodeHistory = next
+    state.bundleSourceFile = path
+    state.bundleSourceFindingIdx = null
+    state.bundleCodeSearchMode = 'files'
+    state.bundleCodeSearchQuery = ''
+    renderPreservingScrollOf('.bundle-code-rail-body')
+    revealBundleCodeCurrent()
+    resetBundleSourceScroll()
+    return true
+  }
   const sourceLink = e.target.closest('[data-bundle-source-link]')
   if (sourceLink) {
     const path = sourceLink.dataset.bundleSourceLink
+    const panel = sourceLink.closest('.focus-pane-code')
+    if (panel) {
+      const group = focusedGroupOf(e)
+      const pos = focusCodeLinkPosition(group, panel.dataset.focusCodeIntegrity, panel.dataset.focusCodeFile, path)
+      if (pos) {
+        pushFocusCode(group, pos)
+        queueMicrotask(() => panel.querySelector('.focus-code-source')?.focus({ preventScroll: true }))
+      }
+      return true
+    }
     if (!bundleSourcesAsMap(state.bundleDetails).has(path)) return true
     // Search results can hide a target that doesn't contain the query.
     // Continue following source references in Code, with its file tree visible.
     if (state.currentView === 'bundles' && state.bundleDetailsTab === 'search') {
-      selectBundleTab('code')
+      selectBundleTab('code', { preserveSource: true })
       if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'code')
     }
-    state.bundleSourceFile = path
+    selectBundleSourceFile(path)
     state.bundleSourceFindingIdx = null
     if (state.bundleDetailsTab === 'code') {
       state.bundleCodeSearchMode = 'files'
@@ -280,11 +316,7 @@ function handleBundleSourceClick(e) {
     }
     renderPreservingScrollOf('.bundle-code-rail-body')
     revealBundleCodeCurrent()
-    queueMicrotask(() => {
-      const source = document.querySelector('.bundle-source-code-wrap')
-      if (source) { source.scrollTop = 0; source.scrollLeft = 0 }
-      source?.querySelector('.bundle-source-code')?.focus({ preventScroll: true })
-    })
+    resetBundleSourceScroll(true)
     return true
   }
   if (e.target.classList?.contains('bundle-source-overlay')
@@ -806,7 +838,7 @@ report.addEventListener('click', (e) => {
     const lineAttr = sourceOpen.dataset.bundleViewLine
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     const pathChanged = state.bundleSourceFile !== path
-    state.bundleSourceFile = path
+    selectBundleSourceFile(path)
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
     else if (pathChanged) state.bundleSourceFindingIdx = null
     // Preserve the scroll position of whichever list-style
@@ -1918,7 +1950,9 @@ report.addEventListener('click', (e) => {
   // inside either panel run via their own delegates higher up in
   // this file; what matters here is that neither counts as a click
   // outside the dialog.
-  if (e.target.closest?.('.kanban-detail-modal, .kanban-detail-side')) return
+  // Import navigation can replace the clicked source markup in an earlier
+  // listener. The original event path still identifies this as an inside click.
+  if (pathClosest(e, '.kanban-detail-modal, .kanban-detail-side')) return
   if (getLinksPreview()) { dismissLinksPreview(); return }
   // Click anywhere else while the modal is open → close. With the
   // backdrop set to pointer-events: none, these clicks bubble up
@@ -1971,8 +2005,8 @@ document.addEventListener('keydown', (e) => {
 // to that gid. The handler also scrolls the now-active card into
 // view inside the sidebar so chaining clicks keeps the queue
 // oriented around the cursor.
-// The dedup group whose card a click landed in, read off the card
-// itself (`<finding-card>` stamps `data-gid` on its host).
+// The dedup group whose card or source panel a click landed in, read from
+// the nearest data-gid on the card host or its shared focus workbench.
 //
 // NOT `state.focusGid`: the focus view only writes that on an explicit
 // pick — a sidebar click, an arrow key — and otherwise falls back to
@@ -2004,7 +2038,15 @@ function pushFocusCode(group, pos) {
     state.focusCodeAt = next.at
     render()
   }
+  if (!pos.range) resetFocusCodeScroll()
   revealFocusCodeLines()
+}
+
+function resetFocusCodeScroll() {
+  for (const body of report.querySelectorAll('.focus-code-body')) {
+    body.scrollTop = 0
+    body.scrollLeft = 0
+  }
 }
 
 // The panel references are `role="link"` spans rather than anchors or
@@ -2034,6 +2076,7 @@ function stepFocusCode(direction) {
   if (next === state.focusCodeAt) return
   state.focusCodeAt = next
   render()
+  if (!state.focusCodeStack[next]?.range) resetFocusCodeScroll()
   revealFocusCodeLines()
 }
 

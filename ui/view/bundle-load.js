@@ -100,6 +100,7 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.selectedBundleWorkspace = workspaceId
   state.bundleDetails = null
   state.bundleSourceFile = null
+  state.bundleCodeHistory = null
   state.bundleSourceFindingIdx = null
   state.bundleCodeSearchQuery = ''
   state.bundleCodeSearchMode = 'files'
@@ -114,11 +115,15 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
 
 // Keep shared downloads alive between source tabs, but stop them when the
 // user returns to metadata or closes its source overlay. Parsed bodies stay
-// available for this bundle; only unfinished requests are cancelled.
-export function selectBundleTab(tab) {
-  if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab)) beginViewNavigation()
+// available for this bundle; only unfinished requests are cancelled. Import
+// links keep their source/history when moving from Search into Code.
+export function selectBundleTab(tab, { preserveSource = false } = {}) {
+  if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab, preserveSource ? state.bundleSourceFile : null)) beginViewNavigation()
   state.bundleDetailsTab = tab
-  state.bundleSourceFile = null
+  if (!preserveSource) {
+    state.bundleSourceFile = null
+    state.bundleCodeHistory = null
+  }
   state.bundleSourceFindingIdx = null
 }
 
