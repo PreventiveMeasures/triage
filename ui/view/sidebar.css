@@ -737,7 +737,7 @@ sidebar-delete-current button {
 #manage-status {
   display: inline-grid; place-items: center;
   width: 1.8rem; height: 1.8rem; padding: .25rem;
-  border-color: transparent; color: var(--accent);
+  border-color: transparent; color: var(--muted);
 }
 #manage-status:hover { border-color: transparent; background: rgb(from var(--text) r g b / .07); }
 .auth-login {
