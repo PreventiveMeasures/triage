@@ -51,6 +51,14 @@ export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }
 
+export async function openManagedIssueDialog(props) {
+  const isCurrent = () => state.managedSession?.id === props.session.id
+    && state.managedSession?.csrfToken === props.session.csrfToken && state.currentManagedTeam === props.teamId
+  const managed = await loadManagedBundle()
+  if (!isCurrent()) return null
+  return managed.openManagedIssueDialog({ ...props, isCurrent })
+}
+
 export async function fetchReport(id) {
   return (await loadManagedBundle()).fetchReport(id)
 }

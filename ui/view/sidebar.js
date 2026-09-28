@@ -1905,6 +1905,8 @@ function applyServerInfo(info, { runtime = true } = {}) {
   if (getPublicShare() && info.managed) setLocalMode(false)
   const changed = previousMode !== state.serverMode
   state.managed = info.managed
+  const labelsChanged = state.githubNewIssueLabels !== (info.githubNewIssueLabels ?? '')
+  state.githubNewIssueLabels = info.githubNewIssueLabels ?? ''
   if (runtime) state.deepviewScanServer = info.mode === 'managed' ? null : info.deepviewScanServer ?? null
   refreshScanNavigation()
   setSyncForceDisabled(state.serverMode !== 'e2e')
@@ -1928,6 +1930,7 @@ function applyServerInfo(info, { runtime = true } = {}) {
     }).catch((err) => console.warn('sync: resume failed', err))
   }
   if (changed) renderSidebar()
+  if (labelsChanged) render({ animate: false })
   if (isManagedUiMode()) void refreshManagedSession()
 }
 

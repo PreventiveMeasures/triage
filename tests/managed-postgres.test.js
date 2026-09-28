@@ -529,3 +529,22 @@ test('Postgres migrates bundle locations to root and preserves directory edits o
   try { assert.equal((await reopened.getBundleByIntegrity('hash')).repoDirectory, 'foo/sub') }
   finally { await reopened.close() }
 })
+
+test('Postgres upgrades and retains immutable managed issue references across connections', async t => {
+  const { db, connect } = await database(t)
+  const old = await connect()
+  try { await old.query('DROP TABLE managed_finding_issue') } finally { await old.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  const userId = await upgraded.upsertUser(identity(1), 1)
+  const claim = { findingId: 'finding', repoId: 7, repository: 'o/r', requestId: 'first', createdBy: userId, createdAt: 1 }
+  const results = await Promise.all([upgraded.claimManagedIssue(claim), db.claimManagedIssue({ ...claim, requestId: 'second' })])
+  assert.deepEqual(results, [true, false])
+  assert.equal(await db.finishManagedIssue('finding', 'second', 'https://github.com/o/r/issues/2'), false)
+  assert.equal(await upgraded.finishManagedIssue('finding', 'first', 'https://github.com/o/r/issues/1'), true)
+  assert.equal(await db.finishManagedIssue('finding', 'first', 'https://github.com/o/r/issues/2'), false)
+  await db.releaseManagedIssue('finding', 'first')
+  await upgraded.close()
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.equal((await reopened.getManagedIssue('finding')).issueUrl, 'https://github.com/o/r/issues/1') }
+  finally { await reopened.close() }
+})

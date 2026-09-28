@@ -266,3 +266,10 @@ test('cached combined mode selects managed before startup and fresh discovery ca
     assert.equal(globalThis.location.pathname, path)
   }
 })
+
+test('server advertisements retain GitHub issue label configuration in both modes', () => {
+  for (const mode of ['managed', 'e2e', 'managed+e2e']) {
+    assert.equal(parseServerInfo({ mode, githubNewIssueLabels: 'team, review' }).githubNewIssueLabels, 'team, review')
+    assert.equal(parseServerInfo({ mode, githubNewIssueLabels: 42 }).githubNewIssueLabels, undefined)
+  }
+})

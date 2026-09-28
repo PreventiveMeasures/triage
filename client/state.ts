@@ -215,6 +215,7 @@ export interface State {
   managed: ManagedServerInfo | null
   // Fresh runtime discovery only; never restored from the protocol cache.
   deepviewScanServer: string | null
+  githubNewIssueLabels: string
   // The logged-in managed user (null when logged out / e2e / standalone),
   // populated by the managed session probe (client/managed/session.js).
   managedSession: { id: string; login: string; name: string | null; avatarUrl: string | null; role: string; csrfToken: string | null; publicShare?: boolean } | null
@@ -946,6 +947,7 @@ export const state: State = store<State>({
   serverModeConfig: INITIAL_SERVER_INFO?.mode ?? null,
   serverModeSelection: INITIAL_MODE_SELECTION,
   deepviewScanServer: null,
+  githubNewIssueLabels: INITIAL_SERVER_INFO?.githubNewIssueLabels ?? '',
   localMode: false,
   managed: INITIAL_SERVER_INFO?.managed ?? null,
   // Set for incompatible single-protocol advertisements.

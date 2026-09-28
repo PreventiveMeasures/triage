@@ -4,6 +4,8 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
 import { publicSharePath } from '../../client/managed/public-share.js'
+import { reportRepoGithub } from '../../report/index.js'
+import { newIssueLabels } from '../../common/github-issue-labels.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
@@ -953,18 +955,29 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const linkBtn = findingLinkFor(activeTab)
     ? html`<button type="button" class="mark-link" data-tooltip="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
-  // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's
-  // pre-filled new-issue form for the finding's repo, with the finding
+  // GitHub-issue action — managed users must check for an existing
+  // issue or reservation before reaching creation. Use a button so
+  // modified clicks and native new-tab actions cannot bypass that check.
+  // Other modes keep a plain anchor to GitHub's pre-filled form, with the finding
   // detail (file:line linked to source, description, confidence) as the
   // body. Only rendered when the finding resolves to a github.com repo
   // (issues live on github.com; githubIssueUrl returns null for a
   // gitlab / self-hosted / unknown base), so non-GitHub findings show
   // the group without it. Third in the handoff group:
   // copy | link | issue | claude.
-  const findingRepoId = findingRepo(activeTab)
-  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab) })
+  // Match the server's finding/report target; local package-index inference
+  // is not authoritative for creating a permanent managed issue reference.
+  const findingRepoId = isManagedUiMode()
+    ? reportRepoGithub({ repo: { github: activeTab.repo?.github || activeTab._repoFallback } })
+    : findingRepo(activeTab)
+  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab),
+    labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
+  const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam
+  const issueContent = html`${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}`
   const issueBtn = issueHref
-    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
+    ? managedIssue
+      ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
+      : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${issueContent}</a>`
     : nothing
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code

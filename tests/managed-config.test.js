@@ -128,3 +128,12 @@ test('Vercel requires a managed database URL and Blob credentials', t => {
   process.env.BLOB_READ_WRITE_TOKEN = 'token'
   assert.equal(loadManagedConfig({ combined: true }).neonUrl, process.env.MANAGED_DATABASE_URL)
 })
+
+test('GitHub issue labels are optional and shared by managed/e2e configuration', t => {
+  useEnv(t, auth)
+  assert.equal(loadManagedConfig().githubNewIssueLabels, '')
+  assert.equal(loadConfig().githubNewIssueLabels, '')
+  process.env.GITHUB_NEW_ISSUE_LABELS = 'team,needs-review'
+  assert.equal(loadManagedConfig().githubNewIssueLabels, 'team,needs-review')
+  assert.equal(loadConfig().githubNewIssueLabels, 'team,needs-review')
+})

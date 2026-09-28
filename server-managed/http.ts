@@ -84,6 +84,8 @@ import { acceptsReportMetadata } from './report-response.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { lookupFixes, storedFixUrls } from './github-pulls.ts'
+import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
+import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
 import { sendJson, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
@@ -143,6 +145,29 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
     sendJson(res, 404, { error: 'workspace-changed' }); return
   }
   sendJson(res, 200, { fixes })
+}
+
+async function handleWorkspaceIssue(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps,
+  cookie: string | undefined, teamId: string, query: URLSearchParams): Promise<void> {
+  if (req.method !== 'GET' && req.method !== 'POST') { send405(res, 'GET, POST'); return }
+  const s = req.method === 'GET' ? await readWorkspaceSession(res, deps, cookie) : await checkMutation(req, res, deps, cookie)
+  if (!s) return
+  if (!roleAtLeast(s.user.role, 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
+  let body: unknown = Object.fromEntries(query)
+  if (req.method === 'POST') {
+    try { body = await readJsonBody(req, MAX_ISSUE_BODY_BYTES) }
+    catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  }
+  const context = parseIssueContext(body)
+  const prepared = await prepareGithubIssue(deps.config, deps.db, deps.reportStore, s.session, teamId, context)
+  await prepared.recheck()
+  if (req.method === 'POST' && prepared.mode === 'api') {
+    sendJson(res, 201, await createGithubIssue(prepared, body)); return
+  }
+  sendJson(res, 200, { mode: prepared.mode, labels: prepared.labels,
+    ...(prepared.mode === 'existing' ? { url: prepared.url } : {}),
+    ...(prepared.mode === 'pending' ? { repositoryUrl: prepared.repositoryUrl } : {}),
+    ...(prepared.mode === 'authorize' || prepared.mode === 'permissions' ? { authorizationPath: prepared.authorizationPath } : {}) })
 }
 
 function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['kind'], action: string, context: Pick<ActivityInput, 'repo' | 'reportId' | 'bundleId' | 'report' | 'repoId' | 'repoDirectory'> = {}): Promise<void> {
@@ -1879,7 +1904,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === CONFIG_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const info = deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } }
-      sendJson(res, 200, { ...info, managed: { ...info.managed, ...(config.allowShare ? { allowShare: true } : {}), ...(deps.uploadStore ? { uploadChunkBytes: UPLOAD_CHUNK_BYTES } : {}) } })
+      sendJson(res, 200, { ...info, ...(config.githubNewIssueLabels ? { githubNewIssueLabels: config.githubNewIssueLabels } : {}),
+        managed: { ...info.managed, ...(config.allowShare ? { allowShare: true } : {}), ...(deps.uploadStore ? { uploadChunkBytes: UPLOAD_CHUNK_BYTES } : {}) } })
       return
     }
     // OAuth: start → redirect to GitHub with the CSRF state cookie.
@@ -1894,6 +1920,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === CALLBACK_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       try {
+        if (isIssueOAuthCallback(config, url.searchParams, cookie)) {
+          const s = await readWorkspaceSession(res, deps, cookie)
+          if (!s) return
+          const result = await issueOAuthCallback(config, db, s.session, url.searchParams, cookie)
+          res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
+          res.end(); return
+        }
         const result = await handleCallback(url.searchParams, cookie, { config, db, avatarStore })
         res.writeHead(302, { location: result.location, 'set-cookie': result.setCookies, 'cache-control': 'no-store' })
         res.end()
@@ -1902,6 +1935,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
         else throw err
       }
       return
+    }
+    if (path === ISSUE_LOGIN_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readWorkspaceSession(res, deps, cookie)
+      if (!s) return
+      const result = issueLoginRedirect(config, s.session)
+      res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
+      res.end(); return
     }
     // Who am I?
     if (path === SESSION_PATH) {
@@ -1920,6 +1961,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const managedDataPath = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
       .some(prefix => path === prefix || path.startsWith(prefix + '/'))
     if (managedDataPath && await readWorkspaceSession(res, deps, cookie) == null) return
+    const issueRoute = /^\/api\/teams\/([^/]+)\/issues$/u.exec(path)
+    if (issueRoute) {
+      await handleWorkspaceIssue(req, res, deps, cookie, decodeURIComponent(issueRoute[1]!), url.searchParams); return
+    }
     if (path === '/api/admin/links') {
       if (!config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
       if (method !== 'GET') { send405(res, 'GET'); return }
@@ -2123,7 +2168,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   return (req, res) => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
     const work = route(req, res).catch((err) => {
-      if (err instanceof TeamReportsError && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
+      if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)
       if (res.headersSent) { try { res.destroy() } catch {} }
       else sendJson(res, 500, { error: 'internal' })

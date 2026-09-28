@@ -1195,7 +1195,7 @@ export function handoffBlock(f, repo) {
 // the user typed) can't take this link — returning null there lets the
 // caller hide the button rather than render a dead link. `repo` is the
 // same slug-or-URL the handoff block's `Repo:` line carries.
-export function githubIssueUrl(repo, { title, body } = {}) {
+export function githubIssueUrl(repo, { title, body, labels = [] } = {}) {
   const base = repoBaseUrl(repo)
   if (!base) return null
   let host
@@ -1204,6 +1204,7 @@ export function githubIssueUrl(repo, { title, body } = {}) {
   const params = new URLSearchParams()
   if (title) params.set('title', title)
   if (body) params.set('body', body)
+  if (labels.length > 0) params.set('labels', labels.join(','))
   const qs = params.toString()
   return qs ? `${base}/issues/new?${qs}` : `${base}/issues/new`
 }

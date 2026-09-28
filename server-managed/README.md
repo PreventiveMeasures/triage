@@ -570,3 +570,64 @@ unapproved accounts receive 403 before request bodies or resources are read.
 Public bootstrap, the user's own session status and sign-out remain available.
 The client shows a no-access page and clears previously loaded data when the
 role changes.
+
+## Creating GitHub issues
+
+The finding's **Issue** action in managed mode opens an editable title and
+description, then creates the issue as the signed-in GitHub user after they
+select **Create issue**. The confirmation shows the fetched title, description,
+author, status, number and labels. It uses their server-held user access token, never
+an installation token. Reauthorization, when needed, must return the same GitHub
+account and preserves the existing DeepView session.
+
+Use one GitHub App for sign-in and repository access: `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` are its user-authorization credentials; `GITHUB_APP_ID`,
+`GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_SLUG` are its installation credentials.
+Keep **Account permissions** unset/minimal so login requests no elevated account
+access. Repository **Contents: read** and **Issues: read and write** are approved
+when connecting repositories, not added as login OAuth scopes. Existing
+installations must have their owner approve the Issues permission update; the
+issue dialog offers the installation flow when approval is missing. GitHub App
+permissions are configured on the app, rather than requested as incremental
+OAuth scopes. See [GitHub's permission model](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
+
+API creation is limited to a visible finding in the current team and a repository
+assigned to that team where the app is installed. The target must match the
+finding's declared repository, or the report's managed assignment when the
+finding has no repository; a different repository in the same team is rejected.
+Other repositories, public
+workspace views, and E2E/local mode use GitHub's prefilled issue form. The dialog
+offers that form only when the server selects the repository fallback. No issue
+is posted by signing in, checking authorization, or connecting a repository.
+
+Both forms and API creation request `deepview`, plus `security` for `isSecurity`
+findings, then comma-separated `GITHUB_NEW_ISSUE_LABELS` (optional). Labels are
+trimmed and deduplicated. The API checks every requested label with the acting
+user's token and silently omits names the repository lacks; it never creates
+labels as a side effect. Security labels on the API path are derived from
+the server's team-wide classification, including hidden siblings and links.
+
+`GET /api/teams/:id/issues?reportId=...&findingId=...&repository=owner/repo`
+checks availability. `POST` to the same path takes these fields plus `title`
+and `body`, requires the session's CSRF token, and rechecks current workspace
+access before creating. A lost GitHub response is not retried automatically,
+since the issue may already exist. Explicit preflight failures (for example, a
+failed label lookup) remain retryable by the user. Unknown server failures and
+lost or malformed responses remain uncertain.
+
+The `managed_finding_issue.issue_url` field stores one permanent reference per
+finding ID, shared across reports and teams. No triage, import, or management
+write can replace or clear it. Later Issue clicks open the saved issue, without
+creating another. Reading the reference still requires finding visibility and
+access to its repository through the current team; a matching finding ID alone
+does not reveal another team's repository or issue URL.
+
+An atomic database reservation prevents simultaneous requests, including those
+on different servers, from creating duplicate issues. Definite GitHub rejection
+releases the reservation; ambiguous failures retain it for operator reconciliation
+instead of automatically creating another issue. The reference is saved before
+fetching details, so a failed detail request still returns creation success with
+the saved URL and the submitted content. If the final workspace access check
+fails, the response confirms creation without exposing the issue URL or details;
+the dialog offers a status check instead of another creation. Pending responses
+link to the repository's issue list, never its new-issue form.

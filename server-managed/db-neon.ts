@@ -3,6 +3,7 @@ import { WebSocket } from 'ws'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
 import { MANAGED_SCHEMA } from './db-schema.ts'
 import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
+import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
@@ -56,7 +57,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(WORKSPACE_SHARE_SCHEMA))
       await db.query('INSERT INTO managed_schema_version VALUES (4)')
     }
-    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA))
+    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA))
     await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
     await db.query('ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS attempted_at BIGINT')
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 5')).rows.length === 0) {

@@ -28,6 +28,7 @@ export type Config = {
   password: string | null
   trustProxyEnv: string | undefined
   deepviewScanServer: string | null
+  githubNewIssueLabels?: string
 }
 
 // Parse + range-validate an integer env var, throwing a clear
@@ -207,5 +208,6 @@ export function loadConfig(): Config {
     debug, neonUrl, blobToken, tokenSecret, password,
     trustProxyEnv: env['TRUST_PROXY'],
     deepviewScanServer: configuredScanServer(env['DEEPVIEW_SCAN_SERVER']),
+    githubNewIssueLabels: env['GITHUB_NEW_ISSUE_LABELS'] ?? '',
   }
 }

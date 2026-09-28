@@ -66,7 +66,9 @@ export function parseServerInfo(body: unknown): ServerInfo | null {
     }
   }
   const deepviewScanServer = mode === 'managed' ? null : normalizeScanServer((body as { deepviewScanServer?: unknown }).deepviewScanServer)
-  return { mode, managed, ...(deepviewScanServer ? { deepviewScanServer } : {}) }
+  const labels = (body as { githubNewIssueLabels?: unknown }).githubNewIssueLabels
+  return { mode, managed, ...(deepviewScanServer ? { deepviewScanServer } : {}),
+    ...(typeof labels === 'string' && labels.length <= 4096 ? { githubNewIssueLabels: labels } : {}) }
 }
 
 // Only an explicit 404 confirms a backend-less deployment. Network errors,

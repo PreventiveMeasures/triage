@@ -1,10 +1,6 @@
-// Managed-server boot config, parsed once at startup and
-// failing fast on a missing / invalid required value — the same discipline as
-// server-e2e/config.ts. Auth (GitHub identity + sessions) is required. An
-// optional, SEPARATE GitHub App (id + private key + slug) enables PRIVATE repo
-// listing via installation tokens — kept distinct from the login App so its
-// Contents permission never lands on the login consent. The sync protocol is
-// not parsed here yet.
+// Managed-server boot config. GitHub user authorization establishes identity;
+// optional App installation credentials enable repository access. A single
+// GitHub App can provide both flows, with repository grants at installation.
 import { env } from 'node:process'
 import { databaseUrls } from '../server-common/database-config.ts'
 
@@ -35,15 +31,12 @@ export interface ManagedConfig {
   cookieSecure: boolean
   sessionCookieName: string
   sessionTtlMs: number
-  // Optional SEPARATE GitHub App for PRIVATE repository access — distinct from
-  // the login App above. It carries the Contents: Read permission (so its
-  // consent never touches login) and is read via installation tokens: the id +
-  // PEM private key mint them; the slug builds the "Connect a repository"
-  // install URL. id/key absent → private repos are off (public-only listing);
-  // slug absent → no install link.
+  // Optional installation credentials for the same GitHub App as login.
+  // Repository permissions are approved when connecting repositories.
   githubAppId: string | null
   githubAppPrivateKey: string | null
   githubAppSlug: string | null
+  githubNewIssueLabels?: string
   // Max accepted size (bytes) for an uploaded report on the "Manage reports"
   // page. Reports are findings dumps (JSON / markdown / CSV), small to a few MB.
   maxReportBytes: number
@@ -130,6 +123,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     githubAppId: env['GITHUB_APP_ID'] ?? null,
     githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
+    githubNewIssueLabels: env['GITHUB_NEW_ISSUE_LABELS'] ?? '',
     maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
     maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 104_857_600, 1, 1_073_741_824),
     triageHistoryLimit: intEnv('TRIAGE_HISTORY_LIMIT', 0, 0, 1_000_000_000),
