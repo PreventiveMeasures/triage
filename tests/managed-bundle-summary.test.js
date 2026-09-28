@@ -17,7 +17,7 @@ test('managed catalog counts reach sidebar tooltips and comparison entries witho
   ] })))
   const teams = await probeTeams()
   assert.equal(fetches.mock.callCount(), 1)
-  assert.equal(managedBundleStats(teams[0].bundles[0]), '3 files · 1,234 LoC')
+  assert.equal(managedBundleStats(teams[0].bundles[0]), '2.0 KiB · 3 files · 1,234 LoC')
   const [entry] = managedTeamBundleEntries(teams)
   assert.equal(entry.kind, 'stasis')
   assert.deepEqual(entry.summary, bundle.summary)

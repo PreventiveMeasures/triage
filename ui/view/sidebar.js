@@ -279,7 +279,7 @@ function teamsSectionTemplate() {
 function teamReportTemplate(team, r) {
   const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && ['findings', 'links'].includes(state.currentView)
   return html`<li class=${`file-item indented team-report-item${current ? ' current' : ''}`}>
-    <button type="button" class="file-name" data-tooltip=${r.filename} data-tooltip-repo=${managedRepositoryPath(r) || nothing} @click=${() => void openTeamReport(team, r)}>
+    <button type="button" class="file-name" data-tooltip=${r.filename} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
       ${unsafeHTML(FILE_ICONS.default)}<span class="file-label">${r.filename}</span>
     </button>
   </li>`
@@ -296,7 +296,7 @@ function teamBundleTemplate(team, bundle) {
   const current = state.currentView === 'bundles' && state.currentManagedTeam === team.id && state.bundleDetails?.managedId === bundle.id
   return html`<li class=${`file-item indented team-bundle-item${current ? ' current' : ''}`}>
     <button type="button" class="file-name" data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}
-      data-tooltip-bundle=${bundle.kind || nothing} data-tooltip-stats=${managedBundleStats(bundle) || nothing}>
+      data-tooltip-bundle=${bundle.kind || nothing} data-tooltip-stats=${managedBundleStats(bundle) || nothing} data-tooltip-placement="right-start">
       ${BUNDLE_ICON}<span class="file-label">${bundle.filename}</span>
     </button>
   </li>`
