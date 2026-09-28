@@ -826,20 +826,26 @@ export function renderBundleSourceModal() {
   // bundleSourceFile while it's active and resets it on slide exit
   // (events.js's tab-switch handler).
   if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') return nothing
-  const sources = bundleSourcesAsMap(state.bundleDetails)
+  const details = state.bundleDetails
+  const error = details?.sourceError || details?.error
+  // A cold open has no details yet; a metadata-only open is still fetching
+  // the bodies. Neither tells us whether this file's content was bundled.
+  const loading = !error && (!details || details.metadataOnly === true)
+  const sources = bundleSourcesAsMap(details)
   const content = sources.get(path)
   // Find this file's matched findings (bundle Issues filter: live +
   // in-progress + fixed + ignored, minus invalid / deleted) and bucket
   // by line so the gutter can stamp dots.
   // The map is also passed to the side panel: clicking a dot picks
   // the first finding on that line by default.
-  const { fileFindings, lineFindings } = bundleViewerFindings(state.bundleDetails, path, content)
+  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${renderBundleSourceBar(path)}
-      <div class="bundle-source-body">
-        ${state.bundleDetails?.metadataOnly ? html`<div class="bundles-slide-placeholder">Loading source…</div>`
-          : renderBundleSourceCodeWrap(path, content, state.bundleDetails, fileFindings, lineFindings)}
+      <div class="bundle-source-body" aria-busy=${String(loading)}>
+        ${error ? html`<div class="bundles-slide-placeholder is-error" role="status">Failed to load source: ${error}</div>`
+          : loading ? html`<div class="bundles-slide-placeholder" role="status">Loading source…</div>`
+          : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings)}
       </div>
     </div>
   </div>`
