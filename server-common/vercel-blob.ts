@@ -17,6 +17,7 @@ import type { Buffer } from 'node:buffer'
 
 type VercelBlobBody = Readable | Buffer | string | Blob | ArrayBuffer | ReadableStream<Uint8Array>
 export type VercelBlobSdk = {
+  BlobNotFoundError: new () => Error
   put: (
     pathname: string,
     body: VercelBlobBody,
@@ -83,24 +84,12 @@ export type VercelBlobSdk = {
 }
 
 // Recognise "blob is gone" errors uniformly across read/write/delete
-// paths so callers can treat them as success (delete) or
-// not-found (read). The SDK exposes BlobNotFoundError as a class with
-// `.name === 'BlobNotFoundError'`; checking the name string avoids
-// importing the class at the top level (which would force the optional
-// peer dep to resolve).
-//
-// Class-name check ONLY — the SDK's internal mapper turns every API
-// `not_found` into BlobNotFoundError-by-name, so a bare-404 transport
-// leak doesn't reach here. A broader `/does not exist|\b404\b/` match
-// is DANGEROUS: it also matches BlobStoreNotFoundError's "This store
-// does not exist.", so a config fault (revoked token, deleted store)
-// would silently surface as every-blob-missing across reads/unlinks,
-// masking the fatal misconfiguration. The tight name check lets
-// BlobStoreNotFoundError / other classes propagate as real exceptions.
-export function isNotFound(err: unknown): boolean {
-  if (err == null || typeof err !== 'object') return false
-  const name = (err as { name?: unknown }).name
-  return typeof name === 'string' && name === 'BlobNotFoundError'
+// paths so callers can treat them as success (delete) or not-found (read).
+// SDK error subclasses retain `.name === 'Error'`; identify the missing-blob
+// class from the same lazily loaded SDK instance that performs the request.
+// Store/configuration failures must propagate, never masquerade as cache misses.
+export function isNotFound(err: unknown, sdk: Pick<VercelBlobSdk, 'BlobNotFoundError'>): boolean {
+  return err instanceof sdk.BlobNotFoundError
 }
 
 export async function loadVercelBlobSdk(): Promise<VercelBlobSdk> {

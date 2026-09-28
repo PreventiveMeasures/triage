@@ -14,7 +14,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { UPLOAD_CHUNK_BYTES, putUploadPart, readUpload, validUploadPart } from '../server-managed/uploads.ts'
 
-import { sdkFixture } from './_managed-vercel.js'
+import { BlobStoreNotFoundError, sdkFixture } from './_managed-vercel.js'
 
 test('private managed blobs and avatars survive independent instances without namespace collisions', async () => {
   const { sdk, objects, calls } = sdkFixture()
@@ -36,8 +36,33 @@ test('private managed blobs and avatars survive independent instances without na
   await assert.rejects(b.reportStore.get('../outside'), /Invalid/u)
   await b.reportStore.delete(id)
   assert.equal(await a.reportStore.get(id), null)
-  const outage = await openManagedVercelStorage('secret', { ...sdk, get: () => Promise.reject(Object.assign(new Error('store gone'), { name: 'BlobStoreNotFoundError' })) })
-  await assert.rejects(outage.reportStore.get(id), /store gone/u)
+  const outage = await openManagedVercelStorage('secret', { ...sdk, get: () => Promise.reject(new BlobStoreNotFoundError()) })
+  await assert.rejects(outage.reportStore.get(id), BlobStoreNotFoundError)
+})
+
+test('cache misses recover while Blob store and access failures remain errors', async () => {
+  const { sdk } = sdkFixture(), id = randomUUID()
+  const missing = new sdk.BlobNotFoundError()
+  assert.equal(missing.name, 'Error', 'the real SDK does not set error.name to its class name')
+  const storage = await openManagedVercelStorage('secret', {
+    ...sdk, get: async () => { throw missing }, del: async () => { throw missing },
+  })
+  assert.equal(await storage.cacheStorage.exists(id, 'v2-metadata.json.br'), false)
+  assert.equal(await storage.reportSourcesStorage.exists(`${id}/sources.json.gz`), false)
+  assert.equal(await storage.bundleStore.get(id, 'stasis'), null)
+  await storage.bundleStore.delete(id)
+
+  for (const error of [new BlobStoreNotFoundError(), new Error('Access denied'),
+    Object.assign(new Error('unrelated'), { name: 'BlobNotFoundError' })]) {
+    const failed = await openManagedVercelStorage('secret', {
+      ...sdk, head: async () => { throw error }, get: async () => { throw error }, del: async () => { throw error },
+    })
+    for (const attempt of [() => failed.cacheStorage.exists(id, 'v2-metadata.json.br'),
+      () => failed.reportSourcesStorage.exists(`${id}/sources.json.gz`),
+      () => failed.bundleStore.get(id, 'stasis'), () => failed.bundleStore.delete(id)]) {
+      await assert.rejects(attempt, err => err === error)
+    }
+  }
 })
 
 test('Brotli metadata persists across cold starts while contents use stored bundles directly', async () => {
