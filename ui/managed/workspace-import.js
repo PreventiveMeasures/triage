@@ -171,11 +171,11 @@ export function registerWorkspaceImport(ManagedPage, request) {
           ${plan.team ? html`<p>Team ${plan.team.name} has been created. Retry continues its remaining import steps.</p>` : nothing}
           <label for="import-team">New team name</label><input id="import-team" maxlength="100" .value=${plan.name} ?disabled=${this._busy || !!plan.team} @input=${e => { plan.name = e.target.value; this.requestUpdate() }}>
           <p>${plan.reports.length} reports / links · ${bundleHashes.size} source bundles · ${triageCount} triaged findings</p>
-          <label for="import-repo">Repository for files and source bundles without an existing repository</label>
+          <label for="import-repo">Repository for files and source bundles without an active repository</label>
           <select id="import-repo" .value=${String(this._repo ?? '')} ?disabled=${this._busy || !!plan.team} @change=${e => { this._repo = e.target.value ? Number(e.target.value) : null }}><option value="" ?selected=${this._repo == null}>Choose a repository…</option>${(this._catalog?.repos ?? []).map(repo => html`<option value=${String(repo.repoId)} ?selected=${this._repo === repo.repoId}>${repo.fullName}</option>`)}</select>
-          <p>Declared report repositories and directories are preserved. The new team receives those repository paths; other published reports in the same paths are also visible to that team.</p>
+          <p>Declared report repositories and directories are preserved. Stored reports without an active repository use the selected repository. The new team receives those repository paths; other published reports in the same paths are also visible to that team.</p>
           <ul>${plan.reports.map(report => html`<li>${report.name}<span>${report.github ?? 'Uses selected repository'}${report.embedded && report.repoId == null ? ' — connect this repository first' : ''}</span></li>`)}</ul>
-          ${reusedBundles.length > 0 ? html`<p>Existing source bundles keep their repository locations. The new team also receives access to those directories. Unassigned bundles use the selected repository.</p>
+          ${reusedBundles.length > 0 ? html`<p>Existing source bundles in active repositories keep their locations. The new team also receives access to those directories. Unassigned bundles and bundles in inactive repositories use the selected repository.</p>
             <ul>${reusedBundles.map(bundle => html`<li>${bundle.filename}<span>${bundle.repoFullName ? `${bundle.repoFullName}${bundle.repoDirectory ? `/${bundle.repoDirectory}` : ''}` : 'Uses selected repository'}</span></li>`)}</ul>` : nothing}
           ${missing ? html`<p>${missing} referenced source bundles have no bytes in this export. Reports can use matching bundles already on the server.</p>` : nothing}
           ${triageCount ? html`<fieldset ?disabled=${this._busy || !!plan.team}><legend>Import triage?</legend>

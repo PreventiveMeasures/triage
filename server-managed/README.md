@@ -419,10 +419,28 @@ Detaching or deleting attached content requires access to its current repository
 and directory; assigning it requires access to the destination. Repository
 pickers contain only allowed repositories. Reports without embedded repository
 metadata can use the repository and directory
-controls on the upload page. Bundle deduplication never returns inaccessible
-bundle IDs or names, and manager uploads only auto-link owned or team-accessible
+controls on the upload page. Report and bundle deduplication never return inaccessible
+IDs or names, and manager uploads only auto-link owned or team-accessible
 reports.
 Repository connections, teams, memberships, and user roles are admin-only.
+
+# Repeated imports
+
+Uploading identical report or bundle content reuses its stored ID, even when
+the filename changes. This also applies to workspace imports, retries after a
+lost response, and concurrent uploads. A reused upload returns HTTP 200 with
+`deduped: true`; new uploads return 201. Reports retain their existing filename,
+repository assignment, publication state, and source-bundle link. CSV parsing
+must also agree, so an earlier unrecognized upload cannot hide a valid CSV report.
+
+Workspace imports grant the new team access through the stored active repository
+and directory, assign unattached content when needed, and publish the reports.
+Non-embedded reports and bundles assigned to inactive repositories are moved to
+the import's selected active repository, preserving their IDs and stored bytes.
+Reports with embedded repository metadata still require that repository to be active.
+Triage remains shared by finding ID and follows the usual import conflict dialog.
+Existing duplicate report rows are preserved; subsequent imports reuse the oldest
+matching record without creating another copy.
 
 # User timestamps
 
