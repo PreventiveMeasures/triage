@@ -23,7 +23,7 @@
 // the hovered element's right edge, vertically centered — for the
 // sidebar, whose left-pinned rows leave the main-content gutter free.
 
-import { GITHUB_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG } from './icons.js'
 
 let tipEl
 function ensureEl() {
@@ -50,6 +50,8 @@ function raise(node) {
 let currentTarget = null
 let currentText = ''
 let currentRepo = ''
+let currentBundle = ''
+let currentStats = ''
 let showTimer = null
 
 // Last known cursor position — captured by the passive mousemove
@@ -77,12 +79,14 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const node = ensureEl()
   const text = el.dataset.tooltip ?? ''
   const repo = el.dataset.tooltipRepo ?? ''
+  const bundle = ['stasis', 'sourcemap'].includes(el.dataset.tooltipBundle) ? el.dataset.tooltipBundle : ''
+  const stats = el.dataset.tooltipStats ?? ''
   if (!text) return
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
   // segments. Reuse the visible node in that case instead of hiding and
   // re-showing it for every child.
-  if (currentTarget === el && currentText === text && currentRepo === repo) return
+  if (currentTarget === el && currentText === text && currentRepo === repo && currentBundle === bundle && currentStats === stats) return
   node.textContent = text
   if (repo) {
     const row = document.createElement('div')
@@ -91,6 +95,20 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     row.innerHTML = GITHUB_ICON_SVG
     const label = document.createElement('span')
     label.textContent = repo
+    row.append(label)
+    node.append(row)
+  }
+  if (bundle) {
+    const row = document.createElement('div')
+    row.className = 'tooltip-bundle'
+    if (bundle === 'stasis') {
+      const icon = document.createElement('img')
+      icon.src = './stasis.svg'
+      icon.alt = ''
+      row.append(icon)
+    } else row.innerHTML = BUNDLE_ICON_SVG
+    const label = document.createElement('span')
+    label.textContent = `${bundle === 'stasis' ? 'Stasis' : 'Sourcemap'}${stats ? ` · ${stats}` : ''}`
     row.append(label)
     node.append(row)
   }
@@ -124,6 +142,8 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   currentTarget = el
   currentText = text
   currentRepo = repo
+  currentBundle = bundle
+  currentStats = stats
 }
 
 export function hideTooltip() {

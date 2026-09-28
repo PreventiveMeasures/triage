@@ -7,6 +7,7 @@ import { codeScanFiles, sourceMetrics } from '../ui/scan/metrics.js'
 import { ScanPage } from '../ui/scan/page.js'
 import { bundleOptions } from '../ui/view/bundle-selector.js'
 import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
+import { createBundleSummary } from '../common/bundle-metadata.js'
 
 function resourceBundle() {
   return { integrity: 'sha512-scan-resources', kind: 'stasis', size: 9000, bundle: Bundle.parse(new Bundle({
@@ -23,6 +24,8 @@ function resourceBundle() {
 test('fresh and cached Stasis inventories preserve formats and give identical Code inputs and estimates', async () => {
   const full = resourceBundle()
   const metadata = await createBundleMetadata(full)
+  assert.deepEqual(createBundleSummary(full, metadata), { files: 3, codeFiles: 2, lines: 1 })
+  assert.deepEqual(createBundleSummary(resourceBundle()), { files: 3, codeFiles: 2, lines: 1 }, 'summary backfills need no file hashes or full metadata')
   const cached = parseBundleMetadata(JSON.parse(JSON.stringify(metadata)), full.integrity)
   const entry = storedScanSource([{ name: 'resources.stasis', integrity: full.integrity }]).bundles[0]
   const inventories = [full, cached].map(details => storedScanBundle(entry, details))

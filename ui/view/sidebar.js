@@ -13,7 +13,7 @@ import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from
 import { managedReportViewChanged } from './managed-report-catalog.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
-import { filterManagedTeams, managedRepositoryPath } from './managed-sidebar.js'
+import { filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -295,7 +295,8 @@ function openTeamReport(team, r) {
 function teamBundleTemplate(team, bundle) {
   const current = state.currentView === 'bundles' && state.currentManagedTeam === team.id && state.bundleDetails?.managedId === bundle.id
   return html`<li class=${`file-item indented team-bundle-item${current ? ' current' : ''}`}>
-    <button type="button" class="file-name" data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}>
+    <button type="button" class="file-name" data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}
+      data-tooltip-bundle=${bundle.kind || nothing} data-tooltip-stats=${managedBundleStats(bundle) || nothing}>
       ${BUNDLE_ICON}<span class="file-label">${bundle.filename}</span>
     </button>
   </li>`
@@ -1174,7 +1175,7 @@ const SIDEBAR_TOOLTIP_OPTIONS = {
   // in the main pane.
   placement: 'right',
   gate: (node) => {
-    if (node.dataset.tooltipRepo) return true
+    if (node.dataset.tooltipRepo || node.dataset.tooltipBundle) return true
     const label = node.querySelector('.file-label')
     if (!label) return true
     const tipText = node.dataset.tooltip ?? ''

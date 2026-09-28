@@ -289,6 +289,7 @@ export interface UserTeamBundle {
   slug: string
   integrity: string
   filename: string
+  kind: string | null
   byteSize: number
   repoDirectory: string
   repoId: number
@@ -745,7 +746,7 @@ function prepareStatements(db: ManagedSql) {
     // team repository scope to appear in that team's sidebar.
     selectUserTeamBundlesStmt: db.prepare(
       `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.slug AS slug, b.integrity AS integrity,
-              b.filename AS filename, b.byte_size AS byteSize, b.repo_id AS repoId, b.repo_directory AS repoDirectory, sr.full_name AS repoFullName, b.uploaded_at
+              b.filename AS filename, b.kind, b.byte_size AS byteSize, b.repo_id AS repoId, b.repo_directory AS repoDirectory, sr.full_name AS repoFullName, b.uploaded_at
          FROM managed_team_user tu
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_bundle b ON b.repo_id = tr.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
@@ -1176,7 +1177,7 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
       for (const b of (await selectUserTeamBundlesStmt.all(userId)) as (UserTeamBundle & { teamId: string })[]) {
         const list = bundlesByTeam.get(b.teamId) ?? []
         list.push({ id: b.id, slug: b.slug, integrity: b.integrity, filename: b.filename,
-          byteSize: b.byteSize, repoId: b.repoId, repoDirectory: b.repoDirectory, repoFullName: b.repoFullName })
+          kind: b.kind, byteSize: b.byteSize, repoId: b.repoId, repoDirectory: b.repoDirectory, repoFullName: b.repoFullName })
         bundlesByTeam.set(b.teamId, list)
       }
       return teams.map((t) => ({

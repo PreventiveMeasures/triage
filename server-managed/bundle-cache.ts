@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
-import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, parseBundleContents } from '../common/bundle-metadata.js'
+import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents } from '../common/bundle-metadata.js'
 import { bundleReasons } from '../common/bundle-reasons.js'
 import { bundlePackageVersions } from '../common/bundle-sources.js'
 import { decodeUtf8 } from '../common/utf8.js'
@@ -14,13 +14,16 @@ import type { OpenedBlob } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
+import { SUMMARY_FILENAME, createBundleSummaryCache } from './bundle-summary-cache.ts'
 
 const decompress = promisify(brotliDecompress)
 const MAX_DECODED_BYTES = 512 * 1024 * 1024
 export const MAX_PACKAGE_INVENTORY_BYTES = 1024 * 1024
 export type BundleCachePart = 'metadata' | 'contents'
+export type BundleCacheRecord = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'kind' | 'byteSize'>
+export interface BundleSummary { files: number; codeFiles: number; lines: number }
 
-export async function readBundleDetails(record: ManagedBundle, store: BundleStore) {
+export async function readBundleDetails(record: BundleCacheRecord, store: BundleStore) {
   const bytes = await store.get(record.id, record.kind)
   if (!bytes) return null
   const decoded = record.kind === 'stasis' || record.kind === 'sourcemap' ? await decompress(bytes, { maxOutputLength: MAX_DECODED_BYTES }) : bytes
@@ -71,30 +74,41 @@ function encodePackageInventory(details: BundleDetails): Buffer {
   return Buffer.from(parts.join(''))
 }
 
+async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
+  const details = await readBundleDetails(record, store)
+  if (!details) throw new Error('Bundle bytes unavailable')
+  const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
+  const body = await encodeBrotli(Buffer.from(JSON.stringify(metadata)))
+  if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')
+  await storage.put(record.id, filename, body)
+  if (record.kind === 'stasis') await storage.put(record.id, packagesFilename, encodePackageInventory(details))
+  const summary = createBundleSummary(details, metadata)
+  await storage.put(record.id, SUMMARY_FILENAME, Buffer.from(JSON.stringify(summary)))
+  // A different instance may have deleted the row while these writes ran.
+  // Reconcile after publishing so its cleanup cannot be undone by us.
+  if (!(await db.getBundle(record.id))) {
+    await storage.delete(record.id)
+    throw new Error('Bundle deleted')
+  }
+  return summary
+}
+
 export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
   const pending = new Map<string, Promise<void>>()
-  let queue = Promise.resolve()
-  async function build(record: ManagedBundle) {
+  // The database deduplicates by integrity, so each hash has one persistent
+  // bundle/cache directory, shared across teams and repeated uploads.
+  const summaries = createBundleSummaryCache(storage, async record => {
     const details = await readBundleDetails(record, store)
     if (!details) throw new Error('Bundle bytes unavailable')
-    const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
-    const body = await encodeBrotli(Buffer.from(JSON.stringify(metadata)))
-    if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')
-    await storage.put(record.id, filename, body)
-    if (record.kind === 'stasis') await storage.put(record.id, packagesFilename, encodePackageInventory(details))
-    // A different instance may have deleted the row while these writes ran.
-    // Reconcile after publishing so its cleanup cannot be undone by us.
-    if (!(await db.getBundle(record.id))) {
-      await storage.delete(record.id)
-      throw new Error('Bundle deleted')
-    }
-  }
-  async function ensure(record: ManagedBundle): Promise<void> {
+    return createBundleSummary(details)
+  }, id => db.getBundle(id))
+  let queue = Promise.resolve()
+  async function ensure(record: BundleCacheRecord): Promise<void> {
     const existing = pending.get(record.id)
     if (existing) return existing
     const job = (async () => {
       if (await storage.exists(record.id, filename) && (record.kind !== 'stasis' || await storage.exists(record.id, packagesFilename))) return
-      const work = queue.then(() => build(record))
+      const work = queue.then(async () => summaries.remember(record, await build(record, storage, db, store)))
       queue = work.catch(() => {})
       await work
     })()
@@ -103,6 +117,9 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
   }
   return {
     prebuild: ensure,
+    summary: summaries.summary,
+    summaryStatus: summaries.summaryStatus,
+    backfillSummaries: summaries.backfill,
     async open(record: ManagedBundle, part: BundleCachePart) {
       if (part === 'contents') {
         if (record.kind !== 'stasis' && record.kind !== 'sourcemap') throw new Error('Unsupported bundle')
@@ -135,6 +152,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       // Call after deleting the row. Waiting prevents an in-flight builder
       // from recreating its files after deletion has completed.
       await pending.get(id)?.catch(() => {})
+      await summaries.forget(id)
       await storage.delete(id)
     },
   }

@@ -23,6 +23,7 @@ const config = {
   githubClientId: 'cid', githubClientSecret: 'secret', oauthCallbackUrl: 'http://localhost/api/oauth/github/callback',
   cookieSecure: false, sessionCookieName: 'sid', sessionTtlMs: 3_600_000,
   maxReportBytes: 10_485_760, maxBundleBytes: 104_857_600,
+  allowShare: true,
 }
 const source = 'export default "private source €😀"\n'
 const stasis = new Bundle({
@@ -96,6 +97,129 @@ async function setup(t) {
     return await db.getBundle(id)
   }
   return { db, store, reportStore, cache, cacheDir, users, send, seed, team, pending, bundleDir: join(dir, 'bundles'), baseUrl: `http://127.0.0.1:${server.address().port}` }
+}
+
+test('catalog summaries reuse one cached count per hash across teams, uploads and cold starts', async t => {
+  const h = await setup(t)
+  const archive = await h.seed({ repoId: 1 }), sourcemap = await h.seed({ kind: 'sourcemap', repoId: 2 })
+  const extraTeam = randomUUID()
+  await h.db.createTeam(extraTeam, 'Second team', Date.now())
+  await h.db.setTeamRepo(extraTeam, 1, '')
+  await h.db.setTeamMember(extraTeam, h.users.viewer.userId, { dependencies: true, security: true })
+  const reads = t.mock.method(h.store, 'get')
+  const coldCatalog = (await h.send('/api/teams', 'viewer')).json()
+  assert.ok(coldCatalog.teams.every(team => team.bundles.every(bundle => bundle.summary === null)))
+  await Promise.all([...h.pending])
+  assert.deepEqual(await readdir(join(h.cacheDir, archive.id)), ['v2-summary.json'], 'backfill does not generate or hash full metadata')
+  const teamCatalog = (await h.send('/api/teams', 'viewer')).json()
+  const listed = teamCatalog.teams.flatMap(team => team.bundles)
+  assert.equal(listed.length, 2)
+  for (const bundle of listed) {
+    assert.equal(bundle.kind, 'stasis')
+    assert.deepEqual(bundle.summary, { files: 3, codeFiles: 2, lines: 2 })
+  }
+  assert.equal(reads.mock.callCount(), 1, 'shared bundles are decoded once')
+  await h.send('/api/admin/bundles')
+  await Promise.all([...h.pending])
+  const admin = (await h.send('/api/admin/bundles')).json().bundles
+  assert.deepEqual(admin.find(bundle => bundle.id === sourcemap.id).summary, { files: 1, codeFiles: 1, lines: 1 })
+  assert.equal(reads.mock.callCount(), 2)
+  const duplicate = await h.send('/api/admin/bundles', 'admin', 'POST', brotliCompressSync(Buffer.from(stasis)), { 'x-bundle-filename': 'renamed.stasis.code.br' })
+  assert.equal(duplicate.json().id, archive.id)
+  await Promise.all([...h.pending])
+  await h.send('/api/teams', 'viewer')
+  await h.send('/api/admin/bundles')
+  assert.equal(reads.mock.callCount(), 3, 'the upload builds full metadata once; repeat catalogs only read counts')
+  const cold = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get() { throw new Error('must use summary cache') } })
+  await writeFile(join(h.cacheDir, archive.id, 'v2-metadata.json.br'), 'summary must not decode the full metadata')
+  assert.deepEqual(await cold.summary(archive), { files: 3, codeFiles: 2, lines: 2 })
+  await h.db.deleteBundle(archive.id)
+  await cold.delete(archive.id)
+  await assert.rejects(readdir(join(h.cacheDir, archive.id)), { code: 'ENOENT' })
+})
+
+test('unavailable bundle summaries do not hide valid catalog entries or fabricate zero counts', async t => {
+  const h = await setup(t)
+  const broken = await h.seed({ repoId: 1, kind: 'sourcemap', bytes: Buffer.from('not json') })
+  const empty = await h.seed({ repoId: 1, kind: 'sourcemap', bytes: Buffer.from('{"version":3,"sources":[],"sourcesContent":[]}') })
+  await h.send('/api/teams', 'viewer')
+  await Promise.all([...h.pending])
+  const bundles = (await h.send('/api/teams', 'viewer')).json().teams[0].bundles
+  assert.equal(bundles.find(bundle => bundle.id === broken.id).summary, null)
+  const retryAt = bundles.find(bundle => bundle.id === broken.id).summaryRetryAt
+  assert.ok(retryAt > Date.now(), 'the client can distinguish retry backoff from pending work')
+  assert.deepEqual(bundles.find(bundle => bundle.id === empty.id).summary, { files: 0, codeFiles: 0, lines: 0 })
+  assert.equal(bundles.find(bundle => bundle.id === empty.id).summaryRetryAt, null)
+  const admin = (await h.send('/api/admin/bundles')).json().bundles
+  assert.equal(admin.find(bundle => bundle.id === broken.id).summaryRetryAt, retryAt)
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', 'POST', '{}')).json()
+  const shared = (await h.send(`/api/teams/${h.team}/shared`, 'viewer', 'GET', undefined, { 'x-deepview-share': share.path.split('.').at(-1) })).json().team.bundles
+  assert.equal(shared.find(bundle => bundle.id === broken.id).summaryRetryAt, retryAt)
+})
+
+test('deleting an unrelated bundle completes and removes bytes while a catalog backfill is stalled', async t => {
+  const h = await setup(t)
+  const blocked = await h.seed({ repoId: 1 }), victim = await h.seed({ kind: 'sourcemap', repoId: 2 })
+  await h.cache.prebuild(victim)
+  const gate = Promise.withResolvers(), get = h.store.get, started = Promise.withResolvers()
+  t.mock.method(h.store, 'get', async (id, kind) => {
+    if (id === blocked.id) { started.resolve(); await gate.promise }
+    return get(id, kind)
+  })
+  let timeout
+  try {
+    await h.send('/api/teams', 'viewer')
+    await started.promise
+    const response = await Promise.race([
+      h.send(`/api/admin/bundles/${victim.id}`, 'admin', 'DELETE'),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('delete waited for another bundle')), 2_000) }),
+    ])
+    assert.equal(response.status, 200)
+    assert.equal(await h.db.getBundle(victim.id), null)
+    assert.equal(await h.store.get(victim.id, victim.kind), null)
+    await assert.rejects(readdir(join(h.cacheDir, victim.id)), { code: 'ENOENT' })
+  } finally { clearTimeout(timeout); gate.resolve(); await Promise.all([...h.pending]) }
+})
+
+test('catalog responses recheck membership and repository scope after cached summary reads', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  const summary = h.cache.summaryStatus
+  let changeAccess = () => h.db.removeTeamMember(h.team, h.users.viewer.userId)
+  t.mock.method(h.cache, 'summaryStatus', async bundle => {
+    const value = await summary(bundle)
+    await changeAccess()
+    return value
+  })
+  assert.deepEqual((await h.send('/api/teams', 'viewer')).json().teams, [])
+  changeAccess = () => h.db.setBundleRepo(record.id, 2, '')
+  assert.deepEqual((await h.send('/api/admin/bundles', 'manager')).json().bundles, [])
+})
+
+for (const catalog of ['teams', 'admin', 'shared']) {
+  test(`${catalog} catalogs respond while a cold summary backfill is stalled`, async t => {
+    const h = await setup(t)
+    await h.seed({ repoId: 1 })
+    const gate = Promise.withResolvers(), started = Promise.withResolvers()
+    const get = h.store.get
+    t.mock.method(h.store, 'get', async (...args) => { started.resolve(); await gate.promise; return get(...args) })
+    let headers = {}
+    if (catalog === 'shared') {
+      const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', 'POST', '{}')).json()
+      headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+    }
+    const path = catalog === 'teams' ? '/api/teams' : catalog === 'admin' ? '/api/admin/bundles' : `/api/teams/${h.team}/shared`
+    let timeout
+    try {
+      const response = await Promise.race([
+        h.send(path, catalog === 'admin' ? 'admin' : 'viewer', 'GET', undefined, headers),
+        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('catalog waited for backfill')), 2_000) }),
+      ])
+      assert.equal(response.status, 200)
+      const data = response.json()
+      assert.equal((data.teams?.[0] ?? data.team ?? data).bundles[0].summary, null)
+      await started.promise
+    } finally { clearTimeout(timeout); gate.resolve(); await Promise.all([...h.pending]) }
+  })
 }
 
 test('bundle locations enforce source and destination scopes on upload, edit, download, and delete', async t => {
@@ -256,7 +380,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br', 'v2-package-versions.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br', 'v2-package-versions.json', 'v2-summary.json'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -313,7 +437,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-package-versions.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-package-versions.json', 'v2-summary.json'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -336,7 +460,7 @@ test('sourcemap uploads retain their identity while storing and serving only Bro
   assert.equal(contents.headers['content-encoding'], 'br')
   assert.deepEqual(contents.bytes, encoded)
   await Promise.allSettled([...h.pending])
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-summary.json'])
   const duplicate = await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)
   assert.equal(duplicate.status, 200)
   assert.equal(duplicate.json().id, id)

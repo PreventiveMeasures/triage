@@ -11,6 +11,7 @@ import { TeamReportsError, loadTeamReports, teamReportVisibility } from './team-
 import { MAX_FINDING_ID, MAX_TRIAGE_HISTORY } from '../common/managed/triage.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
+import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
 import { serveTeamFeed } from './team-feed.ts'
 
@@ -40,6 +41,13 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     if (!current || JSON.stringify(current) !== JSON.stringify(snapshot)) throw new TeamReportsError(404, 'workspace-changed')
   }
   const send = async (body: unknown) => { await recheck(); json(res, 200, body) }
+  const sendTeam = async () => {
+    const summaries = await bundleSummaries(snapshot.team.bundles, deps.bundleCache)
+    await send({ user: snapshot.user, team: { ...snapshot.team,
+      bundles: snapshot.team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })),
+    } })
+    await backfillBundleSummaries(snapshot.team.bundles, deps.bundleCache)
+  }
   const stream = async (stored: OpenedBlob, encoding: string | null, contentType = 'application/json') => {
     try { await recheck() } catch (error) { stored.stream.destroy(); throw error }
     res.writeHead(200, { 'content-type': contentType, 'cache-control': 'private, no-store',
@@ -59,7 +67,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     if (shareRoute[1] !== tokenHash.slice(0, 8) && shareRoute[1] !== snapshot.teamId) {
       json(res, 404, { error: 'no-share' }); return
     }
-    await send({ user: snapshot.user, team: snapshot.team }); return
+    await sendTeam(); return
   }
   if (teamRoute) {
     if (teamRoute[1] !== snapshot.teamId) { json(res, 404, { error: 'no-team' }); return }
@@ -67,7 +75,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
       if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
       await serveTeamFeed(res, deps, snapshot, recheck); return
     }
-    if (teamRoute[2] === 'shared') { await send({ user: snapshot.user, team: snapshot.team }); return }
+    if (teamRoute[2] === 'shared') { await sendTeam(); return }
     await send({ reports: await loadTeamReports(deps.db, deps.reportStore, snapshot) }); return
   }
   if (reportRoute) {
