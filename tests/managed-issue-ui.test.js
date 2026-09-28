@@ -58,27 +58,46 @@ test('managed issue submits the selected, edited sections and uses the same body
 test('opening the managed dialog prepares section defaults before the repository check', t => {
   const dialog = dialogFixture(t)
   dialog.finding = { description: 'Main description', impact: 'Impact details', reproduction: 'Steps' }
+  dialog.draftOptions = { evidence: '**Evidence:**\n1. Source evidence.' }
   t.mock.method(dialog, 'check', redirect => {
     assert.equal(redirect, true)
     assert.match(dialog.body, /Impact details/u)
     assert.doesNotMatch(dialog.body, /Steps/u)
-    assert.deepEqual(dialog.sections.map(s => [s.id, s.selected]), [['impact', true], ['reproduction', false]])
+    assert.deepEqual(dialog.sections.map(s => [s.id, s.selected]), [['impact', true], ['evidence', false], ['reproduction', false]])
   })
   dialog.beforeOpen()
   assert.equal(dialog.check.mock.callCount(), 1)
 })
 
-test('section checkboxes are disabled during access checks, creation and uncertain outcomes', t => {
+test('section checkboxes remain editable during access checks but lock during creation and uncertain outcomes', t => {
   const dialog = dialogFixture(t)
   Object.assign(dialog, createIssueDraft({ impact: 'Impact text', reproduction: 'Steps' }))
   const checkboxes = () => templates(dialog.render()).filter(item => item.strings[0].includes('type="checkbox"'))
   assert.deepEqual(checkboxes().map(item => item.values.slice(0, 2)), [[true, false], [false, false]])
   dialog.busy = true
+  assert.ok(checkboxes().every(item => item.values[1] === false))
+  dialog.creating = true
   assert.ok(checkboxes().every(item => item.values[1] === true))
-  dialog.busy = false; dialog.uncertain = true
+  dialog.creating = false; dialog.busy = false; dialog.uncertain = true
   assert.ok(checkboxes().every(item => item.values[1] === true))
   dialog.uncertain = false; dialog.prepared = { mode: 'pending' }
   assert.ok(checkboxes().every(item => item.values[1] === true))
+})
+
+test('draft edits made while checking access survive the completed check', async t => {
+  const dialog = dialogFixture(t), response = Promise.withResolvers()
+  Object.assign(dialog, createIssueDraft({ description: 'Original description', impact: 'Impact text', reproduction: 'Steps' }))
+  t.mock.method(globalThis, 'fetch', () => response.promise)
+  const check = dialog.check()
+  dialog.title = 'Reviewed title'
+  dialog.editBody(dialog.body.replace('Original description', 'Reviewed description'))
+  dialog.toggleSection('reproduction', true)
+  const body = dialog.body
+  response.resolve(Response.json({ mode: 'api', labels: ['deepview'] }))
+  await check
+  assert.equal(dialog.title, 'Reviewed title')
+  assert.equal(dialog.body, body)
+  assert.equal(dialog.prepared.mode, 'api')
 })
 
 test('managed issue check never posts; confirmation sends edited draft once, with CSRF', async t => {

@@ -3,6 +3,8 @@ import { test } from 'node:test'
 import './_polyfills.js'
 globalThis[Symbol.for('@rray/frontend')] ??= {}
 const { createIssueDraft, editIssueDraft, toggleIssueDraftSection } = await import('../ui/view/dialogs/issue-draft.js')
+const { evidenceMarkdown } = await import('../ui/view/format.js')
+const draftFor = (finding, options = {}) => createIssueDraft(finding, { evidence: evidenceMarkdown(finding), ...options })
 
 const finding = { description: 'An unchecked request reaches storage.', file: 'src/api.js', line: 12, confidence: 8,
   impact: 'Private data can be disclosed.', reproduction: 'Send an unauthenticated request.',
@@ -10,7 +12,7 @@ const finding = { description: 'An unchecked request reaches storage.', file: 's
   recommendation: 'Check ownership before returning data.', confidenceReason: 'The route is reachable.' }
 
 test('issue draft offers populated sections with only impact selected initially', () => {
-  const draft = createIssueDraft(finding, 'https://github.com/o/r')
+  const draft = draftFor(finding, { sourceUrl: 'https://github.com/o/r/blob/HEAD/src/api.js#L12' })
   assert.deepEqual(draft.sections.map(({ label, selected }) => [label, selected]), [
     ['Impact', true], ['Evidence', false], ['Reproduction', false], ['Recommendation', false], ['Confidence reason', false],
   ])
@@ -34,7 +36,7 @@ test('labelled report descriptions expose whole sections, including multiple par
 test('revalidation sections follow the active revalidation layer', () => {
   const f = { ...finding, revalidateVerdict: 'Still present.', revalidateRecommendation: 'Validate ownership.' }
   assert.deepEqual(createIssueDraft(f).sections.slice(-2).map(s => s.label), ['Revalidation verdict', 'Revalidation recommendation'])
-  assert.ok(createIssueDraft(f, undefined, false).sections.every(s => !s.id.startsWith('revalidate')))
+  assert.ok(createIssueDraft(f, { showRevalidation: false }).sections.every(s => !s.id.startsWith('revalidate')))
 })
 
 test('toggling sections preserves edits to the description and section text across repeated toggles', () => {
@@ -60,7 +62,7 @@ test('toggling sections preserves edits to the description and section text acro
 })
 
 test('replacing the whole draft releases section ranges without deleting the new text on a later toggle', () => {
-  let draft = toggleIssueDraftSection(createIssueDraft(finding), 'evidence', true)
+  let draft = toggleIssueDraftSection(draftFor(finding), 'evidence', true)
   draft = editIssueDraft(draft, 'My completely rewritten issue.')
   assert.ok(draft.sections.every(s => !s.selected))
   draft = toggleIssueDraftSection(draft, 'impact', true)

@@ -1,4 +1,4 @@
-import { descriptionSections, evidenceMarkdown, findingUrl, locationLabel, stripExportMarker } from '../format.js'
+import { descriptionSections, locationLabel, stripExportMarker } from '../../../report/index.js'
 
 const FIELDS = [
   ['impact', 'Impact'],
@@ -15,7 +15,9 @@ const FIELD_IDS = new Map([...FIELDS.map(([id, label]) => [sectionKey(label), id
 
 // Keep optional narrative sections separate from the description, including
 // formats that put labelled sections in the description instead of fields.
-export function createIssueDraft(finding, repo, showRevalidation = true) {
+// The caller formats source links and evidence in the main view bundle, keeping
+// its formatting/client imports out of the lazy managed chunk.
+export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevalidation = true } = {}) {
   const blocks = [], content = new Map()
   const add = (id, label, text) => {
     if (!text?.trim()) return
@@ -23,8 +25,8 @@ export function createIssueDraft(finding, repo, showRevalidation = true) {
     if (!section.parts.includes(text.trim())) section.parts.push(text.trim())
     content.set(id, section)
   }
-  const href = findingUrl(finding, repo), location = locationLabel(finding)
-  if (finding.file) blocks.push(`File: ${href ? `[${location}](${href})` : location}`)
+  const location = locationLabel(finding)
+  if (finding.file) blocks.push(`File: ${sourceUrl ? `[${location}](${sourceUrl})` : location}`)
   let current = null
   for (const section of descriptionSections(stripExportMarker(finding.description, finding))) {
     if (section.label !== null) {
@@ -38,7 +40,7 @@ export function createIssueDraft(finding, repo, showRevalidation = true) {
   if (finding.confidence != null) blocks.push(`Confidence: ${finding.confidence}/10`)
   for (const [id, label] of FIELDS) {
     if (id.startsWith('revalidate') && !showRevalidation) { content.delete(id); continue }
-    const text = id === 'evidence' ? evidenceMarkdown(finding).replace(/^\*\*Evidence:\*\*\n/u, '')
+    const text = id === 'evidence' ? evidence.replace(/^\*\*Evidence:\*\*\n/u, '')
       : stripExportMarker(finding[id], finding)
     add(id, label, text)
   }
