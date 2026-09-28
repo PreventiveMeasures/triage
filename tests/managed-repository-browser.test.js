@@ -139,7 +139,7 @@ function githubFixture(t, { publicRepo = false, permission = 'read', identityId 
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     const path = new URL(url).pathname
     calls.push(path)
-    if (path === '/app/installations/7/access_tokens') return Response.json({ token: 'installation-token' })
+    if (path === '/app/installations/7/access_tokens') return Response.json({ token: 'installation-token', expires_at: new Date(Date.now() + 60 * 60_000).toISOString() })
     if (path === '/repos/org/repo') return Response.json(state.metadata)
     if (path === '/user') {
       assert.equal(options.headers.authorization, 'Bearer login-token')
@@ -333,6 +333,49 @@ test('request credentials are isolated by installation and failed token lookups 
   const browser = createRepositoryBrowser(appConfig, anonymous)
   assert.equal((await Promise.all(repos.map(item => browser.reader(item)))).length, 3)
   assert.deepEqual(minted.toSorted(), ['/app/installations/7/access_tokens', '/app/installations/8/access_tokens'])
+})
+
+test('reusing an installation token still rechecks user permissions, public visibility, and managed grants', async t => {
+  const { request, db, userId } = await fixture(t, { selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
+  const { calls, state } = githubFixture(t)
+  const params = { repoId: '1', ref: commit, path: 'src/allowed' }
+  assert.equal((await request(params)).status, 200)
+  assert.equal((await request(params)).status, 200)
+  assert.equal(calls.filter(path => path.endsWith('/access_tokens')).length, 1)
+  assert.equal(calls.filter(path => path === '/user').length, 4, 'identities remain request-local and are rechecked after reading')
+  assert.equal(calls.filter(path => path.includes('/collaborators/')).length, 4)
+  state.permission = 'none'
+  assert.equal((await request(params)).status, 404)
+  state.metadata = publicMetadata
+  assert.equal((await request(params)).status, 200)
+  state.metadata = { ...publicMetadata, private: true, visibility: 'private' }
+  assert.equal((await request(params)).status, 404, 'a cached credential is not cached public visibility')
+  state.permission = 'read'
+  await db.removeTeamMember('team', userId)
+  assert.equal((await request(params)).status, 404)
+  assert.equal(calls.filter(path => path.endsWith('/access_tokens')).length, 1)
+})
+
+test('users share installation credentials without sharing private repository authorization', async () => {
+  let mints = 0
+  const permissions = []
+  const fetch = (url, options) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/access_tokens')) {
+      mints++
+      return Promise.resolve(Response.json({ token: 'shared-installation', expires_at: new Date(Date.now() + 60 * 60_000).toISOString() }))
+    }
+    if (path === '/repos/org/repo') return Promise.resolve(Response.json({ ...publicMetadata, private: true, visibility: 'private' }))
+    if (path === '/user') return Promise.resolve(Response.json(options.headers.authorization === 'Bearer alice' ? { id: 1, login: 'alice' } : { id: 2, login: 'bob' }))
+    permissions.push(path)
+    const alice = path.includes('/alice/')
+    assert.equal(options.headers.authorization, 'Bearer shared-installation')
+    return Promise.resolve(Response.json({ user: { id: alice ? 1 : 2 }, permission: alice ? 'read' : 'none' }))
+  }
+  await createRepositoryBrowser(appConfig, { githubUserId: 1, token: 'alice' }, fetch).reader(privateRepo)
+  await assert.rejects(createRepositoryBrowser(appConfig, { githubUserId: 2, token: 'bob' }, fetch).reader(privateRepo), /no-repository/u)
+  assert.equal(mints, 1)
+  assert.deepEqual(permissions, ['/repos/org/repo/collaborators/alice/permission', '/repos/org/repo/collaborators/bob/permission'])
 })
 
 test('source reads refresh the cached GitHub identity before returning data', async t => {

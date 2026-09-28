@@ -234,6 +234,7 @@ button.repo-row:hover {
 button.repo-row:focus-visible {
   outline-offset: -2px;
 }
+.btn.connect-app { min-height: 1.9rem; padding: .3rem .6rem; font-size: .72rem; }
 .repo-icon {
   width: 1.15rem;
   height: 1.15rem;

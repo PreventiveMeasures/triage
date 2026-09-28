@@ -77,11 +77,11 @@ export function langForTag(tag) {
 // Returns highlighted HTML string when prismjs supports the
 // language; null otherwise (caller renders plain text). Async
 // because the first call may need to download the prism bundle.
-export async function highlight(code, lang) {
+export async function highlight(code, lang, resolveString = null) {
   if (!lang) return null
   try {
     const mod = await loadPrism()
-    return mod.highlight(code, lang)
+    return mod.highlight(code, lang, resolveString)
   } catch {
     return null
   }

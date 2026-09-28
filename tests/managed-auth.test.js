@@ -990,10 +990,10 @@ test('db: bundles — insert/get/list/delete, integrity dedup-key, report link +
 // Shared HTTP harness for the bundle / link / report-triage tests: a handler
 // over in-memory stores + an always-allow origin gate, with raw-body upload +
 // plain send. Pass a reportStore when a fixture needs to seed report bytes.
-function bundleHarness(db, cfg = config, reportStore = fakeBlobStore()) {
+function bundleHarness(db, cfg = config, reportStore = fakeBlobStore(), bundleStore = createBundleStore(fakeBlobStore(), fakeBlobStore())) {
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
-    config: cfg, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),
+    config: cfg, db, avatarStore: fakeAvatarStore(), reportStore, bundleStore,
     originGate: { trustProxy: false, isOriginAllowed: () => true },
     isShuttingDown: () => false, track: (p) => { pending = p },
   })
@@ -1129,6 +1129,175 @@ for (const role of ['view', 'triage', 'admin']) {
     assert.ok(!response.body.includes(managedCsvIds[1]), 'never release the forbidden dependency finding')
   })
 }
+
+test('report uploads reuse identical content, preserving stored metadata and triage', async t => {
+  const f = await managerContentFixture(t)
+  const bytes = JSON.stringify({ findings: [{ id: 'imported-finding', file: 'a.js' }] })
+  const upload = (body, headers = {}) => f.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, body, headers)
+  const first = await upload(bytes, { 'x-report-filename': 'original.json', 'x-repo-id': '7', 'x-repo-directory': 'src' })
+  assert.equal(first.statusCode, 201)
+  const { id } = JSON.parse(first.body)
+  await f.db.setReportVisible(id, true)
+  await f.db.setTriage('imported-finding', { color: 'red' }, f.admin.id, f.admin.login, Date.now())
+  const triage = await f.db.listTriage(['imported-finding'])
+  const stored = await f.db.getReport(id)
+  const count = f.reportStore.map.size
+  for (const headers of [{}, { 'x-report-filename': 'renamed.json', 'x-repo-id': '8', 'x-repo-directory': 'elsewhere' }]) {
+    const retry = await upload(bytes, headers)
+    assert.equal(retry.statusCode, 200)
+    assert.deepEqual(JSON.parse(retry.body), {
+      id, slug: stored.slug, filename: 'original.json', sha256: stored.sha256, byteSize: Buffer.byteLength(bytes),
+      repoId: 7, repoDirectory: 'src', repoEmbedded: false, analyzer: null, visible: true, bundleId: null, deduped: true,
+    })
+    assert.deepEqual(await f.db.getReport(id), stored)
+    assert.equal(f.reportStore.map.size, count)
+    assert.deepEqual(await f.db.listTriage(['imported-finding']), triage)
+  }
+  assert.equal((await upload(bytes.replace('a.js', 'b.js'))).statusCode, 201, 'changed report content gets a new identity')
+  assert.equal((await upload(managedCsv, { 'x-report-filename': 'raw.txt' })).statusCode, 201)
+  const csv = await upload(managedCsv, { 'x-report-filename': 'scan.csv' })
+  assert.equal(csv.statusCode, 201, 'CSV recognition must not be lost to an earlier unrecognized upload')
+  assert.equal(JSON.parse(csv.body).analyzer, 'codex-security')
+  assert.equal((await upload(managedCsv, { 'x-report-filename': 'renamed.csv' })).statusCode, 200)
+})
+
+test('concurrent report uploads retain one row and blob, and discard a failed upload', async t => {
+  const f = await managerContentFixture(t)
+  const originalPut = f.reportStore.put.bind(f.reportStore)
+  let release, writes = 0
+  const ready = new Promise(resolve => { release = resolve })
+  t.mock.method(f.reportStore, 'put', async (id, bytes) => {
+    await originalPut(id, bytes)
+    if (++writes === 2) release()
+    await ready
+  })
+  const other = bundleHarness(f.db, config, f.reportStore)
+  const bytes = JSON.stringify({ findings: [{ id: 'racing-finding' }] })
+  const before = f.reportStore.map.size
+  const replies = await Promise.all([f, other].map(h => h.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, bytes)))
+  assert.deepEqual(replies.map(r => r.statusCode).toSorted(), [200, 201])
+  assert.equal(JSON.parse(replies[0].body).id, JSON.parse(replies[1].body).id)
+  assert.equal(f.reportStore.map.size, before + 1)
+  assert.equal((await f.db.listReports()).filter(r => r.sha256 === JSON.parse(replies[0].body).sha256).length, 1)
+  t.mock.method(f.db, 'insertOrReuseReport', () => { throw new Error('database unavailable') })
+  const failed = await other.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, bytes + ' ')
+  assert.equal(failed.statusCode, 500)
+  assert.equal(f.reportStore.map.size, before + 1, 'failed insertion drops its orphan blob')
+})
+
+test('reimporting a workspace reuses reports and bundles, including renamed copies, and keeps shared triage', async t => {
+  const { prepareWorkspaceImport, runWorkspaceImport } = await import('../client/managed/workspace-import.js')
+  const f = await managerContentFixture(t)
+  const bundleBytes = Buffer.from('{"version":3,"sources":["a.js"],"sourcesContent":["code"],"mappings":""}')
+  const integrity = bundleIntegrity(bundleBytes)
+  const archiveStore = fakeBlobStore(), sourcemapStore = fakeBlobStore()
+  const harness = bundleHarness(f.db, config, f.reportStore, createBundleStore(archiveStore, sourcemapStore))
+  const content = JSON.stringify({ repo: { github: 'o/r', directory: 'src' }, bundleHashes: [integrity], findings: [{ id: 'workspace-finding', file: 'a.js' }] })
+  let loseReportReply = true
+  const api = { async send(path, body, headers) {
+    const response = body === undefined ? await harness.send('GET', path, f.adminCookie)
+      : await harness.upload(path, f.adminCookie, f.adminSess.csrfToken, body instanceof File ? Buffer.from(await body.arrayBuffer()) : JSON.stringify(body), headers)
+    assert.ok(response.statusCode < 300, response.body)
+    if (path === '/api/admin/reports' && loseReportReply) {
+      loseReportReply = false
+      throw new Error('lost upload response')
+    }
+    return JSON.parse(response.body)
+  } }
+  const teams = []
+  let first, firstBundle
+  const before = f.reportStore.map.size
+  for (let i = 0; i < 2; i++) {
+    const plan = await prepareWorkspaceImport({ workspace: { name: `Import ${i}` },
+      reports: [{ name: `report-${i}.json`, content }], triage: { 'workspace-finding': { color: 'red' } },
+      bundles: [integrity], bundleBlobs: [`source-${i}.map`, `renamed-${i}.map`].map(name => ({ name, integrity, data: bundleBytes.toString('base64') })),
+    }, [{ repoId: 7, fullName: 'o/r' }])
+    const options = { api, session: { id: f.admin.id, role: 'admin', csrfToken: f.adminSess.csrfToken }, defaultRepo: i === 0 ? 7 : 8, includeTriage: true }
+    if (i === 0) await assert.rejects(runWorkspaceImport(plan, options), /lost upload response/u)
+    teams.push(await runWorkspaceImport(plan, options))
+    first ??= plan.reports[0].uploaded.id
+    firstBundle ??= plan.bundles[0].uploaded.id
+    assert.equal(plan.reports[0].uploaded.id, first)
+    assert.deepEqual(plan.bundles.map(bundle => bundle.uploaded.id), [firstBundle, firstBundle])
+    assert.equal(plan.reports[0].uploaded.bundleId, firstBundle)
+  }
+  assert.equal(f.reportStore.map.size, before + 1)
+  assert.equal((await f.db.listBundles()).length, 1)
+  assert.equal(sourcemapStore.map.size, 1)
+  assert.equal(archiveStore.map.size, 0)
+  assert.equal((await f.db.getBundle(firstBundle)).filename, 'source-0.map')
+  assert.deepEqual((await f.db.listTriage(['workspace-finding'])).map(row => [row.findingId, row.color]), [['workspace-finding', 'red']])
+  const catalog = await f.db.listTeamsForUser(f.admin.id)
+  for (const team of teams) {
+    const imported = catalog.find(row => row.id === team.id)
+    assert.equal(imported.reports.filter(r => r.id === first).length, 1)
+    assert.deepEqual(imported.bundles.map(b => b.id), [firstBundle])
+    assert.deepEqual((await f.db.listTeams()).find(row => row.id === team.id).repos.map(repo => repo.repoId), [7], 'bundle reuse grants its stored repository, not the new default')
+  }
+})
+
+for (const withBundleBytes of [true, false]) {
+  test(`workspace import reuses content from inactive repositories with ${withBundleBytes ? 'uploaded' : 'reference-only'} bundles`, async t => {
+    const { prepareWorkspaceImport, runWorkspaceImport } = await import('../client/managed/workspace-import.js')
+    const f = await managerContentFixture(t)
+    const sourcemaps = fakeBlobStore()
+    const harness = bundleHarness(f.db, config, f.reportStore, createBundleStore(fakeBlobStore(), sourcemaps))
+    const bundleBytes = Buffer.from('{"version":3,"sources":["a.js"],"sourcesContent":["code"],"mappings":""}')
+    const integrity = bundleIntegrity(bundleBytes)
+    const content = JSON.stringify({ repo: { directory: 'new/path' }, bundleHashes: [integrity], findings: [{ id: 'reassigned-finding', file: 'a.js' }] })
+    const api = { async send(path, body, headers) {
+      const response = body === undefined ? await harness.send('GET', path, f.adminCookie)
+        : await harness.upload(path, f.adminCookie, f.adminSess.csrfToken, body instanceof File ? Buffer.from(await body.arrayBuffer()) : JSON.stringify(body), headers)
+      assert.ok(response.statusCode < 300, response.body)
+      return JSON.parse(response.body)
+    } }
+    const bundle = await api.send('/api/admin/bundles', new File([bundleBytes], 'source.map'),
+      { 'x-bundle-filename': 'source.map', 'x-repo-id': '7', 'x-repo-directory': 'old/path' })
+    const report = await api.send('/api/admin/reports', new File([content], 'report.json'),
+      { 'x-report-filename': 'report.json', 'x-repo-id': '7', 'x-repo-directory': 'old/path' })
+    await f.db.setTriage('reassigned-finding', { color: 'red' }, f.admin.id, f.admin.login, Date.now())
+    const triage = await f.db.listTriage(['reassigned-finding'])
+    const before = f.reportStore.map.size
+    await f.db.deactivateRepo(7)
+    const plan = await prepareWorkspaceImport({ workspace: { name: 'Import inactive content' }, reports: [{ name: 'renamed.json', content }],
+      bundles: [integrity], bundleBlobs: withBundleBytes ? [{ name: 'renamed.map', integrity, data: bundleBytes.toString('base64') }] : [],
+    }, [{ repoId: 8, fullName: 'o/other' }])
+    const team = await runWorkspaceImport(plan, { api, session: { id: f.admin.id, role: 'admin', csrfToken: f.adminSess.csrfToken }, defaultRepo: 8, includeTriage: false })
+    assert.equal(plan.reports[0].uploaded.id, report.id)
+    const storedBundle = await f.db.getBundle(bundle.id), storedReport = await f.db.getReport(report.id)
+    assert.deepEqual([storedReport.repoId, storedReport.repoDirectory, storedReport.visible, storedReport.bundleId], [8, 'new/path', true, bundle.id])
+    assert.deepEqual([storedBundle.repoId, storedBundle.repoDirectory], [8, ''])
+    assert.equal(f.reportStore.map.size, before)
+    assert.equal((await f.db.listBundles()).length, 1)
+    assert.equal(sourcemaps.map.size, 1)
+    assert.deepEqual(await f.db.listTriage(['reassigned-finding']), triage)
+    assert.equal((await f.db.listAllRepos()).find(repo => repo.repoId === 7).active, false, 'import does not reactivate the old repository')
+    const imported = (await f.db.listTeamsForUser(f.admin.id)).find(row => row.id === team.id)
+    assert.equal(imported.reports.filter(row => row.id === report.id).length, 1)
+    assert.deepEqual(imported.bundles.map(row => row.id), [bundle.id])
+  })
+}
+
+test('concurrent bundle uploads keep only one record and stored blob', async t => {
+  const f = await managerContentFixture(t)
+  const archives = fakeBlobStore(), sourcemaps = fakeBlobStore()
+  const store = createBundleStore(archives, sourcemaps)
+  const put = store.put.bind(store)
+  let release, writes = 0
+  const ready = new Promise(resolve => { release = resolve })
+  t.mock.method(store, 'put', async (...args) => {
+    await put(...args)
+    if (++writes === 2) release()
+    await ready
+  })
+  const replies = await Promise.all([0, 1].map(i => bundleHarness(f.db, config, f.reportStore, store)
+    .upload('/api/admin/bundles', f.adminCookie, f.adminSess.csrfToken, '{"sources":[]}', { 'x-bundle-filename': `source-${i}.map` })))
+  assert.deepEqual(replies.map(r => r.statusCode).toSorted(), [200, 201])
+  assert.equal(JSON.parse(replies[0].body).id, JSON.parse(replies[1].body).id)
+  assert.equal((await f.db.listBundles()).length, 1)
+  assert.equal(sourcemaps.map.size, 1)
+  assert.equal(archives.map.size, 0)
+})
 
 test('bundles upload/download/delete: CSRF + role, sha512 dedup, kind, 413/400/404', async () => {
   const db = openSqliteManagedDb(':memory:')
@@ -2461,7 +2630,7 @@ test('manager uploads enforce embedded and explicit repository paths before stor
   assert.equal((await upload(JSON.stringify({ repo: { github: 'o/other', directory: 'src' }, findings: [] }), { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 403, 'headers cannot override embedded private metadata')
   assert.equal((await upload(JSON.stringify({ repo: { github: 'o/r', directory: 'src/app' }, findings: [] }))).statusCode, 201)
   assert.equal((await upload('{}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 201)
-  assert.equal((await upload('{}')).statusCode, 201, 'managers can own unattached uploads')
+  assert.equal((await upload('{"findings":[]}')).statusCode, 201, 'managers can own unattached uploads')
   assert.equal((await f.db.listReports()).length, before + 3)
   await f.db.removeTeamMember(f.team.id, f.frankSess.userId)
   assert.equal((await upload('{}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 403)
@@ -2558,6 +2727,27 @@ test('manager duplicate bundle races do not disclose an inaccessible winner', as
   assert.equal(res.statusCode, 409)
   assert.deepEqual(JSON.parse(res.body), { error: 'bundle-conflict' })
   assert.deepEqual((await f.get('/api/admin/bundles')).bundles, [])
+})
+
+test('manager report reuse cannot disclose another team report, including a concurrent winner', async t => {
+  const f = await managerContentFixture(t)
+  const bytes = JSON.stringify({ findings: [{ id: 'private-finding' }] })
+  await f.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, bytes,
+    { 'x-report-filename': 'private.json', 'x-repo-id': '8' })
+  const before = f.reportStore.map.size
+  const check = async body => {
+    const res = await f.upload('/api/admin/reports', f.cookie, f.frankSess.csrfToken, body, { 'x-repo-id': '7', 'x-repo-directory': 'src' })
+    assert.equal(res.statusCode, 409)
+    assert.deepEqual(JSON.parse(res.body), { error: 'report-conflict' })
+    assert.equal(f.reportStore.map.size, before)
+  }
+  await check(bytes)
+  const insert = f.db.insertOrReuseReport.bind(f.db)
+  t.mock.method(f.db, 'insertOrReuseReport', async (report, now) => {
+    await insert({ ...report, id: 'private-winner', filename: 'secret.json', repoId: 8, uploadedBy: f.admin.id }, now)
+    return insert(report, now)
+  })
+  await check(bytes + ' ')
 })
 
 test('Users Last Activity reflects successful authenticated changes, not reads, rejected requests or no-ops', async (t) => {

@@ -1,6 +1,6 @@
 {
   "name": "@preventive/triage",
-  "version": "1.0.0-alpha.21",
+  "version": "1.0.0-alpha.22",
   "description": "Client & relay server for triaging of automated reports",
   "license": "MIT",
   "author": {
@@ -109,6 +109,7 @@
     "server-managed/db-table-names.ts",
     "server-managed/db.ts",
     "server-managed/github-app.ts",
+    "server-managed/github-errors.ts",
     "server-managed/github-metadata.ts",
     "server-managed/github-issue-oauth.ts",
     "server-managed/github-issues.ts",
@@ -176,6 +177,8 @@
     "common/bundle-reasons.js",
     "common/bundle-sources.d.ts",
     "common/bundle-sources.js",
+    "common/bundle-source-links.d.ts",
+    "common/bundle-source-links.js",
     "common/bundle-stats.js",
     "common/bundle-tabs.js",
     "common/code-language.js",

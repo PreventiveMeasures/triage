@@ -1092,7 +1092,7 @@ function focusCodeLinesTemplate(code) {
         return html`<div class=${classMap(classes)} data-focus-code-line=${ln}>${ln}</div>`
       })}
     </aside>
-    <pre class="focus-code-source"><code>${typeof highlighted === 'string'
+    <pre class="focus-code-source" tabindex="-1" aria-label=${code.file}><code>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
       : content}</code></pre>
   </div>`
@@ -1140,7 +1140,7 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
   // drag itself writes the same property directly on this element
   // rather than re-rendering per pointermove.
   const splitStyle = styleMap({ '--focus-split': String(state.focusSplit) })
-  return html`<div class=${mainClass} style=${splitStyle}>
+  return html`<div class=${mainClass} style=${splitStyle} data-gid=${groupKey(group)}>
       <div class="focus-pane focus-pane-card">
         <div class="focus-card-wrapper">
           ${findingCardPlaceholder(group, false, 'focus', false, popup)}
@@ -1165,7 +1165,7 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
         aria-valuenow=${Math.round(state.focusSplit)}
         data-tooltip="Drag to resize · double-click to reset"
       ></div>
-      <div class="focus-pane focus-pane-code">
+      <div class="focus-pane focus-pane-code" data-focus-code-file=${code.file ?? nothing} data-focus-code-integrity=${code.integrity ?? nothing}>
         ${code.loading
           ? html`<div class="focus-code-empty">Loading source…</div>`
           : html`<header class="focus-code-bar" title=${code.file}>
@@ -1958,6 +1958,9 @@ function renderImpl() {
     if (previous?.id !== state.managedSession?.id || previous?.role !== state.managedSession?.role) slot?.replaceChildren()
     if (slot && !slot.firstElementChild) {
       const el = document.createElement(adminView.tag)
+      const installTooltips = root => installShadowTooltipListener(root, {
+        gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
+      })
       el.localImportSource = createManagedLocalImportSource()
       if (state.currentView === 'manage-import') {
         el.localDeps = managedWorkspaceImportDeps()
@@ -1967,6 +1970,10 @@ function renderImpl() {
       el.session = state.managedSession
       el.allowShare = state.managed?.allowShare === true
       if (state.currentView === 'manage-scans') el.selection = state.scanSelection
+      if (state.currentView === 'manage-bundles') {
+        el.createRepoId = state.bundleCreationRepoId
+        el.installTooltips = installTooltips
+      }
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -1974,13 +1981,13 @@ function renderImpl() {
       // role pickers / repo checkboxes carry `data-tooltip` inside
       // shadow roots the document-level handler can't see, so wire the
       // listener from here instead, on this bundle's instance, once
-      // the element has upgraded and painted.
+      // the element has upgraded and painted. Pass the same installer
+      // to nested pickers: pointer transitions within their shadow root
+      // are trimmed before reaching this outer root.
       void (async () => {
         await customElements.whenDefined(adminView.tag)
         await el.updateComplete
-        installShadowTooltipListener(el.renderRoot, {
-          gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
-        })
+        installTooltips(el.renderRoot)
       })().catch(() => {})
     }
     if (slot?.firstElementChild) {
@@ -1988,6 +1995,7 @@ function renderImpl() {
       slot.firstElementChild.allowShare = state.managed?.allowShare === true
     }
     if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
+    if (state.currentView === 'manage-bundles' && slot?.firstElementChild) slot.firstElementChild.createRepoId = state.bundleCreationRepoId
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = adminView.title

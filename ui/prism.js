@@ -19,6 +19,7 @@
 // php needs markup-templating (which needs markup, above), and
 // php-extras augments php via insertBefore so it must follow php.
 import Prism from 'prismjs/prism.js'
+import { stringifySourceLinks } from './view/prism-source-links.js'
 import 'prismjs/components/prism-markup.js'
 import 'prismjs/components/prism-clike.js'
 import 'prismjs/components/prism-javascript.js'
@@ -49,9 +50,17 @@ Prism.manual = true
 // Returns highlighted HTML for `code` under `lang`, or null when
 // the language isn't loaded. Caller falls back to plain text on
 // null. Prism.highlight does its own escaping of the source, so
-// the returned string is safe to inject via unsafeHTML.
-export function highlight(code, lang) {
+// the returned string is safe to inject via unsafeHTML. Bundle viewers may
+// supply a resolver to turn recognized string tokens into source links.
+export function highlight(code, lang, resolveString = null) {
   const grammar = Prism.languages[lang]
   if (!grammar) return null
+  if (resolveString) {
+    const env = { code, grammar, language: lang }
+    Prism.hooks.run('before-tokenize', env)
+    env.tokens = Prism.tokenize(env.code, env.grammar)
+    Prism.hooks.run('after-tokenize', env)
+    return stringifySourceLinks(env.tokens, env.language, resolveString)
+  }
   return Prism.highlight(code, grammar, lang)
 }

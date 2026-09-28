@@ -16,11 +16,15 @@ import { getPublicShare } from '../../client/managed/public-share.js'
 import { loadManagedBundle } from './client-managed.js'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
+import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourceFileIcon, sourceFolderIcon } from './source-file-icon.js'
+import { sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
+import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
+import { bundleSourceLinkResolver } from './bundle-source-links.js'
+import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -644,11 +648,11 @@ function _topSeverityOf(findings) {
 //
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
 // the gutter. Lines without findings render a plain number.
-function renderBundleSourceLines(content, path, integrity, lineFindings, matchLines = null) {
+function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null) {
   const lineCount = content.split('\n').length
   const digits = String(lineCount).length
   const lang = langForPath(path)
-  const cacheKey = `${integrity ?? ''}\0${path}`
+  const cacheKey = `${details?.integrity ?? ''}\0${path}`
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
   // resolves we set it (string for success, null for "no highlight
@@ -660,7 +664,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings, matchLi
     // result via unsafeHTML. Async IIFE rather than `.then` so
     // the empty `.then` body doesn't trip promise/always-return.
     ;(async () => {
-      const highlightedHtml = await prismHighlight(content, lang)
+      const highlightedHtml = await prismHighlight(content, lang, bundleSourceLinkResolver(details, path))
       _bundleHighlightCache.set(cacheKey, highlightedHtml ?? null)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — Lit only patches what changed, so the cost
@@ -691,7 +695,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings, matchLi
         </div>`
       })}
     </aside>
-    <pre class="bundle-source-code"><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
+    <pre class="bundle-source-code" tabindex="-1" aria-label=${path}><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
       : content}</code></pre>
   </div>`
@@ -799,10 +803,10 @@ function renderBundleSourceBar(path) {
 
 // Code wrap + finding side panel — the viewer body every source
 // surface (modal, Code slide main pane, Search sidebar) renders.
-function renderBundleSourceCodeWrap(path, content, integrity, fileFindings, lineFindings, matchLines = null) {
+function renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines = null) {
   return html`<div class="bundle-source-code-wrap">
         ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, integrity, lineFindings, matchLines)
+          ? renderBundleSourceLines(content, path, details, lineFindings, matchLines)
           : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
       </div>
       ${renderBundleSourceFindingPanel(fileFindings)}`
@@ -822,69 +826,62 @@ export function renderBundleSourceModal() {
   // bundleSourceFile while it's active and resets it on slide exit
   // (events.js's tab-switch handler).
   if (state.bundleDetailsTab === 'code' || state.bundleDetailsTab === 'search') return nothing
-  const sources = bundleSourcesAsMap(state.bundleDetails)
+  const details = state.bundleDetails
+  const error = details?.sourceError || details?.error
+  // A cold open has no details yet; a metadata-only open is still fetching
+  // the bodies. Neither tells us whether this file's content was bundled.
+  const loading = !error && (!details || details.metadataOnly === true)
+  const sources = bundleSourcesAsMap(details)
   const content = sources.get(path)
   // Find this file's matched findings (bundle Issues filter: live +
   // in-progress + fixed + ignored, minus invalid / deleted) and bucket
   // by line so the gutter can stamp dots.
   // The map is also passed to the side panel: clicking a dot picks
   // the first finding on that line by default.
-  const { fileFindings, lineFindings } = bundleViewerFindings(state.bundleDetails, path, content)
+  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${renderBundleSourceBar(path)}
-      <div class="bundle-source-body">
-        ${state.bundleDetails?.metadataOnly ? html`<div class="bundles-slide-placeholder">Loading source…</div>`
-          : renderBundleSourceCodeWrap(path, content, state.bundleDetails?.integrity, fileFindings, lineFindings)}
+      <div class="bundle-source-body" aria-busy=${String(loading)}>
+        ${error ? html`<div class="bundles-slide-placeholder is-error" role="status">Failed to load source: ${error}</div>`
+          : loading ? html`<div class="bundles-slide-placeholder" role="status">Loading source…</div>`
+          : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings)}
       </div>
     </div>
   </div>`
 }
 
-// Build a directory tree from a flat list of paths so the Code
-// slide's left rail can render as nested `<details>` elements.
-// Each tree node is `{ name, files: Map<basename, fullpath>,
-// dirs: Map<dirname, node> }`. Files are placed under their
-// immediate parent; dirs are nested by every '/'-separated
-// segment of the prefix. Returns the root node; callers walk
-// dirs first (sorted), then files (sorted).
-function buildBundleSourceTree(paths) {
-  const root = { name: '', files: new Map(), dirs: new Map() }
-  for (const p of paths) {
-    const parts = p.split('/')
-    let node = root
-    for (let i = 0; i < parts.length - 1; i++) {
-      const seg = parts[i]
-      let child = node.dirs.get(seg)
-      if (!child) {
-        child = { name: seg, files: new Map(), dirs: new Map() }
-        node.dirs.set(seg, child)
-      }
-      node = child
-    }
-    node.files.set(parts.at(-1), p)
-  }
-  return root
-}
-
-// User-driven open/close overrides for the Code slide's tree
-// rail, keyed by full dir path. The default `?open=` formula
-// (root + ancestors of currentPath = open, rest = closed) is
-// what we'd write in a fresh render; this Map records the
-// user's deliberate toggles on top of that, so a filter-typing
-// pass — which forces every dir open via `expandAll` — doesn't
-// erase the user's pre-filter state when the filter clears.
-//
-// Updated only on `<summary>` click, which the browser also
-// dispatches for keyboard activation (Enter / Space). Lit's own
-// `?open=` writes don't fire a click, so they never touch this
-// Map; the toggle event would, which is why we don't listen on
-// that side.
-//
-// Cleared when `state.selectedBundle` changes — paths from one
-// bundle don't carry meaning into another.
+// Remember deliberate expansion separately from search: filtering temporarily
+// opens matching branches without losing the user's unfiltered layout.
+// Keys use the first directory in a compact row, so changing its displayed
+// chain while filtering doesn't change the identity of the disclosure.
 const _bundleTreeUserOpen = new Map()
 let _bundleTreeMapBundle = null
+let _bundleTreeCurrentPath = null
+
+function openBundleTreeAncestors(path, prefix) {
+  const parts = stripPathPrefix(path ?? '', prefix).split('/')
+  for (let i = 1; i < parts.length; i++) _bundleTreeUserOpen.set(parts.slice(0, i).join('/'), true)
+}
+
+function revealBundleTreeFile(path, prefix) {
+  state.bundleCodeSearchMode = 'files'
+  state.bundleCodeSearchQuery = ''
+  openBundleTreeAncestors(path, prefix)
+  render()
+  revealBundleCodeCurrent()
+}
+
+function collapseBundleTree(tree) {
+  const walk = (node) => {
+    for (const child of node.dirs.values()) {
+      _bundleTreeUserOpen.set(child.path, false)
+      walk(child)
+    }
+  }
+  walk(tree)
+  render()
+}
 
 // Aggregate issue count + worst severity across every file under a
 // dir node — the rollup chip a directory row shows so issue
@@ -913,10 +910,10 @@ function dirIssueStats(node, issueIndex) {
 // Recursive directory + file rendering for the Code slide's tree
 // rail. Open the first level by default; deeper levels collapse
 // so the user can drill in. Selected file gets a `current` class
-// for the highlight strip; the click target is the data-bundle-
+// for its background; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '', expandAll = false) {
-  const dirs = [...node.dirs.entries()].toSorted(([a], [b]) => a.localeCompare(b))
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false) {
+  const dirs = [...node.dirs.entries()].toSorted(([a, an], [b, bn]) => sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path))
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
   // the tree spotlights it on slide-open.
@@ -926,55 +923,45 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
     for (const d of n.dirs.values()) if (containsCurrent(d)) return true
     return false
   }
-  // `repeat` keyed by the dir / file path so Lit reuses existing
-  // `<details>` when the user types in the search box and the
-  // filtered tree rebuilds. The `?open=` formula layers three
-  // signals:
-  //   1. `expandAll` (filter-active) wins — the user typed a
-  //      filter and expects to see every match, even ones in
-  //      dirs they had previously closed.
-  //   2. The user's explicit toggles — captured below by the
-  //      `<summary>` click handler — win over the default. This
-  //      is what restores the pre-filter tree state when the
-  //      user clears the search box: dirs the user had open
-  //      stay open, dirs they hadn't touched go back to default.
-  //   3. The default — root open, ancestors of currentPath open,
-  //      everything else closed.
-  // Lit's part-cache short-circuits when the computed value
-  // matches the last committed one, so renders that don't change
-  // anyone's effective state issue zero attribute writes.
+  // Search opens every matching branch. Otherwise preserve manual toggles,
+  // defaulting to the first level and ancestors of the selected source.
+  // live(.open) also reconciles native summary toggles on the next render.
   const computeOpen = (childPath, child) => {
     if (expandAll) return true
     if (_bundleTreeUserOpen.has(childPath)) return _bundleTreeUserOpen.get(childPath)
     return depth === 0 || containsCurrent(child)
   }
-  // Click on `<summary>` toggles the parent `<details>`; the
-  // browser fires a click for both mouse and keyboard activation
-  // (Enter / Space on a focused summary). Record the upcoming
-  // open state — the click handler runs before the default
-  // action, so `parentElement.open` is the OLD value here. A
-  // separate `@toggle` listener would also catch Lit's own
-  // attribute writes (expandAll renders), which we explicitly
-  // do NOT want to record; clicks side-step that entirely.
+  // Click precedes the browser's native toggle, including Enter/Space.
+  // Listening to toggle would also record programmatic search expansion.
   const onSummaryClick = (childPath) => (e) => {
     _bundleTreeUserOpen.set(childPath, !e.currentTarget.parentElement.open)
   }
-  return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}>
-    ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
-      const childPath = parentPath ? `${parentPath}/${name}` : name
+  return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}
+    aria-label=${depth === 0 ? 'Source files' : nothing}
+    @keydown=${depth === 0 ? navigateBundleSourceTree : nothing}
+  >
+    ${repeat(dirs, ([, child]) => child.path, ([name, child]) => {
+      const childPath = child.path
+      const compact = compactSourceDirectory(name, child, depth)
+      const pkg = child.package
+      const tooltip = pkg?.variant ? `Variant ${pkg.variant}\n${compact.node.sourcePath}` : compact.node.sourcePath
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
       // where the issues live (the per-file chips only help once
       // it's expanded).
       const stats = dirIssueStats(child, issueIndex)
       return html`<li class="bundle-code-tree-dir">
-        <details ?open=${computeOpen(childPath, child)}>
-          <summary @click=${onSummaryClick(childPath)}>
-            ${sourceFolderIcon}
-            <span class="bundle-code-tree-dirname">${name}</span>
+        <details .open=${live(computeOpen(childPath, child))}>
+          <summary @click=${onSummaryClick(childPath)} data-tooltip=${tooltip}>
+            <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
+            ${pkg ? sourceNpmIcon : nothing}
+            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg })}>
+              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">@${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
+            </span>
+            ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
           </summary>
-          ${renderBundleSourceTree(child, currentPath, depth + 1, issueIndex, childPath, expandAll)}
+          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll)}
         </details>
       </li>`
     })}
@@ -990,6 +977,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
           type="button"
           class=${classMap({ 'bundle-code-tree-link': true, current: full === currentPath })}
           data-bundle-view-source=${full}
+          aria-current=${full === currentPath ? 'true' : nothing}
           data-tooltip=${full}
         >
           ${sourceFileIcon(name)}<span class="bundle-code-tree-name">${name}</span>
@@ -1009,65 +997,19 @@ function stripPathPrefix(p, prefix) {
   return prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
 }
 
-// Build the Code rail's tree from prefix-STRIPPED paths (so the
-// visual hierarchy doesn't waste rows on a shared root prefix) while
-// keeping the ORIGINAL path as each leaf's value, so the tree-link
-// buttons can hand it to `data-bundle-view-source` directly and
-// `sources.get` resolves. `stripped` and `orig` are parallel arrays.
-function buildRemappedBundleSourceTree(stripped, orig) {
-  const strippedToOrig = new Map()
-  for (let i = 0; i < orig.length; i++) strippedToOrig.set(stripped[i], orig[i])
-  const tree = buildBundleSourceTree(stripped)
-  const remap = (n) => {
-    const remappedFiles = new Map()
-    for (const [name, p] of n.files) remappedFiles.set(name, strippedToOrig.get(p) ?? p)
-    n.files = remappedFiles
-    for (const d of n.dirs.values()) remap(d)
-  }
-  remap(tree)
-  return tree
-}
-
-// Files-mode result pane — the directory tree, optionally
-// filtered to paths matching `query` (case-insensitive
-// substring on the prefix-stripped path the user actually sees
-// in the rail). Empty query renders the full tree. The filtered
-// tree is rebuilt from scratch (rather than hiding nodes) so the
-// auto-open `containsCurrent` logic in renderBundleSourceTree
-// falls out naturally on hits.
+// Filter the full presentation so package boundaries and variant labels stay
+// stable. Both physical paths and the displayed package names are searchable.
 function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '') {
   if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex)
-  const q = query.toLowerCase()
-  // Walk the (already-remapped) tree to collect every full path
-  // whose prefix-stripped form contains the query. Matching
-  // against the stripped form keeps the filter UX consistent
-  // with what the rail prefix label promises ("paths under here
-  // are RELATIVE to <prefix>").
-  const matches = []
-  const collect = (n) => {
-    for (const [, child] of n.dirs) collect(child)
-    for (const [, full] of n.files) {
-      const view = stripPathPrefix(full, prefix)
-      if (view.toLowerCase().includes(q)) matches.push(full)
-    }
-  }
-  collect(tree)
-  if (matches.length === 0) {
+  const filtered = filterBundleSourceTree(tree, query, prefix)
+  if (!filtered) {
     return html`<div class="bundle-code-search-empty">No files match.</div>`
   }
-  // Build a fresh tree from the STRIPPED forms of the matches so
-  // the visual hierarchy doesn't waste rows on a shared prefix
-  // that's already shown above the rail. Files at the leaves are
-  // remapped back to original paths so the click delegate's
-  // `data-bundle-view-source=${full}` resolves against
-  // `sources` (which keys by the original path).
-  const stripped = prefix ? matches.map((p) => stripPathPrefix(p, prefix)) : matches
-  const filtered = buildRemappedBundleSourceTree(stripped, matches)
   // expandAll: filtered tree only contains matches; every dir
   // exists because something inside it matched, so opening them
   // all means the user sees every hit at a glance instead of
   // having to click every level open after typing.
-  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, '', true)
+  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true)
 }
 
 // Code-mode result pane — flat list of files, each with up to
@@ -1276,14 +1218,16 @@ function renderBundleCodeView(details) {
   if (_bundleTreeMapBundle !== state.selectedBundle) {
     _bundleTreeUserOpen.clear()
     _bundleTreeMapBundle = state.selectedBundle
+    _bundleTreeCurrentPath = null
   }
   const allPaths = [...sources.keys()].toSorted()
-  const { prefix, stripped } = stripCommonPathPrefix(allPaths)
+  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix)
+  const stripped = allPaths.map(p => stripPathPrefix(p, prefix))
   // Tree built from STRIPPED paths so the visual hierarchy
   // doesn't waste horizontal space on a shared root prefix.
   // Stripped → original mapping lets the click handlers (and
   // sources.get) recover the full key.
-  const tree = buildRemappedBundleSourceTree(stripped, allPaths)
+  const tree = buildBundleSourceTree(stripped, allPaths)
   // Per-file finding index for the tree's count chips, the default-
   // file pick, and the Issues-mode hidden-when-empty gate. Computed
   // once and reused — the tree walk reads it as
@@ -1331,6 +1275,10 @@ function renderBundleCodeView(details) {
       revealBundleCodeCurrent()
     }
   }
+  if (path !== _bundleTreeCurrentPath) {
+    openBundleTreeAncestors(path, prefix)
+    _bundleTreeCurrentPath = path
+  }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
   // the modal uses; the panel renders inside the slide rather
@@ -1353,6 +1301,16 @@ function renderBundleCodeView(details) {
       <div class="bundle-code-rail-head">
         <span class="bundle-code-rail-label">Files</span>
         <span class="bundle-code-rail-count">${allPaths.length}</span>
+        <span class="bundle-code-rail-actions">
+          <button type="button" class="bundle-code-rail-action" aria-label="Reveal current file" data-tooltip="Reveal current file"
+            ?disabled=${!path} @click=${() => revealBundleTreeFile(path, prefix)}>
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5"/><path d="M8 0v3m0 10v3M0 8h3m10 0h3"/></svg>
+          </button>
+          <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
+            ?disabled=${searchMode !== 'files' || !!query || tree.dirs.size === 0} @click=${() => collapseBundleTree(tree)}>
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M5 2h8a1 1 0 0 1 1 1v8M3 5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1ZM4.5 9.5h4"/></svg>
+          </button>
+        </span>
       </div>
       ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
       <bundle-code-search .modes=${searchModes}></bundle-code-search>
@@ -1379,12 +1337,23 @@ function renderBundleCodeView(details) {
 // attribute so the events.js delegate steps without re-deriving
 // the per-file findings.
 function renderBundleCodeMain(details, path, content, fileFindings, lineFindings) {
+  const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
   const lineCount = typeof content === 'string' ? content.split('\n').length : 0
   const byteSize = typeof content === 'string' ? utf8ByteLength(content) : 0
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
   return html`<header class="bundle-code-main-bar">
+      <span class="bundle-code-file-nav">
+        <button type="button" class="focus-code-nav-btn" data-bundle-code-history="back"
+          aria-label="Back to the previously shown file" ?disabled=${history.at === 0}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg>
+        </button>
+        <button type="button" class="focus-code-nav-btn" data-bundle-code-history="forward"
+          aria-label="Forward to the next shown file" ?disabled=${history.at >= history.files.length - 1}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+        </button>
+      </span>
       ${sourceFileIcon(path)}
       <span class="bundle-code-main-path mono" title=${path}>${path}</span>
       <button
@@ -1420,7 +1389,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
       </span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
-      ${renderBundleSourceCodeWrap(path, content, details.integrity, fileFindings, lineFindings)}
+      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings)}
     </div>`
 }
 
@@ -1669,7 +1638,7 @@ function renderBundleSearchSide(details, sources, matchLines) {
   return html`<aside class="bundle-search-side">
     ${renderBundleSourceBar(path)}
     <div class="bundle-source-body">
-      ${renderBundleSourceCodeWrap(path, content, details.integrity, fileFindings, lineFindings, matchLines)}
+      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines)}
     </div>
   </aside>`
 }

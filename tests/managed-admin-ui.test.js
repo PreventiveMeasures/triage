@@ -512,3 +512,56 @@ test('public repository form submits with CSRF, retains failures and refreshes t
   assert.equal(page._publicRepoError, null)
   assert.deepEqual(page._data.repositories, [repo])
 })
+
+test('connecting the App submits only the repository ID with CSRF and refreshes list and detail', async t => {
+  const page = createPage(Repositories)
+  Object.defineProperty(page, 'isConnected', { value: true })
+  page.session = adminSession
+  page._detail = { ...repo, active: false }
+  let finish
+  let posts = 0
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (options.method === 'POST') {
+      posts++
+      assert.equal(url, '/api/admin/repositories/connect-app')
+      assert.equal(options.headers['x-csrf-token'], adminSession.csrfToken)
+      assert.deepEqual(JSON.parse(options.body), { repoId: repo.id })
+      return new Promise(resolve => { finish = resolve })
+    }
+    return Promise.resolve(Response.json({ repositories: [{ ...repo, installed: true }] }))
+  })
+  const pending = page._connectApp(repo)
+  await page._connectApp(repo)
+  assert.equal(posts, 1)
+  assert.equal(page._connectingApp, true)
+  finish(Response.json({ connected: true }))
+  await pending
+  assert.deepEqual(page._detail, { ...repo, active: false, installed: true })
+  assert.equal(page._data.repositories[0].installed, true)
+  assert.equal(page._busy, null)
+  assert.equal(page._connectingApp, false)
+})
+
+test('connecting the App redirects only for a valid installation response; failures remain retryable', async t => {
+  const page = createPage(Repositories)
+  Object.defineProperty(page, 'isConnected', { value: true })
+  page.session = adminSession
+  const oldLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
+  let destination
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: { assign: url => { destination = url } } })
+  t.after(() => { if (oldLocation) Object.defineProperty(globalThis, 'location', oldLocation); else delete globalThis.location })
+  let result = Response.json({ error: 'github-status-403' }, { status: 502 })
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(result))
+  await page._connectApp(repo)
+  assert.match(page._actionError, /Could not connect/u)
+  assert.equal(destination, undefined)
+  assert.equal(page._busy, null)
+  result = Response.json({ connected: false, installUrl: 'https://evil.test/install' })
+  await page._connectApp(repo)
+  assert.equal(destination, undefined)
+  assert.match(page._actionError, /Invalid GitHub/u)
+  result = Response.json({ connected: false, installUrl: 'https://github.com/apps/triage-test/installations/new' })
+  await page._connectApp(repo)
+  assert.equal(destination, 'https://github.com/apps/triage-test/installations/new')
+  assert.equal(page._actionError, null)
+})

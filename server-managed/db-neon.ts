@@ -79,6 +79,10 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query("ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS repo_directory TEXT NOT NULL DEFAULT ''")
       await db.query('INSERT INTO managed_schema_version VALUES (7)')
     }
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 8')).rows.length === 0) {
+      await db.query('CREATE INDEX IF NOT EXISTS managed_report_hash_idx ON managed_report(sha256, uploaded_at, id)')
+      await db.query('INSERT INTO managed_schema_version VALUES (8)')
+    }
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

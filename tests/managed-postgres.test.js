@@ -4,6 +4,7 @@ import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
+import { checkReportDedup } from './_managed-report-dedup.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 
 // Tests in this file run sequentially. Reuse the expensive WASM engine, but
@@ -39,6 +40,19 @@ async function database(t) {
   return { db, connect, queries }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+test('Postgres report uploads reuse content across instances and upgrade without removing legacy copies', async t => {
+  const { db, connect } = await database(t)
+  const previous = await connect()
+  try { await previous.query('DROP INDEX managed_report_hash_idx; DELETE FROM managed_schema_version WHERE version = 8;') }
+  finally { await previous.release() }
+  const other = await openPostgresManagedDb(connect)
+  try { await checkReportDedup(db, other) }
+  finally { await other.close() }
+  const upgraded = await connect()
+  try { assert.equal((await upgraded.query("SELECT indexname FROM pg_indexes WHERE indexname = 'managed_report_hash_idx'")).rows.length, 1) }
+  finally { await upgraded.release() }
+})
 
 test('Postgres bundle slugs migrate deterministically, persist, and resolve upload collisions', async t => {
   const { db, connect } = await database(t)

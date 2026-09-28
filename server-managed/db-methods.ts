@@ -326,6 +326,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // mutable context while keeping the original added_by/added_at; deselectRepo
   // resolves true iff a row was removed.
   selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
+  connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean>
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
   listAllRepos(): Promise<ManagedRepo[]>
@@ -345,6 +346,10 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // getReport reads one row (for download); deleteReport resolves true iff a row
   // was removed.
   insertReport(report: ReportRecordInput, now: number): Promise<void>
+  // Content reuse is atomic with insertion, including across server instances.
+  // Existing copies are kept; the oldest matching row is the stable identity.
+  insertOrReuseReport(report: ReportRecordInput, now: number): Promise<ReportRecord>
+  getReportByHash(sha256: string, analyzer: string | null): Promise<ReportRecord | null>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
   getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null>
@@ -505,6 +510,12 @@ function prepareStatements(db: ManagedSql) {
          installation_id = excluded.installation_id, default_branch = excluded.default_branch,
          html_url = excluded.html_url, updated_at = excluded.updated_at, active = 1`,
     ),
+    // Never reactivate or recreate a repo, overwrite another connection, or
+    // commit after the administrator's session/role was revoked during GitHub I/O.
+    connectRepoInstallationStmt: db.prepare(`UPDATE managed_selected_repo SET installation_id = ?, updated_at = ?
+      WHERE repo_id = ? AND full_name = ? AND added_at = ? AND installation_id IS NULL
+        AND EXISTS (SELECT 1 FROM managed_session s JOIN managed_user u ON u.id = s.user_id
+          WHERE s.id = ? AND s.expires_at > ? AND u.role = 'admin')`),
     deleteRepoStmt: db.prepare(`DELETE FROM managed_selected_repo WHERE repo_id = ?`),
     deactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
     reactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
@@ -563,6 +574,10 @@ function prepareStatements(db: ManagedSql) {
               repo_id AS repoId, repo_directory AS repoDirectory, repo_embedded AS repoEmbedded,
               analyzer AS analyzer, visible AS visible, bundle_id AS bundleId
          FROM managed_report WHERE id = ?`,
+    ),
+    selectReportByHashStmt: db.prepare(
+      `SELECT id FROM managed_report WHERE sha256 = ? AND COALESCE(analyzer, '') = COALESCE(?, '')
+       ORDER BY uploaded_at, id LIMIT 1`,
     ),
     selectReportAccessStmt: db.prepare(
       `WITH requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
@@ -838,6 +853,9 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     async deselectRepo(repoId: number): Promise<boolean> {
       return Number((await deleteRepoStmt.run(repoId)).changes) > 0
     },
+    async connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean> {
+      return Number((await stmts.connectRepoInstallationStmt.run(installationId, now, repo.repoId, repo.fullName, repo.addedAt, sessionId, now)).changes) > 0
+    },
     async listSelectedRepos(): Promise<SelectedRepo[]> {
       const rows = (await selectReposStmt.all()) as RepoRow[]
       return rows.map(readRepo)
@@ -889,14 +907,34 @@ type ReportRow = {
 // openSqliteManagedDb small. Closes over its prepared statements.
 function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
   const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt, setReportRepoStmt, setReportVisibleStmt } = stmts
+  async function getReport(id: string): Promise<ReportRecord | null> {
+    const row = (await selectReportStmt.get(id)) as ReportRow | undefined
+    if (row == null) return null
+    return { ...row, repoEmbedded: row.repoEmbedded === 1, visible: row.visible === 1 }
+  }
+  async function getReportByHash(sha256: string, analyzer: string | null): Promise<ReportRecord | null> {
+    const row = await stmts.selectReportByHashStmt.get(sha256, analyzer) as { id: string } | undefined
+    return row ? getReport(row.id) : null
+  }
+  async function insertReport(report: ReportRecordInput, now: number): Promise<void> {
+    await insertReportStmt.run(
+      report.id, preferredSlug(report.id), report.filename, report.contentType, report.byteSize,
+      report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
+      report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 0 : report.visible ? 1 : 0, report.bundleId ?? null,
+      report.bundleIntegrity ?? null, now,
+    )
+  }
   return {
-    async insertReport(report: ReportRecordInput, now: number): Promise<void> {
-      await insertReportStmt.run(
-        report.id, preferredSlug(report.id), report.filename, report.contentType, report.byteSize,
-        report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
-        report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 0 : report.visible ? 1 : 0, report.bundleId ?? null,
-        report.bundleIntegrity ?? null, now,
-      )
+    insertReport,
+    getReport,
+    getReportByHash,
+    async insertOrReuseReport(report: ReportRecordInput, now: number): Promise<ReportRecord> {
+      // The driver holds its writer lock for this whole operation. Checking
+      // again here closes the race between the HTTP lookup and blob upload.
+      const existing = await getReportByHash(report.sha256, report.analyzer ?? null)
+      if (existing) return existing
+      await insertReport(report, now)
+      return (await getReport(report.id))!
     },
     async listReports(userId?: string): Promise<AdminReport[]> {
       const rows = (await selectReportsStmt.all(userId ?? null, userId ?? null, userId ?? null)) as ReportListRow[]
@@ -908,16 +946,6 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         bundleId: r.bundleId, bundleFilename: r.bundleFilename, bundleIntegrity: r.bundleIntegrity,
         uploadedAt: r.uploadedAt,
       }))
-    },
-    async getReport(id: string): Promise<ReportRecord | null> {
-      const row = (await selectReportStmt.get(id)) as ReportRow | undefined
-      if (row == null) return null
-      return {
-        id: row.id, slug: row.slug, filename: row.filename, contentType: row.contentType, byteSize: row.byteSize,
-        sha256: row.sha256, uploadedBy: row.uploadedBy, uploadedAt: row.uploadedAt,
-        repoId: row.repoId, repoDirectory: row.repoDirectory, repoEmbedded: row.repoEmbedded === 1, analyzer: row.analyzer, visible: row.visible === 1,
-        bundleId: row.bundleId,
-      }
     },
     async getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null> {
       const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined

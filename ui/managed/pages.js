@@ -24,6 +24,7 @@ import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import './create-bundle.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
+import { managedRoutePath } from '../../common/managed/routes.js'
 import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import { repositoryChoices } from '../view/repository-options.js'
@@ -435,6 +436,28 @@ async function fetchRepositoryImpact(repoId, signal) {
   return impact
 }
 
+async function connectRepositoryApp(repoId, csrfToken) {
+  const res = await managedFetch('/api/admin/repositories/connect-app', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken },
+    body: JSON.stringify({ repoId }),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    const messages = {
+      'github-app-not-configured': 'The GitHub App is not configured on this server.',
+      'repo-identity-changed': 'The repository has changed on GitHub. Refresh and check its connection.',
+      'repo-connection-changed': 'The connection or your permissions changed. Refresh and try again.',
+      'repo-not-connected': 'This repository is no longer connected.',
+      'forbidden': 'Administrator access is required to connect the GitHub App.',
+    }
+    throw new Error(messages[data.error] ?? `Could not connect the GitHub App (HTTP ${res.status}). Try again.`)
+  }
+  if (data.connected === true) return data
+  if (data.connected !== false || typeof data.installUrl !== 'string' || !/^https:\/\/github\.com\/apps\/[^/?#]+\/installations\/new$/u.test(data.installUrl)) throw new Error('Invalid GitHub installation response.')
+  return data
+}
+
 async function removeRepository(repoId, fullName, deleteTriage, csrfToken) {
   const headers = { 'content-type': 'application/json' }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
@@ -465,6 +488,7 @@ class ManagedAdminRepos extends ManagedPage {
     _organization: { state: true },
     _loading: { state: true },
     _busy: { state: true },
+    _connectingApp: { state: true },
     _detail: { state: true },
     _impact: { state: true },
     _impactLoading: { state: true },
@@ -491,6 +515,7 @@ class ManagedAdminRepos extends ManagedPage {
     this._organization = null
     this._loading = true
     this._busy = null
+    this._connectingApp = false
     this._detail = null
     this._impact = null
     this._impactLoading = false
@@ -704,6 +729,30 @@ class ManagedAdminRepos extends ManagedPage {
     return visibility ? `${visibility} · ${source}` : source
   }
 
+  _connectAppButton(repo) {
+    return repo.installed ? nothing : html`<button type="button" class="btn connect-app" aria-label=${`Connect GitHub App to ${repo.fullName}`} ?disabled=${this._busy != null} @click=${() => { void this._connectApp(repo) }}>${this._connectingApp && this._busy === repo.id ? 'Connecting…' : 'Connect GitHub App'}</button>`
+  }
+
+  async _connectApp(repo) {
+    if (this._busy != null || repo.installed) return
+    this._busy = repo.id
+    this._connectingApp = true
+    this._actionError = null
+    try {
+      const result = await this.appState.mutate(() => connectRepositoryApp(repo.id, this._csrf), ['repos', 'history', 'scan-sources'])
+      if (!this.isConnected) return
+      if (!result.connected) { globalThis.location.assign(result.installUrl); return }
+      if (this._detail?.id === repo.id) this._detail = { ...this._detail, installed: true }
+      if (this._data) this._data = { ...this._data, repositories: this._data.repositories.map(entry => entry.id === repo.id ? { ...entry, installed: true } : entry) }
+      await this._load()
+    } catch (err) {
+      this._actionError = `Couldn't connect ${repo.fullName}: ${err?.message ?? err}`
+    } finally {
+      this._busy = null
+      this._connectingApp = false
+    }
+  }
+
   _detailPage(repo) {
     const active = repo.active !== false
     const reports = this._impact?.reports ?? []
@@ -716,10 +765,11 @@ class ManagedAdminRepos extends ManagedPage {
         <h2>Connection</h2>
         <div class="settings-row"><div class="settings-copy"><strong>${this._accessLabel(repo)}</strong><p>${active ? 'Active for new scans and uploads.' : 'Deactivated. Stored reports and bundles are retained.'}</p></div>
           <span class=${`status-line ${active ? '' : 'inactive'}`}>${active ? 'Active' : 'Deactivated'}</span>
+          ${this._connectAppButton(repo)}
           ${repo.htmlUrl ? html`<a class="btn" href=${repo.htmlUrl} target="_blank" rel="noopener noreferrer">View on GitHub</a>` : nothing}
         </div>
         <div class="settings-row"><div class="settings-copy"><strong>${active ? 'Deactivate repository' : 'Reactivate repository'}</strong><p>${active ? 'Pause new scans while preserving all stored data and attachments.' : 'Make this repository available for new scans and bundle attachments again.'}</p></div>
-          <button type="button" class="btn" ?disabled=${this._busy != null} @click=${() => { void this._setActive(repo, !active) }}>${this._busy === repo.id ? (active ? 'Deactivating…' : 'Reactivating…') : (active ? 'Deactivate' : 'Reactivate')}</button>
+          <button type="button" class="btn" ?disabled=${this._busy != null} @click=${() => { void this._setActive(repo, !active) }}>${this._busy === repo.id && !this._connectingApp ? (active ? 'Deactivating…' : 'Reactivating…') : (active ? 'Deactivate' : 'Reactivate')}</button>
         </div>
       </section>
       <section class="data-section" aria-label="Stored repository data">
@@ -1198,6 +1248,8 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 // chunk, fetches its own data; no main-bundle state.
 class ManagedAdminBundles extends ManagedPage {
   static properties = {
+    createRepoId: { attribute: false },
+    installTooltips: { attribute: false },
     localImportSource: { attribute: false },
     _query: { state: true },
     _creating: { state: true },
@@ -1254,9 +1306,20 @@ class ManagedAdminBundles extends ManagedPage {
   }
 
   _showCreate(open) {
+    if (!open && this.createRepoId != null) {
+      document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))
+      return
+    }
     this._creating = open
     this._dragOver = false
     if (!open) void this.updateComplete.then(() => this.renderRoot.querySelector('.create-bundle-action')?.focus())
+  }
+
+  willUpdate(changed) {
+    if (changed.has('createRepoId')) {
+      this._repoId = this.createRepoId ?? null
+      this._creating = this.createRepoId != null
+    }
   }
 
   render() {
@@ -1268,7 +1331,7 @@ class ManagedAdminBundles extends ManagedPage {
         <button type="button" class="breadcrumb-manage" aria-label="Back to bundles" @click=${() => this._showCreate(false)}>Bundles</button>
         <span class="breadcrumb-separator" aria-hidden="true">›</span><h1 class="breadcrumb-current">Create a bundle</h1>
       </div>
-      <managed-create-bundle .initialRepoId=${this._repoId}></managed-create-bundle>
+      <managed-create-bundle .initialRepoId=${this._repoId} .installTooltips=${this.installTooltips}></managed-create-bundle>
     </div>`
     }
     return html`
@@ -1417,7 +1480,7 @@ class ManagedAdminScans extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-scans', this._role, this.allowShare)}
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load scan sources: ${this._error} <button type="button" class="btn" @click=${() => void this._load()}>Retry</button></p>` : nothing}
-      <deepview-scan-page hide-heading .selection=${this.selection} .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
+      <deepview-scan-page hide-heading .selection=${this.selection} .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources} .createBundleHref=${repoId => Number.isSafeInteger(repoId) && repoId > 0 ? managedRoutePath({ view: 'manage-bundles', createRepoId: repoId }) : null}></deepview-scan-page>
     </div>`
   }
 }

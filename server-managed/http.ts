@@ -59,7 +59,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, StoredUser, TriageEventRow } from './db.ts'
+import type { ManagedDb, ManagedSession, ReportRecord, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -72,7 +72,7 @@ import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
-import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName } from './github-app.ts'
+import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
@@ -106,6 +106,7 @@ const REPO_REFS_PATH = '/api/admin/repositories/refs'
 const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
+const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
 const REPO_IMPACT_PATH = '/api/admin/repositories/impact'
 const REMOVE_REPO_PATH = '/api/admin/repositories/remove'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
@@ -525,6 +526,43 @@ async function handleAddPublicRepository(req: IncomingMessage, res: ServerRespon
   await connectRepository(res, deps, s.user, repo)
 }
 
+// Associate an existing connection with this App without changing its active
+// state, ownership, team grants, or stored data. GitHub grants remain separate
+// from the per-user checks required for browsing source.
+async function handleConnectRepositoryApp(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
+  const s = await adminMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const repoId = (body as { repoId?: unknown } | null)?.repoId
+  if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const repo = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
+  if (repo == null) { sendJson(res, 404, { error: 'repo-not-connected' }); return }
+  if (repo.installationId != null) { sendJson(res, 200, { connected: true }); return }
+  let installationId
+  try { installationId = await repositoryInstallation(deps.config, repo.repoId, repo.fullName) } catch (err) {
+    if (!(err instanceof GithubApiError)) throw err
+    // These credentials belong to the server App, not the user's session.
+    sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }); return
+  }
+  if (await readAdminSession(res, deps, cookie) == null) return
+  if (installationId == null) {
+    const current = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
+    if (current == null || current.fullName !== repo.fullName || current.addedAt !== repo.addedAt || current.installationId != null) {
+      sendJson(res, 409, { error: 'repo-connection-changed' }); return
+    }
+    const url = installUrl(deps.config)
+    if (url == null) { sendJson(res, 503, { error: 'github-app-not-configured' }); return }
+    sendJson(res, 200, { connected: false, installUrl: url }); return
+  }
+  if (!await deps.db.connectRepoInstallation(repo, installationId, s.session.id, Date.now())) {
+    sendJson(res, 409, { error: 'repo-connection-changed' }); return
+  }
+  await activity(deps, s.user, 'repository', 'connected GitHub App access', { repo: repo.fullName })
+  sendJson(res, 200, { connected: true })
+}
+
 // POST /api/admin/repositories/select — an admin toggles whether a repo is
 // active in the operate-on set. Mutation: same-origin + CSRF. Body { repoId,
 // selected }. selected:true verifies + records the read context; selected:false
@@ -816,6 +854,17 @@ async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, byte
   return { bundleId: null, integrity: hashes[0] ?? null }
 }
 
+async function sendUploadedReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, report: ReportRecord, deduped: boolean): Promise<void> {
+  const current = await checkMutation(req, res, deps, cookie)
+  if (!current || !requireManageRole(res, current.user)) return
+  // Uploading known bytes cannot reveal another team's report or its source
+  // bundle. The stored location/ownership wins over the upload headers.
+  if (!(await canViewReport(deps, current.user, report.id))) { sendJson(res, 409, { error: 'report-conflict' }); return }
+  const bundleId = report.bundleId != null && await canAccessBundle(deps, current.user, report.bundleId) ? report.bundleId : null
+  const { id, slug, filename, byteSize, sha256, repoId, repoDirectory, repoEmbedded, analyzer, visible } = report
+  sendJson(res, deduped ? 200 : 201, { id, slug, filename, byteSize, sha256, repoId, repoDirectory, repoEmbedded, analyzer, visible, bundleId, ...(deduped ? { deduped: true } : {}) })
+}
+
 // POST /api/admin/reports — upload a report. Mutation: same-origin + CSRF,
 // admin|manage. The body is the raw report bytes (any findings format — JSON /
 // markdown / CSV — archived as-is, like the e2e objstore; the server parses them
@@ -823,9 +872,9 @@ async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, byte
 // directory come from the report header, or from optional repository/directory
 // headers when the report has no repository metadata. The bundle link is
 // auto-resolved from the report's bundleHashes. New reports start hidden until
-// published. Bytes
+// published. Identical content reuses its stored identity and metadata. Bytes
 // are written first (keyed by a fresh uuid) then the metadata row — a failed
-// insert drops the orphan blob. 413 over the cap, 400 on empty.
+// insert or concurrent duplicate drops the orphan blob. 413 over the cap, 400 on empty.
 async function handleUploadReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   let s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
@@ -867,13 +916,18 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     matchedRepo = legacyRepo.repoId == null ? null : selected.find((repo) => repo.repoId === legacyRepo.repoId) ?? null
   }
   if (matchedRepo && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, matchedRepo.repoId, directory))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
+  const sha256 = createHash('sha256').update(bytes).digest('base64url')
+  // The analyzer also distinguishes a CSV from the same bytes previously
+  // uploaded under a filename that did not identify it as a report.
+  const existing = await deps.db.getReportByHash(sha256, analyzer)
+  if (existing) { await sendUploadedReport(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
-  const sha256 = createHash('sha256').update(bytes).digest('base64url')
   const { bundleId, integrity } = await resolveReportBundle(deps, s.user, bytes)
   await deps.reportStore.put(id, bytes)
+  let report: ReportRecord
   try {
-    await deps.db.insertReport({
+    report = await deps.db.insertOrReuseReport({
       id, filename, contentType, byteSize: bytes.length, sha256,
       uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: matchedRepo?.repoId ?? null,
       repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity,
@@ -882,7 +936,8 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     await deps.reportStore.delete(id).catch(() => {})
     throw err
   }
-  sendJson(res, 201, { id, slug: (await deps.db.getReport(id))!.slug, filename, byteSize: bytes.length, sha256, repoId: matchedRepo?.repoId ?? null, repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId })
+  if (report.id !== id) await deps.reportStore.delete(id).catch(() => {})
+  await sendUploadedReport(req, res, deps, cookie, report, report.id !== id)
 }
 
 // GET /api/admin/reports/<id> — download a stored report (admin|manage). Serves
@@ -2006,6 +2061,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
     if (path === ADD_PUBLIC_REPO_PATH) { await handleAddPublicRepository(req, res, deps, cookie); return }
+    if (path === CONNECT_REPO_APP_PATH) { await handleConnectRepositoryApp(req, res, deps, cookie); return }
     // Reports: list / upload on the exact path, download / delete per-id on the
     // prefix. Method-dispatched here since each path carries two verbs.
     if (path === ADMIN_REPORTS_PATH) {
