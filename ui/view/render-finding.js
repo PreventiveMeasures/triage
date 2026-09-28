@@ -954,8 +954,10 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const linkBtn = findingLinkFor(activeTab)
     ? html`<button type="button" class="mark-link" data-tooltip="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
-  // GitHub-issue link — a plain anchor (no JS handoff) to GitHub's
-  // pre-filled new-issue form for the finding's repo, with the finding
+  // GitHub-issue action — managed users must check for an existing
+  // issue or reservation before reaching creation. Use a button so
+  // modified clicks and native new-tab actions cannot bypass that check.
+  // Other modes keep a plain anchor to GitHub's pre-filled form, with the finding
   // detail (file:line linked to source, description, confidence) as the
   // body. Only rendered when the finding resolves to a github.com repo
   // (issues live on github.com; githubIssueUrl returns null for a
@@ -965,8 +967,12 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const findingRepoId = findingRepo(activeTab)
   const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab),
     labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
+  const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam
+  const issueContent = html`${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}`
   const issueBtn = issueHref
-    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
+    ? managedIssue
+      ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
+      : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${issueContent}</a>`
     : nothing
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code

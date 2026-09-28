@@ -956,7 +956,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   &:not(:last-child) { border-right: 1px solid var(--border); }
   &:not(:disabled):hover { color: var(--accent); background: var(--surface-active); }
 }
-/* The issue button is an <a> (a real link to GitHub's new-issue form),
+/* Outside signed-in managed workspaces, the issue action is an <a>,
    so drop the default underline + link color the icon/label would
    otherwise pick up — it inherits the muted button color above. */
 .mark-issue { text-decoration: none; }

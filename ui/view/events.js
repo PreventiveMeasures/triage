@@ -1198,13 +1198,13 @@ report.addEventListener('click', (e) => {
   }
   const issueBtn = pathClosest(e, '.mark-issue')
   if (issueBtn && isManagedUiMode() && state.managedSession && !state.managedSession.publicShare
-    && state.currentManagedTeam && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.button === 0) {
+    && state.currentManagedTeam) {
     const findingEl = pathClosest(e, '[data-gid]')
     const group = findingEl ? findGroupById(findingEl.dataset.gid) : null
     const finding = group ? activeTabFor(group) : null
     if (finding?._managedReportId && finding.id) {
       e.preventDefault()
-      const url = new URL(issueBtn.href)
+      const url = new URL(issueBtn.dataset.issueForm)
       void openManagedIssueDialog({ teamId: state.currentManagedTeam, session: { ...state.managedSession },
         context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
         formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
