@@ -7,7 +7,7 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
-test('the creation picker loads verified repositories and never selects a filtered-out initial repository', async t => {
+test('the creation picker loads managed repositories and never selects a filtered-out initial repository', async t => {
   const calls = []
   const allowed = { repoId: 2, fullName: 'org/allowed' }
   t.mock.method(globalThis, 'fetch', url => {
@@ -30,13 +30,13 @@ test('the creation picker loads verified repositories and never selects a filter
   assert.deepEqual(page._entries, entries)
 })
 
-test('failed or cancelled repository authorization does not expose stale picker options', async t => {
+test('failed or cancelled repository listing does not expose stale picker options', async t => {
   const page = new ManagedCreateBundle()
   page._repos = [{ repoId: 1, fullName: 'org/stale' }]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({}, { status: 502 })))
   await page.loadRepositories()
   assert.deepEqual(page._repos, [])
-  assert.match(page._reposError, /verify repository access/u)
+  assert.match(page._reposError, /load repositories/u)
   let finish
   t.mock.method(globalThis, 'fetch', () => new Promise(resolve => { finish = resolve }))
   const loading = page.loadRepositories()

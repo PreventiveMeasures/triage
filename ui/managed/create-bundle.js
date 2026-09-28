@@ -31,6 +31,7 @@ export class ManagedCreateBundle extends LitElement {
     _repoId: { state: true }, _refs: { state: true }, _refKind: { state: true }, _refName: { state: true },
     _path: { state: true }, _entries: { state: true }, _selected: { state: true }, _commit: { state: true },
     _loadingRefs: { state: true }, _loading: { state: true }, _error: { state: true }, _refsError: { state: true }, _limited: { state: true },
+    _revisionOpen: { state: true }, _revisionQuery: { state: true }, _activeRevision: { state: true },
   }
 
   constructor() {
@@ -52,6 +53,20 @@ export class ManagedCreateBundle extends LitElement {
     this._error = ''
     this._refsError = ''
     this._limited = false
+    this._revisionOpen = false
+    this._revisionQuery = ''
+    this._activeRevision = -1
+    this._onViewport = () => this.positionRevisionSuggestions()
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    globalThis.addEventListener('resize', this._onViewport)
+    globalThis.addEventListener('scroll', this._onViewport, true)
+  }
+
+  updated() {
+    this.positionRevisionSuggestions()
   }
 
   firstUpdated() {
@@ -72,13 +87,15 @@ export class ManagedCreateBundle extends LitElement {
       this._repos = data.repos
       if (this._repos.some(repo => repo.repoId === this.initialRepoId)) void this.selectRepository(this.initialRepoId)
     } catch {
-      if (!request.signal.aborted) this._reposError = 'Could not verify repository access. Try again.'
+      if (!request.signal.aborted) this._reposError = 'Could not load repositories. Try again.'
     } finally {
       if (!request.signal.aborted) this._loadingRepos = false
     }
   }
 
   disconnectedCallback() {
+    globalThis.removeEventListener('resize', this._onViewport)
+    globalThis.removeEventListener('scroll', this._onViewport, true)
     clearTimeout(this._browseTimer)
     this._reposRequest?.abort()
     this._refsRequest?.abort()
@@ -99,6 +116,7 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   async selectRepository(repoId) {
+    this.closeRevisionSuggestions()
     this._refsRequest?.abort()
     this.resetFiles()
     this._repoId = repoId
@@ -131,6 +149,7 @@ export class ManagedCreateBundle extends LitElement {
 
   selectRevisionType(kind) {
     if (this._refKind === kind) return
+    this.closeRevisionSuggestions()
     this.changeRevision(kind, kind === 'branch' ? this._refs.defaultBranch || '' : '')
     if (this._refName) void this.loadDirectory('')
   }
@@ -145,6 +164,74 @@ export class ManagedCreateBundle extends LitElement {
     } else {
       this._browseTimer = setTimeout(() => { void this.loadDirectory('') }, 350)
     }
+  }
+
+  revisionSuggestions() {
+    const choices = this._refKind === 'branch' ? this._refs.branches : this._refKind === 'tag' ? this._refs.tags : []
+    const query = this._revisionQuery.trim().toLowerCase()
+    return choices.filter(name => name.toLowerCase().includes(query))
+  }
+
+  showRevisionSuggestions(all = true) {
+    if (this._refKind === 'commit' || this._repoId == null || this._loadingRefs) return
+    this._revisionQuery = all ? '' : this._refName
+    this._activeRevision = -1
+    this.renderRoot.querySelector('.revision-menu').showPopover()
+  }
+
+  closeRevisionSuggestions() {
+    this.renderRoot?.querySelector('.revision-menu')?.hidePopover()
+    this._revisionOpen = false
+    this._activeRevision = -1
+  }
+
+  pickRevision(name) {
+    this.editRevision(name)
+    this.renderRoot.querySelector('.revision-name').focus({ preventScroll: true })
+    this.closeRevisionSuggestions()
+  }
+
+  positionRevisionSuggestions() {
+    if (!this._revisionOpen) return
+    const menu = this.renderRoot.querySelector('.revision-menu')
+    const rect = this.renderRoot.querySelector('.revision-name').getBoundingClientRect()
+    const margin = 8
+    const gap = 6
+    const fontSize = parseFloat(getComputedStyle(this).fontSize)
+    const columnWidth = 15 * fontSize
+    const columns = Math.max(1, Math.min(3, Math.ceil(this.revisionSuggestions().length / 8), Math.floor((window.innerWidth - 2 * margin) / columnWidth)))
+    const width = Math.min(Math.max(rect.width, columns * columnWidth), window.innerWidth - 2 * margin)
+    menu.style.width = `${width}px`
+    menu.style.setProperty('--revision-columns', columns)
+    menu.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))}px`
+    const below = window.innerHeight - rect.bottom - gap - margin
+    const above = rect.top - gap - margin
+    const upward = below < Math.min(menu.scrollHeight, 320) && above > below
+    menu.style.maxHeight = `${Math.max(0, Math.min(320, upward ? above : below))}px`
+    menu.style.top = `${Math.max(margin, upward ? rect.top - menu.offsetHeight - gap : rect.bottom + gap)}px`
+    menu.dataset.positioned = ''
+  }
+
+  async revisionKeyDown(event) {
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      if (event.key === 'Escape' && this._revisionOpen) { event.preventDefault(); event.stopPropagation() }
+      this.closeRevisionSuggestions()
+      return
+    }
+    if (event.key === 'Enter') {
+      const name = this.revisionSuggestions()[this._activeRevision]
+      if (this._revisionOpen && name != null) { event.preventDefault(); this.pickRevision(name) }
+      else this.closeRevisionSuggestions()
+      return
+    }
+    if (this._refKind === 'commit' || !['ArrowDown', 'ArrowUp'].includes(event.key)) return
+    event.preventDefault()
+    if (!this._revisionOpen) this.showRevisionSuggestions()
+    const count = this.revisionSuggestions().length
+    this._activeRevision = count === 0 ? -1 : event.key === 'ArrowDown'
+      ? Math.min(this._activeRevision + 1, count - 1) : this._activeRevision <= 0 ? count - 1 : this._activeRevision - 1
+    await this.updateComplete
+    this.renderRoot.querySelector('[data-active]')?.scrollIntoView({ block: 'nearest' })
   }
 
   async loadDirectory(path, fresh = false) {
@@ -188,15 +275,19 @@ export class ManagedCreateBundle extends LitElement {
   render() {
     const repo = this._repos.find(item => item.repoId === this._repoId)
     const parts = this._path.split('/').filter(Boolean)
-    const choices = this._refKind === 'branch' ? this._refs.branches : this._refs.tags
+    const choices = this.revisionSuggestions()
     const revisionLabel = this._refKind === 'commit' ? 'Commit SHA' : this._refKind === 'tag' ? 'Tag' : 'Branch'
     return html`<p class="intro">Choose a repository and revision, then select files to use as entry points.</p>
       <div class="source-fields">
         <div class="field"><span>Repository</span><repository-selector label="Repository" ?disabled=${this._loadingRepos} .options=${this._repos.map(item => ({ value: item.repoId, label: item.fullName }))} .value=${this._repoId} @repository-change=${event => this.selectRepository(event.detail.value)}></repository-selector></div>
-        <form class="revision" @submit=${event => { event.preventDefault(); void this.loadDirectory('', true) }}>
-          <div class="revision-switch" role="group" aria-label="Revision type">${REVISION_TYPES.map(({ kind, label, icon }) => html`<button type="button" aria-label=${label} title=${label} aria-pressed=${this._refKind === kind} ?disabled=${!repo || this._loadingRefs} @click=${() => this.selectRevisionType(kind)}>${icon}</button>`)}</div>
-          <input class="revision-name" type="text" aria-label=${revisionLabel} list=${ifDefined(this._refKind === 'commit' ? undefined : 'bundle-revisions')} placeholder=${this._refKind === 'commit' ? 'Commit SHA…' : `Choose or enter a ${this._refKind}…`} .value=${this._refName} ?disabled=${!repo || this._loadingRefs} @input=${event => this.editRevision(event.target.value)}>
-          <datalist id="bundle-revisions">${(choices ?? []).map(name => html`<option value=${name}></option>`)}</datalist>
+        <form class="revision" @focusout=${event => { if (!event.currentTarget.contains(event.relatedTarget)) this.closeRevisionSuggestions() }} @submit=${event => { event.preventDefault(); void this.loadDirectory('', true) }}>
+          <div class="revision-switch" role="group" aria-label="Revision type">${REVISION_TYPES.map(({ kind, label, icon }) => html`<button type="button" aria-label=${label} title=${label} aria-pressed=${this._refKind === kind} ?disabled=${!repo || this._loadingRefs} @click=${() => { this.selectRevisionType(kind); this.renderRoot.querySelector('.revision-name').focus(); this.showRevisionSuggestions() }}>${icon}</button>`)}</div>
+          <input class="revision-name" type="text" aria-label=${revisionLabel} role=${ifDefined(this._refKind === 'commit' ? undefined : 'combobox')} aria-autocomplete=${ifDefined(this._refKind === 'commit' ? undefined : 'list')} aria-expanded=${ifDefined(this._refKind === 'commit' ? undefined : String(this._revisionOpen))} aria-controls=${ifDefined(this._refKind === 'commit' ? undefined : 'bundle-revisions')} aria-activedescendant=${ifDefined(this._revisionOpen && this._activeRevision >= 0 ? `revision-${this._activeRevision}` : undefined)} autocomplete="off" placeholder=${this._refKind === 'commit' ? 'Commit SHA…' : `Choose or enter a ${this._refKind}…`} .value=${this._refName} ?disabled=${!repo || this._loadingRefs} @focus=${() => this.showRevisionSuggestions()} @click=${() => this.showRevisionSuggestions()} @keydown=${this.revisionKeyDown} @input=${event => { this.editRevision(event.target.value); this.showRevisionSuggestions(false) }}>
+          ${this._refKind === 'commit' ? nothing : html`<button type="button" class="revision-expand" aria-label=${`Show ${this._refKind} suggestions`} aria-expanded=${this._revisionOpen} ?disabled=${!repo || this._loadingRefs} @mousedown=${event => event.preventDefault()} @click=${() => { if (this._revisionOpen) this.closeRevisionSuggestions(); else { this.renderRoot.querySelector('.revision-name').focus(); this.showRevisionSuggestions() } }}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>`}
+          <div class="revision-menu" id="bundle-revisions" popover="auto" role="listbox" aria-label=${`${revisionLabel} suggestions`} @beforetoggle=${event => { this._revisionOpen = event.newState === 'open'; delete event.target.dataset.positioned; if (!this._revisionOpen) this._activeRevision = -1 }}>
+            <div class="revision-options">${choices.map((name, index) => html`<button type="button" role="option" id=${`revision-${index}`} aria-selected=${name === this._refName} ?data-active=${index === this._activeRevision} tabindex="-1" title=${name} @mousedown=${event => event.preventDefault()} @click=${() => this.pickRevision(name)}><span>${name}</span></button>`)}</div>
+            ${choices.length > 0 ? nothing : html`<p class="revision-empty">${this._revisionQuery ? 'No matching suggestions. Enter a revision name to browse.' : `No ${this._refKind} suggestions available.`}</p>`}
+          </div>
         </form>
       </div>
       ${this._reposError ? html`<p class="message" role="alert">${this._reposError} <button type="button" class="text-action" @click=${() => this.loadRepositories()}>Retry</button></p>` : nothing}

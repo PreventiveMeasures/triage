@@ -962,35 +962,12 @@ async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
   return { githubUserId, token }
 }
 
-// The source picker has an additional GitHub gate. Upload/link pickers retain
-// their existing managed-data permissions and do not grant live source access.
+// Listing connected repository names uses managed access only. Verify GitHub
+// access after selection, before returning any refs or source directory data.
 async function handleBrowsableRepositories(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (!s) return
-  const candidates = await bundleRepos(deps, s.user)
-  const allowed = []
-  try {
-    const user = await repositoryBrowserUser(deps, s.user.id)
-    const browser = createRepositoryBrowser(deps.config, user)
-    // Bound GitHub requests; never consult repositories outside the local gate.
-    for (let i = 0; i < candidates.length; i += 4) {
-      const batch = await Promise.all(candidates.slice(i, i + 4).map(async repo => {
-        try { await browser.reader(repo); return repo }
-        catch (err) {
-          if (err instanceof GithubApiError && [401, 404].includes(err.status)) return null
-          throw err
-        }
-      }))
-      allowed.push(...batch.filter(repo => repo !== null))
-    }
-  } catch (err) {
-    if (err instanceof GithubApiError) { sendJson(res, 502, { error: 'repository-access-unavailable' }); return }
-    throw err
-  }
-  const current = await readManageSession(res, deps, cookie)
-  if (!current) return
-  const currentRepos = await bundleRepos(deps, current.user)
-  sendJson(res, 200, { repos: selectableRepos(allowed.filter(repo => currentRepos.some(item => JSON.stringify(item) === JSON.stringify(repo)))) })
+  sendJson(res, 200, { repos: selectableRepos(await bundleRepos(deps, s.user)) })
 }
 
 // Recheck repository/path grants after upstream reads, before returning names.
