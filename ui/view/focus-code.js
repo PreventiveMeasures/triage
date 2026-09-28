@@ -6,6 +6,7 @@ import { fetchReportSources, readReportSources } from './client-managed.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleSourceImports, sourceLinkResolver } from '../../common/bundle-source-links.js'
 import { historyFor } from './focus-code-history.js'
 import { lineRange } from './format.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -13,7 +14,7 @@ import { render } from './render.js'
 import { report } from './dom.js'
 import { revealCitedLines } from './reveal-cited.js'
 
-// integrity → { sources: Map<file, content> | null, loading: bool, error: string | null }
+// integrity → { sources, imports, loading, error }
 const sourcesCache = new Map()
 
 // integrity\0file → highlighted HTML string, or null when prism
@@ -26,7 +27,7 @@ const highlightPending = new Set()
 const managedHighlights = new WeakMap()
 const managedLoads = new Set()
 
-function kickHighlight(integrity, file, content, cache = highlightCache, pending = highlightPending) {
+function kickHighlight(integrity, file, content, resolveString, cache = highlightCache, pending = highlightPending) {
   const key = `${integrity}\0${file}`
   if (cache.has(key) || pending.has(key)) return
   const lang = langForPath(file)
@@ -36,7 +37,7 @@ function kickHighlight(integrity, file, content, cache = highlightCache, pending
   }
   pending.add(key)
   ;(async () => {
-    const html = await prismHighlight(content, lang)
+    const html = await prismHighlight(content, lang, resolveString)
     cache.set(key, html ?? null)
     pending.delete(key)
     state.focusCodeTick++
@@ -57,7 +58,7 @@ async function loadSources(integrity) {
   try {
     const details = await buildBundleDetails(integrity, entry)
     const sources = bundleSourcesAsMap(details)
-    sourcesCache.set(integrity, { sources, loading: false, error: details.error ?? null })
+    sourcesCache.set(integrity, { sources, imports: bundleSourceImports(details, sources), loading: false, error: details.error ?? null })
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
@@ -151,7 +152,7 @@ function managedSource(reportId, file, kick) {
   if (typeof content !== 'string') return null
   let highlights = managedHighlights.get(data)
   if (!highlights) { highlights = { cache: new Map(), pending: new Set() }; managedHighlights.set(data, highlights) }
-  kickHighlight(data.integrity, file, content, highlights.cache, highlights.pending)
+  kickHighlight(data.integrity, file, content, sourceLinkResolver(data.sources, file, data.imports), highlights.cache, highlights.pending)
   return { content, highlighted: highlights.cache.get(`${data.integrity}\0${file}`) ?? null, loading: false }
 }
 
@@ -192,7 +193,7 @@ export function bundleSource(integrity, file, { kick = true, reportId = null } =
   if (typeof content !== 'string') return null
   // Kick Prism highlight if we haven't yet — render() runs again when
   // the highlighted HTML lands and the second pass picks it up.
-  kickHighlight(integrity, file, content)
+  kickHighlight(integrity, file, content, sourceLinkResolver(cached.sources, file, cached.imports))
   const key = `${integrity}\0${file}`
   return {
     content,
@@ -246,6 +247,16 @@ export function focusCodePosition(f) {
   const base = basePosition(f)
   if (!base) return null
   return historyFor(state.focusCodeStack, state.focusCodeAt, base).pos
+}
+
+// A link belongs to the panel's current bundle/file, never the separately
+// selected bundle view. Managed targets must be in this report's source set.
+export function focusCodeLinkPosition(group, integrity, parent, file) {
+  const history = focusCodeHistory(group)
+  if (!history || history.pos.integrity !== integrity || history.pos.file !== parent) return null
+  const finding = activeTabFor(group)
+  const source = bundleSource(integrity, file, { kick: false, reportId: finding?._managedReportId })
+  return source && !source.loading ? { integrity, file, range: null } : null
 }
 
 // The focus view's inline code panel: whatever file the history says

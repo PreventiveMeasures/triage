@@ -24,6 +24,7 @@ import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.j
 import { sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
+import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -1299,7 +1300,7 @@ function renderBundleCodeView(details) {
             ?disabled=${!path} @click=${() => revealBundleTreeFile(path, prefix)}>
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5"/><path d="M8 0v3m0 10v3M0 8h3m10 0h3"/></svg>
           </button>
-          <button type="button" class="bundle-code-rail-action" aria-label="Collapse folders" data-tooltip="Collapse folders"
+          <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
             ?disabled=${searchMode !== 'files' || !!query || tree.dirs.size === 0} @click=${() => collapseBundleTree(tree)}>
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M5 2h8a1 1 0 0 1 1 1v8M3 5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1ZM4.5 9.5h4"/></svg>
           </button>
@@ -1330,12 +1331,23 @@ function renderBundleCodeView(details) {
 // attribute so the events.js delegate steps without re-deriving
 // the per-file findings.
 function renderBundleCodeMain(details, path, content, fileFindings, lineFindings) {
+  const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
   const lineCount = typeof content === 'string' ? content.split('\n').length : 0
   const byteSize = typeof content === 'string' ? utf8ByteLength(content) : 0
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
   return html`<header class="bundle-code-main-bar">
+      <span class="bundle-code-file-nav">
+        <button type="button" class="focus-code-nav-btn" data-bundle-code-history="back"
+          aria-label="Back to the previously shown file" ?disabled=${history.at === 0}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg>
+        </button>
+        <button type="button" class="focus-code-nav-btn" data-bundle-code-history="forward"
+          aria-label="Forward to the next shown file" ?disabled=${history.at >= history.files.length - 1}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+        </button>
+      </span>
       ${sourceFileIcon(path)}
       <span class="bundle-code-main-path mono" title=${path}>${path}</span>
       <button

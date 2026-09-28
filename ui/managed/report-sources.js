@@ -17,7 +17,10 @@ export async function fetchReportSources(id, teamId) {
     if (response.status === 204 || response.status === 404) return null
     if (!response.ok) throw new Error(`Sources request failed (${response.status})`)
     const data = await response.json()
-    return { integrity: data.integrity, sources: new Map(data.files), paths: new Map(data.paths) }
+    return {
+      integrity: data.integrity, sources: new Map(data.files), paths: new Map(data.paths),
+      imports: new Map((data.imports ?? []).map(([parent, targets]) => [parent, new Map(targets)])),
+    }
   })
   const owner = readReportSources(id, teamId)
   try {

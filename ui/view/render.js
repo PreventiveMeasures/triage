@@ -1092,7 +1092,7 @@ function focusCodeLinesTemplate(code) {
         return html`<div class=${classMap(classes)} data-focus-code-line=${ln}>${ln}</div>`
       })}
     </aside>
-    <pre class="focus-code-source"><code>${typeof highlighted === 'string'
+    <pre class="focus-code-source" tabindex="-1" aria-label=${code.file}><code>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
       : content}</code></pre>
   </div>`
@@ -1140,7 +1140,7 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
   // drag itself writes the same property directly on this element
   // rather than re-rendering per pointermove.
   const splitStyle = styleMap({ '--focus-split': String(state.focusSplit) })
-  return html`<div class=${mainClass} style=${splitStyle}>
+  return html`<div class=${mainClass} style=${splitStyle} data-gid=${groupKey(group)}>
       <div class="focus-pane focus-pane-card">
         <div class="focus-card-wrapper">
           ${findingCardPlaceholder(group, false, 'focus', false, popup)}
@@ -1165,7 +1165,7 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
         aria-valuenow=${Math.round(state.focusSplit)}
         data-tooltip="Drag to resize · double-click to reset"
       ></div>
-      <div class="focus-pane focus-pane-code">
+      <div class="focus-pane focus-pane-code" data-focus-code-file=${code.file ?? nothing} data-focus-code-integrity=${code.integrity ?? nothing}>
         ${code.loading
           ? html`<div class="focus-code-empty">Loading source…</div>`
           : html`<header class="focus-code-bar" title=${code.file}>

@@ -71,7 +71,15 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
   for (const role of ['manage', 'view', 'none']) await db.setTeamMember(team, users[role].userId, { dependencies: true, security: true })
   const bytes = kind === 'stasis' ? brotliCompressSync(Buffer.from(new Bundle({
     modules: new Map([['.', { name: 'app', version: '1', files: { ...files, 'image.png': 'AP8=' } }]]),
-    formats: new Map([['image.png', 'resource:base64']]), entries: new Set(), executable: new Set(), imports: new Map(),
+    formats: new Map([['image.png', 'resource:base64']]), entries: new Set(), executable: new Set(),
+    imports: new Map([
+      ['node', new Map([
+        ['src/main.js', new Map([['proof', 'src/evidence.js'], ['conditional', 'src/evidence.js'], ['./evidence.js', 'src/evidence.js'], ['platform', new Map([['ios', 'src/evidence.js']])], ['hidden', 'unrelated.js'], ['security', 'secret.js']])],
+        ['unrelated.js', new Map([['secret-import', 'secret.js']])],
+        ['secret.js', new Map([['proof', 'secret-evidence.js']])],
+      ])],
+      ['browser', new Map([['src/main.js', new Map([['proof', 'src/evidence.js'], ['conditional', 'secret.js'], ['./evidence.js', 'unrelated.js']])]])],
+    ]),
   }).serialize())) : Buffer.from(JSON.stringify({ version: 3, sources: [...Object.keys(files), 'missing.js'], sourcesContent: [...Object.values(files), null] }))
   const bundle = { id: randomUUID(), integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'app.stasis.code.br' : 'app.map', kind, byteSize: bytes.length, uploadedBy: users.admin.userId, uploadedByLogin: 'admin', repoId: 1 }
   await bundles.put(bundle.id, bytes, kind); await db.insertBundle(bundle, Date.now())
@@ -105,6 +113,23 @@ function deleteReport(h, id) { return h.send(id, 'admin', 'DELETE', { path: `/ap
 
 function sourcesTests(backend) {
   const setup = (t, kind) => setupBackend(t, kind, backend)
+
+  test('Stasis import metadata is scoped to visible files and blocks ambiguous or hidden targets', async t => {
+    const h = await setup(t, 'stasis')
+    const admin = (await h.send()).json()
+    assert.deepEqual(new Map(new Map(admin.imports).get('src/main.js')), new Map([
+      ['proof', 'src/evidence.js'], ['conditional', null], ['./evidence.js', null], ['platform', null], ['hidden', null], ['security', 'secret.js'],
+    ]))
+    assert.equal(new Map(admin.imports).has('unrelated.js'), false)
+    await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+    const restricted = (await h.send(h.report.id, 'view')).json()
+    const imports = new Map(restricted.imports)
+    assert.equal(imports.has('secret.js'), false)
+    assert.equal(new Map(imports.get('src/main.js')).get('security'), null)
+    assert.equal(JSON.stringify(restricted.imports).includes('secret.js'), false)
+    assert.equal(JSON.stringify(restricted.imports).includes('unrelated.js'), false)
+    assert.equal(new Map(imports.get('src/main.js')).get('./evidence.js'), null, 'do not restore relative fallback after omitting a hidden condition')
+  })
 
   for (const kind of ['stasis', 'sourcemap']) {
     test(`${kind}: gzip includes location and evidence files only, with safe suffix matching`, async t => {

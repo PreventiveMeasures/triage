@@ -4,6 +4,7 @@ import { extname } from 'node:path'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { bundleSourceImports } from '../common/bundle-source-links.js'
 import { loadManagedFindings, managedFindingSourcePaths } from '../common/managed/report-content.ts'
 import { type ViewerPermissions, filterReportContent } from '../common/managed/report-filter.ts'
 import type { CacheStorage } from './cache-storage.ts'
@@ -27,7 +28,7 @@ function formatDirectory(bundleId: string, sha256: string, name: string) {
 }
 function sourceCacheFilename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>) {
   const key = createHash('sha256').update(JSON.stringify([
-    'finding-access-v4', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
+    'finding-access-v5', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
   ])).digest('hex')
   return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
 }
@@ -88,7 +89,8 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     const details = await readBundleDetails(bundle, bundles)
     if (!details) return false
     const selection = selectSources(sourcePaths, bundleSourcesAsMap(details))
-    const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection })), { level: 6 })
+    const imports = [...bundleSourceImports(details, new Map(selection.files))].map(([parent, targets]) => [parent, [...targets]])
+    const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection, imports })), { level: 6 })
     // A duplicate with the same hash AND format can use these parsed bytes.
     // Another format must not keep a deleted variant's late build alive.
     if (!(await referenced(report, bundle))) return false

@@ -132,6 +132,7 @@ export interface State {
   repositoriesSortBy: string
   bundleSourceFile: string | null
   bundleSourceFindingIdx: number | null
+  bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
   bundleCodeSearchMode: string
   bundleCodeSearchQuery: string
   bundleSearchQuery: string
@@ -617,6 +618,7 @@ export const state: State = store<State>({
   // array; null when no panel is open). Reset alongside
   // bundleSourceFile.
   bundleSourceFindingIdx: null,
+  bundleCodeHistory: null,
   // Code-slide search state — `mode` selects what gets filtered
   // by `query`: file paths (default), source content, or matched
   // findings. Reset on bundle change / slide exit so a stale

@@ -963,9 +963,10 @@ bundle-code-search {
   font: inherit;
   text-align: left;
   user-select: none;
+  cursor: default;
   scroll-margin-block: 1.5rem;
 }
-.bundle-code-tree-dir > details > summary { list-style: none; cursor: pointer; }
+.bundle-code-tree-dir > details > summary { list-style: none; }
 .bundle-code-tree-dir > details > summary::-webkit-details-marker { display: none; }
 .bundle-code-tree-chevron {
   display: grid; place-items: center;
@@ -1033,6 +1034,7 @@ bundle-code-search {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column;
   min-height: 0;
+  container: bundle-code / inline-size;
 }
 /* Main-pane header — path + copy button hug the left, stats and
    the issue stepper pin right via the spacer. The path shrinks
@@ -1050,6 +1052,7 @@ bundle-code-search {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
 }
+.bundle-code-file-nav { display: flex; align-items: center; gap: .2rem; flex: none; }
 .bundle-code-copy-path {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1068,6 +1071,10 @@ bundle-code-search {
   color: var(--muted);
   font-size: .72rem;
   font-variant-numeric: tabular-nums;
+}
+/* Keep the file identity and navigation readable in a narrow Code pane. */
+@container bundle-code (max-width: 380px) {
+  .bundle-code-main-stats { display: none; }
 }
 /* Issue stepper — severity-tinted count pill (shared
    .bundle-code-tree-count palette) + quiet ‹ › buttons cycling the
@@ -2397,7 +2404,7 @@ body.report-fullscreen {
   text-align: inherit;
   text-decoration: underline dotted;
   text-underline-offset: 3px;
-  cursor: pointer;
+  cursor: text;
   user-select: text;
 }
 .bundle-source-link:hover { background: var(--surface-active); text-decoration-style: solid; }

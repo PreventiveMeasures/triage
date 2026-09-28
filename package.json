@@ -176,6 +176,8 @@
     "common/bundle-reasons.js",
     "common/bundle-sources.d.ts",
     "common/bundle-sources.js",
+    "common/bundle-source-links.d.ts",
+    "common/bundle-source-links.js",
     "common/bundle-stats.js",
     "common/bundle-tabs.js",
     "common/code-language.js",

@@ -100,6 +100,7 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.selectedBundleWorkspace = workspaceId
   state.bundleDetails = null
   state.bundleSourceFile = null
+  state.bundleCodeHistory = null
   state.bundleSourceFindingIdx = null
   state.bundleCodeSearchQuery = ''
   state.bundleCodeSearchMode = 'files'
@@ -119,6 +120,7 @@ export function selectBundleTab(tab) {
   if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab)) beginViewNavigation()
   state.bundleDetailsTab = tab
   state.bundleSourceFile = null
+  state.bundleCodeHistory = null
   state.bundleSourceFindingIdx = null
 }
 
