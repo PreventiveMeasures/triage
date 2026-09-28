@@ -23,7 +23,17 @@ export function mapSeverity(s) {
     case 'MEDIUM': return 'medium'
     case 'LOW': return 'low'
     case 'INFO': case 'INFORMATIONAL': return 'informational'
+    case 'INFORMATIVE': return 'informative'
     default: return ''
+  }
+}
+
+// Keep the pre-alias fallback for the ID fingerprint, while displaying the
+// newly recognized tier. Inputs are ordered from strongest to weakest source.
+export function resolveSeverity(...tiers) {
+  return {
+    severity: tiers.find(Boolean) || 'medium',
+    identitySeverity: tiers.find(tier => tier && tier !== 'informative') || 'medium',
   }
 }
 
@@ -42,7 +52,7 @@ export function severityFromId(id) {
 // findings. Anchored to the whole heading, so "High memory usage in
 // parser" is never mistaken for one.
 export function severityGroupOf(heading) {
-  const m = /^(critical|high|medium|low|informational|info)(?:[ -](?:severity|risk))?(?:[ -]findings?)?(?:\s*\(\d+\))?$/iu
+  const m = /^(critical|high|medium|low|informational|informative|info)(?:[ -](?:severity|risk))?(?:[ -]findings?)?(?:\s*\(\d+\))?$/iu
     .exec((heading || '').trim())
   return m ? mapSeverity(m[1]) : ''
 }
@@ -51,7 +61,7 @@ export function severityGroupOf(heading) {
 // `High: remaining` — for sections recognized by their CONTENT rather
 // than the anchored severityGroupOf shape.
 export function headerSeverity(header) {
-  const m = /^(critical|high|medium|low|informational|info)\b/iu.exec((header || '').trim())
+  const m = /^(critical|high|medium|low|informational|informative|info)\b/iu.exec((header || '').trim())
   return m ? mapSeverity(m[1]) : ''
 }
 

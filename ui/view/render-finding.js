@@ -80,7 +80,7 @@ function severityBadge(f, { variant = 'full' } = {}) {
     return html`<span class=${`badge-pair badge-pair-${variant}`}>${primary}${variesChip}</span>`
   }
 
-  const original = f.severity
+  const original = displayedSeverity(f, 'original')
   const corrected = effectiveSeverity(f)
   const reason = f.correctedSeverityReason
   const raised = (SEVERITY_ORDER[corrected] ?? 0) > (SEVERITY_ORDER[original] ?? 0)

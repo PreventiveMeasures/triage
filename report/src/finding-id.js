@@ -71,7 +71,7 @@ export async function deriveFindingId(f) {
 // The choice above as the object that gets hashed. Key order is part of
 // the id — JSON.stringify keeps insertion order — so every shape lists
 // severity and description first.
-function fingerprintOf(f) {
+export function fingerprintOf(f) {
   if (f._idBasis) return f._idBasis
   const { severity, description } = f
   if (f.fileHash) return { severity, description, fileHash: f.fileHash }

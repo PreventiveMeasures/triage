@@ -64,11 +64,12 @@
 
 import { H2_RE, H3_RE, H4_RE, normalizeNewlines, parseCodeRef, parseLabelledFields, splitByHeading, splitLeading, tableObjects } from './md-structure.js'
 import { frozenIdBasis } from './parse-piolium-id.js'
+import { normalizeFindingSeverity } from './severity.js'
 import { fromIndexRow, indexRowOf, listFindings, variantFindings } from './parse-piolium-rows.js'
 import {
   CODE_REF_FIELDS, codeRefOf, headerSeverity, idCell, idFromToken,
   isVariantsHeading, mapSeverity, parseHeading, preambleMeta,
-  severityFromId, severityGroupOf,
+  resolveSeverity, severityFromId, severityGroupOf,
 } from './parse-piolium-tokens.js'
 
 
@@ -295,11 +296,9 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   // Precedence: the block's own bullet, the index row, the enclosing
   // group, the id's prefix, then medium — where an unrecognized tier
   // stays visible rather than dropping out.
-  const severity = mapSeverity(fields.severity)
-    || mapSeverity(row?.severity)
-    || groupSeverity
-    || severityFromId(id)
-    || 'medium'
+  const { severity, identitySeverity } = resolveSeverity(
+    mapSeverity(fields.severity), mapSeverity(row?.severity), groupSeverity, severityFromId(id),
+  )
 
   const ref = parseCodeRef(codeRefOf(fields))
   // A `**Line:**` / `**Lines:**` bullet supplies the line when the
@@ -332,7 +331,7 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   // not. finding-id.js prefers `_idBasis` when deriving the uuid; read
   // that module's header before touching either side.
   finding._idBasis = frozenIdBasis({
-    severity, description: finding.description, ref: codeRefOf(fields), lineBullet, id,
+    severity: identitySeverity, description: finding.description, ref: codeRefOf(fields), lineBullet, id,
   })
   // Auxiliary provenance, kept as plain strings so an export can cite
   // the audit's own artifacts — as parse-md.js keeps branch / status.
@@ -344,7 +343,7 @@ function parseBlock(heading, body, index, groupSeverity = '') {
   const parent = row?.parent || (variantOf ? idCell(variantOf[1]) : '')
   if (parent) finding.parent = parent
 
-  return { id, finding }
+  return { id, finding: normalizeFindingSeverity(finding) }
 }
 
 // The `## ` sections, keyed case-folded. A repeated header CONCATENATES

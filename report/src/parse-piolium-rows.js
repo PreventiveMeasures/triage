@@ -5,8 +5,9 @@
 
 import { cellValue, parseCodeRef, stripBold, tableObjects } from './md-structure.js'
 import { frozenIdBasis } from './parse-piolium-id.js'
+import { normalizeFindingSeverity } from './severity.js'
 import {
-  idCell, leadingId, leadingLink, mapSeverity, severityFromId, slugTitle,
+  idCell, leadingId, leadingLink, mapSeverity, resolveSeverity, severityFromId, slugTitle,
 } from './parse-piolium-tokens.js'
 
 // Normalize a table-row object to the shared row shape used by the
@@ -33,10 +34,7 @@ export function indexRowOf(obj) {
 // namespaced to read as an opaque token rather than a URL. A Location
 // column, where a table has one, is parsed like any code reference.
 export function fromIndexRow(row, sevFallback = '') {
-  const severity = mapSeverity(row.severity)
-    || sevFallback
-    || severityFromId(row.id)
-    || 'medium'
+  const { severity, identitySeverity } = resolveSeverity(mapSeverity(row.severity), sevFallback, severityFromId(row.id))
   const { file, line, locationLink } = parseCodeRef(row.location || '')
   const finding = {
     file: file || 'unknown',
@@ -49,12 +47,12 @@ export function fromIndexRow(row, sevFallback = '') {
   // The fingerprint reads the same reference its own way — see
   // parse-piolium-id.js.
   finding._idBasis = frozenIdBasis({
-    severity, description: finding.description, ref: row.location || '', id: row.id,
+    severity: identitySeverity, description: finding.description, ref: row.location || '', id: row.id,
   })
   if (row.pocStatus) finding.pocStatus = row.pocStatus
   if (row.status) finding.status = row.status
   if (row.parent) finding.parent = row.parent
-  return finding
+  return normalizeFindingSeverity(finding)
 }
 
 // Findings rendered as a list: the mode outline asks for "links to
@@ -92,10 +90,7 @@ export function listFindings(body, sev, index) {
     }
 
     const row = index.get(id)
-    const severity = mapSeverity(row?.severity)
-      || sev
-      || severityFromId(id)
-      || 'medium'
+    const { severity, identitySeverity } = resolveSeverity(mapSeverity(row?.severity), sev, severityFromId(id))
     const finding = { file: 'unknown', line: '?', severity, description: stripBold(title) }
     if (id) finding.location = `piolium:${id}`
     else if (link) finding.location = link
@@ -103,7 +98,7 @@ export function listFindings(body, sev, index) {
     if (row?.pocStatus) finding.pocStatus = row.pocStatus
     if (row?.status) finding.status = row.status
     if (row?.parent) finding.parent = row.parent
-    out.push({ id, finding })
+    out.push({ id, finding: normalizeFindingSeverity(finding, identitySeverity) })
   }
   return out
 }

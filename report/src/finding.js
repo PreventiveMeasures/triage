@@ -8,6 +8,7 @@
 
 import { fenceRanges, inFence } from './md-structure.js'
 import { SOURCE_LABELS } from './labels.js'
+import { canonicalSeverity } from './severity.js'
 
 // Severity ranking — higher = more severe. Two stacks: vulnerabilities
 // (critical → low) over bug-class findings (high_bug → bug), with
@@ -33,6 +34,7 @@ export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'high_bug', 'bug
 // Only a known tier counts: an unrecognised one would sort to rank 0 and
 // render an uncolored badge, so the intrinsic severity stands instead.
 function validCorrected(corrected) {
+  corrected = canonicalSeverity(corrected)
   return corrected != null && corrected in SEVERITY_ORDER ? corrected : null
 }
 
@@ -40,20 +42,20 @@ function validCorrected(corrected) {
 // correction — it IS that report's finding — so no report key is needed;
 // divergence across reports comes from correctedVariants.
 export function effectiveSeverity(f) {
-  return validCorrected(f?.correctedSeverity) ?? f?.severity
+  return validCorrected(f?.correctedSeverity) ?? canonicalSeverity(f?.severity)
 }
 
 // True when the finding carries a valid correction that actually changes
 // the tier — the trigger for the dual badge / reason affordance.
 export function hasSeverityCorrection(f) {
   const c = validCorrected(f?.correctedSeverity)
-  return c != null && c !== f?.severity
+  return c != null && c !== canonicalSeverity(f?.severity)
 }
 
 // Every display, count and sort site reads severity through this with the
 // current lens (`state.severityMode`), not off `f.severity`.
 export function displayedSeverity(f, mode) {
-  return mode === 'original' ? f?.severity : effectiveSeverity(f)
+  return mode === 'original' ? canonicalSeverity(f?.severity) : effectiveSeverity(f)
 }
 
 // The per-report map of a deduped survivor, but only where the reports
@@ -61,7 +63,7 @@ export function displayedSeverity(f, mode) {
 export function correctedVariants(f) {
   const byReport = f?._correctedByReport
   if (!byReport) return null
-  const tiers = new Set(Object.values(byReport).map((v) => v?.severity))
+  const tiers = new Set(Object.values(byReport).map((v) => canonicalSeverity(v?.severity)))
   return tiers.size > 1 ? byReport : null
 }
 

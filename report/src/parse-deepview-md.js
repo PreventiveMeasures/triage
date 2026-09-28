@@ -56,6 +56,7 @@
 import { locationLabel } from './finding.js'
 import { H2_RE, H3_RE, H4_RE, normalizeNewlines, splitByHeading, splitLeading } from './md-structure.js'
 import { applyFact, buildDescription, narrativeSplit, readAnalyzer, readEvidence, readProse, readRepository, splitFacts, splitSections, tierOf } from './parse-deepview-fields.js'
+import { normalizeFindingSeverity } from './severity.js'
 
 const MARKER_RE = /^<!--\s*DeepView findings export\b[^>]*-->/u
 const CASE_RE = /^Case \d+ of \d+(?:\s|$)/u
@@ -136,7 +137,7 @@ function readCase(body, depth, entryTitle, tier) {
   for (const [field, value] of fields) f[field] = value
   const reason = sections.find((s) => s.label.toLowerCase() === 'severity correction')
   if (reason?.body) f.correctedSeverityReason = readProse(reason.body)
-  return { finding: f, analyzer }
+  return { finding: normalizeFindingSeverity(f), analyzer }
 }
 
 // The producer and the run for the whole report: from the Analyzer facts

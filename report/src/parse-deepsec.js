@@ -30,6 +30,7 @@
 // `## SEVERITY (n)` header appears and the chain moves on.
 
 import { normalizeNewlines, splitHeadingLine } from './md-structure.js'
+import { normalizeFindingSeverity } from './severity.js'
 
 // The `## SEVERITY (n)` header that marks a DeepSec document. Splitting
 // on it with the tier captured interleaves tiers and content:
@@ -50,6 +51,7 @@ function mapSeverity(s) {
     case 'HIGH_BUG': return 'high_bug'
     case 'BUG': return 'bug'
     case 'INFO': case 'INFORMATIONAL': return 'informational'
+    case 'INFORMATIVE': return 'informative'
     default: return 'medium'
   }
 }
@@ -193,5 +195,5 @@ function parseBlock(block, severity) {
     if (fields.reasoning) finding.revalidateVerdict = fields.reasoning.replaceAll('**', '')
   }
   if (fields.slug) finding.slug = fields.slug
-  return finding
+  return normalizeFindingSeverity(finding, severity === 'informative' ? 'medium' : severity)
 }
