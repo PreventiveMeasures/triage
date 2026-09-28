@@ -24,6 +24,7 @@ import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import './create-bundle.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
+import { managedRoutePath } from '../../common/managed/routes.js'
 import { managedReportSources } from '../scan/report-source.js'
 import { fetchScanModels } from '../view/scan-models.js'
 import { repositoryChoices } from '../view/repository-options.js'
@@ -1247,6 +1248,7 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 // chunk, fetches its own data; no main-bundle state.
 class ManagedAdminBundles extends ManagedPage {
   static properties = {
+    createRepoId: { attribute: false },
     localImportSource: { attribute: false },
     _query: { state: true },
     _creating: { state: true },
@@ -1303,9 +1305,20 @@ class ManagedAdminBundles extends ManagedPage {
   }
 
   _showCreate(open) {
+    if (!open && this.createRepoId != null) {
+      document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))
+      return
+    }
     this._creating = open
     this._dragOver = false
     if (!open) void this.updateComplete.then(() => this.renderRoot.querySelector('.create-bundle-action')?.focus())
+  }
+
+  willUpdate(changed) {
+    if (changed.has('createRepoId')) {
+      this._repoId = this.createRepoId ?? null
+      this._creating = this.createRepoId != null
+    }
   }
 
   render() {
@@ -1466,7 +1479,7 @@ class ManagedAdminScans extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-scans', this._role, this.allowShare)}
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load scan sources: ${this._error} <button type="button" class="btn" @click=${() => void this._load()}>Retry</button></p>` : nothing}
-      <deepview-scan-page hide-heading .selection=${this.selection} .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources}></deepview-scan-page>
+      <deepview-scan-page hide-heading .selection=${this.selection} .source=${this._source} .sourceLoading=${this._loading && this._source == null} .loadBundle=${loadManagedScanBundle} .loadModels=${this._loadModels} .loadReportSources=${this._loadReportSources} .createBundleHref=${repoId => Number.isSafeInteger(repoId) && repoId > 0 ? managedRoutePath({ view: 'manage-bundles', createRepoId: repoId }) : null}></deepview-scan-page>
     </div>`
   }
 }

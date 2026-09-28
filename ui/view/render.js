@@ -1967,6 +1967,7 @@ function renderImpl() {
       el.session = state.managedSession
       el.allowShare = state.managed?.allowShare === true
       if (state.currentView === 'manage-scans') el.selection = state.scanSelection
+      if (state.currentView === 'manage-bundles') el.createRepoId = state.bundleCreationRepoId
       slot.append(el)
       // The admin bundle is its own esbuild entry (no code splitting),
       // so it can't import view/tooltip.js without duplicating the
@@ -1988,6 +1989,7 @@ function renderImpl() {
       slot.firstElementChild.allowShare = state.managed?.allowShare === true
     }
     if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
+    if (state.currentView === 'manage-bundles' && slot?.firstElementChild) slot.firstElementChild.createRepoId = state.bundleCreationRepoId
     report.classList.add('active')
     dropZone.classList.add('hidden')
     document.title = adminView.title

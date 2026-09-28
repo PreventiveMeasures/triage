@@ -31,6 +31,11 @@ export const SCAN_PAGE_STYLES = css`
   .panel-head p { margin: 0; color: var(--muted); font-size: .72rem; }
   .bundle-choice { display: grid; grid-template-columns: minmax(16rem, 1.2fr) minmax(0, 1fr); gap: 1rem; align-items: end; padding: .85rem .9rem; }
   .field { display: grid; gap: .3rem; min-width: 0; }
+  .source-choice > .field > span, .bundle-label { height: 1.25rem; }
+  .bundle-label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; }
+  .create-bundle-button { display: inline-flex; align-items: center; flex: none; height: 1.25rem; padding: 0 .4rem; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); background: var(--bg); font-size: .65rem; text-decoration: none; white-space: nowrap; }
+  .create-bundle-button:hover { color: var(--text); border-color: var(--muted); background: var(--surface-active); }
+  .create-bundle-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .field label, .scope-field > span { color: var(--muted); font-size: .68rem; }
   select { min-width: 0; height: 2rem; padding: .28rem .5rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font-size: .76rem; }
   .bundle-stats { display: grid; grid-template-columns: repeat(4, max-content); align-items: center; gap: .45rem 1.1rem; min-width: 0; }
@@ -44,6 +49,9 @@ export const SCAN_PAGE_STYLES = css`
   .scope-slot { justify-self: end; width: min(34rem, 100%); min-height: 2rem; }
   .source-footer .bundle-stats { min-height: 2rem; }
   .choice-empty { display: flex; align-items: center; height: 2rem; padding: .28rem .5rem; border: 1px dashed var(--border); border-radius: 5px; color: var(--muted); background: var(--bg); font-size: .72rem; }
+  .choice-empty a { margin-left: .4rem; color: var(--accent); text-underline-offset: .15em; white-space: nowrap; }
+  .choice-empty a:hover { color: var(--text); }
+  .choice-empty a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
   .scope-head { display: flex; align-items: center; gap: .55rem; padding: .72rem .9rem; list-style: none; cursor: default; user-select: none; }
   .scope-head::-webkit-details-marker { display: none; }
   .scope-head:hover { background: var(--surface-active); }
