@@ -21,8 +21,8 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourceFileIcon } from './source-file-icon.js'
-import { buildBundleSourceTree, compactSourceDirectory, navigateBundleSourceTree } from './bundle-source-tree.js'
+import { sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
+import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
@@ -866,11 +866,10 @@ function revealBundleTreeFile(path, prefix) {
 }
 
 function collapseBundleTree(tree) {
-  const walk = (node, parent = '') => {
-    for (const [name, child] of node.dirs) {
-      const path = parent ? `${parent}/${name}` : name
-      _bundleTreeUserOpen.set(path, false)
-      walk(child, path)
+  const walk = (node) => {
+    for (const child of node.dirs.values()) {
+      _bundleTreeUserOpen.set(child.path, false)
+      walk(child)
     }
   }
   walk(tree)
@@ -904,10 +903,10 @@ function dirIssueStats(node, issueIndex) {
 // Recursive directory + file rendering for the Code slide's tree
 // rail. Open the first level by default; deeper levels collapse
 // so the user can drill in. Selected file gets a `current` class
-// for the highlight strip; the click target is the data-bundle-
+// for its background; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, parentPath = '', expandAll = false) {
-  const dirs = [...node.dirs.entries()].toSorted(([a], [b]) => a.localeCompare(b))
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false) {
+  const dirs = [...node.dirs.entries()].toSorted(([a, an], [b, bn]) => sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path))
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
   // the tree spotlights it on slide-open.
@@ -934,10 +933,11 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
     aria-label=${depth === 0 ? 'Source files' : nothing}
     @keydown=${depth === 0 ? navigateBundleSourceTree : nothing}
   >
-    ${repeat(dirs, ([name]) => `${parentPath}/${name}`, ([name, child]) => {
-      const childPath = parentPath ? `${parentPath}/${name}` : name
+    ${repeat(dirs, ([, child]) => child.path, ([name, child]) => {
+      const childPath = child.path
       const compact = compactSourceDirectory(name, child, depth)
-      const compactPath = parentPath ? `${parentPath}/${compact.names.join('/')}` : compact.names.join('/')
+      const pkg = child.package
+      const tooltip = pkg?.variant ? `Variant ${pkg.variant}\n${compact.node.sourcePath}` : compact.node.sourcePath
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
       // where the issues live (the per-file chips only help once
@@ -945,12 +945,16 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const stats = dirIssueStats(child, issueIndex)
       return html`<li class="bundle-code-tree-dir">
         <details .open=${live(computeOpen(childPath, child))}>
-          <summary @click=${onSummaryClick(childPath)} data-tooltip=${compactPath}>
+          <summary @click=${onSummaryClick(childPath)} data-tooltip=${tooltip}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
-            <span class="bundle-code-tree-dirname">${compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}</span>
+            ${pkg ? sourceNpmIcon : nothing}
+            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg })}>
+              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">@${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
+            </span>
+            ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
           </summary>
-          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, compactPath, expandAll)}
+          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll)}
         </details>
       </li>`
     })}
@@ -986,46 +990,19 @@ function stripPathPrefix(p, prefix) {
   return prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
 }
 
-// Files-mode result pane — the directory tree, optionally
-// filtered to paths matching `query` (case-insensitive
-// substring on the prefix-stripped path the user actually sees
-// in the rail). Empty query renders the full tree. The filtered
-// tree is rebuilt from scratch (rather than hiding nodes) so the
-// auto-open `containsCurrent` logic in renderBundleSourceTree
-// falls out naturally on hits.
+// Filter the full presentation so package boundaries and variant labels stay
+// stable. Both physical paths and the displayed package names are searchable.
 function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '') {
   if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex)
-  const q = query.toLowerCase()
-  // Walk the (already-remapped) tree to collect every full path
-  // whose prefix-stripped form contains the query. Matching
-  // against the stripped form keeps the filter UX consistent
-  // with what the rail prefix label promises ("paths under here
-  // are RELATIVE to <prefix>").
-  const matches = []
-  const collect = (n) => {
-    for (const [, child] of n.dirs) collect(child)
-    for (const [, full] of n.files) {
-      const view = stripPathPrefix(full, prefix)
-      if (view.toLowerCase().includes(q)) matches.push(full)
-    }
-  }
-  collect(tree)
-  if (matches.length === 0) {
+  const filtered = filterBundleSourceTree(tree, query, prefix)
+  if (!filtered) {
     return html`<div class="bundle-code-search-empty">No files match.</div>`
   }
-  // Build a fresh tree from the STRIPPED forms of the matches so
-  // the visual hierarchy doesn't waste rows on a shared prefix
-  // that's already shown above the rail. Files at the leaves are
-  // remapped back to original paths so the click delegate's
-  // `data-bundle-view-source=${full}` resolves against
-  // `sources` (which keys by the original path).
-  const stripped = prefix ? matches.map((p) => stripPathPrefix(p, prefix)) : matches
-  const filtered = buildBundleSourceTree(stripped, matches)
   // expandAll: filtered tree only contains matches; every dir
   // exists because something inside it matched, so opening them
   // all means the user sees every hit at a glance instead of
   // having to click every level open after typing.
-  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, '', true)
+  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true)
 }
 
 // Code-mode result pane — flat list of files, each with up to
@@ -1237,7 +1214,8 @@ function renderBundleCodeView(details) {
     _bundleTreeCurrentPath = null
   }
   const allPaths = [...sources.keys()].toSorted()
-  const { prefix, stripped } = stripCommonPathPrefix(allPaths)
+  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix)
+  const stripped = allPaths.map(p => stripPathPrefix(p, prefix))
   // Tree built from STRIPPED paths so the visual hierarchy
   // doesn't waste horizontal space on a shared root prefix.
   // Stripped → original mapping lets the click handlers (and

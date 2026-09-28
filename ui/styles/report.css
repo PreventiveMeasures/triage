@@ -987,6 +987,11 @@ bundle-code-search {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bundle-code-tree-separator { color: var(--muted); padding-inline: 1px; }
+.bundle-code-tree-npm { flex: none; color: var(--muted); }
+.bundle-code-tree-dirname.bundle-code-tree-package { display: flex; align-items: baseline; }
+.bundle-code-tree-package-name { overflow: hidden; text-overflow: ellipsis; }
+.bundle-code-tree-package-version { flex-shrink: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.bundle-code-tree-variant { flex: none; font: .6rem var(--font-ui, system-ui); color: var(--muted); }
 .bundle-code-tree-file { padding: 0; }
 .bundle-code-tree-dir > details > summary:hover,
 .bundle-code-tree-link:hover { background: var(--surface-active); }
