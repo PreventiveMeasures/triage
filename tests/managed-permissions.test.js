@@ -44,6 +44,7 @@ const dataPaths = [
   '/api/teams', `/api/teams/${id}/reports`, `/api/teams/${id}/fixes`, `/api/avatar/${id}`, '/api/github/pull-requests',
   '/api/admin/users', '/api/admin/set-role', '/api/admin/history', '/api/admin/scan/models',
   '/api/admin/repositories', '/api/admin/repositories/select', '/api/admin/repositories/add-public',
+  '/api/admin/repositories/connect-app',
   '/api/admin/repositories/impact', '/api/admin/repositories/remove',
   '/api/admin/reports', `/api/admin/reports/${id}`, '/api/admin/reports/set-repo', '/api/admin/reports/set-visible',
   '/api/admin/bundles', `/api/admin/bundles/${id}`, '/api/admin/bundles/set-repo',

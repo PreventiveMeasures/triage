@@ -326,6 +326,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // mutable context while keeping the original added_by/added_at; deselectRepo
   // resolves true iff a row was removed.
   selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
+  connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean>
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
   listAllRepos(): Promise<ManagedRepo[]>
@@ -505,6 +506,12 @@ function prepareStatements(db: ManagedSql) {
          installation_id = excluded.installation_id, default_branch = excluded.default_branch,
          html_url = excluded.html_url, updated_at = excluded.updated_at, active = 1`,
     ),
+    // Never reactivate or recreate a repo, overwrite another connection, or
+    // commit after the administrator's session/role was revoked during GitHub I/O.
+    connectRepoInstallationStmt: db.prepare(`UPDATE managed_selected_repo SET installation_id = ?, updated_at = ?
+      WHERE repo_id = ? AND full_name = ? AND added_at = ? AND installation_id IS NULL
+        AND EXISTS (SELECT 1 FROM managed_session s JOIN managed_user u ON u.id = s.user_id
+          WHERE s.id = ? AND s.expires_at > ? AND u.role = 'admin')`),
     deleteRepoStmt: db.prepare(`DELETE FROM managed_selected_repo WHERE repo_id = ?`),
     deactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
     reactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
@@ -837,6 +844,9 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     },
     async deselectRepo(repoId: number): Promise<boolean> {
       return Number((await deleteRepoStmt.run(repoId)).changes) > 0
+    },
+    async connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean> {
+      return Number((await stmts.connectRepoInstallationStmt.run(installationId, now, repo.repoId, repo.fullName, repo.addedAt, sessionId, now)).changes) > 0
     },
     async listSelectedRepos(): Promise<SelectedRepo[]> {
       const rows = (await selectReposStmt.all()) as RepoRow[]

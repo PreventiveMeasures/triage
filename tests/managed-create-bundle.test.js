@@ -7,6 +7,19 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
+test('branch suggestions put the default first, retain filtering, and leave tag order unchanged', () => {
+  const page = new ManagedCreateBundle()
+  page._refs = { defaultBranch: 'main', branches: ['develop', 'main', 'release'], tags: ['v1', 'v2'] }
+  assert.deepEqual(page.revisionSuggestions(), ['main', 'develop', 'release'])
+  page._revisionQuery = 're'
+  assert.deepEqual(page.revisionSuggestions(), ['release'])
+  page._revisionQuery = ''
+  page._refs.branches = ['develop']
+  assert.deepEqual(page.revisionSuggestions(), ['main', 'develop'], 'default remains available when outside the first page of branch suggestions')
+  page._refKind = 'tag'
+  assert.deepEqual(page.revisionSuggestions(), ['v1', 'v2'])
+})
+
 test('the creation picker loads managed repositories and never selects a filtered-out initial repository', async t => {
   const calls = []
   const allowed = { repoId: 2, fullName: 'org/allowed' }

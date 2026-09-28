@@ -72,7 +72,7 @@ import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
-import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName } from './github-app.ts'
+import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
@@ -106,6 +106,7 @@ const REPO_REFS_PATH = '/api/admin/repositories/refs'
 const REPO_CONTENTS_PATH = '/api/admin/repositories/contents'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
+const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
 const REPO_IMPACT_PATH = '/api/admin/repositories/impact'
 const REMOVE_REPO_PATH = '/api/admin/repositories/remove'
 const ADMIN_REPORTS_PATH = '/api/admin/reports'
@@ -523,6 +524,39 @@ async function handleAddPublicRepository(req: IncomingMessage, res: ServerRespon
   // Only public access was verified. Keep its null installation context rather
   // than restoring a stored App installation that may no longer cover this repo.
   await connectRepository(res, deps, s.user, repo)
+}
+
+// Associate an existing connection with this App without changing its active
+// state, ownership, team grants, or stored data. GitHub grants remain separate
+// from the per-user checks required for browsing source.
+async function handleConnectRepositoryApp(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
+  const s = await adminMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const repoId = (body as { repoId?: unknown } | null)?.repoId
+  if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const repo = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
+  if (repo == null) { sendJson(res, 404, { error: 'repo-not-connected' }); return }
+  if (repo.installationId != null) { sendJson(res, 200, { connected: true }); return }
+  let installationId
+  try { installationId = await repositoryInstallation(deps.config, repo.repoId, repo.fullName) } catch (err) {
+    if (!(err instanceof GithubApiError)) throw err
+    // These credentials belong to the server App, not the user's session.
+    sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }); return
+  }
+  if (await readAdminSession(res, deps, cookie) == null) return
+  if (installationId == null) {
+    const url = installUrl(deps.config)
+    if (url == null) { sendJson(res, 503, { error: 'github-app-not-configured' }); return }
+    sendJson(res, 200, { connected: false, installUrl: url }); return
+  }
+  if (!await deps.db.connectRepoInstallation(repo, installationId, s.session.id, Date.now())) {
+    sendJson(res, 409, { error: 'repo-connection-changed' }); return
+  }
+  await activity(deps, s.user, 'repository', 'connected GitHub App access', { repo: repo.fullName })
+  sendJson(res, 200, { connected: true })
 }
 
 // POST /api/admin/repositories/select — an admin toggles whether a repo is
@@ -2003,6 +2037,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
     if (path === ADD_PUBLIC_REPO_PATH) { await handleAddPublicRepository(req, res, deps, cookie); return }
+    if (path === CONNECT_REPO_APP_PATH) { await handleConnectRepositoryApp(req, res, deps, cookie); return }
     // Reports: list / upload on the exact path, download / delete per-id on the
     // prefix. Method-dispatched here since each path carries two verbs.
     if (path === ADMIN_REPORTS_PATH) {

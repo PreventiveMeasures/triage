@@ -189,6 +189,30 @@ async function mintInstallationToken(jwt: string, installId: number, fetchImpl: 
   return token
 }
 
+// Resolve this exact repository with the App's identity, then confirm the
+// installation token reaches the same numeric repository. A missing grant is
+// actionable through installation; transport/auth/rate errors must stay errors.
+export async function repositoryInstallation(config: ManagedConfig, repoId: number, fullName: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<number | null> {
+  const { githubAppId, githubAppPrivateKey } = config
+  if (githubAppId == null || githubAppPrivateKey == null) throw new GithubApiError(503, 'github-app-not-configured')
+  if (publicRepositoryName(fullName) !== fullName) throw new GithubApiError(409, 'repo-identity-changed')
+  const path = fullName.split('/').map(encodeURIComponent).join('/')
+  const jwt = appJwt(githubAppId, githubAppPrivateKey)
+  let raw
+  try { raw = await githubJson(`${GITHUB_API}/repos/${path}/installation`, jwt, fetchImpl) } catch (err) {
+    if (err instanceof GithubApiError && err.status === 404) return null
+    throw err
+  }
+  const installation = raw as { id?: unknown; suspended_at?: unknown; permissions?: { contents?: unknown } } | null
+  const id = installation?.id
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new GithubApiError(502, 'github-malformed')
+  if (installation?.suspended_at != null || !['read', 'write'].includes(String(installation?.permissions?.contents))) return null
+  const token = await mintInstallationToken(jwt, id, fetchImpl)
+  const repo = parseRepo(await githubJson(`${GITHUB_API}/repos/${path}`, token, fetchImpl), id)
+  if (repo == null || repo.id !== repoId || repo.fullName.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(409, 'repo-identity-changed')
+  return id
+}
+
 // The `repositories` array of one /installation/repositories page → ConnectedRepo[],
 // each tagged with the installation id that can read it.
 function repoPage(body: unknown, installationId: number): ConnectedRepo[] {
