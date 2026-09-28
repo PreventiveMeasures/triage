@@ -1494,8 +1494,8 @@ class ManagedAdminTeams extends ManagedPage {
         <input id="new-team-name" class="new-name" type="text" placeholder="Team name" maxlength="100" ?disabled=${this._busy}
           @keydown=${(e) => { if (e.key === 'Enter') this._create() }}>
         <button class="btn primary" ?disabled=${this._busy} @click=${() => this._create()}>${ADMIN_PLUS_ICON} Create team</button>
+        <p class="access-note">All members can view standard findings. Set dependencies and security access per member.</p>
       </div>
-      <p class="access-note">All members can view standard findings. Set dependencies and security access per member.</p>
       <div aria-busy=${this._loading}>${this._body()}</div>
     </div>`
   }

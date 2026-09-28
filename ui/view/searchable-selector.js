@@ -110,12 +110,12 @@ export class SearchableSelector extends LitElement {
     </div>`
   }
 
-  optionIcon(_option) { return nothing }
+  optionIcon(option) { return option.initials ? html`<span class="avatar" aria-hidden="true">${option.initials}</span>` : nothing }
   optionTitle(option) { return option.label }
 
   _option(option, grouped, tabValue) {
     return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} title=${this.optionTitle(option)} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}${option.initials ? html`<span class="avatar" aria-hidden="true">${option.initials}</span>` : nothing}<span class="option-copy"><span class="name">${option.displayLabel ?? (grouped ? option.name : option.label)}</span>${option.secondary ? html`<span class="secondary">${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name">${option.displayLabel ?? (grouped ? option.name : option.label)}</span>${option.secondary ? html`<span class="secondary">${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
     </button>`
   }
 
