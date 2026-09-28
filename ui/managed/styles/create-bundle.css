@@ -85,7 +85,8 @@ button:disabled, input:disabled { opacity: .5; }
 .entry-points > .btn { flex: none; }
 .selection { flex: 1; min-width: 0; }
 .selection .note { margin: .5rem 0 0; }
-.selection-head { display: flex; align-items: center; justify-content: space-between; }
+.selection-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.btn.clear-selection { min-height: 1.65rem; padding: .2rem .5rem; font-size: .72rem; }
 h2 { margin: 0; font-size: .8rem; font-weight: 500; }
 h2 span { color: var(--muted); margin-left: .4rem; }
 .entry-points ul {
@@ -96,7 +97,12 @@ h2 span { color: var(--muted); margin-left: .4rem; }
   border: 1px solid var(--border); border-radius: 4px; background: var(--bg); font-size: .72rem;
 }
 .entry-points li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.entry-points li button { border: 0; background: transparent; padding: .1rem .2rem; color: var(--muted); }
+.entry-points li button {
+  display: grid; place-items: center; flex: none; width: 1.3rem; height: 1.3rem; padding: 0;
+  border: 0; border-radius: 3px; background: transparent; color: var(--muted); font-size: 1rem; cursor: pointer;
+}
+.entry-points li button:hover { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, transparent); }
+.entry-points li button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 @container (width <= 45rem) {
   .source-fields { grid-template-columns: 1fr; }
 }

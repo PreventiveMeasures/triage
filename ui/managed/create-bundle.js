@@ -168,8 +168,10 @@ export class ManagedCreateBundle extends LitElement {
 
   revisionSuggestions() {
     const choices = this._refKind === 'branch' ? this._refs.branches : this._refKind === 'tag' ? this._refs.tags : []
+    const ordered = this._refKind === 'branch' && this._refs.defaultBranch
+      ? [this._refs.defaultBranch, ...choices.filter(name => name !== this._refs.defaultBranch)] : choices
     const query = this._revisionQuery.trim().toLowerCase()
-    return choices.filter(name => name.toLowerCase().includes(query))
+    return ordered.filter(name => name.toLowerCase().includes(query))
   }
 
   showRevisionSuggestions(all = true) {
@@ -305,7 +307,7 @@ export class ManagedCreateBundle extends LitElement {
         </div>
         ${this._limited ? html`<p class="message">Showing GitHub’s first 1,000 entries in this directory.</p>` : nothing}
       </section>
-      <section class="entry-points" aria-label="Selected entry points"><div class="selection"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="text-action" @click=${() => { this._selected = new Set() }}>Clear all</button>` : nothing}</div>
+      <section class="entry-points" aria-label="Selected entry points"><div class="selection"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="btn clear-selection" @click=${() => { this._selected = new Set() }}>Clear all</button>` : nothing}</div>
         ${this._selected.size > 0 ? html`<ul>${[...this._selected].map(path => html`<li>${sourceFileIcon(path)}<span title=${path}>${path}</span><button type="button" aria-label=${`Remove ${path}`} @click=${() => this.toggleFile(path)}>×</button></li>`)}</ul>` : html`<p class="note">Select files above. You can choose entry points from multiple directories.</p>`}
         </div><button type="button" class="btn primary" disabled>Create a bundle</button>
       </section>

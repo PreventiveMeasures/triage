@@ -52,7 +52,7 @@ const repositories = [
   },
   {
     id: 106, fullName: 'tools/public-library', private: false, visibility: 'public',
-    installed: false, selected: false, htmlUrl: 'https://github.com/tools/public-library',
+    installed: false, selected: true, htmlUrl: 'https://github.com/tools/public-library',
   },
 ]
 
@@ -323,7 +323,16 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   sendJson(res, 200, { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false })
 }
 
-function handleAdmin(url: URL, method: string, res: ServerResponse): void {
+async function connectAppFixture(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let raw = ''
+  for await (const chunk of req) raw += String(chunk)
+  const repo = repoById((JSON.parse(raw) as { repoId: number }).repoId)
+  if (!repo?.selected) { sendJson(res, 404, { error: 'repo-not-connected' }); return }
+  repo.installed = true
+  sendJson(res, 200, { connected: true })
+}
+
+async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
   const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   if (!['admin', 'manage'].includes(role) || (adminOnly && role !== 'admin')) {
@@ -331,6 +340,7 @@ function handleAdmin(url: URL, method: string, res: ServerResponse): void {
   }
   if (handleAdminCatalog(url, method, res)) return
   if (repositoryBrowser) { handleRepositoryBrowserFixture(url, method, res); return }
+  if (url.pathname === '/api/admin/repositories/connect-app' && method === 'POST') { await connectAppFixture(req, res); return }
   if (url.pathname === '/api/admin/reports/set-visible' && method === 'POST') {
     sendJson(res, 200, { ok: true })
     return
@@ -629,9 +639,8 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   }
 
   // Management pages can still be opened from the account menu in the
-  // fixture. Reads return the linked fixture data above; mutations remain
-  // harmless acknowledgments because this server intentionally has no state.
-  if (url.pathname.startsWith('/api/admin/')) { handleAdmin(url, method, res); return }
+  // fixture. App connections only update the in-memory fixture repository.
+  if (url.pathname.startsWith('/api/admin/')) { void handleAdmin(req, url, method, res).catch(() => sendJson(res, 400, { error: 'bad-request' })); return }
   if (url.pathname === '/api/auth/logout') { res.writeHead(204); res.end(); return }
   sendJson(res, 404, { error: 'not-found' })
 }
