@@ -1,34 +1,24 @@
-// Guard: every server source file must be listed in package.json `files`.
-//
-// The server ships as raw .ts run through strip-types-loader (the
-// `triage-server` bin → server-e2e/cli.js, and the `./server` export →
-// server-e2e/index.ts). `files` is the npm publish allowlist, so a server module
-// that's absent from it is simply MISSING from the published package and the
-// server throws on import at startup. There's no bundler to paper over it.
-//
-// This catches the "added a new server-e2e/*.ts but forgot to list it" class of
-// bug — which is exactly how the objstore REST-mint modules (rest-mint.ts,
-// rest-deny.ts, fetch-mint-guard.ts) shipped unpublished until this guard.
+// Servers ship as raw source through strip-types-loader. Keep all modes and
+// their transitive runtime imports in npm's explicit publish allowlist.
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { isBuiltin } from 'node:module'
+import { build } from 'esbuild'
 
 test('package.json "files" lists every server source file (publish allowlist)', () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const allow = new Set(pkg.files)
-  // Tracked files only — skips gitignored operator state (server-e2e/config.json,
-  // server-e2e/data/*) that must NOT be published.
-  const tracked = execSync('git ls-files server-e2e', { cwd: root, encoding: 'utf8' })
+  // Tracked sources only: operator configuration/data and the development-only
+  // managed test server are not part of the published runtime.
+  const tracked = execSync('git ls-files cli.js server.ts strip-types-loader.js server-e2e server-managed server-common common/managed', { cwd: root, encoding: 'utf8' })
     .trim().split('\n').filter(Boolean)
-  // Every runtime source module (.ts/.js) under server-e2e/ is published; type
-  // decls and the colocated-nothing test files (there are none under server-e2e/,
-  // but guard anyway) are not runtime imports.
   const needsPublish = tracked.filter((f) =>
-    /\.(ts|js)$/u.test(f) && !f.endsWith('.d.ts') && !/\.test\.(ts|js)$/u.test(f))
+    /\.(ts|js)$/u.test(f) && f !== 'server-managed/test-server.ts' && !/\.test\.(ts|js)$/u.test(f))
   const missing = needsPublish.filter((f) => !allow.has(f))
   assert.deepEqual(
     missing, [],
@@ -37,63 +27,39 @@ test('package.json "files" lists every server source file (publish allowlist)', 
   )
 })
 
-// Every `exports` target must be in `files` too — an entry point that isn't
-// published resolves to a missing file for consumers (e.g. the `./reap`
-// Vercel-cron handler lives under `api/`, outside the `server-e2e/` scan above).
-test('package.json "files" includes every exports target', () => {
+test('package.json "files" includes every exports and bin target', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   const allow = new Set(pkg.files)
-  const missing = Object.entries(pkg.exports)
+  const missing = [...Object.entries(pkg.exports), ...Object.entries(pkg.bin)]
     .map(([sub, target]) => [sub, target.replace(/^\.\//u, '')])
     // `package.json` is always included by npm; everything else must be listed.
     .filter(([, rel]) => rel !== 'package.json' && !allow.has(rel))
-    .map(([sub, rel]) => `exports["${sub}"] → ${rel}`)
-  assert.deepEqual(missing, [], `exports targets missing from "files":\n  ${missing.join('\n  ')}`)
+    .map(([sub, rel]) => `${sub} → ${rel}`)
+  assert.deepEqual(missing, [], `entry points missing from "files":\n  ${missing.join('\n  ')}`)
 })
 
-// Inverse guard: the managed server is deliberately NOT released yet.
-//
-// `server-managed/` (the `triage-managed-server` bin) and the `common/managed/`
-// modules it imports at runtime are held back from the publish allowlist while
-// the managed mode is still being built out. The client half stays in the
-// tarball — `out/client-managed.js` is inert without a
-// server that advertises `mode: 'managed'` (see common/server-info.ts), so they
-// cost a few KB and change nothing for an e2e deployment.
-//
-// This guard exists because the hold is otherwise one edit deep: `files` is a
-// hand-maintained allowlist that every `managed:` commit has been appending to,
-// and the first guard above only scans `server-e2e/`. That gap is how the
-// managed server came to be published with blob-store.ts and bundle.ts missing
-// — a `triage-managed-server` that throws on import at startup.
-//
-// TO LIFT THE HOLD: delete this test, add `server-managed` (and `common/managed`)
-// to the tracked-source scan in the first test so the allowlist stays complete,
-// then list the files and restore the `triage-managed-server` bin.
-const HELD_BACK = /^(?:\.\/)?(?:server-managed|common\/managed)(?:\/|$)/u
-
-test('managed server is held back from the published package', () => {
+test('published entry points include their complete runtime dependency graph', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  // Parse static and dynamic imports without executing server initialization.
+  // This also follows shared helpers outside the server source directories.
+  const entryPoints = [...new Set(['./server.ts', './cli.js', ...Object.values(pkg.exports), ...Object.values(pkg.bin)])]
+    .filter(path => /\.(ts|js)$/u.test(path))
+  const { metafile } = await build({
+    absWorkingDir: root, entryPoints, bundle: true, platform: 'node', format: 'esm',
+    packages: 'external', metafile: true, write: false, outdir: 'unused', logLevel: 'silent',
+  })
+  const missing = Object.keys(metafile.inputs).filter(path => !pkg.files.includes(path))
+  assert.deepEqual(missing, [], `runtime imports missing from "files":\n  ${missing.join('\n  ')}`)
 
-  const listed = pkg.files.filter((f) => HELD_BACK.test(f))
-  assert.deepEqual(
-    listed, [],
-    `managed sources are in the publish allowlist but the managed server is not ` +
-    `released yet — drop them from package.json "files":\n  ${listed.join('\n  ')}`,
-  )
-
-  // A bin pointing into an unpublished tree installs a command that dies on its
-  // first import, which is worse than no command at all.
-  const bins = Object.entries(pkg.bin ?? {})
-    .filter(([, target]) => HELD_BACK.test(target))
-    .map(([name, target]) => `bin["${name}"] → ${target}`)
-  assert.deepEqual(bins, [], `bin entries point into the held-back managed tree:\n  ${bins.join('\n  ')}`)
-
-  // Same for `exports` — and the "every exports target is in files" test above
-  // would only catch this as a missing-file error, not as a released-too-early one.
-  const exported = Object.entries(pkg.exports ?? {})
-    .filter(([, target]) => HELD_BACK.test(target))
-    .map(([sub, target]) => `exports["${sub}"] → ${target}`)
-  assert.deepEqual(exported, [], `exports point into the held-back managed tree:\n  ${exported.join('\n  ')}`)
+  const dependencies = { ...pkg.dependencies, ...pkg.peerDependencies }
+  const external = new Set(Object.values(metafile.outputs).flatMap(output => output.imports.map(entry => entry.path)))
+  const undeclared = [...external].filter(path => {
+    if (isBuiltin(path)) return false
+    const name = path.split('/').slice(0, path.startsWith('@') ? 2 : 1).join('/')
+    return !Object.hasOwn(dependencies, name)
+  })
+  assert.deepEqual(undeclared, [], `undeclared runtime dependencies:\n  ${undeclared.join('\n  ')}`)
 })
 
 // `report/` publishes TWICE, from two hand-maintained allowlists that have to
@@ -105,7 +71,7 @@ test('managed server is held back from the published package', () => {
 //     `index.js`, the first thing a consumer does throws ERR_MODULE_NOT_FOUND.
 //   - `@preventive/triage` — the root `files`, behind the `./report` export.
 //
-// Neither list is generated, and the first guard above only scans `server-e2e/`,
+// Neither list is generated, and the first guard above only scans server sources,
 // so a new `report/*.js` is one forgotten line away from a library that cannot
 // be imported. The library also has to stay STANDALONE to be publishable at all:
 // it may import nothing outside its own directory, since nothing outside ships

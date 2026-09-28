@@ -35,16 +35,26 @@ node cli.js --mode e2e-managed
 argument parsing and server selection. `server.ts` does not register a loader
 or start listening when imported or executed directly.
 
+The published `triage-server` command runs the same launcher and accepts these
+`--mode` values. `triage-e2e-server` and `triage-managed-server` run the individual
+servers directly.
+
 To embed any mode, initialize it once during host startup. `init(mode)` returns
 an unbound Node HTTP server with its request and upgrade listeners installed:
 
 ```js
-import { init } from './server.ts'
+import { init } from '@preventive/triage/server'
 
 const httpServer = await init('managed-e2e')
 const [triageRequestListener] = httpServer.listeners('request')
 const [triageUpgradeListener] = httpServer.listeners('upgrade')
 ```
+
+For an installed package, run the host with
+`node --import @preventive/triage/strip-types-loader host.js` so Node can load
+TypeScript from `node_modules`. From a checkout, import `./server.ts` instead.
+The e2e entry point that exports an already initialized `httpServer` is available
+as `@preventive/triage/server-e2e`.
 
 Attach those listeners to your host server, or call `httpServer.listen(...)`
 yourself. The supported modes match `--mode`; managed-only has no upgrade

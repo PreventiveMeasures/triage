@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Executable entry for the `triage-server` bin.
+// Executable entry for the `triage-e2e-server` bin.
 //
 // Node refuses to strip TypeScript types from files under node_modules
 // (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), so once this package is
