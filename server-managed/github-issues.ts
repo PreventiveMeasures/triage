@@ -103,7 +103,10 @@ export async function createGithubIssue(prepared: Awaited<ReturnType<typeof prep
     requestId, createdBy: prepared.userId, createdAt: Date.now() })) {
     const stored = await db.getManagedIssue(findingId)
     await prepared.recheck()
-    return stored ? referenceResult(stored, prepared.repoIds) : { mode: 'pending' as const }
+    // The competing request may have released its reservation after a definite
+    // failure. Still return a listing, never a fresh creation form, for this race.
+    return stored ? referenceResult(stored, prepared.repoIds)
+      : { mode: 'pending' as const, repositoryUrl: `https://github.com/${prepared.repository}/issues` }
   }
   // The last awaited operation before the external write checks current access.
   // Release only when we know no issue was created; unknown outcomes stay claimed.
@@ -128,6 +131,11 @@ export async function createGithubIssue(prepared: Awaited<ReturnType<typeof prep
       detailsUnavailable = false
     }
   } catch { /* Creation and its permanent reference succeeded; detail reads are best effort. */ }
-  await prepared.recheck()
+  try { await prepared.recheck() }
+  catch {
+    // The external write and permanent reference succeeded. Withhold details
+    // if current access cannot be confirmed, but never advertise a safe retry.
+    return { mode: 'created-unavailable' as const }
+  }
   return { url, issue: details, detailsUnavailable }
 }

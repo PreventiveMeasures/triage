@@ -591,4 +591,7 @@ on different servers, from creating duplicate issues. Definite GitHub rejection
 releases the reservation; ambiguous failures retain it for operator reconciliation
 instead of automatically creating another issue. The reference is saved before
 fetching details, so a failed detail request still returns creation success with
-the saved URL and the submitted content.
+the saved URL and the submitted content. If the final workspace access check
+fails, the response confirms creation without exposing the issue URL or details;
+the dialog offers a status check instead of another creation. Pending responses
+link to the repository's issue list, never its new-issue form.

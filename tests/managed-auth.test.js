@@ -3112,3 +3112,74 @@ test('uncertain creation stays reserved across later requests, definitive reject
   assert.equal(pending.mode, 'pending')
   assert.equal((await db.getManagedIssue('own')).issueUrl, null)
 })
+
+test('a losing issue creation returns the reserved repository listing while the winner is pending', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  const prepare = () => prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'write' } }))
+  const a = await prepare(), b = await prepare()
+  const posting = Promise.withResolvers(), response = Promise.withResolvers()
+  const winner = createGithubIssue(a, { title: 'Once', body: '' }, (url, init) => {
+    if (init.method === 'POST') { posting.resolve(); return response.promise }
+    return jsonResponse({}, 503)
+  })
+  await posting.promise
+  const loser = await createGithubIssue(b, { title: 'Twice', body: '' }, () => assert.fail('the loser must not write'))
+  assert.deepEqual(loser, { mode: 'pending', repositoryUrl: 'https://github.com/o/r/issues' })
+  response.resolve(jsonResponse({ number: 73 }, 201))
+  assert.equal((await winner).url, 'https://github.com/o/r/issues/73')
+})
+
+test('a lost issue reservation still returns a listing after the winner releases a rejected creation', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  const prepare = () => prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'write' } }))
+  const a = await prepare(), b = await prepare()
+  const posting = Promise.withResolvers(), response = Promise.withResolvers()
+  const winner = createGithubIssue(a, { title: 'Rejected', body: '' }, () => { posting.resolve(); return response.promise })
+  const rejected = assert.rejects(winner, /github-issue-forbidden/u)
+  await posting.promise
+  const claim = db.claimManagedIssue.bind(db)
+  t.mock.method(db, 'claimManagedIssue', async input => {
+    const claimed = await claim(input)
+    assert.equal(claimed, false)
+    response.resolve(jsonResponse({}, 403))
+    await rejected
+    return claimed
+  })
+  const result = await createGithubIssue(b, { title: 'Race', body: '' }, () => assert.fail('the loser must not write'))
+  assert.equal(await db.getManagedIssue(context.findingId), null)
+  assert.deepEqual(result, { mode: 'pending', repositoryUrl: 'https://github.com/o/r/issues' })
+})
+
+for (const change of ['membership', 'report', 'session', 'permissions']) {
+  test(`saved issue creation withholds details when ${change} changes during the external write`, async t => {
+    const { db, store, fx, team, session, cfg, context } = await issueFixture(t)
+    const { upload, send } = bundleHarness(db, cfg, store)
+    const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/teams/${team.id}/issues`
+    let writes = 0
+    t.mock.method(globalThis, 'fetch', async (url, init) => {
+      if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+      if (url.endsWith('/labels/deepview')) return jsonResponse({ name: 'deepview' })
+      if (init.method === 'POST') {
+        writes++
+        if (change === 'membership') await db.removeTeamMember(team.id, session.userId)
+        if (change === 'session') await db.deleteSession(session.id)
+        return jsonResponse({ number: 74 }, 201)
+      }
+      assert.ok(url.endsWith('/issues/74'))
+      if (change === 'report') await db.setReportVisible(context.reportId, false)
+      if (change === 'permissions') await db.setTeamMember(team.id, session.userId, { dependencies: true, security: true })
+      return jsonResponse({ title: 'Withheld title', body: 'Withheld body', number: 74 })
+    })
+    const result = await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ ...context, title: 'Create once', body: '' }))
+    assert.equal(result.statusCode, 201)
+    assert.deepEqual(JSON.parse(result.body), { mode: 'created-unavailable' })
+    assert.equal((await db.getManagedIssue(context.findingId)).issueUrl, 'https://github.com/o/r/issues/74')
+    if (change !== 'session') {
+      await db.setReportVisible(context.reportId, true)
+      await db.setTeamMember(team.id, session.userId, { dependencies: false, security: true })
+      const lookup = await send('GET', `${path}?${new URLSearchParams(context)}`, cookie)
+      assert.equal(JSON.parse(lookup.body).url, 'https://github.com/o/r/issues/74')
+    }
+    assert.equal(writes, 1)
+  })
+}
