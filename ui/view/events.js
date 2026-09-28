@@ -26,6 +26,7 @@ import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-pr
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
+import { bundleSourcesAsMap } from './bundle-sources.js'
 
 function navigateManagedReportView(view) {
   if (!isManagedUiMode() || !managedHistory.active || !state.currentManagedTeam) return null
@@ -261,6 +262,31 @@ function copyWithPulse(el, text) {
 // listener below (the modal mounts outside #report). Returns true
 // when the click was one of these so the delegate can stop.
 function handleBundleSourceClick(e) {
+  const sourceLink = e.target.closest('[data-bundle-source-link]')
+  if (sourceLink) {
+    const path = sourceLink.dataset.bundleSourceLink
+    if (!bundleSourcesAsMap(state.bundleDetails).has(path)) return true
+    // Search results can hide a target that doesn't contain the query.
+    // Continue following source references in Code, with its file tree visible.
+    if (state.currentView === 'bundles' && state.bundleDetailsTab === 'search') {
+      selectBundleTab('code')
+      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'code')
+    }
+    state.bundleSourceFile = path
+    state.bundleSourceFindingIdx = null
+    if (state.bundleDetailsTab === 'code') {
+      state.bundleCodeSearchMode = 'files'
+      state.bundleCodeSearchQuery = ''
+    }
+    renderPreservingScrollOf('.bundle-code-rail-body')
+    revealBundleCodeCurrent()
+    queueMicrotask(() => {
+      const source = document.querySelector('.bundle-source-code-wrap')
+      if (source) { source.scrollTop = 0; source.scrollLeft = 0 }
+      source?.querySelector('.bundle-source-code')?.focus({ preventScroll: true })
+    })
+    return true
+  }
   if (e.target.classList?.contains('bundle-source-overlay')
       || e.target.closest('[data-action="bundle-source-close"]')) {
     if (state.bundleSourceFile) {

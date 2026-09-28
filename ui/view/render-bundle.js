@@ -23,6 +23,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, compactSourceDirectory, navigateBundleSourceTree } from './bundle-source-tree.js'
+import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -646,11 +647,11 @@ function _topSeverityOf(findings) {
 //
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
 // the gutter. Lines without findings render a plain number.
-function renderBundleSourceLines(content, path, integrity, lineFindings, matchLines = null) {
+function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null) {
   const lineCount = content.split('\n').length
   const digits = String(lineCount).length
   const lang = langForPath(path)
-  const cacheKey = `${integrity ?? ''}\0${path}`
+  const cacheKey = `${details?.integrity ?? ''}\0${path}`
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
   // resolves we set it (string for success, null for "no highlight
@@ -662,7 +663,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings, matchLi
     // result via unsafeHTML. Async IIFE rather than `.then` so
     // the empty `.then` body doesn't trip promise/always-return.
     ;(async () => {
-      const highlightedHtml = await prismHighlight(content, lang)
+      const highlightedHtml = await prismHighlight(content, lang, bundleSourceLinkResolver(details, path))
       _bundleHighlightCache.set(cacheKey, highlightedHtml ?? null)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — Lit only patches what changed, so the cost
@@ -693,7 +694,7 @@ function renderBundleSourceLines(content, path, integrity, lineFindings, matchLi
         </div>`
       })}
     </aside>
-    <pre class="bundle-source-code"><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
+    <pre class="bundle-source-code" tabindex="-1" aria-label=${path}><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
       : content}</code></pre>
   </div>`
@@ -801,10 +802,10 @@ function renderBundleSourceBar(path) {
 
 // Code wrap + finding side panel — the viewer body every source
 // surface (modal, Code slide main pane, Search sidebar) renders.
-function renderBundleSourceCodeWrap(path, content, integrity, fileFindings, lineFindings, matchLines = null) {
+function renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines = null) {
   return html`<div class="bundle-source-code-wrap">
         ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, integrity, lineFindings, matchLines)
+          ? renderBundleSourceLines(content, path, details, lineFindings, matchLines)
           : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
       </div>
       ${renderBundleSourceFindingPanel(fileFindings)}`
@@ -837,7 +838,7 @@ export function renderBundleSourceModal() {
       ${renderBundleSourceBar(path)}
       <div class="bundle-source-body">
         ${state.bundleDetails?.metadataOnly ? html`<div class="bundles-slide-placeholder">Loading source…</div>`
-          : renderBundleSourceCodeWrap(path, content, state.bundleDetails?.integrity, fileFindings, lineFindings)}
+          : renderBundleSourceCodeWrap(path, content, state.bundleDetails, fileFindings, lineFindings)}
       </div>
     </div>
   </div>`
@@ -1392,7 +1393,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
       </span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
-      ${renderBundleSourceCodeWrap(path, content, details.integrity, fileFindings, lineFindings)}
+      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings)}
     </div>`
 }
 
@@ -1641,7 +1642,7 @@ function renderBundleSearchSide(details, sources, matchLines) {
   return html`<aside class="bundle-search-side">
     ${renderBundleSourceBar(path)}
     <div class="bundle-source-body">
-      ${renderBundleSourceCodeWrap(path, content, details.integrity, fileFindings, lineFindings, matchLines)}
+      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines)}
     </div>
   </aside>`
 }
