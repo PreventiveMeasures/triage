@@ -1,6 +1,7 @@
 // Backend selection is shared by standalone, combined and function entrypoints.
 import { dirname } from 'node:path'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
+import { runReapers } from '../server-common/reap.ts'
 import { createBundleCache } from './bundle-cache.ts'
 import { createReportSourcesCache } from './report-sources.ts'
 import { openNeonManagedDb } from './db-neon.ts'
@@ -29,8 +30,10 @@ export async function openManagedStorage(config: ManagedConfig) {
       migrateStorage: (budget?: { maxObjects?: number; maxMs?: number }) => key ? migrateStorage(raw, db, key, budget) : Promise.resolve(null),
       async reapStorage() {
         if (!key) return
-        await migrateStorage(raw, db, key)
-        await reapEncryptedStorage(raw, db, key)
+        await runReapers({
+          migration: () => migrateStorage(raw, db, key),
+          ciphertext: () => reapEncryptedStorage(raw, db, key),
+        })
       },
       reapUploads: () => reapStorageUploads(raw, db, key),
     }

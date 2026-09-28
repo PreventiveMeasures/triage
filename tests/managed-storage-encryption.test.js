@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -171,6 +171,28 @@ test('interrupted migration retains the original; verification failure never pub
   assert.deepEqual(await store.get(report), Buffer.from('legacy'))
 })
 
+for (const damage of ['missing', 'corrupt']) {
+  test(`resuming a committed migration preserves plaintext when the encrypted copy is ${damage}`, async t => {
+    const { raw, db } = await fixture(t, true)
+    await raw.put(report, Buffer.from('legacy'))
+    await createEncryptedObjectStorage(raw, db, key)
+    const publish = db.publishStorageObject.bind(db)
+    t.mock.method(db, 'publishStorageObject', async (...args) => { await publish(...args); throw new Error('commit acknowledgement lost') })
+    await assert.rejects(migrateStorage(raw, db, key), /acknowledgement lost/u)
+    t.mock.restoreAll()
+    const reference = await db.getStorageReference(key.id, report)
+    const encrypted = await bytes(raw, reference.objectKey)
+    if (damage === 'missing') await raw.delete(reference.objectKey)
+    else await raw.put(reference.objectKey, Buffer.from('damaged'))
+    await assert.rejects(migrateStorage(raw, db, key))
+    assert.deepEqual(await bytes(raw, report), Buffer.from('legacy'), 'keep the recovery copy')
+    assert.equal((await db.getStorageEncryption(key.id)).complete, 0)
+    await raw.put(reference.objectKey, encrypted)
+    await finish(raw, db)
+    assert.equal(await raw.exists(report), false)
+  })
+}
+
 test('missing or corrupt encrypted objects never fall back to a legacy copy', async t => {
   const { raw, db } = await fixture(t, true)
   await raw.put(report, Buffer.from('legacy'))
@@ -282,6 +304,21 @@ test('production disk storage enables encryption and rejects a missing key after
     assert.equal((await storage.storageEncryptionStatus()).complete, 1)
   } finally { await storage.db.close() }
   await assert.rejects(openManagedStorage({ dbPath: config.dbPath }), /encryption key/u)
+})
+
+test('ciphertext collection still runs when a migration batch fails', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'triage-managed-encrypted-reap-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const storage = await openManagedStorage({ dbPath: join(dir, 'managed.db'), storageEncryptionKey: key.bytes.toString('base64') })
+  try {
+    const orphan = `encrypted-v1/${randomUUID()}`, raw = createDiskObjectStorage(dir)
+    await raw.put(orphan, Buffer.from('abandoned candidate'))
+    const old = new Date(Date.now() - STORAGE_GC_MS - 1000)
+    await utimes(join(dir, orphan), old, old)
+    t.mock.method(storage.db, 'advanceStorageMigration', () => Promise.reject(new Error('migration unavailable')))
+    await assert.rejects(storage.reapStorage())
+    assert.equal(await raw.exists(orphan), false)
+  } finally { await storage.db.close() }
 })
 
 test('expired upload cleanup does not remove a concurrently retried encrypted part', async t => {

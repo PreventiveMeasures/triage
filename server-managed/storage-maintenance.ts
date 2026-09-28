@@ -3,9 +3,26 @@ import { ENCRYPTED_PREFIX, LEGACY_PREFIXES, type ListedObject, type RawObjectSto
 import type { StorageDb, StorageEncryptionState } from './storage-db.ts'
 import { STORAGE_GC_MS, STORAGE_WRITE_MS, removeLegacy, stageEncrypted, verifyEncrypted } from './storage-encryption.ts'
 
+async function removePublishedLegacy(raw: RawObjectStorage, db: StorageDb, key: StorageKey, identity: string,
+  signal: AbortSignal, version?: string): Promise<void> {
+  const current = await db.getStorageReference(key.id, identity)
+  if (current.legacy) return
+  if (current.objectKey) {
+    // A previous worker may have committed, then lost its acknowledgement or
+    // stopped before deleting plaintext. Verify the current recovery target
+    // again before removing the remaining copy, including after a lost CAS.
+    if (!current.digest) throw new Error('Encrypted storage reference has no digest')
+    await verifyEncrypted(raw, key, identity, current.objectKey, current.digest, signal)
+    if ((await db.getStorageReference(key.id, identity)).revision !== current.revision) return
+  }
+  signal.throwIfAborted()
+  if (version === undefined) await removeLegacy(raw, identity, signal)
+  else if (!await raw.delete(identity, version)) throw new Error('Legacy storage changed during encryption migration')
+}
+
 async function migrateObject(raw: RawObjectStorage, db: StorageDb, key: StorageKey, identity: string, deadline: number, signal: AbortSignal) {
   const snapshot = await db.getStorageReference(key.id, identity)
-  if (!snapshot.legacy) { await removeLegacy(raw, identity); return }
+  if (!snapshot.legacy) { await removePublishedLegacy(raw, db, key, identity, signal); return }
   const stored = await raw.open(identity, signal)
   if (!stored) return
   const candidate = await stageEncrypted(raw, key, identity, stored.stream, stored.size, signal)
@@ -15,7 +32,8 @@ async function migrateObject(raw: RawObjectStorage, db: StorageDb, key: StorageK
     await raw.delete(candidate.objectKey)
     // A concurrent write/delete is authoritative. On timeout leave plaintext
     // available for a later attempt rather than removing the only live copy.
-    if ((await db.getStorageReference(key.id, identity)).legacy) return
+    await removePublishedLegacy(raw, db, key, identity, signal, stored.version)
+    return
   }
   if (!await raw.delete(identity, stored.version)) throw new Error('Legacy storage changed during encryption migration')
 }

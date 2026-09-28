@@ -50,6 +50,11 @@ deploy code. Provider encryption at rest remains an independent outer layer.
 5. Check that migration reports `complete: true`. That requires a full empty
    inventory sweep after plaintext cleanup. Unlisted plaintext is then ignored.
 
+Setting the key does not start a migration batch on startup or on a read.
+Until maintenance or the migration command runs, existing objects remain
+plaintext. The scheduled limits count all payloads, cache files and sidecars,
+not just bundles; migration may therefore span many scheduled invocations.
+
 Run these commands with the deployment's usual managed configuration and key:
 
 ```sh
@@ -70,6 +75,10 @@ fence off stale migration attempts. Concurrent workers share progress through
 the database. A failed upload/verification preserves the original; an uncertain
 SQL commit preserves the candidate until maintenance can check its reference.
 Reads racing plaintext removal retry through the new SQL reference.
+When resuming after publication, the worker verifies the referenced encrypted
+copy again before deleting leftover plaintext. A missing or corrupt encrypted
+copy stops that cleanup and preserves the plaintext for recovery. Disk deletes
+sync the containing directory before migration progress can mark them complete.
 
 There is no background promise left running after a Vercel response. Work is
 awaited, transfer operations receive an abort signal, and progress survives
@@ -101,6 +110,8 @@ of starting their write, and collection checks references under the database's
 writer transaction. This also collects abandoned uploads and superseded object
 versions. Missing or invalid ciphertext is an error, never a reason to fall
 back to an old plaintext copy.
+Collection and migration run independently and are both awaited; a failed
+migration batch does not prevent collection of older unreferenced ciphertext.
 
 Keep a consistent backup of **database + byte store + key**. Losing the key
 makes encrypted contents unrecoverable. Losing the manifest loses the mapping

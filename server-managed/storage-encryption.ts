@@ -62,8 +62,8 @@ export async function verifyEncrypted(raw: RawObjectStorage, key: StorageKey, id
   if (hash.digest('hex') !== digest) throw new Error('Encrypted candidate verification failed')
 }
 
-export async function removeLegacy(raw: RawObjectStorage, identity: string): Promise<void> {
-  const stored = await raw.open(identity)
+export async function removeLegacy(raw: RawObjectStorage, identity: string, signal?: AbortSignal): Promise<void> {
+  const stored = await raw.open(identity, signal)
   if (!stored) return
   stored.stream.destroy()
   if (!await raw.delete(identity, stored.version)) throw new Error('Legacy storage changed during encryption migration')
