@@ -234,15 +234,7 @@ button.repo-row:hover {
 button.repo-row:focus-visible {
   outline-offset: -2px;
 }
-.connected-repo { display: flex; align-items: center; }
-.connected-repo > .repo-row { flex: 1; min-width: 0; }
 .btn.connect-app { min-height: 1.9rem; padding: .3rem .6rem; font-size: .72rem; }
-.connected-repo > .connect-app { flex: none; margin-right: .85rem; }
-@container (width <= 35rem) {
-  .connected-repo { flex-wrap: wrap; }
-  .connected-repo > .repo-row { flex-basis: 100%; }
-  .connected-repo > .connect-app { margin: 0 .85rem .65rem 2.7rem; }
-}
 .repo-icon {
   width: 1.15rem;
   height: 1.15rem;
