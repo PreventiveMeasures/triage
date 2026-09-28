@@ -7,6 +7,26 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
+test('the commit link opens the current directory at the pinned commit on GitHub', () => {
+  function templates(value) {
+    if (Array.isArray(value)) return value.flatMap(templates)
+    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
+  }
+  const page = new ManagedCreateBundle()
+  page._repos = [{ repoId: 1, fullName: 'org/repo' }]
+  page._repoId = 1
+  page._refName = 'main'
+  const link = () => templates(page.render()).find(template => template.strings[0].includes('class="commit-link"'))
+  assert.equal(link(), undefined, 'do not link before resolving the revision')
+  page._commit = commit
+  assert.equal(link().values[0], `https://github.com/org/repo/tree/${commit}`)
+  assert.match(link().strings.join(''), /target="_blank" rel="noopener noreferrer"/u)
+  page._path = 'src/a #?%/nested'
+  assert.equal(link().values[0], `https://github.com/org/repo/tree/${commit}/src/a%20%23%3F%25/nested`)
+  page.changeRevision('tag', 'v1')
+  assert.equal(link(), undefined, 'do not retain a link to the previous commit while loading a revision')
+})
+
 test('branch suggestions put the default first, retain filtering, and leave tag order unchanged', () => {
   const page = new ManagedCreateBundle()
   page._refs = { defaultBranch: 'main', branches: ['develop', 'main', 'release'], tags: ['v1', 'v2'] }
