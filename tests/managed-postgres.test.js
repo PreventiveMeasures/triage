@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
+import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 
 // Tests in this file run sequentially. Reuse the expensive WASM engine, but
@@ -89,7 +90,12 @@ test('Postgres upgrades existing databases for durable, revocable workspace shar
   } finally { await upgraded.close() }
 })
 
-test('Postgres initial admin is restricted to the allowlisted first identity and never re-promotes existing users', async t => {
+test('Postgres recovers the configured sole No access user on login only', async t => {
+  const { db } = await database(t)
+  await checkInitialAdminRecovery(db)
+})
+
+test('Postgres initial admin does not restore revoked roles when other users exist', async t => {
   const { db, connect } = await database(t)
   const [first] = await Promise.all([
     db.upsertUser(identity(7), 1, 7), db.upsertUser(identity(8), 2, 8), db.upsertUser(identity(7), 3, 7),
@@ -108,6 +114,35 @@ test('Postgres rejects initial-admin promotion once a nonmatching user has regis
   const { db } = await database(t)
   await Promise.all([db.upsertUser(identity(1), 1, 7), db.upsertUser(identity(7), 2, 7)])
   assert.deepEqual((await db.listUsers()).map(user => user.role), ['none', 'none'])
+})
+
+test('Postgres initial-admin population check runs only for a matching No access login', async t => {
+  const { db, queries } = await database(t)
+  const userId = await db.upsertUser(identity(7), 1)
+  for (const [role, configuredId] of [['none', null], ['none', 8], ['view', 7], ['triage', 7], ['manage', 7], ['admin', 7], ['none', 7]]) {
+    await db.setUserRole(userId, role)
+    queries.length = 0
+    await db.upsertUser(identity(7), 2, configuredId)
+    const checks = queries.filter(sql => /NOT EXISTS\s*\(SELECT 1 FROM managed_user/iu.test(sql))
+    assert.equal(checks.length, role === 'none' && configuredId === 7 ? 1 : 0,
+      `population check for role=${role}, configuredId=${configuredId}`)
+  }
+})
+
+test('Postgres recovery and registration serialize across managed instances', async t => {
+  for (const recoveryFirst of [true, false]) {
+    const { db, connect } = await database(t)
+    await db.upsertUser(identity(7), 1)
+    const other = await openPostgresManagedDb(connect)
+    try {
+      const recovery = () => db.upsertUser(identity(7), 2, 7)
+      const signup = () => other.upsertUser(identity(8), 2, 7)
+      await Promise.all(recoveryFirst ? [recovery(), signup()] : [signup(), recovery()])
+      assert.deepEqual(Object.fromEntries((await db.listUsers()).map(user => [user.login, user.role])), {
+        user7: recoveryFirst ? 'admin' : 'none', user8: 'none',
+      })
+    } finally { await other.close() }
+  }
 })
 
 test('Postgres report batches snapshot sessions, scoped grants, and metadata with constant SQL round trips', async t => {

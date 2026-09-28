@@ -6,26 +6,26 @@ both server modes, see [storage separation](../server-common/STORAGE.md).
 
 GitHub sign-in establishes identity. New accounts default to the `none`
 (No access) role. To preapprove the initial administrator, set this optional
-environment variable to that account's numeric GitHub user ID before the
-first registration:
+environment variable to that account's numeric GitHub user ID:
 
 ```sh
 MANAGED_INITIAL_ADMIN_GITHUB_ID=123456
 ```
 
-The first registration gets `admin` only when the user table is empty and
-GitHub returns the configured ID. The check and insertion are atomic. An
-unset or empty variable disables automatic promotion. Invalid IDs fail
-startup. If a different user registers first, they get No access and the
-bootstrap opportunity is closed.
+On successful GitHub sign-in, the matching account gets `admin` only if its
+role is `none` and it is the **only user in the database**. This applies to
+the first registration and to later logins. If the intended administrator
+signed in before the variable was set, set it and have them sign in again.
+The identity update, sole-user check, and promotion share one transaction.
 
-Once **any user exists**, the variable has no effect: it cannot promote an
-existing account, a later new account, or restore a revoked role. Changing
-the variable or restarting the server does not reopen bootstrapping.
+Changing configuration, restarting, or reading an existing session does not
+trigger promotion. Assigned roles other than `none` are preserved. Any other
+user row, even one with No access, blocks automatic promotion. An unset or
+empty variable disables promotion; invalid IDs fail startup.
 Team membership, upload ownership, and GitHub repository access do not grant
-a workspace role. Returning logins preserve the assigned role.
+a workspace role.
 
-For a populated deployment without an admin, a trusted operator must approve
+For a deployment with multiple users and no admin, a trusted operator must approve
 the intended account directly in the managed SQLite or Neon database. Verify
 the numeric GitHub user ID and replace `123456` with it:
 
@@ -35,9 +35,7 @@ UPDATE managed_user SET role = 'admin' WHERE github_user_id = 123456;
 
 Verify that exactly the intended row was updated. The administrator can then
 approve other users through **Manage → Users**, and assign team access through
-**Manage → Teams**. Existing database roles are preserved on upgrade; operators
-should review existing admins, including accounts promoted by the previous
-unrestricted first-login behavior.
+**Manage → Teams**. Database upgrades preserve existing roles.
 
 These approval rules apply to the managed service. Combined managed + E2E
 deployments retain the E2E service's separate authentication and permissions.

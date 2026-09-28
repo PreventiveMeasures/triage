@@ -378,7 +378,7 @@ test('handleCallback: valid state mints a session for the GitHub identity', asyn
   await db.close()
 })
 
-test('OAuth initial admin requires an empty user table and the configured GitHub ID', async t => {
+test('OAuth initial admin requires the configured GitHub ID and no other users', async t => {
   for (const initialAdminGithubId of [null, 7, 8]) {
     const db = openSqliteManagedDb(':memory:')
     t.after(() => db.close())
@@ -400,6 +400,33 @@ test('OAuth initial admin requires an empty user table and the configured GitHub
     cfg.initialAdminGithubId = 9
     assert.equal((await login(9, 'new-admin-candidate')).user.role, 'none', 'changing configuration cannot promote a new user in a populated DB')
   }
+})
+
+test('OAuth login recovers an initial administrator configured after their first sign-in', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const cfg = { ...config, initialAdminGithubId: null }
+  const query = new URLSearchParams({ code: 'code', state: 'state' })
+  const fetchImpl = makeFetch({ token: { access_token: 'token' }, user: { id: 7, login: 'owner' } })
+  const login = async () => {
+    const result = await handleCallback(query, 'dvstate=state', { config: cfg, db, fetchImpl })
+    return cookiePair(result.setCookies.find(value => value.startsWith('dvsid=')))
+  }
+  const firstCookie = await login()
+  const first = await readSession(cfg, db, firstCookie, Date.now())
+  assert.equal(first.user.role, 'none')
+
+  cfg.initialAdminGithubId = 7
+  await assert.rejects(handleCallback(query, 'dvstate=wrong', { config: cfg, db, fetchImpl }), OAuthError)
+  await assert.rejects(handleCallback(query, 'dvstate=state', {
+    config: cfg, db, fetchImpl: makeFetch({ token: { error: 'bad_verification_code' } }),
+  }), OAuthError)
+  assert.equal((await readSession(cfg, db, firstCookie, Date.now())).user.role, 'none',
+    'configuration, failed login, and session reads do not promote')
+
+  const recovered = await readSession(cfg, db, await login(), Date.now())
+  assert.equal(recovered.user.id, first.user.id)
+  assert.equal(recovered.user.role, 'admin')
 })
 
 test('handleCallback: caches the user avatar through the store, keyed by uuid', async () => {
@@ -2864,5 +2891,18 @@ test('arbitrary public additions require server admin AND WHITEHAT identity, nev
     const catalogue = JSON.parse((await send('GET', '/api/admin/repositories?scope=connected', cookie)).body)
     assert.equal(catalogue.repositories[0].installed, false)
     assert.equal(catalogue.repositories[0].active, true)
+  }
+  for (const [githubUserId, login] of [[259122746, 'exo-nikita'], [247161625, 'ex0sec']]) {
+    const added = await createSession(config, db, { githubUserId, login: `${login}-renamed`, name: null, avatarUrl: null }, Date.now())
+    for (const role of ['none', 'view', 'triage', 'manage']) {
+      await db.setUserRole(added.userId, role)
+      assert.equal((await post({ repository: 'Example/Repo' }, added)).statusCode, 403, `${login} with ${role} is not admin`)
+    }
+    await db.setUserRole(added.userId, 'admin')
+    assert.equal(await capability(added), true, `${login} is recognized by its immutable GitHub ID`)
+    assert.equal((await post({ repository: 'Example/Repo' }, added)).statusCode, 200)
+    await db.upsertUser({ githubUserId: 999, login, name: null, avatarUrl: null }, Date.now())
+    assert.equal(await capability(impersonator), false, `${login} cannot be impersonated by login name`)
+    assert.equal((await post({ repository: 'Example/Repo', githubUserId }, impersonator)).statusCode, 403)
   }
 })
