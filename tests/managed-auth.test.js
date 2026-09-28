@@ -24,6 +24,8 @@ import { MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/tri
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
 import { defaultScanModels } from '../ui/scan/default-models.js'
+import { createGithubIssue, parseIssueContext, prepareGithubIssue } from '../server-managed/github-issues.ts'
+import { isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from '../server-managed/github-issue-oauth.ts'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false, trustProxyEnv: undefined,
@@ -2905,4 +2907,208 @@ test('arbitrary public additions require server admin AND WHITEHAT identity, nev
     assert.equal(await capability(impersonator), false, `${login} cannot be impersonated by login name`)
     assert.equal((await post({ repository: 'Example/Repo', githubUserId }, impersonator)).statusCode, 403)
   }
+})
+
+async function issueFixture(t) {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const store = fakeBlobStore()
+  const fx = await reportTriageFixture(db, store)
+  const team = (await db.listTeams()).find(item => item.name === 'Blue')
+  const { session } = await readSession(config, db, cookiePair(fx.bobSess.setCookie), Date.now())
+  await db.setUserTokens(session.userId, { accessToken: 'acting-user-token', refreshToken: null, expiresAt: null })
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const cfg = { ...config, githubAppId: '123', githubAppSlug: 'triage',
+    githubAppPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }), githubNewIssueLabels: 'custom, deepview, security' }
+  return { db, store, fx, team, session, cfg, context: { reportId: fx.reportId, findingId: 'own', repository: 'o/r' } }
+}
+
+test('issue API uses acting user, server-classified labels, and ignores missing deepview label', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  const calls = []
+  const fetchImpl = (url, init) => {
+    calls.push({ url, init })
+    if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+    assert.equal(init.headers.authorization, 'Bearer acting-user-token')
+    if (url.endsWith('/labels/deepview')) return jsonResponse({}, 404)
+    if (url.endsWith('/issues/42')) return jsonResponse({ number: 42, title: 'Fetched title', body: 'Fetched description', state: 'open', user: { login: 'bob' }, labels: [{ name: 'security' }] })
+    assert.equal(init.method, 'POST')
+    assert.deepEqual(JSON.parse(init.body), { title: 'Review this finding', body: 'Details', labels: ['security', 'custom'] })
+    return jsonResponse({ number: 42, html_url: 'https://untrusted.invalid' }, 201)
+  }
+  const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, { ...context, findingId: 'sec' }, fetchImpl)
+  assert.equal(prepared.mode, 'api')
+  assert.notEqual(calls[0].init.headers.authorization, 'Bearer acting-user-token', 'installation lookup uses app JWT')
+  const created = await createGithubIssue(prepared, { title: 'Review this finding', body: 'Details' }, fetchImpl)
+  assert.equal(created.url, 'https://github.com/o/r/issues/42')
+  assert.equal(created.issue.title, 'Fetched title')
+  assert.equal(created.issue.description, 'Fetched description')
+  assert.equal(created.issue.author, 'bob')
+  assert.deepEqual(created.issue.labels, ['security'])
+  assert.equal(created.detailsUnavailable, false)
+  assert.equal((await db.getManagedIssue('sec')).issueUrl, created.url)
+  assert.equal(calls.filter(call => call.init.method === 'POST').length, 1)
+})
+
+test('issue API falls back outside team/installations and requests permissions only for issue action', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  const unexpected = () => { throw new Error('must not fetch') }
+  assert.equal((await prepareGithubIssue(cfg, db, store, session, team.id, { ...context, repository: 'outside/repo' }, unexpected)).mode, 'form')
+  assert.equal((await prepareGithubIssue(config, db, store, session, team.id, context, unexpected)).mode, 'form')
+  assert.equal((await prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({}, 404))).mode, 'form')
+  const permissions = await prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'read' } }))
+  assert.equal(permissions.mode, 'permissions')
+  assert.match(permissions.authorizationPath, /^https:\/\/github.com\/apps\/triage\/installations\/new$/u)
+  await db.setUserTokens(session.userId, { accessToken: null, refreshToken: null, expiresAt: null })
+  const authorize = await prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'write' } }))
+  assert.equal(authorize.mode, 'authorize')
+  assert.equal(authorize.authorizationPath, '/api/oauth/github/issues/login')
+})
+
+test('issue API denies hidden findings and changed access before any external write', async t => {
+  const { db, store, fx, team, session, cfg, context } = await issueFixture(t)
+  const unexpected = () => { throw new Error('must not fetch') }
+  const carol = (await readSession(config, db, cookiePair(fx.carolSess.setCookie), Date.now())).session
+  await assert.rejects(prepareGithubIssue(cfg, db, store, carol, team.id, { ...context, findingId: 'sec' }, unexpected), /no-finding/u)
+  await assert.rejects(prepareGithubIssue(cfg, db, store, session, team.id, { ...context, findingId: 'dep' }, unexpected), /no-finding/u)
+  assert.throws(() => parseIssueContext({ ...context, repository: 'o/../r' }), /bad-request/u)
+  const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'write' } }))
+  await db.setTeamMember(team.id, session.userId, { dependencies: false, security: false })
+  await assert.rejects(createGithubIssue(prepared, { title: 'No write', body: '' }, unexpected), /workspace-changed/u)
+})
+
+test('issue security label propagates through hidden siblings and linked team reports', async t => {
+  const { db, store, fx, team, session, cfg, context } = await issueFixture(t)
+  cfg.githubNewIssueLabels = ''
+  await store.put(fx.reportId, Buffer.from(JSON.stringify({ source: 'native', groups: [
+    [{ id: 'own', file: 'src/a.js' }, { id: 'hidden', file: 'node_modules/x/a.js', security: true }],
+    [{ id: 'linked', file: 'src/b.js' }],
+  ] })))
+  const linksId = randomUUID()
+  await db.insertReport({ id: linksId, filename: 'links.json', contentType: 'application/json', byteSize: 5, sha256: 'links', uploadedBy: fx.admin.id, uploadedByLogin: 'alice', repoId: 7, visible: true }, Date.now())
+  await store.put(linksId, Buffer.from(JSON.stringify([[{ id: 'own' }, { id: 'linked' }]])))
+  for (const findingId of ['own', 'linked']) {
+    const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, { ...context, findingId }, () => jsonResponse({ permissions: { issues: 'write' } }))
+    assert.deepEqual(prepared.labels, ['deepview', 'security'])
+  }
+})
+
+test('issue creation does not retry ambiguous failures', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'write' } }))
+  let writes = 0
+  await assert.rejects(createGithubIssue(prepared, { title: 'Test', body: '' }, () => { writes++; throw new Error('connection lost') }), /github-create-uncertain/u)
+  assert.equal(writes, 1)
+})
+
+test('issue reauthorization uses the same app with no scopes and cannot change the acting account/session', async t => {
+  const { db, session, cfg } = await issueFixture(t)
+  const now = Date.now(), redirect = issueLoginRedirect(cfg, session, now)
+  const cookie = cookiePair(redirect.setCookie), url = new URL(redirect.location)
+  assert.equal(url.searchParams.get('client_id'), cfg.githubClientId)
+  assert.equal(url.searchParams.get('redirect_uri'), cfg.oauthCallbackUrl)
+  assert.equal(url.searchParams.has('scope'), false)
+  assert.equal(new URL(buildLoginRedirect(cfg).location).searchParams.has('scope'), false)
+  const query = new URLSearchParams({ state: url.searchParams.get('state'), code: 'code' })
+  assert.equal(isIssueOAuthCallback(cfg, query, cookie), true)
+  const fetchImpl = makeFetch({ token: { access_token: 'new-user-token' }, user: { id: 2, login: 'bob' } })
+  for (const badSession of [{ ...session, id: 'another' }, { ...session, userId: 'another' }]) {
+    await assert.rejects(issueOAuthCallback(cfg, db, badSession, query, cookie, fetchImpl, now), /invalid-oauth-state|github-account-mismatch/u)
+  }
+  await assert.rejects(issueOAuthCallback(cfg, db, session, query, cookie, fetchImpl, now + 600001), /invalid-oauth-state/u)
+  await assert.rejects(issueOAuthCallback(cfg, db, session, query, cookie, makeFetch({ token: { access_token: 'wrong-account' }, user: { id: 100, login: 'mallory' } }), now), /github-account-mismatch/u)
+  assert.equal((await db.getUserTokens(session.userId)).accessToken, 'acting-user-token')
+  const result = await issueOAuthCallback(cfg, db, session, query, cookie, fetchImpl, now)
+  assert.equal(result.location, '/github-issue-authorized.html')
+  assert.match(result.setCookie, /Max-Age=0/u)
+  assert.equal((await db.getUserTokens(session.userId)).accessToken, 'new-user-token')
+  assert.deepEqual((await db.sessionWithUser(session.id, now)).session, session, 'same session and CSRF token')
+})
+
+test('issue HTTP route requires session and CSRF, filters inputs, and returns no tokens', async t => {
+  const { db, store, fx, team, cfg, context } = await issueFixture(t)
+  const { send, upload } = bundleHarness(db, cfg, store)
+  const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/teams/${team.id}/issues`
+  const draft = JSON.stringify({ ...context, title: 'From the user', body: 'Details', labels: ['spoofed'] })
+  let writes = 0
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+    assert.equal(init.headers.authorization, 'Bearer acting-user-token')
+    if (url.endsWith('/labels/deepview')) return jsonResponse({ name: 'deepview' })
+    if (url.endsWith('/issues/9')) return jsonResponse({ number: 9, title: 'From the user', body: 'Details', state: 'open' })
+    assert.deepEqual(JSON.parse(init.body).labels, ['deepview', 'custom', 'security'])
+    writes++; return jsonResponse({ number: 9 }, 201)
+  })
+  assert.equal((await send('GET', `${path}?${new URLSearchParams(context)}`)).statusCode, 401)
+  assert.equal((await upload(path, cookie, null, draft)).statusCode, 403)
+  assert.equal((await upload(path, cookie, fx.bobSess.csrfToken, draft, { 'x-deepview-share': 'fake' })).statusCode, 401)
+  const check = await send('GET', `${path}?${new URLSearchParams(context)}`, cookie)
+  assert.equal(check.statusCode, 200)
+  assert.deepEqual(JSON.parse(check.body), { mode: 'api', labels: ['deepview', 'custom', 'security'] })
+  assert.equal(writes, 0)
+  const created = await upload(path, cookie, fx.bobSess.csrfToken, draft)
+  assert.equal(created.statusCode, 201)
+  assert.equal(JSON.parse(created.body).url, 'https://github.com/o/r/issues/9')
+  assert.equal(JSON.parse(created.body).issue.title, 'From the user')
+  const existing = await send('GET', `${path}?${new URLSearchParams(context)}`, cookie)
+  assert.equal(JSON.parse(existing.body).mode, 'existing')
+  assert.equal(JSON.parse(existing.body).url, 'https://github.com/o/r/issues/9')
+  await upload(path, cookie, fx.bobSess.csrfToken, draft)
+  assert.equal(writes, 1)
+})
+
+test('managed issue references are permanent, shared by finding ID, and prevent concurrent creates', async t => {
+  const { db, store, fx, team, session, cfg, context } = await issueFixture(t)
+  const fetchRead = () => jsonResponse({ permissions: { issues: 'write' } })
+  const a = await prepareGithubIssue(cfg, db, store, session, team.id, context, fetchRead)
+  const b = await prepareGithubIssue(cfg, db, store, session, team.id, context, fetchRead)
+  let writes = 0
+  const fetchImpl = (url, init) => {
+    if (init.method === 'POST') { writes++; return jsonResponse({ number: 90 }, 201) }
+    return jsonResponse({}, 503)
+  }
+  const results = await Promise.all([a, b].map(prepared => createGithubIssue(prepared, { title: 'Created once', body: 'Body' }, fetchImpl)))
+  assert.equal(writes, 1)
+  const created = results.find(result => result.issue)
+  assert.equal(created.detailsUnavailable, true, 'detail failure retains creation success and the saved reference')
+  const stored = await db.getManagedIssue('own')
+  assert.equal(stored.issueUrl, 'https://github.com/o/r/issues/90')
+  assert.equal(await db.finishManagedIssue('own', stored.requestId, 'https://github.com/o/r/issues/91'), false)
+  await db.releaseManagedIssue('own', stored.requestId)
+  await db.setTriage('own', { fix: 'some other editable fix' }, fx.admin.id, 'alice', Date.now())
+  await db.setTriage('own', null, fx.admin.id, 'alice', Date.now())
+  assert.equal((await db.getManagedIssue('own')).issueUrl, stored.issueUrl)
+  const otherTeam = randomUUID()
+  await db.createTeam(otherTeam, 'Same finding, another team', Date.now())
+  await db.setTeamRepo(otherTeam, 7, null)
+  await db.setTeamMember(otherTeam, session.userId, { dependencies: true, security: true })
+  const unexpected = () => { throw new Error('no upstream request for an existing issue') }
+  const existing = await prepareGithubIssue(cfg, db, store, session, otherTeam, context, unexpected)
+  assert.equal(existing.mode, 'existing')
+  assert.equal(existing.url, stored.issueUrl)
+})
+
+test('a shared managed issue never exposes another team repository, even through a repeated finding ID', async t => {
+  const { db, store, fx, session, cfg, context } = await issueFixture(t)
+  await db.claimManagedIssue({ findingId: 'own', repoId: 8, repository: 'o/other', requestId: 'claim', createdBy: session.userId, createdAt: Date.now() })
+  await db.finishManagedIssue('own', 'claim', 'https://github.com/o/other/issues/1')
+  const team = (await db.listTeams()).find(item => item.name === 'Blue')
+  const result = await prepareGithubIssue(cfg, db, store, session, team.id, context, () => { throw new Error('no upstream') })
+  assert.equal(result.mode, 'unavailable')
+  assert.equal(result.url, undefined)
+  const { send } = bundleHarness(db, cfg, store)
+  const response = await send('GET', `/api/teams/${team.id}/issues?${new URLSearchParams(context)}`, cookiePair(fx.bobSess.setCookie))
+  assert.equal(JSON.parse(response.body).mode, 'unavailable')
+  assert.equal(response.body.includes('o/other'), false)
+})
+
+test('uncertain creation stays reserved across later requests, definitive rejection can be retried', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  const prepare = () => prepareGithubIssue(cfg, db, store, session, team.id, context, () => jsonResponse({ permissions: { issues: 'write' } }))
+  await assert.rejects(createGithubIssue(await prepare(), { title: 'Title', body: '' }, () => jsonResponse({}, 403)), /github-issue-forbidden/u)
+  assert.equal(await db.getManagedIssue('own'), null)
+  await assert.rejects(createGithubIssue(await prepare(), { title: 'Title', body: '' }, () => { throw new Error('lost response') }), /github-create-uncertain/u)
+  const pending = await prepare()
+  assert.equal(pending.mode, 'pending')
+  assert.equal((await db.getManagedIssue('own')).issueUrl, null)
 })

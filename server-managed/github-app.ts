@@ -1,15 +1,7 @@
-// Repository listing for the "Manage repositories" page, READ-ONLY. Two sources,
-// merged + deduped by full name:
-//
-//   PUBLIC  — the logged-in user's own repos (GET /user/repos) read with their
-//             identity-only login token. No installation; the login App needs no
-//             repository permissions, so login never shows "Act on your behalf".
-//   PRIVATE — a SEPARATE GitHub App (Contents: Read) the user installs on the
-//             repos they want; read server-side via installation tokens. That
-//             App's Contents permission lives on IT, never on the login App, so
-//             login stays clean. "Connect a repository" installs it (installUrl).
-//
-// Archived repos are skipped. Nothing here writes.
+// Repository discovery uses the signed-in user token and App installation
+// tokens. Login and repository installation can use one GitHub App: user
+// authorization requests account permissions, installation grants repository
+// permissions. Discovery itself is read-only and skips archived repositories.
 import { Buffer } from 'node:buffer'
 import { createSign } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
@@ -44,7 +36,7 @@ export class GithubApiError extends Error {
   }
 }
 
-// The separate repositories App is configured (id + private key present) →
+// App installation credentials are configured (id + private key present) →
 // private repos can be listed via its installation tokens.
 export function githubAppConfigured(config: ManagedConfig): boolean {
   return config.githubAppId != null && config.githubAppPrivateKey != null
@@ -156,7 +148,7 @@ export async function listUserRepos(accessToken: string, fetchImpl: typeof fetch
   return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
 }
 
-// ── PRIVATE: the separate App's installations via installation tokens ──
+// ── PRIVATE: App installations via installation tokens ──
 
 function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url')

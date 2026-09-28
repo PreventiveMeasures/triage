@@ -1,6 +1,8 @@
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { managedBundleRoute } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
+import { openManagedIssueDialog } from './client-managed.js'
+import { renderHighlighted } from './render-finding.js'
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, handoffBlock, isModule, lineRange } from './format.js'
@@ -1193,6 +1195,23 @@ report.addEventListener('click', (e) => {
   if (copyPath) {
     copyWithPulse(copyPath, copyPath.dataset.copyPath)
     return
+  }
+  const issueBtn = pathClosest(e, '.mark-issue')
+  if (issueBtn && isManagedUiMode() && state.managedSession && !state.managedSession.publicShare
+    && state.currentManagedTeam && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.button === 0) {
+    const findingEl = pathClosest(e, '[data-gid]')
+    const group = findingEl ? findGroupById(findingEl.dataset.gid) : null
+    const finding = group ? activeTabFor(group) : null
+    if (finding?._managedReportId && finding.id) {
+      e.preventDefault()
+      const url = new URL(issueBtn.href)
+      void openManagedIssueDialog({ teamId: state.currentManagedTeam, session: { ...state.managedSession },
+        context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
+        formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
+        renderBody: renderHighlighted,
+      }).catch(() => showToast('Could not open issue creation. Please retry.'))
+      return
+    }
   }
   // Claude button — hand the same finding block to Claude Code via
   // the `claude://code/new?q=…` URL scheme, prefixed with a

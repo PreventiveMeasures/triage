@@ -1,0 +1,22 @@
+dialog { max-width: 680px; width: min(680px, calc(100vw - 48px)); }
+label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+textarea { min-height: 220px; resize: vertical; }
+a { color: var(--accent); }
+.created-issue { padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
+.issue-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.issue-status { padding: 3px 10px; border-radius: 20px; background: #238636; color: #fff; font-size: .8rem; }
+.issue-status.closed { background: #8250df; }
+.issue-status.not_planned, .issue-status.duplicate, .issue-status.unknown { background: #656d76; }
+.issue-number { color: var(--muted); }
+h4 { font-size: 1.15rem; line-height: 1.4; overflow-wrap: anywhere; }
+.issue-description {
+  margin-top: 16px; white-space: pre-wrap; overflow-wrap: anywhere;
+  max-height: 40vh; overflow: auto; line-height: 1.5; font-size: .9rem;
+}
+.issue-labels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.issue-labels span { border: 1px solid var(--border); border-radius: 12px; padding: 2px 8px; font-size: .75rem; }
+.para + .para, .md-list { margin-top: .75em; }
+.md-list { padding-left: 1.5em; }
+.inline-code, .code-block { font-family: monospace; background: var(--bg, var(--surface)); border-radius: 4px; }
+.inline-code { padding: 1px 4px; }
+.code-block { white-space: pre; overflow: auto; padding: 10px; margin: 10px 0; }

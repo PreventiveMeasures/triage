@@ -13,6 +13,9 @@ export async function loadWorkspaceImportPage() {
 export async function openManagedShareDialog(...args) {
   return (await import('./view/dialogs/managed-share-dialog.js')).openManagedShareDialog(...args)
 }
+export async function openManagedIssueDialog(props) {
+  return (await import('./view/dialogs/managed-issue-dialog.js')).openManagedIssueDialog(props)
+}
 export * from '../client/managed/session.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
 export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-data.js'

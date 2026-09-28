@@ -4,6 +4,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
 import { publicSharePath } from '../../client/managed/public-share.js'
+import { newIssueLabels } from '../../common/github-issue-labels.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
 import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
@@ -962,9 +963,10 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // the group without it. Third in the handoff group:
   // copy | link | issue | claude.
   const findingRepoId = findingRepo(activeTab)
-  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab) })
+  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab),
+    labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
   const issueBtn = issueHref
-    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a pre-filled GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
+    ? html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}</a>`
     : nothing
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code

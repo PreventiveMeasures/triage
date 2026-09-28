@@ -7,6 +7,7 @@ import { preferredSlug } from './slugs.ts'
 import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
 import { type GithubMetadataStore, githubMetadataMethods } from './github-metadata.ts'
+import { type ManagedIssueStore, managedIssueMethods } from './managed-issues.ts'
 import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
@@ -305,7 +306,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, WorkspaceShareStore, ImportTriageStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted login configuration. It
   // promotes a matching No access identity only while it is the sole user.
@@ -1320,6 +1321,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       return row?.githubId ?? null
     },
     ...githubMetadataMethods(db),
+    ...managedIssueMethods(db),
     ...selectedRepoMethods(stmts),
     ...activity,
     ...comments,

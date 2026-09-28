@@ -25,6 +25,7 @@ export interface ServerInfo {
   mode: ServerMode | 'managed+e2e' | 'e2e+managed'
   managed: ManagedServerInfo | null
   deepviewScanServer?: string
+  githubNewIssueLabels?: string
 }
 
 // The mode-probe route. A client GETs this to learn a server's protocol up

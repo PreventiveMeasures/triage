@@ -1,22 +1,6 @@
-// GitHub App user-authorization (identity) for the managed server. This is the
-// GitHub *App* user-to-server flow, NOT an OAuth App: the authorize request
-// carries NO `scope` (a GitHub App's permissions live on the App itself), so
-// login asks for identity only — repo access is a SEPARATE installation flow
-// (later work), keeping the broad "act on your behalf" ask off of login.
-//
-//   GET /api/oauth/github/login     → 302 to github.com/login/oauth/authorize
-//                                      with a CSRF `state` mirrored into a
-//                                      short-lived state cookie.
-//   GET /api/oauth/github/callback   → verify `state` vs the cookie, exchange
-//                                      the code for a user token, read the
-//                                      GitHub identity, upsert the user, mint a
-//                                      session, set the cookie, 302 to the app.
-//
-// The user-to-server token is read for the identity AND persisted (see
-// db.setUserTokens): the "Manage repositories" page lists the user's repos with
-// it on demand (GET /user/repos — public repos with no App install; private
-// ones once the App is installed). `ensureUserAccessToken` refreshes it when the
-// App issues expiring tokens.
+// GitHub App user authorization for managed sign-in. Configure no additional
+// account permissions on the App. Repository permissions are granted separately
+// at installation; login does not install the App or request OAuth scopes.
 import { Buffer } from 'node:buffer'
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
@@ -47,8 +31,8 @@ export interface CallbackDeps { config: ManagedConfig; db: ManagedDb; avatarStor
 
 // GET /api/oauth/github/login — redirect to GitHub, stashing the CSRF state. No
 // `scope` is sent: as the GitHub App user-authorization flow, the App's own
-// permission set governs access, so login requests identity only (repo access
-// is granted separately by installing the App).
+// permission set governs access. Keep account permissions minimal; repository
+// grants are approved separately when installing the App.
 export function buildLoginRedirect(config: ManagedConfig): { location: string; setCookie: string } {
   const state = randomToken()
   const u = new URL(GITHUB_AUTHORIZE_URL)
@@ -97,7 +81,7 @@ export async function handleCallback(
 }
 
 // Exchange the authorization code for a user-to-server token set.
-function exchangeCode(config: ManagedConfig, code: string, now: number, fetchImpl: typeof fetch): Promise<UserTokens> {
+export function exchangeCode(config: ManagedConfig, code: string, now: number, fetchImpl: typeof fetch): Promise<UserTokens> {
   return postToken({
     client_id: config.githubClientId, client_secret: config.githubClientSecret,
     code, redirect_uri: config.oauthCallbackUrl,
@@ -160,7 +144,7 @@ export async function ensureUserAccessToken(
 }
 
 // Read the authenticated user's identity (`GET /user`).
-async function fetchIdentity(token: string, fetchImpl: typeof fetch): Promise<ManagedUser> {
+export async function fetchIdentity(token: string, fetchImpl: typeof fetch): Promise<ManagedUser> {
   let res: Response
   try {
     res = await fetchImpl(GITHUB_USER_URL, {
