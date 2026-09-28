@@ -1,11 +1,17 @@
+import { formatBytes } from '../scan/metrics.js'
+
 export function managedRepositoryPath(item) {
   return item.repoFullName ? `${item.repoFullName}${item.repoDirectory ? `/${item.repoDirectory}` : ''}` : ''
 }
 
 export function managedBundleStats(bundle) {
   const summary = bundle.summary
-  return summary && [summary.files, summary.lines].every(value => Number.isSafeInteger(value) && value >= 0)
-    ? `${summary.files.toLocaleString()} files · ${summary.lines.toLocaleString()} LoC` : ''
+  const parts = []
+  if (Number.isSafeInteger(bundle.byteSize) && bundle.byteSize >= 0) parts.push(formatBytes(bundle.byteSize))
+  if (summary && [summary.files, summary.lines].every(value => Number.isSafeInteger(value) && value >= 0)) {
+    parts.push(`${summary.files.toLocaleString()} files`, `${summary.lines.toLocaleString()} LoC`)
+  }
+  return parts.join(' · ')
 }
 
 // Filter only the loaded catalogue. Keep the original team for click handlers

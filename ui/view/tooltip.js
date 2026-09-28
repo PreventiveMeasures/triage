@@ -22,6 +22,8 @@
 // right-of-element would overlap the next column. 'right' anchors to
 // the hovered element's right edge, vertically centered — for the
 // sidebar, whose left-pinned rows leave the main-content gutter free.
+// 'right-start' aligns to the row's top instead. A target can override
+// its listener's placement with `data-tooltip-placement`.
 
 import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG } from './icons.js'
 
@@ -76,6 +78,7 @@ const RIGHT_GAP_PX = 8
 const VIEWPORT_MARGIN_PX = 8
 
 export function showTooltip(el, { placement = 'cursor' } = {}) {
+  placement = el.dataset.tooltipPlacement ?? placement
   const node = ensureEl()
   const text = el.dataset.tooltip ?? ''
   const repo = el.dataset.tooltipRepo ?? ''
@@ -98,7 +101,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     row.append(label)
     node.append(row)
   }
-  if (bundle) {
+  if (bundle || stats) {
     const row = document.createElement('div')
     row.className = 'tooltip-bundle'
     if (bundle === 'stasis') {
@@ -108,7 +111,8 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
       row.append(icon)
     } else row.innerHTML = BUNDLE_ICON_SVG
     const label = document.createElement('span')
-    label.textContent = `${bundle === 'stasis' ? 'Stasis' : 'Sourcemap'}${stats ? ` · ${stats}` : ''}`
+    const type = bundle === 'stasis' ? 'Stasis' : bundle === 'sourcemap' ? 'Sourcemap' : ''
+    label.textContent = [type, stats].filter(Boolean).join(' · ')
     row.append(label)
     node.append(row)
   }
@@ -121,19 +125,19 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   node.classList.add('visible')
   let anchorLeft = lastClientX
   let anchorTop = lastClientY + CURSOR_GAP_PX
-  if (placement === 'right') {
-    // Anchor to the element's right edge, vertically centered.
+  if (placement === 'right' || placement === 'right-start') {
+    // Anchor to the element's right edge, centered or aligned to its top.
     const rect = el.getBoundingClientRect()
     anchorLeft = rect.right + RIGHT_GAP_PX
-    anchorTop = rect.top + rect.height / 2
+    anchorTop = rect.top + (placement === 'right' ? rect.height / 2 : 0)
   }
   // Both placements must keep long repository paths inside the viewport.
   const maxLeft = window.innerWidth - node.offsetWidth - VIEWPORT_MARGIN_PX
   const left = Math.max(VIEWPORT_MARGIN_PX, Math.min(anchorLeft, maxLeft))
   node.style.left = `${Math.round(left)}px`
   // Measure height at the final horizontal position, after long paths wrap.
-  // Prefer centering sidebar tips (or placing cursor tips below the pointer),
-  // but move them inward when that would hide content above/below the viewport.
+  // Preserve the requested alignment, moving inward only when it would hide
+  // content above/below the viewport.
   const height = node.offsetHeight
   const preferredTop = placement === 'right' ? anchorTop - height / 2 : anchorTop
   const maxTop = window.innerHeight - height - VIEWPORT_MARGIN_PX
