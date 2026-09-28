@@ -1975,7 +1975,9 @@ function renderImpl() {
       // role pickers / repo checkboxes carry `data-tooltip` inside
       // shadow roots the document-level handler can't see, so wire the
       // listener from here instead, on this bundle's instance, once
-      // the element has upgraded and painted.
+      // the element has upgraded and painted. The listener follows
+      // composedPath(), so it also covers nested shadow roots such as
+      // <managed-create-bundle>; those must not import another instance.
       void (async () => {
         await customElements.whenDefined(adminView.tag)
         await el.updateComplete

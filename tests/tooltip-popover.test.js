@@ -7,7 +7,7 @@ import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG } from '../ui/view/icons.js'
 // one still matches `:popover-open`, which other code reads as "a
 // popover is up" — Escape in events.js stopped dismissing the links
 // preview after the first tooltip (review r4099015016).
-test('tooltips preserve popover lifecycle and keep repository paths inside the viewport', async () => {
+test('tooltips preserve popover lifecycle and keep repository paths inside the viewport', async t => {
   const originalDocument = globalThis.document
   const originalWindow = globalThis.window
   let open = false
@@ -32,7 +32,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
   }, body: { append() {} } }
   globalThis.window = { innerWidth: 1000, innerHeight: 800 }
   try {
-    const { showTooltip, hideTooltip } = await import('../ui/view/tooltip.js')
+    const { showTooltip, hideTooltip, installShadowTooltipListener } = await import('../ui/view/tooltip.js')
     const target = { dataset: { tooltip: 'hello' } }
     showTooltip(target)
     assert.equal(open, true, 'shown as a popover')
@@ -105,6 +105,29 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.style.transform, 'none')
       hideTooltip()
     }
+    await t.test('the managed-page listener reaches tooltips inside a nested picker shadow root', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const outerListeners = {}
+      const pageRoot = { nodeType: 11, addEventListener(type, listener) { outerListeners[type] = listener } }
+      const pickerHost = { nodeType: 1, dataset: {} }
+      const pickerRoot = { nodeType: 11 }
+      const file = { nodeType: 1, dataset: { tooltip: 'src/entry.ts' } }
+      const label = { nodeType: 1, dataset: {}, closest: () => file }
+      const event = { target: pickerHost, composedPath: () => [label, file, pickerRoot, pickerHost, pageRoot] }
+      installShadowTooltipListener(pageRoot)
+      outerListeners.mouseover(event)
+      nested.mock.timers.tick(100)
+      assert.equal(open, true, 'the outer listener opens the shared tooltip without an inner listener')
+      assert.equal(node.textContent, 'src/entry.ts', 'the composed path identifies the file despite event retargeting')
+      outerListeners.mouseout({ ...event, relatedTarget: label })
+      assert.equal(open, true, 'moving within the file keeps its tooltip visible')
+      outerListeners.mouseout({ ...event, relatedTarget: null })
+      assert.equal(open, false, 'leaving the nested control closes the tooltip')
+      outerListeners.mouseover(event)
+      outerListeners.mouseout({ ...event, relatedTarget: null })
+      nested.mock.timers.tick(100)
+      assert.equal(open, false, 'leaving before the delay cancels the tooltip')
+    })
   } finally {
     globalThis.document = originalDocument
     globalThis.window = originalWindow
