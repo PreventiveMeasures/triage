@@ -57,34 +57,36 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: .65rem;
-  margin-bottom: 1.75rem;
-  padding: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-}
-.create-team label {
-  color: var(--muted);
-  font-size: .78rem;
-  margin-right: .25rem;
+  gap: .5rem;
+  margin-bottom: .6rem;
 }
 .new-name {
-  width: 15rem;
+  flex: 1;
+  width: 16rem;
+  max-width: 24rem;
+}
+.access-note {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.team .icon-btn {
+  width: 1.8rem;
+  height: 1.8rem;
 }
 .team {
   border: 1px solid var(--border);
-  border-radius: 11px;
-  margin-bottom: 1.5rem;
+  border-radius: 8px;
+  margin-bottom: .85rem;
   background: var(--panel);
   overflow: hidden;
 }
 .team-head {
   display: flex;
   align-items: center;
-  gap: .85rem;
-  min-height: 4.5rem;
-  padding: 1rem 1.35rem;
+  gap: .5rem;
+  min-height: 2.75rem;
+  padding: .4rem .85rem;
   border-bottom: 1px solid var(--border);
   background: rgb(from var(--text) r g b / .025);
 }
@@ -92,12 +94,9 @@
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 2.25rem;
-  height: 2.25rem;
-  border: 1px solid rgb(from var(--accent) r g b / .2);
-  border-radius: 7px;
-  background: rgb(from var(--accent) r g b / .07);
-  color: var(--accent);
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--muted);
 }
 .team-icon svg {
   width: 1.05rem;
@@ -106,7 +105,7 @@
 .team-name {
   margin: 0;
   min-width: 0;
-  font-size: 1rem;
+  font-size: .875rem;
   font-weight: 600;
   letter-spacing: -.015em;
   overflow-wrap: anywhere;
@@ -123,11 +122,11 @@
 }
 .team-body {
   display: grid;
-  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
 }
 .sub {
   min-width: 0;
-  padding: 1.35rem;
+  padding: .75rem .85rem;
 }
 .sub + .sub {
   border-left: 1px solid var(--border);
@@ -136,8 +135,8 @@
   display: flex;
   align-items: center;
   gap: .5rem;
-  margin: 0;
-  font-size: .85rem;
+  margin: 0 0 .4rem;
+  font-size: .75rem;
   font-weight: 600;
 }
 .sub-title .count {
@@ -145,15 +144,6 @@
   min-width: 1.1rem;
   font-size: .75rem;
   padding: 0 .3rem;
-}
-.sub-description {
-  display: flex;
-  flex-direction: column;
-  gap: .2rem;
-  margin: .5rem 0 1rem;
-  color: var(--muted);
-  font-size: .75rem;
-  line-height: 1.6;
 }
 .links {
   list-style: none;
@@ -163,9 +153,9 @@
 .links li {
   display: flex;
   align-items: center;
-  gap: .7rem;
-  min-height: 3.5rem;
-  padding: .75rem 0;
+  gap: .5rem;
+  min-height: 2.25rem;
+  padding: .25rem 0;
 }
 .links li + li {
   border-top: 1px solid var(--border);
@@ -180,7 +170,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: .2rem;
+  gap: .1rem;
 }
 .ln {
   min-width: 0;
@@ -221,10 +211,10 @@
 .perm {
   display: inline-flex;
   align-items: center;
-  gap: .4rem;
-  padding: .4rem .5rem;
+  gap: .3rem;
+  padding: .15rem .3rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   font-size: .7rem;
   color: var(--muted);
   user-select: none;
@@ -241,7 +231,7 @@
   display: flex;
   align-items: center;
   gap: .5rem;
-  padding-top: .85rem;
+  padding-top: .45rem;
 }
 .add-row select,
 .add-row repository-selector,
@@ -259,9 +249,9 @@
 .muted {
   color: var(--muted);
   font-size: .78rem;
-  margin: .75rem 0;
+  margin: .5rem 0;
 }
-@container (max-width: 57rem) {
+@container (max-width: 50rem) {
   .team-body {
     grid-template-columns: 1fr;
   }
@@ -277,9 +267,6 @@
   .create-team {
     flex-wrap: wrap;
   }
-  .create-team label {
-    flex-basis: 100%;
-  }
   .new-name {
     flex: 1;
     width: 0;
@@ -289,6 +276,20 @@
     padding-left: .75rem;
     padding-right: .75rem;
   }
+  .add-row:has(.add-repo-sel) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .add-row .add-repo-sel {
+    width: 100%;
+  }
+  .add-repo-path {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+}
+@container (max-width: 26rem) {
   .links .member-row {
     grid-template-columns: minmax(0, 1fr) 1.8rem;
   }
@@ -299,38 +300,5 @@
   .member-row > .icon-btn {
     grid-column: 2;
     grid-row: 1;
-  }
-  .add-row {
-    flex-wrap: wrap;
-  }
-  .add-repo-sel {
-    flex-basis: calc(100% - 4rem) !important;
-  }
-  .add-repo-path {
-    order: 1;
-    flex-basis: 100%;
-  }
-}
-.create-copy {
-  display: grid;
-  gap: .2rem;
-  margin-right: auto;
-}
-.create-copy strong {
-  font-size: .85rem;
-  font-weight: 500;
-}
-.create-copy > span {
-  color: var(--muted);
-  font-size: .75rem;
-}
-@container (max-width: 52rem) {
-  .create-copy {
-    flex-basis: 100%;
-    margin-bottom: .35rem;
-  }
-  .new-name {
-    flex: 1;
-    min-width: 6rem;
   }
 }
