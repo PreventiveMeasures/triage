@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
+import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 
 const config = {
   sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000,
@@ -162,6 +163,12 @@ test('all concurrent signups start with no access; identity updates and re-login
   for (const s of [session, again]) assert.equal((await readSession(config, db, cookieOf(s), Date.now())).user.role, 'none')
 })
 
+test('SQLite recovers the configured sole No access user on login only', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  await checkInitialAdminRecovery(db)
+})
+
 test('concurrent SQLite first logins check initial-admin approval atomically', async t => {
   for (const firstMatches of [true, false]) {
     const db = openSqliteManagedDb(':memory:')
@@ -171,6 +178,20 @@ test('concurrent SQLite first logins check initial-admin approval atomically', a
     await Promise.all(ids.map(githubId => createSession(cfg, db, identity(githubId), Date.now())))
     assert.deepEqual(Object.fromEntries((await db.listUsers()).map(user => [user.login, user.role])), {
       user7: firstMatches ? 'admin' : 'none', user8: 'none',
+    })
+  }
+})
+
+test('concurrent SQLite recovery and registration check the sole-user condition atomically', async t => {
+  for (const recoveryFirst of [true, false]) {
+    const db = openSqliteManagedDb(':memory:')
+    t.after(() => db.close())
+    await createSession(config, db, identity(7), 1)
+    const cfg = { ...config, initialAdminGithubId: 7 }
+    const ids = recoveryFirst ? [7, 8, 7] : [8, 7, 7]
+    await Promise.all(ids.map(githubId => createSession(cfg, db, identity(githubId), 2)))
+    assert.deepEqual(Object.fromEntries((await db.listUsers()).map(user => [user.login, user.role])), {
+      user7: recoveryFirst ? 'admin' : 'none', user8: 'none',
     })
   }
 })

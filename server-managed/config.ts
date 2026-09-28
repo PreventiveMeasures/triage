@@ -24,8 +24,8 @@ export interface ManagedConfig {
   // + secret, used by the login flow.
   githubClientId: string
   githubClientSecret: string
-  // Preapproved GitHub identity for the first registration in an empty DB.
-  // This never changes an existing user's role on later logins.
+  // Preapproved GitHub identity promoted on login when it is the only user
+  // and its role is No access, including a login after registration.
   initialAdminGithubId: number | null
   // Absolute callback registered with GitHub, e.g.
   // 'https://triage.example.com/api/oauth/github/callback'.

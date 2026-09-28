@@ -35,9 +35,10 @@ managed-specific database. The global URL cannot be combined with either
 `MANAGED_DATABASE_URL` or `E2E_DATABASE_URL`. A managed database URL and
 `BLOB_READ_WRITE_TOKEN` are required; there is no SQLite/filesystem fallback.
 Changing backends does not migrate existing data. New users default to No
-access. Only a matching `MANAGED_INITIAL_ADMIN_GITHUB_ID` can bootstrap the
-empty database's first user as admin. Once any user exists, that variable has
-no effect. See [Account approval](README.md#account-approval).
+access. On login, a matching `MANAGED_INITIAL_ADMIN_GITHUB_ID` becomes admin
+only if that account has No access and is the sole user. This also recovers
+an account registered before the variable was set. Any other user blocks
+promotion. See [Account approval](README.md#account-approval).
 
 E2e and managed may share a Postgres database and Blob store: their tables are
 separate, and e2e cleanup skips `.managed/`. This is logical separation under
@@ -72,7 +73,7 @@ Set these variables for each deployment environment:
 | `BLOB_READ_WRITE_TOKEN` | Token for a private Vercel Blob store paired with that database |
 | `GITHUB_CLIENT_ID` | GitHub login app client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub login app client secret |
-| `MANAGED_INITIAL_ADMIN_GITHUB_ID` | Optional numeric GitHub ID allowed to become admin on the first registration, only while the user table is empty |
+| `MANAGED_INITIAL_ADMIN_GITHUB_ID` | Optional numeric GitHub ID promoted on login only when that account has No access and is the sole user |
 | `OAUTH_CALLBACK_URL` | HTTPS callback registered with the login app, ending in `/api/oauth/github/callback` |
 | `CRON_SECRET` | Cleanup authorization secret; the endpoint requires `Authorization: Bearer <secret>` |
 

@@ -307,8 +307,8 @@ export interface UserTeam {
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
 export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, WorkspaceShareStore, ImportTriageStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
-  // Initial-admin approval comes only from trusted server configuration and
-  // applies exclusively to the first insertion into an empty user table.
+  // Initial-admin approval comes only from trusted login configuration. It
+  // promotes a matching No access identity only while it is the sole user.
   upsertUser(user: ManagedUser, now: number, initialAdminGithubId?: number | null): Promise<string>
   createSession(session: ManagedSession, now: number): Promise<void>
   sessionWithUser(id: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
@@ -447,18 +447,20 @@ const BUNDLE_IN_TEAM_PATH_SQL = REPORT_IN_TEAM_PATH_SQL.replaceAll('r.repo_direc
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
 function prepareStatements(db: ManagedSql) {
   return {
-    // Only the operator-preapproved identity may bootstrap the empty DB.
-    // The emptiness check and insert share the store's writer transaction,
-    // so concurrent first logins cannot both become admins. Re-login never
-    // overwrites approval or revocation through the ON CONFLICT update.
+    // Identity refreshes preserve roles. Login can separately bootstrap the
+    // configured sole No access user within this same writer transaction.
     upsertUserStmt: db.prepare(
       `INSERT INTO managed_user (id, github_user_id, login, name, avatar_url, role, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, CASE WHEN NOT EXISTS(SELECT 1 FROM managed_user) THEN ? ELSE 'none' END, ?, ?)
+       VALUES (?, ?, ?, ?, ?, 'none', ?, ?)
        ON CONFLICT(github_user_id) DO UPDATE SET
          login = excluded.login, name = excluded.name,
          avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
     ),
-    selectUserIdStmt: db.prepare(`SELECT id FROM managed_user WHERE github_user_id = ?`),
+    selectUserIdStmt: db.prepare(`SELECT id, role FROM managed_user WHERE github_user_id = ?`),
+    promoteInitialAdminStmt: db.prepare(
+      `UPDATE managed_user SET role = 'admin' WHERE id = ? AND role = 'none'
+         AND NOT EXISTS(SELECT 1 FROM managed_user WHERE id <> ?)`,
+    ),
     selectGithubIdStmt: db.prepare(`SELECT github_user_id AS githubId FROM managed_user WHERE id = ?`),
     insertSessionStmt: db.prepare(
       `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
@@ -1261,7 +1263,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const stmts = prepareStatements(db)
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0)
   const {
-    upsertUserStmt, selectUserIdStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
+    upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
   } = stmts
 
@@ -1269,10 +1271,14 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     async upsertUser(user, now, initialAdminGithubId = null) {
       // New row → a fresh id; ON CONFLICT(github_user_id) keeps an existing
       // user's id (DO UPDATE leaves it untouched), so re-read to return it.
-      const initialRole = initialAdminGithubId != null && Number.isSafeInteger(initialAdminGithubId) && initialAdminGithubId > 0
-        && user.githubUserId === initialAdminGithubId ? 'admin' : 'none'
-      await upsertUserStmt.run(randomUUID(), user.githubUserId, user.login, user.name, user.avatarUrl, initialRole, now, now)
-      const row = (await selectUserIdStmt.get(user.githubUserId)) as { id: string }
+      await upsertUserStmt.run(randomUUID(), user.githubUserId, user.login, user.name, user.avatarUrl, now, now)
+      const row = (await selectUserIdStmt.get(user.githubUserId)) as { id: string; role: Role }
+      // Avoid the population check unless this login matches the configured
+      // identity and still needs approval. NOT EXISTS stops at any other user.
+      if (initialAdminGithubId != null && Number.isSafeInteger(initialAdminGithubId) && initialAdminGithubId > 0
+        && user.githubUserId === initialAdminGithubId && row.role === 'none') {
+        await promoteInitialAdminStmt.run(row.id, row.id)
+      }
       return row.id
     },
     async createSession(session, now) {

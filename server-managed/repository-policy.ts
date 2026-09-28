@@ -2,6 +2,8 @@ import type { StoredUser } from './db.ts'
 
 const WHITEHAT = [
   291301, // ChALkeR
+  259122746, // exo-nikita
+  247161625, // ex0sec
 ]
 const whitehatIds = new Set(WHITEHAT)
 

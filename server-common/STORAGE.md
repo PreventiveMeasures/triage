@@ -131,8 +131,9 @@ app. Both use the startup database URL validator. `OBJSTORE_REAP_DISABLED` disab
 automatic e2e sweeps; explicit `/api/reap` requests still run them.
 
 Switching backends does not migrate metadata or bytes. Managed users default to
-No access. Only the preapproved `MANAGED_INITIAL_ADMIN_GITHUB_ID` can bootstrap the empty database's
-first user as admin; once any user exists, it has no effect. See
+No access. The configured `MANAGED_INITIAL_ADMIN_GITHUB_ID` is promoted on login
+only while that account has No access and is the sole user, including when it
+registered before the variable was set. Any other user blocks promotion. See
 [account approval](../server-managed/README.md#account-approval).
 
 ## Verification
