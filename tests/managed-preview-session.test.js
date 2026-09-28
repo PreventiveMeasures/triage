@@ -142,10 +142,14 @@ test('background team refresh preserves the sidebar during an outage and clears 
 })
 
 
-test('the team catalogue preserves report locations, server slugs, and cache versions alongside UUIDs', async t => {
+test('the team catalogue preserves report locations, analyzer metadata, server slugs, and cache versions alongside UUIDs', async t => {
   const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json', repoFullName: 'org/repo', repoDirectory: 'packages/app', cacheKey: 'access-and-assignment-v1' }], bundles: [] }]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams })))
-  assert.deepEqual(await probeTeams(), teams)
+  for (const analyzer of ['claude-security', 'codex-security', 'deepsec', 'piolium', 'links', null, undefined]) {
+    if (analyzer === undefined) delete teams[0].reports[0].analyzer
+    else teams[0].reports[0].analyzer = analyzer
+    assert.deepEqual(await probeTeams(), teams)
+  }
 })
 
 test('feed probes preserve team grant keys and report transient failures for retry', async t => {

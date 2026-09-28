@@ -26,7 +26,20 @@ function createLocalStorage() {
 globalThis.localStorage ??= createLocalStorage()
 
 const { setCount } = await import('../client/counts.js')
-const { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf, loadedBrands } = await import('../ui/view/file-display.js')
+const { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf, loadedBrands, reportGroup } = await import('../ui/view/file-display.js')
+
+describe('managed report groups', () => {
+  it('uses catalog metadata despite a local report with the same filename', () => {
+    setCount('report.md', 1, 'deepsec')
+    for (const source of ['claude-security', 'codex-security', 'deepsec', 'piolium', 'links']) {
+      assert.equal(reportGroup('report.md', source), source)
+      assert.equal(reportGroup('report.json', source), source)
+    }
+    assert.equal(reportGroup('report.md', null), 'default', 'known native reports override the extension')
+    assert.equal(reportGroup('report.md', 'future-analyzer'), 'default')
+    assert.equal(reportGroup('report.md', undefined), 'claude-security', 'older catalogs can fall back to the extension')
+  })
+})
 
 describe('groupOf — the bucket a file lands in', () => {
   beforeEach(() => { globalThis.localStorage.clear() })

@@ -143,7 +143,12 @@ export function loadedBrands(reports) {
 // file falls through to the report guesses below and re-buckets itself
 // the moment the lazy count fill reaches it.
 export function groupOf(name) {
-  const kind = getKind(name)
+  return reportGroup(name, getKind(name))
+}
+
+// Managed catalogs supply their own analyzer metadata. Do not consult the
+// local filename cache: another report can have the same name there.
+export function reportGroup(name, kind) {
   if (kind === LINKS_KIND) return LINKS_KIND
   if (kind !== undefined) return SOURCE_GROUPS.has(kind) ? kind : 'default'
   const lower = name.toLowerCase()

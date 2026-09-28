@@ -945,7 +945,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
-  const copyBtn = html`<button type="button" class="mark-copy" data-tooltip="Copy file, line, description, confidence to clipboard" aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  const copyBtn = html`<button type="button" class="mark-copy" data-tooltip=${showActionLabels ? nothing : 'Copy file, line, description, confidence to clipboard'} aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   // Link button — copies a `#finding=<id>` URL that reopens the app on
   // THIS finding (handler in events.js; resolution in
   // view/finding-link.js). Suppressed for a session-local numeric id:
@@ -953,7 +953,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // next load. Managed reports also wait for a server-aware link resolver.
   // Sits next to Copy, the other "take this with you" action.
   const linkBtn = findingLinkFor(activeTab)
-    ? html`<button type="button" class="mark-link" data-tooltip="Copy a link to this finding" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
+    ? html`<button type="button" class="mark-link" data-tooltip=${showActionLabels ? nothing : 'Copy a link to this finding'} aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
   // GitHub-issue action — managed users must check for an existing
   // issue or reservation before reaching creation. Use a button so
@@ -976,13 +976,13 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const issueContent = html`${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}`
   const issueBtn = issueHref
     ? managedIssue
-      ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
-      : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip="Create a GitHub issue for this finding" aria-label="Create a GitHub issue for this finding">${issueContent}</a>`
+      ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
+      : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</a>`
     : nothing
   // Claude button — hands off the same finding block the copy
   // button writes (prefixed with "Confirm and fix:") to Claude Code
   // via the `claude://code/new?q=…` URL scheme.
-  const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip="Open in Claude Code (claude://) with a confirm-and-fix prompt" aria-label="Open finding in Claude Code">${CLAUDE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
+  const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip=${showActionLabels ? nothing : 'Open in Claude Code (claude://) with a confirm-and-fix prompt'} aria-label="Open finding in Claude Code">${CLAUDE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
   const picker = html`<color-marker .selected=${activeColor} .disabled=${disabled}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /

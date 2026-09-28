@@ -71,7 +71,7 @@ function shareQueries(db: ManagedSql) {
   const repositories = db.prepare(`SELECT tr.repo_id AS repoId, sr.full_name AS github, tr.path
     FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
     WHERE tr.team_id = ? ORDER BY tr.repo_id, tr.path`)
-  const reports = db.prepare(`SELECT DISTINCT r.id, r.slug, r.filename, r.byte_size AS byteSize,
+  const reports = db.prepare(`SELECT DISTINCT r.id, r.slug, r.filename, r.analyzer, r.byte_size AS byteSize,
     r.sha256, r.repo_directory AS directory, sr.full_name AS github
     FROM managed_team_repo tr JOIN managed_report r ON r.repo_id = tr.repo_id
     JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
@@ -128,7 +128,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       if (!grant) return null
       const { dependencies, security, ...team } = grant
       const permissions = { dependencies: dependencies === 1, security: security === 1 }
-      const rows = await q.reports.all(team.id) as { id: string; slug: string; filename: string; byteSize: number; sha256: string; directory: string; github: string }[]
+      const rows = await q.reports.all(team.id) as { id: string; slug: string; filename: string; analyzer: string | null; byteSize: number; sha256: string; directory: string; github: string }[]
       const bundleRows = await q.bundles.all(team.id) as (ManagedBundle & { repoFullName: string })[]
       return {
         user: { id: `share:${tokenHash}`, login: 'public', name: 'Public workspace', avatarUrl: null, role: 'view' },
@@ -138,7 +138,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
         reports: rows.map(row => ({ id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
           repo: { github: row.github, directory: row.directory }, permissions })),
         team: { ...team,
-          reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, repoFullName: row.github, repoDirectory: row.directory,
+          reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, analyzer: row.analyzer, repoFullName: row.github, repoDirectory: row.directory,
             cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions]) })),
           bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
             filename: row.filename, kind: row.kind, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName })),
