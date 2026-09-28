@@ -564,13 +564,14 @@ OAuth scopes. See [GitHub's permission model](https://docs.github.com/en/apps/cr
 API creation is limited to a visible finding in the current team and a repository
 assigned to that team where the app is installed. Other repositories, public
 workspace views, and E2E/local mode use GitHub's prefilled issue form. The dialog
-also offers that form when API access is unavailable. No issue is posted by
-signing in, checking authorization, or connecting a repository.
+offers that form only when the server selects the repository fallback. No issue
+is posted by signing in, checking authorization, or connecting a repository.
 
 Both forms and API creation request `deepview`, plus `security` for `isSecurity`
 findings, then comma-separated `GITHUB_NEW_ISSUE_LABELS` (optional). Labels are
-trimmed and deduplicated. The API silently omits the default `deepview` label
-when the repository lacks it. Security labels on the API path are derived from
+trimmed and deduplicated. The API checks every requested label with the acting
+user's token and silently omits names the repository lacks; it never creates
+labels as a side effect. Security labels on the API path are derived from
 the server's team-wide classification, including hidden siblings and links.
 
 `GET /api/teams/:id/issues?reportId=...&findingId=...&repository=owner/repo`

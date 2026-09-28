@@ -2931,6 +2931,7 @@ test('issue API uses acting user, server-classified labels, and ignores missing 
     if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
     assert.equal(init.headers.authorization, 'Bearer acting-user-token')
     if (url.endsWith('/labels/deepview')) return jsonResponse({}, 404)
+    if (url.includes('/labels/')) return jsonResponse({})
     if (url.endsWith('/issues/42')) return jsonResponse({ number: 42, title: 'Fetched title', body: 'Fetched description', state: 'open', user: { login: 'bob' }, labels: [{ name: 'security' }] })
     assert.equal(init.method, 'POST')
     assert.deepEqual(JSON.parse(init.body), { title: 'Review this finding', body: 'Details', labels: ['security', 'custom'] })
@@ -3034,7 +3035,7 @@ test('issue HTTP route requires session and CSRF, filters inputs, and returns no
   t.mock.method(globalThis, 'fetch', (url, init) => {
     if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
     assert.equal(init.headers.authorization, 'Bearer acting-user-token')
-    if (url.endsWith('/labels/deepview')) return jsonResponse({ name: 'deepview' })
+    if (url.includes('/labels/')) return jsonResponse({})
     if (url.endsWith('/issues/9')) return jsonResponse({ number: 9, title: 'From the user', body: 'Details', state: 'open' })
     assert.deepEqual(JSON.parse(init.body).labels, ['deepview', 'custom', 'security'])
     writes++; return jsonResponse({ number: 9 }, 201)
@@ -3158,7 +3159,7 @@ for (const change of ['membership', 'report', 'session', 'permissions']) {
     let writes = 0
     t.mock.method(globalThis, 'fetch', async (url, init) => {
       if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
-      if (url.endsWith('/labels/deepview')) return jsonResponse({ name: 'deepview' })
+      if (url.includes('/labels/')) return jsonResponse({})
       if (init.method === 'POST') {
         writes++
         if (change === 'membership') await db.removeTeamMember(team.id, session.userId)
@@ -3181,5 +3182,57 @@ for (const change of ['membership', 'report', 'session', 'permissions']) {
       assert.equal(JSON.parse(lookup.body).url, 'https://github.com/o/r/issues/74')
     }
     assert.equal(writes, 1)
+  })
+}
+
+for (const available of [[], ['deepview'], ['security'], ['triage / qa?'], ['deepview', 'security', 'triage / qa?']]) {
+  test(`issue API creates with only existing optional labels: ${available.join(', ') || '(none)'}`, async t => {
+    const { db, store, fx, team, cfg, context } = await issueFixture(t)
+    cfg.githubNewIssueLabels = 'triage / qa?, missing label, SECURITY, deepview, triage / qa?'
+    const { send, upload } = bundleHarness(db, cfg, store)
+    const cookie = cookiePair(fx.bobSess.setCookie), path = `/api/teams/${team.id}/issues`
+    const requested = ['deepview', 'security', 'triage / qa?', 'missing label']
+    const labelReads = [], writes = []
+    t.mock.method(globalThis, 'fetch', (url, init) => {
+      if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+      assert.equal(init.headers.authorization, 'Bearer acting-user-token')
+      if (init.method === 'GET' && url.includes('/labels/')) {
+        const name = decodeURIComponent(new URL(url).pathname.split('/labels/')[1])
+        assert.equal(url, `https://api.github.com/repos/o/r/labels/${encodeURIComponent(name)}`, 'label names stay in one encoded path segment')
+        labelReads.push(name)
+        return available.includes(name) ? jsonResponse({ name }) : jsonResponse({}, 404)
+      }
+      if (url.endsWith('/issues/88')) return jsonResponse({ number: 88 })
+      assert.equal(init.method, 'POST')
+      assert.equal(url, 'https://api.github.com/repos/o/r/issues', 'no label-creation side effects')
+      writes.push(JSON.parse(init.body))
+      return jsonResponse({ number: 88 }, 201)
+    })
+    const issueContext = { ...context, findingId: 'sec' }
+    const preview = await send('GET', `${path}?${new URLSearchParams(issueContext)}`, cookie)
+    assert.equal(preview.statusCode, 200)
+    assert.deepEqual(JSON.parse(preview.body), { mode: 'api', labels: available })
+    assert.deepEqual(labelReads, requested, 'check every distinct requested name')
+    const created = await upload(path, cookie, fx.bobSess.csrfToken, JSON.stringify({ ...issueContext, title: 'Security finding', body: 'Description' }))
+    assert.equal(created.statusCode, 201)
+    assert.deepEqual(writes, [{ title: 'Security finding', body: 'Description', labels: available }])
+    assert.deepEqual(labelReads, [...requested, ...requested], 'POST revalidates labels instead of trusting the preview')
+    assert.equal((await db.getManagedIssue('sec')).issueUrl, 'https://github.com/o/r/issues/88')
+  })
+}
+
+for (const status of [401, 403, 429, 503]) {
+  test(`optional label lookup preserves ${status} failures instead of treating them as missing`, async t => {
+    const { db, store, team, session, cfg, context } = await issueFixture(t)
+    const lookup = prepareGithubIssue(cfg, db, store, session, team.id, { ...context, findingId: 'sec' }, (url, init) => {
+      assert.equal(init.method, 'GET', 'label validation cannot create an issue')
+      if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+      if (url.endsWith('/labels/deepview')) return jsonResponse({ name: 'deepview' })
+      assert.ok(url.endsWith('/labels/security'))
+      return jsonResponse({}, status)
+    })
+    if (status === 401) assert.equal((await lookup).mode, 'authorize')
+    else await assert.rejects(lookup, /github-unavailable/u)
+    assert.equal(await db.getManagedIssue('sec'), null)
   })
 }

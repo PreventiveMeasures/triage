@@ -84,12 +84,17 @@ export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, s
   if (installed?.permissions?.issues !== 'write') return { mode: 'permissions' as const, authorizationPath: installUrl(config), labels, recheck }
   const token = await issueUserToken(config, db, session.userId, fetchImpl)
   if (!token) return { mode: 'authorize' as const, authorizationPath: ISSUE_LOGIN_PATH, labels, recheck }
-  // GitHub's form ignores unknown labels. Keep that behavior for the default
-  // deepview label on the API path; never create the label as a side effect.
-  const label = await github(`${path}/labels/deepview`, token, fetchImpl)
-  if (label.status === 401) return { mode: 'authorize' as const, authorizationPath: ISSUE_LOGIN_PATH, labels, recheck }
-  if (label.status !== 404 && !label.ok) throw new IssueError(502, 'github-unavailable')
-  return { mode: 'api' as const, token, path, labels: label.status === 404 ? labels.filter(name => name.toLowerCase() !== 'deepview') : labels, recheck,
+  // All requested labels are optional, including security and operator labels.
+  // Omit missing names rather than rejecting issue creation or creating labels.
+  const existingLabels: string[] = []
+  for (const name of labels) {
+    const label = await github(`${path}/labels/${encodeURIComponent(name)}`, token, fetchImpl)
+    if (label.status === 401) return { mode: 'authorize' as const, authorizationPath: ISSUE_LOGIN_PATH, labels, recheck }
+    if (label.status === 404) continue
+    if (!label.ok) throw new IssueError(502, 'github-unavailable')
+    existingLabels.push(name)
+  }
+  return { mode: 'api' as const, token, path, labels: existingLabels, recheck,
     db, findingId: context.findingId, repoId: repository.repoId, repository: context.repository, repoIds, userId: session.userId }
 }
 
