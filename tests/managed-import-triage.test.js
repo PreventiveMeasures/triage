@@ -112,7 +112,7 @@ test('whole workspace import uses real managed routes to create a team, upload r
   let prompts = 0
   const team = await runWorkspaceImport(plan, { session: { id: admin.userId, role: 'admin', csrfToken: admin.csrfToken }, includeTriage: true,
     api: { async send(path, body, headers) {
-      const response = await request(body, 'admin', true, 'POST', path, headers)
+      const response = await request(body, 'admin', true, body === undefined ? 'GET' : 'POST', path, headers)
       assert.ok(response.status >= 200 && response.status < 300, `${path}: ${JSON.stringify(response)}`)
       return response
     } },
