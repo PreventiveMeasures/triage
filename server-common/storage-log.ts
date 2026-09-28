@@ -19,11 +19,15 @@ export function e2eStorageLines(config: DatabaseConfig & { objstoreDir: string }
   ]
 }
 
-export function managedStorageLines(config: DatabaseConfig): string[] {
+export function managedStorageLines(config: DatabaseConfig & { storageEncryptionKey?: string | null }): string[] {
   const dir = dirname(config.dbPath)
   const location = (path: string) => config.neonUrl ? `Vercel Blob (private), .managed/${path}/` : resolve(dir, path)
   return [
     `  Managed database: ${databaseLocation(config)}`,
+    ...(config.storageEncryptionKey ? [
+      `  Managed encrypted objects: ${location('encrypted-v1')} (ChaCha20-Poly1305)`,
+      '  Managed legacy locations (until migration completes):',
+    ] : []),
     `  Managed reports: ${location('reports')}`,
     `  Managed bundles: ${location('bundles')}`,
     `  Managed avatars: ${location('avatars')}`,

@@ -42,7 +42,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
   })
   const routeRequest = createManagedRequestHandler({
     ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, originGate, serveStatic,
-    ...('uploadStore' in storage ? { uploadStore: storage.uploadStore } : {}),
+    ...(storage.uploadStore ? { uploadStore: storage.uploadStore } : {}),
     isShuttingDown, track,
   })
 
@@ -56,6 +56,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
     cleanup = runReapers({
       sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
       ...('reapUploads' in storage ? { uploads: async () => { uploads = await storage.reapUploads() } } : {}),
+      ...('reapStorage' in storage ? { storage: () => storage.reapStorage() } : {}),
     }).then(() => {
       nextCleanupAt = Date.now() + REAP_INTERVAL_MS
       return console.info(`managed-reaper: removed ${sessions} expired session(s), ${uploads} stale upload part(s) in ${Date.now() - startedAt}ms`)

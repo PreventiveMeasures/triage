@@ -76,6 +76,7 @@ SQL schema; neither creates a separate PostgreSQL schema or database role.
 | Managed triage | `managed_finding_triage`, `managed_finding_triage_event` |
 | Managed comments | `managed_finding_comment`, `managed_finding_comment_event` |
 | Managed activity and schema versions | `managed_activity`, `managed_schema_version` |
+| Managed encrypted byte references and migration | `managed_storage_encryption`, `managed_storage_object`, `managed_storage_prefix` |
 
 Startup renames tables in an existing managed database transactionally while
 retaining rows, foreign keys, and upload triggers. Conflicting source/destination
@@ -99,6 +100,13 @@ compatible with a shared file, but the launcher requires separate files.
 | Bundle metadata cache | `cache/bundles/<uuid>/...` | `.managed/cache/bundles/<uuid>/...` |
 | Report source cache | `cache/report-sources/<bundleUuid>/...` | `.managed/cache/report-sources/<bundleUuid>/...` |
 | Managed upload parts | Not enabled by the disk adapter | `.managed/uploads/<derivedUuid>` |
+| Managed encrypted objects (when enabled) | `encrypted-v1/<uuid>` | `.managed/encrypted-v1/<uuid>` |
+
+With `MANAGED_STORAGE_ENCRYPTION_KEY`, new managed payloads and derived caches
+use the encrypted namespace and a SQL manifest. Existing plaintext in the
+locations above remains readable during automatic, resumable migration. The
+key does not encrypt SQL rows or affect e2e encryption. See
+[managed storage encryption](../server-managed/STORAGE-ENCRYPTION.md).
 
 Managed filesystem paths are relative to the database's parent, not its
 filename. In combined cloud mode, both servers use `BLOB_READ_WRITE_TOKEN`.
@@ -116,6 +124,8 @@ The response proceeds alongside cleanup, and the triggering invocation awaits
 both; concurrent requests share the sweep. Results and failures are logged as
 `managed-reaper:` under the triggering request. Persistent servers also have an
 hourly timer; serverless instances need traffic or the optional cron when idle.
+When encryption is enabled, maintenance also migrates plaintext and collects
+unreferenced ciphertext at least 24 hours old.
 
 E2e commits and reaping are designed for concurrent instances: version updates
 use database compare-and-set operations; cleanup rechecks live references and
@@ -126,7 +136,8 @@ All replicas of a mode must use the same configured database and byte storage.
 
 `GET /api/reap` is mounted by the top-level servers and runs cleanup for every
 enabled mode using its already-open storage. Standalone e2e runs object cleanup;
-standalone managed runs session/upload cleanup; either combined mode runs both.
+standalone managed runs session/upload cleanup and encrypted-storage maintenance
+when enabled; either combined mode runs both.
 `Authorization: Bearer <CRON_SECRET>` is required (401 if unset or incorrect).
 Other methods return 405. Cleanup waits for all enabled modes and returns 500
 if any fails. Concurrent requests share each mode's in-flight sweep.

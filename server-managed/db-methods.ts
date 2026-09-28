@@ -12,6 +12,7 @@ import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
 import { ManagedMutationError, type ManagementStore, managementMethods } from './management.ts'
+import { type StorageDb, storageMethods } from './storage-db.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
 // to the upsert; `githubUserId` is the provider lookup key, never exposed to
@@ -310,7 +311,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, StorageDb {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted login configuration. It
   // promotes a matching No access identity only while it is the sole user.
@@ -1324,6 +1325,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   } = stmts
 
   const methods: Omit<ManagedDb, keyof ManagementStore> = {
+    ...storageMethods(db),
     async upsertUser(user, now, initialAdminGithubId = null) {
       // New row → a fresh id; ON CONFLICT(github_user_id) keeps an existing
       // user's id (DO UPDATE leaves it untouched), so re-read to return it.

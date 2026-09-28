@@ -5,6 +5,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
+import { checkStorageDb } from './_managed-storage-db.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
 import { reportReferenceSnapshot } from '../server-managed/management.ts'
@@ -113,6 +114,12 @@ test('Postgres repository removal compares report references and rolls back part
   assert.equal((await send('/api/admin/repositories/remove', { session, body: { ...removal, deleteTriage: true } })).status, 200)
   assert.ok(await db.getReport(survivor))
   assert.equal((await db.listTriage(['shared-finding'])).length, 1)
+})
+
+test('Postgres encryption references, deletion fences, and migration progress are shared across instances', async t => {
+  const { db, connect } = await database(t)
+  const other = await openPostgresManagedDb(connect)
+  try { await checkStorageDb(db, other) } finally { await other.close() }
 })
 
 test('Postgres report uploads reuse content across instances and upgrade without removing legacy copies', async t => {

@@ -13,6 +13,10 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_UPLOAD_BYTES, UPLOAD_CHUNK_BYTES, deleteUpload, putUploadPart, readUpload, validUploadPart } from '../server-managed/uploads.ts'
+import { parseStorageKey } from '../server-common/storage-crypto.ts'
+import { openVercelObjectStorage } from '../server-managed/object-storage-vercel.ts'
+import { createEncryptedObjectStorage } from '../server-managed/storage-encryption.ts'
+import { createManagedStores } from '../server-managed/storage-stores.ts'
 
 import { BlobStoreNotFoundError, sdkFixture } from './_managed-vercel.js'
 
@@ -215,10 +219,14 @@ async function consume(opened) {
 }
 
 for (const kind of ['sourcemap', 'stasis']) {
-  test(`private Blob ${kind} uploads preserve identity and stream Brotli contents and downloads`, async t => {
+  for (const encrypted of [false, true]) {
+  test(`private Blob ${kind} (encrypted=${encrypted}) uploads preserve identity and stream Brotli contents and downloads`, async t => {
     const { sdk, objects } = sdkFixture()
-    const storage = await openManagedVercelStorage('secret', sdk)
     const db = openSqliteManagedDb(':memory:')
+    const key = parseStorageKey(Buffer.alloc(32, 123).toString('base64'))
+    const storage = encrypted
+      ? createManagedStores(await createEncryptedObjectStorage(await openVercelObjectStorage('secret', sdk), db, key), false)
+      : await openManagedVercelStorage('secret', sdk)
     const config = { serverless: true, sessionCookieName: 'sid', sessionTtlMs: 3_600_000, cookieSecure: false, maxBundleBytes: 104_857_600 }
     const cache = createBundleCache(storage.cacheStorage, db, storage.bundleStore)
     const server = createServer(createManagedRequestHandler({
@@ -254,9 +262,11 @@ for (const kind of ['sourcemap', 'stasis']) {
     const { id, integrity, byteSize } = JSON.parse(upload.bytes)
     assert.equal(integrity, bundleIntegrity(body))
     assert.equal(byteSize, body.length)
-    const path = `.managed/bundles/${id}${kind === 'sourcemap' ? '.map.br' : ''}`
+    const logical = `bundles/${id}${kind === 'sourcemap' ? '.map.br' : ''}`
+    const path = `.managed/${encrypted ? (await db.getStorageReference(key.id, logical)).objectKey : logical}`
     assert.deepEqual([...objects.keys()], [path], 'only the stored archive exists before metadata is requested')
-    const encoded = objects.get(path).bytes
+    const encoded = await consume(await storage.bundleStore.open(id, kind))
+    if (encrypted) assert.notDeepEqual(objects.get(path).bytes, encoded)
     assert.deepEqual(brotliDecompressSync(encoded), decoded)
     if (kind === 'stasis') assert.deepEqual(encoded, body)
     const duplicate = await send('/api/admin/bundles', 'POST', body, { 'x-bundle-filename': filename })
@@ -282,19 +292,25 @@ for (const kind of ['sourcemap', 'stasis']) {
     const get = sdk.get
     for (const size of [0, null]) {
       // Private SDK GET responses can return zero even with a nonempty body.
-      sdk.get = async (...args) => { const result = await get(...args); return { ...result, blob: { size } } }
+      sdk.get = async (...args) => { const result = await get(...args); return result ? { ...result, blob: { ...result.blob, size } } : null }
       for (const part of ['metadata', 'contents', 'download']) {
         for (const method of ['GET', 'HEAD']) {
           const unknownSize = await send(`/api/bundles/${id}/${part}`, method)
           assert.equal(unknownSize.status, 200)
-          assert.equal(unknownSize.headers['content-length'], undefined)
+          const expected = part === 'metadata' ? metadata.bytes : encoded
+          assert.equal(unknownSize.headers['content-length'], encrypted ? String(expected.length) : undefined)
           assert.deepEqual(unknownSize.bytes, method === 'HEAD' ? Buffer.alloc(0) : part === 'metadata' ? metadata.bytes : encoded)
         }
       }
     }
     assert.equal((await send(`/api/admin/bundles/${id}`, 'DELETE')).status, 200)
-    assert.equal(objects.size, 0, 'deletion removes the archive and cached metadata')
+    if (encrypted) {
+      assert.equal(await storage.bundleStore.open(id, kind), null, 'deletion revokes the reference immediately')
+      assert.equal(await storage.cacheStorage.exists(id, 'v2-metadata.json.br'), false)
+      for (const name of objects.keys()) assert.ok(name.startsWith('.managed/encrypted-v1/'))
+    } else assert.equal(objects.size, 0, 'deletion removes the archive and cached metadata')
   })
+  }
 }
 
 test('upload reaping lists all pages before deleting stale parts and preserves recent uploads', async () => {

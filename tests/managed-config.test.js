@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { Buffer } from 'node:buffer'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +33,16 @@ test('public workspace sharing requires exactly DEEPVIEW_ALLOW_SHARE=1', t => {
     process.env.DEEPVIEW_ALLOW_SHARE = value
     for (const combined of [false, true]) assert.equal(loadManagedConfig({ combined }).allowShare, value === '1')
   }
+})
+
+test('managed storage encryption is opt-in and validates its key before opening storage', t => {
+  useEnv(t, {})
+  assert.equal(loadManagedConfig().storageEncryptionKey, null)
+  const key = Buffer.alloc(32, 123).toString('base64')
+  process.env.MANAGED_STORAGE_ENCRYPTION_KEY = key
+  for (const combined of [false, true]) assert.equal(loadManagedConfig({ combined }).storageEncryptionKey, key)
+  process.env.MANAGED_STORAGE_ENCRYPTION_KEY = 'not-a-valid-key'
+  assert.throws(() => loadManagedConfig(), err => /MANAGED_STORAGE_ENCRYPTION_KEY/u.test(err.message) && !err.message.includes('not-a-valid-key'))
 })
 
 test('initial admin configuration accepts only one positive numeric GitHub ID, and defaults off', t => {
