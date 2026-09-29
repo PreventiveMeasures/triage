@@ -311,20 +311,24 @@ class ManagedAdminUsers extends ManagedPage {
     })
   }
 
+  _filteredUsers() {
+    const query = this._query.trim().toLocaleLowerCase()
+    return (this._users ?? []).filter(user => [user.name, user.login, user.role, ...(this._teams ?? []).filter(team => team.members?.some(member => member.userId === user.id)).map(team => team.name)].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+  }
+
   render() {
+    const users = this._filteredUsers()
     return html`<div class="wrap">${adminNavigation('admin-users', this._role, this.allowShare)}
       <h1 class="sr-only">Users</h1>
-      <div class="page-intro"><p class="intro">Manage workspace access and roles.</p><span class="result-count">${this._users?.length ?? '…'} users</span></div>
-      <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div>
+      <div class="page-intro"><p class="intro">Manage workspace access and roles.</p></div>
+      <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}><span class="result-count" role="status">${this._users && this._query.trim() ? `${users.length} matching out of ` : ''}${this._users?.length ?? '…'} users</span></div>
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load users: ${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._users == null ? (this._error ? nothing : loadingRows('Loading users…')) : this._list()}</div>
+      <div aria-busy=${this._loading}>${this._users == null ? (this._error ? nothing : loadingRows('Loading users…')) : this._list(users)}</div>
     </div>`
   }
 
-  _list() {
+  _list(users) {
     if (this._users.length === 0) return html`<p class="msg">No users yet.</p>`
-    const query = this._query.trim().toLocaleLowerCase()
-    const users = this._users.filter(user => [user.name, user.login, user.role, ...(this._teams ?? []).filter(team => team.members?.some(member => member.userId === user.id)).map(team => team.name)].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
     if (users.length === 0) return html`<div class="empty"><strong>No matching users</strong><p>Try another name, username, or team.</p></div>`
     return html`<div class="directory">
       <div class="list-head" aria-hidden="true"><span>Account</span><span>Team access</span><span>Last seen</span><span>Last activity</span><span>Role</span></div>
@@ -630,7 +634,11 @@ class ManagedAdminRepos extends ManagedPage {
         ? 'Manage connected repositories and their settings.'
         : this._scope === 'installed'
           ? this._showAll ? 'Showing all repositories the GitHub App can read.' : 'Showing installed repositories you can access on GitHub.'
-          : 'Choose a public repository your GitHub account is involved with.'}</p>${connected ? html`<span class="result-count">${this._data?.connectedCount ?? '…'} connected</span>` : nothing}</div>
+          : 'Choose a public repository your GitHub account is involved with.'}</p>${connected ? html`<div class="repository-actions">
+          <button type="button" class="btn" @click=${() => this._open('installed')}>${this._accessIcon('private')} Add installed repository</button>
+          <button type="button" class="btn" @click=${() => this._open('public')}>${this._accessIcon('public')} Add your public repository</button>
+          ${this._role === 'admin' && this._data?.canAddAnyPublicRepository ? html`<button type="button" class="btn" aria-expanded=${this._publicRepoOpen} @click=${() => this._openPublicRepository()}>${this._accessIcon('public')} Add a public repository</button>` : nothing}
+        </div>` : nothing}</div>
       ${!connected && this._scope === 'installed' ? html`<div class="access-note">
         <p>Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
         <span class="access-action">${this._data?.installUrl ? html`<a class="btn" href=${this._data.installUrl} target="_blank" rel="noopener noreferrer">Configure GitHub access</a>` : html`<button type="button" class="btn" disabled>Configure GitHub access</button>`}</span>
@@ -638,16 +646,13 @@ class ManagedAdminRepos extends ManagedPage {
       <div class="toolbar">
         <label class="search"><input type="search" aria-label=${connected ? 'Search connected repositories' : `Search ${this._scope} repositories`} placeholder="Search by repository or owner…" .value=${this._query} @input=${(e) => this._search(e.target.value)}></label>
         ${this._scope === 'installed' ? html`<label class="show-all"><input type="checkbox" role="switch" .checked=${this._showAll} @change=${(event) => this._setShowAll(event.target.checked)}><span>Show all</span></label>` : nothing}
-        ${connected ? html`
-          <button type="button" class="btn" @click=${() => this._open('installed')}>${this._accessIcon('private')} Add installed repository</button>
-          <button type="button" class="btn" @click=${() => this._open('public')}>${this._accessIcon('public')} Add your public repository</button>
-          ${this._role === 'admin' && this._data?.canAddAnyPublicRepository ? html`<button type="button" class="btn" aria-expanded=${this._publicRepoOpen} @click=${() => this._openPublicRepository()}>${this._accessIcon('public')} Add a public repository</button>` : nothing}
-        ` : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load(true) }}>Refresh</button>`}
+        ${connected ? html`<span class="result-count" role="status">${this._data && (this._query.trim() || choices.activeFacet != null) ? `${choices.count} ${choices.count === 1 ? 'repository' : 'repositories'} out of ` : ''}${this._data?.connectedCount ?? '…'} connected</span>`
+          : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load(true) }}>Refresh</button>`}
       </div>
       ${connected && this._publicRepoOpen && this._role === 'admin' && this._data?.canAddAnyPublicRepository ? this._publicRepositoryForm() : nothing}
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
-      ${this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
+      ${!connected && this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
       <div aria-busy=${this._loading}>${this._body(choices)}</div>
     </div>`
   }
