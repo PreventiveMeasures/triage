@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { teamCatalogRevision } from './team-catalog.ts'
-import type { Role } from '../common/managed/roles.ts'
+import { type Role, roleAtLeast } from '../common/managed/roles.ts'
 import type { TeamUserPermissions } from '../common/managed/permissions.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { preferredSlug } from './slugs.ts'
@@ -11,6 +11,7 @@ import { type ManagedIssueStore, managedIssueMethods } from './managed-issues.ts
 import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
+import { ManagedMutationError, type ManagementStore, managementMethods } from './management.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
 // to the upsert; `githubUserId` is the provider lookup key, never exposed to
@@ -307,7 +308,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted login configuration. It
   // promotes a matching No access identity only while it is the sole user.
@@ -349,7 +350,8 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   insertReport(report: ReportRecordInput, now: number): Promise<void>
   // Content reuse is atomic with insertion, including across server instances.
   // Existing copies are kept; the oldest matching row is the stable identity.
-  insertOrReuseReport(report: ReportRecordInput, now: number): Promise<ReportRecord>
+  // HTTP uploads pass sessionId to recheck role/destination in that transaction.
+  insertOrReuseReport(report: ReportRecordInput, now: number, sessionId?: string): Promise<ReportRecord>
   getReportByHash(sha256: string, analyzer: string | null): Promise<ReportRecord | null>
   listReports(userId?: string): Promise<AdminReport[]>
   getReport(id: string): Promise<ReportRecord | null>
@@ -385,7 +387,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // (referencing reports' bundle_id null out via the FK). linkReportsToBundle
   // attaches a freshly-stored bundle to the (still-unlinked) reports that
   // declared its integrity.
-  insertBundle(bundle: BundleInput, now: number): Promise<void>
+  insertBundle(bundle: BundleInput, now: number, sessionId?: string): Promise<void>
   getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null>
   getBundle(id: string): Promise<ManagedBundle | null>
   listBundles(userId?: string): Promise<AdminBundle[]>
@@ -904,8 +906,20 @@ type ReportRow = {
   bundleId: string | null
 }
 
-// The report slice of ManagedDb, split out (like selectedRepoMethods) to keep
-// openSqliteManagedDb small. Closes over its prepared statements.
+// Byte storage may outlast a logout or grant change. HTTP uploads reauthorize
+// inside the metadata writer transaction after their bytes have been stored.
+async function authorizeUpload(stmts: ReturnType<typeof prepareStatements>, sessionId: string | undefined,
+  item: { uploadedBy: string | null; repoId: number | null; repoDirectory?: string }) {
+  if (sessionId === undefined) return // Trusted imports and fixtures use the raw store API.
+  const user = await stmts.selectSessionStmt.get(sessionId, Date.now()) as SessionRow | undefined
+  if (!user) throw new ManagedMutationError(401, 'unauthenticated')
+  if (user.uid !== item.uploadedBy || !roleAtLeast(user.role, 'manage')) throw new ManagedMutationError(403, 'forbidden')
+  if (item.repoId === null) return
+  if (!(await stmts.selectReposStmt.all() as RepoRow[]).some(repo => repo.repoId === item.repoId)) throw new ManagedMutationError(400, 'repo-not-selected')
+  if (user.role !== 'admin' && !await stmts.selectRepoPathReadableStmt.get(item.repoDirectory ?? '', item.repoId, user.uid)) throw new ManagedMutationError(403, 'repo-forbidden')
+}
+
+// The report slice of ManagedDb closes over its prepared statements.
 function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
   const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt, setReportRepoStmt, setReportVisibleStmt } = stmts
   async function getReport(id: string): Promise<ReportRecord | null> {
@@ -929,7 +943,8 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     insertReport,
     getReport,
     getReportByHash,
-    async insertOrReuseReport(report: ReportRecordInput, now: number): Promise<ReportRecord> {
+    async insertOrReuseReport(report: ReportRecordInput, now: number, sessionId?: string): Promise<ReportRecord> {
+      await authorizeUpload(stmts, sessionId, report)
       // The driver holds its writer lock for this whole operation. Checking
       // again here closes the race between the HTTP lookup and blob upload.
       const existing = await getReportByHash(report.sha256, report.analyzer ?? null)
@@ -1108,7 +1123,8 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
     selectBundlesStmt, deleteBundleStmt, setBundleRepoStmt, linkReportsToBundleStmt, selectBundleReadableStmt, selectRepoReadableStmt, selectRepoPathReadableStmt,
   } = stmts
   return {
-    async insertBundle(bundle: BundleInput, now: number): Promise<void> {
+    async insertBundle(bundle: BundleInput, now: number, sessionId?: string): Promise<void> {
+      await authorizeUpload(stmts, sessionId, bundle)
       await insertBundleStmt.run(
         bundle.id, preferredSlug(bundle.id), bundle.integrity, bundle.filename, bundle.kind,
         bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, bundle.repoId == null ? '' : bundle.repoDirectory ?? '', now,
@@ -1297,7 +1313,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
   } = stmts
 
-  return {
+  const methods: Omit<ManagedDb, keyof ManagementStore> = {
     async upsertUser(user, now, initialAdminGithubId = null) {
       // New row → a fresh id; ON CONFLICT(github_user_id) keeps an existing
       // user's id (DO UPDATE leaves it untouched), so re-read to return it.
@@ -1364,4 +1380,5 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       await db.close()
     },
   }
+  return { ...methods, ...managementMethods(methods) }
 }

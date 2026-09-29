@@ -244,9 +244,9 @@ function sourcesTests(backend) {
       if (otherFormatSurvives) await h.seed(undefined, h.bundle.id, 'same-report.md')
       const bundle = await h.db.getBundle(h.bundle.id), bytes = await h.reports.get(h.report.id)
       const finish = Promise.withResolvers(), reading = Promise.withResolvers(), removed = Promise.withResolvers()
-      const get = h.bundles.get.bind(h.bundles), remove = h.db.deleteReport.bind(h.db)
+      const get = h.bundles.get.bind(h.bundles), remove = h.db.mutateReport.bind(h.db)
       t.mock.method(h.bundles, 'get', async (...args) => { reading.resolve(); await finish.promise; return get(...args) })
-      t.mock.method(h.db, 'deleteReport', async id => { const result = await remove(id); removed.resolve(); return result })
+      t.mock.method(h.db, 'mutateReport', async (...args) => { const result = await remove(...args); removed.resolve(); return result })
       const loading = h.cache.open(h.report, bundle, { dependencies: true, security: true })
       await reading.promise
       const deleting = deleteReport(h, h.report.id)

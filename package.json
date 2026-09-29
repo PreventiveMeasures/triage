@@ -119,6 +119,7 @@
     "server-managed/http.ts",
     "server-managed/import-triage.ts",
     "server-managed/managed-issues.ts",
+    "server-managed/management.ts",
     "server-managed/index.ts",
     "server-managed/package-entry-points.ts",
     "server-managed/public-workspace.ts",
