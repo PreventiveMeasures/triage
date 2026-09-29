@@ -67,6 +67,11 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec('PRAGMA foreign_keys = ON;')
     migrateManagedTableNames(db)
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA)
+    for (const table of ['managed_report', 'managed_bundle']) {
+      ensureColumn(db, table, 'data_key', 'TEXT')
+      ensureColumn(db, table, 'storage_encrypted', 'INTEGER NOT NULL DEFAULT 0')
+    }
+    ensureColumn(db, 'managed_user', 'gh_tokens_encrypted', 'INTEGER NOT NULL DEFAULT 0')
     ensureColumn(db, 'managed_github_metadata', 'state_reason', GITHUB_STATE_REASON_COLUMN)
     ensureColumn(db, 'managed_github_metadata', 'attempted_at', 'INTEGER')
     // Existing public links must opt in too; never preserve an implicit grant.

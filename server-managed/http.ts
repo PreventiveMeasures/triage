@@ -92,7 +92,6 @@ import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
-import { ManagedCommitError } from './sql.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 
 const SESSION_PATH = '/api/auth/session'
@@ -914,18 +913,20 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   const { bundleId, integrity } = await resolveReportBundle(deps, s.user, bytes)
-  await deps.reportStore.put(id, bytes)
+  const dataKey = await deps.reportStore.put(id, bytes) ?? null
   let report: ReportRecord
   try {
     report = await deps.db.insertOrReuseReport({
-      id, filename, contentType, byteSize: bytes.length, sha256,
+      id, filename, contentType, byteSize: bytes.length, sha256, dataKey,
       uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: matchedRepo?.repoId ?? null,
       repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity,
     }, Date.now(), s.session.id)
   } catch (err) {
-    // Losing the commit acknowledgement cannot turn primary bytes into garbage.
-    if (!(err instanceof ManagedCommitError)) await deps.reportStore.delete(id).catch(() => {})
-    throw err
+    // A successful COMMIT can lose its acknowledgement. Never delete a file
+    // until a writer-locked read confirms that this candidate did not commit.
+    const committed = await deps.db.resolveReportUpload(id)
+    if (committed) report = committed
+    else { await deps.reportStore.delete(id).catch(() => {}); throw err }
   }
   if (report.id !== id) await deps.reportStore.delete(id).catch(() => {})
   await sendUploadedReport(req, res, deps, cookie, report, report.id !== id)
@@ -1204,20 +1205,21 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   }
   const id = randomUUID()
   const kind = bundleKind(filename)
-  await deps.bundleStore.put(id, bytes, kind)
+  const dataKey = await deps.bundleStore.put(id, bytes, kind) ?? null
   try {
     await deps.db.insertBundle({
-      id, integrity, filename, kind,
+      id, integrity, filename, kind, dataKey,
       byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId, repoDirectory: directory,
     }, Date.now(), s.session.id)
   } catch (err) {
-    // A committed row may already point here even though insertion rejected.
-    if (!(err instanceof ManagedCommitError)) await deps.bundleStore.delete(id).catch(() => {})
-    if (err instanceof ManagedMutationError) throw err
     // A concurrent upload of identical bytes can insert this integrity (UNIQUE)
     // between our dedup check and this insert — treat that as a dedup, not a 500.
     // Any other failure rethrows.
-    const raced = await deps.db.getBundleByIntegrity(integrity)
+    const raced = await deps.db.resolveBundleUpload(integrity)
+    // Preserve a committed candidate after a lost acknowledgement. If this
+    // read fails too, leave the bytes for later reconciliation.
+    if (raced?.id !== id) await deps.bundleStore.delete(id).catch(() => {})
+    if (err instanceof ManagedMutationError) throw err
     if (raced != null) {
       s = await manageMutation(req, res, deps, cookie)
       if (!s) return

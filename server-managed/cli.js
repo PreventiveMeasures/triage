@@ -10,9 +10,9 @@
 // `import.meta.main` auto-start gate stays off and we call `start()` ourselves.
 import '../strip-types-loader.js'
 const command = process.argv[2]
-if (command === '--migrate-storage' || command === '--storage-encryption-status') {
+if (command === '--enable-storage-encryption' || command === '--migrate-storage' || command === '--storage-encryption-status') {
   const { storageCommand } = await import('./storage-command.ts')
-  await storageCommand(command === '--storage-encryption-status')
+  await storageCommand(command)
 } else {
   const { start } = await import('./index.ts')
   await start()

@@ -33,10 +33,10 @@ async function deletePrefix(blobs: VercelBlobSdk, token: string, prefix: string,
 
 function createBlobAvatarStore(avatarBlobs: BlobStore): AvatarStore {
   return {
-    put(id, contentType, bytes) {
+    async put(id, contentType, bytes) {
       const type = contentType.split(';', 1)[0]!.trim()
       if (!/^image\/[a-z0-9.+-]+$/iu.test(type)) throw new Error('Invalid avatar type')
-      return avatarBlobs.put(id, Buffer.concat([Buffer.from(`${type}\n`), bytes]))
+      await avatarBlobs.put(id, Buffer.concat([Buffer.from(`${type}\n`), bytes]))
     },
     async get(id) {
       const bytes = await avatarBlobs.get(id)

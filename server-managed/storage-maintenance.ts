@@ -1,116 +1,151 @@
-import type { StorageKey } from '../server-common/storage-crypto.ts'
-import { ENCRYPTED_PREFIX, LEGACY_PREFIXES, type ListedObject, type RawObjectStorage } from './object-storage.ts'
-import type { StorageDb, StorageEncryptionState } from './storage-db.ts'
-import { STORAGE_GC_MS, STORAGE_WRITE_MS, removeLegacy, stageEncrypted, verifyEncrypted } from './storage-encryption.ts'
+import { type StorageKey, decryptStorageStream, encryptStorageStream } from '../server-common/storage-crypto.ts'
+import { type RawObjectStorage } from './object-storage.ts'
+import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, unwrapDataKey } from './storage-db.ts'
+import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
+import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
 
-async function removePublishedLegacy(raw: RawObjectStorage, db: StorageDb, key: StorageKey, identity: string,
-  signal: AbortSignal, version?: string): Promise<void> {
-  const current = await db.getStorageReference(key.id, identity)
-  if (current.legacy) return
-  if (current.objectKey) {
-    // A previous worker may have committed, then lost its acknowledgement or
-    // stopped before deleting plaintext. Verify the current recovery target
-    // again before removing the remaining copy, including after a lost CAS.
-    if (!current.digest) throw new Error('Encrypted storage reference has no digest')
-    await verifyEncrypted(raw, key, identity, current.objectKey, current.digest, signal)
-    if ((await db.getStorageReference(key.id, identity)).revision !== current.revision) return
-  }
-  signal.throwIfAborted()
-  if (version === undefined) await removeLegacy(raw, identity, signal)
-  else if (!await raw.delete(identity, version)) throw new Error('Legacy storage changed during encryption migration')
+async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal) {
+  if (item.type === 'user') { await db.migrateStorageUserTokens(item.id); return }
+  const row = await db.ensureStorageDataKey(item.type, item.id)
+  if (!row || row.encrypted) return
+  const dataKey = unwrapDataKey(key, item.type, row), identity = storageRowPath(item.type, row)
+  try {
+    const source = await raw.open(identity, signal)
+    if (!source) {
+      if (!await db.getStorageRow(item.type, item.id)) return
+      throw new Error('Migration payload unavailable')
+    }
+    let inspected = await inspectStorageObject(source)
+    if (inspected.encrypted) {
+      // A previous PUT may have completed before a timeout or lost SQL ack.
+      try {
+        const decoded = await decryptStorageStream(inspected.stream, dataKey, identity)
+        await verifyStoragePayload(item.type, row, decoded.stream)
+      } catch {
+        // Legacy arbitrary bytes can share the magic prefix. A matching
+        // original upload hash is required before encrypting them as plaintext.
+        const legacy = await raw.open(identity, signal)
+        if (!legacy || legacy.version !== source.version) { legacy?.stream.destroy(); return }
+        inspected = { ...legacy, encrypted: false }
+      }
+    }
+    if (!inspected.encrypted) {
+      await verifyStoragePayload(item.type, row, inspected.stream)
+      signal.throwIfAborted()
+      const current = await raw.open(identity, signal)
+      if (!current) return
+      if (current.version !== source.version) { current.stream.destroy(); return }
+      const encrypted = encryptStorageStream(current.stream, dataKey, identity, current.size)
+      let replaced: boolean
+      try { replaced = await raw.put(identity, encrypted, signal, source.version) }
+      finally { encrypted.destroy(); current.stream.destroy() }
+      if (!replaced) return
+      // Do not mark the row encrypted until the stored bytes authenticate and
+      // match the original upload (including decompression for sourcemaps).
+      const replacement = await raw.open(identity, signal)
+      if (!replacement) {
+        if (!await db.getStorageRow(item.type, item.id)) return
+        throw new Error('Migrated payload unavailable')
+      }
+      const decoded = await decryptStorageStream(replacement.stream, dataKey, identity)
+      await verifyStoragePayload(item.type, row, decoded.stream)
+    }
+    signal.throwIfAborted()
+    // Another process may have renamed ciphertext but stopped before syncing
+    // the directory. Persist the observed rename even on the resume path.
+    await raw.sync?.(identity)
+    await db.markStorageEncrypted(item.type, item.id, row.dataKey!)
+  } finally { dataKey.fill(0) }
 }
 
-async function migrateObject(raw: RawObjectStorage, db: StorageDb, key: StorageKey, identity: string, deadline: number, signal: AbortSignal) {
-  const snapshot = await db.getStorageReference(key.id, identity)
-  if (!snapshot.legacy) { await removePublishedLegacy(raw, db, key, identity, signal); return }
-  const stored = await raw.open(identity, signal)
-  if (!stored) return
-  const candidate = await stageEncrypted(raw, key, identity, stored.stream, stored.size, signal)
-  await verifyEncrypted(raw, key, identity, candidate.objectKey, candidate.digest, signal)
-  const published = await db.publishStorageObject(key.id, identity, snapshot.revision, candidate.objectKey, candidate.digest, deadline, true)
-  if (!published) {
-    await raw.delete(candidate.objectKey)
-    // A concurrent write/delete is authoritative. On timeout leave plaintext
-    // available for a later attempt rather than removing the only live copy.
-    await removePublishedLegacy(raw, db, key, identity, signal, stored.version)
-    return
-  }
-  if (!await raw.delete(identity, stored.version)) throw new Error('Legacy storage changed during encryption migration')
-}
-
-function migrationCursor(state: StorageEncryptionState): { prefix: number; cursor: string | null } {
-  if (state.cursor === null) return { prefix: 0, cursor: null }
-  const value = JSON.parse(state.cursor)
-  if (!Number.isInteger(value.prefix) || value.prefix < 0 || value.prefix >= LEGACY_PREFIXES.length
-    || (value.cursor !== null && typeof value.cursor !== 'string')) throw new Error('Invalid storage migration cursor')
+const LEGACY = ['cache/', 'reports/', 'bundles/']
+function cleanupPosition(state: StorageEncryptionState): { prefix: number; cursor: string | null } {
+  const value = state.cleanupCursor === null ? { prefix: 0, cursor: null } : JSON.parse(state.cleanupCursor)
+  if (!Number.isInteger(value.prefix) || value.prefix < 0 || value.prefix >= LEGACY.length
+    || (value.cursor !== null && typeof value.cursor !== 'string')) throw new Error('Invalid legacy cleanup cursor')
   return value
+}
+
+// Referenced-data migration never depends on Blob listings. A separate bounded
+// inventory removes legacy caches and unreferenced plaintext; ciphertext
+// orphans do not hold a recoverable data key and need no manifest-based GC.
+async function cleanupLegacy(raw: RawObjectStorage, db: StorageDb, state: StorageEncryptionState, limit: number, signal: AbortSignal) {
+  const position = cleanupPosition(state), prefix = LEGACY[position.prefix]!
+  const page = await raw.list(prefix, position.cursor, Math.min(limit, 16))
+  let found = 0
+  for (const object of page.objects) {
+    signal.throwIfAborted()
+    // A process killed during a pre-activation disk write can leave a temp
+    // file. Give live writes time to finish before collecting those files.
+    if (object.key.endsWith('.tmp') && object.modifiedAt > Date.now() - STORAGE_UPLOAD_TTL_MS) { found++; continue }
+    const owner = storageOwner(object.key)
+    if (owner && !owner.cache) {
+      const row = await db.getStorageRow(owner.type, owner.id)
+      if (row && storageRowPath(owner.type, row) === object.key) continue
+    }
+    const stored = await raw.open(object.key, signal)
+    if (!stored) continue
+    const inspected = await inspectStorageObject(stored)
+    inspected.stream.destroy()
+    if (prefix === 'cache/' || !inspected.encrypted) {
+      found++
+      if (!await raw.delete(object.key, stored.version)) throw new Error('Legacy object changed during cleanup')
+    }
+  }
+  const next = page.cursor === null ? position.prefix + 1 < LEGACY.length ? { prefix: position.prefix + 1, cursor: null } : null
+    : { ...position, cursor: page.cursor }
+  // A full pass without removals closes offset-pagination gaps left by deletes.
+  await db.advanceStorageCleanup(state.cleanupCursor, next === null ? null : JSON.stringify(next), found)
+  return page.objects.length || 1
 }
 
 export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
   { maxObjects = 64, maxMs = 150_000 } = {}): Promise<StorageEncryptionState> {
   if (!Number.isSafeInteger(maxObjects) || maxObjects < 1 || !Number.isSafeInteger(maxMs) || maxMs < 1) throw new Error('Invalid migration budget')
-  const deadline = Date.now() + Math.min(maxMs, STORAGE_WRITE_MS)
-  const signal = AbortSignal.timeout(Math.min(maxMs, STORAGE_WRITE_MS))
-  let processed = 0
-  let state = (await db.getStorageEncryption(key.id))!
+  const deadline = Date.now() + maxMs, signal = AbortSignal.timeout(maxMs)
+  const errors: unknown[] = []
+  let processed = 0, state = await db.getStorageEncryption()
+  if (!state) throw new Error('Storage encryption is not enabled; run --enable-storage-encryption')
+  // At most one SQL pass per invocation. Checkpoint each row, including a
+  // failure: other rows progress, and the failed row is retried next pass.
   while (!state.complete && processed < maxObjects && Date.now() < deadline) {
-    const position = migrationCursor(state)
-    const page = await raw.list(LEGACY_PREFIXES[position.prefix]!, position.cursor, Math.min(16, maxObjects - processed))
-    for (const object of page.objects) {
-      signal.throwIfAborted()
-      await migrateObject(raw, db, key, object.key, deadline, signal)
+    const rows = await db.listStorageMigrationRows(state.cursor, Math.min(16, maxObjects - processed))
+    if (rows.length === 0) { await db.advanceStorageMigration(state.cursor, null); break }
+    for (const row of rows) {
+      if (Date.now() >= deadline) break
+      try { await migrateRow(raw, db, key, row, signal) } catch (err) { errors.push(err) }
+      await db.advanceStorageMigration(state.cursor, row.position)
       processed++
+      state = (await db.getStorageEncryption())!
     }
-    const next = page.cursor === null ? position.prefix + 1 < LEGACY_PREFIXES.length ? { prefix: position.prefix + 1, cursor: null } : null
-      : { ...position, cursor: page.cursor }
-    await db.advanceStorageMigration(key.id, state.revision, next === null ? null : JSON.stringify(next), page.objects.length)
-    state = (await db.getStorageEncryption(key.id))!
   }
+  state = (await db.getStorageEncryption())!
+  while (!state.cleanupComplete && processed < maxObjects && Date.now() < deadline) {
+    try { processed += await cleanupLegacy(raw, db, state, maxObjects - processed, signal) }
+    catch (err) { errors.push(err); break }
+    state = (await db.getStorageEncryption())!
+  }
+  if (errors.length > 0) throw new AggregateError(errors, 'Storage migration has pending failures', { cause: errors[0] })
   return state
 }
 
-export async function reapEncryptedStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey, now = Date.now()): Promise<void> {
-  const state = (await db.getStorageEncryption(key.id))!
-  const page = await raw.list(ENCRYPTED_PREFIX, state.gcCursor, 100)
-  for (const object of page.objects) {
-    if (!(object.modifiedAt < now - STORAGE_GC_MS) || !await db.canCollectStorageObject(key.id, object.key)) continue
-    await raw.delete(object.key)
-  }
-  await db.advanceStorageGc(key.id, page.cursor)
-}
-
-export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null, now = Date.now()): Promise<void> {
-  const before = now - STORAGE_GC_MS
-  if (key) {
-    for (const identity of await db.listExpiredStorageUploads(key.id, before, 100)) {
-      const ref = await db.getStorageReference(key.id, identity)
-      if (ref.updatedAt === null || ref.updatedAt >= before) continue
-      await db.deleteStorageObject(key.id, identity, false, ref.revision)
-    }
-  } else await db.getStorageEncryption(null)
-  // Encrypted deployments have a resumable migration for the remaining legacy
-  // pages. Without encryption, retain the existing full staging sweep.
-  const cursors = new Set<string>(), expired: ListedObject[] = []
+export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, now = Date.now()): Promise<void> {
+  await db.getStorageEncryption()
+  const before = now - STORAGE_UPLOAD_TTL_MS
+  // Finish listing before deleting: Vercel cursors can be offset-based.
+  const cursors = new Set<string>(), expired: string[] = []
   let cursor: string | null = null
   do {
     const page = await raw.list('uploads/', cursor, 100)
-    expired.push(...page.objects.filter(object => object.modifiedAt < before))
-    cursor = key ? null : page.cursor
+    expired.push(...page.objects.filter(object => object.modifiedAt < before).map(object => object.key))
+    cursor = page.cursor
     if (cursor !== null && cursors.has(cursor)) throw new Error('Invalid blob pagination')
     if (cursor !== null) cursors.add(cursor)
   } while (cursor !== null)
-  // Finish listing before deleting so opaque offset cursors do not skip parts.
-  for (const object of expired) {
-    const stored = await raw.open(object.key)
+  for (const identity of expired) {
+    const stored = await raw.open(identity)
     if (!stored) continue
     stored.stream.destroy()
-    // A retry can replace a part after listing. Expire the observed version
-    // only, and recheck its age before changing the SQL reference.
-    if (!(stored.modifiedAt < before)) continue
-    if (key) {
-      const ref = await db.getStorageReference(key.id, object.key)
-      if (ref.legacy) await db.deleteStorageObject(key.id, object.key, false, ref.revision)
-    } else await db.getStorageEncryption(null)
-    await raw.delete(object.key, stored.version)
+    if (stored.modifiedAt < before) await raw.delete(identity, stored.version)
   }
 }

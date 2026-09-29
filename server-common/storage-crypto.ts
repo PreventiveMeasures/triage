@@ -5,10 +5,10 @@ import { Buffer } from 'node:buffer'
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto'
 import { Readable } from 'node:stream'
 
-const MAGIC = Buffer.from('DeepView.storage')
+export const STORAGE_MAGIC = Buffer.from('DeepView.storage')
 const VERSION = 1
 export const STORAGE_CHUNK_BYTES = 65_536
-export const STORAGE_HEADER_BYTES = 73
+export const STORAGE_HEADER_BYTES = 57
 const TAG_BYTES = 16
 const UNKNOWN_SIZE = 0xffff_ffff_ffff_ffffn
 
@@ -59,24 +59,23 @@ function nonce(index: number, last: boolean): Buffer {
   return value
 }
 
-function objectKey(key: StorageKey, header: Buffer, identity: string): Buffer {
-  return Buffer.from(hkdfSync('sha256', key.bytes, header.subarray(17, 49),
+function objectKey(key: Uint8Array, header: Buffer, identity: string): Buffer {
+  return Buffer.from(hkdfSync('sha256', key, header.subarray(17, 49),
     Buffer.from(JSON.stringify(['deepview.storage.v1', identity])), 32))
 }
 
-function makeHeader(key: StorageKey, size: number | null): Buffer {
+function makeHeader(size: number | null): Buffer {
   if (size !== null && (!Number.isSafeInteger(size) || size < 0)) throw new Error('Invalid storage size')
   const header = Buffer.alloc(STORAGE_HEADER_BYTES)
-  MAGIC.copy(header); header[16] = VERSION
+  STORAGE_MAGIC.copy(header); header[16] = VERSION
   randomBytes(32).copy(header, 17)
   header.writeBigUInt64BE(size === null ? UNKNOWN_SIZE : BigInt(size), 49)
-  Buffer.from(key.id, 'hex').copy(header, 57)
   return header
 }
 
-export function encryptStorageStream(source: Readable, key: StorageKey, identity: string, size: number | null): Readable {
+export function encryptStorageStream(source: Readable, key: Uint8Array, identity: string, size: number | null): Readable {
   async function* encrypt() {
-    const header = makeHeader(key, size)
+    const header = makeHeader(size)
     const derived = objectKey(key, header, identity)
     let index = 0, length = 0
     try {
@@ -98,7 +97,7 @@ export function encryptStorageStream(source: Readable, key: StorageKey, identity
 // Read just the envelope and authenticate the first frame before returning.
 // In particular, never trust a corrupted size or release update() output
 // before final() authenticates the complete chunk.
-export async function decryptStorageStream(source: Readable, key: StorageKey, identity: string) {
+export async function decryptStorageStream(source: Readable, key: Uint8Array, identity: string) {
   const iterator = source[Symbol.asyncIterator]()
   let done = false
   let peek: Buffer = Buffer.alloc(0), remainder: Buffer = Buffer.alloc(0)
@@ -120,10 +119,9 @@ export async function decryptStorageStream(source: Readable, key: StorageKey, id
   let derived: Buffer | undefined
   try {
     const header = await read(STORAGE_HEADER_BYTES)
-    if (header.length !== STORAGE_HEADER_BYTES || !header.subarray(0, 16).equals(MAGIC) || header[16] !== VERSION) {
+    if (header.length !== STORAGE_HEADER_BYTES || !header.subarray(0, 16).equals(STORAGE_MAGIC) || header[16] !== VERSION) {
       throw new Error('Invalid encrypted storage envelope')
     }
-    if (header.subarray(57).toString('hex') !== key.id) throw new Error('Storage encryption key mismatch')
     const rawSize = header.readBigUInt64BE(49)
     if (rawSize !== UNKNOWN_SIZE && rawSize > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Invalid encrypted storage size')
     const size = rawSize === UNKNOWN_SIZE ? null : Number(rawSize)
@@ -156,4 +154,29 @@ export async function decryptStorageStream(source: Readable, key: StorageKey, id
     stream.once('close', () => { derivedKey.fill(0); source.destroy() })
     return { size, stream }
   } catch (err) { derived?.fill(0); source.destroy(); throw err }
+}
+
+// Small SQL values (data keys, OAuth tokens and the installation sentinel).
+// Fresh salt derives a one-use wrapping key, so the nonce can be all zeroes.
+// The version and master-key ID are authenticated along with the row/field.
+export function wrapStorageValue(key: StorageKey, identity: string, value: Uint8Array): string {
+  const header = Buffer.concat([Buffer.from([1]), Buffer.from(key.id, 'hex'), randomBytes(32)])
+  const derived = Buffer.from(hkdfSync('sha256', key.bytes, header.subarray(17), 'deepview.wrap.v1', 32))
+  try {
+    const cipher = createCipheriv('chacha20-poly1305', derived, Buffer.alloc(12), { authTagLength: TAG_BYTES })
+    cipher.setAAD(Buffer.concat([header, Buffer.from(identity)]))
+    return Buffer.concat([header, cipher.update(value), cipher.final(), cipher.getAuthTag()]).toString('base64')
+  } finally { derived.fill(0) }
+}
+
+export function unwrapStorageValue(key: StorageKey, identity: string, value: string): Buffer {
+  const bytes = Buffer.from(value, 'base64'), header = bytes.subarray(0, 49)
+  if (bytes.length < 65 || bytes.toString('base64') !== value || header[0] !== 1
+    || header.subarray(1, 17).toString('hex') !== key.id) throw new Error('Invalid wrapped storage value or encryption key')
+  const derived = Buffer.from(hkdfSync('sha256', key.bytes, header.subarray(17), 'deepview.wrap.v1', 32))
+  try {
+    const decipher = createDecipheriv('chacha20-poly1305', derived, Buffer.alloc(12), { authTagLength: TAG_BYTES })
+    decipher.setAAD(Buffer.concat([header, Buffer.from(identity)])); decipher.setAuthTag(bytes.subarray(-TAG_BYTES))
+    return Buffer.concat([decipher.update(bytes.subarray(49, -TAG_BYTES)), decipher.final()])
+  } finally { derived.fill(0) }
 }

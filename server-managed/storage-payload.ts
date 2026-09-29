@@ -1,0 +1,62 @@
+import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
+import { Readable } from 'node:stream'
+import { createBrotliDecompress } from 'node:zlib'
+import { STORAGE_MAGIC } from '../server-common/storage-crypto.ts'
+import type { RawObject } from './object-storage.ts'
+import type { StorageRow, StorageRowKind } from './storage-db.ts'
+
+export function storageRowPath(type: StorageRowKind, row: Pick<StorageRow, 'id' | 'kind'>): string {
+  return `${type === 'report' ? 'reports' : 'bundles'}/${row.id}${type === 'bundle' && row.kind === 'sourcemap' ? '.map.br' : ''}`
+}
+export function storageOwner(identity: string): { type: StorageRowKind; id: string; cache: boolean } | null {
+  const match = /^(reports|bundles)\/([a-f\d-]{36})(?:\.map\.br)?$/u.exec(identity)
+  if (match) return { type: match[1] === 'reports' ? 'report' : 'bundle', id: match[2]!, cache: false }
+  const cache = /^cache\/(?:bundles|report-sources)\/([a-f\d-]{36})\//u.exec(identity)
+  return cache ? { type: 'bundle', id: cache[1]!, cache: true } : null
+}
+
+// Peek without buffering the object or consuming bytes from its next reader.
+export async function inspectStorageObject(stored: RawObject): Promise<RawObject & { encrypted: boolean }> {
+  const original = stored.stream
+  const iterator = original[Symbol.asyncIterator]()
+  const first: Buffer[] = [], prefix = Buffer.alloc(STORAGE_MAGIC.length)
+  let length = 0
+  try {
+    while (length < prefix.length) {
+      const next = await iterator.next()
+      if (next.done) break
+      const bytes = Buffer.from(next.value)
+      first.push(bytes)
+      length += bytes.copy(prefix, length, 0, prefix.length - length)
+    }
+  } catch (err) { original.destroy(); throw err }
+  async function* joined() {
+    try {
+      yield* first
+      for (;;) { const next = await iterator.next(); if (next.done) return; yield next.value }
+    } finally { await iterator.return?.(); original.destroy() }
+  }
+  const stream = Readable.from(joined(), { objectMode: false })
+  stream.once('close', () => original.destroy())
+  return { ...stored, stream, encrypted: length === prefix.length && prefix.equals(STORAGE_MAGIC) }
+}
+
+// Sourcemap integrity describes the original upload, before Brotli storage.
+// Hash incrementally, including decompression, so migration stays streaming.
+export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable): Promise<void> {
+  const hash = createHash(type === 'report' ? 'sha256' : 'sha512')
+  let decoded: Readable = source
+  if (type === 'bundle' && row.kind === 'sourcemap') {
+    const brotli = createBrotliDecompress()
+    source.once('error', err => brotli.destroy(err))
+    brotli.once('error', () => source.destroy())
+    source.pipe(brotli)
+    decoded = brotli
+  }
+  try {
+    for await (const chunk of decoded) hash.update(chunk)
+    const actual = type === 'report' ? hash.digest('base64url') : `sha512-${hash.digest('base64')}`
+    if (actual !== row.hash) throw new Error('Stored payload does not match its upload hash')
+  } finally { decoded.destroy(); source.destroy() }
+}

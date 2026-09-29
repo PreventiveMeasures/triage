@@ -28,6 +28,7 @@ export type VercelBlobSdk = {
       allowOverwrite?: boolean
       contentType?: string
       token?: string
+      ifMatch?: string
       multipart?: boolean
       abortSignal?: AbortSignal
       cacheControlMaxAge?: number

@@ -4,15 +4,15 @@ import { Buffer } from 'node:buffer'
 import { hkdfSync, randomBytes } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js'
-import { STORAGE_CHUNK_BYTES as CHUNK, STORAGE_HEADER_BYTES as HEADER, decryptStorageStream, encryptStorageStream, parseStorageKey } from '../server-common/storage-crypto.ts'
+import { STORAGE_CHUNK_BYTES as CHUNK, STORAGE_HEADER_BYTES as HEADER, decryptStorageStream, encryptStorageStream, parseStorageKey, unwrapStorageValue, wrapStorageValue } from '../server-common/storage-crypto.ts'
 
 const key = parseStorageKey(Buffer.alloc(32, 42).toString('base64'))
 const identity = 'bundles/15e86a19-9d50-4df3-a49e-eb3509480f22'
 const source = bytes => Readable.from([bytes])
 async function collect(stream) { const parts = []; for await (const part of stream) parts.push(part); return Buffer.concat(parts) }
-function encode(bytes, size = bytes.length) { return collect(encryptStorageStream(source(bytes), key, identity, size)) }
+function encode(bytes, size = bytes.length) { return collect(encryptStorageStream(source(bytes), key.bytes, identity, size)) }
 async function decode(bytes, name = identity, cryptoKey = key) {
-  const opened = await decryptStorageStream(source(bytes), cryptoKey, name)
+  const opened = await decryptStorageStream(source(bytes), cryptoKey.bytes, name)
   return { size: opened.size, bytes: await collect(opened.stream) }
 }
 
@@ -45,7 +45,7 @@ for (const size of [0, 1, CHUNK - 1, CHUNK, CHUNK + 1, CHUNK * 2, CHUNK * 3 + 17
 test('framing is independent of transport chunk boundaries and supports unknown sizes', async () => {
   const bytes = randomBytes(CHUNK * 2 + 31), encoded = await encode(bytes, null)
   const pieces = Array.from({ length: Math.ceil(encoded.length / 73) }, (_, i) => encoded.subarray(i * 73, (i + 1) * 73))
-  const opened = await decryptStorageStream(Readable.from(pieces), key, identity)
+  const opened = await decryptStorageStream(Readable.from(pieces), key.bytes, identity)
   assert.equal(opened.size, null)
   assert.deepEqual(await collect(opened.stream), bytes)
   await assert.rejects(encode(bytes, bytes.length + 1), /size changed/u)
@@ -70,12 +70,12 @@ test('never emits unauthenticated chunk contents and closes the source on failur
   const bytes = randomBytes(CHUNK * 3), encoded = await encode(bytes)
   encoded[HEADER + CHUNK + 16 + 7] ^= 1
   const raw = source(encoded)
-  const opened = await decryptStorageStream(raw, key, identity), seen = []
+  const opened = await decryptStorageStream(raw, key.bytes, identity), seen = []
   await assert.rejects(async () => { for await (const part of opened.stream) seen.push(part) })
   assert.deepEqual(Buffer.concat(seen), bytes.subarray(0, CHUNK))
   assert.equal(raw.destroyed, true)
   const headSource = source(await encode(bytes))
-  const head = await decryptStorageStream(headSource, key, identity)
+  const head = await decryptStorageStream(headSource, key.bytes, identity)
   head.stream.destroy()
   await new Promise(resolve => { head.stream.once('close', resolve) })
   assert.equal(headSource.destroyed, true)
@@ -87,8 +87,27 @@ test('streaming backpressure bounds read-ahead instead of accumulating the input
   const input = Readable.from((async function* () {
     while (generated < size) { generated += CHUNK; ahead = Math.max(ahead, generated - consumed); yield block }
   })(), { objectMode: false })
-  const decoded = await decryptStorageStream(encryptStorageStream(input, key, identity, size), key, identity)
+  const decoded = await decryptStorageStream(encryptStorageStream(input, key.bytes, identity, size), key.bytes, identity)
   for await (const part of decoded.stream) consumed += part.length
   assert.equal(consumed, size)
   assert.ok(ahead <= 16 * CHUNK, `bounded read-ahead: ${ahead} bytes`)
+})
+
+test('SQL wrapping uses fresh salts, full authentication, and row/field binding', () => {
+  const context = 'managed_bundle:example', value = randomBytes(32)
+  const a = wrapStorageValue(key, context, value), b = wrapStorageValue(key, context, value)
+  assert.notEqual(a, b)
+  assert.deepEqual(unwrapStorageValue(key, context, a), value)
+  assert.throws(() => unwrapStorageValue(key, 'managed_report:example', a))
+  assert.throws(() => unwrapStorageValue(key, 'managed_bundle:other', a))
+  assert.throws(() => unwrapStorageValue(parseStorageKey(randomBytes(32).toString('base64')), context, a))
+  const bytes = Buffer.from(a, 'base64')
+  const header = bytes.subarray(0, 49)
+  const derived = Buffer.from(hkdfSync('sha256', key.bytes, header.subarray(17), 'deepview.wrap.v1', 32))
+  assert.deepEqual(Buffer.from(chacha20poly1305(derived, Buffer.alloc(12), Buffer.concat([header, Buffer.from(context)])).decrypt(bytes.subarray(49))), value)
+  for (const offset of [0, 1, 17, 49, bytes.length - 1]) {
+    const bad = Buffer.from(bytes); bad[offset] ^= 1
+    assert.throws(() => unwrapStorageValue(key, context, bad.toString('base64')))
+  }
+  assert.throws(() => unwrapStorageValue(key, context, a.slice(0, -4)))
 })

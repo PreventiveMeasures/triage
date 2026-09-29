@@ -66,10 +66,10 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
     async exists(key) {
       try { await stat(path(key)); return true } catch (err) { if (missing(err)) return false; throw err }
     },
-    async put(key, bytes, signal) {
+    async put(key, bytes, signal, expected) {
       const target = path(key)
-      // Temporary ciphertext is in the same namespace and filesystem. Startup
-      // never exposes it; maintenance collects abandoned encrypted candidates.
+      // Temp-file + rename makes replacement atomic to readers. Concurrent
+      // migrations use the same persisted data key and immutable plaintext.
       const temp = `${target}.${randomUUID()}.tmp`
       await mkdir(dirname(target), { recursive: true })
       const file = await open(temp, 'wx', 0o600)
@@ -77,8 +77,13 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
         await file.writeFile(bytes, signal ? { signal } : {})
         await file.sync(); await file.close()
         signal?.throwIfAborted()
+        if (expected !== undefined) {
+          try { if (version(await stat(target)) !== expected) return false }
+          catch (err) { if (missing(err)) return false; throw err }
+        }
         await rename(temp, target)
         await syncDirectory(dirname(target))
+        return true
       } finally { await file.close(); await rm(temp, { force: true }) }
     },
     async delete(key, expected) {
@@ -92,6 +97,7 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
         return true
       } catch (err) { if (missing(err)) return true; throw err }
     },
+    sync: key => syncDirectory(dirname(path(key))),
     list: (prefix, cursor, limit) => listFiles(dir, prefix, cursor, limit),
   }
 }

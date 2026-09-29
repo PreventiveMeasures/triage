@@ -5,7 +5,7 @@ import { type BlobStore, type OpenedBlob, createDiskBlobStore } from './blob-sto
 import { encodeBrotli } from './brotli.ts'
 
 export interface BundleStore {
-  put(id: string, bytes: Buffer, kind: string | null): Promise<void>
+  put(id: string, bytes: Buffer, kind: string | null): Promise<string | null | void>
   get(id: string, kind: string | null): Promise<Buffer | null>
   open(id: string, kind: string | null): Promise<OpenedBlob | null>
   delete(id: string): Promise<void>
@@ -15,7 +15,7 @@ export function createBundleStore(archives: BlobStore, sourcemaps: BlobStore): B
   const storage = (kind: string | null) => kind === 'sourcemap' ? sourcemaps : archives
   return {
     async put(id, bytes, kind) {
-      await storage(kind).put(id, kind === 'sourcemap' ? await encodeBrotli(bytes) : bytes)
+      return storage(kind).put(id, kind === 'sourcemap' ? await encodeBrotli(bytes) : bytes)
     },
     get: (id, kind) => storage(kind).get(id),
     open: (id, kind) => storage(kind).open(id),

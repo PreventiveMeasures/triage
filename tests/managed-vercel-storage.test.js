@@ -222,8 +222,9 @@ for (const kind of ['sourcemap', 'stasis']) {
   for (const encrypted of [false, true]) {
   test(`private Blob ${kind} (encrypted=${encrypted}) uploads preserve identity and stream Brotli contents and downloads`, async t => {
     const { sdk, objects } = sdkFixture()
-    const db = openSqliteManagedDb(':memory:')
     const key = parseStorageKey(Buffer.alloc(32, 123).toString('base64'))
+    const db = openSqliteManagedDb(':memory:', { storageEncryptionKey: key })
+    if (encrypted) await db.enableStorageEncryption()
     const storage = encrypted
       ? createManagedStores(await createEncryptedObjectStorage(await openVercelObjectStorage('secret', sdk), db, key), false)
       : await openManagedVercelStorage('secret', sdk)
@@ -263,7 +264,7 @@ for (const kind of ['sourcemap', 'stasis']) {
     assert.equal(integrity, bundleIntegrity(body))
     assert.equal(byteSize, body.length)
     const logical = `bundles/${id}${kind === 'sourcemap' ? '.map.br' : ''}`
-    const path = `.managed/${encrypted ? (await db.getStorageReference(key.id, logical)).objectKey : logical}`
+    const path = `.managed/${logical}`
     assert.deepEqual([...objects.keys()], [path], 'only the stored archive exists before metadata is requested')
     const encoded = await consume(await storage.bundleStore.open(id, kind))
     if (encrypted) assert.notDeepEqual(objects.get(path).bytes, encoded)
@@ -307,7 +308,7 @@ for (const kind of ['sourcemap', 'stasis']) {
     if (encrypted) {
       assert.equal(await storage.bundleStore.open(id, kind), null, 'deletion revokes the reference immediately')
       assert.equal(await storage.cacheStorage.exists(id, 'v2-metadata.json.br'), false)
-      for (const name of objects.keys()) assert.ok(name.startsWith('.managed/encrypted-v1/'))
+      assert.equal(objects.size, 0)
     } else assert.equal(objects.size, 0, 'deletion removes the archive and cached metadata')
   })
   }

@@ -1,8 +1,8 @@
 // Disk byte-store for the managed server's stored blobs (uploaded reports and
 // bundles). Unlike the e2e relay (which only ever holds opaque client-encrypted
-// blobs), a managed server is TRUSTED and stores the bytes in the clear so it
-// can operate on them — the metadata + attribution live in the DB, the bytes
-// live here, keyed by the blob's opaque `id`.
+// blobs), a managed server is TRUSTED and can decrypt/read the contents.
+// Production storage.ts optionally adds per-row envelope encryption. Metadata
+// and attribution live in SQL; bytes are keyed by the upload's opaque `id`.
 //
 // The disk backend uses a dir beside SQLite (data/reports/<uuid> or
 // data/bundles/<uuid>); blob-vercel.ts implements the same interface remotely. Bytes only — the
@@ -19,7 +19,8 @@ export interface OpenedBlob {
 }
 
 export interface BlobStore {
-  put(id: string, bytes: Buffer): Promise<void>
+  // Encrypted upload stores return the wrapped data key for the SQL insert.
+  put(id: string, bytes: Buffer): Promise<string | null | void>
   get(id: string): Promise<Buffer | null>
   open(id: string): Promise<OpenedBlob | null>
   delete(id: string): Promise<void>

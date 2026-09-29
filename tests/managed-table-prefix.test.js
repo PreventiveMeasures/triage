@@ -7,12 +7,13 @@ import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
+import { storageTestKey } from './_managed-storage-db.js'
 
 // Explicit expected names, independent of the migration's rename map.
 const renamed = ['selected_repo', 'team_repo', 'team_user', 'finding_triage',
   'finding_triage_event', 'finding_comment', 'finding_comment_event']
 const tables = ['managed_user', 'managed_session', 'managed_bundle', 'managed_report',
-  'managed_storage_encryption', 'managed_storage_object', 'managed_storage_prefix',
+  'managed_storage_encryption',
   'managed_team', 'managed_activity', 'managed_github_metadata', 'managed_workspace_share', 'managed_finding_issue', ...renamed.map(name => `managed_${name}`)]
 
 // These tests run sequentially; only the engine is shared, never the schema.
@@ -25,7 +26,7 @@ async function database(t, backend) {
     const path = join(dir, 'data.db'), raw = new DatabaseSync(path)
     t.after(async () => { raw.close(); await rm(dir, { recursive: true, force: true }) })
     return {
-      open: () => openSqliteManagedDb(path), exec: sql => raw.exec(sql),
+      open: options => openSqliteManagedDb(path, options), exec: sql => raw.exec(sql),
       query: sql => raw.prepare(sql).all().map(row => ({ ...row })),
       names: () => raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map(row => row.name),
     }
@@ -48,7 +49,7 @@ async function database(t, backend) {
     }
   }
   return {
-    open: () => openPostgresManagedDb(connect), exec: sql => pg.exec(sql),
+    open: options => openPostgresManagedDb(connect, options), exec: sql => pg.exec(sql),
     query: async sql => (await pg.query(sql)).rows,
     names: async () => (await pg.query("SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public'")).rows.map(row => row.name),
   }
@@ -119,6 +120,34 @@ for (const backend of ['sqlite', 'postgres']) {
       assert.ok(await db.getWorkspaceShare('new-link'))
       assert.equal(await db.revokeWorkspaceShares('session', 16, 'team'), true)
       assert.deepEqual(await db.listWorkspaceShares('session', 17, 'team'), [])
+    } finally { await db.close() }
+  })
+
+  test(`${backend}: storage columns upgrade existing plaintext rows and OAuth tokens`, async t => {
+    const fixture = await database(t, backend)
+    let db = await fixture.open()
+    const { bundle, report, user } = await seed(db)
+    const tokens = { accessToken: 'legacy-access', refreshToken: 'legacy-refresh', expiresAt: 2000 }
+    await db.setUserTokens(user, tokens)
+    await db.close()
+    for (const table of ['managed_report', 'managed_bundle']) {
+      await fixture.exec(`ALTER TABLE ${table} DROP COLUMN data_key; ALTER TABLE ${table} DROP COLUMN storage_encrypted`)
+    }
+    await fixture.exec('ALTER TABLE managed_user DROP COLUMN gh_tokens_encrypted; DROP TABLE managed_storage_encryption;')
+    db = await fixture.open({ storageEncryptionKey: storageTestKey })
+    try {
+      assert.equal(await db.getStorageEncryption(), null)
+      for (const [type, id] of [['report', report.id], ['bundle', bundle.id]]) {
+        const row = await db.getStorageRow(type, id)
+        assert.equal(row.encrypted, 0)
+        assert.equal(row.dataKey, null)
+      }
+      await db.enableStorageEncryption()
+      assert.deepEqual(await db.getUserTokens(user), tokens)
+      await db.migrateStorageUserTokens(user)
+      assert.deepEqual(await db.getUserTokens(user), tokens)
+      const row = (await fixture.query('SELECT gh_access_token AS access FROM managed_user'))[0]
+      assert.notEqual(row.access, tokens.accessToken)
     } finally { await db.close() }
   })
 

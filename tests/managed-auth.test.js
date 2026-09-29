@@ -3542,3 +3542,40 @@ test('POST label preflight failures explicitly report no GitHub write and can be
   assert.equal(JSON.parse(retried.body).url, 'https://github.com/o/r/issues/97')
   assert.equal(writes, 1)
 })
+
+test('report upload reconciliation retains a committed file after acknowledgement loss', async t => {
+  const f = await managerContentFixture(t)
+  const before = f.reportStore.map.size
+  const insert = f.db.insertOrReuseReport.bind(f.db)
+  t.mock.method(f.db, 'insertOrReuseReport', async (...args) => { await insert(...args); throw new Error('lost commit acknowledgement') })
+  const response = await f.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, '{"findings":[]}')
+  assert.equal(response.statusCode, 201)
+  const { id } = JSON.parse(response.body)
+  assert.equal((await f.reportStore.get(id)).toString(), '{"findings":[]}')
+  assert.equal(f.reportStore.map.size, before + 1)
+})
+
+test('uncertain report upload retains bytes while database reconciliation is unavailable', async t => {
+  const f = await managerContentFixture(t)
+  const before = f.reportStore.map.size
+  t.mock.method(f.db, 'insertOrReuseReport', () => { throw new Error('connection lost') })
+  t.mock.method(f.db, 'resolveReportUpload', () => { throw new Error('still unavailable') })
+  const response = await f.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, '{"findings":[]}')
+  assert.equal(response.statusCode, 500)
+  assert.equal(f.reportStore.map.size, before + 1)
+})
+
+test('bundle upload reconciliation retains a committed file after acknowledgement loss', async t => {
+  const f = await managerContentFixture(t)
+  const archive = fakeBlobStore(), maps = fakeBlobStore()
+  const harness = bundleHarness(f.db, config, f.reportStore, createBundleStore(archive, maps))
+  const insert = f.db.insertBundle.bind(f.db)
+  t.mock.method(f.db, 'insertBundle', async (...args) => { await insert(...args); throw new Error('lost commit acknowledgement') })
+  const body = Buffer.from('{"version":3,"sources":["a.js"],"sourcesContent":["secret source"],"mappings":""}')
+  const response = await harness.upload('/api/admin/bundles', f.adminCookie, f.adminSess.csrfToken, body,
+    { 'x-repo-id': '7', 'x-bundle-filename': 'source.map' })
+  assert.equal(response.statusCode, 200)
+  const { id } = JSON.parse(response.body)
+  assert.ok(await f.db.getBundle(id))
+  assert.ok(await maps.get(id), 'the committed file must not be deleted as a failed candidate')
+})

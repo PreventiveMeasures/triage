@@ -21,9 +21,14 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
       try { await blobs.head(path(key), { token }); return true }
       catch (err) { if (isNotFound(err, blobs)) return false; throw err }
     },
-    async put(key, bytes, signal) {
-      await blobs.put(path(key), bytes, { token, access: 'private', addRandomSuffix: false, allowOverwrite: true,
-        multipart: true, contentType: 'application/octet-stream', cacheControlMaxAge: 60, ...(signal ? { abortSignal: signal } : {}) })
+    async put(key, bytes, signal, expected) {
+      try { await blobs.put(path(key), bytes, { token, access: 'private', addRandomSuffix: false, allowOverwrite: true,
+        ...(expected ? { ifMatch: expected } : {}), multipart: true, contentType: 'application/octet-stream', cacheControlMaxAge: 60, ...(signal ? { abortSignal: signal } : {}) })
+        return true
+      } catch (err) {
+        if (blobs.BlobPreconditionFailedError && err instanceof blobs.BlobPreconditionFailedError) return false
+        throw err
+      }
     },
     async delete(key, version) {
       try { await blobs.del(path(key), { token, ...(version ? { ifMatch: version } : {}) }); return true }

@@ -27,7 +27,7 @@ function cacheStore(objects: ObjectStorage, name: string): CacheStorage {
   const path = (key: string) => `cache/${name}/${validateCacheKey(key)}`
   return {
     exists: key => objects.exists(path(key)),
-    put: (key, bytes) => objects.put(path(key), bytes),
+    put: async (key, bytes) => { await objects.put(path(key), bytes) },
     async open(key) {
       const value = await objects.open(path(key))
       if (!value) throw new Error('Managed cache unavailable')

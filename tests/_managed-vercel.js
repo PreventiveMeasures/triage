@@ -23,6 +23,7 @@ export function sdkFixture() {
         for await (const part of bytes) parts.push(Buffer.from(part))
         bytes = Buffer.concat(parts)
       }
+      if (options?.ifMatch && (!objects.has(path) || etag(objects.get(path).bytes) !== options.ifMatch)) throw new BlobPreconditionFailedError()
       objects.set(path, { bytes, uploadedAt: new Date() })
       return { pathname: path, url: `https://private.invalid/${path}` }
     },

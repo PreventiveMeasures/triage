@@ -145,6 +145,7 @@
     "server-managed/storage-db.ts",
     "server-managed/storage-encryption.ts",
     "server-managed/storage-maintenance.ts",
+    "server-managed/storage-payload.ts",
     "server-managed/storage-stores.ts",
     "server-managed/team-catalog.ts",
     "server-managed/team-feed.ts",

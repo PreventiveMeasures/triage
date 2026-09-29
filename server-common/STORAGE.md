@@ -76,7 +76,7 @@ SQL schema; neither creates a separate PostgreSQL schema or database role.
 | Managed triage | `managed_finding_triage`, `managed_finding_triage_event` |
 | Managed comments | `managed_finding_comment`, `managed_finding_comment_event` |
 | Managed activity and schema versions | `managed_activity`, `managed_schema_version` |
-| Managed encrypted byte references and migration | `managed_storage_encryption`, `managed_storage_object`, `managed_storage_prefix` |
+| Managed encryption activation and migration | `managed_storage_encryption`; wrapped data keys on the existing bundle/report rows |
 
 Startup renames tables in an existing managed database transactionally while
 retaining rows, foreign keys, and upload triggers. Conflicting source/destination
@@ -100,12 +100,13 @@ compatible with a shared file, but the launcher requires separate files.
 | Bundle metadata cache | `cache/bundles/<uuid>/...` | `.managed/cache/bundles/<uuid>/...` |
 | Report source cache | `cache/report-sources/<bundleUuid>/...` | `.managed/cache/report-sources/<bundleUuid>/...` |
 | Managed upload parts | Not enabled by the disk adapter | `.managed/uploads/<derivedUuid>` |
-| Managed encrypted objects (when enabled) | `encrypted-v1/<uuid>` | `.managed/encrypted-v1/<uuid>` |
+| Managed encrypted caches (when enabled) | `cache-encrypted-v1/` | `.managed/cache-encrypted-v1/` |
 
-With `MANAGED_STORAGE_ENCRYPTION_KEY`, new managed payloads and derived caches
-use the encrypted namespace and a SQL manifest. Existing plaintext in the
-locations above remains readable during automatic, resumable migration. The
-key does not encrypt SQL rows or affect e2e encryption. See
+After explicit activation with `MANAGED_STORAGE_ENCRYPTION_KEY`, reports and
+bundles retain their paths and get random data keys wrapped in their SQL rows.
+Caches rebuild in the encrypted cache namespace using their bundle key. Legacy
+payloads migrate in place through resumable SQL-row batches. GitHub access and
+refresh tokens are encrypted too; other SQL data and e2e encryption are unchanged. See
 [managed storage encryption](../server-managed/STORAGE-ENCRYPTION.md).
 
 Managed filesystem paths are relative to the database's parent, not its
