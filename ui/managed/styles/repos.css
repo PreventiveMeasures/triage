@@ -60,6 +60,13 @@
   gap: .65rem;
   margin: 1.5rem 0 1.65rem;
 }
+.repository-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .65rem;
+  margin-left: auto;
+}
 .breadcrumb {
   flex-wrap: wrap;
 }
