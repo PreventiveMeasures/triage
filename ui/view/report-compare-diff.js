@@ -2,10 +2,17 @@
 // linking, filters or triage can combine them. Finding identity is the id
 // written in the report; missing ids are counted and excluded explicitly.
 import { effectiveSeverity, readReport, reportEntries, revalidateKindOf } from '../../report/index.js'
+import { parseLinkedFindings } from '../../client/linked-findings.js'
 
 export function parseComparisonReport(content) {
-  // Raw arrays are also accepted by diff-reports.js. Wrap them so the
-  // shared reader applies the same severity normalization as stored reports.
+  // A direct file or an uncached saved file can bypass the picker's kind
+  // filter. Preserve the app's links/report distinction before wrapping:
+  // arrays of arrays of { id } are links, even with extra member fields.
+  if (parseLinkedFindings(content)) {
+    throw new Error('This is a links file, not a report. Wrap report rows in a groups or findings object to compare them.')
+  }
+  // Other raw arrays are accepted by the local diff script. Wrap them so
+  // the shared reader applies the same normalization as stored reports.
   let input = content
   try {
     const data = JSON.parse(content)

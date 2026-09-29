@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import { computeReportDiff, parseComparisonReport, reportClusters, reportPairs, reportValues } from '../ui/view/report-compare-diff.js'
 
 const parse = data => parseComparisonReport(JSON.stringify(data))
-const grouped = rows => parse(rows.map(ids => ids.map(id => ({ id }))))
+const grouped = rows => parse({ groups: rows.map(ids => ids.map(id => ({ id }))) })
 const diff = (before, after) => computeReportDiff(grouped(before), grouped(after))
 
 describe('report comparison identity and grouping', () => {
@@ -16,6 +16,23 @@ describe('report comparison identity and grouping', () => {
       assert.equal(report.byId.size, 3)
       assert.equal(report.byId.get('a').length, 2)
       assert.equal(JSON.stringify(data), original)
+    }
+  })
+
+  it('rejects links before raw-array wrapping while preserving explicit report groups', () => {
+    for (const entries of [
+      [[{ id: 'a' }, { id: 'b' }]],
+      [[{ id: 'a', title: 'Link label', report: 'source.json' }, { id: 'b', severity: 'high' }]],
+      [[{ id: 'a', description: 'Finding text', file: 'src/a.js' }]],
+      [[{ id: '42' }], []],
+      [[]],
+    ]) {
+      assert.throws(() => parse(entries), /links file.*groups.*findings/u)
+      // The wrapper disambiguates report rows even when they contain only ids.
+      const asGroups = parse({ groups: entries })
+      const asFindings = parse({ findings: entries })
+      assert.equal(computeReportDiff(asGroups, asFindings).unchanged, true)
+      assert.equal(asGroups.byId.size, new Set(entries.flat().map(finding => finding.id)).size)
     }
   })
 

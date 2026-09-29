@@ -81,6 +81,24 @@ test('read failures clear old results, and reselecting a valid file recovers', a
   assert.equal(view._sides[1].error, '')
 })
 
+test('links from direct files or unclassified saved files clear results and show an error', async () => {
+  const content = JSON.stringify([[{ id: 'a' }, { id: 'b' }]])
+  files.set('unclassified.json', content)
+  for (const directFile of [false, true]) {
+    const view = new Dialog()
+    await view._loadCatalog()
+    assert.ok(view._diff)
+    assert.ok(view._names.includes('unclassified.json'), 'the kind cache has not recognized the links file')
+    await view._select(1, 'unclassified.json', directFile ? { text: () => Promise.resolve(content) } : undefined)
+    assert.equal(view._diff, null)
+    assert.equal(view._sides[1].report, null)
+    assert.match(view._sides[1].error, /links file.*groups.*findings/u)
+    await view._select(1, 'b.json')
+    assert.deepEqual(view._diff.added, ['b'])
+    assert.equal(view._sides[1].error, '')
+  }
+})
+
 test('swap reverses the diff without rereading storage; clearing a side clears results', async () => {
   const view = new Dialog()
   await view._loadCatalog()
