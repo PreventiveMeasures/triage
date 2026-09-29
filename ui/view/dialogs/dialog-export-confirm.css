@@ -76,3 +76,19 @@ dialog { max-width: 515px; width: min(94vw, 515px); }
   color: var(--muted);
 }
 .ecd-filters-label + .ecd-filters { margin-top: .35rem; }
+
+.ecd-samples {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  margin-top: 1rem;
+  font-size: .82rem;
+  color: var(--text);
+}
+.ecd-samples input { margin-top: .15rem; accent-color: var(--accent); }
+.ecd-samples-hint {
+  display: block;
+  margin-top: .2rem;
+  color: var(--muted);
+  font-size: .76rem;
+}

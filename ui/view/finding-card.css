@@ -1398,6 +1398,18 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     border-top: 1px dashed #999;
   }
 
+  /* The export option follows the selected tab, like the on-screen card.
+     Hide the group banner and case numbering when only one sample prints. */
+  :host([print-one-sample]) .tab-body:not(.active),
+  :host([print-one-sample]) .print-case-label,
+  :host([print-one-sample]) .card::before { display: none !important; }
+  :host([print-one-sample]) .tab-body.active {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+    break-inside: var(--finding-print-break, avoid);
+  }
+
   /* Evidence prints LAST, whatever order the report wrote it in. On
      screen it sits where the narrative cites it, folded shut behind
      its summary; paper has no fold (see the `details` rule below), so

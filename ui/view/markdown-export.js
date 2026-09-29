@@ -21,16 +21,17 @@ import { downloadBlob } from './dom.js'
 import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from './export-summary.js'
 import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
-import { findingRepoTarget, isIgnored, sortTabs, triageEntry, underlyingFindingsShown } from './group.js'
+import { activeTabFor, findingRepoTarget, isIgnored, sortTabs, triageEntry, underlyingFindingsShown } from './group.js'
 import { writeMarkdown } from '../../report/index.js'
 
 // The bucket's groups the selection in force lets through, in on-screen
 // order, each group's cases in the order the card's tab strip shows
 // them (the revalidation row first, then the annotated ones, then by
 // severity and confidence — group.js sortTabs), so the document's
-// primary case is the card's.
-function visibleGroups(bucket) {
-  return applySorting(applyFilters(bucket)).map((g) => sortTabs(g))
+// primary case is the card's. Optionally keep only the card's active
+// sample, including its default selection when no tab was picked.
+function visibleGroups(bucket, oneSamplePerGroup) {
+  return applySorting(applyFilters(bucket)).map((g) => oneSamplePerGroup ? [activeTabFor(g)] : sortTabs(g))
 }
 
 // The answers only the viewer has. Links resolve the way the card's
@@ -102,7 +103,7 @@ function documentTitle(reports, workspace) {
   return prefix || `${names.length} reports`
 }
 
-export function reportsToMarkdown() {
+export function reportsToMarkdown({ oneSamplePerGroup = false } = {}) {
   const reports = state.reports
   // The selection in force — the confirm dialog's relaxed copy while an
   // export runs under one, the toolbar's otherwise. The same one the
@@ -111,7 +112,7 @@ export function reportsToMarkdown() {
   // are that pass's.
   const fields = activeFilters()
   const bucket = exportBucketGroups()
-  const groups = visibleGroups(bucket)
+  const groups = visibleGroups(bucket, oneSamplePerGroup)
   const workspace = currentWorkspace()
   // The lens and the layer are named in the header only where they
   // change what the document says: a set with no severity correction
@@ -163,8 +164,8 @@ export function targetFilename() {
   return `${base || 'deepview-report'}.md`
 }
 
-export function downloadReportsAsMarkdown() {
+export function downloadReportsAsMarkdown(options) {
   if (state.reports.length === 0) return
-  const blob = new Blob([reportsToMarkdown()], { type: 'text/markdown;charset=utf-8' })
+  const blob = new Blob([reportsToMarkdown(options)], { type: 'text/markdown;charset=utf-8' })
   downloadBlob(blob, targetFilename())
 }
