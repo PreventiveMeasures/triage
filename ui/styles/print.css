@@ -150,10 +150,10 @@
      body with its own .line-row (re-enabled in finding-card.css's
      print block) — keeping the header's run-meta would pin the active
      tab's metadata to the group banner, not its own body. The
-     `.multi-case` gate leaves single-tab findings unchanged (header
-     shows meta, in-body line-row stays hidden), so meta is neither
-     doubled nor dropped. */
-  .flat-group.multi-case .flat-group-loc .run-meta { display: none; }
+     `.multi-case` gate leaves single-tab findings unchanged. Sampled
+     prints use the same layout (header shows meta, in-body line-row
+     stays hidden), so meta is neither doubled nor dropped. */
+  .flat-group.multi-case:not(:has(> finding-card[print-one-sample])) .flat-group-loc .run-meta { display: none; }
 
   /* Focus view-mode. The right-hand "Up next" queue (prev/next nav +
      the compact card list) is interactive navigation chrome — useless
