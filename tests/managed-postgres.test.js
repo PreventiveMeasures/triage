@@ -6,6 +6,9 @@ import { checkBundleLocations } from './_managed-bundle-location.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
+import { harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
+import { reportReferenceSnapshot } from '../server-managed/management.ts'
+import { hashToken } from '../server-managed/crypto.ts'
 
 // Tests in this file run sequentially. Reuse the expensive WASM engine, but
 // recreate the schema (including functions and triggers) so each test still
@@ -17,6 +20,7 @@ async function database(t) {
   const pg = sharedPg ??= new PGlite()
   await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   const queries = []
+  const faults = {}
   // PGlite has one connection. A lease covers the complete transaction, just
   // like distinct connections do in production; never interleave BEGINs.
   let tail = Promise.resolve()
@@ -25,21 +29,91 @@ async function database(t) {
     let release
     tail = new Promise(resolve => { release = resolve })
     await previous
+    let committed = false, inserted = false
     return {
       async query(sql, params) {
         queries.push(sql)
+        if (faults.deleteBundle && sql.startsWith('DELETE FROM managed_bundle')) {
+          faults.deleteBundle = false
+          throw new Error('injected bundle deletion failure')
+        }
+        if (/INSERT INTO managed_(?:report|bundle) /u.test(sql)) inserted = true
         if (!params && sql.includes(';')) { await pg.exec(sql); return { rows: [] } }
         const result = await pg.query(sql, params)
+        if (sql === 'COMMIT') {
+          committed = true
+          if (inserted && faults.upload === 'commit') {
+            faults.upload = null
+            throw new Error('injected lost COMMIT acknowledgement')
+          }
+        }
         return { ...result, rowCount: result.affectedRows }
       },
-      release: () => { release(); return Promise.resolve() },
+      release() {
+        release()
+        if (inserted && committed && faults.upload === 'release') {
+          faults.upload = null
+          return Promise.reject(new Error('injected connection close failure after COMMIT'))
+        }
+        return Promise.resolve()
+      },
     }
   }
   const db = await openPostgresManagedDb(connect, { triageHistoryLimit: 2 })
   t.after(() => db.close())
-  return { db, connect, queries }
+  return { db, connect, queries, faults }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+for (const failure of ['commit', 'release']) {
+  test(`Postgres upload bytes survive ${failure} errors after commit, including retries`, async t => {
+    const { db, faults } = await database(t)
+    const session = await setup(db)
+    const bundles = memoryStore(), reports = memoryStore(), send = harness(db, reports, bundles)
+    t.mock.method(console, 'warn', () => {})
+    for (const type of ['report', 'bundle']) {
+      const store = type === 'report' ? reports : bundles
+      faults.upload = failure
+      const request = { session, body: Buffer.from(type === 'report' ? '{"findings":[]}' : 'opaque bundle bytes') }
+      const response = await send(`/api/admin/${type}s`, request)
+      assert.equal(response.status, type === 'report' ? 500 : 200)
+      const [record] = type === 'report' ? await db.listReports() : await db.listBundles()
+      assert.deepEqual(await store.get(record.id), request.body, 'committed bytes must not be mistaken for an orphan')
+      const retry = await send(`/api/admin/${type}s`, request)
+      assert.equal(retry.status, 200)
+      assert.equal(JSON.parse(retry.body).deduped, true)
+      assert.equal(JSON.parse(retry.body).id, record.id)
+      assert.deepEqual(await store.get(record.id), request.body)
+      assert.equal(store.blobs.size, 1)
+    }
+  })
+}
+
+test('Postgres repository removal compares report references and rolls back partial deletion', async t => {
+  const { db, faults } = await database(t)
+  const session = await setup(db)
+  const bundles = memoryStore(), reports = memoryStore(), send = harness(db, reports, bundles)
+  const reportId = await seedReport(db, reports, session.userId)
+  const bundleId = await seedBundle(db, bundles, session.userId)
+  await db.setTriage('shared-finding', { fix: 'PR-1' }, session.userId, 'admin', Date.now())
+  const snapshot = reportReferenceSnapshot(await db.listReports())
+  const survivor = await seedReport(db, reports, session.userId, 2)
+  const repo = (await db.listAllRepos()).find(row => row.repoId === 1)
+  const sessionId = hashToken(session.setCookie.split(';')[0].slice('sid='.length))
+  await assert.rejects(db.removeRepository(sessionId, repo, { reports: snapshot, ids: ['shared-finding'] }), { message: 'repository-changed' })
+  faults.deleteBundle = true
+  t.mock.method(console, 'warn', () => {})
+  assert.equal((await send('/api/admin/repositories/remove', { session, body: { ...removal, deleteTriage: true } })).status, 500)
+  assert.ok(await db.getReport(reportId))
+  assert.ok(await db.getBundle(bundleId))
+  assert.equal((await db.listAllRepos()).length, 2)
+  assert.equal((await db.listTriage(['shared-finding'])).length, 1)
+  assert.ok(await reports.get(reportId))
+  assert.ok(await bundles.get(bundleId))
+  assert.equal((await send('/api/admin/repositories/remove', { session, body: { ...removal, deleteTriage: true } })).status, 200)
+  assert.ok(await db.getReport(survivor))
+  assert.equal((await db.listTriage(['shared-finding'])).length, 1)
+})
 
 test('Postgres report uploads reuse content across instances and upgrade without removing legacy copies', async t => {
   const { db, connect } = await database(t)

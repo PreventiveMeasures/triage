@@ -92,6 +92,8 @@ import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
+import { ManagedCommitError } from './sql.ts'
+import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -291,6 +293,7 @@ async function handleUploadPart(req: IncomingMessage, res: ServerResponse, deps:
   try { bytes = await readBodyBytes(req, Math.min(UPLOAD_CHUNK_BYTES, maxBytes)) }
   catch { sendJson(res, 413, { error: 'too-large' }); return }
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
+  if (await manageMutation(req, res, deps, cookie) == null) return
   await putUploadPart(deps.uploadStore, s.session.id, kind, id, index, bytes)
   sendJson(res, 200, { ok: true })
 }
@@ -462,7 +465,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
 // access (never trust a client-supplied id) and capture the server-derived read
 // context (installation id, default branch). A PRIVATE repo with no installation
 // can't be read server-side → 409. Stores via selectRepo (upsert).
-async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repoId: number): Promise<void> {
+async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repoId: number, cookie: string | undefined): Promise<void> {
   if (!canAddRepositories(user)) { sendJson(res, 403, { error: 'forbidden' }); return }
   const userId = user.id
   const token = await ensureUserAccessToken(deps.config, deps.db, userId, Date.now())
@@ -489,6 +492,7 @@ async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user
       sendJson(res, 403, { error: 'forbidden' }); return
     }
   }
+  if (await readAdminSession(res, deps, cookie) == null) return
   await connectRepository(res, deps, user, repo)
 }
 
@@ -580,11 +584,12 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   }
   if (!selected) {
     const repo = (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId)
+    if (await readAdminSession(res, deps, cookie) == null) return
     await deps.db.deactivateRepo(repoId)
     if (repo) await activity(deps, s.user, 'repository', 'deactivated a repository', { repo: repo.fullName })
     sendJson(res, 200, { ok: true, selected: false }); return
   }
-  await selectRepository(res, deps, s.user, repoId)
+  await selectRepository(res, deps, s.user, repoId, cookie)
 }
 
 async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[]): Promise<Set<string>> {
@@ -614,13 +619,15 @@ async function repositoryImpact(deps: ManagedHttpDeps, repoId: number) {
   }
 }
 
-async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[], otherReports: { id: string, filename: string }[]): Promise<string[]> {
+async function repositoryExclusiveTriageIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[], otherReports: { id: string, filename: string }[], annotationsOnly = true): Promise<string[]> {
   const targetIds = await repositoryFindingIds(deps, reports)
-  const triage = await deps.db.listTriage([...targetIds])
-  const commentIds = await deps.db.listCommentedFindingIds([...targetIds])
-  const annotatedIds = new Set([...triage.map(entry => entry.findingId), ...commentIds])
+  const triage = annotationsOnly ? await deps.db.listTriage([...targetIds]) : []
+  const commentIds = annotationsOnly ? await deps.db.listCommentedFindingIds([...targetIds]) : []
+  // Removal includes every exclusive finding, including annotations created
+  // during the blob scan; impact only needs the currently annotated subset.
+  const annotatedIds = annotationsOnly ? new Set([...triage.map(entry => entry.findingId), ...commentIds]) : targetIds
   if (annotatedIds.size === 0) return []
-  // Only annotated findings need an overlap check.
+  // Impact can skip unannotated findings; deletion must also cover new writes.
   // TODO(managed): Persist finding IDs per report at upload time and maintain
   // the index on report deletion. Use it for repository impact and triage
   // cleanup so overlap checks do not fetch and parse every other report blob.
@@ -661,13 +668,12 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
   const repo = (await deps.db.listAllRepos()).find((candidate) => candidate.repoId === repoId)
   if (repo == null) { sendJson(res, 404, { error: 'no-repo' }); return }
   if (repo.fullName !== fullName) { sendJson(res, 400, { error: 'repo-name-mismatch' }); return }
-  const reports = await deps.db.listReportsForRepo(repoId)
-  const bundles = await deps.db.listBundlesForRepo(repoId)
+  const allReports = deleteTriage ? await deps.db.listReports() : []
   const triageIds = deleteTriage
-    ? await repositoryExclusiveTriageIds(deps, reports, (await deps.db.listReports()).filter((report) => report.repoId !== repoId))
+    ? await repositoryExclusiveTriageIds(deps, allReports.filter(report => report.repoId === repoId), allReports.filter(report => report.repoId !== repoId), false)
     : []
-  const deletedReports = await deps.db.deleteReportsForRepo(repoId)
-  const deletedBundles = await deps.db.deleteBundlesForRepo(repoId)
+  const { reports, bundles, deletedReports, deletedBundles, deletedTriage } = await deps.db.removeRepository(s.session.id, repo,
+    deleteTriage ? { reports: reportReferenceSnapshot(allReports), ids: triageIds } : null)
   // Remove metadata first so a blob-store failure leaves an orphaned blob for
   // later cleanup, rather than a live row pointing at missing report data.
   for (const report of reports) {
@@ -675,15 +681,11 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
     await deps.reportStore.delete(report.id).catch(() => {})
   }
   for (const bundle of bundles) {
-    // Cache cleanup must not interrupt triage/repository removal after the
-    // report rows needed to reconstruct exclusive finding IDs are gone.
+    // Best-effort derivative cleanup follows the committed metadata removal.
     await deps.bundleCache?.delete(bundle.id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })
     await deps.reportSourcesCache?.deleteBundle(bundle.id).catch((err) => { console.warn('managed: report sources delete failed:', err) })
     await deps.bundleStore.delete(bundle.id).catch(() => {})
   }
-  const deletedTriage = await deps.db.deleteTriage(triageIds)
-  await deps.db.deleteRepo(repoId)
-  await activity(deps, s.user, 'delete', `removed a repository (${deletedReports} reports, ${deletedBundles} bundles, ${deletedTriage} triage entries)`, { repo: repo.fullName })
   sendJson(res, 200, { ok: true, deletedReports, deletedBundles, deletedTriage })
 }
 
@@ -733,15 +735,6 @@ async function resolveUploadRepoId(req: IncomingMessage, res: ServerResponse, de
   return { ok: true, repoId: n }
 }
 
-// True iff `repoId` may be linked to a report / bundle: null (detach) or a
-// currently-selected repo id (so the FK can't dangle and you can only attach to
-// a managed repo).
-async function repoIdAllowed(deps: ManagedHttpDeps, repoId: unknown): Promise<boolean> {
-  if (repoId == null) return true
-  if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId)) return false
-  return (await deps.db.listSelectedRepos()).some((r) => r.repoId === repoId)
-}
-
 async function canChangeReportRepo(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
   if (!roleAtLeast(user.role, 'manage') || !(await canViewReport(deps, user, reportId))) return false
   const report = await deps.db.getReport(reportId)
@@ -761,18 +754,12 @@ async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, de
   const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
   const directory = (body as { directory?: unknown } | null)?.directory ?? ''
   if (typeof reportId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if (!(await canViewReport(deps, s.user, reportId))) { sendJson(res, 404, { error: 'no-report' }); return }
-  const report = await deps.db.getReport(reportId)
-  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
-  if (!(await canChangeReportRepo(deps, s.user, reportId))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
-  if (report.repoEmbedded) { sendJson(res, 409, { error: 'repo-in-report' }); return }
-  if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  if (repoId !== null && (typeof repoId !== 'number' || !Number.isSafeInteger(repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
   const normalized = normalizeTeamPath(directory)
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
-  if (repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repoId as number, normalized.path ?? ''))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
-  if (!(await deps.db.setReportRepo(reportId, repoId as number | null, normalized.path ?? ''))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const { report, user } = await deps.db.mutateReport(s.session.id, reportId, { type: 'repo', repoId, directory: normalized.path ?? '' })
   if (report.repoId !== repoId || report.repoDirectory !== (repoId == null ? '' : normalized.path ?? '')) {
-    await activity(deps, s.user, 'repository', repoId == null ? 'detached a report from its repository' : `assigned a report to repository path ${normalized.path || '/'}`, { reportId, report: report.filename, repo: await repositoryName(deps, (repoId as number | null) ?? report.repoId) })
+    await activity(deps, user, 'repository', repoId == null ? 'detached a report from its repository' : `assigned a report to repository path ${normalized.path || '/'}`, { reportId, report: report.filename, repo: await repositoryName(deps, repoId ?? report.repoId) })
   }
   sendJson(res, 200, { ok: true, repoId, repoDirectory: normalized.path ?? '' })
 }
@@ -787,12 +774,8 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
   const reportId = (body as { reportId?: unknown } | null)?.reportId
   const visible = (body as { visible?: unknown } | null)?.visible
   if (typeof reportId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if (!(await canViewReport(deps, s.user, reportId))) { sendJson(res, 404, { error: 'no-report' }); return }
-  if (!(await canChangeReportRepo(deps, s.user, reportId))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
-  const report = await deps.db.getReport(reportId)
-  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
-  if (!(await deps.db.setReportVisible(reportId, visible))) { sendJson(res, 404, { error: 'no-report' }); return }
-  if (report.visible !== visible) await activity(deps, s.user, 'visibility', visible ? 'published a report' : 'hid a report', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
+  const { report, user } = await deps.db.mutateReport(s.session.id, reportId, { type: 'visibility', visible })
+  if (report.visible !== visible) await activity(deps, user, 'visibility', visible ? 'published a report' : 'hid a report', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
   sendJson(res, 200, { ok: true, visible })
 }
 
@@ -809,16 +792,9 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
   const directory = repoId == null ? '' : normalized.path ?? ''
   if (typeof bundleId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if (!(await canAccessBundle(deps, s.user, bundleId))) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  const bundle = await deps.db.getBundle(bundleId)
-  if (bundle == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  if (!(await canChangeBundleRepo(deps, s.user, bundle.repoId, bundle.repoDirectory))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
-  if (!(await repoIdAllowed(deps, repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
-  if (repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repoId as number, directory))) {
-    sendJson(res, 403, { error: 'forbidden' }); return
-  }
-  if (!(await deps.db.setBundleRepo(bundleId, repoId as number | null, directory))) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  if (bundle.repoId !== repoId || bundle.repoDirectory !== directory) await activity(deps, s.user, 'repository', repoId == null ? 'detached a bundle from its repository' : `assigned a bundle to repository path ${directory || '/'}`, { bundleId, report: bundle.filename, repo: await repositoryName(deps, (repoId as number | null) ?? bundle.repoId) })
+  if (repoId !== null && (typeof repoId !== 'number' || !Number.isSafeInteger(repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
+  const { bundle, user } = await deps.db.mutateBundle(s.session.id, bundleId, { type: 'repo', repoId, directory })
+  if (bundle.repoId !== repoId || bundle.repoDirectory !== directory) await activity(deps, user, 'repository', repoId == null ? 'detached a bundle from its repository' : `assigned a bundle to repository path ${directory || '/'}`, { bundleId, report: bundle.filename, repo: await repositoryName(deps, repoId ?? bundle.repoId) })
   sendJson(res, 200, { ok: true, repoId, repoDirectory: directory })
 }
 
@@ -873,8 +849,9 @@ async function sendUploadedReport(req: IncomingMessage, res: ServerResponse, dep
 // headers when the report has no repository metadata. The bundle link is
 // auto-resolved from the report's bundleHashes. New reports start hidden until
 // published. Identical content reuses its stored identity and metadata. Bytes
-// are written first (keyed by a fresh uuid) then the metadata row — a failed
-// insert or concurrent duplicate drops the orphan blob. 413 over the cap, 400 on empty.
+// are written first (keyed by a fresh uuid) then the metadata row. A definite
+// insert failure or concurrent duplicate drops the orphan blob; an uncertain
+// commit retains it. 413 over the cap, 400 on empty.
 async function handleUploadReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   let s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
@@ -931,9 +908,10 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
       id, filename, contentType, byteSize: bytes.length, sha256,
       uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: matchedRepo?.repoId ?? null,
       repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity,
-    }, Date.now())
+    }, Date.now(), s.session.id)
   } catch (err) {
-    await deps.reportStore.delete(id).catch(() => {})
+    // Losing the commit acknowledgement cannot turn primary bytes into garbage.
+    if (!(err instanceof ManagedCommitError)) await deps.reportStore.delete(id).catch(() => {})
     throw err
   }
   if (report.id !== id) await deps.reportStore.delete(id).catch(() => {})
@@ -976,15 +954,10 @@ async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
-  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  if (!(await canChangeReportRepo(deps, s.user, id))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
-  const report = await deps.db.getReport(id)
-  if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
-  const existed = await deps.db.deleteReport(id)
+  const { report, user } = await deps.db.mutateReport(s.session.id, id, { type: 'delete' })
   await deps.reportSourcesCache?.deleteReport(report).catch((err) => { console.warn('managed: report sources delete failed:', err) })
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
-  if (!existed) { sendJson(res, 404, { error: 'no-report' }); return }
-  await activity(deps, s.user, 'delete', 'deleted a report', { repoId: report.repoId, repoDirectory: report.repoDirectory, reportId: id, report: report.filename, repo: await repositoryName(deps, report.repoId) })
+  await activity(deps, user, 'delete', 'deleted a report', { repoId: report.repoId, repoDirectory: report.repoDirectory, reportId: id, report: report.filename, repo: await repositoryName(deps, report.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -1206,6 +1179,8 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
   const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing != null) {
+    s = await manageMutation(req, res, deps, cookie)
+    if (!s) return
     if (!(await canAccessBundle(deps, s.user, existing.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
     // Reports uploaded while this bundle was inaccessible retain only its
     // integrity. An authorized re-upload repairs those pending links too.
@@ -1221,14 +1196,18 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     await deps.db.insertBundle({
       id, integrity, filename, kind,
       byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId, repoDirectory: directory,
-    }, Date.now())
+    }, Date.now(), s.session.id)
   } catch (err) {
-    await deps.bundleStore.delete(id).catch(() => {})
+    // A committed row may already point here even though insertion rejected.
+    if (!(err instanceof ManagedCommitError)) await deps.bundleStore.delete(id).catch(() => {})
+    if (err instanceof ManagedMutationError) throw err
     // A concurrent upload of identical bytes can insert this integrity (UNIQUE)
     // between our dedup check and this insert — treat that as a dedup, not a 500.
     // Any other failure rethrows.
     const raced = await deps.db.getBundleByIntegrity(integrity)
     if (raced != null) {
+      s = await manageMutation(req, res, deps, cookie)
+      if (!s) return
       if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
       await deps.db.linkReportsToBundle(integrity, raced.id, s.user.role === 'admin' ? undefined : s.user.id)
       prebuildBundle(deps, raced.id)
@@ -1236,6 +1215,8 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     throw err
   }
   // Auto-link reports that declared this integrity before the bundle existed.
+  s = await manageMutation(req, res, deps, cookie)
+  if (!s) return
   await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
   prebuildBundle(deps, id)
   sendJson(res, 201, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId, repoDirectory: directory })
@@ -1279,16 +1260,11 @@ async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, dep
   const s = await checkMutation(req, res, deps, cookie)
   if (s == null) return
   if (!requireManageRole(res, s.user)) return
-  if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  const bundle = await deps.db.getBundle(id)
-  if (bundle == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  if (!(await canChangeBundleRepo(deps, s.user, bundle.repoId, bundle.repoDirectory))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
-  const existed = await deps.db.deleteBundle(id)
+  const { bundle, user } = await deps.db.mutateBundle(s.session.id, id, { type: 'delete' })
   await deps.bundleCache?.delete(id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })
   await deps.reportSourcesCache?.deleteBundle(id).catch((err) => { console.warn('managed: report sources delete failed:', err) })
   await deps.bundleStore.delete(id).catch((err) => { console.warn('managed: bundle bytes delete failed:', err) })
-  if (!existed) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  await activity(deps, s.user, 'delete', 'deleted a bundle', { repoId: bundle.repoId, repoDirectory: bundle.repoDirectory, bundleId: id, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
+  await activity(deps, user, 'delete', 'deleted a bundle', { repoId: bundle.repoId, repoDirectory: bundle.repoDirectory, bundleId: id, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
   sendJson(res, 200, { ok: true })
 }
 
@@ -2217,7 +2193,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   return (req, res) => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
     const work = route(req, res).catch((err) => {
-      if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
+      if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError || err instanceof ManagedMutationError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)
       if (res.headersSent) { try { res.destroy() } catch {} }
       else sendJson(res, 500, { error: 'internal' })

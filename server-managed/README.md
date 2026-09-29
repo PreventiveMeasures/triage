@@ -429,6 +429,15 @@ IDs or names, and manager uploads only auto-link owned or team-accessible
 reports.
 Repository connections, teams, memberships, and user roles are admin-only.
 
+Report publication, report/bundle reassignment and deletion recheck the session,
+role and current repository grants in the metadata writer transaction. Uploads
+recheck role and destination access after byte storage, before committing metadata.
+Permanent repository removal commits metadata deletion, exclusive annotation
+deletion and its audit record atomically; subsequent blob cleanup uses only the
+rows actually removed.
+If report references change during an annotation-overlap scan, removal returns
+409 `repository-changed` without deleting data. Refresh and retry the removal.
+
 # Repeated imports
 
 Uploading identical report or bundle content reuses its stored ID, even when
@@ -437,6 +446,12 @@ lost response, and concurrent uploads. A reused upload returns HTTP 200 with
 `deduped: true`; new uploads return 201. Reports retain their existing filename,
 repository assignment, publication state, and source-bundle link. CSV parsing
 must also agree, so an earlier unrecognized upload cannot hide a valid CSV report.
+
+If a PostgreSQL commit acknowledgement or connection close fails, uploaded bytes
+are retained because the metadata may already be committed. Retries reuse a
+committed upload with its bytes intact. An uncertain commit that did roll back
+can leave unreferenced bytes for later reconciliation; definite insertion
+failures still clean up their candidate blobs.
 
 Workspace imports grant the new team access through the stored active repository
 and directory, assign unattached content when needed, and publish the reports.

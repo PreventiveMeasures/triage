@@ -6,7 +6,7 @@ import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-met
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA } from './activity.ts'
-import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
+import { ManagedCommitError, type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
@@ -144,16 +144,23 @@ export async function openPostgresManagedDb(connect: PgConnect, options: Managed
     async scope(write, work) {
       if (closed) throw new Error('Managed database is closed')
       const db = await connect()
+      let commitAttempted = false
+      let result
       try {
         await db.query(write ? 'BEGIN' : 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
         if (write) await db.query(LOCK)
-        const result = await context.run(db, work)
+        result = await context.run(db, work)
+        commitAttempted = true
         await db.query('COMMIT')
-        return result
       } catch (err) {
         await db.query('ROLLBACK').catch(() => {})
+        await db.release().catch(() => {})
+        if (write && commitAttempted) throw new ManagedCommitError(err)
         throw err
-      } finally { await db.release() }
+      }
+      try { await db.release() }
+      catch (err) { if (write) throw new ManagedCommitError(err); throw err }
+      return result
     },
     close() { closed = true },
   }
