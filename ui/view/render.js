@@ -47,6 +47,7 @@ import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
 import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
+import { canViewFindingHistory } from './finding-history.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -1098,6 +1099,17 @@ function focusCodeLinesTemplate(code) {
   </div>`
 }
 
+function findingHistoryButton(group) {
+  if (!group || !canViewFindingHistory(activeTabFor(group))) return nothing
+  return html`<button type="button" class="finding-history detail-action" data-finding-history
+    data-gid=${groupKey(group)} aria-label="View issue history" data-tooltip="Issue history">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+      stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M2 5a6.25 6.25 0 1 1-.25 5M1.5 1.5V5H5M8 4.5V8l3 1.5"/>
+    </svg>
+  </button>`
+}
+
 // The focus workbench: a finding-card in one pane and, when the
 // analyzer's bundle carries the file it points at, that source in
 // another, with the draggable divider between them.
@@ -1111,7 +1123,7 @@ function focusCodeLinesTemplate(code) {
 // me", which is why it both drops that shortcut and sends the evidence
 // rows into the panel rather than out to GitHub.
 // `corner` is anything the caller wants floating over the card pane's
-// top-right — the kanban dialog's expand / close pair. It goes in as a
+// top-right — the kanban dialog's history / expand / close controls. It goes in as a
 // grid item of `.focus-main` (findings.css parks it on the card's cell)
 // rather than inside the pane, so it neither scrolls with the card nor
 // needs to know where the divider currently sits.
@@ -1143,6 +1155,7 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
   return html`<div class=${mainClass} style=${splitStyle} data-gid=${groupKey(group)}>
       <div class="focus-pane focus-pane-card">
         <div class="focus-card-wrapper">
+          ${popup ? nothing : findingHistoryButton(group)}
           ${findingCardPlaceholder(group, false, 'focus', false, popup)}
         </div>
       </div>
@@ -1242,7 +1255,7 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
   // animation with it. The modal animates by clip alone (no opacity
   // shift), keeping its background + border at full alpha throughout
   // the morph between the source card and the centered modal box.
-  // Expand + close as one corner cluster, with two homes: the modal's
+  // History, expand and close as one corner cluster, with two homes: the modal's
   // own corner at the readable width, and the card pane's corner in
   // fullscreen — where the modal's corner belongs to the code panel and
   // these buttons belong to the finding beside it. Expand borrows the
@@ -1251,6 +1264,7 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
   // title attribute: the native tooltip is not the one this app uses,
   // and aria-label already names both for the readers that need naming.
   const actions = html`<div class="kanban-detail-actions">
+    ${findingHistoryButton(focusGroup)}
     <button
       type="button"
       class="kanban-detail-expand detail-action"

@@ -1589,25 +1589,29 @@ async function handleGetReportTriage(res: ServerResponse, deps: ManagedHttpDeps,
 }
 
 // GET /api/reports/<id>/triage/history?finding=<fid> — one finding's triage
-// trail (newest first, capped), gated exactly like the entries: the caller
-// may view the report, and the finding is one their visibility permissions
+// trail (newest first, capped). The caller must have at least triage access
+// to the report, and the finding is one their visibility permissions
 // keep in it (a stripped or foreign id 404s without revealing whether it
 // exists). Each event is the entry as written then (null = a clear), who
 // wrote it and when; "what changed" is the diff against the next-older event.
 async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, query: URLSearchParams, teamId: string | null): Promise<void> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await canTriageReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
   const finding = query.get('finding') ?? ''
   if (finding === '' || finding.length > MAX_FINDING_ID) { sendJson(res, 400, { error: 'bad-request' }); return }
   await visibleFindingIds(deps, s.user, id, s.session.id, teamId)
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || !(await canViewReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!current || !(await canTriageReport(deps, current.user, id)) || current.user.role !== s.user.role) { sendJson(res, 404, { error: 'no-report' }); return }
   const visible = await visibleFindingIds(deps, current.user, id, current.session.id, teamId)
   if (!visible.has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
   const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map((row: TriageEventRow) => ({
     seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row, true),
   }))
+  // A database read can outlive a role, membership, or visibility change.
+  const latest = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (!latest || latest.user.role !== current.user.role || !(await canTriageReport(deps, latest.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (!(await visibleFindingIds(deps, latest.user, id, latest.session.id, teamId)).has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
   sendJson(res, 200, { finding, events })
 }
 

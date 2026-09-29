@@ -90,7 +90,7 @@ export class ManagedAppState {
     }
     this.bundleCatalog = bundleCatalog
     for (const key of this.resources.keys()) {
-      if (!key.startsWith('report-sources:')) continue
+      if (!key.startsWith('report-sources:') && !key.startsWith('finding-history:')) continue
       const [, teamId, reportId] = key.split(':')
       // Includes cached 204/404s and errors as well as successful source reads.
       // A privileged preview has no team scope, so any bundle change can

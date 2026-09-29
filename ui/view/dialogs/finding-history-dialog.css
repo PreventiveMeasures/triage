@@ -1,0 +1,15 @@
+dialog { width: min(94vw, 640px); max-width: 640px; max-height: 80dvh; overflow: hidden; }
+dialog[open] { display: flex; flex-direction: column; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+header h3 { margin: 0; }
+.location { margin: .4rem 0 1rem; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
+.history-body { min-height: 0; overflow: auto; overscroll-behavior: contain; font-size: .85rem; line-height: 1.5; }
+.note { color: var(--muted); font-size: .75rem; margin-bottom: .6rem; }
+ol { list-style: none; }
+li { padding: .8rem 0; border-top: 1px solid var(--border); }
+.event-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem 1rem; margin-bottom: .4rem; }
+time, .before { color: var(--muted); }
+time { font-size: .75rem; }
+dl > div { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .5rem; }
+dt { color: var(--muted); }
+dd { white-space: pre-wrap; overflow-wrap: anywhere; }

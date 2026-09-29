@@ -5,6 +5,8 @@ import './managed/pages.js'
 import './managed/links.js'
 import { ManagedPage } from './managed/page.js'
 import { managedFetch } from '../client/managed/request.js'
+import { managedAppState } from './managed/state.js'
+export function clearFindingHistory() { managedAppState.invalidate(['finding-history']) }
 export async function loadWorkspaceImportPage() {
   const path = './client-managed-import.js'
   const mod = await import(path)
@@ -15,6 +17,9 @@ export async function openManagedShareDialog(...args) {
 }
 export async function openManagedIssueDialog(props) {
   return (await import('./view/dialogs/managed-issue-dialog.js')).openManagedIssueDialog(props)
+}
+export async function openFindingHistoryDialog(props) {
+  return (await import('./view/dialogs/finding-history-dialog.js')).openFindingHistoryDialog(props)
 }
 export * from '../client/managed/session.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
