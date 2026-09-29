@@ -9,7 +9,7 @@
 // Sibling of `<delete-report-dialog>` etc.: extends `AppDialog` for
 // the shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
 // Public `openExportConfirmDialog(mode)` snapshots the current
-// selection and resolves with `{ confirmed, view, fields }`; Cancel /
+// selection and resolves with `{ confirmed, view, fields, mode, oneSamplePerGroup }`; Cancel /
 // Esc / native close all resolve to both flags false. Download also
 // offers View, which resolves `{ view: true }` and leaves it to the
 // caller to show the Markdown — this dialog's job is the selection,
@@ -70,6 +70,7 @@ class ExportConfirmDialog extends AppDialog {
     // is asked for once at open time and survives tab flips; the
     // counts themselves are the same for both exports.
     focusedOnly: { type: Boolean },
+    oneSamplePerGroup: { type: Boolean },
   }
 
   constructor() {
@@ -86,6 +87,7 @@ class ExportConfirmDialog extends AppDialog {
     this._relaxed = false
     this.bucketLabel = null
     this.focusedOnly = false
+    this.oneSamplePerGroup = false
   }
 
   // What the open tab makes of the focus flag: the whole-set copy is
@@ -125,6 +127,7 @@ class ExportConfirmDialog extends AppDialog {
       // Which tab it was confirmed under — the caller prints or writes
       // the file on the strength of this, not on what it opened with.
       mode: this.mode,
+      oneSamplePerGroup: this.oneSamplePerGroup,
     })
   }
 
@@ -242,6 +245,11 @@ class ExportConfirmDialog extends AppDialog {
         ? html`<p class="nwd-note">Scoped to the <strong>${this.bucketLabel}</strong> list — live findings are not included.</p>`
         : nothing}
       ${this._filtersSection()}
+      <label class="ecd-samples">
+        <input type="checkbox" .checked=${this.oneSamplePerGroup}
+          @change=${(event) => { this.oneSamplePerGroup = event.target.checked }}>
+        <span>One sample per group<span class="ecd-samples-hint">Include only the currently selected sample from each group.</span></span>
+      </label>
       </div>
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
@@ -261,7 +269,7 @@ customElements.define('export-confirm-dialog', ExportConfirmDialog)
 
 // Public entry point. Snapshots the current export selection (counts +
 // active filters) and opens the dialog on the `mode` tab. Resolves
-// with `{ confirmed, view, fields, mode }` — `mode` being the tab it
+// with `{ confirmed, view, fields, mode, oneSamplePerGroup }` — `mode` being the tab it
 // was confirmed under, which is what decides the export that runs.
 //
 // Custom open helper rather than the shared `openAppDialog`: if
@@ -296,6 +304,7 @@ export function openExportConfirmDialog(mode = 'download') {
       view: Boolean(e.detail?.view),
       fields: e.detail?.fields ?? null,
       mode: e.detail?.mode ?? mode,
+      oneSamplePerGroup: Boolean(e.detail?.oneSamplePerGroup),
     }))
     el.addEventListener('modal-conflict', () => settle({ confirmed: false, view: false, fields: null, mode }))
     document.body.append(el)

@@ -37,6 +37,7 @@ const { state } = await import('../client/state.ts')
 const { createWorkspace } = await import('../client/workspaces.js')
 const { clearFilterOverride, cloneFilterFields, setFilterOverride } = await import('../ui/view/filters.js')
 const { reportsToMarkdown, targetFilename } = await import('../ui/view/markdown-export.js')
+const { getMergedGroups, groupKey, tabKey } = await import('../ui/view/group.js')
 
 const PR = 'https://github.com/owner/repo/pull/42'
 
@@ -57,6 +58,7 @@ const findingHeadings = (md) => [...md.matchAll(/^### (.+)$/gmu)].map((m) => m[1
 
 function reset() {
   state.triage.clear()
+  state.activeTabByGroup.clear()
   state.reports = []
   state.workspaceMerges = []
   state.currentFile = null
@@ -192,6 +194,82 @@ describe('reportsToMarkdown — the selection, as the dialog describes it', () =
     assert.ok(md.includes('2 cases of this finding — reported in `r1.json`, `r2.json`.'), md)
     assert.match(md, /- \*\*Report:\*\* `r1.json`$/mu)
     assert.match(md, /- \*\*Report:\*\* `r2.json`$/mu)
+  })
+})
+
+describe('reportsToMarkdown — one sample per group', () => {
+  beforeEach(reset)
+
+  it('exports the selected sample and its annotations, keeping all samples by default', () => {
+    const a = finding({ id: 'A', description: 'First sample' })
+    const b = finding({ id: 'B', description: 'Selected sample', file: 'src/b.js', severity: 'low' })
+    const single = finding({ id: 'C', description: 'Single sample' })
+    const groups = [[a, b], [single]]
+    state.reports = [{ fileName: 'r.json', groups }]
+    state.activeTabByGroup.set(groupKey(groups[0]), tabKey(b))
+    state.triage.set('B', { comment: 'Selected sample note', fix: PR })
+
+    const all = reportsToMarkdown()
+    assert.ok(all.includes('First sample'))
+    assert.ok(all.includes('Selected sample'))
+    const sampled = reportsToMarkdown({ oneSamplePerGroup: true })
+    assert.ok(!sampled.includes('First sample'))
+    assert.ok(sampled.includes('Selected sample'))
+    assert.ok(sampled.includes('Single sample'))
+    assert.ok(sampled.includes('Selected sample note'))
+    assert.equal(line(sampled, 'Fix'), `<${PR}>`)
+    assert.equal(line(sampled, 'Included'), 'all 2 findings')
+    assert.doesNotMatch(sampled, /2 cases of this finding/u)
+    assert.deepEqual(groups, [[a, b], [single]])
+    assert.equal(state.activeTabByGroup.get(groupKey(groups[0])), tabKey(b))
+    assert.ok(reportsToMarkdown().includes('First sample'), 'sampling does not discard the other cases')
+  })
+
+  it('uses the same annotated default sample as the card when no tab was selected', () => {
+    const a = finding({ id: 'A', description: 'Higher severity sample' })
+    const b = finding({ id: 'B', severity: 'low', description: 'Annotated sample' })
+    state.reports = [{ fileName: 'r.json', groups: [[a, b]] }]
+    state.triage.set('B', { comment: 'Investigate this sample' })
+    const md = reportsToMarkdown({ oneSamplePerGroup: true })
+    assert.deepEqual(findingHeadings(md), ['1. Annotated sample'])
+    assert.ok(!md.includes('Higher severity sample'))
+  })
+
+  it('selects one sample across a workspace merge rather than one per report', () => {
+    const a = finding({ id: 'A', _reportName: 'r1.json', description: 'First report sample' })
+    const b = finding({ id: 'B', _reportName: 'r2.json', description: 'Second report sample' })
+    state.reports = [
+      { fileName: 'r1.json', groups: [[a]] },
+      { fileName: 'r2.json', groups: [[b]] },
+    ]
+    state.workspaceMerges = [new Set(['A', 'B'])]
+    state.activeTabByGroup.set(groupKey(getMergedGroups()[0]), tabKey(b))
+    const md = reportsToMarkdown({ oneSamplePerGroup: true })
+    assert.deepEqual(findingHeadings(md), ['1. Second report sample'])
+    assert.ok(!md.includes('First report sample'))
+    assert.equal(line(md, 'Included'), 'all 1 finding')
+  })
+
+  it('falls back to a visible sample when the App lens folds the selected tab away', () => {
+    const pass = finding({ id: 'P', revalidate: 'revalidation', description: 'App sample' })
+    const own = finding({ id: 'A', revalidate: 'confirmed', description: 'Original sample' })
+    const group = [pass, own]
+    state.reports = [{ fileName: 'r.json', groups: [group] }]
+    state.activeTabByGroup.set(groupKey(group), tabKey(own))
+    assert.deepEqual(findingHeadings(reportsToMarkdown({ oneSamplePerGroup: true })), ['1. App sample'])
+    state.revalidationDetailed = true
+    assert.deepEqual(findingHeadings(reportsToMarkdown({ oneSamplePerGroup: true })), ['1. Original sample'])
+  })
+
+  it('still excludes filtered groups', () => {
+    const a = finding({ id: 'A', description: 'Matching sample' })
+    const b = finding({ id: 'B', description: 'Other sample' })
+    state.reports = [{ fileName: 'r.json', groups: [[a, b], [finding({ id: 'C', severity: 'low', description: 'Excluded group' })]] }]
+    state.filterSeverities = new Set(['high'])
+    const md = reportsToMarkdown({ oneSamplePerGroup: true })
+    assert.deepEqual(findingHeadings(md), ['1. Matching sample'])
+    assert.ok(!md.includes('Excluded group'))
+    assert.equal(line(md, 'Included'), '1 of 2 findings (1 filtered out)')
   })
 })
 

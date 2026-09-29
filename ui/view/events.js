@@ -2301,6 +2301,7 @@ let printSavedTitle = null
 // sees the confirm dialog — that path prints what is on screen, as it
 // always has.
 let printFilterFields = null
+let printOneSamplePerGroup = false
 
 function prepareForPrint() {
   if (printSavedMode !== null) return
@@ -2308,6 +2309,7 @@ function prepareForPrint() {
     // The only way out of this function without a matching restore, so
     // it is also the only place a pending selection could go stale.
     printFilterFields = null
+    printOneSamplePerGroup = false
     return
   }
   printSavedMode = state.viewMode
@@ -2333,7 +2335,10 @@ function prepareForPrint() {
   // just created as well as the ones already on the page. (The button
   // path below awaits the same cards anyway; after this the wait is
   // already over.)
-  for (const card of report.querySelectorAll('finding-card')) card.ensureRendered({ sync: true })
+  for (const card of report.querySelectorAll('finding-card')) {
+    card.toggleAttribute('print-one-sample', printOneSamplePerGroup)
+    card.ensureRendered({ sync: true })
+  }
   const fileNames = state.reports.map((r) => r.fileName)
   let target = ''
   if (fileNames.length === 1) target = fileNames[0]
@@ -2348,6 +2353,8 @@ function prepareForPrint() {
 
 function restoreAfterPrint() {
   if (printSavedMode === null) return
+  for (const card of report.querySelectorAll('finding-card')) card.removeAttribute('print-one-sample')
+  printOneSamplePerGroup = false
   let rerender = false
   if (state.viewMode !== printSavedMode) {
     state.viewMode = printSavedMode
@@ -2372,7 +2379,7 @@ window.addEventListener('afterprint', restoreAfterPrint)
 // two exports part company: the confirm click is still the user
 // gesture that authorises window.print(), it just arrives through the
 // export button rather than a print button of its own.
-async function runPrint(fields) {
+async function runPrint(fields, { oneSamplePerGroup = false } = {}) {
   // Re-check the re-entrancy guard: the caller's check ran before the
   // dialog, and `printSavedMode` isn't set until prepareForPrint below
   // — so a print started during the dialog (a stray beforeprint, or a
@@ -2381,8 +2388,9 @@ async function runPrint(fields) {
   // Set before prepareForPrint, which is what installs it and renders
   // the relaxed set into the DOM print reads.
   printFilterFields = fields
-  prepareForPrint()
+  printOneSamplePerGroup = oneSamplePerGroup
   try {
+    prepareForPrint()
     // `ensureRendered` builds a card's body if the list surfaces
     // hadn't yet (prepareForPrint asked already; this is the wait),
     // and resolves after the element's render() has applied its
@@ -2431,22 +2439,22 @@ function withExportFilters(fields, fn) {
 // `runPrint` above owns that.
 document.addEventListener('download-requested', async () => {
   if (state.reports.length === 0) return
-  const { confirmed, view, fields, mode } = await openExportConfirmDialog('download')
+  const { confirmed, view, fields, mode, oneSamplePerGroup } = await openExportConfirmDialog('download')
   // View replaces the confirmation with the file itself — same
   // selection, serialized the same way the download would, shown
   // read-only. It ends the flow: closing the preview leaves the report
   // unwritten, and the button is one click away for a reader who has
   // seen what they wanted to see.
   if (view) {
-    await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown()))
+    await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown({ oneSamplePerGroup })))
     return
   }
   if (!confirmed) return
   if (mode === 'print') {
-    await runPrint(fields)
+    await runPrint(fields, { oneSamplePerGroup })
     return
   }
-  withExportFilters(fields, () => downloadReportsAsMarkdown())
+  withExportFilters(fields, () => downloadReportsAsMarkdown({ oneSamplePerGroup }))
 })
 
 // `<analyzer-select>` dispatches this when a row in its analyzer /
