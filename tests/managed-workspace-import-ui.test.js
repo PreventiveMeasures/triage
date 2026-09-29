@@ -79,3 +79,86 @@ test('non-admin callers cannot start import actions even after the page code has
   await p._action(() => assert.fail('must not execute'))
   assert.equal(p._busy, false)
 })
+
+function triageDeps(readTriageBlob) {
+  return {
+    isEncryptionEnabled: () => false, isUnlocked: () => true,
+    onVaultStateChange: () => () => {}, readTriageBlob,
+  }
+}
+
+test('Import triage reads only local triage, needs no catalog/workspace, and reports an empty import', async t => {
+  const p = page()
+  p._catalog = null
+  p.localDeps = triageDeps(() => ({ ignored: { ignoredReports: ['report.json'] } }))
+  t.mock.method(globalThis, 'fetch', () => assert.fail('empty import must not contact the server'))
+  await p._importLocalTriage()
+  assert.equal(p._error, '')
+  assert.equal(p._message, 'No local triage to import.')
+})
+
+test('Import triage unlocks local data, imports without reading files, and preserves a pending workspace plan', async t => {
+  const p = page()
+  const plan = p._plan = { name: 'Prepared workspace' }
+  let notifications = 0, unlocked = false, writes = 0
+  p.localDeps = { ...triageDeps(() => ({ f: { flagged: false, comment: 'Local comment' } })),
+    isEncryptionEnabled: () => true, isUnlocked: () => unlocked,
+    unlockEncryption: () => { p._localChanged(); p._blur(); unlocked = true; return true },
+  }
+  p.dispatchEvent = event => { assert.equal(event.type, 'managed-import-complete'); notifications++ }
+  t.mock.method(globalThis, 'fetch', (path, options) => {
+    assert.equal(path, '/api/admin/import-triage')
+    assert.equal(options.headers['x-csrf-token'], 'csrf')
+    const body = JSON.parse(options.body)
+    if (body.findingIds) return Response.json({ snapshots: { f: { entry: null, comments: [], version: '0'.repeat(64) } } })
+    writes++
+    assert.deepEqual(body.entries, { f: { flagged: false, comment: 'Local comment' } })
+    return Response.json({ ok: true })
+  })
+  await p._importLocalTriage()
+  assert.equal(p._error, '')
+  assert.equal(p._message, 'Imported triage for 1 finding.')
+  assert.equal(p._plan, plan)
+  assert.equal(writes, 1)
+  assert.equal(notifications, 1)
+})
+
+test('cancelled unlock and invalid local triage never send imports', async t => {
+  t.mock.method(globalThis, 'fetch', () => assert.fail('must not send'))
+  const p = page()
+  p.localDeps = { ...triageDeps(() => assert.fail('must not read locked data')),
+    isEncryptionEnabled: () => true, isUnlocked: () => false, unlockEncryption: () => false,
+  }
+  await p._importLocalTriage()
+  assert.equal(p._error, '')
+  p.localDeps = triageDeps(() => ({ valid: { color: 'red' }, invalid: { comment: 'x'.repeat(10001) } }))
+  await p._importLocalTriage()
+  assert.match(p._error, /exceeds the managed server limits/u)
+})
+
+test('vault changes during reads and local/session changes during conflicts cancel triage writes', async t => {
+  for (const change of ['read', 'storage', 'session']) {
+    const p = page()
+    let notifyVault
+    p.localDeps = triageDeps(() => {
+      if (change === 'read') notifyVault()
+      return { f: { color: 'red' } }
+    })
+    p.localDeps.onVaultStateChange = callback => { notifyVault = callback; return () => { notifyVault = null } }
+    const fetch = t.mock.method(globalThis, 'fetch', (path, options) => {
+      assert.ok(JSON.parse(options.body).findingIds, 'no write after cancellation')
+      return Response.json({ snapshots: { f: { entry: { color: 'blue' }, comments: [], version: '0'.repeat(64) } } })
+    })
+    p.resolveConflicts = () => {
+      if (change === 'session') p.appState.setSession({ id: 'other-admin', role: 'admin' })
+      else p._localChanged()
+      return { 'f:color': 'imported' }
+    }
+    await p._importLocalTriage()
+    assert.equal(p._message, '')
+    assert.equal(p._busy, false)
+    assert.equal(notifyVault, null, 'vault listener is released after the read')
+    assert.equal(fetch.mock.callCount(), change === 'read' ? 0 : 1)
+    fetch.mock.restore()
+  }
+})

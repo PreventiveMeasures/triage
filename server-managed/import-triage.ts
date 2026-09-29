@@ -11,7 +11,7 @@ export interface ImportTriageSnapshot {
 }
 export interface ImportTriageStore {
   getImportTriage(ids: readonly string[]): Promise<Record<string, ImportTriageSnapshot>>
-  importTriage(entries: [string, TriageEntryPatch | null][], expected: Record<string, string>, actor: { id: string; login: string }, reportId: string, now: number): Promise<boolean>
+  importTriage(entries: [string, TriageEntryPatch | null][], expected: Record<string, string>, actor: { id: string; login: string }, reportId: string | undefined, now: number): Promise<boolean>
 }
 
 // Raw store methods share one transaction for comparison, triage, and comments.
@@ -38,7 +38,7 @@ export function importTriageMethods(store: Pick<ManagedDb, 'listTriage' | 'listC
         changes.push([id, Object.keys(entry).length > 0 ? entry : null])
         if (comment && !current[id]!.comments.some(existing => existing.body === comment)) {
           await store.createComment({ findingId: id, body: comment, authorId: null, authorLogin: null,
-            actor, createdAt: null, updatedAt: null, reportId }, now)
+            actor, createdAt: null, updatedAt: null, reportId: reportId ?? null }, now)
         }
       }
       await store.setTriageEntries(changes, actor.id, actor.login, now, reportId)

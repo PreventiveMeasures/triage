@@ -1,4 +1,26 @@
 // Lazy reader; dependency handles use the main bundle's storage/vault session.
+export function localTriageReader(deps) {
+  const locked = () => deps.isEncryptionEnabled() && !deps.isUnlocked()
+  return {
+    get locked() { return locked() },
+    unlock: options => deps.unlockEncryption(options),
+    async read({ signal } = {}) {
+      let changed = false
+      const off = deps.onVaultStateChange(() => { changed = true })
+      const check = () => {
+        signal?.throwIfAborted()
+        if (locked() || changed) throw new Error('Local data was locked or changed. Unlock it and import triage again.')
+      }
+      try {
+        check()
+        const triage = await deps.readTriageBlob()
+        check()
+        return triage
+      } finally { off() }
+    },
+  }
+}
+
 export function localWorkspaceReader(deps) {
   const locked = () => deps.isEncryptionEnabled() && !deps.isUnlocked()
   async function workspaces() {

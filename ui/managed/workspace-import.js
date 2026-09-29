@@ -3,7 +3,8 @@ import { adminNavigation } from './navigation.js'
 import commonStyles from './styles/common.css'
 import importStyles from './styles/workspace-import.css'
 import { decodeWorkspaceFile, prepareWorkspaceImport, runWorkspaceImport, workspaceImportApi } from '../../client/managed/workspace-import.js'
-import { localWorkspaceReader } from '../../client/managed/workspace-import-local.js'
+import { localTriageReader, localWorkspaceReader } from '../../client/managed/workspace-import-local.js'
+import { runLocalTriageImport } from '../../client/managed/triage-import.js'
 
 // The already-loaded management entry supplies its base class and request
 // transport, preserving its shared caches, session cancellation and preview mode.
@@ -27,7 +28,14 @@ export function registerWorkspaceImport(ManagedPage, request) {
       }
       this._localChanged = () => {
         this._workspaces = []; this._localId = ''
-        if (this._local && !this._unlocking) { this._operation?.abort(); this._plan = null; this._message = ''; this._error = 'Local data changed or was locked. Choose the workspace again.' }
+        if (this._unlocking) return
+        if (this._local) this._plan = null
+        if (this._local || this._importingTriage) {
+          this._operation?.abort(); this._message = ''
+          this._error = this._importingTriage
+            ? 'Local data changed or was locked. Import triage again to continue.'
+            : 'Local data changed or was locked. Choose the workspace again.'
+        }
       }
       this._blur = () => { if (this._readingLocal) this._localChanged() }
     }
@@ -149,6 +157,34 @@ export function registerWorkspaceImport(ManagedPage, request) {
       })
       if (!this._plan && !this._error) await this._nextFile()
     }
+    async _importLocalTriage() {
+      if (!this._csrf) return
+      await this._action(async signal => {
+        this._importingTriage = true; this._message = ''
+        const importedIds = new Set()
+        const families = ['reports', 'history']
+        try {
+          const reader = localTriageReader(this.localDeps)
+          if (!(await this._unlock(reader, signal))) return
+          this._readingLocal = true
+          let triage
+          try { triage = await reader.read({ signal }) }
+          finally { this._readingLocal = false }
+          const count = await runLocalTriageImport(triage, {
+            api: workspaceImportApi(request, this.session, signal), session: this.session,
+            resolveConflicts: this.resolveConflicts, signal, importedIds,
+          })
+          signal.throwIfAborted()
+          this._message = count ? `Imported triage for ${count} finding${count === 1 ? '' : 's'}.` : 'No local triage to import.'
+        } finally {
+          this._importingTriage = false
+          // Earlier batches may have committed even if a later batch failed or
+          // the session was cancelled before its response arrived.
+          this.appState.invalidate(families)
+          if (importedIds.size > 0) this.dispatchEvent(new CustomEvent('managed-import-complete', { bubbles: true, composed: true }))
+        }
+      })
+    }
     render() {
       if (this._role !== 'admin') return nothing
       const plan = this._plan
@@ -157,7 +193,12 @@ export function registerWorkspaceImport(ManagedPage, request) {
       const reusedBundles = (this._catalog?.bundles ?? []).filter(bundle => bundleHashes.has(bundle.integrity))
       const missing = plan?.references.filter(hash => !plan.bundles.some(bundle => bundle.integrity === hash)).length ?? 0
       return html`<div class="wrap" @dragleave=${() => { this._drag = false }}>${adminNavigation('manage-import', this._role, this.allowShare)}
-        <h1>Import workspace</h1><p class="intro">Create a new team from a workspace export or a workspace stored in this browser.</p>
+        <h1>Import</h1>
+        <section class="triage-import" aria-label="Local triage">
+          <button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalTriage()}>Import triage</button>
+          <p>Import saved triage and comments from this browser by finding ID. Conflicting values prompt for resolution. Per-report ignores are skipped.</p>
+        </section>
+        <h2>Import workspace</h2><p class="intro">Create a new team from a workspace export or a workspace stored in this browser.</p>
         <section class=${`workspace-drop ${this._drag ? 'dragging' : ''}`} aria-label="Workspace files">
           <strong>Drop workspace files here</strong><span>Encrypted exports, JSON, or compressed JSON. Encrypted files prompt for a password.</span>
           <div class="actions"><button type="button" class="btn" ?disabled=${this._busy || !this._catalog} @click=${() => this._browse()}>Choose files</button>
