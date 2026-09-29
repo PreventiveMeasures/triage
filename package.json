@@ -154,6 +154,7 @@
     "report/index.js",
     "report/src/finding-id.js",
     "report/src/finding.js",
+    "report/src/severity.js",
     "report/src/security.js",
     "report/src/labels.js",
     "report/src/md-structure.js",

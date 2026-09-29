@@ -30,9 +30,10 @@
 // carry anything mandatory.
 
 import { frozenIdBasis } from './parse-md-id.js'
+import { normalizeFindingSeverity } from './severity.js'
 import { LIST_MARKER_RE, findMdLink, normalizeNewlines, splitHeadingLine, unescapeMd } from './md-structure.js'
 
-const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational'])
+const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'high_bug', 'bug', 'informational', 'informative'])
 
 export function parseMarkdownFindings(content) {
   const text = normalizeNewlines(content).trim()
@@ -115,7 +116,7 @@ function parseBlock(block) {
   const idBasis = frozenIdBasis(block)
   if (idBasis) finding._idBasis = idBasis
 
-  return finding
+  return normalizeFindingSeverity(finding)
 }
 
 // The sections half (before the first `---`) and the metadata half

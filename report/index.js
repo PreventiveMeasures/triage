@@ -82,6 +82,7 @@ import { parseDeepviewMarkdown } from './src/parse-deepview-md.js'
 import { parseMarkdownFindings } from './src/parse-md.js'
 import { parsePioliumFindings } from './src/parse-piolium.js'
 import { deriveFindingId } from './src/finding-id.js'
+import { normalizeFindingSeverity } from './src/severity.js'
 
 // The rest of the surface, so a consumer needs one import: the codex
 // splitter, the id helpers the analyzer shares with the viewer, and the
@@ -193,7 +194,10 @@ export function readReport(content) {
   let jsonError
   try {
     const data = JSON.parse(content)
-    if (reportEntries(data)) return { data, format: 'json', reason: null }
+    if (reportEntries(data)) {
+      for (const finding of flattenFindings(reportEntries(data))) normalizeFindingSeverity(finding)
+      return { data, format: 'json', reason: null }
+    }
     return { data: null, format: null, reason: 'JSON, but not a report: no findings array' }
   } catch (err) {
     jsonError = err
@@ -233,6 +237,8 @@ function flattenFindings(entries) {
 // untouched. Batched via Promise.all — sequential awaits would
 // serialise hundreds of crypto.subtle.digest calls for no reason.
 export async function backfillFindingIds(findings) {
+  // Managed responses may arrive as already-parsed objects.
+  for (const finding of findings) normalizeFindingSeverity(finding)
   const idLess = findings.filter((f) => !f.id)
   if (idLess.length === 0) return
   const derived = await Promise.all(idLess.map(deriveFindingId))

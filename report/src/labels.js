@@ -3,6 +3,8 @@
 // export dialog, the analyzer dropdown, the page header — so a filter
 // the dialog lists and the header line in the file can't disagree.
 
+import { canonicalSeverity } from './severity.js'
+
 export const SEVERITY_LABELS = {
   critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
   high_bug: 'High bug', bug: 'Bug', informational: 'Informational',
@@ -29,5 +31,5 @@ export const SOURCE_LABELS = {
 // invent one, and the reader is better served by the word than by a
 // blank.
 export function severityLabel(severity) {
-  return SEVERITY_LABELS[severity] ?? String(severity ?? '')
+  return SEVERITY_LABELS[canonicalSeverity(severity)] ?? String(severity ?? '')
 }

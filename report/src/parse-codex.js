@@ -14,6 +14,8 @@
 // Only the first path in `relevant_paths` becomes `f.file` (some
 // findings list several, as `path1 | path2 | …`); the rest are dropped.
 
+import { normalizeFindingSeverity } from './severity.js'
+
 const REQUIRED_COLUMNS = [
   'finding_url', 'repository', 'title', 'description', 'severity',
   'configured_scan_id', 'relevant_paths',
@@ -143,5 +145,5 @@ function rowToFinding(r) {
   if (r.commit_hash) finding.commitHash = r.commit_hash
   if (r.detected_at) finding.detectedAt = r.detected_at
   if (r.committed_at) finding.committedAt = r.committed_at
-  return finding
+  return normalizeFindingSeverity(finding)
 }
