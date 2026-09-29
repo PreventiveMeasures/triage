@@ -15,13 +15,11 @@
 // (focus-trap + Esc-to-cancel), with the `.lwd-*` list-dialog layer
 // added on top. Public `openDetachReportDialog({ name, workspaceName })`
 // returns a Promise that resolves to `{ confirmed }`.
-import { html, unsafeCSS } from 'lit'
-import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from './dialog-list.css'
+import { html } from 'lit'
+import { openAppDialog } from './app-dialog.js'
+import { ConfirmationDialog } from './confirmation-dialog.js'
 
-class DetachReportDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
-
+class DetachReportDialog extends ConfirmationDialog {
   static properties = {
     reportName: { type: String },
     workspaceName: { type: String },
@@ -32,21 +30,6 @@ class DetachReportDialog extends AppDialog {
     this.reportName = ''
     this.workspaceName = ''
   }
-
-  // Focus the Cancel button (not the base default's first input) so
-  // an accidental Enter doesn't immediately commit the detach.
-  focusInitial() {
-    this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
-  }
-
-  _finish(confirmed) {
-    if (this._settled) return
-    super._finish({ confirmed: Boolean(confirmed) })
-  }
-
-  _onClose = () => this._finish(false)
-  _onCancel = () => this._finish(false)
-  _onConfirm = () => this._finish(true)
 
   render() {
     return html`<dialog @close=${this._onClose}>

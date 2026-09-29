@@ -288,6 +288,50 @@ test('bundle uploads include the selected repository and encoded directory', asy
   assert.equal(page._error, null)
 })
 
+test('upload batches preserve arrival order, use current metadata, and discard the rest on failure', async t => {
+  for (const kind of ['report', 'bundle']) {
+    const page = createPage(customElements.get(`managed-admin-${kind}s`))
+    page.session = adminSession
+    page._repoId = 7
+    page._repoDirectory = ' first '
+    const first = Promise.withResolvers()
+    const requests = []
+    let refreshes = 0
+    const fetch = t.mock.method(globalThis, 'fetch', (url, options) => {
+      assert.equal(url, `/api/admin/${kind}s`)
+      if (options.method !== 'POST') {
+        refreshes++
+        return Promise.resolve(Response.json({ [`${kind}s`]: [], repos: [] }))
+      }
+      requests.push({ name: options.body.name, headers: options.headers })
+      return requests.length === 1 ? first.promise : Promise.resolve(new Response('', { status: 500 }))
+    })
+    try {
+      await page._upload([])
+      assert.equal(refreshes, 0, 'an empty selection must not reload the page')
+      const pending = page._upload([new File(['{}'], 'first.json'), new File(['{}'], 'second.json')])
+      await page._upload([new File(['{}'], 'dropped.json')])
+      assert.equal(page._busy, true)
+      assert.equal(requests.length, 1, 'only one upload runs at a time')
+      page.session = { ...adminSession, csrfToken: 'rotated' }
+      page._repoId = 8
+      page._repoDirectory = ' next directory '
+      first.resolve(Response.json({ ok: true }))
+      await pending
+      assert.deepEqual(requests.map(request => request.name), ['first.json', 'second.json'])
+      assert.equal(requests[0].headers['x-repo-id'], '7')
+      assert.equal(requests[0].headers['x-repo-directory'], 'first')
+      assert.equal(requests[1].headers['x-repo-id'], '8')
+      assert.equal(requests[1].headers['x-repo-directory'], 'next%20directory')
+      assert.equal(requests[1].headers['x-csrf-token'], 'rotated')
+      assert.deepEqual(page._queue, [])
+      assert.equal(page._busy, false)
+      assert.equal(page._error, 'Upload failed: HTTP 500')
+      assert.equal(refreshes, 1, 'the failed batch still refreshes once')
+    } finally { fetch.mock.restore() }
+  }
+})
+
 test('cached repository details remain visible but cannot authorize removal after a failed refresh', async (t) => {
   const notices = []
   const appState = new ManagedAppState(message => notices.push(message))
