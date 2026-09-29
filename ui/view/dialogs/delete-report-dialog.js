@@ -20,13 +20,11 @@
 // The caller already knows `inRemote` (it passed it in), so it
 // can decide whether to fan out a remote delete without the
 // dialog re-reporting that bit.
-import { html, nothing, unsafeCSS } from 'lit'
-import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from './dialog-list.css'
+import { html, nothing } from 'lit'
+import { openAppDialog } from './app-dialog.js'
+import { ConfirmationDialog } from './confirmation-dialog.js'
 
-class DeleteReportDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
-
+class DeleteReportDialog extends ConfirmationDialog {
   static properties = {
     reportName: { type: String },
     // What the deleted thing IS, in the words the dialog uses for
@@ -57,21 +55,11 @@ class DeleteReportDialog extends AppDialog {
     this._triage = 'keep'
   }
 
-  // Focus the Cancel button (not the base default's first input) so
-  // an accidental Enter doesn't immediately commit the delete.
-  focusInitial() {
-    this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
-  }
-
-  _finish(confirmed) {
-    if (this._settled) return
+  confirmationResult(confirmed) {
     const triage = this.orphanedTriage > 0 ? this._triage : 'keep'
-    super._finish({ confirmed: Boolean(confirmed), triage })
+    return { confirmed, triage }
   }
 
-  _onClose = () => this._finish(false)
-  _onCancel = () => this._finish(false)
-  _onConfirm = () => this._finish(true)
   _onTriageChange = (e) => { this._triage = e.target.value }
 
   _remoteNotice() {

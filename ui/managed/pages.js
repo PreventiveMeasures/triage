@@ -11,6 +11,8 @@ import { REPORT_LOGOS } from '../view/report-logos.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
+import { addPublicRepository, connectRepositoryApp, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import localImportStyles from './styles/local-import.css'
 import commonStyles from './styles/common.css'
 import homeStyles from './styles/home.css'
@@ -100,18 +102,6 @@ class ManagedAdminHome extends ManagedPage {
 
 }
 customElements.define('managed-admin-home', ManagedAdminHome)
-
-async function fetchHistory(signal, page, kind, query, repo, actor) {
-  const params = new URLSearchParams({ page: String(page), limit: '100', kind, q: query.trim() })
-  if (repo) params.set('repo', repo)
-  if (actor) params.set('actor', actor)
-  const res = await managedFetch(`/api/admin/history?${params}`, { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const body = await res.json()
-  if (!Array.isArray(body?.history) || !Number.isSafeInteger(body.total) || body.total < 0
-    || !Number.isSafeInteger(body.page) || body.page < 1) throw new Error('No history returned')
-  return body
-}
 
 class ManagedAdminHistory extends ManagedPage {
   static properties = { _page: { state: true }, _history: { state: true }, _total: { state: true }, _error: { state: true }, _filter: { state: true }, _query: { state: true }, _repo: { state: true }, _actor: { state: true }, _options: { state: true } }
@@ -245,13 +235,6 @@ class ManagedAdminHistory extends ManagedPage {
 }
 customElements.define('managed-admin-history', ManagedAdminHistory)
 
-async function fetchUsers(signal) {
-  const res = await managedFetch('/api/admin/users', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const body = await res.json()
-  return Array.isArray(body?.users) ? body.users : []
-}
-
 function userTime(value) {
   if (value == null || value === '') return html`<span>Unknown</span>`
   const timestamp = typeof value === 'number' ? value : Number(value)
@@ -269,15 +252,6 @@ function userTimeLabel(value) {
 
 function userActivityAt(user) {
   return user?.lastActivityAt ?? user?.lastActivity ?? user?.lastWriteAt ?? user?.lastActiveAt
-}
-
-async function setRole(userId, role, csrfToken) {
-  const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await managedFetch('/api/admin/set-role', {
-    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ userId, role }),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
 class ManagedAdminUsers extends ManagedPage {
@@ -389,89 +363,6 @@ class ManagedAdminUsers extends ManagedPage {
   }
 }
 customElements.define('managed-admin-users', ManagedAdminUsers)
-
-// The connected list is served from stored configuration; discovery runs only
-// for the installed/public pickers. Search and organization filters use the full catalogue.
-async function fetchRepositories(scope, showAll, refresh, signal) {
-  const params = new URLSearchParams({ scope })
-  if (scope === 'installed') params.set('showAll', String(showAll))
-  if (refresh) params.set('refresh', 'true')
-  const res = await managedFetch(`/api/admin/repositories?${params}`, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
-}
-
-// Toggle whether a repo is active (the server verifies access + records the read
-// context when activating, and deactivates without deleting stored data).
-async function selectRepository(repoId, selected, csrfToken) {
-  const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await managedFetch('/api/admin/repositories/select', {
-    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ repoId, selected }),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-}
-
-async function addPublicRepository(repository, csrfToken) {
-  const res = await managedFetch('/api/admin/repositories/add-public', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ repository }),
-  })
-  if (!res.ok) {
-    const messages = {
-      400: 'Enter a repository as owner/repo or a GitHub repository URL.',
-      403: 'You do not have permission to add arbitrary public repositories.',
-      404: 'No public repository was found at that address.',
-      409: 'Choose a public, non-archived repository.',
-    }
-    throw new Error(messages[res.status] ?? `GitHub lookup failed (HTTP ${res.status}). Try again.`)
-  }
-}
-
-async function fetchRepositoryImpact(repoId, signal) {
-  const res = await managedFetch(`/api/admin/repositories/impact?repoId=${encodeURIComponent(repoId)}`, {
-    credentials: 'same-origin', headers: { accept: 'application/json' }, signal,
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const impact = await res.json()
-  if (impact?.repoId !== repoId || !Array.isArray(impact.reports) || !Array.isArray(impact.bundles)
-      || !Number.isSafeInteger(impact.triageCount) || impact.triageCount < 0) throw new Error('Invalid repository data')
-  return impact
-}
-
-async function connectRepositoryApp(repoId, csrfToken) {
-  const res = await managedFetch('/api/admin/repositories/connect-app', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken },
-    body: JSON.stringify({ repoId }),
-  })
-  const data = await res.json()
-  if (!res.ok) {
-    const messages = {
-      'github-app-not-configured': 'The GitHub App is not configured on this server.',
-      'repo-identity-changed': 'The repository has changed on GitHub. Refresh and check its connection.',
-      'repo-connection-changed': 'The connection or your permissions changed. Refresh and try again.',
-      'repo-not-connected': 'This repository is no longer connected.',
-      'forbidden': 'Administrator access is required to connect the GitHub App.',
-    }
-    throw new Error(messages[data.error] ?? `Could not connect the GitHub App (HTTP ${res.status}). Try again.`)
-  }
-  if (data.connected === true) return data
-  if (data.connected !== false || typeof data.installUrl !== 'string' || !/^https:\/\/github\.com\/apps\/[^/?#]+\/installations\/new$/u.test(data.installUrl)) throw new Error('Invalid GitHub installation response.')
-  return data
-}
-
-async function removeRepository(repoId, fullName, deleteTriage, csrfToken) {
-  const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await managedFetch('/api/admin/repositories/remove', {
-    method: 'POST', credentials: 'same-origin', headers,
-    body: JSON.stringify({ repoId, fullName, acknowledge: true, deleteTriage }),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
-}
 
 const REPO_ICON = adminIcon('repo')
 
@@ -866,66 +757,6 @@ class ManagedAdminRepos extends ManagedPage {
 }
 customElements.define('managed-admin-repos', ManagedAdminRepos)
 
-async function fetchReports(signal) {
-  const res = await managedFetch('/api/admin/reports', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
-}
-
-// Upload one report file: the raw bytes as the body and the display name in the
-// X-Report-Filename header. Repository, directory, and analyzer metadata come
-// from the report header; CSRF rides the double-submit token. The server stores
-// the bytes + records the metadata/attribution + auto-links the bundle. Throws
-// with the status word the row surfaces (e.g. 413 → too large).
-async function uploadReport(file, csrfToken, repoId = null, directory = '') {
-  const headers = { 'content-type': file.type || 'application/json', 'x-report-filename': encodeURIComponent(file.name) }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  if (repoId != null) headers['x-repo-id'] = String(repoId)
-  if (directory !== '') headers['x-repo-directory'] = encodeURIComponent(directory)
-  const res = await managedFetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
-  if (!res.ok) {
-    if (res.status === 413) throw new Error('too large')
-    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
-    let detail = ''
-    try {
-      const body = await res.json()
-      if (body?.error === 'repo-not-connected' && typeof body.repo === 'string') detail = `: ${body.repo} is not connected`
-    } catch {}
-    throw new Error(`HTTP ${res.status}${detail}`)
-  }
-  return res.json()
-}
-
-async function setReportVisible(id, visible, csrfToken) {
-  const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await managedFetch('/api/admin/reports/set-visible', {
-    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ reportId: id, visible }),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-}
-
-async function setReportRepo(id, repoId, directory, csrfToken) {
-  const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await managedFetch('/api/admin/reports/set-repo', {
-    method: 'POST', credentials: 'same-origin', headers,
-    body: JSON.stringify({ reportId: id, repoId, directory }),
-  })
-  if (!res.ok) {
-    if (res.status === 409) throw new Error('this report already defines its repository')
-    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
-    throw new Error(res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
-async function deleteReport(id, csrfToken) {
-  const headers = csrfToken ? { 'x-csrf-token': csrfToken } : {}
-  const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-}
-
 // Human byte size (B / KB / MB) for the report / bundle rows.
 function formatBytes(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return ''
@@ -945,62 +776,6 @@ function repoPickerTemplate(repos, selected, onChange, label = 'Repository for n
     <repository-selector class="repo-select" .options=${loading ? [{ value: null, label: 'Loading repositories…' }] : repoOptions(repos, allowUnassigned)} .value=${selected} label=${label} ?disabled=${loading || repos.length === 0}
       @repository-change=${event => onChange(event.detail.value)}></repository-selector>
   </div>`
-}
-
-// Open a file picker (hidden input, created on demand) and hand the chosen files
-// to `onFiles`. `multiple` allows batch uploads.
-function pickFiles(onFiles, multiple = true) {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.multiple = multiple
-  input.addEventListener('change', () => { onFiles([...input.files]) }, { once: true })
-  input.click()
-}
-
-// Wire file drag&drop onto a host element: `onFiles(File[])` fires on drop, and
-// `onState(active)` toggles as a file drag enters / leaves (drives the drop
-// overlay). Enter/leave are tracked with a depth counter so moving over child
-// nodes doesn't flicker the overlay, and only drags that actually carry files
-// are handled (so dragging text / a link is ignored). Returns a teardown.
-function installFileDropZone(host, onFiles, onState) {
-  let depth = 0
-  const hasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
-  const onEnter = (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth += 1; onState(true) }
-  const onOver = (e) => { if (hasFiles(e)) e.preventDefault() } // preventDefault marks us a drop target
-  const onLeave = (e) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (depth === 0) onState(false) }
-  const onDrop = (e) => {
-    if (!hasFiles(e)) return
-    e.preventDefault()
-    e.stopPropagation() // this page owns the drop — don't let the app's global drop handler also see it
-    depth = 0
-    onState(false)
-    onFiles([...e.dataTransfer.files])
-  }
-  host.addEventListener('dragenter', onEnter)
-  host.addEventListener('dragover', onOver)
-  host.addEventListener('dragleave', onLeave)
-  host.addEventListener('drop', onDrop)
-  return () => {
-    host.removeEventListener('dragenter', onEnter)
-    host.removeEventListener('dragover', onOver)
-    host.removeEventListener('dragleave', onLeave)
-    host.removeEventListener('drop', onDrop)
-  }
-}
-
-// A local import owns exactly one upload result. Drops that arrive meanwhile
-// wait in the regular queue, then run separately so their failures cannot turn
-// a successful import into a retry (and duplicate the managed report).
-async function uploadLocalFile(host, file, upload, families) {
-  if (host._busy || !host._csrf) throw new Error('Wait for the current operation to finish, then try again.')
-  host._busy = true
-  try { await host.appState.mutate(() => upload(file), families) }
-  finally {
-    await host._load()
-    host._busy = false
-    const queued = host._queue.splice(0)
-    if (queued.length > 0) void host._upload(queued)
-  }
 }
 
 // Reports are uploaded with their own repository metadata. New reports remain
@@ -1185,15 +960,7 @@ class ManagedAdminReports extends ManagedPage {
   }
 
   async _upload(files) {
-    if (files.length === 0) return
-    this._queue.push(...files)
-    if (this._busy) return
-    this._busy = true
-    this._error = null
-    try {
-      while (this._queue.length > 0) await this.appState.mutate(() => uploadReport(this._queue.shift(), this._csrf, this._repoId, this._repoDirectory.trim()), ['reports', 'repo-impact', 'history', 'scan-sources'])
-    } catch (err) { this._queue = []; this._error = `Upload failed: ${String(err?.message ?? err)}` }
-    finally { this._busy = false; await this._load({ preserveError: true }) }
+    await uploadFiles(this, files, file => uploadReport(file, this._csrf, this._repoId, this._repoDirectory.trim()), ['reports', 'repo-impact', 'history', 'scan-sources'])
   }
 
   async _delete(report) {
@@ -1205,42 +972,6 @@ class ManagedAdminReports extends ManagedPage {
   }
 }
 customElements.define('managed-admin-reports', ManagedAdminReports)
-
-async function fetchBundles(signal) {
-  const res = await managedFetch('/api/admin/bundles', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
-}
-
-// Upload one bundle file: raw bytes as the body, name in X-Bundle-Filename, an
-// optional location in X-Repo-Id / X-Repo-Directory, CSRF token. The server content-addresses it
-// (sha512) — re-uploading identical bytes dedupes — and auto-links any reports
-// that declared its integrity.
-async function uploadBundle(file, csrfToken, repoId, directory = '') {
-  const headers = { 'content-type': 'application/octet-stream', 'x-bundle-filename': encodeURIComponent(file.name) }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  if (repoId != null) headers['x-repo-id'] = String(repoId)
-  if (directory) headers['x-repo-directory'] = encodeURIComponent(directory)
-  const res = await managedFetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
-  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? 'choose a repository and directory within your team access' : `HTTP ${res.status}`)
-  return res.json()
-}
-
-async function deleteBundle(id, csrfToken) {
-  const headers = csrfToken ? { 'x-csrf-token': csrfToken } : {}
-  const res = await managedFetch(`/api/admin/bundles/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-}
-
-// Set a stored bundle's repository and directory, or detach it (null). CSRF token.
-async function setBundleRepo(id, repoId, directory, csrfToken) {
-  const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await managedFetch('/api/admin/bundles/set-repo', {
-    method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ bundleId: id, repoId, directory }),
-  })
-  if (!res.ok) throw new Error(res.status === 403 ? 'choose a repository and directory within your team access' : res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
-}
 
 // Package/box glyph, tinted via currentColor.
 const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -1409,23 +1140,7 @@ class ManagedAdminBundles extends ManagedPage {
   }
 
   async _upload(files) {
-    if (files.length === 0) return
-    this._queue.push(...files) // queue first so a drop mid-upload isn't silently lost
-    if (this._busy) return // the running drain will pick these up
-    this._busy = true
-    this._error = null
-    try {
-      while (this._queue.length > 0) {
-        const file = this._queue.shift()
-        await this.appState.mutate(() => uploadBundle(file, this._csrf, this._repoId, this._repoDirectory.trim()), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
-      }
-    } catch (err) {
-      this._queue = [] // fail-fast: drop the rest of the batch (matches the old behaviour)
-      this._error = `Upload failed: ${String(err?.message ?? err)}`
-    } finally {
-      this._busy = false
-      await this._load({ preserveError: true })
-    }
+    await uploadFiles(this, files, file => uploadBundle(file, this._csrf, this._repoId, this._repoDirectory.trim()), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
   }
 
   async _delete(b) {
@@ -1490,21 +1205,6 @@ class ManagedAdminScans extends ManagedPage {
   }
 }
 customElements.define('managed-admin-scans', ManagedAdminScans)
-
-async function fetchTeams(signal) {
-  const res = await managedFetch('/api/admin/teams', { signal, credentials: 'same-origin', headers: { accept: 'application/json' } })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
-}
-
-// POST a team mutation (create / delete / link / unlink). CSRF via the
-// double-submit token. Surfaces 409 (duplicate name) as a friendly word.
-async function postTeam(path, csrfToken, body) {
-  const headers = { 'content-type': 'application/json' }
-  if (csrfToken) headers['x-csrf-token'] = csrfToken
-  const res = await managedFetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) })
-  if (!res.ok) throw new Error(res.status === 409 ? 'name already taken' : `HTTP ${res.status}`)
-}
 
 // Teams — full-view page for admin/manage. Create teams; per team, link repos
 // (with an optional subpath) and members (with per-member visibility

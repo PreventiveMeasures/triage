@@ -14,13 +14,11 @@
 // that resolves to `{ confirmed }`. The caller already knows
 // `inRemote` (it passed it in), so it can decide whether to fan
 // out a remote delete without the dialog re-reporting that bit.
-import { html, nothing, unsafeCSS } from 'lit'
-import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from './dialog-list.css'
+import { html, nothing } from 'lit'
+import { openAppDialog } from './app-dialog.js'
+import { ConfirmationDialog } from './confirmation-dialog.js'
 
-class DeleteBundleDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
-
+class DeleteBundleDialog extends ConfirmationDialog {
   static properties = {
     bundleName: { type: String },
     // `true` when the bundle exists in at least one owning
@@ -34,21 +32,6 @@ class DeleteBundleDialog extends AppDialog {
     this.bundleName = ''
     this.inRemote = false
   }
-
-  // Focus the Cancel button (not the base default's first input) so
-  // an accidental Enter doesn't immediately commit the delete.
-  focusInitial() {
-    this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
-  }
-
-  _finish(confirmed) {
-    if (this._settled) return
-    super._finish({ confirmed: Boolean(confirmed) })
-  }
-
-  _onClose = () => this._finish(false)
-  _onCancel = () => this._finish(false)
-  _onConfirm = () => this._finish(true)
 
   _remoteNotice() {
     if (!this.inRemote) return nothing
