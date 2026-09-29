@@ -2,7 +2,7 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { managedFetch } from '../../../client/managed/request.js'
 import { managedAppState } from '../../managed/state.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import { findingHistoryChanges } from '../finding-history.js'
+import { findingHistoryChanges } from '../finding-history-changes.js'
 import detailCSS from '../../styles/detail-action.css'
 import styles from './finding-history-dialog.css'
 
