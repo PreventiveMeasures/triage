@@ -654,6 +654,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 }
 
 .kanban-detail-modal {
+  --finding-line-end-inset: 4rem;
   /* Focus uses --surface over the page background. Composite the same
      neutral colors here so the popup stays opaque above the dim layer. */
   --kanban-detail-bg: linear-gradient(var(--surface), var(--surface)), var(--bg);
@@ -686,10 +687,8 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   &.has-conflict { border-color: var(--accent); border-style: dashed; }
 }
 
-/* Expand + close, pinned to the modal's top-right corner as one
-   cluster. They share a shell so the pair reads as a single piece of
-   chrome; the row is what carries the corner position, so adding a
-   third control later needs no offset arithmetic. */
+/* History, expand and close, pinned to the modal's top-right corner as one
+   cluster. The row carries the corner position and spaces the controls. */
 .kanban-detail-actions {
   position: absolute; top: .25rem; right: .25rem; z-index: 1;
   display: flex; align-items: center; gap: .1rem;
@@ -1389,6 +1388,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
    finding-card.css already strips the inner card's bottom border
    so the panel's own border lands cleanly. */
 .focus-card-wrapper {
+  position: relative;
   width: 100%;
   margin-inline: auto;
   background: var(--surface);
@@ -1398,6 +1398,13 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   box-shadow: var(--shadow-glass);
   /* Clip the inner card's content to the wrapper's rounded outline. */
   overflow: hidden;
+}
+.focus-card-wrapper:has(> .finding-history) { --finding-line-end-inset: 1.5rem; }
+.focus-card-wrapper > .finding-history {
+  position: absolute; top: .25rem; right: .25rem; z-index: 1;
+}
+@media print {
+  .finding-history { display: none; }
 }
 /* Cap the wrapper at a comfy reading width ONLY when the Code
    panel is alongside it. Without code, the wrapper fills the

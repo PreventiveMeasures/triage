@@ -95,11 +95,16 @@ clients send the fragment token in `X-Deepview-Share`, with no cookies. A suppli
 token takes precedence over any login cookie and is confined to an explicit
 allowlist: `/api/shares/:linkId/workspace` (only the token's own workspace),
 `/api/teams/:id/{shared,reports,feed}`, visible reports' read-only
-`triage`, `triage/history`, `comments`, and `sources` routes, and authorized
+`triage`, `comments`, and `sources` routes, and authorized
 bundles' `metadata`, `contents`, `download`, and `advisories` routes. Global
 endpoints, mutations, unknown routes, cleanup and sync transports are denied.
 The token stays in the URL fragment across browser navigation, rather than
 being sent in page URLs or stored in local storage.
+
+Finding triage history requires an authenticated `triage`, `manage`, or `admin`
+role and access to the finding within the report. Ordinary triage users must
+supply their team scope; its security and dependency visibility filters apply.
+Public links cannot read triage history, including when a login cookie is present.
 
 ## Page routes
 

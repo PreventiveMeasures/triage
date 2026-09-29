@@ -4,6 +4,7 @@
 // the main view bundle. The browser resolves the path against the page URL.
 import { state } from '#client/index.js'
 import { managedHistory } from './managed-history.js'
+import { canViewFindingHistory } from './finding-history.js'
 
 let loadPromise = null
 let managedModule = null
@@ -15,7 +16,10 @@ export function resetManagedAppState() { managedModule?.resetManagedAppState() }
 export function setManagedAppSession(session) { managedModule?.setManagedAppSession(session) }
 export function setManagedReportCatalog(teams) { return managedModule?.setManagedReportCatalog(teams) ?? new Set() }
 export function readReportSources(id, teamId = state.currentManagedTeam) { return managedModule?.readReportSources(id, teamId) }
-export function clearReportSources() { managedModule?.clearReportSources() }
+export function clearReportSources() {
+  managedModule?.clearReportSources()
+  managedModule?.clearFindingHistory()
+}
 export async function fetchReportSources(id, teamId = state.currentManagedTeam) { return (await loadManagedBundle()).fetchReportSources(id, teamId) }
 
 export function loadManagedBundle() {
@@ -57,6 +61,16 @@ export async function openManagedIssueDialog(props) {
   const managed = await loadManagedBundle()
   if (!isCurrent()) return null
   return managed.openManagedIssueDialog({ ...props, isCurrent })
+}
+
+export async function openFindingHistoryDialog(finding) {
+  if (!canViewFindingHistory(finding)) return null
+  const reports = state.reports, session = state.managedSession, teamId = state.currentManagedTeam
+  const isCurrent = () => canViewFindingHistory(finding) && state.managedSession === session
+    && state.currentManagedTeam === teamId && state.reports === reports
+  const managed = await loadManagedBundle()
+  if (!isCurrent()) return null
+  return managed.openFindingHistoryDialog({ finding, teamId, isCurrent })
 }
 
 export async function fetchReport(id) {

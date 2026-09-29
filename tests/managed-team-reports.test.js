@@ -58,6 +58,57 @@ async function fixture(t) {
   }
   return { db, store, seed, sessions, reads, request }
 }
+
+test('finding history requires triage or higher and uses the selected team visibility', async t => {
+  const h = await fixture(t)
+  await h.seed('matrix', { findings: [
+    { id: 'plain', file: 'src/plain.js' }, { id: 'security', file: 'src/security.js', security: true },
+    { id: 'dependency', file: 'node_modules/third/dep.js' },
+    { id: 'both', file: 'node_modules/third/security.js', security: true },
+  ] })
+  for (const id of ['plain', 'security', 'dependency', 'both']) await h.db.setTriage(id, { fix: `private ${id}` }, h.sessions.admin.userId, 'admin', Date.now())
+  const path = (team, id = 'plain') => `/api/reports/matrix/triage/history?team=${team}&finding=${id}`
+  for (const role of ['none', 'view']) assert.notEqual((await h.request(path('broad'), role)).status, 200, role)
+  for (const role of ['triage', 'manage', 'admin']) assert.equal((await h.request(path('broad'), role)).status, 200, role)
+  for (const [team, allowed] of [
+    ['restricted', ['plain']], ['no-deps', ['plain', 'security']],
+    ['no-security', ['plain', 'dependency']], ['broad', ['plain', 'security', 'dependency', 'both']],
+  ]) {
+    for (const id of ['plain', 'security', 'dependency', 'both', 'missing']) {
+      const result = await h.request(path(team, id))
+      assert.equal(result.status, allowed.includes(id) ? 200 : 404, `${team}: ${id}`)
+      if (!allowed.includes(id)) assert.equal(JSON.stringify(result.body).includes('private'), false)
+    }
+  }
+  assert.equal((await h.request('/api/reports/matrix/triage/history?finding=plain')).status, 404, 'triage cannot omit team scope')
+  assert.equal((await h.request(path('foreign'))).status, 404)
+  // Links propagate security restrictions across reports, including transitively.
+  for (const id of ['linked', 'transitive', 'row', 'sibling']) {
+    assert.equal((await h.request(`/api/reports/a/triage/history?team=restricted&finding=${id}`)).status, 404, id)
+  }
+})
+
+for (const change of ['security', 'dependencies', 'role', 'membership', 'links']) {
+  test(`finding history discards an in-flight read after ${change} revocation`, async t => {
+    const h = await fixture(t)
+    const id = change === 'security' ? 'secret' : change === 'dependencies' ? 'dependent' : 'own'
+    const report = change === 'security' ? 'b' : 'a'
+    const team = change === 'links' ? 'restricted' : 'broad'
+    await h.db.setTriage(id, { fix: 'must not leak' }, h.sessions.admin.userId, 'admin', Date.now())
+    const read = h.db.listTriageHistory.bind(h.db)
+    t.mock.method(h.db, 'listTriageHistory', async (...args) => {
+      const events = await read(...args)
+      if (change === 'role') await h.db.setUserRole(h.sessions.triage.userId, 'view')
+      else if (change === 'membership') await h.db.removeTeamMember(team, h.sessions.triage.userId)
+      else if (change === 'links') await h.seed('revoked-links', [[{ id: 'own' }, { id: 'secret' }]])
+      else await h.db.setTeamMember(team, h.sessions.triage.userId, { security: true, dependencies: true, [change]: false })
+      return events
+    })
+    const result = await h.request(`/api/reports/${report}/triage/history?team=${team}&finding=${id}`)
+    assert.equal(result.status, 404)
+    assert.equal(JSON.stringify(result.body).includes('must not leak'), false)
+  })
+}
 const ids = report => (report.data.findings ?? report.data.groups).flat().map(f => f.id).toSorted()
 const workspace = (h, team, role) => h.request(`/api/teams/${team}/reports`, role)
 

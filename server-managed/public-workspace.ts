@@ -8,7 +8,6 @@ import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
 import { sendJson } from './http-response.ts'
 import { hashToken } from './crypto.ts'
 import { TeamReportsError, loadTeamReports, teamReportVisibility } from './team-reports.ts'
-import { MAX_FINDING_ID, MAX_TRIAGE_HISTORY } from '../common/managed/triage.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
@@ -30,7 +29,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   if (method !== 'GET' && method !== 'HEAD') { json(res, 403, { error: 'share-read-only' }); return }
   const shareRoute = /^\/api\/shares\/([A-Za-z0-9_-]+)\/workspace$/u.exec(url.pathname)
   const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports|feed)$/u.exec(url.pathname)
-  const reportRoute = /^\/api\/reports\/([^/]+)\/(triage|triage\/history|comments|sources)$/u.exec(url.pathname)
+  const reportRoute = /^\/api\/reports\/([^/]+)\/(triage|comments|sources)$/u.exec(url.pathname)
   const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories)$/u.exec(url.pathname)
   if (!shareRoute && !teamRoute && !reportRoute && !bundleRoute) { json(res, 403, { error: 'share-scope-required' }); return }
   const tokenHash = hashToken(token)
@@ -85,15 +84,6 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     await recheck()
     if (part === 'sources') { await sources(res, deps, snapshot, id, visible.sourcePaths, recheck, stream); return }
     if (part === 'comments') { await send({ comments: await deps.db.listComments([...visible.ids]) }); return }
-    if (part === 'triage/history') {
-      const finding = url.searchParams.get('finding') ?? ''
-      if (!finding || finding.length > MAX_FINDING_ID) { json(res, 400, { error: 'bad-request' }); return }
-      if (!visible.ids.has(finding)) { json(res, 404, { error: 'no-finding' }); return }
-      const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map(row => ({
-        seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row, true),
-      }))
-      await send({ finding, events }); return
-    }
     const entries = Object.fromEntries((await deps.db.listTriage([...visible.ids])).map(row => [row.findingId, triageWireEntry(row)]))
     await send({ entries }); return
   }

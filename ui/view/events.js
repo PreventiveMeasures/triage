@@ -1,7 +1,8 @@
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { managedBundleRoute } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
-import { openManagedIssueDialog } from './client-managed.js'
+import { openFindingHistoryDialog, openManagedIssueDialog } from './client-managed.js'
+import { canViewFindingHistory } from './finding-history.js'
 import { renderHighlighted } from './render-finding.js'
 import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
@@ -371,6 +372,12 @@ function findingHandoffText(e) {
 // selectors come first so they short-circuit before a generic match
 // (e.g. tree-graph buttons before generic tab clicks).
 report.addEventListener('click', (e) => {
+  if (pathClosest(e, '[data-finding-history]')) {
+    const group = focusedGroupOf(e)
+    const finding = group && activeTabFor(group)
+    if (canViewFindingHistory(finding)) void openFindingHistoryDialog(finding)
+    return
+  }
   // An evidence reference in the focus view — loads that file into the
   // code panel beside the card (render-finding.js evidencePanelRef).
   // In `<finding-card>`'s shadow root, hence composedPath.

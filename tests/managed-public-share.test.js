@@ -180,8 +180,13 @@ test('an anonymous token sees one published workspace, its annotations and no gl
   await h.db.setTriage('visible-finding', { color: 'red' }, null, 'manager', Date.now())
   await h.db.setTriage('foreign-finding', { color: 'blue' }, null, 'manager', Date.now())
   assert.deepEqual((await h.request('/api/reports/visible/triage', { token })).body.entries, { 'visible-finding': { color: 'red' } })
-  assert.equal((await h.request('/api/reports/visible/triage/history?finding=foreign-finding', { token })).status, 404)
-  assert.equal((await h.request('/api/reports/visible/triage/history?finding=visible-finding', { token })).status, 200)
+  for (const finding of ['foreign-finding', 'visible-finding']) {
+    for (const role of [undefined, 'triage', 'admin']) {
+      for (const method of ['GET', 'HEAD']) {
+        assert.equal((await h.request(`/api/reports/visible/triage/history?finding=${finding}`, { token, role, method })).status, 403)
+      }
+    }
+  }
   await h.db.createComment({ findingId: 'visible-finding', body: 'Shared comment', authorId: h.sessions.manage.userId, authorLogin: 'manage', reportId: 'visible' }, Date.now())
   assert.equal((await h.request('/api/reports/visible/comments', { token })).body.comments[0].body, 'Shared comment')
   h.reads.length = 0
@@ -274,7 +279,7 @@ test('link permissions are independent opt-ins and edits filter cached findings,
     assert.deepEqual(reports.body.reports.find(report => report.id === 'mixed').data.findings.map(finding => finding.id), expected)
     assert.deepEqual(Object.keys((await h.request('/api/reports/mixed/triage', { token })).body.entries).toSorted(), [...expected].toSorted())
     assert.deepEqual((await h.request('/api/reports/mixed/comments', { token })).body.comments.map(comment => comment.body).toSorted(), [...expected].toSorted())
-    assert.equal((await h.request('/api/reports/mixed/triage/history?finding=secure-dep', { token })).status, security && dependencies ? 200 : 404)
+    assert.equal((await h.request('/api/reports/mixed/triage/history?finding=secure-dep', { token })).status, 403)
     h.deps.reportSourcesCache = { open(_report, _bundle, permissions, paths) {
       assert.deepEqual(permissions, { security, dependencies })
       assert.deepEqual([...paths].toSorted(), findings.filter(finding => expected.includes(finding.id)).map(finding => finding.file).toSorted())
