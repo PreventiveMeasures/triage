@@ -3,6 +3,7 @@ import { triageSync } from './client-sync.js'
 import { render } from './render.js'
 import { forceManagedMode } from './sidebar.js'
 import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
+import { openReportCompareDialog } from './dialogs/report-compare-dialog.js'
 import { getMergedGroups } from './group.js'
 import { getTheme, setTheme } from './theme.js'
 
@@ -174,4 +175,7 @@ window.DeepView = {
   // Returns a Promise resolving on dialog close — caller usually
   // doesn't await it (console command), but doing so is harmless.
   export() { return openTriageExportDialog() },
+
+  // Hidden comparison tool for two local/E2E reports. Resolves on close.
+  compareReports() { return openReportCompareDialog() },
 }
