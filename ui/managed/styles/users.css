@@ -155,7 +155,6 @@
 .users li {
   padding-top: .6rem;
   padding-bottom: .6rem;
-  min-height: 3.5rem;
 }
 .person {
   display: flex;
