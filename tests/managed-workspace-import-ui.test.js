@@ -94,7 +94,7 @@ test('Import triage reads only local triage, needs no catalog/workspace, and rep
   t.mock.method(globalThis, 'fetch', () => assert.fail('empty import must not contact the server'))
   await p._importLocalTriage()
   assert.equal(p._error, '')
-  assert.equal(p._message, 'No local triage to import.')
+  assert.equal(p._message, 'No local triage matches findings in managed reports.')
 })
 
 test('Import triage unlocks local data, imports without reading files, and preserves a pending workspace plan', async t => {
@@ -107,7 +107,11 @@ test('Import triage unlocks local data, imports without reading files, and prese
   }
   p.dispatchEvent = event => { assert.equal(event.type, 'managed-import-complete'); notifications++ }
   t.mock.method(globalThis, 'fetch', (path, options) => {
-    assert.equal(path, '/api/admin/import-triage')
+    if (path === '/api/admin/reports/finding-ids') {
+      assert.equal(options.body, undefined)
+      return Response.json({ reports: [{ id: 'report', findingIds: ['f'] }] })
+    }
+    assert.equal(path, '/api/admin/reports/report/import-triage')
     assert.equal(options.headers['x-csrf-token'], 'csrf')
     const body = JSON.parse(options.body)
     if (body.findingIds) return Response.json({ snapshots: { f: { entry: null, comments: [], version: '0'.repeat(64) } } })
@@ -123,17 +127,25 @@ test('Import triage unlocks local data, imports without reading files, and prese
   assert.equal(notifications, 1)
 })
 
-test('cancelled unlock and invalid local triage never send imports', async t => {
-  t.mock.method(globalThis, 'fetch', () => assert.fail('must not send'))
+test('cancelled unlock and invalid matching local triage never send imports', async t => {
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', (path, options) => {
+    assert.equal(path, '/api/admin/reports/finding-ids')
+    assert.equal(options.body, undefined)
+    reads++
+    return Response.json({ reports: [{ id: 'report', findingIds: ['valid', 'invalid'] }] })
+  })
   const p = page()
   p.localDeps = { ...triageDeps(() => assert.fail('must not read locked data')),
     isEncryptionEnabled: () => true, isUnlocked: () => false, unlockEncryption: () => false,
   }
   await p._importLocalTriage()
   assert.equal(p._error, '')
+  assert.equal(reads, 0)
   p.localDeps = triageDeps(() => ({ valid: { color: 'red' }, invalid: { comment: 'x'.repeat(10001) } }))
   await p._importLocalTriage()
   assert.match(p._error, /exceeds the managed server limits/u)
+  assert.equal(reads, 1)
 })
 
 test('vault changes during reads and local/session changes during conflicts cancel triage writes', async t => {
@@ -146,6 +158,7 @@ test('vault changes during reads and local/session changes during conflicts canc
     })
     p.localDeps.onVaultStateChange = callback => { notifyVault = callback; return () => { notifyVault = null } }
     const fetch = t.mock.method(globalThis, 'fetch', (path, options) => {
+      if (path === '/api/admin/reports/finding-ids') return Response.json({ reports: [{ id: 'report', findingIds: ['f'] }] })
       assert.ok(JSON.parse(options.body).findingIds, 'no write after cancellation')
       return Response.json({ snapshots: { f: { entry: { color: 'blue' }, comments: [], version: '0'.repeat(64) } } })
     })
@@ -158,7 +171,7 @@ test('vault changes during reads and local/session changes during conflicts canc
     assert.equal(p._message, '')
     assert.equal(p._busy, false)
     assert.equal(notifyVault, null, 'vault listener is released after the read')
-    assert.equal(fetch.mock.callCount(), change === 'read' ? 0 : 1)
+    assert.equal(fetch.mock.callCount(), change === 'read' ? 0 : 2)
     fetch.mock.restore()
   }
 })

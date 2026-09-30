@@ -1632,9 +1632,27 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   sendJson(res, 200, { ok: true })
 }
 
+// GET only: clients match local annotations against these IDs without sending
+// their local finding IDs or annotation bodies to discover which reports exist.
+async function handleImportFindingIds(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await readAdminSession(res, deps, cookie)
+  if (!s) return
+  const stored = await deps.db.listReports()
+  if (stored.length > MAX_REPORT_QUERY_COUNT || stored.reduce((total, report) => total + report.byteSize, 0) > MAX_REPORT_QUERY_BYTES) {
+    sendJson(res, 413, { error: 'batch-too-large' }); return
+  }
+  const reports = []
+  for (const report of stored) {
+    const findingIds = [...await visibleFindingIds(deps, s.user, report.id, s.session.id, null)]
+    if (findingIds.length > 0) reports.push({ id: report.id, findingIds })
+  }
+  if (await readAdminSession(res, deps, cookie) == null) return
+  sendJson(res, 200, { reports })
+}
+
 // Admin imports compare the exact snapshot shown by the conflict dialog before
 // writing. The store commits shared finding triage and imported comments together.
-async function handleImportTriage(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id?: string): Promise<void> {
+async function handleImportTriage(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie)
   if (!s) return
   let body: { findingIds?: unknown; entries?: unknown; expected?: unknown }
@@ -1658,15 +1676,10 @@ async function handleImportTriage(req: IncomingMessage, res: ServerResponse, dep
       parsed.push([findingId, patch])
     }
   }
-  // Workspace imports remain report-scoped. Standalone local triage can be
-  // imported before its reports; only administrators have this global access.
-  let visible: Set<string> | undefined
-  if (id !== undefined) {
-    if (!(await deps.db.getReport(id))) { sendJson(res, 404, { error: 'no-report' }); return }
-    visible = await visibleFindingIds(deps, s.user, id, s.session.id, null)
-  }
+  if (!(await deps.db.getReport(id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const visible = await visibleFindingIds(deps, s.user, id, s.session.id, null)
   if (await readAdminSession(res, deps, cookie) == null) return
-  if (visible && ids.some(findingId => !visible.has(findingId))) { sendJson(res, 404, { error: 'no-finding' }); return }
+  if (ids.some(findingId => !visible.has(findingId))) { sendJson(res, 404, { error: 'no-finding' }); return }
   if (reading) { sendJson(res, 200, { snapshots: await deps.db.getImportTriage(ids) }); return }
   const applied = await deps.db.importTriage(parsed, expected!, { id: s.user.id, login: s.user.login }, id, Date.now())
   sendJson(res, applied ? 200 : 409, { ok: applied })
@@ -2064,9 +2077,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetReportVisible(req, res, deps, cookie); return
     }
-    if (path === '/api/admin/import-triage') {
-      if (method !== 'POST') { send405(res, 'POST'); return }
-      await handleImportTriage(req, res, deps, cookie); return
+    if (path === '/api/admin/reports/finding-ids') {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleImportFindingIds(res, deps, cookie); return
     }
     const importTriage = /^\/api\/admin\/reports\/([a-f\d-]{36})\/import-triage$/iu.exec(path)
     if (importTriage) {

@@ -1307,6 +1307,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const comments = commentMethods(db)
   const activity = activityMethods(db)
   const stmts = prepareStatements(db)
+  const reports = reportMethods(stmts)
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0)
   const {
     upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
@@ -1371,9 +1372,9 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...activity,
     ...comments,
     ...workspaceShareMethods(db),
-    ...reportMethods(stmts),
+    ...reports,
     ...triage,
-    ...importTriageMethods({ ...triage, ...comments }),
+    ...importTriageMethods({ getReport: reports.getReport, ...triage, ...comments }),
     ...bundleMethods(stmts),
     ...teamMethods(stmts),
     async close() {

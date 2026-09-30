@@ -529,11 +529,12 @@ test('Postgres workspace triage imports compare and write atomically with other 
   const { db, queries } = await database(t)
   const id = await db.upsertUser(identity(1), 1)
   const actor = { id, login: 'user1' }
+  const reportId = await seedReport(db, memoryStore(), id, null)
   const initial = await db.getImportTriage(['f'])
   const expected = { f: initial.f.version }
   const results = await Promise.all([
-    db.importTriage([['f', { color: 'red', comment: 'Imported' }]], expected, actor, null, 2),
-    db.importTriage([['f', { color: 'blue', comment: 'Other import' }]], expected, actor, null, 3),
+    db.importTriage([['f', { color: 'red', comment: 'Imported' }]], expected, actor, reportId, 2),
+    db.importTriage([['f', { color: 'blue', comment: 'Other import' }]], expected, actor, reportId, 3),
   ])
   assert.deepEqual(results, [true, false])
   assert.equal((await db.listTriage(['f']))[0].color, 'red')
@@ -542,8 +543,13 @@ test('Postgres workspace triage imports compare and write atomically with other 
   assert.ok(queries.some(query => query.includes('pg_advisory_xact_lock')))
   const snapshot = await db.getImportTriage(['f'])
   await db.setTriage('f', { color: 'green' }, id, 'user1', 4)
-  assert.equal(await db.importTriage([['f', { color: 'blue' }]], { f: snapshot.f.version }, actor, null, 5), false)
+  assert.equal(await db.importTriage([['f', { color: 'blue' }]], { f: snapshot.f.version }, actor, reportId, 5), false)
   assert.equal((await db.listTriage(['f']))[0].color, 'green')
+  await db.deleteReport(reportId)
+  const missing = await db.getImportTriage(['new-finding'])
+  assert.equal(await db.importTriage([['new-finding', { comment: 'No orphan comment' }]], { 'new-finding': missing['new-finding'].version }, actor, reportId, 6), false)
+  assert.equal((await db.listComments(['new-finding'])).length, 0)
+  assert.equal((await db.listTriage(['new-finding'])).length, 0)
 })
 
 test('Postgres feed snapshots scope catalogs to the session and release read-only transactions', async t => {
