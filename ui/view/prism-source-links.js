@@ -28,5 +28,5 @@ export function stringifySourceLinks(tokens, language, resolveString) {
   const content = stringifySourceLinks(tokens.content, language, target ? null : resolveString)
   const markup = Prism.Token.stringify({ ...tokens, content }, language)
   if (!target) return markup
-  return `<button type="button" class="bundle-source-link" data-bundle-source-link="${attribute(target)}" title="Open ${attribute(target)}">${markup}</button>`
+  return `<button type="button" class="bundle-source-link" data-bundle-source-link="${attribute(target)}">${markup}</button>`
 }
