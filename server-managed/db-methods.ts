@@ -204,7 +204,9 @@ export interface TriageEventRow {
   comment: string | null
   fix: string | null
   flagged: boolean | null
+  actorId: string | null
   actorLogin: string | null
+  actorName: string | null
   at: number
 }
 
@@ -646,7 +648,7 @@ function prepareStatements(db: ManagedSql) {
     selectTriageHistoryStmt: db.prepare(
       `SELECT e.seq AS seq, e.finding_id AS findingId, e.batch_id AS batchId, e.color AS color, e.triage AS triage,
               e.comment AS comment, e.fix AS fix, e.flagged AS flagged,
-              COALESCE(u.login, e.actor_login) AS actorLogin, e.at AS at
+              u.id AS actorId, COALESCE(u.login, e.actor_login) AS actorLogin, u.name AS actorName, e.at AS at
          FROM managed_finding_triage_event e
          LEFT JOIN managed_user u ON u.id = e.actor_id
         WHERE e.finding_id = ?
@@ -1019,7 +1021,9 @@ type TriageDbRow = {
   updatedByLogin: string | null; updatedAt: number
 }
 type TriageStateDbRow = { color: string | null; triage: string | null; comment: string | null; fix: string | null; flagged: number | null }
-type TriageEventDbRow = TriageStateDbRow & { seq: number; findingId: string; batchId: string; actorLogin: string | null; at: number }
+type TriageEventDbRow = TriageStateDbRow & {
+  seq: number; findingId: string; batchId: string; actorId: string | null; actorLogin: string | null; actorName: string | null; at: number
+}
 
 // The per-finding triage slice of ManagedDb. Closes over its prepared
 // statements (and the handle, for the batch write's transaction). A
@@ -1074,7 +1078,7 @@ function triageMethods( stmts: ReturnType<typeof prepareStatements>, historyLimi
         seq: r.seq, findingId: r.findingId, batchId: r.batchId,
         color: r.color, triage: r.triage, comment: r.comment, fix: r.fix,
         flagged: r.flagged == null ? null : r.flagged === 1,
-        actorLogin: r.actorLogin, at: r.at,
+        actorId: r.actorId, actorLogin: r.actorLogin, actorName: r.actorName, at: r.at,
       }))
     },
     async listTriage(findingIds: readonly string[]): Promise<TriageRow[]> {

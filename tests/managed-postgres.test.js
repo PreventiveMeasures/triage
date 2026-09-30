@@ -340,6 +340,9 @@ test('Postgres managed store: auth, scopes, uploads, history, comments, and rest
   await db.setTriage('f', { color: 'blue' }, user, 'user2', 51)
   await db.setTriage('f', null, user, 'user2', 52)
   assert.equal((await db.listTriageHistory('f', 10)).length, 2)
+  assert.deepEqual((await db.listTriageHistory('f', 10)).map(({ actorId, actorLogin, actorName }) => ({ actorId, actorLogin, actorName })), [
+    { actorId: user, actorLogin: 'user2', actorName: null }, { actorId: user, actorLogin: 'user2', actorName: null },
+  ])
   assert.equal((await db.listTriage(['f']))[0].color, null)
   const comment = await db.createComment({ findingId: 'f', body: 'hello', authorId: user, authorLogin: 'user2', reportId: report }, 60)
   const edits = await Promise.all(['one', 'two'].map(body => db.editComment(comment.id, user, 'user2', body, 1, report, 61)))

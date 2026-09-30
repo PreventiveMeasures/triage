@@ -1,15 +1,62 @@
-dialog { width: min(94vw, 640px); max-width: 640px; max-height: 80dvh; overflow: hidden; }
+dialog {
+  width: min(94vw, 720px); max-width: 720px; max-height: calc(100dvh - 4rem);
+  margin-block: 2rem; padding: 0; overflow: hidden;
+}
 dialog[open] { display: flex; flex-direction: column; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-header h3 { margin: 0; }
-.location { margin: .4rem 0 1rem; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
-.history-body { min-height: 0; overflow: auto; overscroll-behavior: contain; font-size: .85rem; line-height: 1.5; }
-.note { color: var(--muted); font-size: .75rem; margin-bottom: .6rem; }
-ol { list-style: none; }
-li { padding: .8rem 0; border-top: 1px solid var(--border); }
-.event-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem 1rem; margin-bottom: .4rem; }
-time, .before { color: var(--muted); }
-time { font-size: .75rem; }
-dl > div { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .5rem; }
-dt { color: var(--muted); }
-dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+header {
+  display: flex; align-items: start; justify-content: space-between; gap: 1rem;
+  padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--border); flex: none;
+}
+.history-heading { min-width: 0; }
+header h3 { display: flex; align-items: center; gap: .55rem; margin: 0; line-height: 1.5; }
+header svg { flex: none; color: var(--muted); }
+header .detail-action { flex: none; width: 1.75rem; height: 1.75rem; }
+.location {
+  margin-top: .4rem; color: var(--muted); font: .76rem/1.5 ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+.history-summary {
+  display: flex; justify-content: space-between; gap: .5rem; flex: none;
+  padding: .75rem 1.25rem .25rem; color: var(--muted); font-size: .72rem;
+}
+.history-body {
+  min-height: 0; overflow: auto; overscroll-behavior: contain;
+  padding: 1rem 1.25rem 1.25rem; font-size: .82rem; line-height: 1.5;
+}
+.timeline { list-style: none; }
+.event { position: relative; display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .75rem; padding-bottom: 1.5rem; }
+.event:last-child { padding-bottom: 0; }
+.event:not(:last-child)::before {
+  content: ''; position: absolute; top: 2.4rem; bottom: .4rem; left: calc(1rem - .5px);
+  width: 1px; background: var(--border);
+}
+.managed-comment-avatar { width: 2rem; height: 2rem; font-size: .8rem; background: var(--surface-active); }
+.event-content { min-width: 0; }
+.event-meta { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .15rem .75rem; }
+.event-user { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .45rem; min-width: 0; overflow-wrap: anywhere; }
+.event-user strong { font-weight: 600; }
+.username { color: var(--muted); font-size: .75rem; }
+time { color: var(--muted); font-size: .7rem; white-space: nowrap; }
+.event-action { margin-top: .1rem; color: var(--muted); font-size: .75rem; }
+.changes { margin-top: .65rem; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.change { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: baseline; gap: .65rem; padding: .55rem .7rem; }
+.change + .change { border-top: 1px solid var(--border); }
+dt { color: var(--muted); font-size: .75rem; }
+dd { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: baseline; gap: .65rem; }
+dd.snapshot { grid-template-columns: minmax(0, 1fr); }
+.before, .after { white-space: pre-wrap; overflow-wrap: anywhere; }
+.before, .change-arrow { color: var(--muted); }
+.after { font-weight: 500; }
+.history-state { padding: 2rem .75rem; text-align: center; color: var(--muted); }
+.history-state strong { display: block; margin-bottom: .35rem; color: var(--text); font-weight: 500; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (width <= 540px) {
+  dialog { margin-block: 1rem; max-height: calc(100dvh - 2rem); }
+  header { padding: .85rem; }
+  .history-summary { padding-inline: .85rem; }
+  .history-body { padding: .85rem; }
+  .event { gap: .6rem; }
+  .event-meta { flex-direction: column; }
+  .change { grid-template-columns: minmax(0, 1fr); gap: .3rem; padding: .5rem .6rem; }
+  dd { gap: .45rem; }
+}
