@@ -119,9 +119,9 @@ test('the managed surface of either combined deployment blocks lazy e2e sync', a
 test('e2e connection frames keep a combined deployment configuration and its default', () => {
   for (const mode of ['managed+e2e', 'e2e+managed']) {
     const configured = { mode, managed: { loginPath: '/login', cookieName: 'session' }, deepviewScanServer: 'https://scan.example/' }
-    assert.deepEqual(mergeSyncServerInfo(configured, { mode: 'e2e', managed: null }), configured)
+    assert.deepEqual(mergeSyncServerInfo(configured, { mode: 'e2e', managed: null }), { ...configured, githubNewIssueLabels: '' })
     assert.deepEqual(mergeSyncServerInfo(configured, { mode: 'e2e', managed: null, deepviewScanServer: 'https://new-scan.example/' }), {
-      ...configured, deepviewScanServer: 'https://new-scan.example/',
+      ...configured, githubNewIssueLabels: '', deepviewScanServer: 'https://new-scan.example/',
     })
   }
   const frame = { mode: 'managed', managed: null }
@@ -268,8 +268,23 @@ test('cached combined mode selects managed before startup and fresh discovery ca
 })
 
 test('server advertisements retain GitHub issue label configuration in both modes', () => {
-  for (const mode of ['managed', 'e2e', 'managed+e2e']) {
+  for (const mode of ['managed', 'e2e', 'managed+e2e', 'e2e+managed']) {
     assert.equal(parseServerInfo({ mode, githubNewIssueLabels: 'team, review' }).githubNewIssueLabels, 'team, review')
     assert.equal(parseServerInfo({ mode, githubNewIssueLabels: 42 }).githubNewIssueLabels, undefined)
+  }
+})
+
+test('e2e connection frames refresh and clear runtime labels without losing combined discovery', () => {
+  for (const mode of ['managed+e2e', 'e2e+managed']) {
+    const discovery = { mode, managed: { loginPath: '/login', cookieName: 'session' } }
+    for (const configured of [discovery, { ...discovery, githubNewIssueLabels: 'outdated' }]) {
+      for (const labels of ['team, review', '', undefined]) {
+        const frame = parseServerInfo({ mode: 'e2e', githubNewIssueLabels: labels })
+        const info = mergeSyncServerInfo(configured, frame)
+        assert.deepEqual(info, { ...discovery, githubNewIssueLabels: labels ?? '' })
+        writeCachedServerInfo(info)
+        assert.deepEqual(readCachedServerInfo(), discovery, 'labels never become a stale startup hint')
+      }
+    }
   }
 })

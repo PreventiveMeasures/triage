@@ -18,6 +18,7 @@ function environment(dir) {
     GITHUB_CLIENT_ID: 'test-client', GITHUB_CLIENT_SECRET: 'test-secret',
     OAUTH_CALLBACK_URL: 'http://127.0.0.1/api/oauth/github/callback',
     SESSION_COOKIE_NAME: 'test-session', DEEPVIEW_SCAN_SERVER: 'http://127.0.0.1:3123/',
+    GITHUB_NEW_ISSUE_LABELS: 'team,needs-review',
   }
 }
 
@@ -46,7 +47,7 @@ async function boot(t, args, env) {
   return { proc, stop, url: `http://127.0.0.1:${port}`, wsUrl: `ws://127.0.0.1:${port}/api/sync` }
 }
 
-async function checkWebSocket(t, url) {
+async function checkWebSocket(t, url, labels) {
   const ws = new WebSocket(url)
   t.after(() => ws.close())
   const frames = []
@@ -62,6 +63,7 @@ async function checkWebSocket(t, url) {
   })
   assert.ok(frames.some(frame => frame.type === 'challenge'))
   assert.equal(frames.find(frame => frame.type === 'server-info')?.mode, 'e2e', 'e2e wire advertisement stays unchanged')
+  assert.equal(frames.find(frame => frame.type === 'server-info')?.githubNewIssueLabels, labels)
   return ws
 }
 
@@ -132,6 +134,7 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
     if (label.startsWith('embedded')) assert.equal(configResponse.headers.get('x-test-host'), 'embedded')
     const info = await configResponse.json()
     assert.equal(info.mode, advertised)
+    assert.equal(info.githubNewIssueLabels, env.GITHUB_NEW_ISSUE_LABELS, '/api/config exposes runtime labels in every mode')
     if (hasManaged) {
       assert.equal(info.managed.loginPath, '/api/oauth/github/login')
       const cookie = session.setCookie.split(';')[0]
@@ -155,7 +158,7 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
     let reader
     if (hasE2e) {
       assert.equal(info.deepviewScanServer, env.DEEPVIEW_SCAN_SERVER)
-      ws = await checkWebSocket(t, server.wsUrl)
+      ws = await checkWebSocket(t, server.wsUrl, env.GITHUB_NEW_ISSUE_LABELS)
       const sse = await fetch(`${server.url}/api/sync/sse`, { method: 'POST', body: '{}', signal: AbortSignal.timeout(10000) })
       assert.equal(sse.status, 200)
       assert.match(sse.headers.get('content-type'), /text\/event-stream/u)
@@ -163,6 +166,7 @@ for (const [label, args, advertised, hasE2e, hasManaged] of [
       let data = ''
       while (!data.includes('server-info')) data += new TextDecoder().decode((await reader.read()).value)
       assert.match(data, /"mode":"e2e"/u)
+      assert.ok(data.includes(`"githubNewIssueLabels":${JSON.stringify(env.GITHUB_NEW_ISSUE_LABELS)}`), 'SSE advertises the same labels')
       assert.equal((await fetch(`${server.url}/api/sync/save`, { method: 'POST', body: '{}' })).status, 400)
     } else {
       for (const path of ['/api/sync', '/api/sync/sse', '/api/sync/save', '/api/npm-advisories', '/api/objstore/a/b']) {

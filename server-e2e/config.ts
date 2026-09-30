@@ -54,6 +54,10 @@ Environment:
   DEEPVIEW_SCAN_SERVER       optional HTTP(S) scan-service URL; advertised
                              in /api/config and allowed by the UI CSP.
                              Unset by default (no external scan service).
+  GITHUB_NEW_ISSUE_LABELS    optional comma-separated labels for the client's
+                             prefilled GitHub issue form, in addition to
+                             deepview and security (for security findings).
+                             Advertised in /api/config and sync connections.
   DB_PATH                    sqlite file (default: server-e2e/data/data.db);
                              ignored when an e2e database URL is set
   DATABASE_URL               shared Neon Postgres URL for enabled modes.
