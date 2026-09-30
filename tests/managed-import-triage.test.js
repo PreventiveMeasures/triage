@@ -7,6 +7,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { prepareWorkspaceImport, runWorkspaceImport } from '../client/managed/workspace-import.js'
 import { runLocalTriageImport } from '../client/managed/triage-import.js'
+import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from '../server-managed/report-query.ts'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -48,7 +49,14 @@ async function fixture(t) {
     await pending
     return { status: res.statusCode, ...(res.body ? JSON.parse(res.body) : {}) }
   }
-  return { db, sessions, id, request, blobs }
+  async function addReport(findings, filename = 'other.json', { reportId = randomUUID(), byteSize } = {}) {
+    const content = Buffer.from(JSON.stringify({ findings }))
+    await db.insertReport({ id: reportId, filename, repoId: null, repoDirectory: '', contentType: 'application/json', byteSize: byteSize ?? content.length,
+      sha256: reportId, uploadedBy: sessions.admin.userId, bundleId: null, bundleIntegrity: null, visible: false }, 1)
+    await blobs.put(reportId, content)
+    return reportId
+  }
+  return { db, sessions, id, request, blobs, addReport }
 }
 
 test('import triage endpoint is admin/CSRF gated and restricts IDs to the uploaded report, including unpublished/security findings', async t => {
@@ -100,54 +108,156 @@ test('admin role is rechecked after loading report content', async t => {
   assert.equal((await request({ findingIds: ['f'] })).status, 403)
 })
 
-test('standalone triage import is admin/CSRF gated and validates IDs and versions without requiring reports', async t => {
-  const { request } = await fixture(t)
-  const send = (body, role = 'admin', csrf = true, method = 'POST') => request(body, role, csrf, method, '/api/admin/import-triage')
-  const body = { findingIds: ['not-uploaded'] }
-  assert.equal((await send(body, null)).status, 401)
-  for (const role of ['manage', 'triage', 'view']) assert.equal((await send(body, role)).status, 403)
-  assert.equal((await send(body, 'admin', false)).status, 403)
-  assert.equal((await send(body, 'admin', true, 'GET')).status, 405)
-  assert.equal((await send({ findingIds: [''] })).status, 400)
-  assert.equal((await send({ findingIds: ['x'.repeat(101)] })).status, 400)
-  assert.equal((await send({ findingIds: Array.from({ length: 201 }, () => 'f') })).status, 400)
-  assert.equal((await send({ entries: { f: {} }, expected: {} })).status, 400)
-  assert.equal((await send({ entries: { f: { comment: 'x'.repeat(10001) } }, expected: { f: '0'.repeat(64) } })).status, 400)
-  const read = await send(body)
+test('finding catalog is admin-only and bodyless; unscoped triage import is no longer available', async t => {
+  const { db, id, request } = await fixture(t)
+  const catalog = (role = 'admin', method = 'GET') => request(undefined, role, false, method, '/api/admin/reports/finding-ids')
+  assert.equal((await catalog(null)).status, 401)
+  for (const role of ['manage', 'triage', 'view']) assert.equal((await catalog(role)).status, 403)
+  assert.equal((await catalog('admin', 'POST')).status, 405)
+  const read = await catalog()
   assert.equal(read.status, 200)
-  assert.equal(read.snapshots['not-uploaded'].entry, null)
+  assert.deepEqual(read.reports, [{ id, findingIds: ['f', 'g'] }], 'includes unpublished/security findings for the administrator')
+  assert.equal(read.nextCursor, null)
+  assert.equal((await request(undefined, 'admin', false, 'GET', '/api/admin/reports/finding-ids?after=invalid')).status, 400)
+  const snapshot = (await db.getImportTriage(['foreign'])).foreign
+  assert.equal((await request({ entries: { foreign: { comment: 'Do not save' } }, expected: { foreign: snapshot.version } },
+    'admin', true, 'POST', '/api/admin/import-triage')).status, 404)
+  assert.equal((await request({ entries: { foreign: { comment: 'Do not save' } }, expected: { foreign: snapshot.version } })).status, 404)
+  assert.equal((await db.listTriage(['foreign'])).length, 0)
+  assert.equal((await db.listComments(['foreign'])).length, 0)
 })
 
-test('standalone import rechecks admin access after receiving the request body', async t => {
-  const { db, request, sessions } = await fixture(t)
-  const readSession = db.sessionWithUser.bind(db)
-  let reads = 0
-  t.mock.method(db, 'sessionWithUser', async (...args) => {
-    const session = await readSession(...args)
-    if (++reads === 1) await db.setUserRole(sessions.admin.userId, 'view')
-    return session
+test('finding catalog rechecks admin access after loading report content', async t => {
+  const { db, request, sessions, blobs } = await fixture(t)
+  const get = blobs.get
+  blobs.get = async id => { await db.setUserRole(sessions.admin.userId, 'view'); return get(id) }
+  const response = await request(undefined, 'admin', false, 'GET', '/api/admin/reports/finding-ids')
+  assert.equal(response.status, 403)
+  assert.equal(response.reports, undefined)
+})
+
+test('local import traverses empty catalog pages beyond the old report-count and total-byte limits', async t => {
+  const { addReport, db, request } = await fixture(t)
+  // Advertise large metadata sizes without allocating a gigabyte of test data.
+  // These empty reports used to reject the entire catalog before matching.
+  const count = MAX_REPORT_QUERY_COUNT + 1
+  for (let i = 0; i < count; i++) {
+    await addReport([], 'empty.json', { reportId: `00000000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`,
+      byteSize: Math.ceil(MAX_REPORT_QUERY_BYTES / MAX_REPORT_QUERY_COUNT) })
+  }
+  const target = await addReport([{ id: 'match', file: 'a.js' }], 'match.json', { reportId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' })
+  const scan = db.listFindingCatalogReports.bind(db)
+  let catalogRequests = 0, emptyPages = 0
+  t.mock.method(db, 'listFindingCatalogReports', (after, limit) => {
+    assert.ok(limit <= FINDING_CATALOG_PAGE_COUNT + 1, 'metadata queries are bounded too')
+    return scan(after, limit)
   })
-  assert.equal((await request({ findingIds: ['f'] }, 'admin', true, 'POST', '/api/admin/import-triage')).status, 403)
+  t.mock.method(db, 'listReports', () => assert.fail('do not load the entire report store'))
+  const imported = await runLocalTriageImport({ match: { comment: 'Import me' }, unknown: { comment: 'Keep local' } }, {
+    session: { role: 'admin', csrfToken: 'csrf' },
+    api: { async send(path, body) {
+      if (path.startsWith('/api/admin/reports/finding-ids')) {
+        assert.equal(body, undefined)
+        catalogRequests++
+        const response = await request(undefined, 'admin', false, 'GET', path)
+        assert.equal(response.status, 200)
+        if (response.reports.length === 0) emptyPages++
+        return response
+      }
+      assert.equal(path, `/api/admin/reports/${target}/import-triage`)
+      assert.doesNotMatch(JSON.stringify(body), /unknown|Keep local/u)
+      const response = await request(body, 'admin', true, 'POST', path)
+      assert.equal(response.status, 200)
+      return response
+    } },
+  })
+  assert.equal(imported, 1)
+  assert.ok(catalogRequests > 1)
+  assert.ok(emptyPages > 0, 'empty pages must not end discovery')
+  assert.equal((await db.listComments(['match']))[0].body, 'Import me')
+  assert.equal((await db.listComments(['unknown'])).length, 0)
 })
 
-test('standalone import batches all local triage, resolves concurrent edits, and reimports without duplicating comments or creating files/teams', async t => {
+test('catalog byte-limited pages advance over empty and oversized reports and survive cursor deletion', async t => {
+  const { addReport, db, id, request } = await fixture(t)
+  await db.deleteReport(id)
+  const ids = [1, 2, 3].map(i => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+  for (const [i, reportId] of ids.entries()) {
+    await addReport(i === 2 ? [{ id: 'match', file: 'a.js' }] : [], 'sized.json', {
+      reportId, byteSize: i === 1 ? FINDING_CATALOG_PAGE_BYTES + 1 : FINDING_CATALOG_PAGE_BYTES / 2 + 1,
+    })
+  }
+  const first = await request(undefined, 'admin', false, 'GET', '/api/admin/reports/finding-ids')
+  assert.deepEqual(first, { status: 200, reports: [], nextCursor: ids[0] })
+  await db.deleteReport(ids[0])
+  const second = await request(undefined, 'admin', false, 'GET', `/api/admin/reports/finding-ids?after=${first.nextCursor}`)
+  assert.deepEqual(second, { status: 200, reports: [], nextCursor: ids[1] }, 'one large report occupies its own page')
+  const third = await request(undefined, 'admin', false, 'GET', `/api/admin/reports/finding-ids?after=${second.nextCursor}`)
+  assert.deepEqual(third, { status: 200, reports: [{ id: ids[2], findingIds: ['match'] }], nextCursor: null })
+})
+
+test('cancelling catalog pagination or losing admin access on a later page prevents imports', async t => {
   const { db, request, sessions } = await fixture(t)
+  for (const revoke of [false, true]) {
+    const signal = new AbortController()
+    let calls = 0
+    await assert.rejects(runLocalTriageImport({ f: { color: 'red' } }, {
+      session: { role: 'admin', csrfToken: 'csrf' }, signal: signal.signal,
+      api: { async send(path, body) {
+        assert.equal(body, undefined, 'all pages finish before sending any annotations')
+        if (++calls === 1) {
+          if (revoke) await db.setUserRole(sessions.admin.userId, 'view')
+          else signal.abort()
+          return { reports: [{ id: 'report', findingIds: ['f'] }], nextCursor: '00000000-0000-4000-8000-000000000001' }
+        }
+        const response = await request(undefined, 'admin', false, 'GET', path)
+        assert.equal(response.status, 403)
+        throw new Error('Forbidden')
+      } },
+    }), revoke ? /Forbidden/u : { name: 'AbortError' })
+    assert.equal(calls, revoke ? 2 : 1)
+  }
+  assert.equal((await db.listTriage(['f'])).length, 0)
+})
+
+test('local triage import sends only known findings through their reports, retains conflict handling, and attaches history', async t => {
+  const { db, request, sessions, id: firstReportId, addReport } = await fixture(t)
   const admin = sessions.admin
-  const raw = Object.fromEntries(Array.from({ length: 205 }, (_, i) => [`local-${i}`, { color: 'red' }]))
+  const knownIds = Array.from({ length: 205 }, (_, i) => `known-${i}`)
+  const second = await addReport([...knownIds, 'f', 'legacy'].map(id => ({ id, file: 'a.js' })))
+  const raw = Object.fromEntries(knownIds.map(id => [id, { color: 'red' }]))
   raw.f = { color: 'red', comment: 'Imported note', flagged: false, ignoredReports: ['local.json'] }
+  raw.g = { flagged: true }
   raw.legacy = { deleted: true }
   raw.ignore = { ignoredReports: ['local.json'] }
+  raw.unknown = { color: 'blue', comment: 'Local-only secret' }
+  raw.oversizedUnknown = { comment: 'x'.repeat(10001) }
+  const before = JSON.stringify(raw)
+  const memberships = new Map([[firstReportId, new Set(['f', 'g'])], [second, new Set([...knownIds, 'f', 'legacy'])]])
   await db.setTriage('f', { color: 'blue', fix: 'Keep this fix', flagged: true }, admin.userId, 'admin', 2)
   const reportIds = (await db.listReports()).map(row => row.id)
-  let prompts = 0, writes = 0
+  let prompts = 0
+  const committed = new Set()
   const options = {
     session: { id: admin.userId, role: 'admin', csrfToken: admin.csrfToken },
     api: { async send(path, body) {
-      assert.equal(path, '/api/admin/import-triage')
-      if (body.entries) writes++
-      const response = await request(body, 'admin', true, 'POST', path)
+      if (path === '/api/admin/reports/finding-ids') assert.equal(body, undefined, 'discovery sends no local data')
+      else {
+        const reportId = /^\/api\/admin\/reports\/([^/]+)\/import-triage$/u.exec(path)?.[1]
+        assert.ok(memberships.has(reportId), 'every request is attached to an existing report')
+        const ids = body.findingIds ?? Object.keys(body.entries)
+        assert.ok(ids.every(id => memberships.get(reportId).has(id)), 'unknown IDs are never transmitted, even for snapshots')
+        assert.doesNotMatch(JSON.stringify(body), /unknown|Local-only secret|oversizedUnknown/u)
+      }
+      const response = await request(body, 'admin', true, body === undefined ? 'GET' : 'POST', path)
       if (response.status === 409) return { conflict: true }
       assert.equal(response.status, 200)
+      if (body?.entries) {
+        for (const id of Object.keys(body.entries)) {
+          assert.equal(committed.has(id), false, 'a finding shared by reports is imported once')
+          committed.add(id)
+        }
+      }
       return response
     } },
     async resolveConflicts(conflicts) {
@@ -159,25 +269,59 @@ test('standalone import batches all local triage, resolves concurrent edits, and
       return Object.fromEntries(conflicts.map(c => [`${c.id}:${c.property}`, 'imported']))
     },
   }
-  assert.equal(await runLocalTriageImport(raw, options), 207)
+  assert.equal(await runLocalTriageImport(raw, options), 208)
   assert.equal(prompts, 2, 'stale snapshot triggers conflict resolution again')
-  assert.equal(writes, 3, 'two batches plus the stale attempt')
+  assert.equal(committed.size, 208)
   const [finding] = await db.listTriage(['f'])
   assert.equal(finding.color, 'red')
   assert.equal(finding.fix, 'Keep this fix')
   assert.equal(finding.flagged, false)
   assert.equal((await db.listTriage(['legacy']))[0].triage, 'deleted')
-  assert.equal((await db.listTriage(['ignore'])).length, 0)
+  assert.equal((await db.listTriage(['ignore', 'unknown', 'oversizedUnknown'])).length, 0)
+  assert.equal((await db.listComments(['unknown', 'oversizedUnknown'])).length, 0)
   const comments = await db.listComments(['f'])
   const imported = comments.find(comment => comment.body === 'Imported note')
   assert.equal(imported.authorId, null)
   assert.equal(imported.createdAt, null)
   assert.equal(comments.length, 2)
+  const { history } = await db.listActivity({ page: 1, limit: 1000, kind: 'triage', query: '', contexts: null })
+  const importEvents = history.filter(event => event.at > 3)
+  assert.equal(importEvents.length, 209)
+  assert.ok(importEvents.every(event => memberships.get(event.reportId)?.has(event.finding)), 'both triage and comment history retain report context')
+  committed.clear()
   await runLocalTriageImport(raw, options)
   assert.equal((await db.listComments(['f'])).length, 2)
+  assert.equal(JSON.stringify(raw), before, 'local data is preserved')
   assert.deepEqual((await db.listReports()).map(row => row.id), reportIds)
   assert.equal((await db.listTeams()).length, 0)
   assert.equal((await db.listBundles()).length, 0)
+})
+
+test('imports with no matching findings send only a bodyless catalog request', async t => {
+  const { request } = await fixture(t)
+  let calls = 0
+  const count = await runLocalTriageImport({ unknown: { comment: 'Keep local' } }, {
+    session: { role: 'admin', csrfToken: 'csrf' },
+    api: { send(path, body) {
+      calls++
+      assert.equal(path, '/api/admin/reports/finding-ids')
+      assert.equal(body, undefined)
+      return request(undefined, 'admin', false, 'GET', path)
+    } },
+  })
+  assert.equal(count, 0)
+  assert.equal(calls, 1)
+})
+
+test('a report deleted between matching and import cannot leave orphan triage or comments', async t => {
+  const { db, id, request, sessions } = await fixture(t)
+  const snapshot = (await request({ findingIds: ['f'] })).snapshots.f
+  await db.deleteReport(id)
+  const entries = { f: { color: 'red', comment: 'Do not save' } }
+  assert.equal((await request({ entries, expected: { f: snapshot.version } })).status, 404)
+  assert.equal(await db.importTriage(Object.entries(entries), { f: snapshot.version }, { id: sessions.admin.userId, login: 'admin' }, id, 2), false)
+  assert.equal((await db.listTriage(['f'])).length, 0)
+  assert.equal((await db.listComments(['f'])).length, 0)
 })
 
 test('whole workspace import uses real managed routes to create a team, upload reports/links, resolve conflicts, and publish', async t => {

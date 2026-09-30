@@ -356,6 +356,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   insertOrReuseReport(report: ReportRecordInput, now: number, sessionId?: string): Promise<ReportRecord>
   getReportByHash(sha256: string, analyzer: string | null): Promise<ReportRecord | null>
   listReports(userId?: string): Promise<AdminReport[]>
+  listFindingCatalogReports(after: string, limit: number): Promise<Pick<ReportRecord, 'id' | 'byteSize'>[]>
   getReport(id: string): Promise<ReportRecord | null>
   getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null>
   getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null>
@@ -573,6 +574,7 @@ function prepareStatements(db: ManagedSql) {
           WHERE tr.repo_id = r.repo_id AND tu.user_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}))
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
+    findingCatalogReportsStmt: db.prepare(`SELECT id, byte_size AS byteSize FROM managed_report WHERE id > ? ORDER BY id LIMIT ?`),
     selectReportStmt: db.prepare(
       `SELECT id, slug, filename, content_type AS contentType, byte_size AS byteSize,
               sha256, uploaded_by AS uploadedBy, uploaded_at AS uploadedAt,
@@ -965,6 +967,9 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
         uploadedAt: r.uploadedAt,
       }))
     },
+    async listFindingCatalogReports(after: string, limit: number): Promise<Pick<ReportRecord, 'id' | 'byteSize'>[]> {
+      return await stmts.findingCatalogReportsStmt.all(after, limit) as Pick<ReportRecord, 'id' | 'byteSize'>[]
+    },
     async getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null> {
       const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
       if (!session) return null
@@ -1311,6 +1316,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const comments = commentMethods(db)
   const activity = activityMethods(db)
   const stmts = prepareStatements(db)
+  const reports = reportMethods(stmts)
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0)
   const {
     upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
@@ -1375,9 +1381,9 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...activity,
     ...comments,
     ...workspaceShareMethods(db),
-    ...reportMethods(stmts),
+    ...reports,
     ...triage,
-    ...importTriageMethods({ ...triage, ...comments }),
+    ...importTriageMethods({ getReport: reports.getReport, ...triage, ...comments }),
     ...bundleMethods(stmts),
     ...teamMethods(stmts),
     async close() {

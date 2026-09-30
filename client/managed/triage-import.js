@@ -1,7 +1,8 @@
 import { normalizeEntry } from '../triage-entry.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, parseTriageEntryPatch } from '../../common/managed/triage.ts'
 
-// Local triage is shared by finding ID; importing it needs no workspace or files.
+// Discover server-owned IDs first, then intersect locally. Unknown finding IDs
+// and their annotations never leave this browser; every write names a report.
 export async function runLocalTriageImport(raw, { session, ...options }) {
   if (session?.role !== 'admin' || !session.csrfToken) throw new Error('An administrator session is required.')
   if (raw != null && (typeof raw !== 'object' || Array.isArray(raw))) throw new Error('Invalid local triage.')
@@ -9,12 +10,35 @@ export async function runLocalTriageImport(raw, { session, ...options }) {
   for (const [id, value] of Object.entries(raw ?? {})) {
     const { ignoredReports: _, ...entry } = normalizeEntry(value) ?? {}
     if (Object.keys(entry).length === 0) continue
-    if (!id || id.length > MAX_FINDING_ID) throw new Error(`Triage finding IDs must be between 1 and ${MAX_FINDING_ID} characters.`)
-    if (parseTriageEntryPatch(entry) === 'invalid') throw new Error(`Triage for ${id} exceeds the managed server limits.`)
     triage[id] = entry
   }
-  await importTriageEntries(triage, { ...options, path: '/api/admin/import-triage' })
-  return Object.keys(triage).length
+  if (Object.keys(triage).length === 0) return 0
+  const matchedIds = new Set(), matches = []
+  let cursor
+  do {
+    options.signal?.throwIfAborted()
+    const path = '/api/admin/reports/finding-ids' + (cursor ? `?after=${encodeURIComponent(cursor)}` : '')
+    const { reports, nextCursor } = await options.api.send(path)
+    options.signal?.throwIfAborted()
+    for (const report of reports) {
+      const ids = report.findingIds.filter(id => Object.hasOwn(triage, id) && !matchedIds.has(id))
+      if (ids.length > 0) matches.push({ id: report.id, ids })
+      for (const id of ids) matchedIds.add(id)
+    }
+    cursor = nextCursor
+  } while (cursor)
+  // Validate only matching entries, before making any writes. An oversized
+  // annotation for an unrelated local report must not block the import.
+  for (const id of matchedIds) {
+    if (!id || id.length > MAX_FINDING_ID) throw new Error(`Triage finding IDs must be between 1 and ${MAX_FINDING_ID} characters.`)
+    if (parseTriageEntryPatch(triage[id]) === 'invalid') throw new Error(`Triage for ${id} exceeds the managed server limits.`)
+  }
+  const importedIds = options.importedIds ?? new Set()
+  for (const report of matches) {
+    await importTriageEntries(triage, { ...options, importedIds, ids: report.ids,
+      path: `/api/admin/reports/${encodeURIComponent(report.id)}/import-triage` })
+  }
+  return matchedIds.size
 }
 
 // Preserve fields omitted by the export. Disagreements only concern fields
@@ -93,4 +117,3 @@ export async function importTriageEntries(triage, { api, path, ids = Object.keys
     if (pending.length > 0) throw new Error('Stored triage keeps changing. Retry to resolve it against the latest values.')
   }
 }
-

@@ -5,10 +5,11 @@ import { setImmediate } from 'node:timers/promises'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, readSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from '../server-managed/report-query.ts'
+import * as reportQueryLimits from '../server-managed/report-query.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }
+const { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } = reportQueryLimits
 
 async function setup(t, createHandler = createManagedRequestHandler) {
   const db = openSqliteManagedDb(':memory:')
@@ -423,7 +424,7 @@ test('catalog report versions change with grants and repository assignments with
 test('encoded output has its own bound and never returns a partial workspace', async t => {
   // Exercise the real endpoint with a small test budget rather than allocating
   // gigabytes just to prove that JSON envelope/format expansion is counted.
-  t.mock.module('../server-managed/report-query.ts', { namedExports: { MAX_REPORT_QUERY_COUNT, MAX_REPORT_QUERY_BYTES: 1024 } })
+  t.mock.module('../server-managed/report-query.ts', { namedExports: { ...reportQueryLimits, MAX_REPORT_QUERY_BYTES: 1024 } })
   const { createManagedRequestHandler: boundedHandler } = await import('../server-managed/http.ts?small-query-budget')
   const h = await setup(t, boundedHandler)
   for (const id of ['a', 'b']) h.blobs.set(id, Buffer.from(JSON.stringify({ findings: [{ id, description: 'x'.repeat(420) }] })))
