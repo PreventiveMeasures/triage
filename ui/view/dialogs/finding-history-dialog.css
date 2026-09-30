@@ -1,6 +1,7 @@
 dialog {
   width: min(94vw, 720px); max-width: 720px; max-height: calc(100dvh - 4rem);
   margin-block: 2rem; padding: 0; overflow: hidden;
+  background: rgb(from var(--surface) r g b / 1);
 }
 dialog[open] { display: flex; flex-direction: column; }
 header {
