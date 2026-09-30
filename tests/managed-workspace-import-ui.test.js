@@ -17,6 +17,7 @@ function page() {
   p.session = { id: 'admin', role: 'admin', csrfToken: 'csrf' }
   p.appState.setSession(p.session)
   p._catalog = { repos: [{ repoId: 1, fullName: 'org/repo' }], teams: [{ name: 'Local workspace' }] }
+  p.confirmTriageImport = () => ({ confirmed: true })
   return p
 }
 const exported = triage => ({ version: 1, workspace: { id: 'local', name: 'Local workspace', privateKey: '' }, reports: [{ name: 'report.json', content: '{"findings":[{"id":"f","file":"a.js"}]}' }], triage })
@@ -87,14 +88,110 @@ function triageDeps(readTriageBlob) {
   }
 }
 
-test('Import triage reads only local triage, needs no catalog/workspace, and reports an empty import', async t => {
+test('Import triage previews an empty local store without reading files or contacting the server', async t => {
   const p = page()
   p._catalog = null
   p.localDeps = triageDeps(() => ({ ignored: { ignoredReports: ['report.json'] } }))
+  p.confirmTriageImport = ({ matched, available }) => {
+    assert.deepEqual({ matched, available }, { matched: 0, available: 0 })
+    return { confirmed: false }
+  }
   t.mock.method(globalThis, 'fetch', () => assert.fail('empty import must not contact the server'))
   await p._importLocalTriage()
   assert.equal(p._error, '')
-  assert.equal(p._message, 'No local triage matches findings in managed reports.')
+  assert.equal(p._message, '')
+})
+
+test('triage confirmation counts unique matches across all pages and sends no annotations before approval', async t => {
+  for (const confirmed of [false, true]) {
+    const p = page()
+    p.localDeps = triageDeps(() => ({ f: { color: 'red' }, shared: { comment: 'Local comment' }, unknown: { comment: 'Keep local' },
+      ignored: { ignoredReports: ['report.json'] }, empty: {} }))
+    const decision = Promise.withResolvers(), shown = Promise.withResolvers()
+    const paths = [], written = []
+    let approved = false
+    p.confirmTriageImport = ({ matched, available, signal }) => {
+      assert.deepEqual({ matched, available }, { matched: 2, available: 3 })
+      assert.equal(signal.aborted, false)
+      shown.resolve()
+      return decision.promise
+    }
+    const fetch = t.mock.method(globalThis, 'fetch', (path, options) => {
+      paths.push(path)
+      if (path.startsWith('/api/admin/reports/finding-ids')) {
+        assert.equal(options.body, undefined)
+        return Response.json({ reports: [{ id: paths.length === 1 ? 'first' : 'second', findingIds: ['f', 'shared', 'other'] }],
+          nextCursor: paths.length === 1 ? 'next' : null })
+      }
+      assert.ok(approved, 'even conflict snapshots must wait for approval')
+      assert.equal(path, '/api/admin/reports/first/import-triage', 'shared IDs are imported once')
+      const body = JSON.parse(options.body)
+      assert.doesNotMatch(options.body, /unknown|Keep local|ignored/u)
+      if (body.findingIds) {
+        assert.deepEqual(body.findingIds, ['f', 'shared'])
+        return Response.json({ snapshots: Object.fromEntries(body.findingIds.map(id => [id, { entry: null, comments: [], version: '0'.repeat(64) }])) })
+      }
+      written.push(...Object.keys(body.entries))
+      return Response.json({ ok: true })
+    })
+    const importing = p._importLocalTriage()
+    await shown.promise
+    assert.deepEqual(paths, ['/api/admin/reports/finding-ids', '/api/admin/reports/finding-ids?after=next'])
+    assert.equal(p._busy, true)
+    approved = confirmed
+    decision.resolve({ confirmed })
+    await importing
+    assert.equal(p._error, '')
+    assert.equal(p._busy, false)
+    assert.equal(p._message, confirmed ? 'Imported triage for 2 findings.' : '')
+    assert.deepEqual(written, confirmed ? ['f', 'shared'] : [])
+    fetch.mock.restore()
+  }
+})
+
+test('nonmatching local triage shows zero eligible entries without sending local IDs', async t => {
+  const p = page()
+  p.localDeps = triageDeps(() => ({ unknown: { comment: 'Keep local' } }))
+  let previews = 0
+  p.confirmTriageImport = ({ matched, available }) => {
+    previews++
+    assert.deepEqual({ matched, available }, { matched: 0, available: 1 })
+    return { confirmed: false }
+  }
+  t.mock.method(globalThis, 'fetch', (path, options) => {
+    assert.equal(path, '/api/admin/reports/finding-ids')
+    assert.equal(options.body, undefined)
+    return Response.json({ reports: [{ id: 'report', findingIds: ['other'] }] })
+  })
+  await p._importLocalTriage()
+  assert.equal(previews, 1)
+  assert.equal(p._error, '')
+  assert.equal(p._message, '')
+})
+
+test('local or session changes while confirmation is pending prevent imports even after approval', async t => {
+  for (const change of ['storage', 'session']) {
+    const p = page()
+    p.localDeps = triageDeps(() => ({ f: { color: 'red' } }))
+    const decision = Promise.withResolvers(), shown = Promise.withResolvers()
+    p.confirmTriageImport = ({ signal }) => { shown.resolve(signal); return decision.promise }
+    const fetch = t.mock.method(globalThis, 'fetch', (path, options) => {
+      assert.equal(path, '/api/admin/reports/finding-ids', 'no annotations may be sent')
+      assert.equal(options.body, undefined)
+      return Response.json({ reports: [{ id: 'report', findingIds: ['f'] }] })
+    })
+    const importing = p._importLocalTriage()
+    const signal = await shown.promise
+    if (change === 'session') p.appState.setSession({ id: 'other-admin', role: 'admin' })
+    else p._localChanged()
+    assert.equal(signal.aborted, true)
+    decision.resolve({ confirmed: true })
+    await importing
+    assert.equal(p._message, '')
+    assert.equal(p._busy, false)
+    assert.equal(fetch.mock.callCount(), 1)
+    fetch.mock.restore()
+  }
 })
 
 test('Import triage unlocks local data, imports without reading files, and preserves a pending workspace plan', async t => {

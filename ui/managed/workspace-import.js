@@ -173,8 +173,10 @@ export function registerWorkspaceImport(ManagedPage, request) {
           const count = await runLocalTriageImport(triage, {
             api: workspaceImportApi(request, this.session, signal), session: this.session,
             resolveConflicts: this.resolveConflicts, signal, importedIds,
+            confirmImport: async counts => (await this.confirmTriageImport({ ...counts, signal }))?.confirmed === true,
           })
           signal.throwIfAborted()
+          if (count === null) return
           this._message = count ? `Imported triage for ${count} finding${count === 1 ? '' : 's'}.` : 'No local triage matches findings in managed reports.'
         } finally {
           this._importingTriage = false
