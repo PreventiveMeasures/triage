@@ -18,7 +18,7 @@ mock.module('../ui/view/dialogs/app-dialog.js', { namedExports: { AppDialog: Tes
 await import('../ui/view/dialogs/finding-history-dialog.js')
 const Dialog = customElements.get('finding-history-dialog')
 const finding = { id: 'finding', _managedReportId: 'report', file: 'src/main.js' }
-const events = [{ seq: 1, at: 100, actorLogin: 'alice', entry: { triage: 'fixed' } }]
+const events = [{ seq: 1, at: 100, actorId: 'alice-id', actorLogin: 'alice', actorName: 'Alice', entry: { triage: 'fixed' } }]
 let calls, gate
 
 beforeEach(t => {

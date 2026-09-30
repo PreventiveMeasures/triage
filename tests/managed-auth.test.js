@@ -2137,6 +2137,30 @@ test('db: finding triage trail — one event per change, none for a no-op write,
   await capped.close()
 })
 
+test('db: triage history resolves profiles by actor id and preserves attribution after deletion', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-history-profile-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.sqlite')
+  const db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  const profile = { githubUserId: 1, login: 'alice', name: 'Alice', avatarUrl: null }
+  const id = await db.upsertUser(profile, 1)
+  await db.setTriage('f', { triage: 'fixed' }, id, 'alice', 2)
+  await db.upsertUser({ ...profile, login: 'alice-renamed', name: 'Alice Updated' }, 3)
+  const actor = async () => (await db.listTriageHistory('f', 10)).map(({ actorId, actorLogin, actorName }) => ({ actorId, actorLogin, actorName }))
+  assert.deepEqual(await actor(), [{ actorId: id, actorLogin: 'alice-renamed', actorName: 'Alice Updated' }])
+  const raw = new DatabaseSync(path)
+  try { raw.prepare('DELETE FROM managed_user WHERE id = ?').run(id) } finally { raw.close() }
+  // A reused login must never attach another person's name or avatar to an old event.
+  await db.upsertUser({ ...profile, githubUserId: 2, name: 'Different Alice' }, 4)
+  assert.deepEqual(await actor(), [{ actorId: null, actorLogin: 'alice', actorName: null }])
+  await db.setTriage('legacy', { flagged: true }, null, null, 5)
+  const [legacy] = await db.listTriageHistory('legacy', 10)
+  assert.equal(legacy.actorId, null)
+  assert.equal(legacy.actorLogin, null)
+  assert.equal(legacy.actorName, null)
+})
+
 test('db: permanent triage deletion rolls back current rows if history deletion fails', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'managed-triage-delete-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -2557,6 +2581,7 @@ test('POST /api/reports/<id>/triage: CSRF + role/membership gating, validation, 
   assert.equal((await send('POST', H(fx.reportId, 'own'), bCk)).statusCode, 405)
   const history = JSON.parse((await send('GET', H(fx.reportId, 'own'), bCk)).body)
   assert.equal(history.finding, 'own')
+  assert.ok(history.events.every(e => e.actorId === fx.bobSess.userId && e.actorName === null))
   assert.deepEqual(history.events.map((e) => [e.actorLogin, e.entry]), [
     ['bob', null],
     ['bob', { color: 'red', flagged: false }],

@@ -3,11 +3,13 @@ import { managedFetch } from '../../../client/managed/request.js'
 import { managedAppState } from '../../managed/state.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { findingHistoryChanges } from '../finding-history-changes.js'
+import { managedCommentAvatar } from '../managed-comment.js'
+import avatarCSS from '../managed-comment.css'
 import detailCSS from '../../styles/detail-action.css'
 import styles from './finding-history-dialog.css'
 
 class FindingHistoryDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(detailCSS), unsafeCSS(styles)]
+  static styles = [...AppDialog.styles, unsafeCSS(detailCSS), unsafeCSS(avatarCSS), unsafeCSS(styles)]
   static properties = { finding: { attribute: false }, teamId: { attribute: false },
     _events: { state: true }, _loading: { state: true }, _error: { state: true } }
 
@@ -60,29 +62,58 @@ class FindingHistoryDialog extends AppDialog {
 
   _onKeydown = event => { if (event.key === 'Escape') event.stopPropagation() }
 
+  _renderEvent(event, index) {
+    const older = this._events[index + 1]
+    const changes = findingHistoryChanges(event.entry, older?.entry)
+    const date = new Date(event.at)
+    const login = event.actorLogin ? `@${event.actorLogin}` : ''
+    return html`<li class="event">
+      ${event.actorId ? managedCommentAvatar(event.actorId, event.actorName || event.actorLogin)
+        : html`<span class="managed-comment-avatar" aria-hidden="true">${(event.actorLogin?.[0] || '?').toUpperCase()}</span>`}
+      <div class="event-content">
+        <div class="event-meta">
+          <div class="event-user"><strong>${event.actorName || login || 'Unknown user'}</strong>
+            ${event.actorName && login ? html`<span class="username">${login}</span>` : nothing}
+          </div>
+          <time datetime=${date.toISOString()} data-tooltip=${date.toLocaleString()}>
+            ${date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+          </time>
+        </div>
+        <p class="event-action">${event.entry === null ? 'Cleared triage' : older ? 'Updated triage' : 'Recorded triage state'}</p>
+        ${changes.length > 0 ? html`<dl class="changes">${changes.map(change => html`<div class="change">
+          <dt>${change.label}</dt>
+          <dd class=${change.before === undefined ? 'snapshot' : ''}>
+            ${change.before === undefined ? nothing : html`<span class="before"><span class="sr-only">Previously: </span>${change.before}</span>
+              <span class="change-arrow" aria-hidden="true">→</span>`}
+            <span class="after"><span class="sr-only">${change.before === undefined ? 'Recorded: ' : 'Changed to: '}</span>${change.after}</span>
+          </dd>
+        </div>`)}</dl>` : nothing}
+      </div>
+    </li>`
+  }
+
   render() {
     const f = this.finding ?? {}
     return html`<dialog aria-labelledby="history-title" @close=${this._onClose} @keydown=${this._onKeydown}>
-      <header><h3 id="history-title">Issue history</h3>
+      <header>
+        <div class="history-heading"><h3 id="history-title">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 11a9 9 0 1 1 2.5 7M3 5v6h6M12 7v5l3 2"/>
+          </svg>Issue history</h3>
+          <p class="location">${f.file}${f.line ? `:${f.line}` : ''}</p>
+        </div>
         <button type="button" class="detail-action" aria-label="Close issue history" @click=${this._onClose}>×</button>
       </header>
-      <p class="location">${f.file}${f.line ? `:${f.line}` : ''}</p>
+      ${!this._loading && !this._error && this._events.length > 0 ? html`<div class="history-summary">
+        <span>${this._events.length} ${this._events.length === 1 ? 'record' : 'records'}</span><span>Newest first</span>
+      </div>` : nothing}
       <div class="history-body" aria-busy=${String(this._loading)}>
-        ${this._loading ? html`<p role="status">Loading history…</p>`
-          : this._error ? html`<p role="alert">Couldn’t load issue history. Close and reopen to try again.</p>`
-          : this._events.length === 0 ? html`<p role="status">No triage changes recorded.</p>`
-          : html`<p class="note">Triage changes · newest first</p><ol>${this._events.map((event, index) => {
-              const changes = findingHistoryChanges(event.entry, this._events[index + 1]?.entry)
-              const date = new Date(event.at)
-              return html`<li>
-                <div class="event-meta"><strong>${event.actorLogin || 'Unknown user'}</strong>
-                  <time datetime=${date.toISOString()}>${date.toLocaleString()}</time></div>
-                ${event.entry === null ? html`<p>Cleared triage</p>` : nothing}
-                ${changes.length > 0 ? html`<dl>${changes.map(change => html`<div><dt>${change.label}</dt>
-                  <dd>${change.before === undefined ? nothing : html`<span class="before">${change.before}</span> → `}${change.after}</dd>
-                </div>`)}</dl>` : event.entry === null ? nothing : html`<p>Triage updated</p>`}
-              </li>`
-            })}</ol>`}
+        ${this._loading ? html`<p class="history-state" role="status">Loading history…</p>`
+          : this._error ? html`<div class="history-state" role="alert"><strong>Couldn’t load issue history</strong>
+            <p>Close and reopen to try again.</p></div>`
+          : this._events.length === 0 ? html`<div class="history-state" role="status"><strong>No triage changes yet</strong>
+            <p>Changes to status, labels, flags, and fixes will appear here.</p></div>`
+          : html`<ol class="timeline">${this._events.map((event, index) => this._renderEvent(event, index))}</ol>`}
       </div>
     </dialog>`
   }

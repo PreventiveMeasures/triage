@@ -1582,7 +1582,8 @@ async function handleGetReportTriageHistory(res: ServerResponse, deps: ManagedHt
   const visible = await visibleFindingIds(deps, current.user, id, current.session.id, teamId)
   if (!visible.has(finding)) { sendJson(res, 404, { error: 'no-finding' }); return }
   const events = (await deps.db.listTriageHistory(finding, MAX_TRIAGE_HISTORY)).map((row: TriageEventRow) => ({
-    seq: row.seq, at: row.at, actorLogin: row.actorLogin, batchId: row.batchId, entry: triageWireEntry(row, true),
+    seq: row.seq, at: row.at, actorId: row.actorId, actorLogin: row.actorLogin, actorName: row.actorName,
+    batchId: row.batchId, entry: triageWireEntry(row, true),
   }))
   // A database read can outlive a role, membership, or visibility change.
   const latest = await readSession(deps.config, deps.db, cookie, Date.now())
