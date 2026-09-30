@@ -7,6 +7,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { prepareWorkspaceImport, runWorkspaceImport } from '../client/managed/workspace-import.js'
 import { runLocalTriageImport } from '../client/managed/triage-import.js'
+import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from '../server-managed/report-query.ts'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -48,10 +49,9 @@ async function fixture(t) {
     await pending
     return { status: res.statusCode, ...(res.body ? JSON.parse(res.body) : {}) }
   }
-  async function addReport(findings, filename = 'other.json') {
-    const reportId = randomUUID()
+  async function addReport(findings, filename = 'other.json', { reportId = randomUUID(), byteSize } = {}) {
     const content = Buffer.from(JSON.stringify({ findings }))
-    await db.insertReport({ id: reportId, filename, repoId: null, repoDirectory: '', contentType: 'application/json', byteSize: content.length,
+    await db.insertReport({ id: reportId, filename, repoId: null, repoDirectory: '', contentType: 'application/json', byteSize: byteSize ?? content.length,
       sha256: reportId, uploadedBy: sessions.admin.userId, bundleId: null, bundleIntegrity: null, visible: false }, 1)
     await blobs.put(reportId, content)
     return reportId
@@ -117,6 +117,8 @@ test('finding catalog is admin-only and bodyless; unscoped triage import is no l
   const read = await catalog()
   assert.equal(read.status, 200)
   assert.deepEqual(read.reports, [{ id, findingIds: ['f', 'g'] }], 'includes unpublished/security findings for the administrator')
+  assert.equal(read.nextCursor, null)
+  assert.equal((await request(undefined, 'admin', false, 'GET', '/api/admin/reports/finding-ids?after=invalid')).status, 400)
   const snapshot = (await db.getImportTriage(['foreign'])).foreign
   assert.equal((await request({ entries: { foreign: { comment: 'Do not save' } }, expected: { foreign: snapshot.version } },
     'admin', true, 'POST', '/api/admin/import-triage')).status, 404)
@@ -132,6 +134,90 @@ test('finding catalog rechecks admin access after loading report content', async
   const response = await request(undefined, 'admin', false, 'GET', '/api/admin/reports/finding-ids')
   assert.equal(response.status, 403)
   assert.equal(response.reports, undefined)
+})
+
+test('local import traverses empty catalog pages beyond the old report-count and total-byte limits', async t => {
+  const { addReport, db, request } = await fixture(t)
+  // Advertise large metadata sizes without allocating a gigabyte of test data.
+  // These empty reports used to reject the entire catalog before matching.
+  const count = MAX_REPORT_QUERY_COUNT + 1
+  for (let i = 0; i < count; i++) {
+    await addReport([], 'empty.json', { reportId: `00000000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`,
+      byteSize: Math.ceil(MAX_REPORT_QUERY_BYTES / MAX_REPORT_QUERY_COUNT) })
+  }
+  const target = await addReport([{ id: 'match', file: 'a.js' }], 'match.json', { reportId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' })
+  const scan = db.listFindingCatalogReports.bind(db)
+  let catalogRequests = 0, emptyPages = 0
+  t.mock.method(db, 'listFindingCatalogReports', (after, limit) => {
+    assert.ok(limit <= FINDING_CATALOG_PAGE_COUNT + 1, 'metadata queries are bounded too')
+    return scan(after, limit)
+  })
+  t.mock.method(db, 'listReports', () => assert.fail('do not load the entire report store'))
+  const imported = await runLocalTriageImport({ match: { comment: 'Import me' }, unknown: { comment: 'Keep local' } }, {
+    session: { role: 'admin', csrfToken: 'csrf' },
+    api: { async send(path, body) {
+      if (path.startsWith('/api/admin/reports/finding-ids')) {
+        assert.equal(body, undefined)
+        catalogRequests++
+        const response = await request(undefined, 'admin', false, 'GET', path)
+        assert.equal(response.status, 200)
+        if (response.reports.length === 0) emptyPages++
+        return response
+      }
+      assert.equal(path, `/api/admin/reports/${target}/import-triage`)
+      assert.doesNotMatch(JSON.stringify(body), /unknown|Keep local/u)
+      const response = await request(body, 'admin', true, 'POST', path)
+      assert.equal(response.status, 200)
+      return response
+    } },
+  })
+  assert.equal(imported, 1)
+  assert.ok(catalogRequests > 1)
+  assert.ok(emptyPages > 0, 'empty pages must not end discovery')
+  assert.equal((await db.listComments(['match']))[0].body, 'Import me')
+  assert.equal((await db.listComments(['unknown'])).length, 0)
+})
+
+test('catalog byte-limited pages advance over empty and oversized reports and survive cursor deletion', async t => {
+  const { addReport, db, id, request } = await fixture(t)
+  await db.deleteReport(id)
+  const ids = [1, 2, 3].map(i => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+  for (const [i, reportId] of ids.entries()) {
+    await addReport(i === 2 ? [{ id: 'match', file: 'a.js' }] : [], 'sized.json', {
+      reportId, byteSize: i === 1 ? FINDING_CATALOG_PAGE_BYTES + 1 : FINDING_CATALOG_PAGE_BYTES / 2 + 1,
+    })
+  }
+  const first = await request(undefined, 'admin', false, 'GET', '/api/admin/reports/finding-ids')
+  assert.deepEqual(first, { status: 200, reports: [], nextCursor: ids[0] })
+  await db.deleteReport(ids[0])
+  const second = await request(undefined, 'admin', false, 'GET', `/api/admin/reports/finding-ids?after=${first.nextCursor}`)
+  assert.deepEqual(second, { status: 200, reports: [], nextCursor: ids[1] }, 'one large report occupies its own page')
+  const third = await request(undefined, 'admin', false, 'GET', `/api/admin/reports/finding-ids?after=${second.nextCursor}`)
+  assert.deepEqual(third, { status: 200, reports: [{ id: ids[2], findingIds: ['match'] }], nextCursor: null })
+})
+
+test('cancelling catalog pagination or losing admin access on a later page prevents imports', async t => {
+  const { db, request, sessions } = await fixture(t)
+  for (const revoke of [false, true]) {
+    const signal = new AbortController()
+    let calls = 0
+    await assert.rejects(runLocalTriageImport({ f: { color: 'red' } }, {
+      session: { role: 'admin', csrfToken: 'csrf' }, signal: signal.signal,
+      api: { async send(path, body) {
+        assert.equal(body, undefined, 'all pages finish before sending any annotations')
+        if (++calls === 1) {
+          if (revoke) await db.setUserRole(sessions.admin.userId, 'view')
+          else signal.abort()
+          return { reports: [{ id: 'report', findingIds: ['f'] }], nextCursor: '00000000-0000-4000-8000-000000000001' }
+        }
+        const response = await request(undefined, 'admin', false, 'GET', path)
+        assert.equal(response.status, 403)
+        throw new Error('Forbidden')
+      } },
+    }), revoke ? /Forbidden/u : { name: 'AbortError' })
+    assert.equal(calls, revoke ? 2 : 1)
+  }
+  assert.equal((await db.listTriage(['f'])).length, 0)
 })
 
 test('local triage import sends only known findings through their reports, retains conflict handling, and attaches history', async t => {

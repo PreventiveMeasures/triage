@@ -13,11 +13,20 @@ export async function runLocalTriageImport(raw, { session, ...options }) {
     triage[id] = entry
   }
   if (Object.keys(triage).length === 0) return 0
-  options.signal?.throwIfAborted()
-  const { reports } = await options.api.send('/api/admin/reports/finding-ids')
-  options.signal?.throwIfAborted()
-  const matches = reports.map(report => ({ id: report.id, ids: report.findingIds.filter(id => Object.hasOwn(triage, id)) }))
-  const matchedIds = new Set(matches.flatMap(report => report.ids))
+  const matchedIds = new Set(), matches = []
+  let cursor
+  do {
+    options.signal?.throwIfAborted()
+    const path = '/api/admin/reports/finding-ids' + (cursor ? `?after=${encodeURIComponent(cursor)}` : '')
+    const { reports, nextCursor } = await options.api.send(path)
+    options.signal?.throwIfAborted()
+    for (const report of reports) {
+      const ids = report.findingIds.filter(id => Object.hasOwn(triage, id) && !matchedIds.has(id))
+      if (ids.length > 0) matches.push({ id: report.id, ids })
+      for (const id of ids) matchedIds.add(id)
+    }
+    cursor = nextCursor
+  } while (cursor)
   // Validate only matching entries, before making any writes. An oversized
   // annotation for an unrelated local report must not block the import.
   for (const id of matchedIds) {

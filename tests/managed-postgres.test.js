@@ -525,6 +525,22 @@ test('Postgres annotation revisions track visible changes across connections, tr
   assert.notEqual(await db.getAnnotationRevision(['finding']), red)
 })
 
+test('Postgres finding catalog pages use stable IDs and continue after deleting the cursor report', async t => {
+  const { db } = await database(t)
+  const user = await db.upsertUser(identity(1), 1)
+  const store = memoryStore()
+  const ids = []
+  for (let i = 0; i < 4; i++) ids.push(await seedReport(db, store, user, null))
+  ids.sort()
+  const first = await db.listFindingCatalogReports('', 2)
+  assert.deepEqual(first.map(row => row.id), ids.slice(0, 2))
+  assert.ok(first.every(row => typeof row.byteSize === 'number' && row.byteSize > 0))
+  await db.deleteReport(first[1].id)
+  const second = await db.listFindingCatalogReports(first[1].id, 2)
+  assert.deepEqual(second.map(row => row.id), ids.slice(2))
+  assert.deepEqual(await db.listFindingCatalogReports(second[1].id, 2), [])
+})
+
 test('Postgres workspace triage imports compare and write atomically with other triage writers', async t => {
   const { db, queries } = await database(t)
   const id = await db.upsertUser(identity(1), 1)

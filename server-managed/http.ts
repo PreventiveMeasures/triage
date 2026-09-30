@@ -82,7 +82,7 @@ import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
-import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
+import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
 import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
@@ -1634,20 +1634,24 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
 
 // GET only: clients match local annotations against these IDs without sending
 // their local finding IDs or annotation bodies to discover which reports exist.
-async function handleImportFindingIds(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+async function handleImportFindingIds(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, search: URLSearchParams): Promise<void> {
   const s = await readAdminSession(res, deps, cookie)
   if (!s) return
-  const stored = await deps.db.listReports()
-  if (stored.length > MAX_REPORT_QUERY_COUNT || stored.reduce((total, report) => total + report.byteSize, 0) > MAX_REPORT_QUERY_BYTES) {
-    sendJson(res, 413, { error: 'batch-too-large' }); return
-  }
+  const after = search.get('after') ?? ''
+  if (after && !/^[a-f\d-]{36}$/iu.test(after)) { sendJson(res, 400, { error: 'bad-cursor' }); return }
+  const stored = await deps.db.listFindingCatalogReports(after, FINDING_CATALOG_PAGE_COUNT + 1)
   const reports = []
+  let bytes = 0, cursor = after, processed = 0
   for (const report of stored) {
+    if (processed >= FINDING_CATALOG_PAGE_COUNT || (processed > 0 && bytes + report.byteSize > FINDING_CATALOG_PAGE_BYTES)) break
+    bytes += report.byteSize
+    processed++
+    cursor = report.id
     const findingIds = [...await visibleFindingIds(deps, s.user, report.id, s.session.id, null)]
     if (findingIds.length > 0) reports.push({ id: report.id, findingIds })
   }
   if (await readAdminSession(res, deps, cookie) == null) return
-  sendJson(res, 200, { reports })
+  sendJson(res, 200, { reports, nextCursor: processed < stored.length ? cursor : null })
 }
 
 // Admin imports compare the exact snapshot shown by the conflict dialog before
@@ -2079,7 +2083,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path === '/api/admin/reports/finding-ids') {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleImportFindingIds(res, deps, cookie); return
+      await handleImportFindingIds(res, deps, cookie, url.searchParams); return
     }
     const importTriage = /^\/api\/admin\/reports\/([a-f\d-]{36})\/import-triage$/iu.exec(path)
     if (importTriage) {
