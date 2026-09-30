@@ -95,6 +95,13 @@ Managed and combined servers also serve the built UI with nested page URLs.
 See [managed browser navigation](../server-managed/README.md) for the page list
 and mode-switch behavior. E2E page navigation is unchanged.
 
+Set `GITHUB_NEW_ISSUE_LABELS` to a comma-separated list of additional labels
+for prefilled GitHub issue forms, for example `team,needs-review`. The server
+advertises the value through `/api/config` and the WebSocket/SSE `server-info`
+frame, including on combined deployments. The client adds `deepview` and,
+for security findings, `security`, then trims and deduplicates the labels.
+Labels remain runtime configuration and are not saved in local storage.
+
 ## Storage backends
 
 For the full standalone/combined backend matrix and sharing constraints, see

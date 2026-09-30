@@ -44,7 +44,10 @@ export function resolveServerMode(mode: ServerMode, selection: ServerProtocol | 
 // served by /api/config. Keep a combined deployment switchable on reconnect.
 export function mergeSyncServerInfo(configured: ServerInfo | null, frame: ServerInfo): ServerInfo {
   if (configured && isCombinedServerMode(configured.mode) && frame.mode === 'e2e') {
-    return { ...configured, ...(frame.deepviewScanServer ? { deepviewScanServer: frame.deepviewScanServer } : {}) }
+    // Keep deployment discovery, but refresh runtime labels from the live
+    // connection. An omitted value clears labels removed by the operator.
+    return { ...configured, githubNewIssueLabels: frame.githubNewIssueLabels ?? '',
+      ...(frame.deepviewScanServer ? { deepviewScanServer: frame.deepviewScanServer } : {}) }
   }
   return frame
 }
