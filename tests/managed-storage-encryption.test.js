@@ -22,7 +22,7 @@ import { openManagedStorage } from '../server-managed/storage.ts'
 import { unwrapDataKey } from '../server-managed/storage-db.ts'
 import { verifyStoragePayload } from '../server-managed/storage-payload.ts'
 import { sdkFixture } from './_managed-vercel.js'
-import { checkStorageDb, storageTestKey as key } from './_managed-storage-db.js'
+import { checkStorageDb, checkStorageMigrationOrder, storageTestKey as key } from './_managed-storage-db.js'
 
 async function fixture(t, remote = false) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-storage-encryption-'))
@@ -60,6 +60,11 @@ async function bundle(f, body = Buffer.from('bundle sources'), kind = null) {
 test('SQLite per-row keys, activation, and migration state', async t => {
   const f = await fixture(t)
   await checkStorageDb(f.db)
+})
+
+test('SQLite migration orders reports before bundles, smallest first, and resumes old cursors', async t => {
+  const f = await fixture(t)
+  await checkStorageMigrationOrder(f.db)
 })
 
 test('startup with a key encrypts new writes before legacy migration and requires the same key on restart', async t => {
@@ -196,7 +201,7 @@ for (const remote of [false, true]) {
     await assert.rejects(f.stores.reportStore.get(id), /upload hash/u)
     await f.raw.put(`reports/${id}`, Buffer.from('private report'))
     await migrateStorage(f.raw, f.db, key, { maxObjects: 1 })
-    // Migrate whichever UUID sorted first, while leaving another row pending.
+    // Migrate one row while leaving another pending.
     const migrated = (await f.db.getStorageRow('report', id)).encrypted ? id : pending
     await f.raw.put(`reports/${migrated}`, Buffer.from(migrated === id ? 'private report' : 'other legacy report'))
     assert.equal((await f.db.getStorageEncryption()).complete, 0)
@@ -703,15 +708,16 @@ test('Vercel uses single PUTs for small encrypted writes and multipart for large
   assert.equal(f.calls.findLast(call => call.op === 'put').options.multipart, true)
 })
 
-test('an oversized first bundle advances the cursor so reports and GitHub tokens can migrate', async t => {
-  const f = await fixture(t), id = await bundle(f, Buffer.alloc(1024 * 1024, 1))
-  const reports = await Promise.all([report(f, Buffer.from('one')), report(f, Buffer.from('two')), report(f, Buffer.from('three'))])
+test('an oversized first report advances the cursor so bundles and GitHub tokens can migrate', async t => {
+  const f = await fixture(t), id = await report(f, Buffer.alloc(1024 * 1024, 1))
+  const bundles = await Promise.all([bundle(f, Buffer.from('one')), bundle(f, Buffer.from('two')), bundle(f, Buffer.from('three'))])
   const user = await f.db.upsertUser({ githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
   await f.db.setUserTokens(user, { accessToken: 'secret', refreshToken: null, expiresAt: null })
   await f.db.enableStorageEncryption()
+  const [first] = await f.db.listStorageMigrationRows(null, 1)
   const open = f.raw.open.bind(f.raw)
   const stalled = t.mock.method(f.raw, 'open', async (path, signal) => {
-    if (path !== `bundles/${id}`) return open(path, signal)
+    if (path !== `reports/${id}`) return open(path, signal)
     await new Promise(resolve => {
       const timer = setTimeout(resolve, 1000)
       signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
@@ -720,18 +726,18 @@ test('an oversized first bundle advances the cursor so reports and GitHub tokens
   })
   const interrupted = await migrateStorage(f.raw, f.db, key, { maxMs: 25 })
   assert.equal(interrupted.failures.length, 1)
-  assert.match(interrupted.failures[0].message, new RegExp(`bundle ${id}.*MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=25`, 'u'))
-  assert.equal((await f.db.getStorageEncryption()).cursor, `bundle:${id}`)
+  assert.match(interrupted.failures[0].message, new RegExp(`report ${id}.*MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=25`, 'u'))
+  assert.equal((await f.db.getStorageEncryption()).cursor, first.position)
   const next = await migrateStorage(f.raw, f.db, key)
-  assert.equal(next.complete, 0, 'the skipped bundle still prevents completion')
-  assert.equal(next.migrated, 4, 'three reports and tokens advance past the large bundle')
-  for (const reportId of reports) assert.equal((await f.db.getStorageRow('report', reportId)).encrypted, 1)
+  assert.equal(next.complete, 0, 'the skipped report still prevents completion')
+  assert.equal(next.migrated, 4, 'three bundles and tokens advance past the large report')
+  for (const bundleId of bundles) assert.equal((await f.db.getStorageRow('bundle', bundleId)).encrypted, 1)
   const sql = new DatabaseSync(f.dbPath)
   try { assert.equal(sql.prepare('SELECT gh_tokens_encrypted FROM managed_user WHERE id = ?').get(user).gh_tokens_encrypted, 1) }
   finally { sql.close() }
   stalled.mock.restore()
   assert.equal((await finish(f)).complete, 1)
-  assert.equal((await f.stores.bundleStore.get(id, null)).length, 1024 * 1024)
+  assert.equal((await f.stores.reportStore.get(id)).length, 1024 * 1024)
 })
 
 test('Vercel previews cannot activate encryption but can validate an already enabled database', async t => {
@@ -831,6 +837,7 @@ test('a row interrupted after earlier progress gets one full-budget retry before
   const first = await report(f, Buffer.from('first'), '00000000-0000-0000-0000-000000000001')
   const second = await report(f, Buffer.from('second'), '00000000-0000-0000-0000-000000000002')
   await f.db.enableStorageEncryption()
+  const pending = await f.db.listStorageMigrationRows(null, 2)
   const open = f.raw.open.bind(f.raw)
   t.mock.method(f.raw, 'open', async (path, signal) => {
     if (path !== `reports/${second}`) return open(path, signal)
@@ -841,11 +848,12 @@ test('a row interrupted after earlier progress gets one full-budget retry before
     signal.throwIfAborted()
   })
   const result = await migrateStorage(f.raw, f.db, key, { maxMs: 100 })
-  assert.equal(result.cursor, `report:${first}`)
+  assert.equal(result.cursor, pending[0].position)
+  assert.equal(pending[0].id, first)
   assert.equal(result.complete, 0)
   const retry = await migrateStorage(f.raw, f.db, key, { maxMs: 25 })
   assert.equal(retry.failures[0].id, second)
-  assert.equal((await f.db.getStorageEncryption()).cursor, `report:${second}`)
+  assert.equal((await f.db.getStorageEncryption()).cursor, pending[1].position)
 })
 
 test('a delayed disabled policy response cannot undo a concurrently observed activation', async t => {

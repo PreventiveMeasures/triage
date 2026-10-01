@@ -105,7 +105,7 @@ only the observed version, preserving a concurrent encrypted replacement.
 
 ## Resumable migration
 
-Migration walks SQL rows by ID, independently of Blob listings. Each payload
+Migration walks pending SQL rows, independently of Blob listings. Each payload
 row has three states:
 
 | `data_key` | `storage_encrypted` | Meaning |
@@ -166,6 +166,10 @@ Each migration call processes at most 64 entries with a default 150-second work
 budget. Set `MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS` to adjust that budget:
 up to one hour on persistent servers, or 240 seconds on Vercel. The deployed
 function's duration must still allow the batch and remaining request work.
+Reports migrate first, then bundles, then GitHub tokens. Reports and bundles
+each sort by their recorded `byte_size`, smallest first, with ID breaking ties;
+token rows sort by ID. A saved cursor from the previous ordering restarts the
+pending pass without repeating completed rows.
 
 When time runs out after earlier rows have completed, the interrupted row stays
 pending and gets a full budget next batch; the batch returns progress normally.
@@ -182,6 +186,12 @@ including temporary files in the encrypted cache namespace. Progress is logged a
 `cursor`, `retryAt`, `failed` (rows in this batch) and `cancelled`. Once both
 completion flags are true the job is a no-op; the migration variable can be
 removed while retaining the key.
+Rows deferred because the object disappeared, changed version between reads,
+or rejected a conditional replacement emit `managed-storage-migration-row:`
+diagnostics too. These contain only the row type, opaque row ID and a short
+reason, without payloads, filenames, paths, hashes, ETags or key material.
+The rows remain pending and retry on the next pass without bypassing the
+version check.
 Temporary files left by later crashes are not swept after migration cleanup
 has completed; like encrypted orphan payloads, they can consume storage.
 

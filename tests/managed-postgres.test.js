@@ -5,7 +5,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
-import { checkStorageDb, storageTestKey } from './_managed-storage-db.js'
+import { checkStorageDb, checkStorageMigrationOrder, storageTestKey } from './_managed-storage-db.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
 import { reportReferenceSnapshot } from '../server-managed/management.ts'
@@ -66,6 +66,11 @@ async function database(t, options = {}) {
   return { db, connect, queries, faults }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+test('Postgres migration orders reports before bundles, smallest first, and resumes old cursors', async t => {
+  const { db } = await database(t, { storageEncryptionKey: storageTestKey })
+  await checkStorageMigrationOrder(db)
+})
 
 for (const failure of ['commit', 'release']) {
   test(`Postgres upload bytes survive ${failure} errors after commit, including retries`, async t => {

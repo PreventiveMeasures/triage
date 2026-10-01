@@ -81,6 +81,63 @@ for (const damage of ['missing', 'hash mismatch']) {
   })
 }
 
+for (const conflict of ['read version', 'conditional replacement']) {
+  test(`migration diagnoses repeated ${conflict} skips without exposing storage data`, async t => {
+    const { blobs, config, ids } = await legacyFixture(t)
+    const seed = await openManagedStorage({ ...config, storageEncryptionKey: null, storageEncryptionMigrate: false })
+    const body = Buffer.from('private bundle contents'), bundleId = randomUUID()
+    try {
+      await seed.bundleStore.put(bundleId, body, null)
+      await seed.db.insertBundle({ id: bundleId, filename: 'private-bundle-name', kind: null, byteSize: body.length,
+        integrity: `sha512-${createHash('sha512').update(body).digest('base64')}`, uploadedBy: null, repoId: null }, Date.now())
+      for (let i = 1; i <= 4; i++) {
+        const user = await seed.db.upsertUser({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null }, Date.now())
+        await seed.db.setUserTokens(user, { accessToken: 'private-access-token', refreshToken: 'private-refresh-token', expiresAt: null })
+      }
+    } finally { await seed.db.close() }
+    const operation = conflict === 'read version' ? 'get' : 'put'
+    const original = blobs.sdk[operation]
+    let reads = 0
+    const fault = t.mock.method(blobs.sdk, operation, async (...args) => {
+      if (operation === 'put' && args[2].ifMatch) throw new blobs.sdk.BlobPreconditionFailedError('private-provider-error')
+      const result = await original(...args)
+      if (operation === 'get' && result) result.blob.etag = `private-etag-${++reads}`
+      return result
+    })
+    const logs = [], warnings = []
+    t.mock.method(console, 'info', (...args) => logs.push(args))
+    t.mock.method(console, 'warn', (...args) => warnings.push(args))
+    const app = await createManagedApp(config), observer = await openManagedStorage(config)
+    try {
+      for (let batch = 0; batch < 2; batch++) {
+        await app.reap()
+        const progress = JSON.parse(logs.findLast(([label]) => label === 'managed-storage-migration:')[1])
+        assert.deepEqual(progress, { complete: false, cleanupComplete: true, migrated: 4, cursor: null, retryAt: null, failed: 3, cancelled: false })
+        const diagnostics = warnings.slice(batch * 3).map(([label, value]) => {
+          assert.equal(label, 'managed-storage-migration-row:')
+          return JSON.parse(value)
+        })
+        const message = conflict === 'read version' ? 'Payload disappeared or changed version before encryption'
+          : 'Conditional replacement rejected (object version precondition failed)'
+        assert.deepEqual(diagnostics, [...ids.map(id => ({ type: 'report', id, message })), { type: 'bundle', id: bundleId, message }])
+        // Exact field checks above and absence of provider/payload data below
+        // guard against adding ETags, paths, secrets or raw errors to warnings.
+        assert.doesNotMatch(JSON.stringify(warnings), /private-|\.managed\/|dataKey|sha512-|test_value/u)
+        for (const { type, id } of diagnostics) {
+          const row = await observer.db.getStorageRow(type, id)
+          assert.ok(row.dataKey)
+          assert.equal(row.encrypted, 0)
+        }
+      }
+      fault.mock.restore()
+      await app.reap()
+      assert.equal((await observer.db.getStorageEncryption()).complete, 1)
+      assert.equal((await observer.db.getStorageEncryption()).migrated, 7)
+      assert.deepEqual(await observer.bundleStore.get(bundleId, null), body)
+    } finally { await app.close(); await observer.db.close() }
+  })
+}
+
 for (const operation of ['get', 'put', 'list']) {
   test(`shutdown cancels migration ${operation} and a new instance resumes with the same data key`, { timeout: 5000 }, async t => {
     const { blobs, config, ids } = await legacyFixture(t)

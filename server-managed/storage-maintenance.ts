@@ -4,7 +4,7 @@ import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, 
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
 import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
 
-async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal) {
+async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal): Promise<string | void> {
   if (item.type === 'user') { await db.migrateStorageUserTokens(item.id); return }
   const row = await db.ensureStorageDataKey(item.type, item.id)
   if (!row || row.encrypted) return
@@ -26,7 +26,7 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
         // Legacy arbitrary bytes can share the magic prefix. A matching
         // original upload hash is required before encrypting them as plaintext.
         const legacy = await openObjectVersion(raw, identity, source.version, signal)
-        if (!legacy) return
+        if (!legacy) return 'Payload disappeared or changed version before plaintext verification'
         inspected = { ...legacy, encrypted: false }
       }
     }
@@ -34,12 +34,12 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
       await verifyStoragePayload(item.type, row, inspected.stream, signal)
       signal.throwIfAborted()
       const current = await openObjectVersion(raw, identity, source.version, signal)
-      if (!current) return
+      if (!current) return 'Payload disappeared or changed version before encryption'
       const encrypted = encryptStorageStream(current.stream, dataKey, identity, current.size)
       let replaced: boolean
       try { replaced = await raw.put(identity, encrypted, signal, source.version, current.size ?? undefined) }
       finally { encrypted.destroy(); current.stream.destroy() }
-      if (!replaced) return
+      if (!replaced) return 'Conditional replacement rejected (object version precondition failed)'
       // Do not mark the row encrypted until the stored bytes authenticate and
       // match the original upload (including decompression for sourcemaps).
       const replacement = await raw.open(identity, signal)
@@ -152,7 +152,10 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
     if (rows.length === 0) { await db.advanceStorageMigration(state.cursor, null); break }
     for (const row of rows) {
       if (Date.now() >= deadline || signal.aborted) break
-      try { await migrateRow(raw, db, key, row, signal) }
+      try {
+        const pending = await migrateRow(raw, db, key, row, signal)
+        if (pending) failures.push({ type: row.type, id: row.id, message: pending })
+      }
       catch (err) {
         // A row started late gets a full budget next time. Skip an oversized
         // first row until the next pass so later rows and tokens can advance.
