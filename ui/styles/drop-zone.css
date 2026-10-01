@@ -23,7 +23,7 @@
 
   & .drop-prompt { margin-block: auto; }
 }
-.local-scan-button, .managed-scan-button {
+.local-scan-button {
   position: absolute; right: 1.5rem; bottom: 1.5rem;
   align-items: center; gap: .4rem;
   display: inline-flex;
@@ -36,7 +36,6 @@
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 }
 #drop-zone[data-server-mode='managed'] > .local-scan-button { display: none; }
-#drop-zone[data-server-mode='managed']:has(.managed-scan-button) { padding-bottom: 5rem; }
 
 .landing-github-link {
   position: absolute; right: 1.5rem; bottom: 1.5rem;
@@ -195,6 +194,36 @@
   color: var(--muted); background: var(--surface);
   border: 1px solid var(--border); border-radius: 10px;
   font-size: .875rem;
+}
+
+.managed-content-links {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem;
+  margin-top: 1.25rem; padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.managed-content-card {
+  display: flex; align-items: center; gap: .625rem;
+  min-width: 0; padding: .75rem .875rem;
+  color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+  font: inherit; font-size: .875rem; font-weight: 600; text-align: left; cursor: default;
+  transition: background .12s, border-color .12s;
+
+  &:hover { background: var(--surface-active); border-color: var(--muted); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+
+.managed-content-icon {
+  display: grid; place-items: center; flex-shrink: 0;
+  width: 28px; height: 28px;
+  color: var(--muted); background: var(--surface-active); border-radius: 6px;
+
+  & svg { width: 18px; height: 18px; }
+}
+
+@container (width < 420px) {
+  .managed-content-links { grid-template-columns: 1fr; }
 }
 
 .managed-landing-actions {
