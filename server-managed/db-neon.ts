@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { WebSocket } from 'ws'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
+import { revisionSchema } from './revisions.ts'
 import { MANAGED_SCHEMA } from './db-schema.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
@@ -21,11 +22,19 @@ export interface PgConnection {
   release(): Promise<void>
 }
 export type PgConnect = () => Promise<PgConnection>
-// All managed writers cooperate on this transaction-scoped lock. Reads use a
-// consistent snapshot without taking it. Also protects concurrent cold starts.
+// Content/access mutations cooperate on this transaction-scoped lock. Reads,
+// presence updates, and maintenance leases do not take it. Also fences migrations.
 const LOCK = 'SELECT pg_advisory_xact_lock(1937006964, 1835101793)'
 
+async function currentSchema(db: PgConnection): Promise<boolean> {
+  const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
+  if (!exists) return false
+  const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
+  return Array.from({ length: 10 }, (_, i) => i + 1).every(version => versions.has(version))
+}
+
 async function initialize(db: PgConnection): Promise<void> {
+  if (await currentSchema(db)) return
   await db.query('BEGIN')
   try {
     await db.query(LOCK)
@@ -92,6 +101,10 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query('ALTER TABLE managed_user ADD COLUMN IF NOT EXISTS gh_tokens_encrypted INTEGER NOT NULL DEFAULT 0')
       await db.query('INSERT INTO managed_schema_version VALUES (9)')
     }
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 10')).rows.length === 0) {
+      await db.query(postgresSchema(revisionSchema(true)))
+      await db.query('INSERT INTO managed_schema_version VALUES (10)')
+    }
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')
@@ -116,10 +129,53 @@ async function createUploadTrigger(db: PgConnection, type: string, createTrigger
   }
 }
 
+function requestConnections(connect: PgConnect) {
+  const requests = new AsyncLocalStorage<{ connection?: PgConnection; queue: Promise<unknown>; ended: boolean }>()
+  async function withConnection<T>(work: (db: PgConnection) => Promise<T>): Promise<T> {
+    const request = requests.getStore()
+    if (!request || request.ended) {
+      const connection = await connect()
+      let result: T
+      try { result = await work(connection) }
+      catch (error) { await connection.release().catch(() => {}); throw error }
+      await connection.release()
+      return result
+    }
+    // Serialize transactions on the leased connection, never interleave BEGINs
+    // from concurrent Blob/catalog tasks. Remote Blob reads remain concurrent.
+    const result = request.queue.then(async () => {
+      const connection = request.connection ??= await connect()
+      try { return await work(connection) }
+      catch (error) {
+        delete request.connection
+        await connection.release().catch(() => {})
+        throw error
+      }
+    })
+    request.queue = result.catch(() => {})
+    return result
+  }
+  async function withRequest<T>(work: () => Promise<T>): Promise<T> {
+    if (requests.getStore()) return work()
+    const request: { connection?: PgConnection; queue: Promise<unknown>; ended: boolean } = { queue: Promise.resolve(), ended: false }
+    let failed = false
+    try { return await requests.run(request, work) }
+    catch (error) { failed = true; throw error }
+    finally {
+      request.ended = true
+      await request.queue
+      if (failed) await request.connection?.release().catch(() => {})
+      else await request.connection?.release()
+    }
+  }
+  return { withConnection, withRequest }
+}
+
 // Exposed for parity tests against real PostgreSQL semantics via PGlite.
-export async function openPostgresManagedDb(connect: PgConnect, options: ManagedDbOptions = {}): Promise<ManagedDb> {
+export async function openPostgresManagedDb(connect: PgConnect, options: ManagedDbOptions = {}, reuseConnections = false): Promise<ManagedDb> {
   const initial = await connect()
   try { await initialize(initial) } finally { await initial.release() }
+  const { withConnection, withRequest } = requestConnections(connect)
   const context = new AsyncLocalStorage<PgConnection>()
   let closed = false
   const driver: ManagedSqlDriver = {
@@ -150,43 +206,51 @@ export async function openPostgresManagedDb(connect: PgConnect, options: Managed
         run: async (...args) => ({ changes: (await query(args)).rowCount ?? 0 }),
       }
     },
-    async scope(write, work) {
+    async scope(write, work, { lock = write, statement = false } = {}) {
       if (closed) throw new Error('Managed database is closed')
-      const db = await connect()
-      let commitAttempted = false
-      let result
-      try {
-        await db.query(write ? 'BEGIN' : 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
-        if (write) await db.query(LOCK)
-        result = await context.run(db, work)
-        commitAttempted = true
-        await db.query('COMMIT')
-      } catch (err) {
-        await db.query('ROLLBACK').catch(() => {})
-        await db.release().catch(() => {})
-        if (write && commitAttempted) throw new Error('Managed commit outcome is uncertain', { cause: err })
-        throw err
+      let committed = false
+      try { return await withConnection(async db => {
+        if (statement) return context.run(db, work)
+        let commitAttempted = false
+        try {
+          await db.query(write ? 'BEGIN' : 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+          if (lock) await db.query(LOCK)
+          const result = await context.run(db, work)
+          commitAttempted = true
+          await db.query('COMMIT')
+          committed = true
+          return result
+        } catch (err) {
+          await db.query('ROLLBACK').catch(() => {})
+          if (write && commitAttempted) throw new Error('Managed commit outcome is uncertain', { cause: err })
+          throw err
+        }
+      }) } catch (error) {
+        if (write && committed) throw new Error('Managed commit outcome is uncertain', { cause: error })
+        throw error
       }
-      try { await db.release() }
-      catch (err) { if (write) throw new Error('Managed commit outcome is uncertain', { cause: err }); throw err }
-      return result
     },
     close() { closed = true },
   }
-  return scopeManagedMethods(createManagedMethods(driver, options), driver)
+  const methods = scopeManagedMethods(createManagedMethods(driver, options), driver)
+  if (reuseConnections) methods.withRequest = withRequest
+  return methods
 }
 
 export async function openNeonManagedDb(url: string, options: ManagedDbOptions = {}): Promise<ManagedDb> {
-  // Reuse the e2e optional-driver boundary. Each operation closes its socket
-  // before returning; no open connection has to survive a frozen invocation.
+  // Reuse the e2e optional-driver boundary. Requests lease one connection and
+  // close it before returning; no socket must survive a frozen invocation.
   const { Client, neonConfig } = await import('../server-e2e/neon-driver.ts') as unknown as {
-    Client: new (url: string) => { connect(): Promise<void>; end(): Promise<void>; query: PgConnection['query'] }
+    Client: new (url: string) => { connect(): Promise<void>; end(): Promise<void>; query: PgConnection['query']; on?(event: 'error', listener: (error: Error) => void): void }
     neonConfig: { webSocketConstructor: typeof WebSocket }
   }
   neonConfig.webSocketConstructor = WebSocket
   return openPostgresManagedDb(async () => {
     const client = new Client(url)
+    // A remote disconnect between operations must reject the next query, not
+    // become an unhandled EventEmitter error while the request is reading Blob.
+    client.on?.('error', () => {})
     try { await client.connect() } catch (err) { await client.end().catch(() => {}); throw err }
     return { query: (sql, params) => client.query(sql, params), release: () => client.end() }
-  }, options)
+  }, options, true)
 }

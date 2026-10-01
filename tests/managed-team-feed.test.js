@@ -412,3 +412,22 @@ test('session revocation during a catalog read prevents its early invalidation',
   await done
   assert.deepEqual(res.frames, ['event: close\ndata: {}\n\n'])
 })
+
+test('unchanged user feeds validate sessions with compact revisions without reloading catalogs or findings', async t => {
+  const h = await fixture(t)
+  let annotations = 0, catalogs = 0, checks = 0
+  for (const [method, count] of [
+    ['getFeedState', () => { checks++ }], ['getUserTeamFeedSnapshot', () => { catalogs++ }],
+    ['getAnnotationRevision', () => { annotations++ }],
+  ]) {
+    const original = h.db[method]
+    h.db[method] = (...args) => { count(); return original(...args) }
+  }
+  const { res } = await h.userFeed()
+  await until(() => checks >= 5)
+  assert.equal(catalogs, 1)
+  assert.equal(annotations, 1)
+  await h.writer.setTriage('visible', { color: 'blue' }, null, null, 20)
+  await until(() => triageEvents(res) === 2)
+  assert.equal(annotations, 2, 'another connection invalidates the next poll')
+})

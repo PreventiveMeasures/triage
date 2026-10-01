@@ -6,6 +6,7 @@ import { migrateSlugs } from './slugs.ts'
 import { migrateReportLocations } from './report-migration.ts'
 import { initCommentMethods } from './comments.ts'
 import { initActivityMethods } from './activity.ts'
+import { revisionSchema } from './revisions.ts'
 import { MANAGED_SCHEMA } from './db-schema.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
@@ -106,6 +107,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ensureColumn(db, 'managed_finding_triage_event', 'repo', 'TEXT')
     initCommentMethods(db)
     initActivityMethods(db)
+    db.exec(revisionSchema())
   } catch (err) {
     try { db.close() } catch {}
     throw err

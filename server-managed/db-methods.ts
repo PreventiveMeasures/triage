@@ -314,6 +314,11 @@ export interface UserTeam {
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
 export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, StorageDb {
+  claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
+  finishMaintenanceLease(owner: string, until: number): Promise<void>
+  getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
+  // Reuse connections only within the awaited request, including bounded feeds.
+  withRequest?<T>(work: () => Promise<T>): Promise<T>
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted login configuration. It
   // promotes a matching No access identity only while it is the sole user.
@@ -430,7 +435,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // bundles attached to that team's repos — for that user's own sidebar Teams section.
   // Any user; only their own memberships.
   listTeamsForUser(userId: string): Promise<UserTeam[]>
-  getUserTeamFeedSnapshot(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; revision: string } | null>
+  getUserTeamFeedSnapshot(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; revision: string; teams: UserTeam[]; catalog: number } | null>
   // Whether `userId` may read `reportId`: true iff the report's repo belongs to
   // a team the user is a member of. Backs the team-scoped report view endpoint.
   userCanReadReport(userId: string, reportId: string): Promise<boolean>
@@ -1046,7 +1051,7 @@ type TriageEventDbRow = TriageStateDbRow & {
 // current row is skipped altogether, so a client re-pushing what already
 // stands neither re-stamps the writer nor echoes into the trail. `historyLimit`
 // > 0 keeps only that many events per finding; 0 keeps everything.
-function triageMethods( stmts: ReturnType<typeof prepareStatements>, historyLimit: number) {
+function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit: number, db: ManagedSql) {
   const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt,
     deleteTriageStmt, deleteTriageHistoryStmt, deleteCommentsStmt, deleteCommentHistoryStmt, countAnnotationsStmt } = stmts
   async function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number, reportId: string | null = null): Promise<void> {
@@ -1112,7 +1117,43 @@ function triageMethods( stmts: ReturnType<typeof prepareStatements>, historyLimi
       // (and costs one fsync under synchronous = FULL, not one per row); one
       // batch id groups its rows in the trail.
       const batchId = randomUUID()
-      for (const [findingId, entry] of entries) await writeEntry(findingId, entry, batchId, updatedBy, updatedByLogin, now, reportId)
+      if (new Set(entries.map(([id]) => id)).size !== entries.length) {
+        // Preserve the ordered history of callers that supply repeated IDs.
+        for (const [id, entry] of entries) await writeEntry(id, entry, batchId, updatedBy, updatedByLogin, now, reportId)
+        return
+      }
+      const current = new Map((await selectTriageStmt.all(JSON.stringify(entries.map(([id]) => id))) as TriageDbRow[])
+        .map(row => [row.findingId, row]))
+      const changed = entries.flatMap(([id, entry]) => {
+        const e = entry ?? {}, previous = current.get(id)
+        const next = { color: e.color ?? null, triage: e.triage ?? null, comment: e.comment ?? null,
+          fix: e.fix ?? null, flagged: e.flagged == null ? null : e.flagged ? 1 : 0 }
+        if (previous && Object.entries(next).every(([key, value]) => previous[key as keyof TriageStateDbRow] === value)) return []
+        return [[id, next.color, next.triage, next.comment, next.fix, next.flagged]]
+      })
+      // Bound SQL parameters while keeping the entire batch/history atomic.
+      for (let offset = 0; offset < changed.length; offset += 200) {
+        const rows = changed.slice(offset, offset + 200), values = rows.flat()
+        const input = `WITH changes(finding_id, color, triage, comment, fix, flagged, ordinal) AS
+          (VALUES ${rows.map((_, index) => `(?, ?, ?, ?, ?, CAST(? AS INTEGER), ${index})`).join(',')})`
+        await db.prepare(`${input}
+          INSERT INTO managed_finding_triage (finding_id, color, triage, comment, fix, flagged, updated_by, updated_by_login, updated_at)
+          SELECT finding_id, color, triage, comment, fix, flagged, ?, ?, CAST(? AS BIGINT) FROM changes WHERE TRUE
+          ON CONFLICT(finding_id) DO UPDATE SET color = excluded.color, triage = excluded.triage,
+            comment = excluded.comment, fix = excluded.fix, flagged = excluded.flagged, updated_by = excluded.updated_by,
+            updated_by_login = excluded.updated_by_login, updated_at = excluded.updated_at`).run(...values, updatedBy, updatedByLogin, now)
+        await db.prepare(`${input}
+          INSERT INTO managed_finding_triage_event (finding_id, batch_id, color, triage, comment, fix, flagged, actor_id, actor_login, at, report_id, report, repo)
+          SELECT c.finding_id, ?, c.color, c.triage, c.comment, c.fix, c.flagged, ?, ?, CAST(? AS BIGINT), ?, r.filename, p.full_name
+          FROM changes c LEFT JOIN managed_report r ON r.id = ? LEFT JOIN managed_selected_repo p ON p.repo_id = r.repo_id ORDER BY c.ordinal`)
+          .run(...values, batchId, updatedBy, updatedByLogin, now, reportId ?? null, reportId ?? null)
+        if (historyLimit > 0) {
+          await db.prepare(`DELETE FROM managed_finding_triage_event WHERE seq IN (
+          SELECT seq FROM (SELECT seq, ROW_NUMBER() OVER (PARTITION BY finding_id ORDER BY seq DESC) AS position
+            FROM managed_finding_triage_event WHERE finding_id IN (SELECT value FROM json_each(?))) ranked WHERE position > ?)`)
+          .run(JSON.stringify(rows.map(row => row[0])), historyLimit)
+        }
+      }
     },
   }
 }
@@ -1195,7 +1236,7 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 // The team slice of ManagedDb. listTeams reads the three tables in full and
 // groups in JS (3 queries, not N+1) — fine for the handful of teams a managed
 // workspace has.
-function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
+function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql) {
   const {
     insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
     selectUserRepoScopesStmt, selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
@@ -1258,15 +1299,19 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
         bundles: bundlesByTeam.get(t.id) ?? [],
       }))
     },
+    async getFeedState(sessionId: string, now: number) {
+      const row = await db.prepare(`SELECT u.id, u.role, r.catalog, r.annotations FROM managed_session s
+        JOIN managed_user u ON u.id = s.user_id JOIN managed_change_revision r ON r.id = 1
+        WHERE s.id = ? AND s.expires_at > ?`).get(sessionId, now) as { id: string; role: Role; catalog: number; annotations: number } | undefined
+      return row ? { user: { id: row.id, role: row.role }, catalog: row.catalog, annotations: row.annotations } : null
+    },
     async getUserTeamFeedSnapshot(sessionId: string, now: number) {
       // One short read-only transaction, shared by SQLite and Postgres. Never
       // touch last-seen timestamps or include other users' memberships.
-      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
-      if (!session) return null
-      const teams = session.role === 'none' ? [] : await methods.listTeamsForUser(session.uid)
-      return { user: { id: session.uid, role: session.role },
-        revision: teamCatalogRevision(teams),
-      }
+      const state = await methods.getFeedState(sessionId, now)
+      if (!state) return null
+      const teams = state.user.role === 'none' ? [] : await methods.listTeamsForUser(state.user.id)
+      return { user: state.user, catalog: state.catalog, teams, revision: teamCatalogRevision(teams) }
     },
     async userCanReadReport(userId: string, reportId: string): Promise<boolean> {
       return (await selectReportReadableStmt.get(reportId, userId)) != null
@@ -1331,7 +1376,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const activity = activityMethods(db)
   const stmts = prepareStatements(db)
   const reports = reportMethods(stmts, db, key)
-  const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0)
+  const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0, db)
   const {
     upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
@@ -1339,6 +1384,14 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
 
   const methods: Omit<ManagedDb, keyof ManagementStore> = {
     ...storageMethods(db, key),
+    async claimMaintenanceLease(owner, now, until, migration = false) {
+      return !!await db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
+        WHERE managed_maintenance_lease.expires_at <= ? RETURNING id`).get(migration ? 2 : 1, owner, until, now)
+    },
+    async finishMaintenanceLease(owner, until) {
+      await db.prepare('UPDATE managed_maintenance_lease SET expires_at = ? WHERE owner = ?').run(until, owner)
+    },
     async upsertUser(user, now, initialAdminGithubId = null) {
       // New row → a fresh id; ON CONFLICT(github_user_id) keeps an existing
       // user's id (DO UPDATE leaves it untouched), so re-read to return it.
@@ -1406,7 +1459,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...triage,
     ...importTriageMethods({ getReport: reports.getReport, ...triage, ...comments }),
     ...bundleMethods(stmts, db, key),
-    ...teamMethods(stmts),
+    ...teamMethods(stmts, db),
     async close() {
       await db.close()
     },

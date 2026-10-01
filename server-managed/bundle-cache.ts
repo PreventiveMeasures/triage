@@ -11,6 +11,7 @@ import type { OpenedBlob } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
+import { CacheMissError } from './cache-storage.ts'
 import { SUMMARY_FILENAME, createBundleSummaryCache } from './bundle-summary-cache.ts'
 
 const decompress = promisify(brotliDecompress)
@@ -112,6 +113,12 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
     pending.set(record.id, job)
     try { await job } finally { if (pending.get(record.id) === job) pending.delete(record.id) }
   }
+  async function openCached(record: BundleCacheRecord, file: string) {
+    try { return await storage.open(record.id, file) }
+    catch (error) { if (!(error instanceof CacheMissError)) throw error }
+    await ensure(record)
+    return storage.open(record.id, file)
+  }
   return {
     prebuild: ensure,
     summary: summaries.summary,
@@ -124,13 +131,11 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
         if (!stored) throw new Error('Bundle bytes unavailable')
         return stored
       }
-      await ensure(record)
-      return storage.open(record.id, filename)
+      return openCached(record, filename)
     },
     async packageVersions(record: ManagedBundle, reason = ''): Promise<Record<string, string[]> | null | undefined> {
       if (record.kind !== 'stasis') return {}
-      await ensure(record)
-      const cached = await storage.open(record.id, packagesFilename)
+      const cached = await openCached(record, packagesFilename)
       try {
         if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) return null
         const chunks: Buffer[] = []

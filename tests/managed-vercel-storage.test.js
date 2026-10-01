@@ -383,3 +383,33 @@ test('a second Blob-backed instance reads the bounded package inventory without 
   await cold.delete(id)
   assert.equal([...objects.keys()].some(key => key.includes('/cache/')), false)
 })
+
+test('encrypted metadata hits need one row lookup and GET, without HEADs or an unrelated inventory', async t => {
+  const { sdk, calls } = sdkFixture()
+  const key = parseStorageKey(Buffer.alloc(32, 123).toString('base64'))
+  const db = openSqliteManagedDb(':memory:', { storageEncryptionKey: key })
+  t.after(() => db.close())
+  await db.enableStorageEncryption()
+  const raw = await openVercelObjectStorage('secret', sdk)
+  const objects = await createEncryptedObjectStorage(raw, db, key), storage = createManagedStores(objects, false)
+  const bytes = Buffer.from('source bytes'), id = randomUUID()
+  const dataKey = await storage.bundleStore.put(id, bytes, 'stasis')
+  await db.insertBundle({ id, filename: 'bundle.stasis', integrity: 'sha512-test', kind: 'stasis', byteSize: bytes.length,
+    uploadedBy: null, repoId: null, dataKey }, 1)
+  await storage.cacheStorage.put(id, 'v2-metadata.json.br', Buffer.from('already cached'))
+  const record = await db.getBundle(id)
+  const cache = createBundleCache(storage.cacheStorage, db, {
+    get() { throw new Error('metadata hits must not decode the bundle to create package inventory') },
+  })
+  const original = db.getStorageRow
+  let rowReads = 0
+  db.getStorageRow = (...args) => { rowReads++; return original(...args) }
+  calls.length = 0
+  assert.equal((await consume(await cache.open(record, 'metadata'))).toString(), 'already cached')
+  assert.equal(rowReads, 1)
+  assert.deepEqual(calls.map(call => call.op), ['get'])
+  const get = sdk.get
+  sdk.get = () => { throw new Error('storage outage') }
+  await assert.rejects(cache.open(record, 'metadata'), /storage outage/u)
+  sdk.get = get
+})

@@ -1,6 +1,10 @@
 import type { Buffer } from 'node:buffer'
 import type { OpenedBlob } from './blob-store.ts'
 
+export class CacheMissError extends Error {
+  constructor() { super('Managed cache unavailable') }
+}
+
 // Keys are internal relative paths; delete removes a whole directory of variants.
 export interface CacheStorage {
   exists(key: string): Promise<boolean>

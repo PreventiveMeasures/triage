@@ -54,7 +54,6 @@ import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import { teamCatalogRevision } from './team-catalog.ts'
 import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
@@ -1300,17 +1299,22 @@ async function adminMutation(req: IncomingMessage, res: ServerResponse, deps: Ma
 // GET /api/teams — the CURRENT user's teams, each with the reports and bundles
 // attached to the team's repos, for the sidebar's per-user Teams section. Any approved
 // user (not just admin|manage); a user only ever sees their own teams.
-async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  let s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const summaries = await bundleSummaries(s.user.role === 'none' ? [] : (await deps.db.listTeamsForUser(s.user.id)).flatMap(team => team.bundles), deps.bundleCache)
-  s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const teams = s.user.role === 'none' ? [] : await deps.db.listTeamsForUser(s.user.id)
+async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession): Promise<void> {
+  let snapshot = await deps.db.getUserTeamFeedSnapshot(session.id, Date.now())
+  if (!snapshot) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const summaries = await bundleSummaries(snapshot.teams.flatMap(team => team.bundles), deps.bundleCache)
+  const current = await deps.db.getFeedState(session.id, Date.now())
+  if (!current) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  // Keep the post-storage authorization fence, but reload the catalog only
+  // when a concurrent mutation actually invalidated its consistent snapshot.
+  if (current.user.id !== snapshot.user.id || current.user.role !== snapshot.user.role || current.catalog !== snapshot.catalog) {
+    snapshot = await deps.db.getUserTeamFeedSnapshot(session.id, Date.now())
+    if (!snapshot) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  }
+  const { teams, revision } = snapshot
   sendJson(res, 200, {
     teams: teams.map(team => ({ ...team, bundles: team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })) })),
-    // Derivatives do not change the catalog revision used by the live feed.
-    revision: teamCatalogRevision(teams),
+    revision,
   })
   await backfillBundleSummaries(teams.flatMap(team => team.bundles), deps.bundleCache)
 }
@@ -1498,12 +1502,10 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
 
 // The server selects the complete workspace; clients cannot omit a report
 // or links file to evade classification through the rest of their team.
-async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<void> {
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
+async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, teamId: string): Promise<void> {
+  const snapshot = await teamSnapshot(deps.db, session.id, teamId)
   const reports = await loadTeamReports(deps.db, deps.reportStore, snapshot)
-  await recheckTeam(deps.db, s.session.id, snapshot)
+  await recheckTeam(deps.db, session.id, snapshot)
   const parts = [Buffer.from('{"reports":[')]
   for (const [index, report] of reports.entries()) parts.push(Buffer.from(`${index ? ',' : ''}${JSON.stringify(report)}`))
   parts.push(Buffer.from(']}'))
@@ -2011,7 +2013,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // every managed data route before reading bodies or looking up resources.
     const managedDataPath = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
       .some(prefix => path === prefix || path.startsWith(prefix + '/'))
-    if (managedDataPath && await readWorkspaceSession(res, deps, cookie) == null) return
+    const workspaceSession = managedDataPath ? await readWorkspaceSession(res, deps, cookie) : null
+    if (managedDataPath && !workspaceSession) return
     const issueRoute = /^\/api\/teams\/([^/]+)\/issues$/u.exec(path)
     if (issueRoute) {
       await handleWorkspaceIssue(req, res, deps, cookie, decodeURIComponent(issueRoute[1]!), url.searchParams); return
@@ -2158,7 +2161,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const teamReports = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
     if (teamReports) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleTeamReports(res, deps, cookie, teamReports[1]!); return
+      await handleTeamReports(res, deps, workspaceSession!.session, teamReports[1]!); return
     }
     if (path === '/api/reports/query') {
       if (method !== 'POST') { send405(res, 'POST'); return }
@@ -2196,7 +2199,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // The signed-in user's own team memberships (any approved user).
     if (path === MY_TEAMS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleMyTeams(res, deps, cookie); return
+      await handleMyTeams(res, deps, workspaceSession!.session); return
     }
     // Teams: list / create on the exact path; the link mutations are POST-only
     // action sub-paths (each carries its ids in the JSON body).
@@ -2223,7 +2226,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
 
   return (req, res) => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
-    const work = route(req, res).catch((err) => {
+    const work = (db.withRequest ? db.withRequest(() => route(req, res)) : route(req, res)).catch((err) => {
       if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError || err instanceof ManagedMutationError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)
       if (res.headersSent) { try { res.destroy() } catch {} }

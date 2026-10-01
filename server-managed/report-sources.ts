@@ -7,7 +7,7 @@ import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleSourceImports } from '../common/bundle-source-links.js'
 import { loadManagedFindings, managedFindingSourcePaths } from '../common/managed/report-content.ts'
 import { type ViewerPermissions, filterReportContent } from '../common/managed/report-filter.ts'
-import type { CacheStorage } from './cache-storage.ts'
+import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import { readBundleDetails } from './bundle-cache.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -128,6 +128,8 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, sourcePaths?: Set<string>) {
       const repo = { github: (await db.listAllRepos()).find(entry => entry.repoId === report.repoId)?.fullName ?? null }
       const target = sourceCacheFilename(report, bundle, permissions, repo, sourcePaths)
+      try { return { ...await storage.open(target), repo } }
+      catch (error) { if (!(error instanceof CacheMissError)) throw error }
       if (!(await ensure(target, report, bundle, permissions, repo, sourcePaths))) return null
       const opened = await storage.open(target)
       return { ...opened, repo }
