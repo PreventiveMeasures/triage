@@ -198,7 +198,9 @@ export function registerWorkspaceImport(ManagedPage, request) {
         <h1>Import</h1>
         <section class="triage-import" aria-label="Local triage">
           <button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalTriage()}>Import triage</button>
-          <p>Import saved triage and comments for findings already in managed reports. Unmatched data stays in this browser. Conflicting values prompt for resolution; per-report ignores are skipped.</p>
+          <p>Import saved triage and comments for findings already in managed reports.<br>
+          Unmatched data stays in this browser.<br>
+          Conflicting values prompt for resolution; per-report ignores are skipped.</p>
         </section>
         <h2>Import workspace</h2><p class="intro">Create a new team from a workspace export or a workspace stored in this browser.</p>
         <section class=${`workspace-drop ${this._drag ? 'dragging' : ''}`} aria-label="Workspace files">
