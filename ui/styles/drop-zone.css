@@ -215,11 +215,36 @@
 }
 
 .managed-content-icon {
+  --panel: color-mix(in srgb, var(--bg) 50%, var(--surface));
+
   display: grid; place-items: center; flex-shrink: 0;
   width: 28px; height: 28px;
-  color: var(--muted); background: var(--surface-active); border-radius: 6px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border)); border-radius: 6px;
 
   & svg { width: 18px; height: 18px; }
+}
+
+.managed-content-card[data-managed-page='manage-bundles'] .managed-content-icon {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 18%, var(--border));
+  background: color-mix(in srgb, var(--green) 6%, var(--panel));
+}
+
+.managed-content-card[data-managed-page='manage-scans'] .managed-content-icon {
+  color: var(--scan-icon-color, var(--yellow));
+  border-color: color-mix(in srgb, var(--scan-icon-color, var(--yellow)) 18%, var(--border));
+  background: color-mix(in srgb, var(--scan-icon-color, var(--yellow)) 6%, var(--panel));
+}
+
+body.theme-light .managed-content-card[data-managed-page='manage-scans'] .managed-content-icon {
+  --scan-icon-color: #bf8700;
+}
+
+body:is(.theme-green, .theme-pink) .managed-content-card .managed-content-icon {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
 
 @container (width < 420px) {
