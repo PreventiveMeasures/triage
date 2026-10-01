@@ -114,7 +114,7 @@ export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageD
       return (await storageState(db, key))!
     },
     getStorageEncryption: () => storageState(db, key),
-    async getStorageRow(type, id) { await storageState(db, key); return getRow(type, id) },
+    getStorageRow: getRow,
     async ensureStorageDataKey(type, id) {
       await requireEnabled()
       const current = await getRow(type, id)

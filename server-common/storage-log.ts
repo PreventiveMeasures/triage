@@ -25,8 +25,8 @@ export function managedStorageLines(config: DatabaseConfig & { storageEncryption
   return [
     `  Managed database: ${databaseLocation(config)}`,
     ...(config.storageEncryptionKey ? [
-      `  Managed encrypted objects: ${location('encrypted-v1')} (ChaCha20-Poly1305)`,
-      '  Managed legacy locations (until migration completes):',
+      '  Managed storage encryption: ChaCha20-Poly1305',
+      `  Managed encrypted caches: ${location('cache-encrypted-v1')}`,
     ] : []),
     `  Managed reports: ${location('reports')}`,
     `  Managed bundles: ${location('bundles')}`,

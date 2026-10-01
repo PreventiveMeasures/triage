@@ -36,6 +36,11 @@ payloads. Access to both the SQL keys and master key permits decryption;
 control of the running managed server or its deployment environment does too.
 Provider encryption at rest remains a separate outer layer.
 
+Processes cache a validated enabled policy, but recheck disabled state so they
+notice another instance enabling encryption. Owned reads still load the current
+SQL data key. Existence and version checks use object metadata; opening a
+payload authenticates its contents.
+
 ## Enable encryption at startup
 
 1. Back up the database and byte store together; retain the master key separately.
@@ -46,30 +51,35 @@ Provider encryption at rest remains a separate outer layer.
    restart or redeploy. The first startup with the key enables encryption in
    the shared database before serving requests. New uploads, cache writes,
    upload parts and GitHub tokens are encrypted immediately.
-4. Run migration, or let scheduled maintenance process bounded batches.
+4. Set `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1` and restart or redeploy to migrate
+   existing data through bounded maintenance batches. Leave it unset to pause
+   migration; new writes remain encrypted either way.
 
 ```sh
 node server-managed/cli.js --storage-encryption-status
-node server-managed/cli.js --migrate-storage
 ```
 
-The installed `triage-managed-server` accepts the same flags. Supply the usual
+The installed `triage-managed-server` accepts the same status flag. Supply the usual
 managed server configuration; these commands do not start an HTTP listener.
-Like server startup, both commands enable encryption if a key is configured.
+Like server startup, the status command enables encryption if a key is configured.
 Without a key, a database that has never enabled encryption stays plaintext.
 Enabling saves a wrapped test value in `managed_storage_encryption`. Every
 startup checks it, and storage/token operations check the requirement again.
 Concurrent starts reuse this value and must present the same key. A missing
 or incorrect key fails closed after encryption is enabled. Removing or changing
 the master key and reverting to an older binary are unsupported after activation.
+Vercel previews (`VERCEL_ENV=preview`) never create the installation marker:
+with a configured key they require encryption to have been enabled outside a
+preview first. They validate the existing marker with the same key.
 
 On Vercel, configure the key and redeploy. The first function invocation that
 opens managed storage enables encryption in Neon; subsequent cold starts
 validate the same key. No activation command or shell inside Vercel is needed.
-The scheduled `/api/reap` migrates existing data in bounded batches. To run
-migration sooner, use the CLI from a trusted workstation or CI job with the
-production database URL, Blob token and same key. Startup itself does not scan
-or rewrite existing payloads, so it does not wait for migration to finish.
+With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, the first ordinary managed request,
+subsequent automatic maintenance and authenticated `/api/reap` run migration
+batches. Startup itself does not scan or rewrite existing payloads. The normal
+response proceeds alongside maintenance, and the triggering invocation awaits
+both; no background job has to survive a Vercel response.
 
 New uploads receive a random data key. The server encrypts the file at its
 usual path, then inserts the row with the wrapped key and an encrypted flag.
@@ -124,18 +134,33 @@ by stray files. Old upload parts remain readable during the activation grace
 period of 24 hours and are removed by the normal staging sweep; expiry is not
 an assurance of physical deletion at exactly 24 hours.
 
-Maintenance runs through managed `reap()`, including authenticated
-`GET /api/reap`. Each migration call processes at most 64 entries with a
-150-second work budget. Persistent servers schedule cleanup; Vercel's supplied
-cron runs daily. The CLI repeats batches until both completion flags are true.
-If cleanup finds a recent temporary file, it exits with `cleanupComplete: false`
-and `retryAt` (Unix milliseconds) rather than spinning through the 24-hour staging
-grace period. Run it again after that time, or let scheduled maintenance resume.
-All work is awaited; no background promise must survive a Vercel response. The
-work budget cancels Blob reads, writes, listings and deletes, as well as payload
-verification and decompression. Provider/database timeouts still apply; an
-in-flight database operation is not cancelled by that signal. A single object
-must fit the transfer budget; persistent failures require investigation and a rerun.
+Migration requires `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1` and the configured
+key. It runs through managed `reap()`, including authenticated `GET /api/reap`.
+Ordinary traffic triggers maintenance on the first request per instance, then
+hourly (one-minute retry backoff after failures). Persistent servers also run
+an hourly timer; Vercel's supplied optional cron runs daily when traffic is idle.
+Each migration call processes at most 64 entries with a default 150-second work
+budget. Set `MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS` to adjust that budget:
+up to one hour on persistent servers, or 240 seconds on Vercel. The deployed
+function's duration must still allow the batch and remaining request work.
+
+Exhausting the batch's time budget returns saved progress normally, leaving
+an interrupted row pending for the next batch. Genuine storage failures remain
+errors. If cleanup finds a recent temporary file, it returns
+`cleanupComplete: false` and `retryAt` (Unix milliseconds) without spinning
+through the 24-hour staging grace period. Progress is logged as
+`managed-storage-migration:` with `complete`, `cleanupComplete`, `migrated`,
+`cursor` and `retryAt`. Once both completion flags are true the job is a no-op;
+the migration variable can be removed while retaining the key.
+
+The work budget cancels Blob reads, writes, listings and deletes, as well as
+payload verification and decompression. Provider/database timeouts still apply;
+an in-flight database operation is not cancelled by that signal. A single object
+must fit the transfer budget; increase the budget for objects that repeatedly
+exhaust it. Disk inventories skip and log unsupported names and symlinks without
+following them. Directory fsync is used where supported; on unsupported
+filesystems, file fsync and atomic rename remain, but directory durability
+depends on the filesystem.
 
 ## Layout, deletion and recovery
 

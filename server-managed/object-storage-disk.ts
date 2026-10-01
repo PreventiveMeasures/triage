@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, rename, rm, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { type ObjectPage, type RawObjectStorage, objectPath } from './object-storage.ts'
 
@@ -9,8 +9,14 @@ function version(info: { dev: number; ino: number; size: number; mtimeMs: number
 }
 
 async function syncDirectory(dir: string): Promise<void> {
-  const directory = await open(dir, 'r')
-  try { await directory.sync() } finally { await directory.close() }
+  try {
+    const directory = await open(dir, 'r')
+    try { await directory.sync() } finally { await directory.close() }
+  } catch (err) {
+    // Windows and some mounted filesystems cannot open/fsync directories.
+    // Preserve real I/O failures; file fsync remains mandatory on every write.
+    if (!['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EISDIR', 'EBADF', 'EPERM'].includes((err as NodeJS.ErrnoException).code ?? '')) throw err
+  }
 }
 
 // Keyset pagination survives concurrent file creation/deletion. A final sweep
@@ -20,14 +26,25 @@ async function listFiles(dir: string, prefix: string, cursor: string | null, lim
   async function visit(key: string): Promise<void> {
     signal?.throwIfAborted()
     let entries
-    try { entries = await readdir(join(dir, key), { withFileTypes: true }) }
+    try {
+      if (!(await lstat(join(dir, key))).isDirectory()) {
+        console.warn('managed-storage: skipping unsupported directory', JSON.stringify(key))
+        return
+      }
+      entries = await readdir(join(dir, key), { withFileTypes: true })
+    }
     catch (err) { if (missing(err)) return; throw err }
     const order = (entry: typeof entries[number]) => `${entry.name}${entry.isDirectory() ? '/' : ''}`
     entries.sort((a, b) => order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0)
     for (const entry of entries) {
       signal?.throwIfAborted()
       const child = `${key}${entry.name}`
-      if (entry.isSymbolicLink()) throw new Error('Symlinks are not supported in managed object storage')
+      if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+        console.warn('managed-storage: skipping unsupported entry', JSON.stringify(child))
+        continue
+      }
+      try { objectPath(child) }
+      catch { console.warn('managed-storage: skipping invalid entry', JSON.stringify(child)); continue }
       if (entry.isDirectory()) {
         const folder = `${child}/`
         if (cursor && folder < cursor && !cursor.startsWith(folder)) continue
@@ -43,7 +60,7 @@ async function listFiles(dir: string, prefix: string, cursor: string | null, lim
     // Another migration worker can observe an unlink before its writer has
     // synced the directory. Persist those observed removals before an empty
     // inventory can mark the shared migration complete.
-    await syncDirectory(join(dir, key))
+    try { await syncDirectory(join(dir, key)) } catch (err) { if (!missing(err)) throw err }
   }
   if (!prefix.endsWith('/') || !Number.isInteger(limit) || limit < 1) throw new Error('Invalid storage page')
   objectPath(`${prefix}validate`)
@@ -54,6 +71,13 @@ async function listFiles(dir: string, prefix: string, cursor: string | null, lim
 export function createDiskObjectStorage(dir: string): RawObjectStorage {
   const path = (key: string) => join(dir, objectPath(key))
   return {
+    async head(key, signal) {
+      signal?.throwIfAborted()
+      try {
+        const info = await stat(path(key))
+        return { size: info.size, version: version(info), modifiedAt: info.mtimeMs }
+      } catch (err) { if (missing(err)) return null; throw err }
+    },
     async open(key, signal) {
       signal?.throwIfAborted()
       let file
@@ -101,6 +125,23 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
       } catch (err) { if (missing(err)) return true; throw err }
     },
     async sync(key, signal) { signal?.throwIfAborted(); await syncDirectory(dirname(path(key))) },
+    async prune(prefix, signal) {
+      if (!prefix.endsWith('/')) throw new Error('Invalid storage prefix')
+      objectPath(`${prefix}validate`)
+      async function visit(folder: string): Promise<void> {
+        signal?.throwIfAborted()
+        let entries
+        try {
+          if (!(await lstat(folder)).isDirectory()) return
+          entries = await readdir(folder, { withFileTypes: true })
+        }
+        catch (err) { if (missing(err)) return; throw err }
+        for (const entry of entries) if (entry.isDirectory()) await visit(join(folder, entry.name))
+        try { await rmdir(folder); await syncDirectory(dirname(folder)) }
+        catch (err) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((err as NodeJS.ErrnoException).code ?? '')) throw err }
+      }
+      await visit(join(dir, prefix))
+    },
     list: (prefix, cursor, limit, signal) => listFiles(dir, prefix, cursor, limit, signal),
   }
 }

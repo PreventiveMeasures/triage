@@ -125,8 +125,9 @@ The response proceeds alongside cleanup, and the triggering invocation awaits
 both; concurrent requests share the sweep. Results and failures are logged as
 `managed-reaper:` under the triggering request. Persistent servers also have an
 hourly timer; serverless instances need traffic or the optional cron when idle.
-When encryption is enabled, maintenance also migrates plaintext and collects
-unreferenced ciphertext at least 24 hours old.
+With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, maintenance also migrates referenced
+plaintext and removes legacy caches and orphan plaintext. It does not collect
+encrypted orphan report/bundle files; those no longer have a live SQL data key.
 
 E2e commits and reaping are designed for concurrent instances: version updates
 use database compare-and-set operations; cleanup rechecks live references and

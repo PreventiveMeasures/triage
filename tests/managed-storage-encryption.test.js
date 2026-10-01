@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, readFile, rm, utimes } from 'node:fs/promises'
+import { mkdir, mkdtemp, open as openFile, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -105,6 +105,10 @@ test('startup with a key encrypts new writes before legacy migration and require
       await assert.rejects(openManagedStorage({ dbPath: f.dbPath, storageEncryptionKey }), /encryption key/u)
     }
     await enabled.reapStorage()
+    assert.equal((await enabled.storageEncryptionStatus()).migrated, 0, 'maintenance leaves legacy data alone without the migration switch')
+    await reopened.db.close()
+    reopened = await openManagedStorage({ ...config, storageEncryptionMigrate: true })
+    await reopened.reapStorage()
     assert.equal((await enabled.storageEncryptionStatus()).complete, 1)
     assert.equal((await enabled.storageEncryptionStatus()).migrated, 1, 'maintenance only migrates the legacy upload')
     assert.equal((await bytes(f.raw, `reports/${legacy}`)).subarray(0, 16).toString(), 'DeepView.storage')
@@ -318,32 +322,40 @@ test('encryption streams a generated 115 MiB payload with bounded input read-ahe
   assert.equal(opened.size, size)
 })
 
-test('CLI startup enables encryption with a key and migration is restartable without a listener', async t => {
+test('CLI reports status while environment-enabled maintenance resumes deferred cleanup', async t => {
   const f = await fixture(t), id = await report(f)
   const abandoned = `reports/${id}.${randomUUID()}.tmp`
   await f.raw.put(abandoned, Buffer.from('unfinished plaintext write'))
   const run = async (flag, storageEncryptionKey = key.bytes.toString('base64')) => {
     const { stdout } = await promisify(execFile)(process.execPath, ['server-managed/cli.js', flag], {
       cwd: process.cwd(), timeout: 10_000, env: { ...process.env, MANAGED_DB_PATH: f.dbPath, MANAGED_STORAGE_ENCRYPTION_KEY: storageEncryptionKey,
+        MANAGED_STORAGE_ENCRYPTION_MIGRATE: '', VERCEL_ENV: '',
         DATABASE_URL: '', MANAGED_DATABASE_URL: '', E2E_DATABASE_URL: '', VERCEL: '',
         GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', OAUTH_CALLBACK_URL: 'https://app.example/api/oauth/github/callback' },
     })
     return JSON.parse(stdout.trim().split('\n').at(-1))
   }
   assert.deepEqual(await run('--storage-encryption-status', ''), { encryption: 'disabled' })
-  await assert.rejects(run('--migrate-storage', ''), /MANAGED_STORAGE_ENCRYPTION_KEY/u)
+  await assert.rejects(run('--migrate-storage'), /Unknown command/u)
   await assert.rejects(run('--unsupported'), /Unknown command/u)
   assert.equal((await run('--storage-encryption-status')).complete, false)
   await assert.rejects(run('--storage-encryption-status', ''), /encryption key/u)
-  const paused = await run('--migrate-storage')
-  assert.equal(paused.complete, true)
-  assert.equal(paused.cleanupComplete, false)
-  assert.ok(paused.retryAt > Date.now(), 'deferred cleanup exits with a retry time instead of busy-looping')
-  await utimes(join(f.dir, abandoned), new Date(0), new Date(0))
-  const final = await run('--migrate-storage')
-  assert.equal(final.complete, true); assert.equal(final.cleanupComplete, true)
-  assert.equal(await f.raw.exists(abandoned), false)
-  assert.equal((await readFile(join(f.dir, 'reports', id))).subarray(0, 16).toString(), 'DeepView.storage')
+  const logs = []
+  t.mock.method(console, 'info', (_label, result) => logs.push(JSON.parse(result)))
+  const storage = await openManagedStorage({ dbPath: f.dbPath, storageEncryptionKey: key.bytes.toString('base64'), storageEncryptionMigrate: true })
+  try {
+    await storage.reapStorage()
+    const paused = logs.at(-1)
+    assert.equal(paused.complete, true)
+    assert.equal(paused.cleanupComplete, false)
+    assert.ok(paused.retryAt > Date.now(), 'deferred cleanup exits with a retry time instead of busy-looping')
+    await utimes(join(f.dir, abandoned), new Date(0), new Date(0))
+    await storage.reapStorage()
+    const final = logs.at(-1)
+    assert.equal(final.complete, true); assert.equal(final.cleanupComplete, true)
+    assert.equal(await f.raw.exists(abandoned), false)
+    assert.equal((await readFile(join(f.dir, 'reports', id))).subarray(0, 16).toString(), 'DeepView.storage')
+  } finally { await storage.db.close() }
 })
 
 test('a reader that loaded a legacy row retries if migration replaces its file before open', async t => {
@@ -478,10 +490,7 @@ test('migration deadline aborts a stalled Vercel inventory request without compl
     })
     options.abortSignal.throwIfAborted()
   })
-  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 100 }), err => {
-    assert.equal(err.cause.name, 'TimeoutError')
-    return true
-  })
+  assert.equal((await migrateStorage(f.raw, f.db, key, { maxMs: 100 })).cleanupComplete, 0)
   assert.equal((await f.db.getStorageEncryption()).cleanupComplete, 0)
 })
 
@@ -507,10 +516,7 @@ test('migration deadline aborts Vercel cleanup deletion without completing the i
     })
     options.abortSignal.throwIfAborted()
   })
-  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 100 }), err => {
-    assert.equal(err.cause.name, 'TimeoutError')
-    return true
-  })
+  assert.equal((await migrateStorage(f.raw, f.db, key, { maxMs: 100 })).cleanupComplete, 0)
   assert.equal((await f.db.getStorageEncryption()).cleanupComplete, 0)
   t.mock.restoreAll()
   await finish(f)
@@ -537,4 +543,111 @@ test('Vercel open cancels a response rejected for a missing object version', asy
   }))
   await assert.rejects(f.raw.open(`reports/${randomUUID()}`), /missing object version/u)
   assert.equal(cancelled, true)
+})
+
+test('disk cleanup skips stray names and symlinks while removing supported plaintext', async t => {
+  const f = await fixture(t)
+  const warnings = []
+  t.mock.method(console, 'warn', (...args) => warnings.push(args.join(' ')))
+  await f.raw.put('cache/old/value', Buffer.from('legacy source code'))
+  await mkdir(join(f.dir, 'cache', '.hidden'))
+  await writeFile(join(f.dir, 'cache', '.DS_Store'), 'stray metadata')
+  await writeFile(join(f.dir, 'outside'), 'must survive')
+  await symlink(join(f.dir, 'outside'), join(f.dir, 'cache', 'linked-source'))
+  const id = await report(f)
+  await f.db.enableStorageEncryption()
+  const result = await finish(f)
+  assert.equal(result.complete, 1)
+  assert.equal(result.cleanupComplete, 1)
+  assert.equal(await f.raw.exists('cache/old/value'), false)
+  assert.equal((await f.stores.reportStore.get(id)).toString(), 'private report')
+  assert.equal(await readFile(join(f.dir, 'outside'), 'utf8'), 'must survive')
+  for (const name of ['.DS_Store', '.hidden', 'linked-source']) assert.ok(warnings.some(line => line.includes(name)))
+})
+
+test('unsupported directory fsync permits disk writes, cleanup and migration; real I/O failures still fail', async t => {
+  const f = await fixture(t)
+  const directory = await openFile(f.dir, 'r'), prototype = Object.getPrototypeOf(directory)
+  await directory.close()
+  const sync = prototype.sync
+  let code = 'EINVAL'
+  t.mock.method(prototype, 'sync', async function () {
+    if ((await this.stat()).isDirectory()) throw Object.assign(new Error('directory fsync failed'), { code })
+    return sync.call(this)
+  })
+  const id = await report(f)
+  await f.raw.put('cache/old/value', Buffer.from('source'))
+  await f.db.enableStorageEncryption()
+  assert.equal((await finish(f)).cleanupComplete, 1)
+  assert.equal((await f.stores.reportStore.get(id)).toString(), 'private report')
+  await f.stores.reportStore.delete(id)
+  code = 'EIO'
+  await assert.rejects(f.raw.put(`reports/${randomUUID()}`, Buffer.from('new')), { code: 'EIO' })
+})
+
+test('encrypted reads reuse the enabled policy and cache existence/deletion use HEAD without downloading contents', async t => {
+  const f = await fixture(t, true)
+  await f.db.enableStorageEncryption()
+  const b = await bundle(f), r = await report(f)
+  await f.stores.cacheStorage.put(b, 'metadata.json', Buffer.from('cached sources'))
+  const policy = t.mock.method(f.db, 'getStorageEncryption')
+  assert.equal((await f.stores.reportStore.get(r)).toString(), 'private report')
+  assert.equal(policy.mock.callCount(), 0)
+  f.calls.length = 0
+  assert.equal(await f.stores.cacheStorage.exists(b, 'metadata.json'), true)
+  await f.stores.cacheStorage.delete(b)
+  assert.equal(f.calls.some(call => call.op === 'get'), false)
+  assert.ok(f.calls.some(call => call.op === 'head'))
+  assert.equal(policy.mock.callCount(), 0)
+  await f.db.deleteBundle(b)
+  assert.equal(await f.stores.cacheStorage.exists(b, 'metadata.json'), false)
+})
+
+test('disk cache prefix deletion prunes empty folders without deleting other bundles', async t => {
+  const f = await fixture(t)
+  const a = await bundle(f, Buffer.from('a')), b = await bundle(f, Buffer.from('b'))
+  await f.stores.cacheStorage.put(a, 'nested/value', Buffer.from('a'))
+  await f.stores.cacheStorage.put(b, 'metadata.json', Buffer.from('b'))
+  await f.stores.cacheStorage.delete(a)
+  await assert.rejects(stat(join(f.dir, 'cache', 'bundles', a)), { code: 'ENOENT' })
+  assert.equal(await f.stores.cacheStorage.exists(b, 'metadata.json'), true)
+})
+
+test('Vercel uses single PUTs for small encrypted writes and multipart for large writes', async t => {
+  const f = await fixture(t, true)
+  await f.db.enableStorageEncryption()
+  await report(f, Buffer.from('small'))
+  assert.equal(f.calls.findLast(call => call.op === 'put').options.multipart, false)
+  await report(f, Buffer.alloc(6 * 1024 * 1024, 42))
+  assert.equal(f.calls.findLast(call => call.op === 'put').options.multipart, true)
+})
+
+test('an interrupted row exhausts its batch normally and retries from its saved position', async t => {
+  const f = await fixture(t), id = await report(f)
+  await f.db.enableStorageEncryption()
+  const stalled = t.mock.method(f.raw, 'open', async (_path, signal) => {
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, 1000)
+      signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+    })
+    signal.throwIfAborted()
+  })
+  const result = await migrateStorage(f.raw, f.db, key, { maxMs: 25 })
+  assert.equal(result.complete, 0)
+  assert.equal(result.cursor, null, 'the interrupted row has not been skipped')
+  stalled.mock.restore()
+  assert.equal((await finish(f)).complete, 1)
+  assert.equal((await f.stores.reportStore.get(id)).toString(), 'private report')
+})
+
+test('Vercel previews cannot activate encryption but can validate an already enabled database', async t => {
+  const f = await fixture(t)
+  const config = { dbPath: f.dbPath, storageEncryptionKey: key.bytes.toString('base64') }
+  await assert.rejects(openManagedStorage({ ...config, vercelPreview: true }), /outside a Vercel preview/u)
+  assert.equal(await f.db.getStorageEncryption(), null)
+  const production = await openManagedStorage(config)
+  await production.db.close()
+  const preview = await openManagedStorage({ ...config, vercelPreview: true })
+  try { assert.ok(await preview.storageEncryptionStatus()) } finally { await preview.db.close() }
+  await assert.rejects(openManagedStorage({ ...config, vercelPreview: true, storageEncryptionKey: randomBytes(32).toString('base64') }), /encryption key/u)
 })

@@ -14,11 +14,10 @@ async function removeObjectPrefix(raw: RawObjectStorage, prefix: string): Promis
   for (;;) {
     signal.throwIfAborted()
     const page = await raw.list(prefix, null, 100, signal)
-    if (page.objects.length === 0) return
+    if (page.objects.length === 0) { await raw.prune?.(prefix, signal); return }
     for (const object of page.objects) {
-      const stored = await raw.open(object.key, signal)
+      const stored = await raw.head(object.key, signal)
       if (!stored) continue
-      stored.stream.destroy()
       if (!await raw.delete(object.key, stored.version, signal)) throw new Error('Storage changed during deletion')
     }
   }
@@ -83,6 +82,7 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
     if (!row) return null
     if (!owner.cache && storageRowPath(owner.type, row) !== identity) return null
     if (owner.cache && !row.dataKey) return null
+    if (!owner.cache && !row.encrypted) state = (await db.getStorageEncryption())!
     const stored = await raw.open(owner.cache ? encryptedCachePath(identity) : identity)
     if (!stored) {
       if (!owner.cache && await db.getStorageRow(owner.type, owner.id)) throw new Error('Stored payload unavailable')
@@ -126,10 +126,13 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
 export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null): Promise<ObjectStorage> {
   // Startup enables encryption before constructing stores; also validate the
   // persisted requirement when this adapter is opened without a key.
-  await db.getStorageEncryption()
+  let enabled = await db.getStorageEncryption()
   async function mode() {
-    const state = await db.getStorageEncryption()
+    // Enabled is irreversible. Never cache a disabled result: an older
+    // instance must notice another instance enabling encryption.
+    const state = enabled ?? await db.getStorageEncryption()
     if (state && !key) throw new Error('Managed storage requires its configured encryption key')
+    if (state) enabled = state
     return state
   }
   async function open(identity: string): ReturnType<ObjectStorage['open']> {
@@ -152,7 +155,16 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
   return {
     open,
     get: async identity => readBytes(await open(identity)),
-    async exists(identity) { const value = await open(identity); value?.stream.destroy(); return value !== null },
+    async exists(identity) {
+      logicalKey(identity)
+      const owner = storageOwner(identity), state = await mode()
+      if (state && owner) {
+        const row = await db.getStorageRow(owner.type, owner.id)
+        if (!row || (owner.cache ? !row.dataKey : storageRowPath(owner.type, row) !== identity)) return false
+      }
+      // Existence is metadata only; open() authenticates the actual bytes.
+      return raw.exists(state && owner?.cache ? encryptedCachePath(identity) : identity)
+    },
     async put(identity, bytes) {
       logicalKey(identity)
       const state = await mode()
@@ -175,7 +187,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
       const target = owner?.cache ? encryptedCachePath(identity) : identity
       const encrypted = encryptStorageStream(Readable.from([bytes]), dataKey, identity, bytes.length)
       try {
-        await raw.put(target, encrypted, AbortSignal.timeout(STORAGE_WRITE_MS))
+        await raw.put(target, encrypted, AbortSignal.timeout(STORAGE_WRITE_MS), undefined, bytes.length)
         // A late cache builder must not leave a readable cache for a deleted
         // bundle. The missing SQL key also makes failed cleanup unreadable.
         if (owner?.cache && !await db.getStorageRow(owner.type, owner.id)) await raw.delete(target)

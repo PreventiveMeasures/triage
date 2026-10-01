@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream'
+import { Buffer } from 'node:buffer'
 import { type VercelBlobSdk, isNotFound, loadVercelBlobSdk } from '../server-common/vercel-blob.ts'
 import { type RawObjectStorage, objectPath } from './object-storage.ts'
 
@@ -6,6 +7,13 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
   const blobs = sdk ?? await loadVercelBlobSdk()
   const path = (key: string) => `.managed/${objectPath(key)}`
   return {
+    async head(key, signal) {
+      try {
+        const meta = await blobs.head(path(key), { token, ...(signal ? { abortSignal: signal } : {}) })
+        if (!meta.etag) throw new Error('Missing object version')
+        return { size: meta.size, version: meta.etag, modifiedAt: new Date(meta.uploadedAt ?? Date.now()).getTime() }
+      } catch (err) { if (isNotFound(err, blobs)) return null; throw err }
+    },
     async open(key, signal) {
       try {
         const result = await blobs.get(path(key), { token, access: 'private', useCache: false, ...(signal ? { abortSignal: signal } : {}) })
@@ -23,9 +31,10 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
       try { await blobs.head(path(key), { token }); return true }
       catch (err) { if (isNotFound(err, blobs)) return false; throw err }
     },
-    async put(key, bytes, signal, expected) {
+    async put(key, bytes, signal, expected, sizeHint) {
+      const multipart = (sizeHint ?? (Buffer.isBuffer(bytes) ? bytes.length : Infinity)) >= 5 * 1024 * 1024
       try { await blobs.put(path(key), bytes, { token, access: 'private', addRandomSuffix: false, allowOverwrite: true,
-        ...(expected ? { ifMatch: expected } : {}), multipart: true, contentType: 'application/octet-stream', cacheControlMaxAge: 60, ...(signal ? { abortSignal: signal } : {}) })
+        ...(expected ? { ifMatch: expected } : {}), multipart, contentType: 'application/octet-stream', cacheControlMaxAge: 60, ...(signal ? { abortSignal: signal } : {}) })
         return true
       } catch (err) {
         if (blobs.BlobPreconditionFailedError && err instanceof blobs.BlobPreconditionFailedError) return false

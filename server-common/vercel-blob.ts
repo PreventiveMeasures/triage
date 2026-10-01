@@ -37,7 +37,7 @@ export type VercelBlobSdk = {
   head: (
     pathname: string,
     options?: { token?: string; abortSignal?: AbortSignal },
-  ) => Promise<{ size: number; pathname: string; url: string }>
+  ) => Promise<{ size: number; pathname: string; url: string; etag?: string; uploadedAt?: Date | string | number }>
   get: (
     pathname: string,
     options: {

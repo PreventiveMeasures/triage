@@ -38,7 +38,7 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
       if (current.version !== source.version) { current.stream.destroy(); return }
       const encrypted = encryptStorageStream(current.stream, dataKey, identity, current.size)
       let replaced: boolean
-      try { replaced = await raw.put(identity, encrypted, signal, source.version) }
+      try { replaced = await raw.put(identity, encrypted, signal, source.version, current.size ?? undefined) }
       finally { encrypted.destroy(); current.stream.destroy() }
       if (!replaced) return
       // Do not mark the row encrypted until the stored bytes authenticate and
@@ -88,21 +88,23 @@ async function cleanupLegacy(raw: RawObjectStorage, db: StorageDb, state: Storag
       const row = await db.getStorageRow(owner.type, owner.id)
       if (row && storageRowPath(owner.type, row) === object.key) continue
     }
-    const stored = await raw.open(object.key, signal)
+    const stored = await raw.head(object.key, signal)
     if (!stored) continue
     // Old pre-activation orphans are legacy even when their arbitrary bytes
     // share the magic prefix. Keep a full staging grace window around enable:
     // Blob Last-Modified has only second precision, and a new encrypted upload
     // may still be waiting for its SQL insert.
     let legacy = prefix === 'cache/' || stored.modifiedAt < state.enabledAt - STORAGE_UPLOAD_TTL_MS
-    try {
-      if (!legacy) {
-        const inspected = await inspectStorageObject(stored)
+    if (!legacy) {
+      const source = await raw.open(object.key, signal)
+      if (!source) continue
+      try {
+        if (source.version !== stored.version) throw new Error('Legacy object changed during cleanup')
+        const inspected = await inspectStorageObject(source)
         legacy = !inspected.encrypted
         inspected.stream.destroy()
-      }
+      } finally { source.stream.destroy() }
     }
-    finally { stored.stream.destroy() }
     if (legacy) {
       found++
       if (!await raw.delete(object.key, stored.version, signal)) throw new Error('Legacy object changed during cleanup')
@@ -131,7 +133,10 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
     for (const row of rows) {
       if (Date.now() >= deadline) break
       try { await migrateRow(raw, db, key, row, signal) }
-      catch (err) { errors.push(new Error(`Could not migrate ${row.type} ${row.id}`, { cause: err })) }
+      catch (err) {
+        if (signal.aborted) break // Leave this row pending for the next batch.
+        errors.push(new Error(`Could not migrate ${row.type} ${row.id}`, { cause: err }))
+      }
       await db.advanceStorageMigration(state.cursor, row.position)
       processed++
       state = (await db.getStorageEncryption())!
@@ -144,7 +149,7 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
       processed += cleanup.processed
       retryAt = cleanup.retryAt
     }
-    catch (err) { errors.push(err); break }
+    catch (err) { if (!signal.aborted) errors.push(err); break }
     state = (await db.getStorageEncryption())!
     if (retryAt !== null) break // Wait for staging grace rather than spinning over live temp files.
   }
@@ -152,7 +157,7 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
   return { ...state, retryAt }
 }
 
-export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, now = Date.now()): Promise<void> {
+export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, now = Date.now()): Promise<number> {
   const signal = AbortSignal.timeout(150_000)
   await db.getStorageEncryption()
   const before = now - STORAGE_UPLOAD_TTL_MS
@@ -166,10 +171,11 @@ export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, n
     if (cursor !== null && cursors.has(cursor)) throw new Error('Invalid blob pagination')
     if (cursor !== null) cursors.add(cursor)
   } while (cursor !== null)
+  let removed = 0
   for (const identity of expired) {
-    const stored = await raw.open(identity, signal)
+    const stored = await raw.head(identity, signal)
     if (!stored) continue
-    stored.stream.destroy()
-    if (stored.modifiedAt < before) await raw.delete(identity, stored.version, signal)
+    if (stored.modifiedAt < before && await raw.delete(identity, stored.version, signal)) removed++
   }
+  return removed
 }

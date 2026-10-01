@@ -34,7 +34,12 @@ export function sdkFixture() {
       return { statusCode: 200, blob: { size: object.bytes.length, etag: etag(object.bytes), uploadedAt: object.uploadedAt },
         stream: new ReadableStream({ start(controller) { controller.enqueue(object.bytes); controller.close() } }) }
     },
-    async head(path) { if (!objects.has(path)) throw new BlobNotFoundError(); return { size: objects.get(path).bytes.length } },
+    async head(path, options) {
+      calls.push({ op: 'head', path, options })
+      const object = objects.get(path)
+      if (!object) throw new BlobNotFoundError()
+      return { size: object.bytes.length, etag: etag(object.bytes), uploadedAt: object.uploadedAt }
+    },
     async del(path, options) {
       if (options?.ifMatch && objects.has(path) && etag(objects.get(path).bytes) !== options.ifMatch) throw new BlobPreconditionFailedError()
       objects.delete(path)

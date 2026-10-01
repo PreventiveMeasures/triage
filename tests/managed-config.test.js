@@ -45,6 +45,29 @@ test('managed storage encryption is opt-in and validates its key before opening 
   assert.throws(() => loadManagedConfig(), err => /MANAGED_STORAGE_ENCRYPTION_KEY/u.test(err.message) && !err.message.includes('not-a-valid-key'))
 })
 
+test('legacy encryption migration requires its environment switch and a key; preview is identified independently', t => {
+  useEnv(t, {})
+  assert.equal(loadManagedConfig().storageEncryptionMigrate, false)
+  process.env.MANAGED_STORAGE_ENCRYPTION_MIGRATE = '1'
+  assert.throws(loadManagedConfig, /MANAGED_STORAGE_ENCRYPTION_MIGRATE requires MANAGED_STORAGE_ENCRYPTION_KEY/u)
+  process.env.MANAGED_STORAGE_ENCRYPTION_KEY = Buffer.alloc(32, 123).toString('base64')
+  for (const value of ['', '0', 'true', '1']) {
+    process.env.MANAGED_STORAGE_ENCRYPTION_MIGRATE = value
+    for (const combined of [false, true]) assert.equal(loadManagedConfig({ combined }).storageEncryptionMigrate, value === '1')
+  }
+  process.env.VERCEL_ENV = 'preview'
+  assert.equal(loadManagedConfig().vercelPreview, true)
+  process.env.VERCEL_ENV = 'production'
+  assert.equal(loadManagedConfig().vercelPreview, false)
+  assert.equal(loadManagedConfig().storageEncryptionMigrateMaxMs, 150_000)
+  process.env.MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS = '600000'
+  assert.equal(loadManagedConfig().storageEncryptionMigrateMaxMs, 600_000)
+  Object.assign(process.env, { VERCEL: '1', DATABASE_URL: 'postgres://fixture', BLOB_READ_WRITE_TOKEN: 'fixture' })
+  assert.throws(loadManagedConfig, /MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS/u)
+  process.env.MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS = '240000'
+  assert.equal(loadManagedConfig().storageEncryptionMigrateMaxMs, 240_000)
+})
+
 test('initial admin configuration accepts only one positive numeric GitHub ID, and defaults off', t => {
   useEnv(t, {})
   assert.equal(loadManagedConfig().initialAdminGithubId, null)

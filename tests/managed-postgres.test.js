@@ -78,7 +78,7 @@ for (const failure of ['commit', 'release']) {
       faults.upload = failure
       const request = { session, body: Buffer.from(type === 'report' ? '{"findings":[]}' : 'opaque bundle bytes') }
       const response = await send(`/api/admin/${type}s`, request)
-      assert.equal(response.status, 200, 'writer-locked reconciliation confirms the committed upload')
+      assert.equal(response.status, type === 'report' ? 201 : 200, 'writer-locked reconciliation confirms the committed upload')
       const [record] = type === 'report' ? await db.listReports() : await db.listBundles()
       assert.deepEqual(await store.get(record.id), request.body, 'committed bytes must not be mistaken for an orphan')
       const retry = await send(`/api/admin/${type}s`, request)

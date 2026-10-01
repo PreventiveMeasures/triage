@@ -225,9 +225,7 @@ for (const kind of ['sourcemap', 'stasis']) {
     const key = parseStorageKey(Buffer.alloc(32, 123).toString('base64'))
     const db = openSqliteManagedDb(':memory:', { storageEncryptionKey: key })
     if (encrypted) await db.enableStorageEncryption()
-    const storage = encrypted
-      ? createManagedStores(await createEncryptedObjectStorage(await openVercelObjectStorage('secret', sdk), db, key), false)
-      : await openManagedVercelStorage('secret', sdk)
+    const storage = createManagedStores(await createEncryptedObjectStorage(await openVercelObjectStorage('secret', sdk), db, key), false)
     const config = { serverless: true, sessionCookieName: 'sid', sessionTtlMs: 3_600_000, cookieSecure: false, maxBundleBytes: 104_857_600 }
     const cache = createBundleCache(storage.cacheStorage, db, storage.bundleStore)
     const server = createServer(createManagedRequestHandler({
