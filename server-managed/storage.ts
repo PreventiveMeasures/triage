@@ -11,14 +11,19 @@ import { createDiskObjectStorage } from './object-storage-disk.ts'
 import { openVercelObjectStorage } from './object-storage-vercel.ts'
 import { migrateStorage, reapStorageUploads } from './storage-maintenance.ts'
 
+// Database-only callers (notably status) must not activate byte encryption.
+export async function openManagedStorageDb(config: ManagedConfig) {
+  const options = { triageHistoryLimit: config.triageHistoryLimit, storageEncryptionKey: parseStorageKey(config.storageEncryptionKey) }
+  return config.neonUrl ? openNeonManagedDb(config.neonUrl, options)
+    : (await import('./db.ts')).openSqliteManagedDb(config.dbPath, options)
+}
+
 export async function openManagedStorage(config: ManagedConfig) {
   const key = parseStorageKey(config.storageEncryptionKey)
   if (config.storageEncryptionMigrate && !key) throw new Error('MANAGED_STORAGE_ENCRYPTION_MIGRATE requires MANAGED_STORAGE_ENCRYPTION_KEY')
-  const options = { triageHistoryLimit: config.triageHistoryLimit, storageEncryptionKey: key }
   if (config.neonUrl && !config.blobToken) throw new Error('Managed Neon mode requires BLOB_READ_WRITE_TOKEN')
   if (config.serverless && !config.neonUrl) throw new Error('Serverless managed storage requires Neon')
-  const db = config.neonUrl ? await openNeonManagedDb(config.neonUrl, options)
-    : (await import('./db.ts')).openSqliteManagedDb(config.dbPath, options)
+  const db = await openManagedStorageDb(config)
   try {
     const raw = config.neonUrl ? await openVercelObjectStorage(config.blobToken!) : createDiskObjectStorage(dirname(config.dbPath))
     // Enable before exposing stores or token writers. Concurrent first starts

@@ -7,7 +7,7 @@ import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-met
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA } from './activity.ts'
-import { ManagedCommitError, type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
+import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
@@ -160,11 +160,11 @@ export async function openPostgresManagedDb(connect: PgConnect, options: Managed
       } catch (err) {
         await db.query('ROLLBACK').catch(() => {})
         await db.release().catch(() => {})
-        if (write && commitAttempted) throw new ManagedCommitError(err)
+        if (write && commitAttempted) throw new Error('Managed commit outcome is uncertain', { cause: err })
         throw err
       }
       try { await db.release() }
-      catch (err) { if (write) throw new ManagedCommitError(err); throw err }
+      catch (err) { if (write) throw new Error('Managed commit outcome is uncertain', { cause: err }); throw err }
       return result
     },
     close() { closed = true },

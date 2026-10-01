@@ -36,10 +36,14 @@ payloads. Access to both the SQL keys and master key permits decryption;
 control of the running managed server or its deployment environment does too.
 Provider encryption at rest remains a separate outer layer.
 
-Processes cache a validated enabled policy, but recheck disabled state so they
-notice another instance enabling encryption. Owned reads still load the current
-SQL data key. Existence and version checks use object metadata; opening a
-payload authenticates its contents.
+Processes cache a validated enabled policy. Keyless instances cache disabled
+state for five seconds to avoid per-read database round trips. A plaintext write
+still checks activation after its PUT, and a read encountering ciphertext forces
+a fresh check; these fences never use the disabled cache. Header inspection on
+plaintext reads prevents serving ciphertext during that window. Owned encrypted
+reads load the current SQL data key separately from public permission/metadata
+records, so a stale handler record cannot supply a deleted key. Existence and
+version checks use object metadata; opening a payload authenticates its contents.
 
 ## Enable encryption at startup
 
@@ -56,12 +60,16 @@ payload authenticates its contents.
    migration; new writes remain encrypted either way.
 
 ```sh
-node server-managed/cli.js --storage-encryption-status
+node server-managed/cli.js --storage-encryption-status managed
+# For a combined e2e + managed deployment:
+node server-managed/cli.js --storage-encryption-status managed-e2e
 ```
 
-The installed `triage-managed-server` accepts the same status flag. Supply the usual
-managed server configuration; these commands do not start an HTTP listener.
-Like server startup, the status command enables encryption if a key is configured.
+The installed `triage-managed-server` accepts the same status flag and required
+deployment mode. `managed` uses the standalone configuration; `managed-e2e` and
+`e2e-managed` use the combined configuration, where `DB_PATH` belongs to e2e
+and managed uses `MANAGED_DB_PATH` or its own default. Status opens only the database, never
+activates encryption, and does not start an HTTP listener or migration.
 Without a key, a database that has never enabled encryption stays plaintext.
 Enabling saves a wrapped test value in `managed_storage_encryption`. Every
 startup checks it, and storage/token operations check the requirement again.
@@ -79,7 +87,10 @@ With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, the first ordinary managed request,
 subsequent automatic maintenance and authenticated `/api/reap` run migration
 batches. Startup itself does not scan or rewrite existing payloads. The normal
 response proceeds alongside maintenance, and the triggering invocation awaits
-both; no background job has to survive a Vercel response.
+both; no background job has to survive a Vercel response. Each cold instance can
+start a batch, so migration increases invocation duration and storage/SQL load
+while enabled. The environment switch intentionally uses deployment configuration
+rather than a separate CLI runner; changing it on Vercel requires a redeploy.
 
 New uploads receive a random data key. The server encrypts the file at its
 usual path, then inserts the row with the wrapped key and an encrypted flag.
@@ -129,7 +140,8 @@ migration incomplete and reports an error.
 Legacy caches are immediately ignored after activation. Rebuilds use the
 bundle key and a separate `cache-encrypted-v1/` namespace. A bounded independent
 inventory removes old caches and unreferenced plaintext; `cleanupComplete`
-reports that inventory's completion. Referenced-data migration is not blocked
+reports that inventory's completion. Deleting a bundle removes both cache
+namespaces even with migration disabled. Referenced-data migration is not blocked
 by stray files. Old upload parts remain readable during the activation grace
 period of 24 hours and are removed by the normal staging sweep; expiry is not
 an assurance of physical deletion at exactly 24 hours.
@@ -144,9 +156,13 @@ budget. Set `MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS` to adjust that budget:
 up to one hour on persistent servers, or 240 seconds on Vercel. The deployed
 function's duration must still allow the batch and remaining request work.
 
-Exhausting the batch's time budget returns saved progress normally, leaving
-an interrupted row pending for the next batch. Genuine storage failures remain
-errors. If cleanup finds a recent temporary file, it returns
+When time runs out after earlier rows have completed, the interrupted row stays
+pending and gets a full budget next batch; the batch returns progress normally.
+If the first row consumes the entire budget, the batch checkpoints past it and
+reports an error naming the row and `MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS`.
+Later rows and GitHub tokens can then advance. The oversized row remains pending
+and is retried on the next pass; completion cannot hide it. Genuine storage
+failures also remain errors. If cleanup finds a recent temporary file, it returns
 `cleanupComplete: false` and `retryAt` (Unix milliseconds) without spinning
 through the 24-hour staging grace period. Progress is logged as
 `managed-storage-migration:` with `complete`, `cleanupComplete`, `migrated`,

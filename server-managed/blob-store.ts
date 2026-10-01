@@ -5,7 +5,8 @@
 // and attribution live in SQL; bytes are keyed by the upload's opaque `id`.
 //
 // The disk backend uses a dir beside SQLite (data/reports/<uuid> or
-// data/bundles/<uuid>); blob-vercel.ts implements the same interface remotely. Bytes only — the
+// data/bundles/<uuid>). Production stores share storage-stores.ts across disk
+// and Vercel backends. Bytes only — the
 // content-type / filename / integrity ride the DB row, so there's no sidecar.
 import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'

@@ -89,7 +89,6 @@
     "server-managed/activity.ts",
     "server-managed/avatar-store.ts",
     "server-managed/blob-store.ts",
-    "server-managed/blob-vercel.ts",
     "server-managed/brotli.ts",
     "server-managed/bundle-cache.ts",
     "server-managed/bundle-catalog.ts",

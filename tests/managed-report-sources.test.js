@@ -8,11 +8,9 @@ import { join } from 'node:path'
 import { brotliCompressSync, gunzipSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { sdkFixture } from './_managed-vercel.js'
-import { openManagedVercelStorage } from '../server-managed/blob-vercel.ts'
-import { createDiskBlobStore } from '../server-managed/blob-store.ts'
-import { createDiskBundleStore } from '../server-managed/bundle-store.ts'
+import { managedStores, vercelStores } from './_managed-storage.js'
+import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
-import { createDiskCacheStorage } from '../server-managed/cache-storage.ts'
 import { createReportSourcesCache } from '../server-managed/report-sources.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -39,10 +37,9 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
   const dir = await mkdtemp(join(tmpdir(), 'triage-report-sources-'))
   const db = openSqliteManagedDb(':memory:')
   const fixture = backend === 'vercel' ? sdkFixture() : null
-  const remote = fixture ? await openManagedVercelStorage('secret', fixture.sdk) : null
-  const reports = remote?.reportStore ?? createDiskBlobStore(join(dir, 'reports'))
-  const bundles = remote?.bundleStore ?? createDiskBundleStore(join(dir, 'bundles'))
-  const cacheStorage = remote?.reportSourcesStorage ?? createDiskCacheStorage(join(dir, 'cache'))
+  const storage = fixture ? await vercelStores(t, 'secret', fixture.sdk, db)
+    : await managedStores(t, createDiskObjectStorage(dir), { db, disk: true })
+  const { reportStore: reports, bundleStore: bundles, reportSourcesStorage: cacheStorage } = storage
   const cache = createReportSourcesCache(cacheStorage, db, reports, bundles)
   const pending = new Set()
   const server = createServer(createManagedRequestHandler({
@@ -100,7 +97,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
       req.on('error', reject); req.end(body === undefined || Buffer.isBuffer(body) ? body : JSON.stringify(body))
     })
   }
-  return { fixture, cacheStorage, db, reports, bundles, cache, bundle, bundleBytes: bytes, report, seed, send, users, team, cacheDir: join(dir, 'cache') }
+  return { fixture, cacheStorage, db, reports, bundles, cache, bundle, bundleBytes: bytes, report, seed, send, users, team, cacheDir: join(dir, 'cache', 'report-sources') }
 }
 
 async function cachedFiles(h) {
@@ -151,7 +148,7 @@ function sourcesTests(backend) {
     })
   }
 
-  test('cached report hashes share gzip bytes without reparsing; warm responses use file streams', async t => {
+  test('cached report hashes share gzip bytes without reparsing; warm responses use streams', async t => {
     const h = await setup(t)
     const original = await h.send()
     const duplicate = await h.seed()
@@ -160,7 +157,6 @@ function sourcesTests(backend) {
     assert.deepEqual((await h.send(duplicate.id)).bytes, original.bytes)
     const opened = await h.cache.open(duplicate, await h.db.getBundle(h.bundle.id), { dependencies: true, security: true })
     assert.equal(opened.stream.readableFlowing, null)
-    if (backend === 'disk') assert.equal(opened.stream.bytesRead, 0)
     opened.stream.destroy()
   })
 
@@ -357,7 +353,7 @@ test('Vercel sources remain shared across cold instances and stream when Blob om
   const h = await setupBackend(t, 'sourcemap', 'vercel')
   const original = await h.send()
   const duplicate = await h.seed()
-  const remote = await openManagedVercelStorage('secret', h.fixture.sdk)
+  const remote = await vercelStores(t, 'secret', h.fixture.sdk, h.db)
   const cold = createReportSourcesCache(remote.reportSourcesStorage, h.db, remote.reportStore, remote.bundleStore)
   t.mock.method(remote.reportStore, 'get', () => { throw new Error('warm cache must not reparse report') })
   t.mock.method(remote.bundleStore, 'get', () => { throw new Error('warm cache must not reparse bundle') })
@@ -367,7 +363,7 @@ test('Vercel sources remain shared across cold instances and stream when Blob om
   for (const size of [0, null]) {
     t.mock.method(h.fixture.sdk, 'get', async (...args) => {
       const result = await get(...args)
-      return result && { ...result, blob: { size } }
+      return result && { ...result, blob: { ...result.blob, size } }
     })
     for (const method of ['GET', 'HEAD']) {
       const result = await h.send(duplicate.id, 'admin', method)
@@ -383,7 +379,7 @@ for (const deleted of ['report', 'bundle']) {
     test(`Vercel late source publication reconciles ${deleted} deletion (survivor: ${survivor})`, async t => {
       const h = await setupBackend(t, 'sourcemap', 'vercel')
       if (survivor !== 'none') await h.seed(undefined, h.bundle.id, survivor === 'same format' ? 'duplicate.json' : 'duplicate.md')
-      const remote = await openManagedVercelStorage('secret', h.fixture.sdk)
+      const remote = await vercelStores(t, 'secret', h.fixture.sdk, h.db)
       const cold = createReportSourcesCache(remote.reportSourcesStorage, h.db, remote.reportStore, remote.bundleStore)
       const put = h.fixture.sdk.put
       t.mock.method(h.fixture.sdk, 'put', async (...args) => {

@@ -10,10 +10,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { brotliDecompressSync } from 'node:zlib'
+import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { createSession } from '../server-managed/session.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { openVercelObjectStorage } from '../server-managed/object-storage-vercel.ts'
-import { STORAGE_UPLOAD_TTL_MS, createEncryptedObjectStorage } from '../server-managed/storage-encryption.ts'
+import { STORAGE_DISABLED_TTL_MS, STORAGE_UPLOAD_TTL_MS, createEncryptedObjectStorage } from '../server-managed/storage-encryption.ts'
 import { migrateStorage, reapStorageUploads } from '../server-managed/storage-maintenance.ts'
 import { createManagedStores } from '../server-managed/storage-stores.ts'
 import { openManagedStorage } from '../server-managed/storage.ts'
@@ -98,7 +100,10 @@ test('startup with a key encrypts new writes before legacy migration and require
     assert.equal((await reopened.reportStore.get(r)).toString(), 'new report')
     assert.equal((await reopened.bundleStore.get(b, null)).toString(), 'bundle sources')
     assert.deepEqual(await reopened.db.getUserTokens(user), tokens)
+    const now = Date.now()
+    const clock = t.mock.method(Date, 'now', () => now + STORAGE_DISABLED_TTL_MS)
     await assert.rejects(stale.reportStore.get(legacy), /encryption key/u)
+    clock.mock.restore()
     await assert.rejects(stale.reportStore.put(randomUUID(), Buffer.from('plain')), /encryption key/u)
     await assert.rejects(stale.db.setUserTokens(user, tokens), /encryption key/u)
     for (const storageEncryptionKey of [null, randomBytes(32).toString('base64')]) {
@@ -326,18 +331,27 @@ test('CLI reports status while environment-enabled maintenance resumes deferred 
   const f = await fixture(t), id = await report(f)
   const abandoned = `reports/${id}.${randomUUID()}.tmp`
   await f.raw.put(abandoned, Buffer.from('unfinished plaintext write'))
-  const run = async (flag, storageEncryptionKey = key.bytes.toString('base64')) => {
-    const { stdout } = await promisify(execFile)(process.execPath, ['server-managed/cli.js', flag], {
-      cwd: process.cwd(), timeout: 10_000, env: { ...process.env, MANAGED_DB_PATH: f.dbPath, MANAGED_STORAGE_ENCRYPTION_KEY: storageEncryptionKey,
+  const run = async (flag, storageEncryptionKey = key.bytes.toString('base64'), mode = 'managed', extra = {}) => {
+    const { stdout } = await promisify(execFile)(process.execPath, [join(process.cwd(), 'server-managed/cli.js'), flag, ...(mode ? [mode] : [])], {
+      cwd: f.dir, timeout: 10_000, env: { ...process.env, MANAGED_DB_PATH: f.dbPath, MANAGED_STORAGE_ENCRYPTION_KEY: storageEncryptionKey,
         MANAGED_STORAGE_ENCRYPTION_MIGRATE: '', VERCEL_ENV: '',
         DATABASE_URL: '', MANAGED_DATABASE_URL: '', E2E_DATABASE_URL: '', VERCEL: '',
-        GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', OAUTH_CALLBACK_URL: 'https://app.example/api/oauth/github/callback' },
+        GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', OAUTH_CALLBACK_URL: 'https://app.example/api/oauth/github/callback', ...extra },
     })
     return JSON.parse(stdout.trim().split('\n').at(-1))
   }
   assert.deepEqual(await run('--storage-encryption-status', ''), { encryption: 'disabled' })
   await assert.rejects(run('--migrate-storage'), /Unknown command/u)
   await assert.rejects(run('--unsupported'), /Unknown command/u)
+  await assert.rejects(run('--storage-encryption-status', '', null), /requires a deployment mode/u)
+  assert.deepEqual(await run('--storage-encryption-status'), { encryption: 'disabled' })
+  assert.equal(await f.db.getStorageEncryption(), null, 'status never activates encryption')
+  // The combined deployment default must not inspect or initialize DB_PATH.
+  const e2ePath = join(f.dir, 'e2e.db')
+  await writeFile(e2ePath, 'not a managed database')
+  assert.deepEqual(await run('--storage-encryption-status', key.bytes.toString('base64'), 'managed-e2e', { DB_PATH: e2ePath, MANAGED_DB_PATH: undefined }), { encryption: 'disabled' })
+  assert.equal(await readFile(e2ePath, 'utf8'), 'not a managed database')
+  await f.db.enableStorageEncryption()
   assert.equal((await run('--storage-encryption-status')).complete, false)
   await assert.rejects(run('--storage-encryption-status', ''), /encryption key/u)
   const logs = []
@@ -622,22 +636,36 @@ test('Vercel uses single PUTs for small encrypted writes and multipart for large
   assert.equal(f.calls.findLast(call => call.op === 'put').options.multipart, true)
 })
 
-test('an interrupted row exhausts its batch normally and retries from its saved position', async t => {
-  const f = await fixture(t), id = await report(f)
+test('an oversized first bundle advances the cursor so reports and GitHub tokens can migrate', async t => {
+  const f = await fixture(t), id = await bundle(f, Buffer.alloc(1024 * 1024, 1))
+  const reports = await Promise.all([report(f, Buffer.from('one')), report(f, Buffer.from('two')), report(f, Buffer.from('three'))])
+  const user = await f.db.upsertUser({ githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+  await f.db.setUserTokens(user, { accessToken: 'secret', refreshToken: null, expiresAt: null })
   await f.db.enableStorageEncryption()
-  const stalled = t.mock.method(f.raw, 'open', async (_path, signal) => {
+  const open = f.raw.open.bind(f.raw)
+  const stalled = t.mock.method(f.raw, 'open', async (path, signal) => {
+    if (path !== `bundles/${id}`) return open(path, signal)
     await new Promise(resolve => {
       const timer = setTimeout(resolve, 1000)
       signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
     })
     signal.throwIfAborted()
   })
-  const result = await migrateStorage(f.raw, f.db, key, { maxMs: 25 })
-  assert.equal(result.complete, 0)
-  assert.equal(result.cursor, null, 'the interrupted row has not been skipped')
+  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 25 }), error => {
+    assert.match(error.cause.message, new RegExp(`bundle ${id}.*MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=25`, 'u'))
+    return true
+  })
+  assert.equal((await f.db.getStorageEncryption()).cursor, `bundle:${id}`)
+  const next = await migrateStorage(f.raw, f.db, key)
+  assert.equal(next.complete, 0, 'the skipped bundle still prevents completion')
+  assert.equal(next.migrated, 4, 'three reports and tokens advance past the large bundle')
+  for (const reportId of reports) assert.equal((await f.db.getStorageRow('report', reportId)).encrypted, 1)
+  const sql = new DatabaseSync(f.dbPath)
+  try { assert.equal(sql.prepare('SELECT gh_tokens_encrypted FROM managed_user WHERE id = ?').get(user).gh_tokens_encrypted, 1) }
+  finally { sql.close() }
   stalled.mock.restore()
   assert.equal((await finish(f)).complete, 1)
-  assert.equal((await f.stores.reportStore.get(id)).toString(), 'private report')
+  assert.equal((await f.stores.bundleStore.get(id, null)).length, 1024 * 1024)
 })
 
 test('Vercel previews cannot activate encryption but can validate an already enabled database', async t => {
@@ -650,4 +678,119 @@ test('Vercel previews cannot activate encryption but can validate an already ena
   const preview = await openManagedStorage({ ...config, vercelPreview: true })
   try { assert.ok(await preview.storageEncryptionStatus()) } finally { await preview.db.close() }
   await assert.rejects(openManagedStorage({ ...config, vercelPreview: true, storageEncryptionKey: randomBytes(32).toString('base64') }), /encryption key/u)
+})
+
+test('keyless reads cache disabled policy briefly; ciphertext and writes force a fresh activation check', async t => {
+  const f = await fixture(t, true)
+  const keyless = await createEncryptedObjectStorage(f.raw, f.db, null)
+  const path = `reports/${await report(f)}`
+  const policy = t.mock.method(f.db, 'getStorageEncryption')
+  for (let i = 0; i < 3; i++) {
+    assert.equal((await keyless.get(path)).toString(), 'private report')
+    assert.equal(await keyless.exists(path), true)
+    await keyless.delete(`reports/${randomUUID()}`)
+  }
+  assert.equal(policy.mock.callCount(), 0)
+  const now = Date.now()
+  const clock = t.mock.method(Date, 'now', () => now + STORAGE_DISABLED_TTL_MS)
+  await keyless.exists(path)
+  assert.equal(policy.mock.callCount(), 1)
+  clock.mock.restore()
+  await f.db.enableStorageEncryption()
+  const encrypted = await report(f, Buffer.from('new secret'))
+  await assert.rejects(keyless.get(`reports/${encrypted}`), /encryption key/u)
+  const stale = await createEncryptedObjectStorage(f.raw, f.db, key)
+  assert.equal((await stale.get(`reports/${encrypted}`)).toString(), 'new secret')
+})
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'Vercel' : 'disk'} deletion removes both generations of caches without migration`, async t => {
+    const f = await fixture(t, remote), id = await bundle(f)
+    await f.stores.cacheStorage.put(id, 'metadata.br', Buffer.from('old metadata'))
+    await f.stores.reportSourcesStorage.put(`${id}/sources.gz`, Buffer.from('old source'))
+    await f.db.enableStorageEncryption()
+    await f.stores.cacheStorage.put(id, 'metadata.br', Buffer.from('new metadata'))
+    await f.stores.reportSourcesStorage.put(`${id}/sources.gz`, Buffer.from('new source'))
+    await f.db.deleteBundle(id)
+    await f.stores.cacheStorage.delete(id)
+    await f.stores.reportSourcesStorage.delete(id)
+    assert.deepEqual((await f.raw.list('cache/', null, 100)).objects, [])
+    assert.deepEqual((await f.raw.list('cache-encrypted-v1/', null, 100)).objects, [])
+  })
+  test(`${remote ? 'Vercel' : 'disk'} missing encrypted payloads return null while storage errors propagate`, async t => {
+    const f = await fixture(t, remote)
+    await f.db.enableStorageEncryption()
+    const b = await bundle(f), r = await report(f)
+    await f.raw.delete(`reports/${r}`)
+    await f.raw.delete(`bundles/${b}`)
+    assert.equal(await f.stores.reportStore.get(r), null)
+    assert.equal(await f.stores.bundleStore.open(b, null), null)
+    const config = { sessionCookieName: 'sid', sessionTtlMs: 3600_000, cookieSecure: false }
+    const session = await createSession(config, f.db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+    await f.db.setUserRole(session.userId, 'admin')
+    const handler = createManagedRequestHandler({ config, db: f.db, ...f.stores,
+      originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {},
+    })
+    for (const path of [`/api/admin/reports/${r}`, `/api/admin/bundles/${b}`]) {
+      const res = { writeHead(status) { this.status = status }, end(body) { this.body = JSON.parse(body) } }
+      await handler({ url: path, method: 'GET', headers: { cookie: session.setCookie.split(';')[0] } }, res)
+      assert.equal(res.status, 503)
+      assert.deepEqual(res.body, { error: 'unavailable' })
+    }
+    t.mock.method(f.raw, 'open', () => { throw new Error('storage unavailable') })
+    await assert.rejects(f.stores.reportStore.get(r), /storage unavailable/u)
+  })
+}
+
+test('prefix deletion finishes past stale listings and preserves concurrent replacements', async t => {
+  const f = await fixture(t, true), id = randomUUID(), prefix = `cache/bundles/${id}/`
+  const changed = `${prefix}changed`, gone = `${prefix}gone`, live = `${prefix}live`
+  for (const path of [changed, live]) await f.raw.put(path, Buffer.from('old'))
+  const list = t.mock.method(f.raw, 'list', (path, cursor) => Promise.resolve(path === prefix
+    ? cursor ? { objects: [{ key: live }], cursor: null } : { objects: [{ key: gone }, { key: changed }], cursor: 'next' }
+    : { objects: [], cursor: null }))
+  const remove = f.raw.delete.bind(f.raw)
+  t.mock.method(f.raw, 'delete', async (path, version, signal) => {
+    if (path === changed) await f.raw.put(path, Buffer.from('replacement'))
+    return remove(path, version, signal)
+  })
+  await f.storage.deletePrefix(prefix)
+  assert.equal(list.mock.callCount(), 3, 'one traversal of each cache generation')
+  assert.equal(await f.raw.exists(live), false)
+  assert.equal((await bytes(f.raw, changed)).toString(), 'replacement')
+})
+
+test('a row interrupted after earlier progress gets one full-budget retry before being skipped', async t => {
+  const f = await fixture(t)
+  const first = await report(f, Buffer.from('first'), '00000000-0000-0000-0000-000000000001')
+  const second = await report(f, Buffer.from('second'), '00000000-0000-0000-0000-000000000002')
+  await f.db.enableStorageEncryption()
+  const open = f.raw.open.bind(f.raw)
+  t.mock.method(f.raw, 'open', async (path, signal) => {
+    if (path !== `reports/${second}`) return open(path, signal)
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, 1000)
+      signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+    })
+    signal.throwIfAborted()
+  })
+  const result = await migrateStorage(f.raw, f.db, key, { maxMs: 100 })
+  assert.equal(result.cursor, `report:${first}`)
+  assert.equal(result.complete, 0)
+  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 25 }), /pending failures/u)
+  assert.equal((await f.db.getStorageEncryption()).cursor, `report:${second}`)
+})
+
+test('a delayed disabled policy response cannot undo a concurrently observed activation', async t => {
+  const f = await fixture(t), id = await report(f)
+  await f.db.enableStorageEncryption()
+  const state = await f.db.getStorageEncryption(), waiting = Promise.withResolvers()
+  let calls = 0
+  t.mock.method(f.db, 'getStorageEncryption', () => ++calls === 1 ? waiting.promise : Promise.resolve(state))
+  const first = f.storage.exists(`reports/${id}`)
+  assert.equal(await f.storage.exists(`reports/${id}`), true)
+  waiting.resolve(null)
+  assert.equal(await first, true)
+  assert.equal(await f.storage.exists(`reports/${id}`), true)
+  assert.equal(calls, 2)
 })

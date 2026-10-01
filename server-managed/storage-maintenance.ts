@@ -134,8 +134,13 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
       if (Date.now() >= deadline) break
       try { await migrateRow(raw, db, key, row, signal) }
       catch (err) {
-        if (signal.aborted) break // Leave this row pending for the next batch.
-        errors.push(new Error(`Could not migrate ${row.type} ${row.id}`, { cause: err }))
+        // A row started late gets a full budget next time. Skip an oversized
+        // first row until the next pass so later rows and tokens can advance.
+        if (signal.aborted && processed > 0) break
+        const message = signal.aborted
+          ? `Could not migrate ${row.type} ${row.id} within MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=${maxMs}; increase the budget`
+          : `Could not migrate ${row.type} ${row.id}`
+        errors.push(new Error(message, { cause: err }))
       }
       await db.advanceStorageMigration(state.cursor, row.position)
       processed++

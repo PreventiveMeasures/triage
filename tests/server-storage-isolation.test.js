@@ -9,7 +9,7 @@ import { commitRevision, headFor, openDb } from '../server-e2e/db.ts'
 import { openVercelBlobBackend } from '../server-e2e/objstore/blob-vercel.ts'
 import { reapOrphans } from '../server-e2e/objstore/reaper.ts'
 import { deleteObject, getLive, openObjstore } from '../server-e2e/objstore/store.ts'
-import { openManagedVercelStorage } from '../server-managed/blob-vercel.ts'
+import { vercelStores } from './_managed-storage.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { openManagedStorage } from '../server-managed/storage.ts'
@@ -119,7 +119,7 @@ test('shared private Blob: e2e GC and managed deletes/reaping stay in their own 
   const dir = await directory(t)
   const e2e = openObjstore(revisions.db, dir)
   e2e.blob = await openVercelBlobBackend({ token: 'same-token', sdk })
-  const managed = await openManagedVercelStorage('same-token', sdk)
+  const managed = await vercelStores(t, 'same-token', sdk)
   const id = randomUUID(), liveHash = 'a'.repeat(43), orphanHash = 'b'.repeat(43), tag = 'workspace'
   const bytes = Buffer.from('stored'), sid = 'c'.repeat(22)
   await e2e.insertLiveIfAbsent.get(tag, id, 'd'.repeat(22), liveHash, bytes.length, 'e'.repeat(86), 1)

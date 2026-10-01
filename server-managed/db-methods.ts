@@ -1139,6 +1139,10 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     insertBundleStmt, selectBundleByIntegrityStmt, selectBundleStmt,
     selectBundlesStmt, deleteBundleStmt, setBundleRepoStmt, linkReportsToBundleStmt, selectBundleReadableStmt, selectRepoReadableStmt, selectRepoPathReadableStmt,
   } = stmts
+  async function getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null> {
+    const row = (await selectBundleByIntegrityStmt.get(integrity)) as BundleRow | undefined
+    return row == null ? null : mapBundle(row)
+  }
   return {
     async insertBundle(bundle: BundleInput, now: number, sessionId?: string): Promise<void> {
       await authorizeUpload(stmts, sessionId, bundle)
@@ -1148,14 +1152,9 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
         bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, bundle.repoId == null ? '' : bundle.repoDirectory ?? '', now, bundle.dataKey ?? null, bundle.dataKey ? 1 : 0,
       )
     },
-    async getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null> {
-      const row = (await selectBundleByIntegrityStmt.get(integrity)) as BundleRow | undefined
-      return row == null ? null : mapBundle(row)
-    },
-    async resolveBundleUpload(integrity: string): Promise<ManagedBundle | null> {
-      const row = (await selectBundleByIntegrityStmt.get(integrity)) as BundleRow | undefined
-      return row == null ? null : mapBundle(row)
-    },
+    getBundleByIntegrity,
+    // The distinct method name selects a writer-locked reconciliation scope.
+    resolveBundleUpload: getBundleByIntegrity,
     async getBundle(id: string): Promise<ManagedBundle | null> {
       const row = (await selectBundleStmt.get(id)) as BundleRow | undefined
       return row == null ? null : mapBundle(row)

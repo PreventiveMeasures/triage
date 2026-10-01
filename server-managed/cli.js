@@ -12,7 +12,7 @@ import '../strip-types-loader.js'
 const command = process.argv[2]
 if (command === '--storage-encryption-status') {
   const { storageCommand } = await import('./storage-command.ts')
-  await storageCommand()
+  await storageCommand(process.argv[3])
 } else if (command) {
   throw new Error(`Unknown command: ${command}`)
 } else {

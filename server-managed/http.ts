@@ -59,7 +59,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, ReportRecord, StoredUser, TriageEventRow } from './db.ts'
+import type { ManagedBundle, ManagedDb, ManagedSession, ReportRecord, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -924,7 +924,9 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   } catch (err) {
     // A successful COMMIT can lose its acknowledgement. Never delete a file
     // until a writer-locked read confirms that this candidate did not commit.
-    const committed = await deps.db.resolveReportUpload(id)
+    let committed: ReportRecord | null
+    try { committed = await deps.db.resolveReportUpload(id) }
+    catch (lookup) { throw new AggregateError([err, lookup], 'Report upload reconciliation failed', { cause: lookup }) }
     if (committed) report = committed
     else { await deps.reportStore.delete(id).catch(() => {}); throw err }
   }
@@ -1215,19 +1217,22 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     // A concurrent upload of identical bytes can insert this integrity (UNIQUE)
     // between our dedup check and this insert — treat that as a dedup, not a 500.
     // Any other failure rethrows.
-    const raced = await deps.db.resolveBundleUpload(integrity)
+    let raced: ManagedBundle | null
+    try { raced = await deps.db.resolveBundleUpload(integrity) }
+    catch (lookup) { throw new AggregateError([err, lookup], 'Bundle upload reconciliation failed', { cause: lookup }) }
     // Preserve a committed candidate after a lost acknowledgement. If this
     // read fails too, leave the bytes for later reconciliation.
     if (raced?.id !== id) await deps.bundleStore.delete(id).catch(() => {})
     if (err instanceof ManagedMutationError) throw err
-    if (raced != null) {
+    if (!raced) throw err
+    if (raced.id !== id) {
       s = await manageMutation(req, res, deps, cookie)
       if (!s) return
       if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
       await deps.db.linkReportsToBundle(integrity, raced.id, s.user.role === 'admin' ? undefined : s.user.id)
       prebuildBundle(deps, raced.id)
       sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, repoId: raced.repoId, repoDirectory: raced.repoDirectory, deduped: true }); return }
-    throw err
+    // Our insert committed: continue with the ordinary creation response.
   }
   // Auto-link reports that declared this integrity before the bundle existed.
   s = await manageMutation(req, res, deps, cookie)

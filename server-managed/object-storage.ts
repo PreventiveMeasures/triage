@@ -4,7 +4,7 @@ import type { OpenedBlob } from './blob-store.ts'
 import { validateCacheKey } from './cache-storage.ts'
 
 export const ENCRYPTED_CACHE_PREFIX = 'cache-encrypted-v1/'
-export const LEGACY_PREFIXES = ['reports/', 'bundles/', 'avatars/', 'uploads/', 'cache/']
+const STORAGE_PREFIXES = ['reports/', 'bundles/', 'avatars/', 'uploads/', 'cache/', ENCRYPTED_CACHE_PREFIX]
 export interface RawObject extends OpenedBlob { version: string; modifiedAt: number }
 export type ObjectMetadata = Omit<RawObject, 'stream'>
 export interface ListedObject { key: string; modifiedAt: number }
@@ -33,6 +33,6 @@ export interface ObjectStorage {
 
 export function objectPath(key: string): string {
   validateCacheKey(key)
-  if (![...LEGACY_PREFIXES, ENCRYPTED_CACHE_PREFIX].some(prefix => key.startsWith(prefix))) throw new Error('Invalid managed storage namespace')
+  if (!STORAGE_PREFIXES.some(prefix => key.startsWith(prefix))) throw new Error('Invalid managed storage namespace')
   return key
 }

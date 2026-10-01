@@ -8,19 +8,25 @@ import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayloa
 
 export const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
+export const STORAGE_DISABLED_TTL_MS = 5_000
 
-async function removeObjectPrefix(raw: RawObjectStorage, prefix: string): Promise<void> {
-  const signal = AbortSignal.timeout(STORAGE_WRITE_MS)
-  for (;;) {
-    signal.throwIfAborted()
-    const page = await raw.list(prefix, null, 100, signal)
-    if (page.objects.length === 0) { await raw.prune?.(prefix, signal); return }
-    for (const object of page.objects) {
-      const stored = await raw.head(object.key, signal)
-      if (!stored) continue
-      if (!await raw.delete(object.key, stored.version, signal)) throw new Error('Storage changed during deletion')
-    }
+async function removeObjectPrefix(raw: RawObjectStorage, prefix: string, signal: AbortSignal): Promise<void> {
+  // Collect before deleting: some providers use offset cursors. A stale list
+  // entry or a concurrently replaced object must not restart this traversal.
+  const cursors = new Set<string>(), keys = new Set<string>()
+  let cursor: string | null = null
+  do {
+    const page = await raw.list(prefix, cursor, 100, signal)
+    for (const object of page.objects) keys.add(object.key)
+    cursor = page.cursor
+    if (cursor !== null && cursors.has(cursor)) throw new Error('Invalid blob pagination')
+    if (cursor !== null) cursors.add(cursor)
+  } while (cursor !== null)
+  for (const identity of keys) {
+    const stored = await raw.head(identity, signal)
+    if (stored) await raw.delete(identity, stored.version, signal)
   }
+  await raw.prune?.(prefix, signal)
 }
 async function readBytes(stored: Awaited<ReturnType<ObjectStorage['open']>>): Promise<Buffer | null> {
   if (!stored) return null
@@ -84,10 +90,7 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
     if (owner.cache && !row.dataKey) return null
     if (!owner.cache && !row.encrypted) state = (await db.getStorageEncryption())!
     const stored = await raw.open(owner.cache ? encryptedCachePath(identity) : identity)
-    if (!stored) {
-      if (!owner.cache && await db.getStorageRow(owner.type, owner.id)) throw new Error('Stored payload unavailable')
-      return null
-    }
+    if (!stored) return null
     // Completed uploads and all new caches are always encrypted. Only legacy
     // pending rows need header inspection and hash-verified plaintext fallback.
     if (row.encrypted || owner.cache || state.complete) {
@@ -123,18 +126,26 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
   throw new Error('Storage changed repeatedly during read')
 }
 
-export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null): Promise<ObjectStorage> {
-  // Startup enables encryption before constructing stores; also validate the
-  // persisted requirement when this adapter is opened without a key.
+// Startup enables encryption before constructing stores; validate the persisted
+// requirement even when this adapter is opened without a key.
+async function storagePolicy(db: StorageDb, key: StorageKey | null) {
   let enabled = await db.getStorageEncryption()
-  async function mode() {
-    // Enabled is irreversible. Never cache a disabled result: an older
-    // instance must notice another instance enabling encryption.
-    const state = enabled ?? await db.getStorageEncryption()
-    if (state && !key) throw new Error('Managed storage requires its configured encryption key')
-    if (state) enabled = state
-    return state
+  let checkedAt = Date.now()
+  return async (fresh = false) => {
+    // Enabled is irreversible. Keyless instances cache "off" briefly, while
+    // writes and detected ciphertext always recheck the activation fence.
+    if (!enabled && (fresh || key || Date.now() - checkedAt >= STORAGE_DISABLED_TTL_MS)) {
+      const state = await db.getStorageEncryption()
+      if (state) enabled = state // A delayed disabled read cannot undo "on".
+      checkedAt = Date.now()
+    }
+    if (enabled && !key) throw new Error('Managed storage requires its configured encryption key')
+    return enabled
   }
+}
+
+export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null): Promise<ObjectStorage> {
+  const mode = await storagePolicy(db, key)
   async function open(identity: string): ReturnType<ObjectStorage['open']> {
     logicalKey(identity)
     const state = await mode()
@@ -147,7 +158,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
     // that ciphertext to a caller expecting the original plaintext bytes.
     if (inspected.encrypted) {
       let current: StorageEncryptionState | null
-      try { current = await mode() } catch (err) { inspected.stream.destroy(); throw err }
+      try { current = await mode(true) } catch (err) { inspected.stream.destroy(); throw err }
       if (current) { inspected.stream.destroy(); return openEncrypted(raw, db, key!, identity, current) }
     }
     return inspected
@@ -169,7 +180,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
       logicalKey(identity)
       const state = await mode()
       if (identity.startsWith('avatars/')) { await raw.put(identity, bytes); return null }
-      if (!state) return putPlaintext(raw, identity, bytes, mode)
+      if (!state) return putPlaintext(raw, identity, bytes, () => mode(true))
       const owner = storageOwner(identity)
       let dataKey: Buffer, wrapped: string | null = null
       if (owner?.cache) {
@@ -196,14 +207,19 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
     },
     async delete(identity) {
       logicalKey(identity)
-      const state = await mode()
-      await raw.delete(state && identity.startsWith('cache/') ? encryptedCachePath(identity) : identity)
+      await mode()
+      await raw.delete(identity)
+      // Always remove both generations, including caches predating activation
+      // when migration is disabled or another instance has just enabled it.
+      if (identity.startsWith('cache/')) await raw.delete(encryptedCachePath(identity))
     },
     async deletePrefix(prefix) {
       logicalKey(`${prefix}validate`)
       if (!prefix.endsWith('/')) throw new Error('Invalid storage prefix')
-      const state = await mode()
-      await removeObjectPrefix(raw, state && prefix.startsWith('cache/') ? encryptedCachePath(prefix) : prefix)
+      await mode()
+      const signal = AbortSignal.timeout(STORAGE_WRITE_MS)
+      await removeObjectPrefix(raw, prefix, signal)
+      if (prefix.startsWith('cache/')) await removeObjectPrefix(raw, encryptedCachePath(prefix), signal)
     },
   }
 }

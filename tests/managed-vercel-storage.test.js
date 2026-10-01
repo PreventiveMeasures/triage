@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { createServer, request as httpRequest } from 'node:http'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { openManagedVercelStorage } from '../server-managed/blob-vercel.ts'
+import { vercelStores } from './_managed-storage.js'
 import { createBundleCache } from '../server-managed/bundle-cache.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -20,9 +20,9 @@ import { createManagedStores } from '../server-managed/storage-stores.ts'
 
 import { BlobStoreNotFoundError, sdkFixture } from './_managed-vercel.js'
 
-test('private managed blobs and avatars survive independent instances without namespace collisions', async () => {
+test('private managed blobs and avatars survive independent instances without namespace collisions', async t => {
   const { sdk, objects, calls } = sdkFixture()
-  const a = await openManagedVercelStorage('secret', sdk), b = await openManagedVercelStorage('secret', sdk)
+  const a = await vercelStores(t, 'secret', sdk), b = await vercelStores(t, 'secret', sdk)
   const id = randomUUID()
   await a.reportStore.put(id, Buffer.from('report'))
   await a.bundleStore.put(id, Buffer.from('bundle'), null)
@@ -37,18 +37,18 @@ test('private managed blobs and avatars survive independent instances without na
     if (op === 'put') assert.equal(options.addRandomSuffix, false)
     else assert.equal(options.useCache, false)
   }
-  await assert.rejects(b.reportStore.get('../outside'), /Invalid/u)
+  await assert.rejects(async () => b.reportStore.get('../outside'), /Invalid/u)
   await b.reportStore.delete(id)
   assert.equal(await a.reportStore.get(id), null)
-  const outage = await openManagedVercelStorage('secret', { ...sdk, get: () => Promise.reject(new BlobStoreNotFoundError()) })
+  const outage = await vercelStores(t, 'secret', { ...sdk, get: () => Promise.reject(new BlobStoreNotFoundError()) })
   await assert.rejects(outage.reportStore.get(id), BlobStoreNotFoundError)
 })
 
-test('cache misses recover while Blob store and access failures remain errors', async () => {
+test('cache misses recover while Blob store and access failures remain errors', async t => {
   const { sdk } = sdkFixture(), id = randomUUID()
   const missing = new sdk.BlobNotFoundError()
   assert.equal(missing.name, 'Error', 'the real SDK does not set error.name to its class name')
-  const storage = await openManagedVercelStorage('secret', {
+  const storage = await vercelStores(t, 'secret', {
     ...sdk, get: async () => { throw missing }, del: async () => { throw missing },
   })
   assert.equal(await storage.cacheStorage.exists(id, 'v2-metadata.json.br'), false)
@@ -58,7 +58,7 @@ test('cache misses recover while Blob store and access failures remain errors', 
 
   for (const error of [new BlobStoreNotFoundError(), new Error('Access denied'),
     Object.assign(new Error('unrelated'), { name: 'BlobNotFoundError' })]) {
-    const failed = await openManagedVercelStorage('secret', {
+    const failed = await vercelStores(t, 'secret', {
       ...sdk, head: async () => { throw error }, get: async () => { throw error }, del: async () => { throw error },
     })
     for (const attempt of [() => failed.cacheStorage.exists(id, 'v2-metadata.json.br'),
@@ -69,9 +69,9 @@ test('cache misses recover while Blob store and access failures remain errors', 
   }
 })
 
-test('Brotli metadata persists across cold starts while contents use stored bundles directly', async () => {
+test('Brotli metadata persists across cold starts while contents use stored bundles directly', async t => {
   const { sdk, objects } = sdkFixture()
-  const storage = await openManagedVercelStorage('secret', sdk)
+  const storage = await vercelStores(t, 'secret', sdk)
   const body = Buffer.from(JSON.stringify({ version: 3, sources: ['hello.js'], sourcesContent: ['hello'], mappings: '' })), id = randomUUID()
   const record = { id, integrity: 'sha512-test', filename: 'sources.map', kind: 'sourcemap', byteSize: body.length }
   const db = { getBundle: async () => record }
@@ -90,7 +90,7 @@ test('Brotli metadata persists across cold starts while contents use stored bund
   assert.ok((await consume(await cache.open(record, 'metadata'))).length > 0)
 })
 
-test('cache deletion removes every version across pages without touching other stored data', async () => {
+test('cache deletion removes every version across pages without touching other stored data', async t => {
   const { sdk, objects } = sdkFixture()
   const id = randomUUID(), other = randomUUID(), prefix = `.managed/cache/bundles/${id}/`
   const versions = ['v1-metadata.json.gz', 'v1-contents.json.gz', 'v2-metadata.json.br', 'v3-metadata.json.br', 'old/metadata.json.br']
@@ -100,24 +100,24 @@ test('cache deletion removes every version across pages without touching other s
   let pages = 0
   sdk.list = async options => {
     assert.equal(options.token, 'secret')
-    assert.equal(options.prefix, prefix)
+    assert.ok([prefix, prefix.replace('/cache/', '/cache-encrypted-v1/')].includes(options.prefix))
     pages++
     const paths = [...objects.keys()].filter(path => path.startsWith(options.prefix)).toSorted()
     const start = Number(options.cursor ?? 0)
     const end = start + 2
     return { blobs: paths.slice(start, end).map(pathname => ({ pathname })), hasMore: end < paths.length, cursor: String(end) }
   }
-  const storage = await openManagedVercelStorage('secret', sdk)
+  const storage = await vercelStores(t, 'secret', sdk)
   const cache = createBundleCache(storage.cacheStorage, {}, storage.bundleStore)
   await cache.delete(id)
   assert.deepEqual([...objects.keys()].toSorted(), retained.toSorted())
-  assert.equal(pages, 3)
+  assert.equal(pages, 4)
   await cache.delete(id)
   assert.deepEqual([...objects.keys()].toSorted(), retained.toSorted(), 'repeated deletion is harmless')
   await assert.rejects(cache.delete('../outside'), /Invalid/u)
 })
 
-test('cache deletion reports incomplete listings and can retry all versions', async () => {
+test('cache deletion reports incomplete listings and can retry all versions', async t => {
   const { sdk, objects } = sdkFixture()
   const id = randomUUID(), prefix = `.managed/cache/bundles/${id}/`
   const paths = ['v1-metadata.json.br', 'v2-metadata.json.br'].map(file => prefix + file)
@@ -127,7 +127,7 @@ test('cache deletion reports incomplete listings and can retry all versions', as
     if (cursor) throw new Error('listing unavailable')
     return { blobs: [{ pathname: paths[0] }], hasMore: true, cursor: 'next' }
   }
-  const storage = await openManagedVercelStorage('secret', sdk)
+  const storage = await vercelStores(t, 'secret', sdk)
   const cache = createBundleCache(storage.cacheStorage, {}, storage.bundleStore)
   await assert.rejects(cache.delete(id), /listing unavailable/u)
   assert.equal(objects.size, 2, 'enumeration finishes before deletion changes the listed set')
@@ -136,9 +136,9 @@ test('cache deletion reports incomplete listings and can retry all versions', as
   assert.equal(objects.size, 0)
 })
 
-test('multipart upload isolation, byte limits, cleanup and orphan expiry', async () => {
+test('multipart upload isolation, byte limits, cleanup and orphan expiry', async t => {
   const { sdk, objects } = sdkFixture()
-  const { uploadStore, reapUploads } = await openManagedVercelStorage('secret', sdk)
+  const { uploadStore, reapUploads } = await vercelStores(t, 'secret', sdk)
   const id = randomUUID(), session = 'session-one'
   const first = Buffer.alloc(UPLOAD_CHUNK_BYTES, 7), last = Buffer.from('last')
   const request = { headers: { 'x-upload-id': id, 'x-upload-parts': '2', 'x-upload-size': String(first.length + last.length) } }
@@ -164,9 +164,9 @@ test('multipart upload isolation, byte limits, cleanup and orphan expiry', async
   assert.equal(objects.size, 1, 'staging GC never deletes published content')
 })
 
-test('upload cleanup is session/kind scoped, bounded for forged counts, and continues after a delete failure', async () => {
+test('upload cleanup is session/kind scoped, bounded for forged counts, and continues after a delete failure', async t => {
   const { sdk, objects } = sdkFixture()
-  const { uploadStore } = await openManagedVercelStorage('secret', sdk)
+  const { uploadStore } = await vercelStores(t, 'secret', sdk)
   const bytes = Buffer.from('part'), id = randomUUID()
   for (const index of [0, 1, 2]) await putUploadPart(uploadStore, 'owner', 'reports', id, index, bytes)
   const own = [...objects.keys()]
@@ -194,7 +194,7 @@ test('upload cleanup is session/kind scoped, bounded for forged counts, and cont
   assert.deepEqual([...objects.keys()], retained, 'invalid finalization also runs bounded cleanup')
 })
 
-test('a cache builder does not leave derivatives after another instance deletes the bundle', async () => {
+test('a cache builder does not leave derivatives after another instance deletes the bundle', async t => {
   const { sdk, objects } = sdkFixture()
   let exists = true
   const upload = sdk.put
@@ -202,7 +202,7 @@ test('a cache builder does not leave derivatives after another instance deletes 
     if (args[0].includes('/cache/')) exists = false
     return upload(...args)
   }
-  const storage = await openManagedVercelStorage('secret', sdk)
+  const storage = await vercelStores(t, 'secret', sdk)
   const bytes = Buffer.from(JSON.stringify({ version: 3, sources: [], sourcesContent: [], mappings: '' })), id = randomUUID()
   const record = { id, kind: 'sourcemap', filename: 'source.map', byteSize: bytes.length, integrity: 'hash' }
   objects.set(`.managed/cache/bundles/${id}/v1-metadata.json.gz`, { bytes: Buffer.from('old cache') })
@@ -312,7 +312,7 @@ for (const kind of ['sourcemap', 'stasis']) {
   }
 }
 
-test('upload reaping lists all pages before deleting stale parts and preserves recent uploads', async () => {
+test('upload reaping lists all pages before deleting stale parts and preserves recent uploads', async t => {
   const { sdk, objects } = sdkFixture()
   const now = 2 * 86_400_000, prefix = '.managed/uploads/'
   for (let i = 0; i < 8; i++) objects.set(`${prefix}${i}`, { bytes: Buffer.from('part'), uploadedAt: new Date(i % 3 === 0 ? now : 0) })
@@ -331,7 +331,7 @@ test('upload reaping lists all pages before deleting stale parts and preserves r
     pages++
     return { blobs: paths.slice(start, end).map(pathname => ({ pathname, uploadedAt: objects.get(pathname).uploadedAt })), hasMore: end < paths.length, cursor: String(end) }
   }
-  const { reapUploads } = await openManagedVercelStorage('secret', sdk)
+  const { reapUploads } = await vercelStores(t, 'secret', sdk)
   await reapUploads(now)
   assert.equal(pages, 6)
   assert.deepEqual([...objects.keys()].toSorted(), preserved.toSorted())
@@ -340,7 +340,7 @@ test('upload reaping lists all pages before deleting stale parts and preserves r
 })
 
 for (const failure of ['network', 'missing cursor', 'cyclic cursor']) {
-  test(`upload reaping leaves all parts intact after ${failure} and retries successfully`, async () => {
+  test(`upload reaping leaves all parts intact after ${failure} and retries successfully`, async t => {
     const { sdk, objects } = sdkFixture()
     const paths = ['a', 'b', 'c'].map(id => `.managed/uploads/${id}`)
     for (const path of paths) objects.set(path, { bytes: Buffer.from('part'), uploadedAt: new Date(0) })
@@ -350,7 +350,7 @@ for (const failure of ['network', 'missing cursor', 'cyclic cursor']) {
       return { blobs: [{ pathname: paths[0], uploadedAt: new Date(0) }], hasMore: true,
         cursor: failure === 'missing cursor' ? undefined : cursor === 'first' ? 'second' : 'first' }
     }
-    const { reapUploads } = await openManagedVercelStorage('secret', sdk)
+    const { reapUploads } = await vercelStores(t, 'secret', sdk)
     await assert.rejects(reapUploads(2 * 86_400_000), /listing unavailable|Invalid blob pagination/u)
     assert.deepEqual([...objects.keys()], paths)
     sdk.list = list
@@ -360,9 +360,9 @@ for (const failure of ['network', 'missing cursor', 'cyclic cursor']) {
 }
 
 
-test('a second Blob-backed instance reads the bounded package inventory without fetching full metadata', async () => {
+test('a second Blob-backed instance reads the bounded package inventory without fetching full metadata', async t => {
   const { sdk, calls, objects } = sdkFixture()
-  const storage = await openManagedVercelStorage('secret', sdk)
+  const storage = await vercelStores(t, 'secret', sdk)
   const serialized = new Bundle({
     entries: new Set(), executable: new Set(), formats: new Map(), imports: new Map(),
     modules: new Map([['node_modules/dep', { name: 'dep', version: '1.2.3', files: { 'index.js': 'export default 1' } }]]),

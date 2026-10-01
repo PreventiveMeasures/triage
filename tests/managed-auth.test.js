@@ -3558,11 +3558,14 @@ test('report upload reconciliation retains a committed file after acknowledgemen
 test('uncertain report upload retains bytes while database reconciliation is unavailable', async t => {
   const f = await managerContentFixture(t)
   const before = f.reportStore.map.size
-  t.mock.method(f.db, 'insertOrReuseReport', () => { throw new Error('connection lost') })
-  t.mock.method(f.db, 'resolveReportUpload', () => { throw new Error('still unavailable') })
+  const original = new Error('connection lost'), reconciliation = new Error('still unavailable')
+  const warning = t.mock.method(console, 'warn', () => {})
+  t.mock.method(f.db, 'insertOrReuseReport', () => { throw original })
+  t.mock.method(f.db, 'resolveReportUpload', () => { throw reconciliation })
   const response = await f.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, '{"findings":[]}')
   assert.equal(response.statusCode, 500)
   assert.equal(f.reportStore.map.size, before + 1)
+  assert.deepEqual(warning.mock.calls.at(-1).arguments[1].errors, [original, reconciliation])
 })
 
 test('bundle upload reconciliation retains a committed file after acknowledgement loss', async t => {
@@ -3574,8 +3577,25 @@ test('bundle upload reconciliation retains a committed file after acknowledgemen
   const body = Buffer.from('{"version":3,"sources":["a.js"],"sourcesContent":["secret source"],"mappings":""}')
   const response = await harness.upload('/api/admin/bundles', f.adminCookie, f.adminSess.csrfToken, body,
     { 'x-repo-id': '7', 'x-bundle-filename': 'source.map' })
-  assert.equal(response.statusCode, 200)
+  assert.equal(response.statusCode, 201)
+  assert.equal(JSON.parse(response.body).byteSize, body.length)
+  assert.equal(JSON.parse(response.body).deduped, undefined)
   const { id } = JSON.parse(response.body)
   assert.ok(await f.db.getBundle(id))
   assert.ok(await maps.get(id), 'the committed file must not be deleted as a failed candidate')
+})
+
+test('uncertain bundle upload preserves bytes and both errors if reconciliation fails', async t => {
+  const f = await managerContentFixture(t)
+  const archive = fakeBlobStore(), maps = fakeBlobStore()
+  const harness = bundleHarness(f.db, config, f.reportStore, createBundleStore(archive, maps))
+  const original = new Error('connection lost'), reconciliation = new Error('still unavailable')
+  const warning = t.mock.method(console, 'warn', () => {})
+  t.mock.method(f.db, 'insertBundle', () => { throw original })
+  t.mock.method(f.db, 'resolveBundleUpload', () => { throw reconciliation })
+  const response = await harness.upload('/api/admin/bundles', f.adminCookie, f.adminSess.csrfToken, 'private bundle bytes',
+    { 'x-repo-id': '7', 'x-bundle-filename': 'source.stasis.code.br' })
+  assert.equal(response.statusCode, 500)
+  assert.equal(archive.map.size, 1)
+  assert.deepEqual(warning.mock.calls.at(-1).arguments[1].errors, [original, reconciliation])
 })
