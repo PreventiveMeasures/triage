@@ -217,6 +217,53 @@ test('invalid package JSON leaves the authorized file listing usable', async t =
   assert.equal(calls.at(-1), '/repos/org/repo', 'optional reads still finish with the live access check')
 })
 
+test('Solidity tree discovery stays inside pinned authorized listings and rechecks access after reads', async t => {
+  const { request, db, userId } = await fixture(t, { tokens: userTokens })
+  const treeSha = 'c'.repeat(40)
+  const calls = []
+  let duringTree = async () => {}
+  let metadata = publicMetadata
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const parsed = new URL(url)
+    calls.push(parsed.pathname)
+    assert.equal(options.headers.authorization, 'Bearer login-token')
+    if (parsed.pathname === '/repos/org/repo') return Response.json(metadata)
+    if (parsed.pathname === '/repos/org/repo/contents/src/allowed') {
+      assert.equal(parsed.searchParams.get('ref'), commit)
+      return Response.json([{ name: 'contracts', path: 'src/allowed/contracts', type: 'dir', sha: treeSha }])
+    }
+    assert.equal(parsed.pathname, `/repos/org/repo/git/trees/${treeSha}`)
+    assert.equal(parsed.searchParams.get('recursive'), '1')
+    await duringTree()
+    return Response.json({ tree: [{ path: 'Token.sol', type: 'blob', mode: '100644' }], truncated: false })
+  })
+  const params = { repoId: '1', ref: commit, path: 'src/allowed' }
+  assert.equal((await request({ ...params, path: '' })).status, 200)
+  assert.deepEqual(calls, ['/repos/org/repo', '/repos/org/repo'], 'virtual ancestors do not read any Git trees')
+  assert.equal((await request({ ...params, path: 'src/private' })).status, 404)
+  const result = await request(params)
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.solidityEntryPoints, ['src/allowed/contracts/Token.sol'])
+  assert.equal(result.body.soliditySuggestionsLimited, false)
+  assert.equal(result.body.commit, commit)
+  duringTree = () => db.removeTeamMember('team', userId)
+  assert.equal((await request(params)).status, 404)
+  await db.setTeamMember('team', userId, { dependencies: true, security: true })
+  duringTree = async () => {
+    await db.removeTeamRepo('team', 1)
+    await db.setTeamRepo('team', 1, 'src/allowed/nested')
+  }
+  const narrowed = await request(params)
+  assert.equal(narrowed.status, 200)
+  assert.deepEqual(narrowed.body.entries, [{ name: 'nested', path: 'src/allowed/nested', type: 'dir' }])
+  assert.deepEqual(narrowed.body.solidityEntryPoints, [])
+  assert.equal(narrowed.body.soliditySuggestionsLimited, false)
+  await db.removeTeamRepo('team', 1)
+  await db.setTeamRepo('team', 1, 'src/allowed')
+  duringTree = () => { metadata = { ...publicMetadata, private: true, visibility: 'private' } }
+  assert.equal((await request(params)).status, 404)
+})
+
 function githubFixture(t, { publicRepo = false, permission = 'read', identityId = 1, permissionUserId = 1 } = {}) {
   const state = { metadata: { ...publicMetadata, private: !publicRepo, visibility: publicRepo ? 'public' : 'private' }, permission, identityId, permissionUserId, duringRead: async () => {} }
   const calls = []

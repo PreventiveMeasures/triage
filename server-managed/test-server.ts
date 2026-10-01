@@ -323,7 +323,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   const path = url.searchParams.get('path') ?? ''
   const ref = url.searchParams.get('ref') ?? 'heads/main'
   const files = repo.id === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
-    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'native/src/lib.rs', 'test/index.test.ts', 'package.json', 'README.md']
+    : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'package.json', 'README.md']
   if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
   const prefix = path ? path + '/' : ''
   const entries = new Map()
@@ -334,6 +334,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   }
   sendJson(res, 200, { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false,
     ...(entries.has('package.json') ? { packageEntryPoints: ['src/index.ts', 'src/app.tsx', 'src/utils/format.js'] } : {}),
+    ...(repo.id !== 102 && (path === '' || path === 'contracts') ? { solidityEntryPoints: ['contracts/Token.sol', ...(path === '' ? ['contracts/vault/Vault.sol'] : [])], soliditySuggestionsLimited: false } : {}),
   })
 }
 
