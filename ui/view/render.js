@@ -7,6 +7,7 @@ import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands }
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, state } from '#client/index.js'
 import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bundle-dialog.js'
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
+import { openLocalTriageImportDialog } from './dialogs/local-triage-import-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
@@ -1980,6 +1981,7 @@ function renderImpl() {
         el.localDeps = managedWorkspaceImportDeps()
         el.promptPassword = openWorkspaceUnlockBundleDialog
         el.resolveConflicts = resolveTriageConflicts
+        el.confirmTriageImport = openLocalTriageImportDialog
       }
       el.session = state.managedSession
       el.allowShare = state.managed?.allowShare === true

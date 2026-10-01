@@ -3,7 +3,7 @@ import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, parseTriageE
 
 // Discover server-owned IDs first, then intersect locally. Unknown finding IDs
 // and their annotations never leave this browser; every write names a report.
-export async function runLocalTriageImport(raw, { session, ...options }) {
+export async function runLocalTriageImport(raw, { session, confirmImport, ...options }) {
   if (session?.role !== 'admin' || !session.csrfToken) throw new Error('An administrator session is required.')
   if (raw != null && (typeof raw !== 'object' || Array.isArray(raw))) throw new Error('Invalid local triage.')
   const triage = Object.create(null)
@@ -12,26 +12,34 @@ export async function runLocalTriageImport(raw, { session, ...options }) {
     if (Object.keys(entry).length === 0) continue
     triage[id] = entry
   }
-  if (Object.keys(triage).length === 0) return 0
+  const available = Object.keys(triage).length
   const matchedIds = new Set(), matches = []
   let cursor
-  do {
-    options.signal?.throwIfAborted()
-    const path = '/api/admin/reports/finding-ids' + (cursor ? `?after=${encodeURIComponent(cursor)}` : '')
-    const { reports, nextCursor } = await options.api.send(path)
-    options.signal?.throwIfAborted()
-    for (const report of reports) {
-      const ids = report.findingIds.filter(id => Object.hasOwn(triage, id) && !matchedIds.has(id))
-      if (ids.length > 0) matches.push({ id: report.id, ids })
-      for (const id of ids) matchedIds.add(id)
-    }
-    cursor = nextCursor
-  } while (cursor)
+  if (available > 0) {
+    do {
+      options.signal?.throwIfAborted()
+      const path = '/api/admin/reports/finding-ids' + (cursor ? `?after=${encodeURIComponent(cursor)}` : '')
+      const { reports, nextCursor } = await options.api.send(path)
+      options.signal?.throwIfAborted()
+      for (const report of reports) {
+        const ids = report.findingIds.filter(id => Object.hasOwn(triage, id) && !matchedIds.has(id))
+        if (ids.length > 0) matches.push({ id: report.id, ids })
+        for (const id of ids) matchedIds.add(id)
+      }
+      cursor = nextCursor
+    } while (cursor)
+  }
   // Validate only matching entries, before making any writes. An oversized
   // annotation for an unrelated local report must not block the import.
   for (const id of matchedIds) {
     if (!id || id.length > MAX_FINDING_ID) throw new Error(`Triage finding IDs must be between 1 and ${MAX_FINDING_ID} characters.`)
     if (parseTriageEntryPatch(triage[id]) === 'invalid') throw new Error(`Triage for ${id} exceeds the managed server limits.`)
+  }
+  options.signal?.throwIfAborted()
+  if (confirmImport) {
+    const confirmed = await confirmImport({ matched: matchedIds.size, available })
+    options.signal?.throwIfAborted()
+    if (!confirmed) return null
   }
   const importedIds = options.importedIds ?? new Set()
   for (const report of matches) {

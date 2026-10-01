@@ -4,7 +4,7 @@ import { mock, test } from 'node:test'
 // Keep the real modal completion logic; only stub its document-level imports.
 mock.module('../ui/view/dom.js', { namedExports: { makeStackedModalError: cause => new Error('Modal conflict', { cause }) } })
 mock.module('../ui/view/tooltip.js', { namedExports: { installShadowTooltipListener() {} } })
-for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle']) {
+for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'local-triage-import']) {
   await import(`../ui/view/dialogs/${name}-dialog.js`)
 }
 
@@ -17,7 +17,7 @@ function createDialog(name) {
   dialog.renderRoot = {
     querySelector(selector) {
       if (selector === 'button[data-role="cancel"]') return { focus() { focused = true } }
-      if (selector === 'dialog') return { close() { closes++; dialog._onClose() } }
+      if (selector === 'dialog') return { showModal() {}, close() { closes++; dialog._onClose() } }
       assert.fail(`Unexpected selector: ${selector}`)
     },
   }
@@ -51,5 +51,37 @@ test('report deletion preserves the orphaned-triage choice on confirm and cancel
         assert.deepEqual(results, [{ confirmed, triage: orphaned > 0 ? triage : 'keep' }])
       }
     }
+  }
+})
+
+test('local triage confirmation focuses Cancel, cancels on close, and cannot approve zero matches', () => {
+  for (const matched of [0, 2]) {
+    for (const action of ['_onConfirm', '_onCancel', '_onClose']) {
+      const view = createDialog('local-triage-import')
+      view.dialog.matched = matched
+      view.dialog.available = 3
+      view.dialog.focusInitial()
+      assert.equal(view.focused(), true)
+      view.dialog[action]()
+      view.dialog._onConfirm()
+      assert.deepEqual(view.results, [{ confirmed: matched > 0 && action === '_onConfirm' }])
+      assert.equal(view.closes(), 1)
+    }
+  }
+})
+
+test('local triage confirmation closes on cancellation before or after opening', () => {
+  for (const beforeOpen of [false, true]) {
+    const view = createDialog('local-triage-import')
+    const controller = new AbortController()
+    view.dialog.matched = 2
+    view.dialog.signal = controller.signal
+    if (beforeOpen) controller.abort()
+    view.dialog.firstUpdated()
+    if (!beforeOpen) controller.abort()
+    view.dialog._onConfirm()
+    assert.deepEqual(view.results, [{ confirmed: false }])
+    assert.equal(view.closes(), 1)
+    view.dialog.disconnectedCallback()
   }
 })
