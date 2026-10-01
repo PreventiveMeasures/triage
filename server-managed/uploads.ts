@@ -59,7 +59,7 @@ export async function readUpload(store: BlobStore, req: IncomingMessage, session
     return Buffer.concat(parts, size)
   } finally {
     // These bytes can no longer be finalized. Failed/abandoned chunk uploads
-    // are also covered by the daily staging sweep.
+    // are also covered by automatic staging maintenance.
     await deleteUpload(store, session, kind, id, count).catch(err => console.warn('managed: upload cleanup failed:', err))
   }
 }

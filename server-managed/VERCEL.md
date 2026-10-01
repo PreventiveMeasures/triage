@@ -19,7 +19,7 @@ For all backend combinations and sharing rules, see
 | Reports, bundles, avatars | Private Blob objects under `.managed/`; clients receive authorized responses, not Blob credentials or public URLs |
 | Bundle storage | Sourcemaps are stored as Brotli; Stasis archives retain their uploaded bytes; original sizes and hashes remain in Postgres |
 | Derived data | Brotli bundle metadata and gzip report sources are cached in Blob; source caches include the viewer's permissions |
-| Cleanup | `GET /api/reap` in `api/managed.ts` deletes expired sessions and upload parts older than 24 hours; cron is scheduled daily at 00:00 UTC |
+| Cleanup | Ordinary requests trigger cleanup on the first request per instance, then hourly while traffic continues; `GET /api/reap` and the daily 00:00 UTC cron also remain available |
 
 The app shares initialization within a function instance and retries failed
 initialization. Requests await their work; the serverless app installs no
@@ -29,6 +29,15 @@ are built during authorized reads. Build deduplication and queues are local to e
 instance; caches are shared, and builders recheck database references after
 publishing to handle concurrent deletion. Access is checked again after cold
 builds. Each Neon operation closes its connection before returning.
+
+Ordinary managed requests start a due session/upload sweep alongside the normal
+response and await it before the invocation returns. Sweeps are coalesced and
+throttled per instance: the first request runs one, successful sweeps defer the
+next for an hour, and failures retry on traffic after a minute. Results appear
+as `managed-reaper:` logs under the triggering request, including expired-session
+and stale-upload-part counts. Failures are logged without failing the request.
+This automatic path needs neither `/api/reap` nor `CRON_SECRET`; the authenticated
+cron remains useful when there is no traffic.
 
 Use `DATABASE_URL` for a shared database, or `MANAGED_DATABASE_URL` for a
 managed-specific database. The global URL cannot be combined with either
@@ -106,8 +115,8 @@ manager/admin access, origin and CSRF checks; it cannot delete another session's
 parts or published reports/bundles. Cleanup has a bounded part count even for
 forged counts and retains the original upload error if deletion fails.
 A failed finalization may require re-uploading. Abandoned parts or failed
-deletions become eligible for the daily cleanup
-after 24 hours, so removal is not immediate at the 24-hour mark.
+deletions become eligible for automatic maintenance or explicit cleanup after
+24 hours, so removal is not immediate at the 24-hour mark.
 
 | Bound | Configured value |
 | --- | --- |
@@ -169,6 +178,7 @@ coverage uses PGlite; Blob coverage uses SDK fixtures. See
 [managed-vercel-runtime](../tests/managed-vercel-runtime.test.js),
 [managed-vercel-storage](../tests/managed-vercel-storage.test.js),
 [managed-vercel-reap](../tests/managed-vercel-reap.test.js),
+[managed maintenance](../tests/managed-maintenance.test.js),
 [team feeds](../tests/managed-team-feed.test.js),
 [feed reconnection](../tests/managed-feed-client.test.js), and
 [storage isolation](../tests/server-storage-isolation.test.js).

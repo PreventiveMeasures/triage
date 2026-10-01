@@ -12,9 +12,10 @@ import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { loadManagedStatic } from './static.ts'
 import { openManagedStorage } from './storage.ts'
 
-// Expired-session sweep period. Lookups already exclude expired rows
-// (`WHERE expires_at > now`), so this is housekeeping, not a security control.
-const SESSION_GC_INTERVAL_MS = 3_600_000
+// Housekeeping runs on ordinary traffic too, including serverless instances
+// without a timer or cron. Failed sweeps retry on later traffic after a minute.
+const REAP_INTERVAL_MS = 3_600_000
+const REAP_RETRY_MS = 60_000
 
 type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>>
 
@@ -39,25 +40,46 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
   const serveStatic = loadManagedStatic(fileURLToPath(new URL('../out/', import.meta.url)), {
     indexOnly: options.next != null, scanServer: options.serverInfo?.deepviewScanServer ?? null,
   })
-  const handleRequest = createManagedRequestHandler({
+  const routeRequest = createManagedRequestHandler({
     ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, originGate, serveStatic,
     ...('uploadStore' in storage ? { uploadStore: storage.uploadStore } : {}),
     isShuttingDown, track,
   })
 
   let cleanup: Promise<void> | undefined
+  let nextCleanupAt = 0
   function reap(): Promise<void> {
     if (cleanup) return cleanup
+    const startedAt = Date.now()
+    nextCleanupAt = startedAt + REAP_INTERVAL_MS
+    let sessions = 0, uploads = 0
     cleanup = runReapers({
-      sessions: () => db.deleteExpiredSessions(Date.now()),
-      ...('reapUploads' in storage ? { uploads: () => storage.reapUploads() } : {}),
+      sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
+      ...('reapUploads' in storage ? { uploads: async () => { uploads = await storage.reapUploads() } } : {}),
+    }).then(() => {
+      nextCleanupAt = Date.now() + REAP_INTERVAL_MS
+      return console.info(`managed-reaper: removed ${sessions} expired session(s), ${uploads} stale upload part(s) in ${Date.now() - startedAt}ms`)
+    }, err => {
+      nextCleanupAt = Date.now() + REAP_RETRY_MS
+      throw err
     }).finally(() => { cleanup = undefined })
     track(cleanup)
     return cleanup
   }
+  function automaticReap(): Promise<void> {
+    if (isShuttingDown() || cleanup || Date.now() < nextCleanupAt) return Promise.resolve()
+    return reap().catch(err => console.warn('managed-reaper: cleanup failed:', err))
+  }
+  async function handleRequest(req: Parameters<typeof routeRequest>[0], res: Parameters<typeof routeRequest>[1]): Promise<void> {
+    const maintenance = automaticReap()
+    // Send the normal response without waiting for storage housekeeping, but
+    // keep the invocation alive until both finish. No detached serverless work.
+    try { await routeRequest(req, res) }
+    finally { await maintenance }
+  }
   const gcTimer = config.serverless ? null : setInterval(() => {
-    void reap().catch(err => console.warn('managed: maintenance failed:', err))
-  }, SESSION_GC_INTERVAL_MS)
+    void automaticReap()
+  }, REAP_INTERVAL_MS)
   rollback.defer(stop)
 
   function stop(): void {

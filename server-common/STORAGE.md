@@ -108,8 +108,14 @@ the mode namespaces remain distinct inside the shared store.
 E2e cleanup excludes `.managed/` because dots are invalid workspace-tag
 characters. It collects unreferenced e2e blobs after an age grace period and
 reclaims stale/orphaned staging. Managed deletes target its UUID objects or
-slash-delimited cache prefixes. Managed cron removes expired sessions and
-upload parts older than 24 hours; it is not a general orphan-object sweep.
+slash-delimited cache prefixes. Managed maintenance removes expired sessions
+and upload parts older than 24 hours; it is not a general orphan-object sweep.
+Ordinary managed requests trigger it on the first request per instance, then
+hourly while traffic continues (one-minute retry backoff after failures).
+The response proceeds alongside cleanup, and the triggering invocation awaits
+both; concurrent requests share the sweep. Results and failures are logged as
+`managed-reaper:` under the triggering request. Persistent servers also have an
+hourly timer; serverless instances need traffic or the optional cron when idle.
 
 E2e commits and reaping are designed for concurrent instances: version updates
 use database compare-and-set operations; cleanup rechecks live references and

@@ -100,11 +100,13 @@ export async function openManagedVercelStorage(token: string, sdk?: VercelBlobSd
     },
     delete: id => deletePrefix(blobs, token, cachePath(id, ''), remove),
   }
-  // Staging uploads are never published. An interrupted browser leaves only
-  // parts here; the authenticated cron removes them after a full day.
-  function reapUploads(now = Date.now()) {
-    return deletePrefix(blobs, token, '.managed/uploads/', remove,
+  // Staging uploads are never published. Automatic maintenance and explicit
+  // cleanup remove abandoned parts after a full day.
+  async function reapUploads(now = Date.now()) {
+    let removed = 0
+    await deletePrefix(blobs, token, '.managed/uploads/', async path => { await remove(path); removed++ },
       blob => new Date(blob.uploadedAt ?? now).getTime() < now - 86_400_000)
+    return removed
   }
   const sourcesPath = (key: string) => `.managed/cache/report-sources/${validateCacheKey(key)}`
   const reportSourcesStorage: CacheStorage = {
