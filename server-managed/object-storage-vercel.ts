@@ -24,7 +24,7 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
         }
         return { size: result.blob.size === 0 ? null : result.blob.size, version: result.blob.etag,
           modifiedAt: new Date(result.blob.uploadedAt ?? Date.now()).getTime(),
-          stream: Readable.fromWeb(result.stream as Parameters<typeof Readable.fromWeb>[0]) }
+          stream: Readable.fromWeb(result.stream as Parameters<typeof Readable.fromWeb>[0], signal ? { signal } : {}) }
       } catch (err) { if (isNotFound(err, blobs)) return null; throw err }
     },
     async put(key, bytes, signal, expected, sizeHint) {

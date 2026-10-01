@@ -7,6 +7,10 @@ import { STORAGE_MAGIC } from '../server-common/storage-crypto.ts'
 import { type RawObject, isBlobId } from './object-storage.ts'
 import type { StorageRow, StorageRowKind } from './storage-db.ts'
 
+// A damaged/missing payload needs repair; retrying the whole cleanup job does
+// not fix it. Keep this distinct from database, storage and cancellation errors.
+export class StoragePayloadError extends Error {}
+
 export function storageRowPath(type: StorageRowKind, row: Pick<StorageRow, 'id' | 'kind'>): string {
   return `${type === 'report' ? 'reports' : 'bundles'}/${row.id}${type === 'bundle' && row.kind === 'sourcemap' ? '.map.br' : ''}`
 }
@@ -52,9 +56,17 @@ export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow
   const hash = createHash(type === 'report' ? 'sha256' : 'sha512')
   const sink = new Writable({ write(chunk, _encoding, next) { hash.update(chunk); next() } })
   const options = signal ? { signal } : {}
-  if (type === 'bundle' && row.kind === 'sourcemap') {
-    await pipeline(source, createBrotliDecompress(), sink, options)
-  } else await pipeline(source, sink, options)
+  try {
+    if (type === 'bundle' && row.kind === 'sourcemap') {
+      await pipeline(source, createBrotliDecompress(), sink, options)
+    } else await pipeline(source, sink, options)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? ''
+    if (['Z_DATA_ERROR', 'Z_BUF_ERROR'].includes(code) || code.startsWith('ERR__ERROR_FORMAT_')) {
+      throw new StoragePayloadError('Stored sourcemap cannot be decompressed', { cause: err })
+    }
+    throw err
+  }
   const actual = type === 'report' ? hash.digest('base64url') : `sha512-${hash.digest('base64')}`
-  if (actual !== row.hash) throw new Error('Stored payload does not match its upload hash')
+  if (actual !== row.hash) throw new StoragePayloadError('Stored payload does not match its upload hash')
 }

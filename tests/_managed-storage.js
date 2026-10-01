@@ -12,7 +12,7 @@ export async function managedStores(t, raw, { db, key = null, disk = false } = {
     t.after(() => db.close())
   }
   const stores = createManagedStores(await createEncryptedObjectStorage(raw, db, key), disk)
-  return { ...stores, db, raw, ...(disk ? {} : { reapUploads: now => reapStorageUploads(raw, db, now) }) }
+  return { ...stores, db, raw, ...(disk ? {} : { reapUploads: signal => reapStorageUploads(raw, db, Date.now(), signal) }) }
 }
 export async function vercelStores(t, token, sdk, db) {
   return managedStores(t, await openVercelObjectStorage(token, sdk), { db })

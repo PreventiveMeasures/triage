@@ -228,7 +228,8 @@ for (const remote of [false, true]) {
     for (const id of ids) await report(f, Buffer.from(id), id)
     await f.db.enableStorageEncryption()
     await f.raw.delete(`reports/${ids[0]}`)
-    await assert.rejects(migrateStorage(f.raw, f.db, key), /pending failures/u)
+    const result = await migrateStorage(f.raw, f.db, key)
+    assert.deepEqual(result.failures, [{ type: 'report', id: ids[0], message: 'Migration payload unavailable' }])
     assert.equal((await f.db.getStorageRow('report', ids[1])).encrypted, 1)
     assert.equal((await f.db.getStorageEncryption()).complete, 0)
     await f.raw.put(`reports/${ids[0]}`, Buffer.from(ids[0]))
@@ -557,6 +558,33 @@ test('payload verification cancels decompression and its input when aborted', as
   assert.equal(source.destroyed, true)
 })
 
+test('corrupt sourcemaps remain pending without turning format errors into cleanup failures', async t => {
+  const f = await fixture(t)
+  const ids = [await bundle(f, Buffer.from('first'), 'sourcemap'), await bundle(f, Buffer.from('second'), 'sourcemap')]
+  await f.raw.put(`bundles/${ids[0]}.map.br`, Buffer.from('broken'))
+  await f.raw.put(`bundles/${ids[1]}.map.br`, Buffer.alloc(0))
+  await f.db.enableStorageEncryption()
+  const result = await migrateStorage(f.raw, f.db, key)
+  assert.equal(result.complete, 0)
+  assert.deepEqual(result.failures.map(failure => failure.id).toSorted(), ids.toSorted())
+  assert.ok(result.failures.every(failure => failure.message === 'Stored sourcemap cannot be decompressed'))
+})
+
+test('shutdown cancels a Vercel response body after the request has returned headers', async t => {
+  const controller = new AbortController(), f = await fixture(t, true)
+  let cancelled = false
+  t.mock.method(f.sdk, 'get', () => Promise.resolve({
+    statusCode: 200, blob: { size: 100, etag: 'body-version' },
+    stream: new ReadableStream({ cancel() { cancelled = true } }),
+  }))
+  const opened = await f.raw.open(`reports/${randomUUID()}`, controller.signal)
+  const reading = consume(opened.stream)
+  controller.abort()
+  await assert.rejects(reading, { name: 'AbortError' })
+  assert.equal(cancelled, true)
+  assert.equal(opened.stream.destroyed, true)
+})
+
 test('migration deadline aborts Vercel cleanup deletion without completing the inventory', async t => {
   const f = await fixture(t, true)
   await f.raw.put('cache/bundles/11111111-1111-4111-8111-111111111111/value', Buffer.from('private legacy cache'))
@@ -690,10 +718,9 @@ test('an oversized first bundle advances the cursor so reports and GitHub tokens
     })
     signal.throwIfAborted()
   })
-  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 25 }), error => {
-    assert.match(error.cause.message, new RegExp(`bundle ${id}.*MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=25`, 'u'))
-    return true
-  })
+  const interrupted = await migrateStorage(f.raw, f.db, key, { maxMs: 25 })
+  assert.equal(interrupted.failures.length, 1)
+  assert.match(interrupted.failures[0].message, new RegExp(`bundle ${id}.*MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=25`, 'u'))
   assert.equal((await f.db.getStorageEncryption()).cursor, `bundle:${id}`)
   const next = await migrateStorage(f.raw, f.db, key)
   assert.equal(next.complete, 0, 'the skipped bundle still prevents completion')
@@ -816,7 +843,8 @@ test('a row interrupted after earlier progress gets one full-budget retry before
   const result = await migrateStorage(f.raw, f.db, key, { maxMs: 100 })
   assert.equal(result.cursor, `report:${first}`)
   assert.equal(result.complete, 0)
-  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 25 }), /pending failures/u)
+  const retry = await migrateStorage(f.raw, f.db, key, { maxMs: 25 })
+  assert.equal(retry.failures[0].id, second)
   assert.equal((await f.db.getStorageEncryption()).cursor, `report:${second}`)
 })
 

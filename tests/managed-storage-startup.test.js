@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
+import { createReapHandler } from '../server-common/reap.ts'
 import { sdkFixture } from './_managed-vercel.js'
 import * as blobSdk from '../server-common/vercel-blob.ts'
 
@@ -18,6 +19,110 @@ mock.module('../server-common/vercel-blob.ts', { namedExports: { ...blobSdk, loa
 mock.module('../server-managed/static.ts', { namedExports: { loadManagedStatic: () => () => false } })
 const { openManagedStorage } = await import('../server-managed/storage.ts')
 const { createManagedApp } = await import('../server-managed/index.ts')
+
+async function legacyFixture(t) {
+  const dir = await mkdtemp(join(tmpdir(), 'triage-maintenance-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  databasePath = join(dir, 'managed.db')
+  const blobs = sdkFixture()
+  sdk = blobs.sdk
+  const config = { dbPath: databasePath, neonUrl: 'postgres://fixture', blobToken: 'fixture', serverless: true, host: 'localhost' }
+  const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']
+  const legacy = await openManagedStorage(config)
+  try {
+    for (const id of ids) {
+      const body = Buffer.from(id)
+      await legacy.reportStore.put(id, body)
+      await legacy.db.insertReport({ id, filename: 'report', contentType: 'text/plain', byteSize: body.length,
+        sha256: createHash('sha256').update(body).digest('base64url'), uploadedBy: null, repoId: null }, Date.now())
+    }
+  } finally { await legacy.db.close() }
+  return { blobs, ids, config: { ...config, storageEncryptionKey: Buffer.alloc(32, 123).toString('base64'), storageEncryptionMigrate: true } }
+}
+
+for (const damage of ['missing', 'hash mismatch']) {
+  test(`a ${damage} row reports incomplete migration without failing reap or triggering minute retries`, async t => {
+    const { blobs, config, ids } = await legacyFixture(t)
+    const path = `.managed/reports/${ids[0]}`
+    const original = blobs.objects.get(path)
+    if (damage === 'missing') blobs.objects.delete(path)
+    else blobs.objects.set(path, { ...original, bytes: Buffer.from('wrong content') })
+    const upload = `.managed/uploads/${randomUUID()}`
+    blobs.objects.set(upload, { bytes: Buffer.from('stale upload'), uploadedAt: new Date(0) })
+    let now = Date.now()
+    const logs = [], warnings = []
+    t.mock.method(Date, 'now', () => now)
+    t.mock.method(console, 'info', (...args) => logs.push(args))
+    t.mock.method(console, 'warn', (...args) => warnings.push(args))
+    const app = await createManagedApp(config), observer = await openManagedStorage(config)
+    try {
+      const reap = createReapHandler({ managed: app.reap }, { secret: 'test' })
+      const res = { writeHead(status) { this.status = status }, end() {} }
+      await reap({ method: 'GET', headers: { authorization: 'Bearer test' } }, res)
+      assert.equal(res.status, 200)
+      assert.equal(blobs.objects.has(upload), false, 'other cleanup completes')
+      assert.equal((await observer.db.getStorageEncryption()).complete, 0)
+      assert.equal((await observer.db.getStorageRow('report', ids[1])).encrypted, 1)
+      assert.equal(warnings.length, 1)
+      assert.equal(warnings[0][0], 'managed-storage-migration-row:')
+      assert.equal(JSON.parse(warnings[0][1]).id, ids[0])
+      assert.equal(JSON.parse(logs.find(([label]) => label === 'managed-storage-migration:')[1]).failed, 1)
+      now += 60_000
+      await app.handleRequest({ url: '/api/config', method: 'GET', headers: {} }, res)
+      assert.equal(warnings.length, 1, 'row damage does not schedule a one-minute retry')
+      now += 3_540_000
+      await app.handleRequest({ url: '/api/config', method: 'GET', headers: {} }, res)
+      assert.equal(warnings.length, 2, 'pending rows retry on the ordinary hourly cadence')
+      blobs.objects.set(path, original)
+      await app.reap()
+      assert.equal((await observer.db.getStorageEncryption()).complete, 1)
+      assert.equal((await observer.reportStore.get(ids[0])).toString(), ids[0])
+    } finally { await app.close(); await observer.db.close() }
+  })
+}
+
+for (const operation of ['get', 'put', 'list']) {
+  test(`shutdown cancels migration ${operation} and a new instance resumes with the same data key`, { timeout: 5000 }, async t => {
+    const { blobs, config, ids } = await legacyFixture(t)
+    const started = Promise.withResolvers()
+    const original = blobs.sdk[operation]
+    let aborted = false
+    const blocked = t.mock.method(blobs.sdk, operation, async (...args) => {
+      const selected = operation === 'list' ? args[0].prefix === '.managed/cache/' : args[0] === `.managed/reports/${ids[0]}`
+      if (!selected) return original(...args)
+      const { abortSignal } = operation === 'list' ? args[0] : args[operation === 'put' ? 2 : 1]
+      assert.ok(abortSignal)
+      started.resolve()
+      await new Promise((resolve, reject) => {
+        const fallback = setTimeout(() => reject(new Error('maintenance was not cancelled')), 2000)
+        abortSignal.addEventListener('abort', () => { clearTimeout(fallback); aborted = true; resolve() }, { once: true })
+      })
+      abortSignal.throwIfAborted()
+    })
+    let app = await createManagedApp(config)
+    const observer = await openManagedStorage(config)
+    try {
+      const running = app.reap()
+      await started.promise
+      const row = await observer.db.getStorageRow('report', ids[0])
+      assert.ok(row.dataKey)
+      await Promise.all([running, app.close()])
+      app = null
+      assert.equal(aborted, true)
+      const state = await observer.db.getStorageEncryption()
+      assert.equal(state.cleanupComplete, 0, 'cancellation cannot complete the migration inventory')
+      if (operation !== 'list') {
+        assert.equal(state.cursor, null, 'shutdown leaves the interrupted row at the checkpoint')
+        assert.equal((await observer.db.getStorageRow('report', ids[0])).encrypted, 0)
+      }
+      blocked.mock.restore()
+      await observer.reapStorage()
+      assert.equal((await observer.db.getStorageEncryption()).complete, 1)
+      assert.equal((await observer.db.getStorageRow('report', ids[0])).dataKey, row.dataKey)
+      assert.equal((await observer.reportStore.get(ids[0])).toString(), ids[0])
+    } finally { await app?.close(); await observer.db.close() }
+  })
+}
 
 for (const encrypted of [false, true]) {
   test(`disk maintenance preserves unrelated files beside a shared database (encryption: ${encrypted})`, async t => {

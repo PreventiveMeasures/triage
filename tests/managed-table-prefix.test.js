@@ -134,6 +134,7 @@ for (const backend of ['sqlite', 'postgres']) {
       await fixture.exec(`ALTER TABLE ${table} DROP COLUMN data_key; ALTER TABLE ${table} DROP COLUMN storage_encrypted`)
     }
     await fixture.exec('ALTER TABLE managed_user DROP COLUMN gh_tokens_encrypted; DROP TABLE managed_storage_encryption;')
+    if (backend === 'postgres') await fixture.exec('DELETE FROM managed_schema_version WHERE version = 9')
     db = await fixture.open({ storageEncryptionKey: storageTestKey })
     try {
       assert.equal(await db.getStorageEncryption(), null)

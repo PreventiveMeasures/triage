@@ -58,7 +58,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(WORKSPACE_SHARE_SCHEMA))
       await db.query('INSERT INTO managed_schema_version VALUES (4)')
     }
-    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA))
+    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA))
     await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
     await db.query('ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS attempted_at BIGINT')
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 5')).rows.length === 0) {
@@ -84,10 +84,14 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query('CREATE INDEX IF NOT EXISTS managed_report_hash_idx ON managed_report(sha256, uploaded_at, id)')
       await db.query('INSERT INTO managed_schema_version VALUES (8)')
     }
-    for (const table of ['managed_report', 'managed_bundle']) {
-      await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS data_key TEXT, ADD COLUMN IF NOT EXISTS storage_encrypted INTEGER NOT NULL DEFAULT 0`)
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 9')).rows.length === 0) {
+      await db.query(postgresSchema(STORAGE_SCHEMA))
+      for (const table of ['managed_report', 'managed_bundle']) {
+        await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS data_key TEXT, ADD COLUMN IF NOT EXISTS storage_encrypted INTEGER NOT NULL DEFAULT 0`)
+      }
+      await db.query('ALTER TABLE managed_user ADD COLUMN IF NOT EXISTS gh_tokens_encrypted INTEGER NOT NULL DEFAULT 0')
+      await db.query('INSERT INTO managed_schema_version VALUES (9)')
     }
-    await db.query('ALTER TABLE managed_user ADD COLUMN IF NOT EXISTS gh_tokens_encrypted INTEGER NOT NULL DEFAULT 0')
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

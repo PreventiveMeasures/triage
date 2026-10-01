@@ -134,8 +134,12 @@ transactions, serialized with token refreshes.
 
 Progress is saved after each row. Failed rows are retried on the next pass;
 other rows can advance. `complete: true` means there are no pending payload or
-token rows, including earlier failures. An unavailable/corrupt payload keeps
-migration incomplete and reports an error.
+token rows, including earlier failures. A missing payload, hash mismatch or
+invalid sourcemap keeps migration incomplete and logs its row type, ID and
+failure under `managed-storage-migration-row:`. These rows do not fail session
+or upload cleanup, change `/api/reap` to HTTP 500, or trigger one-minute retries.
+They retry on subsequent ordinary batches; repairing the payload lets migration
+finish. Database and provider failures still fail the cleanup job.
 
 Legacy caches are immediately ignored after activation. Rebuilds use the
 bundle key and a separate `cache-encrypted-v1/` namespace. A bounded independent
@@ -155,8 +159,9 @@ the staging sweep runs only on Vercel.
 Migration requires `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1` and the configured
 key. It runs through managed `reap()`, including authenticated `GET /api/reap`.
 Ordinary traffic triggers maintenance on the first request per instance, then
-hourly (one-minute retry backoff after failures). Persistent servers also run
-an hourly timer; Vercel's supplied optional cron runs daily when traffic is idle.
+hourly (one-minute retry backoff after database/provider failures). Persistent
+servers also run an hourly timer; Vercel's supplied optional cron runs daily
+when traffic is idle.
 Each migration call processes at most 64 entries with a default 150-second work
 budget. Set `MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS` to adjust that budget:
 up to one hour on persistent servers, or 240 seconds on Vercel. The deployed
@@ -165,7 +170,7 @@ function's duration must still allow the batch and remaining request work.
 When time runs out after earlier rows have completed, the interrupted row stays
 pending and gets a full budget next batch; the batch returns progress normally.
 If the first row consumes the entire budget, the batch checkpoints past it and
-reports an error naming the row and `MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS`.
+logs a row diagnostic naming the row and `MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS`.
 Later rows and GitHub tokens can then advance. The oversized row remains pending
 and is retried on the next pass; completion cannot hide it. Genuine storage
 failures also remain errors. If cleanup finds a recent temporary file, it returns
@@ -174,14 +179,17 @@ through the 24-hour staging grace period. Recognized disk `<path>.<uuid>.tmp`
 files are removed after that grace period whether plaintext or encrypted,
 including temporary files in the encrypted cache namespace. Progress is logged as
 `managed-storage-migration:` with `complete`, `cleanupComplete`, `migrated`,
-`cursor` and `retryAt`. Once both completion flags are true the job is a no-op;
-the migration variable can be removed while retaining the key.
+`cursor`, `retryAt`, `failed` (rows in this batch) and `cancelled`. Once both
+completion flags are true the job is a no-op; the migration variable can be
+removed while retaining the key.
 Temporary files left by later crashes are not swept after migration cleanup
 has completed; like encrypted orphan payloads, they can consume storage.
 
 The work budget cancels Blob reads, writes, listings and deletes, as well as
-payload verification and decompression. Provider/database timeouts still apply;
-an in-flight database operation is not cancelled by that signal. A single object
+payload verification and decompression. Server shutdown aborts the same work,
+leaves an interrupted row pending with its existing data key, and waits for
+maintenance to settle before closing the database. Provider/database timeouts
+still apply; an in-flight database operation is not cancelled by that signal. A single object
 must fit the transfer budget; increase the budget for objects that repeatedly
 exhaust it. Disk inventories skip and log unsupported names and symlinks without
 following them. Directory fsync is used where supported; on unsupported
