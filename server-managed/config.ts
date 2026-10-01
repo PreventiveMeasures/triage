@@ -3,6 +3,7 @@
 // GitHub App can provide both flows, with repository grants at installation.
 import { env } from 'node:process'
 import { databaseUrls } from '../server-common/database-config.ts'
+import { MAX_UPLOAD_BYTES } from './uploads.ts'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
@@ -124,7 +125,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
     githubNewIssueLabels: env['GITHUB_NEW_ISSUE_LABELS'] ?? '',
     maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
-    maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 209_715_200, 1, 1_073_741_824),
+    maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 209_715_200, 1, MAX_UPLOAD_BYTES),
     triageHistoryLimit: intEnv('TRIAGE_HISTORY_LIMIT', 0, 0, 1_000_000_000),
   }
 }

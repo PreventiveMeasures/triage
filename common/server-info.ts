@@ -16,6 +16,7 @@ export interface ManagedServerInfo {
   loginPath: string
   cookieName: string
   uploadChunkBytes?: number
+  uploadMaxBytes?: { reports: number; bundles: number }
   allowShare?: boolean
 }
 

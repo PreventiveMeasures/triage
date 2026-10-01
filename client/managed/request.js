@@ -57,24 +57,43 @@ function previewResponse(url, options) {
 async function uploadInParts(url, options, send) {
   const config = await send('/api/config', { credentials: 'same-origin', signal: options.signal })
   if (!config.ok) return config
-  const chunkBytes = (await config.json()).managed?.uploadChunkBytes
+  const managed = (await config.json()).managed
+  const chunkBytes = managed?.uploadChunkBytes
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0 || chunkBytes > 3 * 1024 * 1024) return send(url, options)
   const file = options.body, id = crypto.randomUUID()
   const kind = url.endsWith('/reports') ? 'reports' : 'bundles'
+  const maxBytes = managed?.uploadMaxBytes?.[kind]
+  if (Number.isSafeInteger(maxBytes) && maxBytes > 0 && file.size > maxBytes) return Response.json({ error: 'too-large' }, { status: 413 })
   const count = Math.ceil(file.size / chunkBytes)
   const partHeaders = new Headers(options.headers)
   partHeaders.set('content-type', 'application/octet-stream')
-  for (let index = 0; index < count; index++) {
-    const response = await send(`/api/admin/uploads/${kind}/${id}/${index}`, {
-      ...options, headers: partHeaders, body: file.slice(index * chunkBytes, (index + 1) * chunkBytes),
-    })
-    if (!response.ok) return response
+  let attempted = 0, completed = false
+  try {
+    for (let index = 0; index < count; index++) {
+      attempted = index + 1
+      const response = await send(`/api/admin/uploads/${kind}/${id}/${index}`, {
+        ...options, headers: partHeaders, body: file.slice(index * chunkBytes, (index + 1) * chunkBytes),
+      })
+      if (!response.ok) return response
+    }
+    const headers = new Headers(options.headers)
+    headers.set('x-upload-id', id)
+    headers.set('x-upload-parts', String(count))
+    headers.set('x-upload-size', String(file.size))
+    const response = await send(url, { ...options, headers, body: '' })
+    completed = response.ok
+    return response
+  } finally {
+    if (!completed && attempted > 0) {
+      // Cancellation needs its own bounded signal. The session-generation
+      // guard in send still prevents cleanup under a switched account.
+      const headers = new Headers(options.headers)
+      headers.set('x-upload-parts', String(attempted))
+      await send(`/api/admin/uploads/${kind}/${id}`, {
+        ...options, method: 'DELETE', headers, body: undefined, signal: AbortSignal.timeout(10000),
+      }).catch(() => {}) // Preserve the upload error; the staging sweep retries cleanup.
+    }
   }
-  const headers = new Headers(options.headers)
-  headers.set('x-upload-id', id)
-  headers.set('x-upload-parts', String(count))
-  headers.set('x-upload-size', String(file.size))
-  return send(url, { ...options, headers, body: '' })
 }
 
 export async function managedFetch(url, options) {

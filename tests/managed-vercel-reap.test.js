@@ -7,7 +7,7 @@ mock.module('../server-managed/storage.ts', { namedExports: { openManagedStorage
   if (fail) return Promise.reject(new Error('cold start failed'))
   return Promise.resolve({
     db: { deleteExpiredSessions: () => { sessions++; return Promise.resolve(3) } },
-    reapUploads: () => { uploads++; return Promise.resolve() },
+    reapUploads: () => { uploads++; return Promise.resolve(0) },
   })
 } } })
 mock.module('../server-managed/static.ts', { namedExports: { loadManagedStatic: () => () => false } })

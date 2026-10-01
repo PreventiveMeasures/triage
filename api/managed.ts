@@ -1,5 +1,6 @@
 // Vercel Node function: no listener, signal handlers or detached work. Feed
-// timers live only inside their awaited, bounded streaming request.
+// timers live only inside their awaited, bounded streaming request. Ordinary
+// requests also await any due managed maintenance before the invocation ends.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createManagedApp } from '../server-managed/index.ts'
 import { loadManagedConfig } from '../server-managed/config.ts'
