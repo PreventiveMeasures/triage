@@ -59,12 +59,22 @@ startup checks it, and storage/token operations check the requirement again.
 A missing or incorrect key fails closed. Removing or changing the master key
 and reverting to an older binary are unsupported after activation.
 
+On Vercel, deploy with the key configured first, then run the activation command
+from a trusted workstation or CI job using the production Neon URL, Blob token
+and the same key. The marker is stored in Neon, so deployed functions observe
+it on subsequent operations. The command needs no shell inside Vercel; the
+scheduled `/api/reap` can perform migration after activation.
+
 New uploads receive a random data key. The server encrypts the file at its
 usual path, then inserts the row with the wrapped key and an encrypted flag.
 A duplicate retains the original row/key and discards the candidate. After an
 uncertain database commit, reconciliation takes the database writer lock
 before deciding whether the candidate file can be deleted. If reconciliation
 is unavailable, the encrypted candidate is retained.
+
+A plaintext write racing activation is rejected, including a write whose PUT
+committed but lost its acknowledgement. Cleanup compares its bytes and deletes
+only the observed version, preserving a concurrent encrypted replacement.
 
 ## Resumable migration
 
@@ -112,9 +122,14 @@ Maintenance runs through managed `reap()`, including authenticated
 `GET /api/reap`. Each migration call processes at most 64 entries with a
 150-second work budget. Persistent servers schedule cleanup; Vercel's supplied
 cron runs daily. The CLI repeats batches until both completion flags are true.
-All work is awaited; no background promise must survive a Vercel response.
-Provider/database timeouts still apply. A single object must fit the transfer
-budget; persistent failures require investigation and a rerun.
+If cleanup finds a recent temporary file, it exits with `cleanupComplete: false`
+and `retryAt` (Unix milliseconds) rather than spinning through the 24-hour staging
+grace period. Run it again after that time, or let scheduled maintenance resume.
+All work is awaited; no background promise must survive a Vercel response. The
+work budget cancels Blob reads, writes, listings and deletes, as well as payload
+verification and decompression. Provider/database timeouts still apply; an
+in-flight database operation is not cancelled by that signal. A single object
+must fit the transfer budget; persistent failures require investigation and a rerun.
 
 ## Layout, deletion and recovery
 

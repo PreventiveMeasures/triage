@@ -18,6 +18,7 @@ import { migrateStorage, reapStorageUploads } from '../server-managed/storage-ma
 import { createManagedStores } from '../server-managed/storage-stores.ts'
 import { openManagedStorage } from '../server-managed/storage.ts'
 import { unwrapDataKey } from '../server-managed/storage-db.ts'
+import { verifyStoragePayload } from '../server-managed/storage-payload.ts'
 import { sdkFixture } from './_managed-vercel.js'
 import { checkStorageDb, storageTestKey as key } from './_managed-storage-db.js'
 
@@ -156,7 +157,7 @@ for (const remote of [false, true]) {
     const migrated = (await f.db.getStorageRow('report', id)).encrypted ? id : pending
     await f.raw.put(`reports/${migrated}`, Buffer.from(migrated === id ? 'private report' : 'other legacy report'))
     assert.equal((await f.db.getStorageEncryption()).complete, 0)
-    await assert.rejects(f.stores.reportStore.get(migrated), /plaintext/u)
+    await assert.rejects(f.stores.reportStore.get(migrated), /encrypted storage envelope/u)
   })
 
   test(`${backend}: interrupted PUT and lost SQL acknowledgement resume with the same persisted key`, async t => {
@@ -285,9 +286,11 @@ test('encryption streams a generated 115 MiB payload with bounded input read-ahe
 
 test('CLI status is read-only, enable is explicit, and migration is restartable without a listener', async t => {
   const f = await fixture(t), id = await report(f)
+  const abandoned = `reports/${id}.${randomUUID()}.tmp`
+  await f.raw.put(abandoned, Buffer.from('unfinished plaintext write'))
   const run = async flag => {
     const { stdout } = await promisify(execFile)(process.execPath, ['server-managed/cli.js', flag], {
-      cwd: process.cwd(), env: { ...process.env, MANAGED_DB_PATH: f.dbPath, MANAGED_STORAGE_ENCRYPTION_KEY: key.bytes.toString('base64'),
+      cwd: process.cwd(), timeout: 10_000, env: { ...process.env, MANAGED_DB_PATH: f.dbPath, MANAGED_STORAGE_ENCRYPTION_KEY: key.bytes.toString('base64'),
         DATABASE_URL: '', MANAGED_DATABASE_URL: '', E2E_DATABASE_URL: '', VERCEL: '',
         GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', OAUTH_CALLBACK_URL: 'https://app.example/api/oauth/github/callback' },
     })
@@ -296,8 +299,14 @@ test('CLI status is read-only, enable is explicit, and migration is restartable 
   assert.deepEqual(await run('--storage-encryption-status'), { encryption: 'disabled' })
   await assert.rejects(run('--migrate-storage'), /enable-storage-encryption/u)
   assert.equal((await run('--enable-storage-encryption')).complete, false)
+  const paused = await run('--migrate-storage')
+  assert.equal(paused.complete, true)
+  assert.equal(paused.cleanupComplete, false)
+  assert.ok(paused.retryAt > Date.now(), 'deferred cleanup exits with a retry time instead of busy-looping')
+  await utimes(join(f.dir, abandoned), new Date(0), new Date(0))
   const final = await run('--migrate-storage')
   assert.equal(final.complete, true); assert.equal(final.cleanupComplete, true)
+  assert.equal(await f.raw.exists(abandoned), false)
   assert.equal((await readFile(join(f.dir, 'reports', id))).subarray(0, 16).toString(), 'DeepView.storage')
 })
 
@@ -366,4 +375,130 @@ test('resuming a disk replacement persists the rename before marking the row enc
   t.mock.restoreAll()
   await finish(f)
   assert.equal((await f.db.getStorageRow('report', id)).encrypted, 1)
+})
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'Vercel' : 'disk'}: failed writes clean up only their own plaintext after activation`, async t => {
+    const f = await fixture(t, remote), id = randomUUID()
+    const body = Buffer.from('DeepView.storage is also a valid plaintext prefix')
+    const put = f.raw.put.bind(f.raw)
+    t.mock.method(f.raw, 'put', async (...args) => {
+      await put(...args)
+      await f.db.enableStorageEncryption()
+      throw new Error('lost plaintext PUT acknowledgement')
+    })
+    await assert.rejects(f.stores.reportStore.put(id, body), /lost plaintext PUT acknowledgement/u)
+    assert.equal(await f.raw.exists(`reports/${id}`), false)
+  })
+
+  test(`${remote ? 'Vercel' : 'disk'}: legacy cleanup does not mistake orphan plaintext for ciphertext`, async t => {
+    const f = await fixture(t, remote), path = `reports/${randomUUID()}`
+    await f.raw.put(path, Buffer.from('DeepView.storage orphan plaintext'))
+    if (remote) f.objects.get(`.managed/${path}`).uploadedAt = new Date(0)
+    else await utimes(join(f.dir, path), new Date(0), new Date(0))
+    await f.db.enableStorageEncryption()
+    await finish(f)
+    assert.equal(await f.raw.exists(path), false)
+  })
+}
+
+test('failed plaintext cleanup preserves a concurrent encrypted replacement', async t => {
+  const f = await fixture(t, true)
+  const body = Buffer.from('private report'), id = randomUUID()
+  const put = f.raw.put.bind(f.raw)
+  t.mock.method(f.raw, 'put', async (...args) => {
+    await put(...args)
+    await f.db.insertReport({ id, filename: 'report', contentType: 'text/plain', byteSize: body.length,
+      sha256: createHash('sha256').update(body).digest('base64url'), uploadedBy: null, repoId: null }, Date.now())
+    t.mock.restoreAll()
+    await f.db.enableStorageEncryption()
+    await finish(f)
+    throw new Error('lost acknowledgement after migration')
+  })
+  await assert.rejects(f.stores.reportStore.put(id, body), /lost acknowledgement/u)
+  assert.deepEqual(await f.stores.reportStore.get(id), body)
+})
+
+test('an encrypted row with a missing key fails without allocating a replacement key', async t => {
+  const f = await fixture(t)
+  await f.db.enableStorageEncryption()
+  const id = await bundle(f)
+  const sql = new DatabaseSync(f.dbPath)
+  try {
+    sql.prepare('UPDATE managed_bundle SET data_key = NULL WHERE id = ?').run(id)
+    await assert.rejects(f.db.ensureStorageDataKey('bundle', id), /data key/u)
+    assert.equal(sql.prepare('SELECT data_key FROM managed_bundle WHERE id = ?').get(id).data_key, null)
+  } finally { sql.close() }
+})
+
+test('migration deadline aborts a stalled Vercel inventory request without completing cleanup', async t => {
+  const f = await fixture(t, true)
+  await f.db.enableStorageEncryption()
+  t.mock.method(f.sdk, 'list', async options => {
+    assert.ok(options.abortSignal, 'inventory must receive the migration signal')
+    await new Promise((resolve, reject) => {
+      const fallback = setTimeout(() => reject(new Error('inventory was not aborted')), 1000)
+      options.abortSignal.addEventListener('abort', () => { clearTimeout(fallback); resolve() }, { once: true })
+    })
+    options.abortSignal.throwIfAborted()
+  })
+  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 100 }), err => {
+    assert.equal(err.cause.name, 'TimeoutError')
+    return true
+  })
+  assert.equal((await f.db.getStorageEncryption()).cleanupComplete, 0)
+})
+
+test('payload verification cancels decompression and its input when aborted', async () => {
+  const controller = new AbortController()
+  // A blocked input also exercises cancellation independently of raw adapters.
+  const source = new Readable({ read() {} })
+  const job = verifyStoragePayload('bundle', { kind: 'sourcemap', hash: 'unused' }, source, controller.signal)
+  controller.abort()
+  await assert.rejects(job, { name: 'AbortError' })
+  assert.equal(source.destroyed, true)
+})
+
+test('migration deadline aborts Vercel cleanup deletion without completing the inventory', async t => {
+  const f = await fixture(t, true)
+  await f.raw.put('cache/old/value', Buffer.from('private legacy cache'))
+  await f.db.enableStorageEncryption()
+  t.mock.method(f.sdk, 'del', async (_path, options) => {
+    assert.ok(options.abortSignal, 'deletion must receive the migration signal')
+    await new Promise((resolve, reject) => {
+      const fallback = setTimeout(() => reject(new Error('deletion was not aborted')), 1000)
+      options.abortSignal.addEventListener('abort', () => { clearTimeout(fallback); resolve() }, { once: true })
+    })
+    options.abortSignal.throwIfAborted()
+  })
+  await assert.rejects(migrateStorage(f.raw, f.db, key, { maxMs: 100 }), err => {
+    assert.equal(err.cause.name, 'TimeoutError')
+    return true
+  })
+  assert.equal((await f.db.getStorageEncryption()).cleanupComplete, 0)
+  t.mock.restoreAll()
+  await finish(f)
+  assert.equal(await f.raw.exists('cache/old/value'), false)
+})
+
+test('Vercel cleanup preserves an encrypted upload awaiting SQL despite rounded Last-Modified', async t => {
+  const f = await fixture(t, true), id = randomUUID()
+  const state = await f.db.enableStorageEncryption()
+  const body = Buffer.from('new upload'), dataKey = await f.stores.reportStore.put(id, body)
+  f.objects.get(`.managed/reports/${id}`).uploadedAt = new Date(Math.floor(state.enabledAt / 1000) * 1000)
+  await finish(f)
+  assert.equal(await f.raw.exists(`reports/${id}`), true)
+  await f.db.insertReport({ id, filename: 'report', contentType: 'text/plain', byteSize: body.length,
+    sha256: createHash('sha256').update(body).digest('base64url'), dataKey, uploadedBy: null, repoId: null }, Date.now())
+  assert.deepEqual(await f.stores.reportStore.get(id), body)
+})
+
+test('Vercel open cancels a response rejected for a missing object version', async t => {
+  const f = await fixture(t, true)
+  let cancelled = false
+  t.mock.method(f.sdk, 'get', () => Promise.resolve({ statusCode: 200, blob: { size: 1 },
+    stream: new ReadableStream({ cancel() { cancelled = true } }),
+  }))
+  await assert.rejects(f.raw.open(`reports/${randomUUID()}`), /missing object version/u)
+  assert.equal(cancelled, true)
 })

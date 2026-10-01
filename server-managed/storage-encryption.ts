@@ -9,15 +9,17 @@ import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayloa
 export const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
 
-export async function removeLegacyPrefix(raw: RawObjectStorage, prefix: string): Promise<void> {
+async function removeObjectPrefix(raw: RawObjectStorage, prefix: string): Promise<void> {
+  const signal = AbortSignal.timeout(STORAGE_WRITE_MS)
   for (;;) {
-    const page = await raw.list(prefix, null, 100)
+    signal.throwIfAborted()
+    const page = await raw.list(prefix, null, 100, signal)
     if (page.objects.length === 0) return
     for (const object of page.objects) {
-      const stored = await raw.open(object.key)
+      const stored = await raw.open(object.key, signal)
       if (!stored) continue
       stored.stream.destroy()
-      if (!await raw.delete(object.key, stored.version)) throw new Error('Storage changed during deletion')
+      if (!await raw.delete(object.key, stored.version, signal)) throw new Error('Storage changed during deletion')
     }
   }
 }
@@ -32,6 +34,37 @@ function logicalKey(identity: string) {
   if (identity.startsWith(ENCRYPTED_CACHE_PREFIX)) throw new Error('Encrypted cache paths are internal')
 }
 const encryptedCachePath = (identity: string) => `${ENCRYPTED_CACHE_PREFIX}${identity.slice('cache/'.length)}`
+
+// A PUT can commit and still throw. Remove only this attempted plaintext,
+// comparing bytes rather than magic: arbitrary uploads can share the header.
+// A concurrent migration's ciphertext must survive this reconciliation.
+async function discardPlaintextWrite(raw: RawObjectStorage, identity: string, bytes: Buffer): Promise<void> {
+  // Leave time to report the original failure inside a serverless invocation.
+  const signal = AbortSignal.timeout(30_000)
+  const current = await raw.open(identity, signal)
+  if (!current) return
+  try {
+    let offset = 0
+    for await (const part of current.stream) {
+      const chunk = Buffer.from(part)
+      if (!chunk.equals(bytes.subarray(offset, offset + chunk.length))) return
+      offset += chunk.length
+    }
+    if (offset === bytes.length) await raw.delete(identity, current.version, signal)
+  } finally { current.stream.destroy() }
+}
+
+async function putPlaintext(raw: RawObjectStorage, identity: string, bytes: Buffer, mode: () => Promise<StorageEncryptionState | null>): Promise<null> {
+  try {
+    await raw.put(identity, bytes, AbortSignal.timeout(STORAGE_WRITE_MS))
+    if (!await mode()) return null
+    throw new Error('Storage encryption was enabled during upload; retry the upload')
+  } catch (err) {
+    try { await discardPlaintextWrite(raw, identity, bytes) }
+    catch (cleanup) { throw new AggregateError([err, cleanup], 'Storage write and plaintext cleanup failed', { cause: cleanup }) }
+    throw err
+  }
+}
 
 async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageKey, identity: string, state: StorageEncryptionState): ReturnType<ObjectStorage['open']> {
   const owner = storageOwner(identity)
@@ -55,6 +88,14 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
       if (!owner.cache && await db.getStorageRow(owner.type, owner.id)) throw new Error('Stored payload unavailable')
       return null
     }
+    // Completed uploads and all new caches are always encrypted. Only legacy
+    // pending rows need header inspection and hash-verified plaintext fallback.
+    if (row.encrypted || owner.cache || state.complete) {
+      let bytes: Buffer | undefined
+      try { bytes = unwrapDataKey(key, owner.type, row); return await decryptStorageStream(stored.stream, bytes, identity) }
+      catch (err) { stored.stream.destroy(); throw err }
+      finally { bytes?.fill(0) }
+    }
     let inspected = await inspectStorageObject(stored)
     if (inspected.encrypted && !row.dataKey && (await db.getStorageRow(owner.type, owner.id))?.dataKey) {
       inspected.stream.destroy(); continue
@@ -62,9 +103,8 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
     if (inspected.encrypted && row.dataKey) {
       let bytes: Buffer | undefined
       try { bytes = unwrapDataKey(key, owner.type, row); return await decryptStorageStream(inspected.stream, bytes, identity) }
-      catch (err) {
+      catch {
         inspected.stream.destroy()
-        if (row.encrypted || owner.cache || state.complete) throw err
         // An arbitrary legacy upload can begin with our magic bytes. Only
         // its original SQL hash can authorize that plaintext interpretation.
         const legacy = await raw.open(identity)
@@ -72,10 +112,6 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
         inspected = { ...legacy, encrypted: false }
       }
       finally { bytes?.fill(0) }
-    }
-    if (row.encrypted || owner.cache || state.complete) {
-      inspected.stream.destroy()
-      throw new Error('Unexpected plaintext storage payload')
     }
     // Only a pending row may read plaintext, and only the original upload.
     // Verify first, then reopen that exact version before exposing bytes.
@@ -120,23 +156,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
       logicalKey(identity)
       const state = await mode()
       if (identity.startsWith('avatars/')) { await raw.put(identity, bytes); return null }
-      if (!state) {
-        await raw.put(identity, bytes)
-        try {
-          if (!await mode()) return null
-          throw new Error('Storage encryption was enabled during upload; retry the upload')
-        } catch (err) {
-          // A pre-activation write may finish after activation. Remove only
-          // plaintext, never a concurrent migration's encrypted replacement.
-          const current = await raw.open(identity)
-          if (current) {
-            const inspected = await inspectStorageObject(current)
-            inspected.stream.destroy()
-            if (!inspected.encrypted) await raw.delete(identity, current.version)
-          }
-          throw err
-        }
-      }
+      if (!state) return putPlaintext(raw, identity, bytes, mode)
       const owner = storageOwner(identity)
       let dataKey: Buffer, wrapped: string | null = null
       if (owner?.cache) {
@@ -170,7 +190,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
       logicalKey(`${prefix}validate`)
       if (!prefix.endsWith('/')) throw new Error('Invalid storage prefix')
       const state = await mode()
-      await removeLegacyPrefix(raw, state && prefix.startsWith('cache/') ? encryptedCachePath(prefix) : prefix)
+      await removeObjectPrefix(raw, state && prefix.startsWith('cache/') ? encryptedCachePath(prefix) : prefix)
     },
   }
 }

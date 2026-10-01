@@ -96,8 +96,11 @@ export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageD
     return state
   }
   async function getRow(type: StorageRowKind, id: string): Promise<StorageRow | null> {
-    return await db.prepare(`SELECT id, data_key AS dataKey, storage_encrypted AS encrypted,
+    const row = await db.prepare(`SELECT id, data_key AS dataKey, storage_encrypted AS encrypted,
       ${type === 'report' ? 'sha256 AS hash, NULL AS kind' : 'integrity AS hash, kind'} FROM ${table(type)} WHERE id = ?`).get(id) as StorageRow | undefined ?? null
+    if (row && row.encrypted !== 0 && row.encrypted !== 1) throw new Error('Invalid storage encryption state')
+    if (row?.encrypted && !row.dataKey) throw new Error('Encrypted storage row is missing its data key')
+    return row
   }
   return {
     async enableStorageEncryption() {

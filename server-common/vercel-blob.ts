@@ -73,6 +73,7 @@ export type VercelBlobSdk = {
     limit?: number
     mode?: 'expanded' | 'folded'
     token?: string
+    abortSignal?: AbortSignal
   }) => Promise<{
     // `uploadedAt` (a Date per the SDK v2 surface) is the blob's
     // creation time — used by the reaper's GC grace window. Optional

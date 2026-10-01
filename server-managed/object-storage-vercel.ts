@@ -10,8 +10,10 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
       try {
         const result = await blobs.get(path(key), { token, access: 'private', useCache: false, ...(signal ? { abortSignal: signal } : {}) })
         if (!result) return null
-        if (result.statusCode !== 200 || !result.stream) throw new Error('Unexpected blob response')
-        if (!result.blob.etag) throw new Error('Vercel Blob did not return an object version')
+        if (result.statusCode !== 200 || !result.stream || !result.blob.etag) {
+          await result.stream?.cancel()
+          throw new Error('Unexpected blob response or missing object version')
+        }
         return { size: result.blob.size === 0 ? null : result.blob.size, version: result.blob.etag,
           modifiedAt: new Date(result.blob.uploadedAt ?? Date.now()).getTime(),
           stream: Readable.fromWeb(result.stream as Parameters<typeof Readable.fromWeb>[0]) }
@@ -30,18 +32,20 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
         throw err
       }
     },
-    async delete(key, version) {
-      try { await blobs.del(path(key), { token, ...(version ? { ifMatch: version } : {}) }); return true }
+    async delete(key, version, signal) {
+      signal?.throwIfAborted()
+      try { await blobs.del(path(key), { token, ...(version ? { ifMatch: version } : {}), ...(signal ? { abortSignal: signal } : {}) }); return true }
       catch (err) {
         if (isNotFound(err, blobs)) return true
         if (blobs.BlobPreconditionFailedError && err instanceof blobs.BlobPreconditionFailedError) return false
         throw err
       }
     },
-    async list(prefix, cursor, limit) {
+    async list(prefix, cursor, limit, signal) {
+      signal?.throwIfAborted()
       if (!prefix.endsWith('/') || !Number.isInteger(limit) || limit < 1) throw new Error('Invalid storage page')
       objectPath(`${prefix}validate`)
-      const page = await blobs.list({ prefix: `.managed/${prefix}`, token, limit, ...(cursor ? { cursor } : {}) })
+      const page = await blobs.list({ prefix: `.managed/${prefix}`, token, limit, ...(cursor ? { cursor } : {}), ...(signal ? { abortSignal: signal } : {}) })
       if (page.hasMore && (!page.cursor || page.cursor === cursor)) throw new Error('Invalid blob pagination')
       return { objects: page.blobs.filter(blob => blob.pathname.startsWith(`.managed/${prefix}`)).map(blob => ({ key: blob.pathname.slice('.managed/'.length),
         modifiedAt: new Date(blob.uploadedAt ?? Date.now()).getTime() })).filter(blob => blob.key.startsWith(prefix)),

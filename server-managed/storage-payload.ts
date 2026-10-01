@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { Readable } from 'node:stream'
+import { Readable, Writable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { createBrotliDecompress } from 'node:zlib'
 import { STORAGE_MAGIC } from '../server-common/storage-crypto.ts'
 import type { RawObject } from './object-storage.ts'
@@ -44,19 +45,13 @@ export async function inspectStorageObject(stored: RawObject): Promise<RawObject
 
 // Sourcemap integrity describes the original upload, before Brotli storage.
 // Hash incrementally, including decompression, so migration stays streaming.
-export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable): Promise<void> {
+export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable, signal?: AbortSignal): Promise<void> {
   const hash = createHash(type === 'report' ? 'sha256' : 'sha512')
-  let decoded: Readable = source
+  const sink = new Writable({ write(chunk, _encoding, next) { hash.update(chunk); next() } })
+  const options = signal ? { signal } : {}
   if (type === 'bundle' && row.kind === 'sourcemap') {
-    const brotli = createBrotliDecompress()
-    source.once('error', err => brotli.destroy(err))
-    brotli.once('error', () => source.destroy())
-    source.pipe(brotli)
-    decoded = brotli
-  }
-  try {
-    for await (const chunk of decoded) hash.update(chunk)
-    const actual = type === 'report' ? hash.digest('base64url') : `sha512-${hash.digest('base64')}`
-    if (actual !== row.hash) throw new Error('Stored payload does not match its upload hash')
-  } finally { decoded.destroy(); source.destroy() }
+    await pipeline(source, createBrotliDecompress(), sink, options)
+  } else await pipeline(source, sink, options)
+  const actual = type === 'report' ? hash.digest('base64url') : `sha512-${hash.digest('base64')}`
+  if (actual !== row.hash) throw new Error('Stored payload does not match its upload hash')
 }

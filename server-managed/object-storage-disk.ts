@@ -15,15 +15,17 @@ async function syncDirectory(dir: string): Promise<void> {
 
 // Keyset pagination survives concurrent file creation/deletion. A final sweep
 // catches objects inserted before the cursor during migration.
-async function listFiles(dir: string, prefix: string, cursor: string | null, limit: number): Promise<ObjectPage> {
+async function listFiles(dir: string, prefix: string, cursor: string | null, limit: number, signal?: AbortSignal): Promise<ObjectPage> {
   const objects: ObjectPage['objects'] = []
   async function visit(key: string): Promise<void> {
+    signal?.throwIfAborted()
     let entries
     try { entries = await readdir(join(dir, key), { withFileTypes: true }) }
     catch (err) { if (missing(err)) return; throw err }
     const order = (entry: typeof entries[number]) => `${entry.name}${entry.isDirectory() ? '/' : ''}`
     entries.sort((a, b) => order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0)
     for (const entry of entries) {
+      signal?.throwIfAborted()
       const child = `${key}${entry.name}`
       if (entry.isSymbolicLink()) throw new Error('Symlinks are not supported in managed object storage')
       if (entry.isDirectory()) {
@@ -86,7 +88,8 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
         return true
       } finally { await file.close(); await rm(temp, { force: true }) }
     },
-    async delete(key, expected) {
+    async delete(key, expected, signal) {
+      signal?.throwIfAborted()
       try {
         if (expected !== undefined && version(await stat(path(key))) !== expected) return false
         await rm(path(key), { force: true })
@@ -97,7 +100,7 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
         return true
       } catch (err) { if (missing(err)) return true; throw err }
     },
-    sync: key => syncDirectory(dirname(path(key))),
-    list: (prefix, cursor, limit) => listFiles(dir, prefix, cursor, limit),
+    async sync(key, signal) { signal?.throwIfAborted(); await syncDirectory(dirname(path(key))) },
+    list: (prefix, cursor, limit, signal) => listFiles(dir, prefix, cursor, limit, signal),
   }
 }

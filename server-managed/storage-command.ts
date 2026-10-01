@@ -9,12 +9,18 @@ export async function storageCommand(command: string): Promise<void> {
     let status = command === '--enable-storage-encryption' ? await storage.enableStorageEncryption() : await storage.storageEncryptionStatus()
     if (command === '--migrate-storage' && !status) throw new Error('Run --enable-storage-encryption before migrating storage')
     for (;;) {
-      if (command === '--migrate-storage' && status && (!status.complete || !status.cleanupComplete)) status = await storage.migrateStorage()
+      let retryAt: number | null = null
+      if (command === '--migrate-storage' && status && (!status.complete || !status.cleanupComplete)) {
+        const result = await storage.migrateStorage()
+        status = result
+        retryAt = result?.retryAt ?? null
+      }
       console.log(JSON.stringify(status ? {
         encryption: 'chacha20-poly1305', complete: status.complete === 1, cleanupComplete: status.cleanupComplete === 1,
         migrated: status.migrated, cursor: status.cursor,
+        ...(retryAt === null ? {} : { retryAt }),
       } : { encryption: 'disabled' }))
-      if (command !== '--migrate-storage' || !status || (status.complete && status.cleanupComplete)) break
+      if (command !== '--migrate-storage' || !status || (status.complete && status.cleanupComplete) || retryAt !== null) break
     }
   } finally { await storage.db.close() }
 }

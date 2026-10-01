@@ -12,11 +12,11 @@ export interface RawObjectStorage {
   open(key: string, signal?: AbortSignal): Promise<RawObject | null>
   exists(key: string): Promise<boolean>
   // Persist an observed disk replacement before its SQL migration checkpoint.
-  sync?(key: string): Promise<void>
+  sync?(key: string, signal?: AbortSignal): Promise<void>
   put(key: string, bytes: Buffer | Readable, signal?: AbortSignal, expected?: string): Promise<boolean>
   // Return false if the original version changed; do not delete its replacement.
-  delete(key: string, version?: string): Promise<boolean>
-  list(prefix: string, cursor: string | null, limit: number): Promise<ObjectPage>
+  delete(key: string, version?: string, signal?: AbortSignal): Promise<boolean>
+  list(prefix: string, cursor: string | null, limit: number, signal?: AbortSignal): Promise<ObjectPage>
 }
 export interface ObjectStorage {
   open(key: string): Promise<OpenedBlob | null>
