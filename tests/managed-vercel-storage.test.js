@@ -12,7 +12,7 @@ import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
-import { UPLOAD_CHUNK_BYTES, putUploadPart, readUpload, validUploadPart } from '../server-managed/uploads.ts'
+import { MAX_UPLOAD_BYTES, UPLOAD_CHUNK_BYTES, deleteUpload, putUploadPart, readUpload, validUploadPart } from '../server-managed/uploads.ts'
 
 import { BlobStoreNotFoundError, sdkFixture } from './_managed-vercel.js'
 
@@ -143,6 +143,9 @@ test('multipart upload isolation, byte limits, cleanup and orphan expiry', async
   await assert.rejects(readUpload(uploadStore, request, 'other-session', 'bundles', 10e6), /bad-upload/u)
   await assert.rejects(readUpload(uploadStore, request, session, 'reports', 10e6), /bad-upload/u)
   await assert.rejects(readUpload(uploadStore, request, session, 'bundles', 1), /too-large/u)
+  assert.equal(objects.size, 0, 'size rejection cleans all parts even if the configured limit was lowered')
+  await putUploadPart(uploadStore, session, 'bundles', id, 0, first)
+  await putUploadPart(uploadStore, session, 'bundles', id, 1, last)
   assert.deepEqual(await readUpload(uploadStore, request, session, 'bundles', 10e6), Buffer.concat([first, last]))
   assert.equal(objects.size, 0)
   await assert.rejects(readUpload(uploadStore, request, session, 'bundles', 10e6), /bad-upload/u)
@@ -155,6 +158,36 @@ test('multipart upload isolation, byte limits, cleanup and orphan expiry', async
   objects.set(`.managed/reports/${id}`, { bytes: last, uploadedAt: new Date(0) })
   await reapUploads(2 * 86_400_000)
   assert.equal(objects.size, 1, 'staging GC never deletes published content')
+})
+
+test('upload cleanup is session/kind scoped, bounded for forged counts, and continues after a delete failure', async () => {
+  const { sdk, objects } = sdkFixture()
+  const { uploadStore } = await openManagedVercelStorage('secret', sdk)
+  const bytes = Buffer.from('part'), id = randomUUID()
+  for (const index of [0, 1, 2]) await putUploadPart(uploadStore, 'owner', 'reports', id, index, bytes)
+  const own = [...objects.keys()]
+  await putUploadPart(uploadStore, 'other', 'reports', id, 0, bytes)
+  await putUploadPart(uploadStore, 'owner', 'bundles', id, 0, bytes)
+  const retained = [...objects.keys()].filter(key => !own.includes(key))
+  const remove = sdk.del
+  let deletes = 0
+  sdk.del = async path => {
+    deletes++
+    if (path === own[0]) throw new Error('temporary outage')
+    await remove(path)
+  }
+  await assert.rejects(deleteUpload(uploadStore, 'owner', 'reports', id, Number.MAX_SAFE_INTEGER), /Upload cleanup failed/u)
+  assert.equal(deletes, Math.ceil(MAX_UPLOAD_BYTES / UPLOAD_CHUNK_BYTES))
+  assert.deepEqual([...objects.keys()], [own[0], ...retained], 'one failed delete does not stop the others')
+  sdk.del = remove
+  await deleteUpload(uploadStore, 'owner', 'reports', id, 3)
+  await deleteUpload(uploadStore, 'owner', 'reports', id, 3)
+  assert.deepEqual([...objects.keys()], retained, 'repeated cleanup never crosses the session or kind boundary')
+  await putUploadPart(uploadStore, 'owner', 'reports', id, 0, bytes)
+  await assert.rejects(readUpload(uploadStore, { headers: {
+    'x-upload-id': id, 'x-upload-parts': String(Number.MAX_SAFE_INTEGER), 'x-upload-size': '1',
+  } }, 'owner', 'reports', 1), /bad-upload/u)
+  assert.deepEqual([...objects.keys()], retained, 'invalid finalization also runs bounded cleanup')
 })
 
 test('a cache builder does not leave derivatives after another instance deletes the bundle', async () => {

@@ -87,8 +87,9 @@ application limits are defined in [config.ts](config.ts).
 
 ## Uploads and resource limits
 
-The client reads `managed.uploadChunkBytes` from `/api/config` and splits uploads
-larger than 3 MiB into 3 MiB parts. Each part is sent to
+The client reads `managed.uploadChunkBytes` and `managed.uploadMaxBytes` from
+`/api/config`, rejects files over the report/bundle limit before uploading, and
+splits uploads larger than 3 MiB into 3 MiB parts. Each part is sent to
 `POST /api/admin/uploads/{reports|bundles}/{uploadUuid}/{zeroBasedPart}` with the
 session cookie, manager/admin access, same-origin validation, and `X-CSRF-Token`.
 Parts are bound to the session, upload kind, upload ID, and part index.
@@ -96,9 +97,16 @@ Parts are bound to the session, upload kind, upload ID, and part index.
 Finalization posts an empty body to `/api/admin/reports` or `/api/admin/bundles`
 with the filename/repository headers and `X-Upload-Id`, `X-Upload-Parts`, and
 `X-Upload-Size`. The server checks part lengths and the total limit, assembles
-the file, and applies parsing, access checks, hashing, and deduplication. Once
-part assembly is attempted, the parts are consumed; a failed finalization may
-require re-uploading. Abandoned parts become eligible for the daily cleanup
+the file, and applies parsing, access checks, hashing, and deduplication.
+Size-limit failures during finalization and rejected later chunks delete the
+staged parts too. Clients also cancel failed or interrupted uploads with
+`DELETE /api/admin/uploads/{reports|bundles}/{uploadUuid}` and `X-Upload-Parts`
+set to the number of attempted parts. This requires the same session,
+manager/admin access, origin and CSRF checks; it cannot delete another session's
+parts or published reports/bundles. Cleanup has a bounded part count even for
+forged counts and retains the original upload error if deletion fails.
+A failed finalization may require re-uploading. Abandoned parts or failed
+deletions become eligible for the daily cleanup
 after 24 hours, so removal is not immediate at the 24-hour mark.
 
 | Bound | Configured value |

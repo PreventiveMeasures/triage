@@ -48,7 +48,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
-import { UPLOAD_CHUNK_BYTES, type UploadKind, putUploadPart, readUpload, validUploadPart } from './uploads.ts'
+import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, putUploadPart, readUpload, validUpload, validUploadPart } from './uploads.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -280,19 +280,32 @@ function readUploadBody(req: IncomingMessage, deps: ManagedHttpDeps, session: st
 }
 
 async function handleUploadPart(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string) {
-  if (req.method !== 'POST') { send405(res, 'POST'); return }
+  const cancel = req.method === 'DELETE'
+  if (req.method !== 'POST' && !cancel) { send405(res, 'POST, DELETE'); return }
   const s = await checkMutation(req, res, deps, cookie)
   if (!s || !requireManageRole(res, s.user)) return
   if (!deps.uploadStore) { sendJson(res, 404, { error: 'not-found' }); return }
-  const match = /^\/api\/admin\/uploads\/(reports|bundles)\/([^/]+)\/(0|[1-9][0-9]*)$/u.exec(path)
-  if (!match) { sendJson(res, 400, { error: 'bad-upload' }); return }
-  const id = match[2]!, index = Number(match[3]), kind = match[1] as UploadKind
+  const match = /^\/api\/admin\/uploads\/(reports|bundles)\/([^/]+)(?:\/(0|[1-9][0-9]*))?$/u.exec(path)
+  if (!match || (cancel ? match[3] !== undefined : match[3] === undefined)) { sendJson(res, 400, { error: 'bad-upload' }); return }
+  const id = match[2]!, kind = match[1] as UploadKind
+  if (cancel) {
+    const count = Number(req.headers['x-upload-parts'])
+    if (!validUpload(id, count)) { sendJson(res, 400, { error: 'bad-upload' }); return }
+    await deleteUpload(deps.uploadStore, s.session.id, kind, id, count)
+    sendJson(res, 200, { ok: true }); return
+  }
+  const index = Number(match[3])
   const maxBytes = kind === 'reports' ? deps.config.maxReportBytes : deps.config.maxBundleBytes
-  if (!validUploadPart(id, index, maxBytes)) { sendJson(res, 400, { error: 'bad-upload' }); return }
+  const discard = async () => {
+    if (validUpload(id, index + 1)) {
+      await deleteUpload(deps.uploadStore!, s.session.id, kind, id, index + 1).catch(err => console.warn('managed: upload cleanup failed:', err))
+    }
+  }
+  if (!validUploadPart(id, index, maxBytes)) { await discard(); sendJson(res, 400, { error: 'bad-upload' }); return }
   let bytes
   try { bytes = await readBodyBytes(req, Math.min(UPLOAD_CHUNK_BYTES, maxBytes)) }
-  catch { sendJson(res, 413, { error: 'too-large' }); return }
-  if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
+  catch { await discard(); sendJson(res, 413, { error: 'too-large' }); return }
+  if (bytes.length === 0) { await discard(); sendJson(res, 400, { error: 'empty' }); return }
   if (await manageMutation(req, res, deps, cookie) == null) return
   await putUploadPart(deps.uploadStore, s.session.id, kind, id, index, bytes)
   sendJson(res, 200, { ok: true })
@@ -1943,7 +1956,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const info = deps.serverInfo ?? { mode: 'managed', managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName } }
       sendJson(res, 200, { ...info, ...(config.githubNewIssueLabels ? { githubNewIssueLabels: config.githubNewIssueLabels } : {}),
-        managed: { ...info.managed, ...(config.allowShare ? { allowShare: true } : {}), ...(deps.uploadStore ? { uploadChunkBytes: UPLOAD_CHUNK_BYTES } : {}) } })
+        managed: { ...info.managed, ...(config.allowShare ? { allowShare: true } : {}), ...(deps.uploadStore ? {
+          uploadChunkBytes: UPLOAD_CHUNK_BYTES, uploadMaxBytes: { reports: config.maxReportBytes, bundles: config.maxBundleBytes },
+        } : {}) } })
       return
     }
     // OAuth: start → redirect to GitHub with the CSRF state cookie.
