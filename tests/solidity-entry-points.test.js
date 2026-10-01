@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readSolidityEntryPoints } from '../server-managed/solidity-entry-points.ts'
+import { addSoliditySuggestion, readSolidityEntryPoints } from '../server-managed/solidity-entry-points.ts'
 
 const sha = 'b'.repeat(40)
 const dir = (name, parent = '') => ({ name, path: parent ? `${parent}/${name}` : name, type: 'dir', sha })
@@ -63,4 +63,41 @@ test('optional tree failures preserve directly visible Solidity suggestions', as
   for (const read of [() => Promise.reject(new Error('rate limited')), () => Promise.resolve(null), () => Promise.resolve({ tree: {} })]) {
     assert.deepEqual(await readSolidityEntryPoints('', [file('Token.sol'), dir('contracts')], read), { paths: ['Token.sol'], limited: false })
   }
+})
+
+test('candidate storage stays bounded throughout large ascending and descending inputs', () => {
+  const name = i => `contracts/Token${String(i).padStart(6, '0')}.sol`
+  for (const descending of [false, true]) {
+    const paths = []
+    let limited = false
+    for (let i = 0; i < 100_000; i++) {
+      const path = name(descending ? 99_999 - i : i)
+      if (addSoliditySuggestion(paths, path)) limited = true
+      assert.ok(paths.length <= 100, 'retained candidates stay capped after every input')
+    }
+    assert.deepEqual(paths, Array.from({ length: 100 }, (_, i) => name(i)))
+    assert.equal(limited, true)
+  }
+})
+
+test('duplicates at capacity do not mark suggestions limited or evict existing candidates', () => {
+  const paths = []
+  for (let i = 0; i < 100; i++) assert.equal(addSoliditySuggestion(paths, `Token${i}.sol`), false)
+  const expected = [...paths]
+  for (const path of expected) assert.equal(addSoliditySuggestion(paths, path), false)
+  assert.deepEqual(paths, expected)
+  assert.equal(addSoliditySuggestion(paths, 'Z.sol'), true)
+  assert.deepEqual(paths, expected)
+  assert.equal(addSoliditySuggestion(paths, 'A.sol'), true)
+  assert.deepEqual(paths, ['A.sol', ...expected.slice(0, 99)])
+})
+
+test('one cap is shared by direct files and both source trees', async () => {
+  const listing = [file('foundry.toml'), dir('src'), dir('contracts'), ...Array.from({ length: 120 }, (_, i) => file(`Root${i}.sol`))]
+  const result = await readSolidityEntryPoints('', listing, () => Promise.resolve({ tree: Array.from({ length: 120 }, (_, i) => blob(`Token${i}.sol`)) }))
+  assert.equal(result.limited, true)
+  assert.deepEqual(result.paths, Array.from({ length: 120 }, (_, i) => `Root${i}.sol`).toSorted().slice(0, 100))
+  const treesOnly = await readSolidityEntryPoints('', listing.slice(0, 3), () => Promise.resolve({ tree: Array.from({ length: 120 }, (_, i) => blob(`Token${i}.sol`)) }))
+  assert.equal(treesOnly.limited, true)
+  assert.deepEqual(treesOnly.paths, Array.from({ length: 120 }, (_, i) => `contracts/Token${i}.sol`).toSorted().slice(0, 100), 'later trees can replace earlier candidates')
 })
