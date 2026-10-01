@@ -21,3 +21,27 @@ export function bundleCompareFiles(details, scope = '') {
   const selected = new Set(Array.isArray(paths) ? paths : [])
   return new Map([...files].filter(([path]) => selected.has(path)))
 }
+
+// Keep the full resolution identity: collapsing to graph edges would lose
+// specifier, condition/import-attribute, and Metro platform changes.
+export function bundleCompareResolutions(details, scope = '') {
+  const result = new Map()
+  if (details?.kind !== 'stasis' || !details.bundle) return result
+  const files = scope ? bundleFilesAsMap(details) : null
+  const selected = scope ? bundleCompareFiles(details, scope) : null
+  for (const [conditions, byParent] of details.bundle.imports) {
+    for (const [parent, specifiers] of byParent) {
+      for (const [specifier, resolved] of specifiers) {
+        const targets = typeof resolved === 'string' ? [[null, resolved]] : resolved
+        for (const [platform, target] of targets) {
+          // Include imports from scoped files, plus imports into the scope
+          // from uncaptured parents (e.g. an app in a dependencies-only bundle).
+          if (selected && !selected.has(parent) && (files.has(parent) || !selected.has(target))) continue
+          const key = JSON.stringify([parent, specifier, conditions, platform])
+          result.set(key, { key, parent, specifier, conditions, platform, target })
+        }
+      }
+    }
+  }
+  return result
+}
