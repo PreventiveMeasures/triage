@@ -133,6 +133,7 @@
     "server-managed/repository-policy.ts",
     "server-managed/session.ts",
     "server-managed/slugs.ts",
+    "server-managed/solidity-entry-points.ts",
     "server-managed/sql-postgres.ts",
     "server-managed/sql.ts",
     "server-managed/static.ts",

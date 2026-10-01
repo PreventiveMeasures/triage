@@ -264,6 +264,48 @@ test('package suggestions are opt-in, additive, deduplicated, and cached with th
   assert.deepEqual(page._packageEntryPoints, [])
 })
 
+test('Solidity suggestions coexist with package suggestions, preserve selection, and reuse the pinned cache', async t => {
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', url => {
+    reads++
+    const path = new URL(url, 'https://test.invalid').searchParams.get('path')
+    return Promise.resolve(Response.json({ commit, entries, ...(path === '' ? {
+      packageEntryPoints: ['cli.js'], solidityEntryPoints: ['contracts/Token.sol', 'contracts/Vault.sol'], soliditySuggestionsLimited: true,
+    } : {}) }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('')
+  assert.equal(page._selected.size, 0)
+  const suggestions = () => templates(page.render()).filter(template => template.strings[0].includes('class="package-suggestions"'))
+  assert.equal(suggestions().length, 2)
+  page.toggleFile('manual.js')
+  page.toggleFile('contracts/Token.sol')
+  suggestions()[0].values.find(value => typeof value === 'function')()
+  assert.deepEqual([...page._selected], ['manual.js', 'contracts/Token.sol', 'cli.js'])
+  const solidity = suggestions()[0]
+  assert.ok(solidity.values.includes('Suggested Solidity sources'))
+  assert.ok(templates(solidity).some(template => template.strings.join('').includes('Suggestions are limited')))
+  solidity.values.find(value => typeof value === 'function')()
+  assert.deepEqual([...page._selected], ['manual.js', 'contracts/Token.sol', 'cli.js', 'contracts/Vault.sol'])
+  assert.equal(suggestions().length, 0)
+  await page.loadDirectory('contracts')
+  assert.deepEqual(page._solidityEntryPoints, [])
+  assert.equal(page._soliditySuggestionsLimited, false)
+  await page.loadDirectory('')
+  assert.deepEqual(page._solidityEntryPoints, ['contracts/Token.sol', 'contracts/Vault.sol'])
+  assert.equal(page._soliditySuggestionsLimited, true)
+  assert.equal(reads, 2)
+  page.changeRevision('tag', 'v1')
+  assert.deepEqual(page._solidityEntryPoints, [])
+  assert.equal(page._soliditySuggestionsLimited, false)
+  await page.loadDirectory('')
+  assert.equal(reads, 3)
+  page.disconnectedCallback()
+  assert.deepEqual(page._solidityEntryPoints, [])
+})
+
 test('refresh, revision/repository changes, and leaving the view discard directory caches', async t => {
   const calls = []
   let currentCommit = commit
@@ -303,7 +345,7 @@ test('cached navigation cancels in-flight reads, and failures invalidate cached 
     const path = new URL(url, 'https://test.invalid').searchParams.get('path')
     directoryReads++
     if (path === 'src') return new Promise(resolve => { finish = resolve })
-    return Promise.resolve(fail ? Response.json({}, { status: 403 }) : Response.json({ commit, entries: [], packageEntryPoints: ['root.js'] }))
+    return Promise.resolve(fail ? Response.json({}, { status: 403 }) : Response.json({ commit, entries: [], packageEntryPoints: ['root.js'], solidityEntryPoints: ['Root.sol'] }))
   })
   const page = new ManagedCreateBundle()
   page._repoId = 1
@@ -313,10 +355,11 @@ test('cached navigation cancels in-flight reads, and failures invalidate cached 
   assert.equal(page._loading, true)
   await page.loadDirectory('')
   assert.equal(page._loading, false)
-  finish(Response.json({ commit, entries, packageEntryPoints: ['src/late.js'] }))
+  finish(Response.json({ commit, entries, packageEntryPoints: ['src/late.js'], solidityEntryPoints: ['src/Late.sol'] }))
   await pending
   assert.deepEqual(page._entries, [])
   assert.deepEqual(page._packageEntryPoints, ['root.js'])
+  assert.deepEqual(page._solidityEntryPoints, ['Root.sol'])
   const retry = page.loadDirectory('src')
   assert.equal(directoryReads, 3, 'cancelled reads cannot populate the cache')
   finish(Response.json({ commit, entries }))
@@ -325,6 +368,7 @@ test('cached navigation cancels in-flight reads, and failures invalidate cached 
   await page.loadDirectory('other')
   assert.match(page._error, /access is required/u)
   assert.deepEqual(page._packageEntryPoints, [])
+  assert.deepEqual(page._solidityEntryPoints, [])
   await page.loadDirectory('')
   assert.equal(directoryReads, 5, 'known access failure prevents redisplaying an old cached listing')
   assert.equal(page._entries, null)
