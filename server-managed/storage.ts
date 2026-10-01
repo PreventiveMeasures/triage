@@ -37,17 +37,19 @@ export async function openManagedStorage(config: ManagedConfig) {
     return { ...storage, db, uploadStore: config.neonUrl ? storage.uploadStore : undefined,
       bundleCache: createBundleCache(storage.cacheStorage, db, storage.bundleStore),
       reportSourcesCache: createReportSourcesCache(storage.reportSourcesStorage, db, storage.reportStore, storage.bundleStore),
-      async reapStorage() {
-        if (!config.storageEncryptionMigrate) return
+      async reapStorage(signal?: AbortSignal) {
+        if (!config.storageEncryptionMigrate || signal?.aborted) return
         const state = await db.getStorageEncryption()
         if (state?.complete && state.cleanupComplete) return
-        const result = await migrateStorage(raw, db, key!, { maxMs: config.storageEncryptionMigrateMaxMs })
+        const result = await migrateStorage(raw, db, key!, { maxMs: config.storageEncryptionMigrateMaxMs, signal })
+        for (const failure of result.failures) console.warn('managed-storage-migration-row:', JSON.stringify(failure))
         console.info('managed-storage-migration:', JSON.stringify({
           complete: result.complete === 1, cleanupComplete: result.cleanupComplete === 1,
           migrated: result.migrated, cursor: result.cursor, retryAt: result.retryAt,
+          failed: result.failures.length, cancelled: signal?.aborted === true,
         }))
       },
-      ...(config.neonUrl ? { reapUploads: () => reapStorageUploads(raw, db) } : {}),
+      ...(config.neonUrl ? { reapUploads: (signal?: AbortSignal) => reapStorageUploads(raw, db, Date.now(), signal) } : {}),
     }
   } catch (err) {
     await db.close()

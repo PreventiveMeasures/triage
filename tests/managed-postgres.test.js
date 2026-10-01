@@ -5,7 +5,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
-import { checkStorageDb, storageTestKey } from './_managed-storage-db.js'
+import { checkStorageDb, checkStorageMigrationOrder, storageTestKey } from './_managed-storage-db.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
 import { reportReferenceSnapshot } from '../server-managed/management.ts'
@@ -67,6 +67,11 @@ async function database(t, options = {}) {
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
 
+test('Postgres migration orders reports before bundles, smallest first, and resumes old cursors', async t => {
+  const { db } = await database(t, { storageEncryptionKey: storageTestKey })
+  await checkStorageMigrationOrder(db)
+})
+
 for (const failure of ['commit', 'release']) {
   test(`Postgres upload bytes survive ${failure} errors after commit, including retries`, async t => {
     const { db, faults } = await database(t)
@@ -124,6 +129,40 @@ test('Postgres per-row encryption keys and migration progress are shared across 
   const other = await openPostgresManagedDb(connect, { storageEncryptionKey: storageTestKey })
   try { await checkStorageDb(db, other) } finally { await other.close() }
 })
+
+for (const existingColumns of [false, true]) {
+  test(`Postgres versions storage encryption once and skips hot-table DDL on restart (existing columns: ${existingColumns})`, async t => {
+    const { connect, db, queries } = await database(t, { storageEncryptionKey: storageTestKey })
+    const id = randomUUID()
+    await db.insertBundle({ id, integrity: 'sha512-test', filename: 'bundle', kind: null, byteSize: 1, uploadedBy: null, repoId: null }, 100)
+    let row = await db.getStorageRow('bundle', id), state = null
+    if (existingColumns) {
+      state = await db.enableStorageEncryption()
+      row = await db.ensureStorageDataKey('bundle', id)
+    }
+    const previous = await connect()
+    try {
+      await previous.query('DELETE FROM managed_schema_version WHERE version = 9')
+      if (!existingColumns) {
+        await previous.query(`
+          ALTER TABLE managed_report DROP COLUMN data_key, DROP COLUMN storage_encrypted;
+          ALTER TABLE managed_bundle DROP COLUMN data_key, DROP COLUMN storage_encrypted;
+          ALTER TABLE managed_user DROP COLUMN gh_tokens_encrypted;
+          DROP TABLE managed_storage_encryption;`)
+      }
+    } finally { await previous.release() }
+    for (let restart = 0; restart < 2; restart++) {
+      queries.length = 0
+      const reopened = await openPostgresManagedDb(connect, { storageEncryptionKey: storageTestKey })
+      const altered = queries.filter(sql => /^ALTER TABLE managed_(report|bundle|user)\b/u.test(sql))
+      assert.equal(altered.length, restart === 0 ? 3 : 0, 'installed storage columns require no exclusive table locks on later starts')
+      try {
+        assert.deepEqual(await reopened.getStorageEncryption(), state)
+        assert.deepEqual(await reopened.getStorageRow('bundle', id), row, 'upgrading preserves rows and wrapped keys')
+      } finally { await reopened.close() }
+    }
+  })
+}
 
 test('Postgres concurrent activation rejects a different key without replacing the installation marker', async t => {
   const { db, connect } = await database(t, { storageEncryptionKey: storageTestKey })

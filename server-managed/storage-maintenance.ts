@@ -2,9 +2,9 @@ import { type StorageKey, decryptStorageStream, encryptStorageStream } from '../
 import { ENCRYPTED_CACHE_PREFIX, type RawObjectStorage, deleteObjects, isBlobId, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, unwrapDataKey } from './storage-db.ts'
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
-import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
+import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
 
-async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal) {
+async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal): Promise<string | void> {
   if (item.type === 'user') { await db.migrateStorageUserTokens(item.id); return }
   const row = await db.ensureStorageDataKey(item.type, item.id)
   if (!row || row.encrypted) return
@@ -13,7 +13,7 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
     const source = await raw.open(identity, signal)
     if (!source) {
       if (!await db.getStorageRow(item.type, item.id)) return
-      throw new Error('Migration payload unavailable')
+      throw new StoragePayloadError('Migration payload unavailable')
     }
     let inspected = await inspectStorageObject(source)
     if (inspected.encrypted) {
@@ -26,7 +26,7 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
         // Legacy arbitrary bytes can share the magic prefix. A matching
         // original upload hash is required before encrypting them as plaintext.
         const legacy = await openObjectVersion(raw, identity, source.version, signal)
-        if (!legacy) return
+        if (!legacy) return 'Payload disappeared or changed version before plaintext verification'
         inspected = { ...legacy, encrypted: false }
       }
     }
@@ -34,18 +34,18 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
       await verifyStoragePayload(item.type, row, inspected.stream, signal)
       signal.throwIfAborted()
       const current = await openObjectVersion(raw, identity, source.version, signal)
-      if (!current) return
+      if (!current) return 'Payload disappeared or changed version before encryption'
       const encrypted = encryptStorageStream(current.stream, dataKey, identity, current.size)
       let replaced: boolean
       try { replaced = await raw.put(identity, encrypted, signal, source.version, current.size ?? undefined) }
       finally { encrypted.destroy(); current.stream.destroy() }
-      if (!replaced) return
+      if (!replaced) return 'Conditional replacement rejected (object version precondition failed)'
       // Do not mark the row encrypted until the stored bytes authenticate and
       // match the original upload (including decompression for sourcemaps).
       const replacement = await raw.open(identity, signal)
       if (!replacement) {
         if (!await db.getStorageRow(item.type, item.id)) return
-        throw new Error('Migrated payload unavailable')
+        throw new StoragePayloadError('Migrated payload unavailable')
       }
       const decoded = await decryptStorageStream(replacement.stream, dataKey, identity)
       await verifyStoragePayload(item.type, row, decoded.stream, signal)
@@ -130,38 +130,50 @@ async function cleanupLegacy(raw: RawObjectStorage, db: StorageDb, state: Storag
   return { processed: page.objects.length || 1, retryAt }
 }
 
-interface StorageMigrationResult extends StorageEncryptionState { retryAt: number | null }
+interface StorageMigrationResult extends StorageEncryptionState {
+  retryAt: number | null
+  failures: { type: StorageMigrationRow['type']; id: string; message: string }[]
+}
+interface MigrationOptions { maxObjects?: number; maxMs?: number | undefined; signal?: AbortSignal | undefined }
 export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
-  { maxObjects = 64, maxMs = 150_000 } = {}): Promise<StorageMigrationResult> {
+  { maxObjects = 64, maxMs = 150_000, signal: stopping }: MigrationOptions = {}): Promise<StorageMigrationResult> {
   if (!Number.isSafeInteger(maxObjects) || maxObjects < 1 || !Number.isSafeInteger(maxMs) || maxMs < 1) throw new Error('Invalid migration budget')
-  const deadline = Date.now() + maxMs, signal = AbortSignal.timeout(maxMs)
+  const deadline = Date.now() + maxMs, timeout = AbortSignal.timeout(maxMs)
+  const signal = stopping ? AbortSignal.any([stopping, timeout]) : timeout
   const errors: unknown[] = []
+  const failures: StorageMigrationResult['failures'] = []
   let processed = 0, retryAt: number | null = null, state = await db.getStorageEncryption()
   if (!state) throw new Error('Storage encryption is not enabled; configure MANAGED_STORAGE_ENCRYPTION_KEY')
   // At most one SQL pass per invocation. Checkpoint each row, including a
   // failure: other rows progress, and the failed row is retried next pass.
-  while (!state.complete && processed < maxObjects && Date.now() < deadline) {
+  while (!state.complete && processed < maxObjects && Date.now() < deadline && !signal.aborted) {
     const rows = await db.listStorageMigrationRows(state.cursor, Math.min(16, maxObjects - processed))
+    if (stopping?.aborted) break
     if (rows.length === 0) { await db.advanceStorageMigration(state.cursor, null); break }
     for (const row of rows) {
-      if (Date.now() >= deadline) break
-      try { await migrateRow(raw, db, key, row, signal) }
+      if (Date.now() >= deadline || signal.aborted) break
+      try {
+        const pending = await migrateRow(raw, db, key, row, signal)
+        if (pending) failures.push({ type: row.type, id: row.id, message: pending })
+      }
       catch (err) {
         // A row started late gets a full budget next time. Skip an oversized
         // first row until the next pass so later rows and tokens can advance.
-        if (signal.aborted && processed > 0) break
-        const message = signal.aborted
+        if (stopping?.aborted || (signal.aborted && processed > 0)) break
+        const failure = signal.aborted
           ? `Could not migrate ${row.type} ${row.id} within MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=${maxMs}; increase the budget`
-          : `Could not migrate ${row.type} ${row.id}`
-        errors.push(new Error(message, { cause: err }))
+          : err instanceof StoragePayloadError ? err.message : null
+        if (failure === null) errors.push(new Error(`Could not migrate ${row.type} ${row.id}`, { cause: err }))
+        else failures.push({ type: row.type, id: row.id, message: failure })
       }
+      if (stopping?.aborted) break
       await db.advanceStorageMigration(state.cursor, row.position)
       processed++
       state = (await db.getStorageEncryption())!
     }
   }
   state = (await db.getStorageEncryption())!
-  while (!state.cleanupComplete && processed < maxObjects && Date.now() < deadline) {
+  while (!state.cleanupComplete && processed < maxObjects && Date.now() < deadline && !signal.aborted) {
     try {
       const cleanup = await cleanupLegacy(raw, db, state, maxObjects - processed, signal)
       processed += cleanup.processed
@@ -172,11 +184,14 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
     if (retryAt !== null) break // Wait for staging grace rather than spinning over live temp files.
   }
   if (errors.length > 0) throw new AggregateError(errors, 'Storage migration has pending failures', { cause: errors[0] })
-  return { ...state, retryAt }
+  return { ...state, retryAt, failures }
 }
 
-export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, now = Date.now()): Promise<number> {
-  const signal = AbortSignal.timeout(150_000)
+export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, now = Date.now(), stopping?: AbortSignal): Promise<number> {
+  if (stopping?.aborted) return 0
+  const timeout = AbortSignal.timeout(150_000)
+  const signal = stopping ? AbortSignal.any([stopping, timeout]) : timeout
   await db.getStorageEncryption()
-  return deleteObjects(raw, 'uploads/', signal, now - STORAGE_UPLOAD_TTL_MS)
+  try { return await deleteObjects(raw, 'uploads/', signal, now - STORAGE_UPLOAD_TTL_MS) }
+  catch (err) { if (stopping?.aborted) return 0; throw err }
 }

@@ -127,3 +127,25 @@ test('failed automatic sweeps preserve responses, log the failure, and retry aft
   assert.equal(objects.has(old), false)
   assert.equal(logs.length, 1)
 })
+
+test('shutdown cancels a stalled upload sweep before closing the database', async t => {
+  const { app, close, request, sdk, warnings } = await fixture(t)
+  const started = Promise.withResolvers()
+  let aborted = false
+  sdk.list = async ({ abortSignal }) => {
+    assert.ok(abortSignal)
+    started.resolve()
+    await new Promise((resolve, reject) => {
+      const fallback = setTimeout(() => reject(new Error('upload sweep was not cancelled')), 2000)
+      abortSignal.addEventListener('abort', () => { clearTimeout(fallback); aborted = true; resolve() }, { once: true })
+    })
+    abortSignal.throwIfAborted()
+  }
+  const first = request()
+  await started.promise
+  await Promise.all([first.done, close()])
+  assert.equal(aborted, true)
+  assert.equal(first.res.status, 200)
+  assert.equal(warnings.length, 0)
+  await app.reap() // No maintenance may start against the closed database.
+})

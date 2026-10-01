@@ -84,10 +84,17 @@ export function decodeStorageTokens(key: StorageKey, id: string, row: StoredToke
   return { access: decode('access', row.access), refresh: decode('refresh', row.refresh) }
 }
 
-const PENDING = `SELECT 'bundle:' || id AS position, id, 'bundle' AS type FROM managed_bundle WHERE storage_encrypted = 0
-  UNION ALL SELECT 'report:' || id AS position, id, 'report' AS type FROM managed_report WHERE storage_encrypted = 0
-  UNION ALL SELECT 'user:' || id AS position, id, 'user' AS type FROM managed_user
+// Fixed-width sizes make the saved position sort by type, then numeric byte
+// size, then ID in both SQLite and Postgres. Sixteen digits cover JS safe sizes.
+const PADDED_SIZE = "substr('0000000000000000', 1, 16 - length(CAST(byte_size AS TEXT))) || CAST(byte_size AS TEXT)"
+const PENDING = `SELECT '0:' || ${PADDED_SIZE} || ':' || id AS position, id, 'report' AS type FROM managed_report WHERE storage_encrypted = 0
+  UNION ALL SELECT '1:' || ${PADDED_SIZE} || ':' || id AS position, id, 'bundle' AS type FROM managed_bundle WHERE storage_encrypted = 0
+  UNION ALL SELECT '2:0000000000000000:' || id AS position, id, 'user' AS type FROM managed_user
     WHERE gh_tokens_encrypted = 0 AND (gh_access_token IS NOT NULL OR gh_refresh_token IS NOT NULL)`
+
+// Restart the pending pass for a cursor saved under the previous ID ordering.
+// Completed rows are excluded by PENDING; the original cursor still fences CAS.
+const orderedCursor = (cursor: string | null): string => cursor && /^[012]:[0-9]{16}:/u.test(cursor) ? cursor : ''
 
 export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageDb {
   async function requireEnabled() {
@@ -135,11 +142,11 @@ export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageD
     async listStorageMigrationRows(after, limit) {
       await requireEnabled()
       return await db.prepare(`SELECT position, id, type FROM (${PENDING}) AS pending
-        WHERE position > ? ORDER BY position LIMIT ?`).all(after ?? '', limit) as StorageMigrationRow[]
+        WHERE position > ? ORDER BY position LIMIT ?`).all(orderedCursor(after), limit) as StorageMigrationRow[]
     },
     async advanceStorageMigration(expected, next) {
       await requireEnabled()
-      if (expected !== null && next !== null && next <= expected) return
+      if (next !== null && next <= orderedCursor(expected)) return
       // End-of-pass completion checks every pending row, including failed rows
       // before the cursor. A failure cannot be mistaken for a finished pass.
       await db.prepare(`UPDATE managed_storage_encryption SET cursor = ?, complete =

@@ -160,7 +160,7 @@ test('multipart upload isolation, byte limits, cleanup and orphan expiry', async
   assert.equal(objects.size, 0, 'malformed finalizations also clean staged parts')
   objects.set(`.managed/uploads/${id}`, { bytes: last, uploadedAt: new Date(0) })
   objects.set(`.managed/reports/${id}`, { bytes: last, uploadedAt: new Date(0) })
-  await reapUploads(2 * 86_400_000)
+  await reapUploads()
   assert.equal(objects.size, 1, 'staging GC never deletes published content')
 })
 
@@ -315,6 +315,7 @@ for (const kind of ['sourcemap', 'stasis']) {
 test('upload reaping lists all pages before deleting stale parts and preserves recent uploads', async t => {
   const { sdk, objects } = sdkFixture()
   const now = 2 * 86_400_000, prefix = '.managed/uploads/'
+  t.mock.method(Date, 'now', () => now)
   for (let i = 0; i < 8; i++) objects.set(`${prefix}${i}`, { bytes: Buffer.from('part'), uploadedAt: new Date(i % 3 === 0 ? now : 0) })
   const preserved = [...objects.keys()].filter((_, i) => i % 3 === 0)
   for (const [suffix, uploadedAt] of [['unknown', undefined], ['invalid', 'invalid'], ['boundary', new Date(now - 86_400_000)]]) {
@@ -332,10 +333,10 @@ test('upload reaping lists all pages before deleting stale parts and preserves r
     return { blobs: paths.slice(start, end).map(pathname => ({ pathname, uploadedAt: objects.get(pathname).uploadedAt })), hasMore: end < paths.length, cursor: String(end) }
   }
   const { reapUploads } = await vercelStores(t, 'secret', sdk)
-  await reapUploads(now)
+  await reapUploads()
   assert.equal(pages, 6)
   assert.deepEqual([...objects.keys()].toSorted(), preserved.toSorted())
-  await reapUploads(now)
+  await reapUploads()
   assert.deepEqual([...objects.keys()].toSorted(), preserved.toSorted())
 })
 
@@ -351,10 +352,10 @@ for (const failure of ['network', 'missing cursor', 'cyclic cursor']) {
         cursor: failure === 'missing cursor' ? undefined : cursor === 'first' ? 'second' : 'first' }
     }
     const { reapUploads } = await vercelStores(t, 'secret', sdk)
-    await assert.rejects(reapUploads(2 * 86_400_000), /listing unavailable|Invalid blob pagination/u)
+    await assert.rejects(reapUploads(), /listing unavailable|Invalid blob pagination/u)
     assert.deepEqual([...objects.keys()], paths)
     sdk.list = list
-    await reapUploads(2 * 86_400_000)
+    await reapUploads()
     assert.equal(objects.size, 0)
   })
 }

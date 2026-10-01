@@ -48,15 +48,17 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
 
   let cleanup: Promise<void> | undefined
   let nextCleanupAt = 0
+  const maintenance = new AbortController()
   function reap(): Promise<void> {
     if (cleanup) return cleanup
+    if (isShuttingDown()) return Promise.resolve()
     const startedAt = Date.now()
     nextCleanupAt = startedAt + REAP_INTERVAL_MS
     let sessions = 0, uploads = 0
     cleanup = runReapers({
       sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
-      ...(storage.reapUploads ? { uploads: async () => { uploads = await storage.reapUploads!() } } : {}),
-      ...('reapStorage' in storage ? { storage: () => storage.reapStorage() } : {}),
+      ...(storage.reapUploads ? { uploads: async () => { uploads = await storage.reapUploads!(maintenance.signal) } } : {}),
+      ...('reapStorage' in storage ? { storage: () => storage.reapStorage(maintenance.signal) } : {}),
     }).then(() => {
       nextCleanupAt = Date.now() + REAP_INTERVAL_MS
       return console.info(`managed-reaper: removed ${sessions} expired session(s), ${uploads} stale upload part(s) in ${Date.now() - startedAt}ms`)
@@ -72,11 +74,11 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
     return reap().catch(err => console.warn('managed-reaper: cleanup failed:', err))
   }
   async function handleRequest(req: Parameters<typeof routeRequest>[0], res: Parameters<typeof routeRequest>[1]): Promise<void> {
-    const maintenance = automaticReap()
+    const pendingMaintenance = automaticReap()
     // Send the normal response without waiting for storage housekeeping, but
     // keep the invocation alive until both finish. No detached serverless work.
     try { await routeRequest(req, res) }
-    finally { await maintenance }
+    finally { await pendingMaintenance }
   }
   const gcTimer = config.serverless ? null : setInterval(() => {
     void automaticReap()
@@ -85,6 +87,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
 
   function stop(): void {
     shuttingDown = true
+    maintenance.abort()
     if (gcTimer) clearInterval(gcTimer)
   }
 
