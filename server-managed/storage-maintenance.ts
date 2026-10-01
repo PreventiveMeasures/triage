@@ -1,5 +1,5 @@
 import { type StorageKey, decryptStorageStream, encryptStorageStream } from '../server-common/storage-crypto.ts'
-import { type RawObjectStorage } from './object-storage.ts'
+import { type RawObjectStorage, deleteObjects, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, unwrapDataKey } from './storage-db.ts'
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
 import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
@@ -25,17 +25,16 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
         signal.throwIfAborted()
         // Legacy arbitrary bytes can share the magic prefix. A matching
         // original upload hash is required before encrypting them as plaintext.
-        const legacy = await raw.open(identity, signal)
-        if (!legacy || legacy.version !== source.version) { legacy?.stream.destroy(); return }
+        const legacy = await openObjectVersion(raw, identity, source.version, signal)
+        if (!legacy) return
         inspected = { ...legacy, encrypted: false }
       }
     }
     if (!inspected.encrypted) {
       await verifyStoragePayload(item.type, row, inspected.stream, signal)
       signal.throwIfAborted()
-      const current = await raw.open(identity, signal)
+      const current = await openObjectVersion(raw, identity, source.version, signal)
       if (!current) return
-      if (current.version !== source.version) { current.stream.destroy(); return }
       const encrypted = encryptStorageStream(current.stream, dataKey, identity, current.size)
       let replaced: boolean
       try { replaced = await raw.put(identity, encrypted, signal, source.version, current.size ?? undefined) }
@@ -165,22 +164,5 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
 export async function reapStorageUploads(raw: RawObjectStorage, db: StorageDb, now = Date.now()): Promise<number> {
   const signal = AbortSignal.timeout(150_000)
   await db.getStorageEncryption()
-  const before = now - STORAGE_UPLOAD_TTL_MS
-  // Finish listing before deleting: Vercel cursors can be offset-based.
-  const cursors = new Set<string>(), expired: string[] = []
-  let cursor: string | null = null
-  do {
-    const page = await raw.list('uploads/', cursor, 100, signal)
-    expired.push(...page.objects.filter(object => object.modifiedAt < before).map(object => object.key))
-    cursor = page.cursor
-    if (cursor !== null && cursors.has(cursor)) throw new Error('Invalid blob pagination')
-    if (cursor !== null) cursors.add(cursor)
-  } while (cursor !== null)
-  let removed = 0
-  for (const identity of expired) {
-    const stored = await raw.head(identity, signal)
-    if (!stored) continue
-    if (stored.modifiedAt < before && await raw.delete(identity, stored.version, signal)) removed++
-  }
-  return removed
+  return deleteObjects(raw, 'uploads/', signal, now - STORAGE_UPLOAD_TTL_MS)
 }

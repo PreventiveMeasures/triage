@@ -2,32 +2,14 @@ import { Buffer } from 'node:buffer'
 import { randomBytes } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { type StorageKey, decryptStorageStream, encryptStorageStream, wrapStorageValue } from '../server-common/storage-crypto.ts'
-import { ENCRYPTED_CACHE_PREFIX, type ObjectStorage, type RawObjectStorage, objectPath } from './object-storage.ts'
-import { type StorageDb, type StorageEncryptionState, dataKeyIdentity, unwrapDataKey } from './storage-db.ts'
+import { ENCRYPTED_CACHE_PREFIX, type ObjectStorage, type RawObject, type RawObjectStorage, deleteObjects, objectPath, openObjectVersion } from './object-storage.ts'
+import { type StorageDb, type StorageEncryptionState, type StorageRow, type StorageRowKind, dataKeyIdentity, unwrapDataKey } from './storage-db.ts'
 import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
 
 export const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
 export const STORAGE_DISABLED_TTL_MS = 5_000
 
-async function removeObjectPrefix(raw: RawObjectStorage, prefix: string, signal: AbortSignal): Promise<void> {
-  // Collect before deleting: some providers use offset cursors. A stale list
-  // entry or a concurrently replaced object must not restart this traversal.
-  const cursors = new Set<string>(), keys = new Set<string>()
-  let cursor: string | null = null
-  do {
-    const page = await raw.list(prefix, cursor, 100, signal)
-    for (const object of page.objects) keys.add(object.key)
-    cursor = page.cursor
-    if (cursor !== null && cursors.has(cursor)) throw new Error('Invalid blob pagination')
-    if (cursor !== null) cursors.add(cursor)
-  } while (cursor !== null)
-  for (const identity of keys) {
-    const stored = await raw.head(identity, signal)
-    if (stored) await raw.delete(identity, stored.version, signal)
-  }
-  await raw.prune?.(prefix, signal)
-}
 async function readBytes(stored: Awaited<ReturnType<ObjectStorage['open']>>): Promise<Buffer | null> {
   if (!stored) return null
   const parts: Buffer[] = []
@@ -39,6 +21,7 @@ function logicalKey(identity: string) {
   if (identity.startsWith(ENCRYPTED_CACHE_PREFIX)) throw new Error('Encrypted cache paths are internal')
 }
 const encryptedCachePath = (identity: string) => `${ENCRYPTED_CACHE_PREFIX}${identity.slice('cache/'.length)}`
+const deletionPaths = (identity: string) => identity.startsWith('cache/') ? [identity, encryptedCachePath(identity)] : [identity]
 
 // A PUT can commit and still throw. Remove only this attempted plaintext,
 // comparing bytes rather than magic: arbitrary uploads can share the header.
@@ -71,6 +54,15 @@ async function putPlaintext(raw: RawObjectStorage, identity: string, bytes: Buff
   }
 }
 
+async function decryptOwned(stored: RawObject, key: StorageKey, type: StorageRowKind, row: StorageRow, identity: string) {
+  let dataKey: Buffer | undefined
+  try {
+    dataKey = unwrapDataKey(key, type, row)
+    return await decryptStorageStream(stored.stream, dataKey, identity)
+  } catch (err) { stored.stream.destroy(); throw err }
+  finally { dataKey?.fill(0) }
+}
+
 async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageKey, identity: string, state: StorageEncryptionState): ReturnType<ObjectStorage['open']> {
   const owner = storageOwner(identity)
   if (!owner) {
@@ -94,34 +86,27 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
     // Completed uploads and all new caches are always encrypted. Only legacy
     // pending rows need header inspection and hash-verified plaintext fallback.
     if (row.encrypted || owner.cache || state.complete) {
-      let bytes: Buffer | undefined
-      try { bytes = unwrapDataKey(key, owner.type, row); return await decryptStorageStream(stored.stream, bytes, identity) }
-      catch (err) { stored.stream.destroy(); throw err }
-      finally { bytes?.fill(0) }
+      return decryptOwned(stored, key, owner.type, row, identity)
     }
     let inspected = await inspectStorageObject(stored)
     if (inspected.encrypted && !row.dataKey && (await db.getStorageRow(owner.type, owner.id))?.dataKey) {
       inspected.stream.destroy(); continue
     }
     if (inspected.encrypted && row.dataKey) {
-      let bytes: Buffer | undefined
-      try { bytes = unwrapDataKey(key, owner.type, row); return await decryptStorageStream(inspected.stream, bytes, identity) }
+      try { return await decryptOwned(inspected, key, owner.type, row, identity) }
       catch {
-        inspected.stream.destroy()
         // An arbitrary legacy upload can begin with our magic bytes. Only
         // its original SQL hash can authorize that plaintext interpretation.
-        const legacy = await raw.open(identity)
-        if (!legacy || legacy.version !== stored.version) { legacy?.stream.destroy(); continue }
+        const legacy = await openObjectVersion(raw, identity, stored.version)
+        if (!legacy) continue
         inspected = { ...legacy, encrypted: false }
       }
-      finally { bytes?.fill(0) }
     }
     // Only a pending row may read plaintext, and only the original upload.
     // Verify first, then reopen that exact version before exposing bytes.
     await verifyStoragePayload(owner.type, row, inspected.stream)
-    const current = await raw.open(identity)
-    if (current?.version === stored.version) return current
-    current?.stream.destroy()
+    const current = await openObjectVersion(raw, identity, stored.version)
+    if (current) return current
   }
   throw new Error('Storage changed repeatedly during read')
 }
@@ -208,18 +193,19 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
     async delete(identity) {
       logicalKey(identity)
       await mode()
-      await raw.delete(identity)
       // Always remove both generations, including caches predating activation
       // when migration is disabled or another instance has just enabled it.
-      if (identity.startsWith('cache/')) await raw.delete(encryptedCachePath(identity))
+      for (const target of deletionPaths(identity)) await raw.delete(target)
     },
     async deletePrefix(prefix) {
       logicalKey(`${prefix}validate`)
       if (!prefix.endsWith('/')) throw new Error('Invalid storage prefix')
       await mode()
       const signal = AbortSignal.timeout(STORAGE_WRITE_MS)
-      await removeObjectPrefix(raw, prefix, signal)
-      if (prefix.startsWith('cache/')) await removeObjectPrefix(raw, encryptedCachePath(prefix), signal)
+      for (const target of deletionPaths(prefix)) {
+        await deleteObjects(raw, target, signal)
+        await raw.prune?.(target, signal)
+      }
     },
   }
 }

@@ -1158,6 +1158,18 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, coo
   await backfillBundleSummaries(bundles, deps.bundleCache)
 }
 
+type UploadedBundle = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'byteSize' | 'repoId' | 'repoDirectory'>
+async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, bundle: UploadedBundle, deduped: boolean): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie)
+  if (!s) return
+  if (deduped && !(await canAccessBundle(deps, s.user, bundle.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+  const { id, integrity, filename, byteSize, repoId, repoDirectory } = bundle
+  // Re-uploading also repairs reports uploaded while the bundle was inaccessible.
+  await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
+  prebuildBundle(deps, id)
+  sendJson(res, deduped ? 200 : 201, { id, integrity, filename, repoId, repoDirectory, ...(deduped ? { deduped: true } : { byteSize }) })
+}
+
 // POST /api/admin/bundles — upload a bundle. Mutation: same-origin + CSRF,
 // admin|manage. Raw bytes; X-Bundle-Filename names it, optional X-Repo-Id and
 // X-Repo-Directory assign a repository location. The bundle's identity is its content hash (sha512), UNIQUE — a
@@ -1194,17 +1206,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   const integrity = bundleIntegrity(bytes)
   const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
   const existing = await deps.db.getBundleByIntegrity(integrity)
-  if (existing != null) {
-    s = await manageMutation(req, res, deps, cookie)
-    if (!s) return
-    if (!(await canAccessBundle(deps, s.user, existing.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
-    // Reports uploaded while this bundle was inaccessible retain only its
-    // integrity. An authorized re-upload repairs those pending links too.
-    await deps.db.linkReportsToBundle(integrity, existing.id, s.user.role === 'admin' ? undefined : s.user.id)
-    prebuildBundle(deps, existing.id)
-    sendJson(res, 200, { id: existing.id, integrity, filename: existing.filename, repoId: existing.repoId, repoDirectory: existing.repoDirectory, deduped: true })
-    return
-  }
+  if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
   const kind = bundleKind(filename)
   const dataKey = await deps.bundleStore.put(id, bytes, kind) ?? null
@@ -1225,21 +1227,10 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     if (raced?.id !== id) await deps.bundleStore.delete(id).catch(() => {})
     if (err instanceof ManagedMutationError) throw err
     if (!raced) throw err
-    if (raced.id !== id) {
-      s = await manageMutation(req, res, deps, cookie)
-      if (!s) return
-      if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
-      await deps.db.linkReportsToBundle(integrity, raced.id, s.user.role === 'admin' ? undefined : s.user.id)
-      prebuildBundle(deps, raced.id)
-      sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, repoId: raced.repoId, repoDirectory: raced.repoDirectory, deduped: true }); return }
+    if (raced.id !== id) { await sendUploadedBundle(req, res, deps, cookie, raced, true); return }
     // Our insert committed: continue with the ordinary creation response.
   }
-  // Auto-link reports that declared this integrity before the bundle existed.
-  s = await manageMutation(req, res, deps, cookie)
-  if (!s) return
-  await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
-  prebuildBundle(deps, id)
-  sendJson(res, 201, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId, repoDirectory: directory })
+  await sendUploadedBundle(req, res, deps, cookie, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId, repoDirectory: directory }, false)
 }
 
 // GET /api/admin/bundles/<id> — download a stored bundle (admin|manage). Bytes
