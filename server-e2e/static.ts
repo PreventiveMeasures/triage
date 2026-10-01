@@ -194,13 +194,12 @@ function buildEntry(staticDir: string, name: string, deepviewScanServer: string 
   // collision-resistance against the ~tens of files we load.
   const etag = `"${createHash('sha256').update(identity).digest('hex').slice(0, 32)}"`
   const isCompressible = COMPRESSIBLE.has(ext)
-  // Brotli quality 11 is the maximum — slow at compress time but
-  // we pay it once at boot and ship the smaller bytes on every
-  // request thereafter. text mode tells the encoder we're working
+  // Brotli quality 9 limits boot-time compression work, including on
+  // serverless cold starts. Text mode tells the encoder we're working
   // on UTF-8 text (every COMPRESSIBLE entry is text-shaped).
   const br = isCompressible ? brotliCompressSync(identity, {
     params: {
-      [zlibConstants.BROTLI_PARAM_QUALITY]: 11,
+      [zlibConstants.BROTLI_PARAM_QUALITY]: 9,
       [zlibConstants.BROTLI_PARAM_MODE]: zlibConstants.BROTLI_MODE_TEXT,
     },
   }) : null
