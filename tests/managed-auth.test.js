@@ -57,7 +57,7 @@ function makeFetch(responses) {
   }
 }
 
-// In-memory AvatarStore double — mirrors createDiskAvatarStore's interface.
+// In-memory AvatarStore double.
 function fakeAvatarStore() {
   const map = new Map()
   return {
