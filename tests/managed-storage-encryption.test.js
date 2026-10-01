@@ -67,11 +67,11 @@ test('startup with a key encrypts new writes before legacy migration and require
   const stale = await openManagedStorage({ dbPath: f.dbPath })
   let enabled, reopened
   try {
-    assert.equal(await stale.storageEncryptionStatus(), null)
+    assert.equal(await stale.db.getStorageEncryption(), null)
     const legacy = await report({ db: stale.db, stores: stale })
     const config = { dbPath: f.dbPath, storageEncryptionKey: key.bytes.toString('base64') }
     enabled = await openManagedStorage(config)
-    const state = await enabled.storageEncryptionStatus()
+    const state = await enabled.db.getStorageEncryption()
     assert.equal(state.complete, 0)
     assert.equal(state.migrated, 0)
     assert.equal((await bytes(f.raw, `reports/${legacy}`)).toString(), 'private report', 'startup does not migrate legacy bytes')
@@ -96,7 +96,7 @@ test('startup with a key encrypts new writes before legacy migration and require
     } finally { sql.close() }
 
     reopened = await openManagedStorage(config)
-    assert.deepEqual(await reopened.storageEncryptionStatus(), state, 'restarts preserve activation and migration progress')
+    assert.deepEqual(await reopened.db.getStorageEncryption(), state, 'restarts preserve activation and migration progress')
     assert.equal((await reopened.reportStore.get(r)).toString(), 'new report')
     assert.equal((await reopened.bundleStore.get(b, null)).toString(), 'bundle sources')
     assert.deepEqual(await reopened.db.getUserTokens(user), tokens)
@@ -110,12 +110,12 @@ test('startup with a key encrypts new writes before legacy migration and require
       await assert.rejects(openManagedStorage({ dbPath: f.dbPath, storageEncryptionKey }), /encryption key/u)
     }
     await enabled.reapStorage()
-    assert.equal((await enabled.storageEncryptionStatus()).migrated, 0, 'maintenance leaves legacy data alone without the migration switch')
+    assert.equal((await enabled.db.getStorageEncryption()).migrated, 0, 'maintenance leaves legacy data alone without the migration switch')
     await reopened.db.close()
     reopened = await openManagedStorage({ ...config, storageEncryptionMigrate: true })
     await reopened.reapStorage()
-    assert.equal((await enabled.storageEncryptionStatus()).complete, 1)
-    assert.equal((await enabled.storageEncryptionStatus()).migrated, 1, 'maintenance only migrates the legacy upload')
+    assert.equal((await enabled.db.getStorageEncryption()).complete, 1)
+    assert.equal((await enabled.db.getStorageEncryption()).migrated, 1, 'maintenance only migrates the legacy upload')
     assert.equal((await bytes(f.raw, `reports/${legacy}`)).subarray(0, 16).toString(), 'DeepView.storage')
     assert.equal((await enabled.reportStore.get(legacy)).toString(), 'private report')
   } finally { await reopened?.db.close(); await enabled?.db.close(); await stale.db.close() }
@@ -144,7 +144,7 @@ for (const remote of [false, true]) {
     assert.equal((await f.db.getStorageRow('bundle', b)).encrypted, 0)
     const status = await finish(f)
     assert.equal(status.migrated, 2)
-    assert.equal(await f.raw.exists(orphan), false)
+    assert.equal(await f.raw.head(orphan) !== null, false)
     assert.equal((await f.raw.list('cache/', null, 100)).objects.length, 0)
     for (const path of [`reports/${r}`, `bundles/${b}.map.br`, `cache-encrypted-v1/bundles/${b}/metadata.br`]) {
       const data = await bytes(f.raw, path)
@@ -183,7 +183,7 @@ for (const remote of [false, true]) {
     assert.equal(await f.stores.bundleStore.get(dep, null), null)
     assert.equal(await f.stores.cacheStorage.exists(dep, 'metadata.json'), false)
     assert.equal(await f.stores.reportSourcesStorage.exists(`${dep}/sources.json`), false)
-    assert.equal(await f.raw.exists(`reports/${a}`), true, 'test deliberately leaves ciphertext behind')
+    assert.equal(await f.raw.head(`reports/${a}`) !== null, true, 'test deliberately leaves ciphertext behind')
     assert.equal((await f.stores.reportStore.get(b)).toString(), 'b')
   })
 
@@ -246,7 +246,7 @@ for (const remote of [false, true]) {
       return put(...args)
     })
     await finish(f)
-    assert.equal(await f.raw.exists(`reports/${id}`), false)
+    assert.equal(await f.raw.head(`reports/${id}`) !== null, false)
     assert.equal(await f.stores.reportStore.get(id), null)
     assert.equal(await f.db.getStorageRow('report', id), null)
   })
@@ -297,7 +297,7 @@ test('OAuth tokens migrate and remain transparent to refresh; plaintext writes a
 
 test('legacy cache cleanup survives offset pagination and ignores unrelated namespaces', async t => {
   const f = await fixture(t, true)
-  for (let i = 0; i < 7; i++) await f.raw.put(`cache/old/${i}`, Buffer.from('private cache'))
+  for (let i = 0; i < 7; i++) await f.raw.put(`cache/bundles/11111111-1111-4111-8111-111111111111/${i}`, Buffer.from('private cache'))
   f.objects.set('.e2e/keep', { bytes: Buffer.from('other mode') })
   t.mock.method(f.sdk, 'list', ({ prefix, cursor }) => {
     const keys = [...f.objects.keys()].filter(path => path.startsWith(prefix)).toSorted()
@@ -309,6 +309,45 @@ test('legacy cache cleanup survives offset pagination and ignores unrelated name
   await finish(f)
   assert.deepEqual([...f.objects.keys()], ['.e2e/keep'])
 })
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'Vercel' : 'disk'}: migration cleanup recognizes managed paths and expires ciphertext temp files`, async t => {
+    const f = await fixture(t, remote), id = randomUUID()
+    const unrelated = ['cache/webpack/build.json', 'reports/q3-summary.pdf', 'bundles/readme.txt',
+      `reports/${id}.map.br`, `reports/${id}.backup.tmp`, `bundles/${id}.zip`,
+      `cache/other/${id}/metadata.json`, 'cache/bundles/not-a-uuid/metadata.json',
+      'reports/111111111111111111111111111111111111', `reports/nested/${id}`,
+      `cache-encrypted-v1/webpack/build.json.${randomUUID()}.tmp`]
+    const legacy = [`reports/${randomUUID()}`, `bundles/${randomUUID()}`, `bundles/${randomUUID()}.map.br`,
+      `cache/bundles/${id}/old/metadata.json`, `cache/report-sources/${id}/v1-hash/sources.json.gz`]
+    for (const path of [...unrelated, ...legacy]) await f.raw.put(path, Buffer.from(path))
+    await f.db.enableStorageEncryption()
+    const b = await bundle(f), live = await report(f)
+    await f.stores.cacheStorage.put(b, 'metadata.json', Buffer.from('live cache'))
+    const ciphertext = await bytes(f.raw, `reports/${live}`)
+    const stale = [`reports/${live}.${randomUUID()}.tmp`, `bundles/${b}.map.br.${randomUUID()}.tmp`,
+      `cache/bundles/${b}/metadata.json.${randomUUID()}.tmp`,
+      `cache-encrypted-v1/bundles/${b}/metadata.json.${randomUUID()}.tmp`,
+      `cache-encrypted-v1/report-sources/${b}/v1-hash/sources.gz.${randomUUID()}.tmp`]
+    async function age(path) {
+      if (remote) f.objects.get(`.managed/${path}`).uploadedAt = new Date(0)
+      else await utimes(join(f.dir, path), new Date(0), new Date(0))
+    }
+    for (const path of stale) { await f.raw.put(path, ciphertext); await age(path) }
+    const recent = `reports/${live}.${randomUUID()}.tmp`
+    await f.raw.put(recent, ciphertext)
+    const progress = await migrateStorage(f.raw, f.db, key, { maxObjects: 100 })
+    assert.equal(progress.cleanupComplete, 0)
+    assert.ok(progress.retryAt > Date.now(), 'recent ciphertext temps retain the staging grace period')
+    assert.deepEqual(await bytes(f.raw, recent), ciphertext)
+    await age(recent)
+    await finish(f)
+    for (const path of [...legacy, ...stale, recent]) assert.equal(await f.raw.head(path), null, path)
+    for (const path of unrelated) assert.equal((await bytes(f.raw, path)).toString(), path)
+    assert.equal((await f.stores.reportStore.get(live)).toString(), 'private report')
+    assert.equal((await consume((await f.stores.cacheStorage.open(b, 'metadata.json')).stream)).toString(), 'live cache')
+  })
+}
 
 test('encryption streams a generated 115 MiB payload with bounded input read-ahead', async t => {
   const f = await fixture(t), id = randomUUID()
@@ -367,7 +406,7 @@ test('CLI reports status while environment-enabled maintenance resumes deferred 
     await storage.reapStorage()
     const final = logs.at(-1)
     assert.equal(final.complete, true); assert.equal(final.cleanupComplete, true)
-    assert.equal(await f.raw.exists(abandoned), false)
+    assert.equal(await f.raw.head(abandoned) !== null, false)
     assert.equal((await readFile(join(f.dir, 'reports', id))).subarray(0, 16).toString(), 'DeepView.storage')
   } finally { await storage.db.close() }
 })
@@ -389,7 +428,7 @@ test('pre-activation writes finishing after enable cannot leave new plaintext be
   const put = f.raw.put.bind(f.raw)
   t.mock.method(f.raw, 'put', async (...args) => { const result = await put(...args); await f.db.enableStorageEncryption(); return result })
   await assert.rejects(f.stores.reportStore.put(id, Buffer.from('racing plaintext')), /enabled during upload/u)
-  assert.equal(await f.raw.exists(`reports/${id}`), false)
+  assert.equal(await f.raw.head(`reports/${id}`) !== null, false)
 })
 
 for (const remote of [false, true]) {
@@ -450,7 +489,7 @@ for (const remote of [false, true]) {
       throw new Error('lost plaintext PUT acknowledgement')
     })
     await assert.rejects(f.stores.reportStore.put(id, body), /lost plaintext PUT acknowledgement/u)
-    assert.equal(await f.raw.exists(`reports/${id}`), false)
+    assert.equal(await f.raw.head(`reports/${id}`) !== null, false)
   })
 
   test(`${remote ? 'Vercel' : 'disk'}: legacy cleanup does not mistake orphan plaintext for ciphertext`, async t => {
@@ -460,7 +499,7 @@ for (const remote of [false, true]) {
     else await utimes(join(f.dir, path), new Date(0), new Date(0))
     await f.db.enableStorageEncryption()
     await finish(f)
-    assert.equal(await f.raw.exists(path), false)
+    assert.equal(await f.raw.head(path) !== null, false)
   })
 }
 
@@ -520,7 +559,7 @@ test('payload verification cancels decompression and its input when aborted', as
 
 test('migration deadline aborts Vercel cleanup deletion without completing the inventory', async t => {
   const f = await fixture(t, true)
-  await f.raw.put('cache/old/value', Buffer.from('private legacy cache'))
+  await f.raw.put('cache/bundles/11111111-1111-4111-8111-111111111111/value', Buffer.from('private legacy cache'))
   await f.db.enableStorageEncryption()
   t.mock.method(f.sdk, 'del', async (_path, options) => {
     assert.ok(options.abortSignal, 'deletion must receive the migration signal')
@@ -534,7 +573,7 @@ test('migration deadline aborts Vercel cleanup deletion without completing the i
   assert.equal((await f.db.getStorageEncryption()).cleanupComplete, 0)
   t.mock.restoreAll()
   await finish(f)
-  assert.equal(await f.raw.exists('cache/old/value'), false)
+  assert.equal(await f.raw.head('cache/bundles/11111111-1111-4111-8111-111111111111/value') !== null, false)
 })
 
 test('Vercel cleanup preserves an encrypted upload awaiting SQL despite rounded Last-Modified', async t => {
@@ -543,7 +582,7 @@ test('Vercel cleanup preserves an encrypted upload awaiting SQL despite rounded 
   const body = Buffer.from('new upload'), dataKey = await f.stores.reportStore.put(id, body)
   f.objects.get(`.managed/reports/${id}`).uploadedAt = new Date(Math.floor(state.enabledAt / 1000) * 1000)
   await finish(f)
-  assert.equal(await f.raw.exists(`reports/${id}`), true)
+  assert.equal(await f.raw.head(`reports/${id}`) !== null, true)
   await f.db.insertReport({ id, filename: 'report', contentType: 'text/plain', byteSize: body.length,
     sha256: createHash('sha256').update(body).digest('base64url'), dataKey, uploadedBy: null, repoId: null }, Date.now())
   assert.deepEqual(await f.stores.reportStore.get(id), body)
@@ -563,7 +602,7 @@ test('disk cleanup skips stray names and symlinks while removing supported plain
   const f = await fixture(t)
   const warnings = []
   t.mock.method(console, 'warn', (...args) => warnings.push(args.join(' ')))
-  await f.raw.put('cache/old/value', Buffer.from('legacy source code'))
+  await f.raw.put('cache/bundles/11111111-1111-4111-8111-111111111111/value', Buffer.from('legacy source code'))
   await mkdir(join(f.dir, 'cache', '.hidden'))
   await writeFile(join(f.dir, 'cache', '.DS_Store'), 'stray metadata')
   await writeFile(join(f.dir, 'outside'), 'must survive')
@@ -573,7 +612,7 @@ test('disk cleanup skips stray names and symlinks while removing supported plain
   const result = await finish(f)
   assert.equal(result.complete, 1)
   assert.equal(result.cleanupComplete, 1)
-  assert.equal(await f.raw.exists('cache/old/value'), false)
+  assert.equal(await f.raw.head('cache/bundles/11111111-1111-4111-8111-111111111111/value') !== null, false)
   assert.equal((await f.stores.reportStore.get(id)).toString(), 'private report')
   assert.equal(await readFile(join(f.dir, 'outside'), 'utf8'), 'must survive')
   for (const name of ['.DS_Store', '.hidden', 'linked-source']) assert.ok(warnings.some(line => line.includes(name)))
@@ -590,7 +629,7 @@ test('unsupported directory fsync permits disk writes, cleanup and migration; re
     return sync.call(this)
   })
   const id = await report(f)
-  await f.raw.put('cache/old/value', Buffer.from('source'))
+  await f.raw.put('cache/bundles/11111111-1111-4111-8111-111111111111/value', Buffer.from('source'))
   await f.db.enableStorageEncryption()
   assert.equal((await finish(f)).cleanupComplete, 1)
   assert.equal((await f.stores.reportStore.get(id)).toString(), 'private report')
@@ -676,7 +715,7 @@ test('Vercel previews cannot activate encryption but can validate an already ena
   const production = await openManagedStorage(config)
   await production.db.close()
   const preview = await openManagedStorage({ ...config, vercelPreview: true })
-  try { assert.ok(await preview.storageEncryptionStatus()) } finally { await preview.db.close() }
+  try { assert.ok(await preview.db.getStorageEncryption()) } finally { await preview.db.close() }
   await assert.rejects(openManagedStorage({ ...config, vercelPreview: true, storageEncryptionKey: randomBytes(32).toString('base64') }), /encryption key/u)
 })
 
@@ -756,7 +795,7 @@ test('prefix deletion finishes past stale listings and preserves concurrent repl
   })
   await f.storage.deletePrefix(prefix)
   assert.equal(list.mock.callCount(), 3, 'one traversal of each cache generation')
-  assert.equal(await f.raw.exists(live), false)
+  assert.equal(await f.raw.head(live) !== null, false)
   assert.equal((await bytes(f.raw, changed)).toString(), 'replacement')
 })
 

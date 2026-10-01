@@ -1,4 +1,5 @@
 // Exercise the same raw backend, encryption boundary and stores as production.
+import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { openVercelObjectStorage } from '../server-managed/object-storage-vercel.ts'
 import { createEncryptedObjectStorage } from '../server-managed/storage-encryption.ts'
@@ -11,8 +12,11 @@ export async function managedStores(t, raw, { db, key = null, disk = false } = {
     t.after(() => db.close())
   }
   const stores = createManagedStores(await createEncryptedObjectStorage(raw, db, key), disk)
-  return { ...stores, db, raw, reapUploads: now => reapStorageUploads(raw, db, now) }
+  return { ...stores, db, raw, ...(disk ? {} : { reapUploads: now => reapStorageUploads(raw, db, now) }) }
 }
 export async function vercelStores(t, token, sdk, db) {
   return managedStores(t, await openVercelObjectStorage(token, sdk), { db })
+}
+export function diskStores(t, dir, db) {
+  return managedStores(t, createDiskObjectStorage(dir), { db, disk: true })
 }

@@ -67,13 +67,12 @@ function fakeAvatarStore() {
   }
 }
 
-// In-memory BlobStore double — mirrors createDiskBlobStore's interface (backs
-// both the report + bundle stores).
+// In-memory BlobStore double for reports and bundles.
 function fakeBlobStore() {
   const map = new Map()
   return {
     map,
-    put(id, bytes) { map.set(id, bytes); return Promise.resolve() },
+    put(id, bytes) { map.set(id, bytes); return Promise.resolve(null) },
     get(id) { return Promise.resolve(map.get(id) ?? null) },
     open(id) {
       const bytes = map.get(id)

@@ -28,7 +28,7 @@ export interface StorageDb {
   getStorageEncryption(): Promise<StorageEncryptionState | null>
   getStorageRow(type: StorageRowKind, id: string): Promise<StorageRow | null>
   ensureStorageDataKey(type: StorageRowKind, id: string): Promise<StorageRow | null>
-  markStorageEncrypted(type: StorageRowKind, id: string, dataKey: string): Promise<boolean>
+  markStorageEncrypted(type: StorageRowKind, id: string, dataKey: string): Promise<void>
   listStorageMigrationRows(after: string | null, limit: number): Promise<StorageMigrationRow[]>
   advanceStorageMigration(expected: string | null, next: string | null): Promise<void>
   advanceStorageCleanup(expected: string | null, next: string | null, removed: number): Promise<void>
@@ -131,8 +131,6 @@ export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageD
       const result = await db.prepare(`UPDATE ${table(type)} SET storage_encrypted = 1
         WHERE id = ? AND data_key = ? AND storage_encrypted = 0`).run(id, wrapped)
       if (Number(result.changes)) await db.prepare('UPDATE managed_storage_encryption SET migrated = migrated + 1 WHERE id = 1').run()
-      const current = await getRow(type, id)
-      return current?.dataKey === wrapped && current.encrypted === 1
     },
     async listStorageMigrationRows(after, limit) {
       await requireEnabled()

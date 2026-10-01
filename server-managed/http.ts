@@ -913,7 +913,7 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   const { bundleId, integrity } = await resolveReportBundle(deps, s.user, bytes)
-  const dataKey = await deps.reportStore.put(id, bytes) ?? null
+  const dataKey = await deps.reportStore.put(id, bytes)
   let report: ReportRecord
   try {
     report = await deps.db.insertOrReuseReport({
@@ -1209,7 +1209,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
   const kind = bundleKind(filename)
-  const dataKey = await deps.bundleStore.put(id, bytes, kind) ?? null
+  const dataKey = await deps.bundleStore.put(id, bytes, kind)
   try {
     await deps.db.insertBundle({
       id, integrity, filename, kind, dataKey,

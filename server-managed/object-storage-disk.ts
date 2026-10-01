@@ -89,9 +89,6 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
           stream: file.createReadStream(signal ? { signal } : {}) }
       } catch (err) { await file.close(); throw err }
     },
-    async exists(key) {
-      try { await stat(path(key)); return true } catch (err) { if (missing(err)) return false; throw err }
-    },
     async put(key, bytes, signal, expected) {
       const target = path(key)
       // Temp-file + rename makes replacement atomic to readers. Concurrent

@@ -4,17 +4,20 @@ import { Readable, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createBrotliDecompress } from 'node:zlib'
 import { STORAGE_MAGIC } from '../server-common/storage-crypto.ts'
-import type { RawObject } from './object-storage.ts'
+import { type RawObject, isBlobId } from './object-storage.ts'
 import type { StorageRow, StorageRowKind } from './storage-db.ts'
 
 export function storageRowPath(type: StorageRowKind, row: Pick<StorageRow, 'id' | 'kind'>): string {
   return `${type === 'report' ? 'reports' : 'bundles'}/${row.id}${type === 'bundle' && row.kind === 'sourcemap' ? '.map.br' : ''}`
 }
 export function storageOwner(identity: string): { type: StorageRowKind; id: string; cache: boolean } | null {
-  const match = /^(reports|bundles)\/([a-f\d-]{36})(?:\.map\.br)?$/u.exec(identity)
-  if (match) return { type: match[1] === 'reports' ? 'report' : 'bundle', id: match[2]!, cache: false }
+  const match = /^(reports|bundles)\/([^/]+)$/u.exec(identity)
+  if (match) {
+    const id = match[1] === 'bundles' ? match[2]!.replace(/\.map\.br$/u, '') : match[2]!
+    if (isBlobId(id)) return { type: match[1] === 'reports' ? 'report' : 'bundle', id, cache: false }
+  }
   const cache = /^cache\/(?:bundles|report-sources)\/([a-f\d-]{36})\//u.exec(identity)
-  return cache ? { type: 'bundle', id: cache[1]!, cache: true } : null
+  return cache && isBlobId(cache[1]!) ? { type: 'bundle', id: cache[1]!, cache: true } : null
 }
 
 // Peek without buffering the object or consuming bytes from its next reader.

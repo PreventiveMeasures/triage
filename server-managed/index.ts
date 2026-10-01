@@ -55,7 +55,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
     let sessions = 0, uploads = 0
     cleanup = runReapers({
       sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
-      ...('reapUploads' in storage ? { uploads: async () => { uploads = await storage.reapUploads() } } : {}),
+      ...(storage.reapUploads ? { uploads: async () => { uploads = await storage.reapUploads!() } } : {}),
       ...('reapStorage' in storage ? { storage: () => storage.reapStorage() } : {}),
     }).then(() => {
       nextCleanupAt = Date.now() + REAP_INTERVAL_MS

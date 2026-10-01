@@ -6,13 +6,12 @@ import { validateCacheKey } from './cache-storage.ts'
 export const ENCRYPTED_CACHE_PREFIX = 'cache-encrypted-v1/'
 const STORAGE_PREFIXES = ['reports/', 'bundles/', 'avatars/', 'uploads/', 'cache/', ENCRYPTED_CACHE_PREFIX]
 export interface RawObject extends OpenedBlob { version: string; modifiedAt: number }
-export type ObjectMetadata = Omit<RawObject, 'stream'>
-export interface ListedObject { key: string; modifiedAt: number }
+type ObjectMetadata = Omit<RawObject, 'stream'>
+interface ListedObject { key: string; modifiedAt: number }
 export interface ObjectPage { objects: ListedObject[]; cursor: string | null }
 export interface RawObjectStorage {
   open(key: string, signal?: AbortSignal): Promise<RawObject | null>
   head(key: string, signal?: AbortSignal): Promise<ObjectMetadata | null>
-  exists(key: string): Promise<boolean>
   prune?(prefix: string, signal?: AbortSignal): Promise<void>
   // Persist an observed disk replacement before its SQL migration checkpoint.
   sync?(key: string, signal?: AbortSignal): Promise<void>
@@ -29,6 +28,10 @@ export interface ObjectStorage {
   put(key: string, bytes: Buffer): Promise<string | null>
   delete(key: string): Promise<void>
   deletePrefix(prefix: string): Promise<void>
+}
+
+export function isBlobId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value)
 }
 
 export function objectPath(key: string): string {

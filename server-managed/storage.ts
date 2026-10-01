@@ -37,7 +37,6 @@ export async function openManagedStorage(config: ManagedConfig) {
     return { ...storage, db, uploadStore: config.neonUrl ? storage.uploadStore : undefined,
       bundleCache: createBundleCache(storage.cacheStorage, db, storage.bundleStore),
       reportSourcesCache: createReportSourcesCache(storage.reportSourcesStorage, db, storage.reportStore, storage.bundleStore),
-      storageEncryptionStatus: () => db.getStorageEncryption(),
       async reapStorage() {
         if (!config.storageEncryptionMigrate) return
         const state = await db.getStorageEncryption()
@@ -48,7 +47,7 @@ export async function openManagedStorage(config: ManagedConfig) {
           migrated: result.migrated, cursor: result.cursor, retryAt: result.retryAt,
         }))
       },
-      reapUploads: () => reapStorageUploads(raw, db),
+      ...(config.neonUrl ? { reapUploads: () => reapStorageUploads(raw, db) } : {}),
     }
   } catch (err) {
     await db.close()

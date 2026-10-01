@@ -1,9 +1,6 @@
 // Metadata is cached as Brotli. Contents use the stored Brotli bytes directly:
 // unchanged Stasis uploads or sourcemaps compressed once at upload.
 import { Buffer } from 'node:buffer'
-import { mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
 import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents } from '../common/bundle-metadata.js'
@@ -158,28 +155,3 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
   }
 }
 export type BundleCache = ReturnType<typeof createBundleCache>
-
-export function createDiskBundleCache(dir: string, db: ManagedDb, store: BundleStore): BundleCache {
-  function directory(id: string) {
-    if (!/^[a-f\d-]{36}$/iu.test(id)) throw new Error('Invalid bundle id')
-    return join(dir, id)
-  }
-  return createBundleCache({
-    async exists(id, file) {
-      try { await stat(join(directory(id), file)); return true }
-      catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false; throw err }
-    },
-    async put(id, file, bytes) {
-      await mkdir(directory(id), { recursive: true })
-      const target = join(directory(id), file), temp = `${target}.${randomUUID()}.tmp`
-      try { await writeFile(temp, bytes); await rename(temp, target) }
-      finally { await rm(temp, { force: true }) }
-    },
-    async open(id, name) {
-      const file = await open(join(directory(id), name), 'r')
-      try { return { size: (await file.stat()).size, stream: file.createReadStream() } }
-      catch (err) { await file.close(); throw err }
-    },
-    async delete(id) { await rm(directory(id), { recursive: true, force: true }) },
-  }, db, store)
-}

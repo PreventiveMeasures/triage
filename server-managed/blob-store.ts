@@ -1,15 +1,4 @@
-// Disk byte-store for the managed server's stored blobs (uploaded reports and
-// bundles). Unlike the e2e relay (which only ever holds opaque client-encrypted
-// blobs), a managed server is TRUSTED and can decrypt/read the contents.
-// Production storage.ts optionally adds per-row envelope encryption. Metadata
-// and attribution live in SQL; bytes are keyed by the upload's opaque `id`.
-//
-// The disk backend uses a dir beside SQLite (data/reports/<uuid> or
-// data/bundles/<uuid>). Production stores share storage-stores.ts across disk
-// and Vercel backends. Bytes only — the
-// content-type / filename / integrity ride the DB row, so there's no sidecar.
-import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+// Logical upload-store interfaces shared by disk and Vercel storage.
 import type { Buffer } from 'node:buffer'
 import type { Readable } from 'node:stream'
 
@@ -21,48 +10,8 @@ export interface OpenedBlob {
 
 export interface BlobStore {
   // Encrypted upload stores return the wrapped data key for the SQL insert.
-  put(id: string, bytes: Buffer): Promise<string | null | void>
+  put(id: string, bytes: Buffer): Promise<string | null>
   get(id: string): Promise<Buffer | null>
   open(id: string): Promise<OpenedBlob | null>
   delete(id: string): Promise<void>
-}
-
-// The blob id is a v4 uuid (crypto.randomUUID) — lowercase hex + dashes, no
-// path separators. Validated anyway so a crafted id can't escape the store dir.
-const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
-
-export function createDiskBlobStore(dir: string, suffix = ''): BlobStore {
-  function pathFor(id: string): string {
-    if (!ID_RE.test(id)) throw new Error('invalid blob id')
-    return join(dir, id + suffix)
-  }
-  return {
-    async put(id, bytes) {
-      const p = pathFor(id)
-      await mkdir(dirname(p), { recursive: true })
-      await writeFile(p, bytes)
-    },
-    async get(id) {
-      try {
-        return await readFile(pathFor(id))
-      } catch {
-        return null
-      }
-    },
-    async open(id) {
-      let file
-      try { file = await open(pathFor(id), 'r') }
-      catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null; throw err }
-      try {
-        const info = await file.stat()
-        // Remain paused until piped. HEAD can close without reading the body.
-        return { size: info.size, stream: file.createReadStream() }
-      } catch (err) { await file.close(); throw err }
-    },
-    async delete(id) {
-      // `force` so a missing file (already gone) is a no-op, not a throw — the
-      // metadata row is the source of truth for whether a blob "exists".
-      await rm(pathFor(id), { force: true })
-    },
-  }
 }

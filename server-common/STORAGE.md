@@ -118,7 +118,7 @@ E2e cleanup excludes `.managed/` because dots are invalid workspace-tag
 characters. It collects unreferenced e2e blobs after an age grace period and
 reclaims stale/orphaned staging. Managed deletes target its UUID objects or
 slash-delimited cache prefixes. Managed maintenance removes expired sessions
-and upload parts older than 24 hours; it is not a general orphan-object sweep.
+and, on Vercel only, upload parts older than 24 hours; it is not a general orphan-object sweep.
 Ordinary managed requests trigger it on the first request per instance, then
 hourly while traffic continues (one-minute retry backoff after failures).
 The response proceeds alongside cleanup, and the triggering invocation awaits
@@ -126,7 +126,9 @@ both; concurrent requests share the sweep. Results and failures are logged as
 `managed-reaper:` under the triggering request. Persistent servers also have an
 hourly timer; serverless instances need traffic or the optional cron when idle.
 With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, maintenance also migrates referenced
-plaintext and removes legacy caches and orphan plaintext. It does not collect
+plaintext and removes legacy caches, orphan plaintext and stale atomic-write
+temporary files. Cleanup recognizes managed UUID filenames and bundle cache
+directories; unrelated files in a shared database directory are left alone. It does not collect
 encrypted orphan report/bundle files; those no longer have a live SQL data key.
 
 E2e commits and reaping are designed for concurrent instances: version updates

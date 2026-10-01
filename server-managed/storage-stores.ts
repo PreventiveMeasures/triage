@@ -6,10 +6,10 @@ import type { BlobStore } from './blob-store.ts'
 import type { BundleCacheStorage } from './bundle-cache.ts'
 import { createBundleStore } from './bundle-store.ts'
 import { type CacheStorage, validateCacheKey } from './cache-storage.ts'
-import type { ObjectStorage } from './object-storage.ts'
+import { type ObjectStorage, isBlobId } from './object-storage.ts'
 
 function id(value: string): string {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value)) throw new Error('Invalid managed blob id')
+  if (!isBlobId(value)) throw new Error('Invalid managed blob id')
   return value
 }
 

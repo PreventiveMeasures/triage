@@ -6,14 +6,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { createDiskBlobStore } from '../server-managed/blob-store.ts'
+import { diskStores } from './_managed-storage.js'
 import { managedCsv } from './_managed-csv.js'
 
 async function legacyDatabase(t) {
   const dir = await mkdtemp(join(tmpdir(), 'managed-report-migration-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const path = join(dir, 'managed.sqlite')
-  const store = createDiskBlobStore(join(dir, 'reports'))
+  const { reportStore: store } = await diskStores(t, dir)
   const db = openSqliteManagedDb(path)
   const userId = await db.upsertUser({ githubUserId: 1, login: 'member', name: null, avatarUrl: null }, 100)
   await db.setUserRole(userId, 'triage')

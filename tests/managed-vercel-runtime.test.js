@@ -18,7 +18,7 @@ const memoryStore = () => {
   return {
     get: id => Promise.resolve(objects.get(id) ?? null),
     open: id => Promise.resolve(objects.has(id) ? { size: objects.get(id).length, stream: Readable.from([objects.get(id)]) } : null),
-    put: (id, bytes) => { objects.set(id, bytes); return Promise.resolve() },
+    put: (id, bytes) => { objects.set(id, bytes); return Promise.resolve(null) },
     delete: id => { objects.delete(id); return Promise.resolve() },
   }
 }

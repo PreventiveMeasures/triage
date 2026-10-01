@@ -8,8 +8,7 @@ import { join } from 'node:path'
 import { brotliCompressSync, gunzipSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { sdkFixture } from './_managed-vercel.js'
-import { managedStores, vercelStores } from './_managed-storage.js'
-import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
+import { diskStores, vercelStores } from './_managed-storage.js'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createReportSourcesCache } from '../server-managed/report-sources.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -38,7 +37,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
   const db = openSqliteManagedDb(':memory:')
   const fixture = backend === 'vercel' ? sdkFixture() : null
   const storage = fixture ? await vercelStores(t, 'secret', fixture.sdk, db)
-    : await managedStores(t, createDiskObjectStorage(dir), { db, disk: true })
+    : await diskStores(t, dir, db)
   const { reportStore: reports, bundleStore: bundles, reportSourcesStorage: cacheStorage } = storage
   const cache = createReportSourcesCache(cacheStorage, db, reports, bundles)
   const pending = new Set()

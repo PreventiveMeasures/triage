@@ -1,5 +1,5 @@
 import { type StorageKey, decryptStorageStream, encryptStorageStream } from '../server-common/storage-crypto.ts'
-import { type RawObjectStorage, deleteObjects, openObjectVersion } from './object-storage.ts'
+import { ENCRYPTED_CACHE_PREFIX, type RawObjectStorage, deleteObjects, isBlobId, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, unwrapDataKey } from './storage-db.ts'
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
 import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
@@ -58,42 +58,56 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
   } finally { dataKey.fill(0) }
 }
 
-const LEGACY = ['cache/', 'reports/', 'bundles/']
+const CLEANUP_PREFIXES = ['cache/', 'reports/', 'bundles/', ENCRYPTED_CACHE_PREFIX]
 function cleanupPosition(state: StorageEncryptionState): { prefix: number; cursor: string | null } {
   const value = state.cleanupCursor === null ? { prefix: 0, cursor: null } : JSON.parse(state.cleanupCursor)
-  if (!Number.isInteger(value.prefix) || value.prefix < 0 || value.prefix >= LEGACY.length
+  if (!Number.isInteger(value.prefix) || value.prefix < 0 || value.prefix >= CLEANUP_PREFIXES.length
     || (value.cursor !== null && typeof value.cursor !== 'string')) throw new Error('Invalid legacy cleanup cursor')
   return value
+}
+
+// The database directory may be shared. Recognize managed paths, including
+// disk atomic-write temps, before treating any listed file as ours to remove.
+function cleanupTarget(identity: string) {
+  const temp = /^(.+)\.([^.]+)\.tmp$/u.exec(identity)
+  const temporary = !!temp && isBlobId(temp[2]!)
+  const path = temporary ? temp![1]! : identity
+  const encryptedCache = path.startsWith(ENCRYPTED_CACHE_PREFIX)
+  if (encryptedCache && !temporary) return null
+  const owner = storageOwner(encryptedCache ? `cache/${path.slice(ENCRYPTED_CACHE_PREFIX.length)}` : path)
+  return owner ? { owner, temporary } : null
 }
 
 // Referenced-data migration never depends on Blob listings. A separate bounded
 // inventory removes legacy caches and unreferenced plaintext; ciphertext
 // orphans do not hold a recoverable data key and need no manifest-based GC.
 async function cleanupLegacy(raw: RawObjectStorage, db: StorageDb, state: StorageEncryptionState, limit: number, signal: AbortSignal) {
-  const position = cleanupPosition(state), prefix = LEGACY[position.prefix]!
+  const position = cleanupPosition(state), prefix = CLEANUP_PREFIXES[position.prefix]!
   const page = await raw.list(prefix, position.cursor, Math.min(limit, 16), signal)
   let found = 0, retryAt: number | null = null
   for (const object of page.objects) {
     signal.throwIfAborted()
-    // A process killed during a pre-activation disk write can leave a temp
-    // file. Give live writes time to finish before collecting those files.
-    if (object.key.endsWith('.tmp') && object.modifiedAt > Date.now() - STORAGE_UPLOAD_TTL_MS) {
-      found++
-      retryAt = Math.min(retryAt ?? Infinity, object.modifiedAt + STORAGE_UPLOAD_TTL_MS)
-      continue
-    }
-    const owner = storageOwner(object.key)
-    if (owner && !owner.cache) {
+    const target = cleanupTarget(object.key)
+    if (!target) continue
+    const { owner, temporary } = target
+    if (!temporary && !owner.cache) {
       const row = await db.getStorageRow(owner.type, owner.id)
       if (row && storageRowPath(owner.type, row) === object.key) continue
     }
     const stored = await raw.head(object.key, signal)
     if (!stored) continue
+    // A killed disk writer can leave plaintext or ciphertext in its temp file.
+    // Recheck its current age and give live writes a full staging grace window.
+    if (temporary && stored.modifiedAt > Date.now() - STORAGE_UPLOAD_TTL_MS) {
+      found++
+      retryAt = Math.min(retryAt ?? Infinity, stored.modifiedAt + STORAGE_UPLOAD_TTL_MS)
+      continue
+    }
     // Old pre-activation orphans are legacy even when their arbitrary bytes
     // share the magic prefix. Keep a full staging grace window around enable:
     // Blob Last-Modified has only second precision, and a new encrypted upload
     // may still be waiting for its SQL insert.
-    let legacy = prefix === 'cache/' || stored.modifiedAt < state.enabledAt - STORAGE_UPLOAD_TTL_MS
+    let legacy = temporary || owner.cache || stored.modifiedAt < state.enabledAt - STORAGE_UPLOAD_TTL_MS
     if (!legacy) {
       const source = await raw.open(object.key, signal)
       if (!source) continue
@@ -109,14 +123,14 @@ async function cleanupLegacy(raw: RawObjectStorage, db: StorageDb, state: Storag
       if (!await raw.delete(object.key, stored.version, signal)) throw new Error('Legacy object changed during cleanup')
     }
   }
-  const next = page.cursor === null ? position.prefix + 1 < LEGACY.length ? { prefix: position.prefix + 1, cursor: null } : null
+  const next = page.cursor === null ? position.prefix + 1 < CLEANUP_PREFIXES.length ? { prefix: position.prefix + 1, cursor: null } : null
     : { ...position, cursor: page.cursor }
   // A full pass without removals closes offset-pagination gaps left by deletes.
   await db.advanceStorageCleanup(state.cleanupCursor, next === null ? null : JSON.stringify(next), found)
   return { processed: page.objects.length || 1, retryAt }
 }
 
-export interface StorageMigrationResult extends StorageEncryptionState { retryAt: number | null }
+interface StorageMigrationResult extends StorageEncryptionState { retryAt: number | null }
 export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
   { maxObjects = 64, maxMs = 150_000 } = {}): Promise<StorageMigrationResult> {
   if (!Number.isSafeInteger(maxObjects) || maxObjects < 1 || !Number.isSafeInteger(maxMs) || maxMs < 1) throw new Error('Invalid migration budget')

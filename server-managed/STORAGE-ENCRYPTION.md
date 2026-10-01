@@ -146,6 +146,12 @@ by stray files. Old upload parts remain readable during the activation grace
 period of 24 hours and are removed by the normal staging sweep; expiry is not
 an assurance of physical deletion at exactly 24 hours.
 
+Cleanup recognizes only managed paths: `reports/<uuid>`, `bundles/<uuid>` and
+`bundles/<uuid>.map.br`, plus caches under `cache/bundles/<uuid>/` and
+`cache/report-sources/<uuid>/`. Unrelated files beside a database in a shared
+directory are left alone. Disk deployments do not create or reap upload parts;
+the staging sweep runs only on Vercel.
+
 Migration requires `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1` and the configured
 key. It runs through managed `reap()`, including authenticated `GET /api/reap`.
 Ordinary traffic triggers maintenance on the first request per instance, then
@@ -164,10 +170,14 @@ Later rows and GitHub tokens can then advance. The oversized row remains pending
 and is retried on the next pass; completion cannot hide it. Genuine storage
 failures also remain errors. If cleanup finds a recent temporary file, it returns
 `cleanupComplete: false` and `retryAt` (Unix milliseconds) without spinning
-through the 24-hour staging grace period. Progress is logged as
+through the 24-hour staging grace period. Recognized disk `<path>.<uuid>.tmp`
+files are removed after that grace period whether plaintext or encrypted,
+including temporary files in the encrypted cache namespace. Progress is logged as
 `managed-storage-migration:` with `complete`, `cleanupComplete`, `migrated`,
 `cursor` and `retryAt`. Once both completion flags are true the job is a no-op;
 the migration variable can be removed while retaining the key.
+Temporary files left by later crashes are not swept after migration cleanup
+has completed; like encrypted orphan payloads, they can consume storage.
 
 The work budget cancels Blob reads, writes, listings and deletes, as well as
 payload verification and decompression. Provider/database timeouts still apply;

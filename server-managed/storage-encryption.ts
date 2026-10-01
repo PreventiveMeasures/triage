@@ -6,7 +6,7 @@ import { ENCRYPTED_CACHE_PREFIX, type ObjectStorage, type RawObject, type RawObj
 import { type StorageDb, type StorageEncryptionState, type StorageRow, type StorageRowKind, dataKeyIdentity, unwrapDataKey } from './storage-db.ts'
 import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
 
-export const STORAGE_WRITE_MS = 180_000
+const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
 export const STORAGE_DISABLED_TTL_MS = 5_000
 
@@ -159,7 +159,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
         if (!row || (owner.cache ? !row.dataKey : storageRowPath(owner.type, row) !== identity)) return false
       }
       // Existence is metadata only; open() authenticates the actual bytes.
-      return raw.exists(state && owner?.cache ? encryptedCachePath(identity) : identity)
+      return await raw.head(state && owner?.cache ? encryptedCachePath(identity) : identity) !== null
     },
     async put(identity, bytes) {
       logicalKey(identity)

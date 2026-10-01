@@ -27,10 +27,6 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
           stream: Readable.fromWeb(result.stream as Parameters<typeof Readable.fromWeb>[0]) }
       } catch (err) { if (isNotFound(err, blobs)) return null; throw err }
     },
-    async exists(key) {
-      try { await blobs.head(path(key), { token }); return true }
-      catch (err) { if (isNotFound(err, blobs)) return false; throw err }
-    },
     async put(key, bytes, signal, expected, sizeHint) {
       const multipart = (sizeHint ?? (Buffer.isBuffer(bytes) ? bytes.length : Infinity)) >= 5 * 1024 * 1024
       try { await blobs.put(path(key), bytes, { token, access: 'private', addRandomSuffix: false, allowOverwrite: true,
@@ -57,7 +53,7 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
       const page = await blobs.list({ prefix: `.managed/${prefix}`, token, limit, ...(cursor ? { cursor } : {}), ...(signal ? { abortSignal: signal } : {}) })
       if (page.hasMore && (!page.cursor || page.cursor === cursor)) throw new Error('Invalid blob pagination')
       return { objects: page.blobs.filter(blob => blob.pathname.startsWith(`.managed/${prefix}`)).map(blob => ({ key: blob.pathname.slice('.managed/'.length),
-        modifiedAt: new Date(blob.uploadedAt ?? Date.now()).getTime() })).filter(blob => blob.key.startsWith(prefix)),
+        modifiedAt: new Date(blob.uploadedAt ?? Date.now()).getTime() })),
       cursor: page.hasMore ? page.cursor! : null }
     },
   }
