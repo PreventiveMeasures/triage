@@ -536,7 +536,7 @@ test('Postgres upgrades existing databases and retains GitHub metadata across re
   const { connect, db } = await database(t)
   await db.close()
   const connection = await connect()
-  try { await connection.query('DROP TABLE managed_github_metadata') } finally { await connection.release() }
+  try { await connection.query('DROP TABLE managed_github_metadata; DELETE FROM managed_schema_version WHERE version = 10;') } finally { await connection.release() }
   const upgraded = await openPostgresManagedDb(connect)
   const { checkGithubMetadataStore } = await import('./_managed-github-metadata.js')
   const merged = await checkGithubMetadataStore(upgraded)
@@ -552,7 +552,7 @@ test('Postgres adds closure reasons and attempts to an existing metadata table w
   await db.setGithubMetadata([cached])
   await db.close()
   const connection = await connect()
-  try { await connection.query('ALTER TABLE managed_github_metadata DROP COLUMN state_reason, DROP COLUMN attempted_at') }
+  try { await connection.query('ALTER TABLE managed_github_metadata DROP COLUMN state_reason, DROP COLUMN attempted_at; DELETE FROM managed_schema_version WHERE version = 10;') }
   finally { await connection.release() }
   for (let i = 0; i < 2; i++) {
     const upgraded = await openPostgresManagedDb(connect)
@@ -708,7 +708,7 @@ test('Postgres migrates bundle locations to root and preserves directory edits o
 test('Postgres upgrades and retains immutable managed issue references across connections', async t => {
   const { db, connect } = await database(t)
   const old = await connect()
-  try { await old.query('DROP TABLE managed_finding_issue') } finally { await old.release() }
+  try { await old.query('DROP TABLE managed_finding_issue; DELETE FROM managed_schema_version WHERE version = 10;') } finally { await old.release() }
   const upgraded = await openPostgresManagedDb(connect)
   const userId = await upgraded.upsertUser(identity(1), 1)
   const claim = { findingId: 'finding', repoId: 7, repository: 'o/r', requestId: 'first', createdBy: userId, createdAt: 1 }
@@ -730,4 +730,84 @@ test('Postgres upload reconciliation waits under the writer lock before authoriz
   assert.equal(await db.resolveBundleUpload('absent'), null)
   assert.equal(await db.resolveReportUpload('absent'), null)
   assert.equal(queries.filter(sql => sql.includes('pg_advisory_xact_lock')).length, 2)
+})
+
+test('Postgres warm schemas and single-statement reads avoid DDL and transaction round trips', async t => {
+  const { connect, queries } = await database(t)
+  queries.length = 0
+  let opened = 0
+  const db = await openPostgresManagedDb(() => { opened++; return connect() }, {}, true)
+  t.after(() => db.close())
+  assert.equal(queries.length, 2)
+  assert.ok(queries.every(query => query.startsWith('SELECT')))
+  opened = 0; queries.length = 0
+  await db.withRequest(async () => {
+    assert.deepEqual(await Promise.all([db.getReport('missing'), db.getBundle('missing'), db.getStorageRow('report', 'missing')]), [null, null, null])
+  })
+  assert.equal(opened, 1, 'concurrent operations reuse one request-owned connection without interleaving transactions')
+  assert.equal(queries.length, 3)
+  await db.withRequest(() => db.getReport('missing'))
+  assert.equal(opened, 2, 'a completed invocation retains no sockets')
+})
+
+test('Postgres authentication retains last-seen updates without taking the global mutation lock', async t => {
+  const { db, queries } = await database(t)
+  const session = await setup(db)
+  const id = hashToken(session.setCookie.split(';')[0].slice(4)), now = Date.now() + 100
+  queries.length = 0
+  assert.equal((await db.sessionWithUser(id, now)).user.id, session.userId)
+  assert.equal(queries.length, 4)
+  assert.ok(queries.every(query => !query.includes('pg_advisory_xact_lock')))
+  assert.equal((await db.listUsers()).find(user => user.id === session.userId).lastSeenAt, now)
+})
+
+test('Postgres bulk triage uses bounded queries and preserves no-ops, tombstones, and retention', async t => {
+  const { db, queries } = await database(t)
+  const entries = Array.from({ length: 100 }, (_, i) => [`f${i}`, { color: 'red', flagged: false }])
+  queries.length = 0
+  await db.setTriageEntries(entries, null, 'actor', 10)
+  assert.equal(queries.length, 7, 'one read, upsert, history insert, and trim for the batch, plus transaction/lock')
+  assert.equal((await db.listTriage(entries.map(([id]) => id))).length, 100)
+  await db.setTriageEntries(entries, null, 'actor', 20)
+  assert.equal((await db.listTriageHistory('f0', 10)).length, 1, 'no-op writes add no history')
+  await db.setTriageEntries(entries.map(([id]) => [id, null]), null, 'actor', 30)
+  await db.setTriageEntries(entries.map(([id]) => [id, { triage: 'done' }]), null, 'actor', 40)
+  const history = await db.listTriageHistory('f0', 10)
+  assert.deepEqual(history.map(event => event.at), [40, 30])
+  assert.equal(history[1].flagged, null)
+  assert.equal(history[1].color, null)
+})
+
+test('maintenance leases coordinate instances and an expired owner cannot release its successor', async t => {
+  const { db, connect } = await database(t)
+  const peer = await openPostgresManagedDb(connect)
+  t.after(() => peer.close())
+  assert.equal(await db.claimMaintenanceLease('first', 10, 100), true)
+  assert.equal(await peer.claimMaintenanceLease('second', 20, 200), false)
+  assert.equal(await peer.claimMaintenanceLease('second', 100, 200), true)
+  await db.finishMaintenanceLease('first', 101)
+  assert.equal(await db.claimMaintenanceLease('third', 102, 300), false)
+  await peer.finishMaintenanceLease('second', 105)
+  assert.equal(await db.claimMaintenanceLease('third', 105, 300), true)
+})
+
+test('request-owned connections rollback failures and reconnect before subsequent operations', async t => {
+  const { connect } = await database(t)
+  let opened = 0, released = 0
+  const db = await openPostgresManagedDb(async () => {
+    opened++
+    const connection = await connect()
+    return { query: connection.query, release: async () => { released++; await connection.release() } }
+  }, {}, true)
+  t.after(() => db.close())
+  opened = 0; released = 0
+  await db.withRequest(async () => {
+    await assert.rejects(db.setTeamRepo('missing', 123, ''), /foreign key/u)
+    assert.equal(await db.getReport('missing'), null)
+  })
+  assert.equal(opened, 2)
+  assert.equal(released, 2)
+  await assert.rejects(db.withRequest(async () => { await db.getReport('missing'); throw new Error('request failed') }), /request failed/u)
+  assert.equal(opened, 3)
+  assert.equal(released, 3, 'request failures also close the socket')
 })

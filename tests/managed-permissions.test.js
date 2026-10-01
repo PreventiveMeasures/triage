@@ -75,6 +75,7 @@ test('every managed data route rejects anonymous, invalid, expired, revoked, and
   }
   const guardedDb = new Proxy(db, {
     get(target, name) {
+      if (name === 'withRequest') return work => work() // Connection scope itself must not issue SQL.
       if (name === 'sessionWithUser') return target[name]
       return () => assert.fail(`denied request accessed db.${String(name)}`)
     },

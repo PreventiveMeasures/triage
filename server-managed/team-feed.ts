@@ -32,6 +32,7 @@ export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
 export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
   sessionId: string, user: StoredUser, teamId: string | null, options: FeedOptions = {}): Promise<void> {
   let ids: string[] = [], visibilityKey: string | undefined
+  let previousState: { catalog: number; annotations: number } | undefined
   const checkUser = (current: { user: Pick<StoredUser, 'id' | 'role'> } | null) => {
     if (!current) throw new TeamReportsError(401, 'unauthenticated')
     if (current.user.id !== user.id || current.user.role !== user.role || current.user.role === 'none') {
@@ -39,12 +40,22 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
     }
   }
   await serveFeed(res, deps, async publish => {
+    const state = await deps.db.getFeedState(sessionId, Date.now())
+    checkUser(state)
+    if (state!.catalog === previousState?.catalog && (!teamId || state!.annotations === previousState?.annotations)) return
     const catalog = await deps.db.getUserTeamFeedSnapshot(sessionId, Date.now())
     checkUser(catalog)
     checkUser(await deps.db.getReportAccessSnapshot(sessionId, Date.now(), []))
     // Publish catalog state before loading any report blobs. A slow or broken
     // focused report must not hide membership/content changes from the client.
-    if (!publish('teams', catalog!.revision) || !teamId) return
+    if (!publish('teams', catalog!.revision)) return
+    if (!teamId) {
+      // A mutation during the snapshot must cause a fresh read next poll.
+      const current = await deps.db.getFeedState(sessionId, Date.now())
+      checkUser(current)
+      if (current!.catalog === state!.catalog) previousState = state!
+      return
+    }
     let triage: string | undefined
     const snapshot = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
     if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
@@ -67,6 +78,9 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
     checkUser(current)
     if (!current || teamSnapshotKey(current) !== key) return
     publish('triage', triage)
+    const after = await deps.db.getFeedState(sessionId, Date.now())
+    checkUser(after)
+    if (after!.catalog === state!.catalog && after!.annotations === state!.annotations) previousState = state!
   }, options)
 }
 

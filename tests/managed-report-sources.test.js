@@ -151,6 +151,7 @@ function sourcesTests(backend) {
     const h = await setup(t)
     const original = await h.send()
     const duplicate = await h.seed()
+    t.mock.method(h.cacheStorage, 'exists', () => { throw new Error('warm cache must not issue HEAD') })
     t.mock.method(h.reports, 'get', () => { throw new Error('warm cache must not read report') })
     t.mock.method(h.bundles, 'get', () => { throw new Error('warm cache must not read bundle') })
     assert.deepEqual((await h.send(duplicate.id)).bytes, original.bytes)

@@ -1,5 +1,5 @@
 // Team content is filtered as one workspace, with separate report envelopes.
-// Only the visibility index is retained in memory for annotations/source reads.
+// Bounded snapshots retain filtered content and visibility for repeated reads.
 import { Buffer } from 'node:buffer'
 import { backfillFindingIds, reportEntries, stampSecurityGroups } from '../report/index.js'
 import { managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
@@ -15,6 +15,21 @@ type Visibility = Map<string, ReportVisibility>
 const VISIBILITY_CACHE_MAX_ITEMS = 250_000
 const VISIBILITY_CACHE_MAX_SNAPSHOTS = 32
 const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
+const REPORT_CACHE_BYTES = 16 * 1024 * 1024
+const reportCaches = new WeakMap<ManagedDb, Map<string, Buffer>>()
+function retainReports(db: ManagedDb, key: string, reports: TeamReport[]) {
+  const bytes = Buffer.from(JSON.stringify(reports))
+  if (bytes.length > REPORT_CACHE_BYTES) return
+  let cache = reportCaches.get(db)
+  if (!cache) { cache = new Map(); reportCaches.set(db, cache) }
+  cache.delete(key)
+  let total = bytes.length + [...cache.values()].reduce((sum, value) => sum + value.length, 0)
+  for (const [oldest, value] of cache) {
+    if (total <= REPORT_CACHE_BYTES && cache.size < VISIBILITY_CACHE_MAX_SNAPSHOTS) break
+    cache.delete(oldest); total -= value.length
+  }
+  cache.set(key, bytes)
+}
 function visibilityWeight(visible: Visibility): number {
   return [...visible.values()].reduce((sum, v) => sum + v.ids.size + v.sourcePaths.size, 0)
 }
@@ -61,24 +76,30 @@ function linksOf(data: unknown): string[][] | null {
   if (!record.links.every(ids => Array.isArray(ids) && ids.every(id => typeof id === 'string'))) throw new TeamReportsError(422, 'unreadable-links')
   return record.links
 }
-async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<{ reports: TeamReport[]; visible: Visibility }> {
+async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<{ reports: TeamReport[]; visible: Visibility }> {
   if (snapshot.reports.length > MAX_REPORT_QUERY_COUNT || snapshot.reports.reduce((n, r) => n + r.byteSize, 0) > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   const reports: TeamReport[] = []
-  let inputBytes = 0
-  // Retain parsed reports for cross-report classification; release raw bytes
-  // after each parse. No unbounded burst of remote reads or duplicate buffers.
-  for (const access of snapshot.reports) {
-    const bytes = await store.get(access.id)
-    if (!bytes) throw new TeamReportsError(503, 'unavailable')
-    inputBytes += bytes.length
-    if (inputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
-    const parsed = readManagedReport(bytes.toString('utf8'), access.filename)
-    if (!parsed.data) throw new TeamReportsError(422, 'unreadable-report')
-    // Backfill before filtering so links, annotations and the client agree on
-    // IDs even when hiding a component would change the original row shape.
-    await backfillFindingIds(groupsOf(parsed.data).flat())
-    reports.push({ id: access.id, filename: access.filename, data: parsed.data, repo: access.repo })
-  }
+  let inputBytes = 0, next = 0
+  // Bound both remote reads and raw buffers, retaining stable report order for
+  // the cross-report classification that follows. Finish workers on failure.
+  const results = await Promise.allSettled(Array.from({ length: Math.min(4, snapshot.reports.length) }, async () => {
+    while (next < snapshot.reports.length) {
+      const index = next++
+      const access = snapshot.reports[index]!
+
+      const bytes = await store.get(access.id)
+      if (!bytes) throw new TeamReportsError(503, 'unavailable')
+      inputBytes += bytes.length
+      if (inputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+      const parsed = readManagedReport(bytes.toString('utf8'), access.filename)
+      if (!parsed.data) throw new TeamReportsError(422, 'unreadable-report')
+      // Backfill before filtering so links, annotations and the client agree on
+      // IDs even when hiding a component would change the original row shape.
+      await backfillFindingIds(groupsOf(parsed.data).flat())
+      reports[index] = { id: access.id, filename: access.filename, data: parsed.data, repo: access.repo }
+    }
+  }))
+  for (const result of results) if (result.status === 'rejected') throw result.reason
   const edges = new Map<string, Set<string>>()
   const connect = (a: string, b: string) => {
     if (!edges.has(a)) edges.set(a, new Set())
@@ -117,9 +138,24 @@ async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Team
     if (outputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   }
   retainVisibility(db, teamSnapshotKey(snapshot), visible)
+  retainReports(db, teamSnapshotKey(snapshot), reports)
   return { reports, visible }
 }
+const pendingWorkspaces = new WeakMap<ManagedDb, Map<string, ReturnType<typeof buildTeamWorkspace>>>()
+async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
+  let pending = pendingWorkspaces.get(db)
+  if (!pending) { pending = new Map(); pendingWorkspaces.set(db, pending) }
+  const key = teamSnapshotKey(snapshot)
+  const existing = pending.get(key)
+  if (existing) return existing
+  const job = buildTeamWorkspace(db, store, snapshot)
+  pending.set(key, job)
+  try { return await job } finally { pending.delete(key) }
+}
 export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
+  const cached = reportCaches.get(db)?.get(teamSnapshotKey(snapshot))
+  // Never share mutable parsed objects across callers or permission scopes.
+  if (cached) return JSON.parse(cached.toString('utf8')) as TeamReport[]
   return (await loadTeamWorkspace(db, store, snapshot)).reports
 }
 async function teamVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Visibility> {

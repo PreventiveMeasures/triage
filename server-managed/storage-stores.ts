@@ -5,7 +5,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { BundleCacheStorage } from './bundle-cache.ts'
 import { createBundleStore } from './bundle-store.ts'
-import { type CacheStorage, validateCacheKey } from './cache-storage.ts'
+import { CacheMissError, type CacheStorage, validateCacheKey } from './cache-storage.ts'
 import { type ObjectStorage, isBlobId } from './object-storage.ts'
 
 function id(value: string): string {
@@ -30,7 +30,7 @@ function cacheStore(objects: ObjectStorage, name: string): CacheStorage {
     put: async (key, bytes) => { await objects.put(path(key), bytes) },
     async open(key) {
       const value = await objects.open(path(key))
-      if (!value) throw new Error('Managed cache unavailable')
+      if (!value) throw new CacheMissError()
       return value
     },
     delete: prefix => objects.deletePrefix(`${path(prefix)}/`),

@@ -1,5 +1,6 @@
 // Managed HTTP app and standalone boot. The combined launcher mounts this
 // same app on e2e's listener; storage, routing and cleanup stay here.
+import { randomUUID } from 'node:crypto'
 import { type Server, createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { createOriginGate } from '../server-common/origin.ts'
@@ -49,18 +50,30 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
   let cleanup: Promise<void> | undefined
   let nextCleanupAt = 0
   const maintenance = new AbortController()
-  function reap(): Promise<void> {
+  function reap(automatic = false): Promise<void> {
     if (cleanup) return cleanup
     if (isShuttingDown()) return Promise.resolve()
     const startedAt = Date.now()
     nextCleanupAt = startedAt + REAP_INTERVAL_MS
     let sessions = 0, uploads = 0
-    cleanup = runReapers({
-      sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
-      ...(storage.reapUploads ? { uploads: async () => { uploads = await storage.reapUploads!(maintenance.signal) } } : {}),
-      ...('reapStorage' in storage ? { storage: () => storage.reapStorage(maintenance.signal) } : {}),
-    }).then(() => {
+    cleanup = (async () => {
+      const owner = automatic && config.serverless ? randomUUID() : null
+      if (owner && !await db.claimMaintenanceLease(owner, startedAt, startedAt + Math.max(300_000, (config.storageEncryptionMigrateMaxMs ?? 0) + 60_000), config.storageEncryptionMigrate)) return false
+      let succeeded = false
+      try {
+        await runReapers({
+          sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
+          ...(storage.reapUploads ? { uploads: async () => { uploads = await storage.reapUploads!(maintenance.signal) } } : {}),
+          ...('reapStorage' in storage ? { storage: () => storage.reapStorage(maintenance.signal) } : {}),
+        })
+        succeeded = true
+        return true
+      } finally {
+        if (owner) await db.finishMaintenanceLease(owner, Date.now() + (succeeded ? REAP_INTERVAL_MS : REAP_RETRY_MS))
+      }
+    })().then(ran => {
       nextCleanupAt = Date.now() + REAP_INTERVAL_MS
+      if (!ran) return
       return console.info(`managed-reaper: removed ${sessions} expired session(s), ${uploads} stale upload part(s) in ${Date.now() - startedAt}ms`)
     }, err => {
       nextCleanupAt = Date.now() + REAP_RETRY_MS
@@ -71,7 +84,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
   }
   function automaticReap(): Promise<void> {
     if (isShuttingDown() || cleanup || Date.now() < nextCleanupAt) return Promise.resolve()
-    return reap().catch(err => console.warn('managed-reaper: cleanup failed:', err))
+    return reap(true).catch(err => console.warn('managed-reaper: cleanup failed:', err))
   }
   async function handleRequest(req: Parameters<typeof routeRequest>[0], res: Parameters<typeof routeRequest>[1]): Promise<void> {
     const pendingMaintenance = automaticReap()

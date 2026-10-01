@@ -197,3 +197,45 @@ test('warm annotation authorization invalidates when team links change, without 
   assert.deepEqual((await h.request('/api/reports/a/triage?team=restricted')).body.entries, {})
   assert.deepEqual((await h.request('/api/reports/a/triage?team=broad')).body.entries, { own: { color: 'red' } })
 })
+
+test('team response cache reuses immutable content and invalidates on permission changes', async t => {
+  const h = await fixture(t)
+  const first = await workspace(h, 'broad')
+  const reads = h.reads.length
+  assert.deepEqual(await workspace(h, 'broad'), first)
+  assert.equal(h.reads.length, reads, 'repeat navigation reads no report blobs')
+  await h.db.setTeamMember('broad', h.sessions.triage.userId, { dependencies: false, security: false })
+  const changed = await workspace(h, 'broad')
+  assert.equal(changed.status, 200)
+  assert.ok(h.reads.length > reads)
+  assert.equal(ids(changed.body.reports[0]).includes('dependent'), false)
+  assert.equal(ids(changed.body.reports[1]).includes('secret'), false)
+})
+
+test('team report loads overlap remote reads while retaining stable output order', async t => {
+  const gate = Promise.withResolvers(), h = await fixture(t)
+  let active = 0, maximum = 0
+  h.store.afterRead = async () => {
+    active++; maximum = Math.max(maximum, active)
+    if (active === 3) gate.resolve()
+    await gate.promise
+    active--
+  }
+  const response = await workspace(h, 'broad')
+  assert.equal(response.status, 200)
+  assert.equal(maximum, 3)
+  assert.deepEqual(response.body.reports.map(report => report.id), ['a', 'b', 'links'])
+})
+
+test('concurrent team opens share one load, and a failed load remains retryable', async t => {
+  const h = await fixture(t)
+  h.store.afterRead = () => new Promise(resolve => { setTimeout(resolve, 10) })
+  const [a, b] = await Promise.all([workspace(h, 'broad'), workspace(h, 'broad')])
+  assert.deepEqual(a, b)
+  assert.equal(a.status, 200)
+  assert.equal(h.reads.length, 3)
+  h.store.afterRead = () => { throw new Error('temporary storage failure') }
+  assert.equal((await workspace(h, 'restricted')).status, 500)
+  h.store.afterRead = undefined
+  assert.equal((await workspace(h, 'restricted')).status, 200)
+})
