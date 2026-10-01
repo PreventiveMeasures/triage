@@ -4,11 +4,6 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { ManagedDb } from './db-methods.ts'
 
 type MaybePromise<T> = T | Promise<T>
-// A failed COMMIT acknowledgement (or connection close after COMMIT) does not
-// establish rollback. Callers must retain primary bytes until reconciled.
-export class ManagedCommitError extends Error {
-  constructor(cause: unknown) { super('Managed commit outcome is uncertain', { cause }) }
-}
 export interface ManagedSql {
   prepare(sql: string): {
     get(...params: unknown[]): MaybePromise<unknown>

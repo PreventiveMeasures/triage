@@ -12,6 +12,8 @@ import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
 import { ManagedMutationError, type ManagementStore, managementMethods } from './management.ts'
+import { type StorageKey } from '../server-common/storage-crypto.ts'
+import { type StorageDb, type StoredTokens, decodeStorageTokens, encodeStorageTokens, storageMethods, storageState, validateStorageUpload } from './storage-db.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
 // to the upsert; `githubUserId` is the provider lookup key, never exposed to
@@ -131,6 +133,7 @@ export interface ReportAccessSnapshot {
 // bundle links; `bundleIntegrity` is the report's declared primary bundle (kept
 // so a later bundle upload of that integrity re-links it).
 export interface ReportRecordInput {
+  dataKey?: string | null
   id: string
   filename: string
   contentType: string
@@ -228,7 +231,7 @@ export interface ManagedBundle {
 
 // What the upload handler supplies to record a bundle; the store stamps
 // uploaded_at. `uploadedByLogin` is the durable uploader-login snapshot.
-export type BundleInput = Omit<ManagedBundle, 'uploadedAt' | 'slug' | 'repoDirectory'> & { uploadedByLogin: string | null; repoDirectory?: string }
+export type BundleInput = Omit<ManagedBundle, 'uploadedAt' | 'slug' | 'repoDirectory'> & { uploadedByLogin: string | null; repoDirectory?: string; dataKey?: string | null }
 
 // A bundle row for the "Manage bundles" list — adds the uploader login + repo
 // full name display joins (null when absent / since removed).
@@ -310,7 +313,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, StorageDb {
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted login configuration. It
   // promotes a matching No access identity only while it is the sole user.
@@ -358,6 +361,8 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   listReports(userId?: string): Promise<AdminReport[]>
   listFindingCatalogReports(after: string, limit: number): Promise<Pick<ReportRecord, 'id' | 'byteSize'>[]>
   getReport(id: string): Promise<ReportRecord | null>
+  // Writer-locked reconciliation waits for an uncertain earlier insert.
+  resolveReportUpload(id: string): Promise<ReportRecord | null>
   getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null>
   getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null>
   listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
@@ -392,6 +397,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // declared its integrity.
   insertBundle(bundle: BundleInput, now: number, sessionId?: string): Promise<void>
   getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null>
+  resolveBundleUpload(integrity: string): Promise<ManagedBundle | null>
   getBundle(id: string): Promise<ManagedBundle | null>
   listBundles(userId?: string): Promise<AdminBundle[]>
   userCanReadBundle(userId: string, id: string): Promise<boolean>
@@ -499,11 +505,11 @@ function prepareStatements(db: ManagedSql) {
     updateRoleStmt: db.prepare(`UPDATE managed_user SET role = ?, updated_at = ? WHERE id = ?`),
     updateTokensStmt: db.prepare(
       `UPDATE managed_user
-          SET gh_access_token = ?, gh_refresh_token = ?, gh_token_expires_at = ?, updated_at = ?
+          SET gh_access_token = ?, gh_refresh_token = ?, gh_token_expires_at = ?, gh_tokens_encrypted = ?, updated_at = ?
         WHERE id = ?`,
     ),
     selectTokensStmt: db.prepare(
-      `SELECT gh_access_token AS access, gh_refresh_token AS refresh, gh_token_expires_at AS exp
+      `SELECT gh_access_token AS access, gh_refresh_token AS refresh, gh_token_expires_at AS exp, gh_tokens_encrypted AS encrypted
          FROM managed_user WHERE id = ?`,
     ),
     deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
@@ -551,9 +557,9 @@ function prepareStatements(db: ManagedSql) {
     ),
     insertReportStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
-       INSERT INTO managed_report (id, slug, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at)
+       INSERT INTO managed_report (id, slug, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at, data_key, storage_encrypted)
        SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_report WHERE slug = candidate.slug) THEN id ELSE slug END,
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
     ),
     // LEFT JOINs so a report whose uploader / repo / bundle was removed (the FK
     // nulled) still lists, with null display fields.
@@ -680,9 +686,9 @@ function prepareStatements(db: ManagedSql) {
       WHERE finding_id IN (SELECT value FROM json_each(?)) ORDER BY id`),
     insertBundleStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
-       INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, repo_directory, uploaded_at)
+       INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, repo_directory, uploaded_at, data_key, storage_encrypted)
        SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_bundle WHERE slug = candidate.slug) THEN id ELSE slug END,
-              ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
     ),
     selectBundleByIntegrityStmt: db.prepare(
       `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
@@ -924,7 +930,7 @@ async function authorizeUpload(stmts: ReturnType<typeof prepareStatements>, sess
 }
 
 // The report slice of ManagedDb closes over its prepared statements.
-function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
+function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql, key: StorageKey | null) {
   const { insertReportStmt, selectReportsStmt, selectReportStmt, deleteReportStmt, setReportRepoStmt, setReportVisibleStmt } = stmts
   async function getReport(id: string): Promise<ReportRecord | null> {
     const row = (await selectReportStmt.get(id)) as ReportRow | undefined
@@ -936,16 +942,18 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>) {
     return row ? getReport(row.id) : null
   }
   async function insertReport(report: ReportRecordInput, now: number): Promise<void> {
+    await validateStorageUpload(db, key, 'report', report.id, report.dataKey)
     await insertReportStmt.run(
       report.id, preferredSlug(report.id), report.filename, report.contentType, report.byteSize,
       report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
       report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 0 : report.visible ? 1 : 0, report.bundleId ?? null,
-      report.bundleIntegrity ?? null, now,
+      report.bundleIntegrity ?? null, now, report.dataKey ?? null, report.dataKey ? 1 : 0,
     )
   }
   return {
     insertReport,
     getReport,
+    resolveReportUpload: getReport,
     getReportByHash,
     async insertOrReuseReport(report: ReportRecordInput, now: number, sessionId?: string): Promise<ReportRecord> {
       await authorizeUpload(stmts, sessionId, report)
@@ -1126,23 +1134,27 @@ function mapBundle(r: BundleRow): ManagedBundle {
 }
 
 // The bundle slice of ManagedDb. Closes over its prepared statements.
-function bundleMethods(stmts: ReturnType<typeof prepareStatements>) {
+function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql, key: StorageKey | null) {
   const {
     insertBundleStmt, selectBundleByIntegrityStmt, selectBundleStmt,
     selectBundlesStmt, deleteBundleStmt, setBundleRepoStmt, linkReportsToBundleStmt, selectBundleReadableStmt, selectRepoReadableStmt, selectRepoPathReadableStmt,
   } = stmts
+  async function getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null> {
+    const row = (await selectBundleByIntegrityStmt.get(integrity)) as BundleRow | undefined
+    return row == null ? null : mapBundle(row)
+  }
   return {
     async insertBundle(bundle: BundleInput, now: number, sessionId?: string): Promise<void> {
       await authorizeUpload(stmts, sessionId, bundle)
+      await validateStorageUpload(db, key, 'bundle', bundle.id, bundle.dataKey)
       await insertBundleStmt.run(
         bundle.id, preferredSlug(bundle.id), bundle.integrity, bundle.filename, bundle.kind,
-        bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, bundle.repoId == null ? '' : bundle.repoDirectory ?? '', now,
+        bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, bundle.repoId == null ? '' : bundle.repoDirectory ?? '', now, bundle.dataKey ?? null, bundle.dataKey ? 1 : 0,
       )
     },
-    async getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null> {
-      const row = (await selectBundleByIntegrityStmt.get(integrity)) as BundleRow | undefined
-      return row == null ? null : mapBundle(row)
-    },
+    getBundleByIntegrity,
+    // The distinct method name selects a writer-locked reconciliation scope.
+    resolveBundleUpload: getBundleByIntegrity,
     async getBundle(id: string): Promise<ManagedBundle | null> {
       const row = (await selectBundleStmt.get(id)) as BundleRow | undefined
       return row == null ? null : mapBundle(row)
@@ -1309,14 +1321,16 @@ function teamMethods( stmts: ReturnType<typeof prepareStatements>) {
 // `triageHistoryLimit`: events kept per finding in the triage trail; 0 (the
 // default) keeps everything. See ManagedConfig.
 export interface ManagedDbOptions {
+  storageEncryptionKey?: StorageKey | null
   triageHistoryLimit?: number
 }
 
 export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions = {}): ManagedDb {
+  const key = options.storageEncryptionKey ?? null
   const comments = commentMethods(db)
   const activity = activityMethods(db)
   const stmts = prepareStatements(db)
-  const reports = reportMethods(stmts)
+  const reports = reportMethods(stmts, db, key)
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0)
   const {
     upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
@@ -1324,6 +1338,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   } = stmts
 
   const methods: Omit<ManagedDb, keyof ManagementStore> = {
+    ...storageMethods(db, key),
     async upsertUser(user, now, initialAdminGithubId = null) {
       // New row → a fresh id; ON CONFLICT(github_user_id) keeps an existing
       // user's id (DO UPDATE leaves it untouched), so re-read to return it.
@@ -1364,12 +1379,18 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       return Number((await updateRoleStmt.run(role, Date.now(), id)).changes) > 0
     },
     async setUserTokens(id, tokens) {
-      await updateTokensStmt.run(tokens.accessToken, tokens.refreshToken, tokens.expiresAt, Date.now(), id)
+      const state = await storageState(db, key)
+      const value = state ? encodeStorageTokens(key!, id, tokens.accessToken, tokens.refreshToken) : { access: tokens.accessToken, refresh: tokens.refreshToken }
+      await updateTokensStmt.run(value.access, value.refresh, tokens.expiresAt, state ? 1 : 0, Date.now(), id)
     },
     async getUserTokens(id) {
-      const row = (await selectTokensStmt.get(id)) as { access: string | null; refresh: string | null; exp: number | null } | undefined
+      const state = await storageState(db, key)
+      const row = (await selectTokensStmt.get(id)) as StoredTokens | undefined
       if (row == null || row.access == null) return null
-      return { accessToken: row.access, refreshToken: row.refresh, expiresAt: row.exp }
+      if (row.encrypted && !state) throw new Error('Encrypted tokens without storage encryption state')
+      if (!row.encrypted && state?.complete) throw new Error('Unexpected plaintext GitHub tokens')
+      const value = row.encrypted ? decodeStorageTokens(key!, id, row) : row
+      return { accessToken: value.access!, refreshToken: value.refresh, expiresAt: row.exp }
     },
     async getUserGithubId(id) {
       const row = (await selectGithubIdStmt.get(id)) as { githubId: number } | undefined
@@ -1384,7 +1405,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...reports,
     ...triage,
     ...importTriageMethods({ getReport: reports.getReport, ...triage, ...comments }),
-    ...bundleMethods(stmts),
+    ...bundleMethods(stmts, db, key),
     ...teamMethods(stmts),
     async close() {
       await db.close()

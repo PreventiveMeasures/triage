@@ -18,6 +18,7 @@ import type { Buffer } from 'node:buffer'
 type VercelBlobBody = Readable | Buffer | string | Blob | ArrayBuffer | ReadableStream<Uint8Array>
 export type VercelBlobSdk = {
   BlobNotFoundError: new () => Error
+  BlobPreconditionFailedError?: new () => Error
   put: (
     pathname: string,
     body: VercelBlobBody,
@@ -27,6 +28,7 @@ export type VercelBlobSdk = {
       allowOverwrite?: boolean
       contentType?: string
       token?: string
+      ifMatch?: string
       multipart?: boolean
       abortSignal?: AbortSignal
       cacheControlMaxAge?: number
@@ -35,7 +37,7 @@ export type VercelBlobSdk = {
   head: (
     pathname: string,
     options?: { token?: string; abortSignal?: AbortSignal },
-  ) => Promise<{ size: number; pathname: string; url: string }>
+  ) => Promise<{ size: number; pathname: string; url: string; etag?: string; uploadedAt?: Date | string | number }>
   get: (
     pathname: string,
     options: {
@@ -47,7 +49,7 @@ export type VercelBlobSdk = {
   ) => Promise<{
     statusCode: 200 | 304
     stream: ReadableStream<Uint8Array> | null
-    blob: { size: number | null }
+    blob: { size: number | null; etag?: string; uploadedAt?: Date | string | number }
   } | null>
   copy: (
     fromPathname: string,
@@ -63,7 +65,7 @@ export type VercelBlobSdk = {
   ) => Promise<{ url: string; pathname: string }>
   del: (
     urlOrPathname: string | string[],
-    options?: { token?: string; abortSignal?: AbortSignal },
+    options?: { token?: string; abortSignal?: AbortSignal; ifMatch?: string },
   ) => Promise<void>
   list: (options: {
     prefix?: string
@@ -71,6 +73,7 @@ export type VercelBlobSdk = {
     limit?: number
     mode?: 'expanded' | 'folded'
     token?: string
+    abortSignal?: AbortSignal
   }) => Promise<{
     // `uploadedAt` (a Date per the SDK v2 surface) is the blob's
     // creation time — used by the reaper's GC grace window. Optional

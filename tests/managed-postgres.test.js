@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
+import { checkStorageDb, storageTestKey } from './_managed-storage-db.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
 import { reportReferenceSnapshot } from '../server-managed/management.ts'
 import { hashToken } from '../server-managed/crypto.ts'
+import { parseStorageKey } from '../server-common/storage-crypto.ts'
 
 // Tests in this file run sequentially. Reuse the expensive WASM engine, but
 // recreate the schema (including functions and triggers) so each test still
@@ -16,7 +18,7 @@ import { hashToken } from '../server-managed/crypto.ts'
 let sharedPg
 after(async () => { await sharedPg?.close() })
 
-async function database(t) {
+async function database(t, options = {}) {
   const pg = sharedPg ??= new PGlite()
   await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   const queries = []
@@ -59,7 +61,7 @@ async function database(t) {
       },
     }
   }
-  const db = await openPostgresManagedDb(connect, { triageHistoryLimit: 2 })
+  const db = await openPostgresManagedDb(connect, { triageHistoryLimit: 2, ...options })
   t.after(() => db.close())
   return { db, connect, queries, faults }
 }
@@ -76,7 +78,9 @@ for (const failure of ['commit', 'release']) {
       faults.upload = failure
       const request = { session, body: Buffer.from(type === 'report' ? '{"findings":[]}' : 'opaque bundle bytes') }
       const response = await send(`/api/admin/${type}s`, request)
-      assert.equal(response.status, type === 'report' ? 500 : 200)
+      assert.equal(response.status, 201, 'writer-locked reconciliation confirms the committed upload')
+      assert.equal(JSON.parse(response.body).byteSize, request.body.length)
+      assert.equal(JSON.parse(response.body).deduped, undefined)
       const [record] = type === 'report' ? await db.listReports() : await db.listBundles()
       assert.deepEqual(await store.get(record.id), request.body, 'committed bytes must not be mistaken for an orphan')
       const retry = await send(`/api/admin/${type}s`, request)
@@ -113,6 +117,25 @@ test('Postgres repository removal compares report references and rolls back part
   assert.equal((await send('/api/admin/repositories/remove', { session, body: { ...removal, deleteTriage: true } })).status, 200)
   assert.ok(await db.getReport(survivor))
   assert.equal((await db.listTriage(['shared-finding'])).length, 1)
+})
+
+test('Postgres per-row encryption keys and migration progress are shared across instances', async t => {
+  const { db, connect } = await database(t, { storageEncryptionKey: storageTestKey })
+  const other = await openPostgresManagedDb(connect, { storageEncryptionKey: storageTestKey })
+  try { await checkStorageDb(db, other) } finally { await other.close() }
+})
+
+test('Postgres concurrent activation rejects a different key without replacing the installation marker', async t => {
+  const { db, connect } = await database(t, { storageEncryptionKey: storageTestKey })
+  const other = await openPostgresManagedDb(connect, { storageEncryptionKey: parseStorageKey(randomBytes(32).toString('base64')) })
+  try {
+    const [enabled, rejected] = await Promise.allSettled([db.enableStorageEncryption(), other.enableStorageEncryption()])
+    assert.equal(enabled.status, 'fulfilled')
+    assert.equal(rejected.status, 'rejected')
+    assert.match(rejected.reason.message, /encryption key/u)
+    assert.deepEqual(await db.getStorageEncryption(), enabled.value)
+    await assert.rejects(other.getStorageEncryption(), /encryption key/u)
+  } finally { await other.close() }
 })
 
 test('Postgres report uploads reuse content across instances and upgrade without removing legacy copies', async t => {
@@ -660,4 +683,12 @@ test('Postgres upgrades and retains immutable managed issue references across co
   const reopened = await openPostgresManagedDb(connect)
   try { assert.equal((await reopened.getManagedIssue('finding')).issueUrl, 'https://github.com/o/r/issues/1') }
   finally { await reopened.close() }
+})
+
+test('Postgres upload reconciliation waits under the writer lock before authorizing cleanup', async t => {
+  const { db, queries } = await database(t)
+  queries.length = 0
+  assert.equal(await db.resolveBundleUpload('absent'), null)
+  assert.equal(await db.resolveReportUpload('absent'), null)
+  assert.equal(queries.filter(sql => sql.includes('pg_advisory_xact_lock')).length, 2)
 })

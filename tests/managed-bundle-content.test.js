@@ -9,9 +9,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { MAX_PACKAGE_INVENTORY_BYTES, createBundleCache, createDiskBundleCache } from '../server-managed/bundle-cache.ts'
-import { createDiskBlobStore } from '../server-managed/blob-store.ts'
-import { createDiskBundleStore } from '../server-managed/bundle-store.ts'
+import { MAX_PACKAGE_INVENTORY_BYTES, createBundleCache } from '../server-managed/bundle-cache.ts'
+import { diskStores } from './_managed-storage.js'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -40,10 +39,9 @@ const map = JSON.stringify({ version: 3, sources: ['src/main.js', 'missing.js'],
 async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-bundle-'))
   const db = openSqliteManagedDb(':memory:')
-  const store = createDiskBundleStore(join(dir, 'bundles'))
-  const reportStore = createDiskBlobStore(join(dir, 'reports'))
-  const cacheDir = join(dir, 'cache')
-  const cache = createDiskBundleCache(cacheDir, db, store)
+  const { bundleStore: store, reportStore, cacheStorage } = await diskStores(t, dir, db)
+  const cacheDir = join(dir, 'cache', 'bundles')
+  const cache = createBundleCache(cacheStorage, db, store)
   const pending = new Set()
   const server = createServer(createManagedRequestHandler({
     config, db, bundleStore: store, bundleCache: cache, reportStore,
@@ -96,7 +94,7 @@ async function setup(t) {
     await store.put(id, bytes, kind); await db.insertBundle(record, Date.now())
     return await db.getBundle(id)
   }
-  return { db, store, reportStore, cache, cacheDir, users, send, seed, team, pending, bundleDir: join(dir, 'bundles'), baseUrl: `http://127.0.0.1:${server.address().port}` }
+  return { db, store, reportStore, cache, cacheDir, cacheStorage, users, send, seed, team, pending, bundleDir: join(dir, 'bundles'), baseUrl: `http://127.0.0.1:${server.address().port}` }
 }
 
 test('catalog summaries reuse one cached count per hash across teams, uploads and cold starts', async t => {
@@ -130,7 +128,7 @@ test('catalog summaries reuse one cached count per hash across teams, uploads an
   await h.send('/api/teams', 'viewer')
   await h.send('/api/admin/bundles')
   assert.equal(reads.mock.callCount(), 3, 'the upload builds full metadata once; repeat catalogs only read counts')
-  const cold = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get() { throw new Error('must use summary cache') } })
+  const cold = createBundleCache(h.cacheStorage, h.db, { ...h.store, get() { throw new Error('must use summary cache') } })
   await writeFile(join(h.cacheDir, archive.id, 'v2-metadata.json.br'), 'summary must not decode the full metadata')
   assert.deepEqual(await cold.summary(archive), { files: 3, codeFiles: 2, lines: 2 })
   await h.db.deleteBundle(archive.id)
@@ -316,7 +314,7 @@ for (const kind of ['stasis', 'sourcemap']) {
   assert.deepEqual(contents.bytes, await h.store.get(record.id, record.kind), 'serve the stored compressed bytes')
   const decodedResponse = await fetch(`${h.baseUrl}${url}/contents`, { headers: { cookie: h.users.viewer.cookie } })
   assert.equal(await decodedResponse.text(), kind === 'stasis' ? stasis : map, 'HTTP fetch decodes the response without client-side codecs')
-  const restarted = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get: () => { throw new Error('must use disk cache') } })
+  const restarted = createBundleCache(h.cacheStorage, h.db, { ...h.store, get: () => { throw new Error('must use disk cache') } })
   const cached = await restarted.open(record, 'metadata')
   const chunks = []; for await (const chunk of cached.stream) chunks.push(chunk)
   assert.deepEqual(Buffer.concat(chunks), metadata.bytes)
@@ -351,12 +349,14 @@ for (const kind of ['stasis', 'sourcemap']) {
       }
       for (const stream of streams.splice(0)) {
         if (!stream.closed) await once(stream, 'close')
-        assert.equal(stream.bytesRead, 0, 'HEAD closes the file without reading content')
+        assert.equal(stream.readableDidRead, false, 'HEAD closes the stream without consuming its body')
       }
       const response = await h.send(url, 'viewer')
       assert.equal(response.status, 200)
       assert.deepEqual(response.bytes, bytes)
-      assert.equal(streams.shift().bytesRead, bytes.length)
+      const stream = streams.shift()
+      if (!stream.closed) await once(stream, 'close')
+      assert.equal(stream.readableDidRead, true, 'GET consumes the body')
     }
   })
 }
@@ -492,7 +492,7 @@ test('authorized duplicate uploads repair reports uploaded before bundle access 
 test('deletion during a cold build cannot leave cache files behind or serve deleted data', async t => {
   const h = await setup(t), record = await h.seed()
   const gate = Promise.withResolvers(), started = Promise.withResolvers()
-  const cache = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get: async (id, kind) => { started.resolve(); await gate.promise; return h.store.get(id, kind) } })
+  const cache = createBundleCache(h.cacheStorage, h.db, { ...h.store, get: async (id, kind) => { started.resolve(); await gate.promise; return h.store.get(id, kind) } })
   const build = cache.prebuild(record)
   await started.promise
   await h.db.deleteBundle(record.id)
@@ -683,7 +683,7 @@ test('package inventories persist separately; concurrent cache upgrades build on
   assert.equal(builds, 1)
   // A fresh instance needs neither the full metadata nor original bundle bytes.
   await writeFile(join(h.cacheDir, record.id, 'v2-metadata.json.br'), 'not compressed metadata')
-  const restarted = createDiskBundleCache(h.cacheDir, h.db, { ...h.store, get() { throw new Error('must use inventory') } })
+  const restarted = createBundleCache(h.cacheStorage, h.db, { ...h.store, get() { throw new Error('must use inventory') } })
   assert.deepEqual(await restarted.packageVersions(record), { dep: ['2.0.0'] })
 })
 

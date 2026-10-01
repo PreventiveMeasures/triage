@@ -4,7 +4,7 @@ import { setImmediate } from 'node:timers/promises'
 import { mock, test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, readSession } from '../server-managed/session.ts'
-import { openManagedVercelStorage } from '../server-managed/blob-vercel.ts'
+import { vercelStores } from './_managed-storage.js'
 import { sdkFixture } from './_managed-vercel.js'
 
 let nextStorage
@@ -23,7 +23,7 @@ async function fixture(t) {
   const config = { serverless: true, sessionCookieName: 'sid', sessionTtlMs: HOUR, cookieSecure: false, dbPath: ':memory:' }
   const db = openSqliteManagedDb(':memory:')
   const { sdk, objects } = sdkFixture()
-  const storage = await openManagedVercelStorage('test', sdk)
+  const storage = await vercelStores(t, 'test', sdk, db)
   nextStorage = { db, ...storage }
   const app = await createManagedApp(config)
   let closing

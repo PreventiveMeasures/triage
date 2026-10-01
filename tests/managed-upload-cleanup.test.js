@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { openManagedVercelStorage } from '../server-managed/blob-vercel.ts'
+import { vercelStores } from './_managed-storage.js'
 import { UPLOAD_CHUNK_BYTES } from '../server-managed/uploads.ts'
 import { sdkFixture } from './_managed-vercel.js'
 
@@ -21,7 +21,7 @@ async function fixture(t) {
     sessions[role] = session
   }
   const { sdk, objects } = sdkFixture()
-  const storage = await openManagedVercelStorage('test', sdk)
+  const storage = await vercelStores(t, 'test', sdk, db)
   const handler = createManagedRequestHandler({ config, db, ...storage,
     originGate: { isOriginAllowed: req => req.headers.origin !== 'blocked' },
     isShuttingDown: () => false, track() {},

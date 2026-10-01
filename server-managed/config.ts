@@ -4,6 +4,7 @@
 import { env } from 'node:process'
 import { databaseUrls } from '../server-common/database-config.ts'
 import { MAX_UPLOAD_BYTES } from './uploads.ts'
+import { parseStorageKey } from '../server-common/storage-crypto.ts'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
@@ -13,6 +14,10 @@ export interface ManagedConfig {
   dbPath: string
   neonUrl?: string | null
   blobToken?: string | null
+  storageEncryptionKey?: string | null
+  storageEncryptionMigrate?: boolean
+  storageEncryptionMigrateMaxMs?: number
+  vercelPreview?: boolean
   serverless?: boolean
   debug: boolean
   allowShare: boolean
@@ -88,6 +93,10 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
   const serverless = env['VERCEL'] === '1'
   const neonUrl = databaseUrls({ combined }).managed
   const blobToken = env['BLOB_READ_WRITE_TOKEN'] || null
+  const storageEncryptionKey = env['MANAGED_STORAGE_ENCRYPTION_KEY'] || null
+  parseStorageKey(storageEncryptionKey)
+  const storageEncryptionMigrate = env['MANAGED_STORAGE_ENCRYPTION_MIGRATE'] === '1'
+  if (storageEncryptionMigrate && !storageEncryptionKey) fail('MANAGED_STORAGE_ENCRYPTION_MIGRATE requires MANAGED_STORAGE_ENCRYPTION_KEY.')
   if (serverless && !neonUrl) fail('Vercel managed mode requires DATABASE_URL or MANAGED_DATABASE_URL.')
   if (neonUrl && !blobToken) fail('Managed Neon mode requires BLOB_READ_WRITE_TOKEN.')
   const host = env['HOST'] ?? '127.0.0.1'
@@ -105,7 +114,9 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     fail(`SESSION_COOKIE_NAME=${sessionCookieName} uses the __Host- prefix but the callback is not https. Use a non-prefixed name for loopback http dev.`)
   }
   return {
-    neonUrl, blobToken, serverless,
+    neonUrl, blobToken, serverless, storageEncryptionKey, storageEncryptionMigrate,
+    storageEncryptionMigrateMaxMs: intEnv('MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS', 150_000, 1, serverless ? 240_000 : 3_600_000),
+    vercelPreview: env['VERCEL_ENV'] === 'preview',
     port: intEnv('PORT', 8765, 0, 65535),
     host,
     // DB_PATH belongs to e2e in a combined process. Keep the two stores apart.

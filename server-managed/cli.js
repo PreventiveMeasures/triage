@@ -9,5 +9,13 @@
 // Imported here rather than run as the process entry, so index.ts's
 // `import.meta.main` auto-start gate stays off and we call `start()` ourselves.
 import '../strip-types-loader.js'
-const { start } = await import('./index.ts')
-await start()
+const command = process.argv[2]
+if (command === '--storage-encryption-status') {
+  const { storageCommand } = await import('./storage-command.ts')
+  await storageCommand(process.argv[3])
+} else if (command) {
+  throw new Error(`Unknown command: ${command}`)
+} else {
+  const { start } = await import('./index.ts')
+  await start()
+}

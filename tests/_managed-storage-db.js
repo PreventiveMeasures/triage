@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { parseStorageKey, unwrapStorageValue } from '../server-common/storage-crypto.ts'
+
+export const storageTestKey = parseStorageKey(Buffer.alloc(32, 123).toString('base64'))
+export async function checkStorageDb(db, other = db) {
+  assert.equal(await db.getStorageEncryption(), null)
+  const id = randomUUID()
+  await db.insertBundle({ id, integrity: 'sha512-test', filename: 'b.zip', kind: null, byteSize: 1, uploadedBy: null, repoId: null }, Date.now())
+  const before = await db.getStorageRow('bundle', id)
+  assert.equal(before.dataKey, null)
+  const [state, concurrent] = await Promise.all([db.enableStorageEncryption(), other.enableStorageEncryption()])
+  assert.deepEqual(concurrent, state, 'concurrent activation is idempotent across instances')
+  const rows = await Promise.all([db, other].map(store => store.ensureStorageDataKey('bundle', id)))
+  assert.equal(rows[0].dataKey, rows[1].dataKey, 'both workers use the persisted key')
+  const bytes = unwrapStorageValue(storageTestKey, `managed_bundle:${id}`, rows[0].dataKey)
+  assert.equal(bytes.length, 32)
+  assert.throws(() => unwrapStorageValue(storageTestKey, `managed_report:${id}`, rows[0].dataKey))
+  assert.equal((await db.getBundle(id)).dataKey, undefined)
+  assert.equal((await db.listBundles())[0].dataKey, undefined)
+  await assert.rejects(db.insertBundle({ id: randomUUID(), integrity: 'another', filename: 'a', kind: null, byteSize: 1, uploadedBy: null, repoId: null }), /data key/u)
+  const pending = await db.listStorageMigrationRows(null, 10)
+  assert.deepEqual(pending.map(row => ({ ...row })), [{ position: `bundle:${id}`, id, type: 'bundle' }])
+  await db.advanceStorageMigration(null, null)
+  assert.equal((await db.getStorageEncryption()).complete, 0, 'one pass cannot skip pending rows')
+  await other.markStorageEncrypted('bundle', id, rows[0].dataKey)
+  await db.markStorageEncrypted('bundle', id, rows[0].dataKey)
+  assert.equal((await db.getStorageRow('bundle', id)).encrypted, 1)
+  await db.advanceStorageMigration(null, null)
+  assert.equal((await db.getStorageEncryption()).complete, 1)
+  assert.equal((await db.getStorageEncryption()).migrated, 1, 'concurrent completion counts once')
+  await other.deleteBundle(id)
+  assert.equal(await db.getStorageRow('bundle', id), null)
+  assert.equal(await db.ensureStorageDataKey('bundle', id), null)
+  await db.markStorageEncrypted('bundle', id, rows[0].dataKey)
+  assert.equal(await db.getStorageRow('bundle', id), null, 'completion cannot recreate a deleted row')
+  assert.equal((await db.getStorageEncryption()).migrated, 1)
+}

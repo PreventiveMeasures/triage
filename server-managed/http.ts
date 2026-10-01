@@ -59,7 +59,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedSession, ReportRecord, StoredUser, TriageEventRow } from './db.ts'
+import type { ManagedBundle, ManagedDb, ManagedSession, ReportRecord, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -92,7 +92,6 @@ import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
-import { ManagedCommitError } from './sql.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 
 const SESSION_PATH = '/api/auth/session'
@@ -914,18 +913,22 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
   const { bundleId, integrity } = await resolveReportBundle(deps, s.user, bytes)
-  await deps.reportStore.put(id, bytes)
+  const dataKey = await deps.reportStore.put(id, bytes)
   let report: ReportRecord
   try {
     report = await deps.db.insertOrReuseReport({
-      id, filename, contentType, byteSize: bytes.length, sha256,
+      id, filename, contentType, byteSize: bytes.length, sha256, dataKey,
       uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: matchedRepo?.repoId ?? null,
       repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity,
     }, Date.now(), s.session.id)
   } catch (err) {
-    // Losing the commit acknowledgement cannot turn primary bytes into garbage.
-    if (!(err instanceof ManagedCommitError)) await deps.reportStore.delete(id).catch(() => {})
-    throw err
+    // A successful COMMIT can lose its acknowledgement. Never delete a file
+    // until a writer-locked read confirms that this candidate did not commit.
+    let committed: ReportRecord | null
+    try { committed = await deps.db.resolveReportUpload(id) }
+    catch (lookup) { throw new AggregateError([err, lookup], 'Report upload reconciliation failed', { cause: lookup }) }
+    if (committed) report = committed
+    else { await deps.reportStore.delete(id).catch(() => {}); throw err }
   }
   if (report.id !== id) await deps.reportStore.delete(id).catch(() => {})
   await sendUploadedReport(req, res, deps, cookie, report, report.id !== id)
@@ -1155,6 +1158,18 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, coo
   await backfillBundleSummaries(bundles, deps.bundleCache)
 }
 
+type UploadedBundle = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'byteSize' | 'repoId' | 'repoDirectory'>
+async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, bundle: UploadedBundle, deduped: boolean): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie)
+  if (!s) return
+  if (deduped && !(await canAccessBundle(deps, s.user, bundle.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+  const { id, integrity, filename, byteSize, repoId, repoDirectory } = bundle
+  // Re-uploading also repairs reports uploaded while the bundle was inaccessible.
+  await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
+  prebuildBundle(deps, id)
+  sendJson(res, deduped ? 200 : 201, { id, integrity, filename, repoId, repoDirectory, ...(deduped ? { deduped: true } : { byteSize }) })
+}
+
 // POST /api/admin/bundles — upload a bundle. Mutation: same-origin + CSRF,
 // admin|manage. Raw bytes; X-Bundle-Filename names it, optional X-Repo-Id and
 // X-Repo-Directory assign a repository location. The bundle's identity is its content hash (sha512), UNIQUE — a
@@ -1191,48 +1206,31 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   const integrity = bundleIntegrity(bytes)
   const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
   const existing = await deps.db.getBundleByIntegrity(integrity)
-  if (existing != null) {
-    s = await manageMutation(req, res, deps, cookie)
-    if (!s) return
-    if (!(await canAccessBundle(deps, s.user, existing.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
-    // Reports uploaded while this bundle was inaccessible retain only its
-    // integrity. An authorized re-upload repairs those pending links too.
-    await deps.db.linkReportsToBundle(integrity, existing.id, s.user.role === 'admin' ? undefined : s.user.id)
-    prebuildBundle(deps, existing.id)
-    sendJson(res, 200, { id: existing.id, integrity, filename: existing.filename, repoId: existing.repoId, repoDirectory: existing.repoDirectory, deduped: true })
-    return
-  }
+  if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
   const kind = bundleKind(filename)
-  await deps.bundleStore.put(id, bytes, kind)
+  const dataKey = await deps.bundleStore.put(id, bytes, kind)
   try {
     await deps.db.insertBundle({
-      id, integrity, filename, kind,
+      id, integrity, filename, kind, dataKey,
       byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId, repoDirectory: directory,
     }, Date.now(), s.session.id)
   } catch (err) {
-    // A committed row may already point here even though insertion rejected.
-    if (!(err instanceof ManagedCommitError)) await deps.bundleStore.delete(id).catch(() => {})
-    if (err instanceof ManagedMutationError) throw err
     // A concurrent upload of identical bytes can insert this integrity (UNIQUE)
     // between our dedup check and this insert — treat that as a dedup, not a 500.
     // Any other failure rethrows.
-    const raced = await deps.db.getBundleByIntegrity(integrity)
-    if (raced != null) {
-      s = await manageMutation(req, res, deps, cookie)
-      if (!s) return
-      if (!(await canAccessBundle(deps, s.user, raced.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
-      await deps.db.linkReportsToBundle(integrity, raced.id, s.user.role === 'admin' ? undefined : s.user.id)
-      prebuildBundle(deps, raced.id)
-      sendJson(res, 200, { id: raced.id, integrity, filename: raced.filename, repoId: raced.repoId, repoDirectory: raced.repoDirectory, deduped: true }); return }
-    throw err
+    let raced: ManagedBundle | null
+    try { raced = await deps.db.resolveBundleUpload(integrity) }
+    catch (lookup) { throw new AggregateError([err, lookup], 'Bundle upload reconciliation failed', { cause: lookup }) }
+    // Preserve a committed candidate after a lost acknowledgement. If this
+    // read fails too, leave the bytes for later reconciliation.
+    if (raced?.id !== id) await deps.bundleStore.delete(id).catch(() => {})
+    if (err instanceof ManagedMutationError) throw err
+    if (!raced) throw err
+    if (raced.id !== id) { await sendUploadedBundle(req, res, deps, cookie, raced, true); return }
+    // Our insert committed: continue with the ordinary creation response.
   }
-  // Auto-link reports that declared this integrity before the bundle existed.
-  s = await manageMutation(req, res, deps, cookie)
-  if (!s) return
-  await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
-  prebuildBundle(deps, id)
-  sendJson(res, 201, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId, repoDirectory: directory })
+  await sendUploadedBundle(req, res, deps, cookie, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId, repoDirectory: directory }, false)
 }
 
 // GET /api/admin/bundles/<id> — download a stored bundle (admin|manage). Bytes

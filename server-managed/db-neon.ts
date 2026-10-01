@@ -2,11 +2,12 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { WebSocket } from 'ws'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
 import { MANAGED_SCHEMA } from './db-schema.ts'
+import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA } from './activity.ts'
-import { ManagedCommitError, type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
+import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
@@ -57,7 +58,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(WORKSPACE_SHARE_SCHEMA))
       await db.query('INSERT INTO managed_schema_version VALUES (4)')
     }
-    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA))
+    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA))
     await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
     await db.query('ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS attempted_at BIGINT')
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 5')).rows.length === 0) {
@@ -83,6 +84,10 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query('CREATE INDEX IF NOT EXISTS managed_report_hash_idx ON managed_report(sha256, uploaded_at, id)')
       await db.query('INSERT INTO managed_schema_version VALUES (8)')
     }
+    for (const table of ['managed_report', 'managed_bundle']) {
+      await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS data_key TEXT, ADD COLUMN IF NOT EXISTS storage_encrypted INTEGER NOT NULL DEFAULT 0`)
+    }
+    await db.query('ALTER TABLE managed_user ADD COLUMN IF NOT EXISTS gh_tokens_encrypted INTEGER NOT NULL DEFAULT 0')
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')
@@ -155,11 +160,11 @@ export async function openPostgresManagedDb(connect: PgConnect, options: Managed
       } catch (err) {
         await db.query('ROLLBACK').catch(() => {})
         await db.release().catch(() => {})
-        if (write && commitAttempted) throw new ManagedCommitError(err)
+        if (write && commitAttempted) throw new Error('Managed commit outcome is uncertain', { cause: err })
         throw err
       }
       try { await db.release() }
-      catch (err) { if (write) throw new ManagedCommitError(err); throw err }
+      catch (err) { if (write) throw new Error('Managed commit outcome is uncertain', { cause: err }); throw err }
       return result
     },
     close() { closed = true },

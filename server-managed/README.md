@@ -1,6 +1,8 @@
 For deployment on Vercel, see [the deployment guide](VERCEL.md).
 For database selection, shared-storage boundaries, and cleanup behavior across
 both server modes, see [storage separation](../server-common/STORAGE.md).
+For optional encryption of disk and Vercel Blob payloads, configuration and
+plaintext migration, see [managed storage encryption](STORAGE-ENCRYPTION.md).
 
 # Account approval
 

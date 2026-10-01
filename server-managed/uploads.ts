@@ -38,8 +38,8 @@ export async function deleteUpload(store: BlobStore, session: string, kind: Uplo
   if (errors.length > 0) throw new AggregateError(errors, 'Upload cleanup failed')
 }
 
-export function putUploadPart(store: BlobStore, session: string, kind: UploadKind, id: string, index: number, bytes: Buffer): Promise<void> {
-  return store.put(partId(session, kind, id, index), bytes)
+export async function putUploadPart(store: BlobStore, session: string, kind: UploadKind, id: string, index: number, bytes: Buffer): Promise<void> {
+  await store.put(partId(session, kind, id, index), bytes)
 }
 
 export async function readUpload(store: BlobStore, req: IncomingMessage, session: string, kind: UploadKind, maxBytes: number): Promise<Buffer> {
