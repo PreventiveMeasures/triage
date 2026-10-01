@@ -80,7 +80,7 @@ Set these variables for each deployment environment:
 | --- | --- |
 | `DATABASE_URL` or `MANAGED_DATABASE_URL` | Shared or managed-specific Neon connection string; set exactly one |
 | `BLOB_READ_WRITE_TOKEN` | Token for a private Vercel Blob store paired with that database |
-| `MANAGED_STORAGE_ENCRYPTION_KEY` | Optional 32-byte base64 master key for managed payloads and GitHub tokens; requires explicit enable, and the same key on every instance and cleanup function |
+| `MANAGED_STORAGE_ENCRYPTION_KEY` | Optional 32-byte base64 master key for managed payloads and GitHub tokens; enables encryption on startup, then requires the same key on every instance and cleanup function |
 | `GITHUB_CLIENT_ID` | GitHub login app client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub login app client secret |
 | `MANAGED_INITIAL_ADMIN_GITHUB_ID` | Optional numeric GitHub ID promoted on login only when that account has No access and is the sole user |
@@ -188,12 +188,13 @@ These tests do not validate a deployed Vercel build, live OAuth/provider
 credentials, platform streaming, actual concurrent Neon connections, or memory
 and timeout behavior at upload limits. Those require deployment validation.
 
-Cleanup covers sessions and upload staging. After explicit encryption activation,
+Cleanup covers sessions and upload staging. After encryption is enabled on startup,
 it also runs bounded SQL-row migration and legacy plaintext/cache cleanup.
 Reports and bundles retain their paths under `.managed/`; their SQL rows hold
 random data keys wrapped by `MANAGED_STORAGE_ENCRYPTION_KEY`. Rebuilt caches use
 `.managed/cache-encrypted-v1/` and their bundle's data key. GitHub access/refresh
 tokens are wrapped separately. Public GitHub avatars remain unencrypted.
 See [storage encryption](STORAGE-ENCRYPTION.md) for activation, migration commands,
-key custody and compatible database/Blob backups. Configuring the key alone does
-not activate encryption. Rotation and old-key lists are not implemented.
+key custody and compatible database/Blob backups. Configure the key and redeploy;
+the first function opening managed storage enables encryption automatically.
+Rotation and old-key lists are not implemented.

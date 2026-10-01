@@ -124,7 +124,8 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
 }
 
 export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null): Promise<ObjectStorage> {
-  // Read-only: the CLI's explicit enable command is the sole activation path.
+  // Startup enables encryption before constructing stores; also validate the
+  // persisted requirement when this adapter is opened without a key.
   await db.getStorageEncryption()
   async function mode() {
     const state = await db.getStorageEncryption()

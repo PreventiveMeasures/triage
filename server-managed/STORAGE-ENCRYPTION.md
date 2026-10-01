@@ -36,34 +36,40 @@ payloads. Access to both the SQL keys and master key permits decryption;
 control of the running managed server or its deployment environment does too.
 Provider encryption at rest remains a separate outer layer.
 
-## Explicit activation
+## Enable encryption at startup
 
 1. Back up the database and byte store together; retain the master key separately.
 2. Upgrade all instances and cleanup functions, including any previews sharing
-   production storage. Configure the same master key everywhere. Drain old
-   binaries before activation; they do not enforce the encryption requirement.
-3. Explicitly enable encryption with the command below. Merely setting the
-   variable, starting the server or asking for status never enables it.
+   production storage. Drain old binaries before configuring the key; they do
+   not enforce the encryption requirement.
+3. Set `MANAGED_STORAGE_ENCRYPTION_KEY` to the same master key everywhere and
+   restart or redeploy. The first startup with the key enables encryption in
+   the shared database before serving requests. New uploads, cache writes,
+   upload parts and GitHub tokens are encrypted immediately.
 4. Run migration, or let scheduled maintenance process bounded batches.
 
 ```sh
 node server-managed/cli.js --storage-encryption-status
-node server-managed/cli.js --enable-storage-encryption
 node server-managed/cli.js --migrate-storage
 ```
 
 The installed `triage-managed-server` accepts the same flags. Supply the usual
 managed server configuration; these commands do not start an HTTP listener.
-Activation saves a wrapped test value in `managed_storage_encryption`. Every
+Like server startup, both commands enable encryption if a key is configured.
+Without a key, a database that has never enabled encryption stays plaintext.
+Enabling saves a wrapped test value in `managed_storage_encryption`. Every
 startup checks it, and storage/token operations check the requirement again.
-A missing or incorrect key fails closed. Removing or changing the master key
-and reverting to an older binary are unsupported after activation.
+Concurrent starts reuse this value and must present the same key. A missing
+or incorrect key fails closed after encryption is enabled. Removing or changing
+the master key and reverting to an older binary are unsupported after activation.
 
-On Vercel, deploy with the key configured first, then run the activation command
-from a trusted workstation or CI job using the production Neon URL, Blob token
-and the same key. The marker is stored in Neon, so deployed functions observe
-it on subsequent operations. The command needs no shell inside Vercel; the
-scheduled `/api/reap` can perform migration after activation.
+On Vercel, configure the key and redeploy. The first function invocation that
+opens managed storage enables encryption in Neon; subsequent cold starts
+validate the same key. No activation command or shell inside Vercel is needed.
+The scheduled `/api/reap` migrates existing data in bounded batches. To run
+migration sooner, use the CLI from a trusted workstation or CI job with the
+production database URL, Blob token and same key. Startup itself does not scan
+or rewrite existing payloads, so it does not wait for migration to finish.
 
 New uploads receive a random data key. The server encrypts the file at its
 usual path, then inserts the row with the wrapped key and an encrypted flag.
@@ -183,5 +189,5 @@ fail authentication. Same-path replay of valid ciphertext is possible; upload
 contents are immutable, and cached derivatives can be rebuilt.
 
 Tests exercise disk and Blob SDK fixtures, SQLite and PostgreSQL semantics
-(PGlite), API uploads/downloads, explicit activation, migration interruptions,
+(PGlite), API uploads/downloads, automatic startup activation, migration interruptions,
 concurrent keys/deletions, token encryption and a generated 115 MiB payload.

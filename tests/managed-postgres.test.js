@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
@@ -10,6 +10,7 @@ import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
 import { reportReferenceSnapshot } from '../server-managed/management.ts'
 import { hashToken } from '../server-managed/crypto.ts'
+import { parseStorageKey } from '../server-common/storage-crypto.ts'
 
 // Tests in this file run sequentially. Reuse the expensive WASM engine, but
 // recreate the schema (including functions and triggers) so each test still
@@ -120,6 +121,19 @@ test('Postgres per-row encryption keys and migration progress are shared across 
   const { db, connect } = await database(t, { storageEncryptionKey: storageTestKey })
   const other = await openPostgresManagedDb(connect, { storageEncryptionKey: storageTestKey })
   try { await checkStorageDb(db, other) } finally { await other.close() }
+})
+
+test('Postgres concurrent activation rejects a different key without replacing the installation marker', async t => {
+  const { db, connect } = await database(t, { storageEncryptionKey: storageTestKey })
+  const other = await openPostgresManagedDb(connect, { storageEncryptionKey: parseStorageKey(randomBytes(32).toString('base64')) })
+  try {
+    const [enabled, rejected] = await Promise.allSettled([db.enableStorageEncryption(), other.enableStorageEncryption()])
+    assert.equal(enabled.status, 'fulfilled')
+    assert.equal(rejected.status, 'rejected')
+    assert.match(rejected.reason.message, /encryption key/u)
+    assert.deepEqual(await db.getStorageEncryption(), enabled.value)
+    await assert.rejects(other.getStorageEncryption(), /encryption key/u)
+  } finally { await other.close() }
 })
 
 test('Postgres report uploads reuse content across instances and upgrade without removing legacy copies', async t => {

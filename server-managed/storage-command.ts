@@ -1,13 +1,13 @@
 import { loadManagedConfig } from './config.ts'
 import { openManagedStorage } from './storage.ts'
 
-// Explicit activation is separate from opening storage, status and migration.
-// All work is awaited; the command never starts an HTTP listener.
+// Opening storage enables encryption when a key is configured, just as server
+// startup does. All work is awaited without starting an HTTP listener.
 export async function storageCommand(command: string): Promise<void> {
   const storage = await openManagedStorage(loadManagedConfig())
   try {
-    let status = command === '--enable-storage-encryption' ? await storage.enableStorageEncryption() : await storage.storageEncryptionStatus()
-    if (command === '--migrate-storage' && !status) throw new Error('Run --enable-storage-encryption before migrating storage')
+    let status = await storage.storageEncryptionStatus()
+    if (command === '--migrate-storage' && !status) throw new Error('Configure MANAGED_STORAGE_ENCRYPTION_KEY before migrating storage')
     for (;;) {
       let retryAt: number | null = null
       if (command === '--migrate-storage' && status && (!status.complete || !status.cleanupComplete)) {

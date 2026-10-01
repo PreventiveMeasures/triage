@@ -61,7 +61,7 @@ export async function storageState(db: ManagedSql, key: StorageKey | null): Prom
 }
 
 // Called inside the insert transaction, fencing an old/plain upload that raced
-// explicit activation. The wrapped key never enters public report/bundle DTOs.
+// activation. The wrapped key never enters public report/bundle DTOs.
 export async function validateStorageUpload(db: ManagedSql, key: StorageKey | null, type: StorageRowKind,
   id: string, dataKey: string | null | undefined): Promise<void> {
   const state = await storageState(db, key)
@@ -92,7 +92,7 @@ const PENDING = `SELECT 'bundle:' || id AS position, id, 'bundle' AS type FROM m
 export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageDb {
   async function requireEnabled() {
     const state = await storageState(db, key)
-    if (!state) throw new Error('Storage encryption is not enabled; run --enable-storage-encryption')
+    if (!state) throw new Error('Storage encryption is not enabled; configure MANAGED_STORAGE_ENCRYPTION_KEY')
     return state
   }
   async function getRow(type: StorageRowKind, id: string): Promise<StorageRow | null> {
@@ -105,7 +105,8 @@ export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageD
   return {
     async enableStorageEncryption() {
       if (!key) throw new Error('Set MANAGED_STORAGE_ENCRYPTION_KEY before enabling storage encryption')
-      // Opening storage and status checks never run this mutation.
+      // Called during startup in a writer transaction. Concurrent instances
+      // must reuse the marker and validate its key before serving requests.
       const existing = await storageState(db, key)
       if (existing) return existing
       await db.prepare('INSERT INTO managed_storage_encryption (id, test_value, enabled_at) VALUES (1, ?, ?)')

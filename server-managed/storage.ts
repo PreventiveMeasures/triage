@@ -20,12 +20,14 @@ export async function openManagedStorage(config: ManagedConfig) {
     : (await import('./db.ts')).openSqliteManagedDb(config.dbPath, options)
   try {
     const raw = config.neonUrl ? await openVercelObjectStorage(config.blobToken!) : createDiskObjectStorage(dirname(config.dbPath))
+    // Enable before exposing stores or token writers. Concurrent first starts
+    // serialize activation in the database and validate the winning key.
+    if (key && !await db.getStorageEncryption()) await db.enableStorageEncryption()
     const objects = await createEncryptedObjectStorage(raw, db, key)
     const storage = createManagedStores(objects, !config.neonUrl)
     return { ...storage, db, uploadStore: config.neonUrl ? storage.uploadStore : undefined,
       bundleCache: createBundleCache(storage.cacheStorage, db, storage.bundleStore),
       reportSourcesCache: createReportSourcesCache(storage.reportSourcesStorage, db, storage.reportStore, storage.bundleStore),
-      enableStorageEncryption: () => db.enableStorageEncryption(),
       storageEncryptionStatus: () => db.getStorageEncryption(),
       migrateStorage: (budget?: { maxObjects?: number; maxMs?: number }) => key ? migrateStorage(raw, db, key, budget) : Promise.resolve(null),
       async reapStorage() {

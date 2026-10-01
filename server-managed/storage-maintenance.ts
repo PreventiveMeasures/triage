@@ -122,7 +122,7 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
   const deadline = Date.now() + maxMs, signal = AbortSignal.timeout(maxMs)
   const errors: unknown[] = []
   let processed = 0, retryAt: number | null = null, state = await db.getStorageEncryption()
-  if (!state) throw new Error('Storage encryption is not enabled; run --enable-storage-encryption')
+  if (!state) throw new Error('Storage encryption is not enabled; configure MANAGED_STORAGE_ENCRYPTION_KEY')
   // At most one SQL pass per invocation. Checkpoint each row, including a
   // failure: other rows progress, and the failed row is retried next pass.
   while (!state.complete && processed < maxObjects && Date.now() < deadline) {

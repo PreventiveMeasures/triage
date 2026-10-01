@@ -102,7 +102,7 @@ compatible with a shared file, but the launcher requires separate files.
 | Managed upload parts | Not enabled by the disk adapter | `.managed/uploads/<derivedUuid>` |
 | Managed encrypted caches (when enabled) | `cache-encrypted-v1/` | `.managed/cache-encrypted-v1/` |
 
-After explicit activation with `MANAGED_STORAGE_ENCRYPTION_KEY`, reports and
+Once startup enables encryption with `MANAGED_STORAGE_ENCRYPTION_KEY`, reports and
 bundles retain their paths and get random data keys wrapped in their SQL rows.
 Caches rebuild in the encrypted cache namespace using their bundle key. Legacy
 payloads migrate in place through resumable SQL-row batches. GitHub access and

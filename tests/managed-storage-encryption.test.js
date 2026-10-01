@@ -55,27 +55,61 @@ async function bundle(f, body = Buffer.from('bundle sources'), kind = null) {
   return id
 }
 
-test('SQLite per-row keys, explicit activation, and migration state', async t => {
+test('SQLite per-row keys, activation, and migration state', async t => {
   const f = await fixture(t)
   await checkStorageDb(f.db)
 })
 
-test('a configured key and read-only status do not enable encryption; missing/wrong keys fail after explicit enable', async t => {
+test('startup with a key encrypts new writes before legacy migration and requires the same key on restart', async t => {
   const f = await fixture(t)
-  assert.equal(await f.db.getStorageEncryption(), null)
-  const id = await report(f)
-  assert.equal((await bytes(f.raw, `reports/${id}`)).toString(), 'private report')
-  const stale = openSqliteManagedDb(f.dbPath)
-  const staleObjects = await createEncryptedObjectStorage(f.raw, stale, null)
+  const stale = await openManagedStorage({ dbPath: f.dbPath })
+  let enabled, reopened
   try {
-    await f.db.enableStorageEncryption()
-    await assert.rejects(staleObjects.get(`reports/${id}`), /encryption key/u)
-    await assert.rejects(staleObjects.put(`reports/${randomUUID()}`, Buffer.from('plain')), /encryption key/u)
-    await assert.rejects(stale.setUserTokens('no-user', { accessToken: 'token', refreshToken: null, expiresAt: null }), /encryption key/u)
+    assert.equal(await stale.storageEncryptionStatus(), null)
+    const legacy = await report({ db: stale.db, stores: stale })
+    const config = { dbPath: f.dbPath, storageEncryptionKey: key.bytes.toString('base64') }
+    enabled = await openManagedStorage(config)
+    const state = await enabled.storageEncryptionStatus()
+    assert.equal(state.complete, 0)
+    assert.equal(state.migrated, 0)
+    assert.equal((await bytes(f.raw, `reports/${legacy}`)).toString(), 'private report', 'startup does not migrate legacy bytes')
+
+    const current = { db: enabled.db, stores: enabled }
+    const b = await bundle(current), r = await report(current, Buffer.from('new report'))
+    for (const [type, id] of [['report', r], ['bundle', b]]) {
+      const row = await enabled.db.getStorageRow(type, id)
+      assert.equal(row.encrypted, 1)
+      assert.ok(row.dataKey)
+      assert.equal((await bytes(f.raw, `${type}s/${id}`)).subarray(0, 16).toString(), 'DeepView.storage')
+    }
+    const user = await enabled.db.upsertUser({ githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+    const tokens = { accessToken: 'access-secret', refreshToken: 'refresh-secret', expiresAt: null }
+    await enabled.db.setUserTokens(user, tokens)
+    const sql = new DatabaseSync(f.dbPath)
+    try {
+      const row = sql.prepare('SELECT gh_access_token, gh_refresh_token, gh_tokens_encrypted FROM managed_user WHERE id = ?').get(user)
+      assert.equal(row.gh_tokens_encrypted, 1)
+      assert.notEqual(row.gh_access_token, tokens.accessToken)
+      assert.notEqual(row.gh_refresh_token, tokens.refreshToken)
+    } finally { sql.close() }
+
+    reopened = await openManagedStorage(config)
+    assert.deepEqual(await reopened.storageEncryptionStatus(), state, 'restarts preserve activation and migration progress')
+    assert.equal((await reopened.reportStore.get(r)).toString(), 'new report')
+    assert.equal((await reopened.bundleStore.get(b, null)).toString(), 'bundle sources')
+    assert.deepEqual(await reopened.db.getUserTokens(user), tokens)
+    await assert.rejects(stale.reportStore.get(legacy), /encryption key/u)
+    await assert.rejects(stale.reportStore.put(randomUUID(), Buffer.from('plain')), /encryption key/u)
+    await assert.rejects(stale.db.setUserTokens(user, tokens), /encryption key/u)
     for (const storageEncryptionKey of [null, randomBytes(32).toString('base64')]) {
       await assert.rejects(openManagedStorage({ dbPath: f.dbPath, storageEncryptionKey }), /encryption key/u)
     }
-  } finally { await stale.close() }
+    await enabled.reapStorage()
+    assert.equal((await enabled.storageEncryptionStatus()).complete, 1)
+    assert.equal((await enabled.storageEncryptionStatus()).migrated, 1, 'maintenance only migrates the legacy upload')
+    assert.equal((await bytes(f.raw, `reports/${legacy}`)).subarray(0, 16).toString(), 'DeepView.storage')
+    assert.equal((await enabled.reportStore.get(legacy)).toString(), 'private report')
+  } finally { await reopened?.db.close(); await enabled?.db.close(); await stale.db.close() }
 })
 
 for (const remote of [false, true]) {
@@ -284,21 +318,23 @@ test('encryption streams a generated 115 MiB payload with bounded input read-ahe
   assert.equal(opened.size, size)
 })
 
-test('CLI status is read-only, enable is explicit, and migration is restartable without a listener', async t => {
+test('CLI startup enables encryption with a key and migration is restartable without a listener', async t => {
   const f = await fixture(t), id = await report(f)
   const abandoned = `reports/${id}.${randomUUID()}.tmp`
   await f.raw.put(abandoned, Buffer.from('unfinished plaintext write'))
-  const run = async flag => {
+  const run = async (flag, storageEncryptionKey = key.bytes.toString('base64')) => {
     const { stdout } = await promisify(execFile)(process.execPath, ['server-managed/cli.js', flag], {
-      cwd: process.cwd(), timeout: 10_000, env: { ...process.env, MANAGED_DB_PATH: f.dbPath, MANAGED_STORAGE_ENCRYPTION_KEY: key.bytes.toString('base64'),
+      cwd: process.cwd(), timeout: 10_000, env: { ...process.env, MANAGED_DB_PATH: f.dbPath, MANAGED_STORAGE_ENCRYPTION_KEY: storageEncryptionKey,
         DATABASE_URL: '', MANAGED_DATABASE_URL: '', E2E_DATABASE_URL: '', VERCEL: '',
         GITHUB_CLIENT_ID: 'client', GITHUB_CLIENT_SECRET: 'secret', OAUTH_CALLBACK_URL: 'https://app.example/api/oauth/github/callback' },
     })
     return JSON.parse(stdout.trim().split('\n').at(-1))
   }
-  assert.deepEqual(await run('--storage-encryption-status'), { encryption: 'disabled' })
-  await assert.rejects(run('--migrate-storage'), /enable-storage-encryption/u)
-  assert.equal((await run('--enable-storage-encryption')).complete, false)
+  assert.deepEqual(await run('--storage-encryption-status', ''), { encryption: 'disabled' })
+  await assert.rejects(run('--migrate-storage', ''), /MANAGED_STORAGE_ENCRYPTION_KEY/u)
+  await assert.rejects(run('--unsupported'), /Unknown command/u)
+  assert.equal((await run('--storage-encryption-status')).complete, false)
+  await assert.rejects(run('--storage-encryption-status', ''), /encryption key/u)
   const paused = await run('--migrate-storage')
   assert.equal(paused.complete, true)
   assert.equal(paused.cleanupComplete, false)
