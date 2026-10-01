@@ -282,6 +282,21 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-row-delta.up { color: var(--green); }
 .bundle-compare-row-delta.down { color: var(--critical); }
 
+.bundle-compare-resolution {
+  padding: .35rem;
+  font-size: .72rem;
+  overflow-wrap: anywhere;
+}
+.bundle-compare-resolution + .bundle-compare-resolution { border-top: 1px solid var(--border); }
+.bundle-compare-resolution code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bundle-compare-resolution-context { margin-top: .15rem; color: var(--muted); font-size: .68rem; }
+.bundle-compare-resolution-targets { margin-top: .3rem; }
+.bundle-compare-resolution-targets > div { display: flex; align-items: baseline; gap: .5rem; }
+.bundle-compare-resolution-targets span { flex: 0 0 3rem; font-size: .66rem; white-space: nowrap; }
+.bundle-compare-resolution-targets code { min-width: 0; }
+.bundle-compare-resolution-before { color: var(--critical); }
+.bundle-compare-resolution-after { color: var(--green); }
+
 /* Dependency version updates (see view/bundle-compare.js
    _renderVersionUpdates). The "Updated" list is a neutral card: each
    row's `old → new` already carries the up / down / changed color, so

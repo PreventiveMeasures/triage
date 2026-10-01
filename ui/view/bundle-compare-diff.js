@@ -21,6 +21,23 @@
 
 import { bundleFileByteLength } from './bundle-sources.js'
 
+// Resolutions compare independently from file bytes: identical files can be
+// wired together differently. Inputs are keyed by importer, specifier,
+// conditions (including import attributes), and platform. Only existing
+// resolutions whose targets changed are reported; additions/removals are omitted.
+export function computeResolutionDiff(base, other) {
+  const changed = []
+  for (const [key, before] of base) {
+    const after = other.get(key)
+    if (after && before.target !== after.target) {
+      const { target: baseTarget, ...identity } = before
+      changed.push({ ...identity, baseTarget, otherTarget: after.target })
+    }
+  }
+  changed.sort((a, b) => a.key.localeCompare(b.key))
+  return { changed, totalChanges: changed.length }
+}
+
 // A file's size, by the measure the Overview and Treemap use: text by the
 // UTF-8 it encodes to, a base64 resource by the bytes it decodes to. A
 // file with no size to give (a base64 spelling that does not decode)

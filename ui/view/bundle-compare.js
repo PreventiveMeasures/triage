@@ -32,8 +32,8 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundleFileKinds, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { computeBundleDiff, computeVersionUpdates } from './bundle-compare-diff.js'
-import { bundleCompareFiles, bundleCompareScopes } from './bundle-compare-inputs.js'
+import { computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
+import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import { openBundleFileDialog } from './dialogs/bundle-file-dialog.js'
 import { showToast } from './toast.js'
 import './bundle-selector.js'
@@ -342,6 +342,27 @@ class BundleCompare extends LitElement {
     </section>`
   }
 
+  _resolutionGroup(rows) {
+    return this._group('Repointed', rows, 'changed', r => r.key, r => html`<li class="bundle-compare-resolution">
+      <div class="bundle-compare-resolution-source"><code>${r.parent}</code> → <code>${r.specifier}</code></div>
+      <div class="bundle-compare-resolution-context">${r.conditions}${r.platform === null ? nothing : html` · Platform: ${r.platform}`}</div>
+      <div class="bundle-compare-resolution-targets">
+        <div class="bundle-compare-resolution-before"><span>Before</span><code>${r.baseTarget || '(empty target)'}</code></div>
+        <div class="bundle-compare-resolution-after"><span>After</span><code>${r.otherTarget || '(empty target)'}</code></div>
+      </div>
+    </li>`)
+  }
+
+  _renderResolutions(resolutions) {
+    if (resolutions.totalChanges === 0) return nothing
+    return html`<section class="bundle-compare-section">
+      <h3 class="bundle-compare-section-head">Import resolutions</h3>
+      <div class="bundle-compare-cols bundle-compare-cols--files">
+        ${this._resolutionGroup(resolutions.changed)}
+      </div>
+    </section>`
+  }
+
   // Compute (or reuse the memo of) the diff for the current pairing.
   _diffFor() {
     const key = `${this.integrity}|${this._targetIntegrity}|${this._scope}`
@@ -378,6 +399,10 @@ class BundleCompare extends LitElement {
         { packageDir: packageDirs?.get(p) },
       )
       this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
+      this._diff.resolutions = computeResolutionDiff(
+        bundleCompareResolutions(this.details, this._scope),
+        bundleCompareResolutions(this._otherDetails, this._scope),
+      )
       // Dependency version changes come from the stasis per-module
       // `{ name, version }` metadata, not the path/byte walk above, so
       // they're computed alongside and hung off the same memo. Empty for
@@ -424,6 +449,7 @@ class BundleCompare extends LitElement {
         <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
         <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed</span>
         <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
+        ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
       </div>
     </div>`
   }
@@ -537,8 +563,11 @@ class BundleCompare extends LitElement {
         ${prefix ? html` · <span class="mono">${prefix}</span>` : nothing}
       </div>
       ${this._renderVersionUpdates(diff.versionUpdates, baseName, otherName)}
+      ${this._renderResolutions(diff.resolutions)}
       ${diff.totals.identical
-        ? html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
+        ? diff.resolutions.totalChanges > 0
+          ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
+          : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
         : html`
           ${hasPkgChanges ? html`<section class="bundle-compare-section">
             <h3 class="bundle-compare-section-head">Packages</h3>
