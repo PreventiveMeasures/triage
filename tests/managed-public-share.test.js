@@ -346,7 +346,7 @@ test('public security advisories require security opt-in and permission changes 
   const h = await fixture(t), token = await h.mint('whole')
   const id = hashToken(token)
   let inventories = 0
-  h.deps.bundleCache = { advisoryPackages() { inventories++; return Promise.resolve([]) } }
+  h.deps.bundleCache = { advisoryInventory() { inventories++; return Promise.resolve({ packages: [], skipped: [] }) } }
   await h.db.insertBundle({ id: 'stasis', integrity: 'stasis', filename: 'sources.stasis', kind: 'stasis', byteSize: 2, uploadedBy: h.sessions.manage.userId, uploadedByLogin: 'manage', repoId: 1 }, Date.now())
   assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 403)
   assert.equal(inventories, 0)
@@ -357,12 +357,47 @@ test('public security advisories require security opt-in and permission changes 
     await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
   }
   assert.equal((await h.request('/api/teams/whole/reports', { token })).status, 404)
-  h.deps.bundleCache.advisoryPackages = async () => {
+  h.deps.bundleCache.advisoryInventory = async () => {
     await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
-    return []
+    return { packages: [], skipped: [] }
   }
   await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: true } })
   assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 404)
+})
+
+test('public repository rechecks retain skipped dependencies and enforce security after repository lookups', async t => {
+  const h = await fixture(t), token = await h.mint('whole')
+  const id = hashToken(token)
+  const skipped = [{ ecosystem: 'cargo-git', name: 'private-crate', version: '1.0.0', because: 'Git crate.' }]
+  h.deps.bundleCache = { advisoryInventory: () => Promise.resolve({ packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0'] }], skipped }) }
+  await h.db.insertBundle({ id: 'stasis', integrity: 'stasis', filename: 'sources.stasis', kind: 'stasis', byteSize: 2, uploadedBy: h.sessions.manage.userId, uploadedByLogin: 'manage', repoId: 1 }, Date.now())
+  await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: true } })
+  let calls = 0, revoke = false
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls++
+    if (url.endsWith('/advisories/bulk')) return Response.json({})
+    if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
+    assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
+    if (revoke) await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
+    return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability',
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<2.0.0' }] }])
+  })
+  const path = '/api/bundles/stasis/advisories'
+  const base = await h.request(path, { token })
+  assert.equal(base.status, 200)
+  assert.deepEqual(base.body.skipped, skipped)
+  assert.deepEqual(base.body.advisories, [])
+  assert.equal(calls, 1)
+  const recheck = await h.request(`${path}?repoAdvisories=true`, { token })
+  assert.equal(recheck.status, 200)
+  assert.equal(recheck.body.advisories[0].source, 'repository')
+  assert.deepEqual(recheck.body.skipped, skipped)
+  assert.equal(calls, 4)
+  revoke = true
+  const denied = await h.request(`${path}?repoAdvisories=true`, { token })
+  assert.equal(denied.status, 404)
+  assert.equal(denied.body.advisories, undefined)
+  assert.equal(denied.body.skipped, undefined)
 })
 
 for (const focused of [false, true]) {

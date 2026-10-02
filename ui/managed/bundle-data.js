@@ -12,7 +12,7 @@ export async function fetchManagedBundleCatalog() {
 async function requestBundle(id, part, signal) {
   const generation = managedAppState.generation
   const response = await managedFetch(`/api/bundles/${encodeURIComponent(id)}/${part}`, { credentials: 'same-origin', signal })
-  if (!response.ok) throw new Error(`Bundle ${part} request failed (${response.status})`)
+  if (!response.ok) throw Object.assign(new Error(`Bundle ${part} request failed (${response.status})`), { status: response.status })
   const data = part === 'contents' ? await response.text() : await response.json()
   signal?.throwIfAborted()
   if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
@@ -31,8 +31,8 @@ export async function fetchBundleContents(id, { signal } = {}) {
 }
 
 // Advisory queries send only the bundle identity; inventory stays server-owned.
-export function fetchBundleAdvisories(id, teamId, reason = '') {
-  const params = [teamId ? `team=${encodeURIComponent(teamId)}` : '', reason ? `reason=${encodeURIComponent(reason)}` : ''].filter(Boolean).join('&')
+export function fetchBundleAdvisories(id, teamId, reason = '', repoAdvisories = false) {
+  const params = [teamId ? `team=${encodeURIComponent(teamId)}` : '', reason ? `reason=${encodeURIComponent(reason)}` : '', repoAdvisories ? 'repoAdvisories=true' : ''].filter(Boolean).join('&')
   const part = `advisories${params ? `?${params}` : ''}`
   return requestBundle(id, part, managedAppState.sessionController.signal)
 }

@@ -5,7 +5,8 @@ export const ADVISORIES_TIMEOUT_MS = 30_000
 
 // Public advisories never use a viewer's credentials. The library validates
 // inventories, matches versions, and normalizes npm, OSV and repository rows.
-export async function fetchBundleAdvisories(packages: Package[], signal: AbortSignal, debug = false): Promise<
+export async function fetchBundleAdvisories(packages: Package[], signal: AbortSignal,
+  { debug = false, repoAdvisories = false }: { debug?: boolean; repoAdvisories?: boolean } = {}): Promise<
   { status: 200; body: Advisory[] } | { status: 502; body: { error: string } }
 > {
   let onAbort: (() => void) | undefined
@@ -19,7 +20,7 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
       signal.addEventListener('abort', onAbort, { once: true })
     })
     const result = await Promise.race([
-      advisories(packages, { github: createClient({ token: null, userAgent: 'deepview-triage' }) }), deadline,
+      advisories(packages, { github: createClient({ token: null, userAgent: 'deepview-triage' }), repoAdvisories }), deadline,
     ])
     return { status: 200, body: result }
   } catch (error) {

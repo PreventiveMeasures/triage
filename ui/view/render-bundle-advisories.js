@@ -140,22 +140,36 @@ async function fetchLocalAdvisories(query) {
   return res.json()
 }
 
-export async function ensureBundleAdvisories(details, renderFn) {
+export function ensureBundleAdvisories(details, renderFn) {
+  return loadBundleAdvisories(details, renderFn)
+}
+
+export function recheckBundleAdvisories(details, renderFn) {
+  return loadBundleAdvisories(details, renderFn, true)
+}
+
+async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
   if (!details?.integrity || (!details.managedId && !hasConsent())) return
   const cache = advisoryCache(details), key = cacheKey(details)
-  if (cache.has(key)) return
+  const previous = cache.get(key)
+  if (repoAdvisories) {
+    if (!details.managedId || previous?.state !== 'ok' || previous.recheckingRepositories || previous.query.size === 0) return
+    cache.set(key, { ...previous, recheckingRepositories: true, repositoryError: null })
+    renderFn()
+  } else if (previous) return
   const { reasons, selected } = advisoryScope(details)
   let query = details.managedId ? new Map() : bundlePackageVersions(details, reasons.get(selected) ?? null)
-  cache.set(key, { state: 'loading', query })
+  if (!repoAdvisories) cache.set(key, { state: 'loading', query })
   try {
-    let json
+    let json, skipped = []
     if (details.managedId) {
-      const result = await fetchBundleAdvisories(details.managedId, undefined, selected)
+      const result = await fetchBundleAdvisories(details.managedId, undefined, selected, repoAdvisories)
       // Accept the former npm-only shape during a client/server upgrade.
       query = Array.isArray(result.packages)
         ? new Map(result.packages.map(pkg => [packageKey(pkg), new Set(pkg.versions)]))
         : new Map(Object.entries(result.packages).map(([name, versions]) => [name, new Set(versions)]))
       json = Array.isArray(result.advisories) ? managedAdvisories(result.advisories) : result.advisories
+      skipped = Array.isArray(result.skipped) ? result.skipped : []
     } else {
       json = query.size > 0 ? await fetchLocalAdvisories(query) : {}
     }
@@ -168,9 +182,12 @@ export async function ensureBundleAdvisories(details, renderFn) {
         if (normalised.length > 0) byPackage.set(name, normalised)
       }
     }
-    cache.set(key, { state: 'ok', byPackage, query })
+    cache.set(key, { state: 'ok', byPackage, query, skipped })
   } catch (err) {
-    cache.set(key, { state: 'error', reason: err?.message ?? 'fetch-failed', query })
+    const reason = err?.message ?? 'fetch-failed'
+    cache.set(key, repoAdvisories && ![401, 403, 404].includes(err?.status)
+      ? { ...previous, recheckingRepositories: false, repositoryError: reason }
+      : { state: 'error', reason, query })
   }
   renderFn()
 }
@@ -249,7 +266,8 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
   const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
   const summary = renderAdvisoriesSummary(details)
   return html`<div class="bundle-advisories-panel">
-    ${summary !== nothing || reasons.length > 0 ? html`<div class="bundle-advisories-toolbar">
+    ${renderRepositoryRecheck(details, renderFn)}
+    ${summary !== nothing || reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-toolbar">
     ${summary}
     ${reasons.length > 0 ? html`<div class="bundle-advisories-scopes"><bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
@@ -265,15 +283,29 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
   </div>`
 }
 
+function renderRepositoryRecheck(details, renderFn) {
+  if (!details?.managedId) return nothing
+  const entry = advisoryCache(details).get(cacheKey(details))
+  const busy = Boolean(entry?.recheckingRepositories)
+  return html`<button type="button" class="bundle-advisories-retry bundle-advisories-recheck"
+    ?disabled=${busy || entry?.state !== 'ok' || entry.query.size === 0}
+    aria-busy=${String(busy)} @click=${() => recheckBundleAdvisories(details, renderFn)}>
+    ${busy ? 'Rechecking…' : 'Recheck against repositories'}
+  </button>`
+}
+
 function renderAdvisoriesSummary(details) {
   if (!details || (!details.managedId && !hasConsent())) return nothing
   const entry = advisoryCache(details).get(cacheKey(details))
   if (entry?.state !== 'ok') return nothing
   const totalPackagesQueried = entry.query.size
   const packagesWithAdvisories = entry.byPackage.size
+  if (totalPackagesQueried === 0 && entry.skipped.length > 0) {
+    return html`<div class="bundle-advisories-summary">No packages could be audited.</div>`
+  }
   if (packagesWithAdvisories === 0) {
     return html`<div class="bundle-advisories-summary">
-      No advisories for the ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
+      No advisories for the ${totalPackagesQueried} ${entry.skipped.length > 0 ? 'audited ' : ''}${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
     </div>`
   }
   const totalAdvisories = [...entry.byPackage.values()].reduce((n, list) => n + list.length, 0)
@@ -299,7 +331,7 @@ function renderAdvisoriesBody(details) {
       <button type="button" class="bundle-advisories-retry" data-advisories-retry>Retry</button>
     </div>`
   }
-  if (entry.byPackage.size === 0) return nothing
+  if (entry.byPackage.size === 0 && entry.skipped.length === 0 && !entry.repositoryError) return nothing
   // Sort sections by the worst severity inside the section, then
   // by name — surfaces the most urgent stuff at the top while
   // keeping the rest deterministic across re-renders.
@@ -310,6 +342,13 @@ function renderAdvisoriesBody(details) {
     return na.localeCompare(nb)
   })
   return html`<div class="bundle-advisories">
+    ${entry.repositoryError ? html`<div class="bundle-advisories-empty is-error" role="alert">
+      Repository recheck failed: ${entry.repositoryError}. Previous results are shown.
+    </div>` : nothing}
+    ${entry.skipped.length > 0 ? html`<section class="bundle-advisories-skipped" aria-label="Dependencies not audited">
+      <h3>Not audited</h3>
+      <ul>${entry.skipped.map(pkg => html`<li><span class="mono">${packageKey(pkg)}@${pkg.version}</span>: ${pkg.because}</li>`)}</ul>
+    </section>` : nothing}
     <ul class="bundle-advisories-list">
       ${sections.map(([pkg, list]) => renderAdvisorySection(pkg, list, entry.query.get(pkg)))}
     </ul>

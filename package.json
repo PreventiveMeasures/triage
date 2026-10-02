@@ -92,6 +92,7 @@
     "server-managed/blob-store.ts",
     "server-managed/brotli.ts",
     "server-managed/bundle-advisories.ts",
+    "server-managed/bundle-advisory-inventory.ts",
     "server-managed/bundle-cache.ts",
     "server-managed/bundle-build.ts",
     "server-managed/bundle-build-leases.ts",
