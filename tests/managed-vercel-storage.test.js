@@ -83,7 +83,7 @@ test('Brotli metadata persists across cold starts while contents use stored bund
   assert.equal(JSON.parse(brotliDecompressSync(await consume(cached))).id, id)
   assert.deepEqual(brotliDecompressSync(await consume(await cold.open(record, 'contents'))), body)
   assert.deepEqual(await cold.summary(record), { files: 1, codeFiles: 1, lines: 1 })
-  assert.deepEqual([...objects.keys()].filter(path => path.includes('/cache/')), [`.managed/cache/bundles/${id}/v2-metadata.json.br`, `.managed/cache/bundles/${id}/v2-summary.json`])
+  assert.deepEqual([...objects.keys()].filter(path => path.includes('/cache/')), [`.managed/cache/bundles/${id}/v3-metadata.json.br`, `.managed/cache/bundles/${id}/v2-summary.json`])
   await cold.delete(id)
   assert.deepEqual(brotliDecompressSync(await consume(await cold.open(record, 'contents'))), body, 'contents work without metadata')
   await cache.prebuild(record)
@@ -396,7 +396,7 @@ test('encrypted metadata hits need one row lookup and GET, without HEADs or an u
   const dataKey = await storage.bundleStore.put(id, bytes, 'stasis')
   await db.insertBundle({ id, filename: 'bundle.stasis', integrity: 'sha512-test', kind: 'stasis', byteSize: bytes.length,
     uploadedBy: null, repoId: null, dataKey }, 1)
-  await storage.cacheStorage.put(id, 'v2-metadata.json.br', Buffer.from('already cached'))
+  await storage.cacheStorage.put(id, 'v3-metadata.json.br', Buffer.from('already cached'))
   const record = await db.getBundle(id)
   const cache = createBundleCache(storage.cacheStorage, db, {
     get() { throw new Error('metadata hits must not decode the bundle to create package inventory') },

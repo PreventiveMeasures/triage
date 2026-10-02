@@ -25,7 +25,7 @@ import { sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -36,6 +36,7 @@ import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPath
 import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleCodeStats } from '../../common/bundle-stats.js'
+import { bundleOriginLinks } from './bundle-origin-links.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
@@ -427,7 +428,7 @@ function renderBundleSizeDistribution(items) {
 // weigh in the Packages column and list among the Files like any other
 // file, but are counted apart from Sources and open no source viewer:
 // there is no source to show.
-function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exportsCol, resources = null) {
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, resources = null) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Compute packages from the STRIPPED paths so the visualization
   // reflects what differs between files (a shared `dist/src/...`
@@ -545,7 +546,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exp
   return html`<div class="bundles-overview">
     <div class="bundles-overview-summary">
       <div class="bundles-detail-meta-row">
-        ${meta}
+        ${renderMeta(prefix)}
         <dl class="bundles-detail-meta">
           ${extras}
           <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
@@ -2296,9 +2297,14 @@ function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
 // bundle with no parsed `bundle`, gets the metadata row plus a
 // placeholder line.
 function renderBundleDetails(entry, details) {
-  const meta = html`<dl class="bundles-detail-meta">
+  const origin = details?.integrity === entry.integrity && !details.error && details.kind === 'stasis' ? details.bundle : null
+  const meta = (prefix = '') => html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
+    ${bundleOriginLinks(origin, prefix).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
+      <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
+      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} title=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
+    </dd>`)}
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
     ${details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
@@ -2318,9 +2324,9 @@ function renderBundleDetails(entry, details) {
   // loading branch shows just the metadata (name + integrity are
   // already known); a "Loading…" placeholder flickered too briefly
   // to be useful and pushed the columns down on every open.
-  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta, exportsCol)
+  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta(), exportsCol)
   if (details.error) {
-    return renderBundleOverviewFallback(meta, exportsCol,
+    return renderBundleOverviewFallback(meta(), exportsCol,
       html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>`)
   }
   if (details.kind === 'sourcemap' && details.json) {
@@ -2380,6 +2386,6 @@ function renderBundleDetails(entry, details) {
   // that failed silently (no error path filled in). Fall back to
   // the metadata block above plus a generic "not parsed" line,
   // wrapped in the same shell so layout is consistent.
-  return renderBundleOverviewFallback(meta, exportsCol,
+  return renderBundleOverviewFallback(meta(), exportsCol,
     html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>`)
 }

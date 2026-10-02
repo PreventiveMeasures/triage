@@ -130,7 +130,7 @@ test('catalog summaries reuse one cached count per hash across teams, uploads an
   await h.send('/api/admin/bundles')
   assert.equal(reads.mock.callCount(), 3, 'the upload builds full metadata once; repeat catalogs only read counts')
   const cold = createBundleCache(h.cacheStorage, h.db, { ...h.store, get() { throw new Error('must use summary cache') } })
-  await writeFile(join(h.cacheDir, archive.id, 'v2-metadata.json.br'), 'summary must not decode the full metadata')
+  await writeFile(join(h.cacheDir, archive.id, 'v3-metadata.json.br'), 'summary must not decode the full metadata')
   assert.deepEqual(await cold.summary(archive), { files: 3, codeFiles: 2, lines: 2 })
   await h.db.deleteBundle(archive.id)
   await cold.delete(archive.id)
@@ -250,6 +250,78 @@ for (const catalog of ['teams', 'admin', 'shared']) {
     } finally { clearTimeout(timeout); gate.resolve(); await Promise.all([...h.pending]) }
   })
 }
+
+test('new Stasis uploads default to connected header repositories and retain origins in metadata', async t => {
+  const h = await setup(t)
+  const bundle = Bundle.parse(stasis)
+  bundle.repo = { github: 'ORG/Repo1', directory: 'packages/app', commit: 'a'.repeat(40) }
+  bundle.package = { npm: { name: '@org/app', version: '1.2.3' } }
+  const bytes = brotliCompressSync(Buffer.from(bundle.serialize()))
+  const response = await h.send('/api/admin/bundles', 'manager', 'POST', bytes, { 'x-bundle-filename': 'app.stasis.code.br' })
+  assert.equal(response.status, 201)
+  const { id } = response.json()
+  assert.equal(response.json().repoId, 1)
+  assert.equal(response.json().repoDirectory, 'packages/app')
+  const stored = await h.db.getBundle(id)
+  assert.equal(stored.repoId, 1)
+  assert.equal(stored.repoDirectory, 'packages/app')
+  const metadata = (await h.send(`/api/bundles/${id}/metadata`, 'viewer')).json()
+  assert.deepEqual(metadata.bundle.repo, JSON.parse(JSON.stringify(bundle.repo)))
+  assert.deepEqual(metadata.bundle.package, JSON.parse(JSON.stringify(bundle.package)))
+  assert.equal(metadata.version, 3)
+  assert.deepEqual(parseBundleMetadata(metadata, stored.integrity).bundle.repo, bundle.repo)
+  // Location edits and future uploads keep the original row's assignment.
+  await h.send('/api/admin/bundles/set-repo', 'admin', 'POST', JSON.stringify({ bundleId: id, repoId: 2, directory: 'moved' }))
+  const duplicate = await h.send('/api/admin/bundles', 'admin', 'POST', bytes, { 'x-bundle-filename': 'again.stasis.code.br' })
+  assert.equal(duplicate.status, 200)
+  assert.equal(duplicate.json().repoId, 2)
+  assert.equal(duplicate.json().repoDirectory, 'moved')
+})
+
+test('bundle upload origin defaults allow unmatched repos and honor explicit locations', async t => {
+  const h = await setup(t)
+  const upload = (repo, headers = {}) => {
+    const bundle = Bundle.parse(stasis)
+    bundle.repo = repo
+    return h.send('/api/admin/bundles', 'admin', 'POST', brotliCompressSync(Buffer.from(bundle.serialize())),
+      { 'x-bundle-filename': 'app.stasis.code.br', ...headers })
+  }
+  const unmatched = await upload({ github: 'other/repo', directory: 'app' })
+  assert.equal(unmatched.status, 201)
+  assert.equal(unmatched.json().repoId, null)
+  assert.equal(unmatched.json().repoDirectory, '')
+  const explicit = await upload({ github: 'org/repo1', directory: 'embedded' }, { 'x-repo-id': '2', 'x-repo-directory': 'chosen' })
+  assert.equal(explicit.status, 201)
+  assert.equal(explicit.json().repoId, 2)
+  assert.equal(explicit.json().repoDirectory, 'chosen')
+  const directory = await upload({ github: 'org/repo1', directory: 'original' }, { 'x-repo-directory': 'override' })
+  assert.equal(directory.status, 201)
+  assert.equal(directory.json().repoId, 1)
+  assert.equal(directory.json().repoDirectory, 'override')
+  const root = await upload({ github: 'org/repo1', root: true })
+  assert.equal(root.status, 201)
+  assert.equal(root.json().repoDirectory, '')
+  const absent = await upload(undefined)
+  assert.equal(absent.status, 201)
+  assert.equal(absent.json().repoId, null)
+})
+
+test('automatic bundle locations enforce current directory grants using only the header', async t => {
+  const h = await setup(t)
+  await h.db.removeTeamRepo(h.team, 1, null)
+  await h.db.setTeamRepo(h.team, 1, 'allowed')
+  const upload = (directory, who = 'manager') => {
+    // Uploads need only the header; background metadata parsing may fail.
+    const text = `{"version":1,"config":{"scope":"full"},"repo":{"github":"org/repo1","directory":${JSON.stringify(directory)}},"sources":invalid}`
+    return h.send('/api/admin/bundles', who, 'POST', brotliCompressSync(Buffer.from(text)), { 'x-bundle-filename': 'app.stasis.code.br' })
+  }
+  assert.equal((await upload('allowed/sub')).status, 201)
+  assert.equal((await upload('forbidden')).status, 403)
+  assert.equal((await upload('allowed/sub', 'owner')).status, 409, 'deduped rows retain their access checks')
+  assert.equal((await upload('allowed/other', 'owner')).status, 403)
+  assert.equal((await upload('../allowed', 'admin')).status, 400)
+  assert.equal((await upload('allowed\\sub', 'admin')).status, 400)
+})
 
 test('bundle locations enforce source and destination scopes on upload, edit, download, and delete', async t => {
   const h = await setup(t)
@@ -411,7 +483,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-metadata.json.br', 'v2-package-versions.json', 'v2-summary.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v2-package-versions.json', 'v2-summary.json', 'v3-metadata.json.br'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -468,7 +540,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-package-versions.json', 'v2-summary.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-package-versions.json', 'v2-summary.json', 'v3-metadata.json.br'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -491,7 +563,7 @@ test('sourcemap uploads retain their identity while storing and serving only Bro
   assert.equal(contents.headers['content-encoding'], 'br')
   assert.deepEqual(contents.bytes, encoded)
   await Promise.allSettled([...h.pending])
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-metadata.json.br', 'v2-summary.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v2-summary.json', 'v3-metadata.json.br'])
   const duplicate = await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)
   assert.equal(duplicate.status, 200)
   assert.equal(duplicate.json().id, id)
@@ -715,7 +787,7 @@ test('package inventories persist separately; concurrent cache upgrades build on
   for (const packages of await Promise.all(queries)) assert.deepEqual(packages, { dep: ['2.0.0'] })
   assert.equal(builds, 1)
   // A fresh instance needs neither the full metadata nor original bundle bytes.
-  await writeFile(join(h.cacheDir, record.id, 'v2-metadata.json.br'), 'not compressed metadata')
+  await writeFile(join(h.cacheDir, record.id, 'v3-metadata.json.br'), 'not compressed metadata')
   const restarted = createBundleCache(h.cacheStorage, h.db, { ...h.store, get() { throw new Error('must use inventory') } })
   assert.deepEqual(await restarted.packageVersions(record), { dep: ['2.0.0'] })
 })
@@ -771,7 +843,7 @@ test('advisory reasons select exact package versions from persisted inventory', 
   await h.cache.prebuild(record)
   // Scope switches must not read full bundle contents or decode full metadata.
   t.mock.method(h.store, 'get', () => { throw new Error('must use bounded inventory') })
-  await writeFile(join(h.cacheDir, record.id, 'v2-metadata.json.br'), 'not compressed metadata')
+  await writeFile(join(h.cacheDir, record.id, 'v3-metadata.json.br'), 'not compressed metadata')
   await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: true })
   const calls = []
   t.mock.method(globalThis, 'fetch', (_url, init) => {
