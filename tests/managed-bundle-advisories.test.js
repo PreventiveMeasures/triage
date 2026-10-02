@@ -112,12 +112,12 @@ test('GitHub branch dot is normalized to the unknown-version placeholder and con
   assert.deepEqual(result.body[0].versions, ['0.0.0'])
 })
 
-test('managed audits use the real upstream API for npm, Cargo, Composer, Soldeer and GitHub', async t => {
+test('managed audits use the real upstream API and authenticate only GitHub across all five ecosystems', async t => {
   const requests = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
     const parsed = new URL(url)
     requests.push({ url, options })
-    assert.equal(new Headers(options.headers).get('authorization'), null)
+    assert.equal(new Headers(options.headers).get('authorization'), parsed.hostname === 'api.github.com' ? 'Bearer viewer-token' : null)
     if (parsed.hostname === 'registry.npmjs.org') {
       assert.deepEqual(JSON.parse(options.body), { log: ['1.0.0', '2.0.0'] })
       return Promise.resolve(Response.json({ log: [{ id: 1, title: 'npm vulnerability', severity: 'high',
@@ -145,7 +145,7 @@ test('managed audits use the real upstream API for npm, Cargo, Composer, Soldeer
     return Promise.resolve(Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Repository vulnerability',
       severity: 'medium', vulnerabilities: [{ vulnerable_version_range: '<2.0.0' }] }]))
   })
-  const result = await fetchBundleAdvisories(bundleAdvisoryInventory(mixedBundle()).packages, signal())
+  const result = await fetchBundleAdvisories(bundleAdvisoryInventory(mixedBundle()).packages, signal(), { githubToken: 'viewer-token' })
   assert.equal(result.status, 200)
   assert.deepEqual(result.body.map(row => row.ecosystem), ['cargo', 'composer', 'github', 'npm', 'soldeer'])
   assert.deepEqual(result.body.find(row => row.ecosystem === 'npm').versions, ['1.0.0'])

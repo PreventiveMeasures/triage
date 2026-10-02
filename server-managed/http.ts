@@ -1144,7 +1144,12 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   const timer = setTimeout(() => controller.abort(), ADVISORIES_TIMEOUT_MS)
   try {
     if (res.destroyed) return
-    const result = await fetchBundleAdvisories(inventory.packages, controller.signal, { debug: deps.config.debug, repoAdvisories })
+    const needsGithub = inventory.packages.some(pkg => repoAdvisories || pkg.ecosystem === 'github' || pkg.ecosystem === 'soldeer')
+    const githubToken = needsGithub ? await ensureUserAccessToken(deps.config, deps.db, session.userId, Date.now(), (url, init) => fetch(url, {
+      ...init, signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
+    })) : null
+    if (res.destroyed || (needsGithub && !(await authorize()))) return
+    const result = await fetchBundleAdvisories(inventory.packages, controller.signal, { debug: deps.config.debug, repoAdvisories, githubToken })
     if (res.destroyed || !(await authorize())) return
     // Return just inventory and public advisories, never source or report data.
     sendJson(res, result.status, result.status >= 200 && result.status < 300 ? { ...inventory, advisories: result.body } : result.body)

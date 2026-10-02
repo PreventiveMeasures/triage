@@ -367,14 +367,16 @@ test('public security advisories require security opt-in and permission changes 
 
 test('public repository rechecks retain skipped dependencies and enforce security after repository lookups', async t => {
   const h = await fixture(t), token = await h.mint('whole')
+  await h.db.setUserTokens(h.sessions.manage.userId, { accessToken: 'share-owner-token', refreshToken: null, expiresAt: null })
   const id = hashToken(token)
   const skipped = [{ ecosystem: 'cargo-git', name: 'private-crate', version: '1.0.0', because: 'Git crate.' }]
   h.deps.bundleCache = { advisoryInventory: () => Promise.resolve({ packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0'] }], skipped }) }
   await h.db.insertBundle({ id: 'stasis', integrity: 'stasis', filename: 'sources.stasis', kind: 'stasis', byteSize: 2, uploadedBy: h.sessions.manage.userId, uploadedByLogin: 'manage', repoId: 1 }, Date.now())
   await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: true } })
   let calls = 0, revoke = false
-  t.mock.method(globalThis, 'fetch', async url => {
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
     calls++
+    assert.equal(new Headers(init.headers).get('authorization'), null, 'public shares never borrow the owner credential')
     if (url.endsWith('/advisories/bulk')) return Response.json({})
     if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)

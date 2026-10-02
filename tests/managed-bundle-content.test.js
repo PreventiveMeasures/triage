@@ -948,11 +948,14 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
 
 test('managed repository rechecks enrich advisories and recheck security before returning', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
+  await h.db.setUserTokens(h.users.viewer.userId, { accessToken: 'viewer-token', refreshToken: null, expiresAt: null })
+  await h.db.setUserTokens(h.users.owner.userId, { accessToken: 'owner-token', refreshToken: null, expiresAt: null })
   const path = `/api/bundles/${record.id}/advisories`
   const calls = []
   let revoke = false
-  t.mock.method(globalThis, 'fetch', async url => {
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
     calls.push(url)
+    assert.equal(new Headers(init.headers).get('authorization'), new URL(url).hostname === 'api.github.com' ? 'Bearer viewer-token' : null)
     if (url.endsWith('/advisories/bulk')) return Response.json({})
     if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
@@ -973,3 +976,33 @@ test('managed repository rechecks enrich advisories and recheck security before 
   assert.equal(denied.status, 403)
   assert.deepEqual(denied.json(), { error: 'security-access-required' })
 })
+
+for (const mode of ['refresh', 'expired', 'revoked']) {
+  test(`GitHub dependency audits use the viewer credential lifecycle (${mode})`, async t => {
+    const h = await setup(t)
+    const bundle = new Bundle({ modules: new Map([
+      ['lib/dep', { ecosystem: 'github', name: 'org/dep', version: '1.0.0', files: { 'code.sol': 'source' } }],
+    ]) }).serialize()
+    const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(bundle)) })
+    await h.db.setUserTokens(h.users.viewer.userId, { accessToken: 'expired-token', refreshToken: mode === 'expired' ? null : 'refresh-token', expiresAt: 1 })
+    const calls = []
+    t.mock.method(globalThis, 'fetch', async (url, init) => {
+      calls.push(url)
+      if (url === 'https://github.com/login/oauth/access_token') {
+        assert.equal(JSON.parse(init.body).refresh_token, 'refresh-token')
+        assert.ok(init.signal instanceof AbortSignal, 'refresh is bounded by the audit deadline')
+        if (mode === 'revoked') await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
+        return Response.json({ access_token: 'refreshed-token', expires_in: 3600 })
+      }
+      assert.match(url, /^https:\/\/api\.github\.com\/repos\/org\/dep\/security-advisories/u)
+      assert.equal(new Headers(init.headers).get('authorization'), mode === 'expired' ? null : 'Bearer refreshed-token')
+      return Response.json([])
+    })
+    const response = await h.send(`/api/bundles/${record.id}/advisories`, 'viewer')
+    assert.equal(response.status, mode === 'revoked' ? 403 : 200)
+    assert.equal(calls.length, mode === 'refresh' ? 2 : 1)
+    if (mode === 'revoked') assert.deepEqual(response.json(), { error: 'security-access-required' })
+    else assert.deepEqual(response.json().advisories, [])
+    if (mode === 'refresh') assert.equal((await h.db.getUserTokens(h.users.viewer.userId)).accessToken, 'refreshed-token')
+  })
+}
