@@ -503,10 +503,14 @@ The caller must have a managed grant covering the resulting project root, which
 can be above the selected files when a workspace lockfile installs them. Access
 and repository identity are rechecked after building and storage authorization
 is transactional. Duplicate bytes reuse the existing authorized bundle.
-Each server process allows two worker builds, one per user, with a three-minute
-timeout and 512 MiB worker heap limit. Disconnects cancel builds; no persistent
-Stasis cache is enabled. Output is bounded by 200 MiB decoded and the configured
-bundle upload size limit.
+Shared database leases allow two builds across all instances using the managed
+database, one per user, including on Vercel. Admission is atomic and precedes
+GitHub requests. The three-minute budget starts before admission; disconnects
+cancel builds and slots are released only after worker termination. Leases
+expire after four minutes using the database clock to recover from crashes;
+only the claiming request can release its slot. Each worker has a 512 MiB heap
+limit, and no persistent Stasis cache is enabled. Output is bounded by 200 MiB
+decoded and the configured bundle upload size limit.
 
 `GET /api/admin/repositories/browsable` provides the creation page's repository
 picker. A repository must be active, and both access gates must pass: the caller

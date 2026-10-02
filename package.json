@@ -93,6 +93,7 @@
     "server-managed/brotli.ts",
     "server-managed/bundle-cache.ts",
     "server-managed/bundle-build.ts",
+    "server-managed/bundle-build-leases.ts",
     "server-managed/bundle-build-worker.js",
     "server-managed/bundle-catalog.ts",
     "server-managed/bundle-store.ts",

@@ -4,6 +4,7 @@ export function postgresSql(source: string): { sql: string; names: string[] } {
   const names: string[] = []
   let position = 0
   let sql = source.replaceAll('json_each(:contexts)', 'jsonb_array_elements(:contexts::jsonb)')
+    .replaceAll("CAST(unixepoch('subsec') * 1000 AS INTEGER)", 'CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)')
     .replaceAll(/json_extract\((\w+\.value), '\$\.(\w+)'\)/gu, "($1->>'$2')")
     .replaceAll('json_each(?)', 'jsonb_array_elements_text(?::jsonb)')
     .replaceAll('INSERT OR IGNORE INTO', 'INSERT INTO')

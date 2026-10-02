@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import { Worker } from 'node:worker_threads'
+import { BUNDLE_BUILD_TIMEOUT_MS, type BundleBuildLeaseStore } from './bundle-build-leases.ts'
 
 export class BundleBuildError extends Error {
   status: number
@@ -74,7 +75,35 @@ export function githubBundleFilename(github: string, directory: string, commit: 
 
 export interface BuiltBundle { bytes: Uint8Array; directory: string; filename: string }
 export interface BuildRequest { input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[] }
+// An extra per-process ceiling; admission must also hold the shared DB lease.
 const active = new Set<string>()
+
+export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId: string, signal: AbortSignal,
+  work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  signal.throwIfAborted()
+  const owner = randomUUID(), started = performance.now(), timeout = new AbortController()
+  const expired = () => timeout.abort(new BundleBuildError(504, 'build-timeout'))
+  const timer = setTimeout(expired, BUNDLE_BUILD_TIMEOUT_MS)
+  const combined = AbortSignal.any([signal, timeout.signal])
+  let claimed = false
+  try {
+    claimed = await db.claimBundleBuildLease(userId, owner)
+    if (!claimed) throw new BundleBuildError(429, 'build-busy')
+    // Account for a slow/lost claim response or a suspended invocation before
+    // starting work. The three-minute budget starts before lease acquisition.
+    if (performance.now() - started >= BUNDLE_BUILD_TIMEOUT_MS) expired()
+    combined.throwIfAborted()
+    return await work(combined)
+  } catch (error) {
+    if (timeout.signal.aborted && !signal.aborted) throw timeout.signal.reason
+    throw error
+  } finally {
+    clearTimeout(timer)
+    // buildRepositoryBundle waits for worker termination before settling.
+    // Unknown claim/release outcomes expire safely without starting more work.
+    if (claimed) await db.releaseBundleBuildLease(owner)
+  }
+}
 
 // Parsing repositories and compressing bundles stays off the HTTP event loop.
 // Cap concurrent builds, terminate disconnected/timed-out work, and share no
@@ -90,7 +119,7 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
     })
     const running = worker
     return await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new BundleBuildError(504, 'build-timeout')), 180_000)
+      const timer = setTimeout(() => reject(new BundleBuildError(504, 'build-timeout')), BUNDLE_BUILD_TIMEOUT_MS)
       const abort = () => reject(new BundleBuildError(499, 'build-cancelled'))
       signal.addEventListener('abort', abort, { once: true })
       running.once('message', (message: BuiltBundle & { error?: string; status?: number }) => {

@@ -93,6 +93,17 @@ test('private GitHub access is required even for a managed administrator', async
   assert.equal(f.builds.length, 0)
 })
 
+test('shared capacity rejects creation before GitHub work, and released slots can be reused', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  assert.equal(await f.db.claimBundleBuildLease(f.session.userId, 'another-instance'), true)
+  assert.deepEqual(await f.send(), { status: 429, body: { error: 'build-busy' } })
+  assert.equal(f.reads(), 0)
+  assert.equal(f.builds.length, 0)
+  await f.db.releaseBundleBuildLease('another-instance')
+  assert.equal((await f.send()).status, 201)
+  assert.equal(await f.db.claimBundleBuildLease(f.session.userId, 'after-completion'), true)
+})
+
 for (const change of ['role', 'logout', 'team', 'repository', 'github', 'root']) {
   // Tests run serially; each fixture replaces the mocked builder before use.
   // oxlint-disable-next-line eslint/no-loop-func

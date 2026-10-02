@@ -93,7 +93,7 @@ import { serveUserTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
-import { BundleBuildError, buildRepositoryBundle, parseBundleBuild } from './bundle-build.ts'
+import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -1206,18 +1206,22 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
     }
     const access = await authorize(input.directory)
     if (!access) return
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
-    const built = await buildRepositoryBundle(access.user.id, {
-      input, github: access.repo.fullName, token: reader.readToken(), maxBytes: deps.config.maxBundleBytes, scopes: access.scopes,
-    }, controller.signal)
-    if (controller.signal.aborted) return
-    await reader.recheckAccess()
-    const current = await authorize(built.directory)
-    if (!current) return
-    if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
-      throw new BundleBuildError(409, 'repository-changed')
-    }
-    await storeUploadedBundle(req, res, deps, cookie, current, Buffer.from(built.bytes), input.repoId, built.directory, built.filename)
+    await withBundleBuildLease(deps.db, access.user.id, controller.signal, async signal => {
+      const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+      signal.throwIfAborted()
+      const built = await buildRepositoryBundle(access.user.id, {
+        input, github: access.repo.fullName, token: reader.readToken(), maxBytes: deps.config.maxBundleBytes, scopes: access.scopes,
+      }, signal)
+      signal.throwIfAborted()
+      await reader.recheckAccess()
+      const current = await authorize(built.directory)
+      if (!current) return
+      if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
+        throw new BundleBuildError(409, 'repository-changed')
+      }
+      signal.throwIfAborted()
+      await storeUploadedBundle(req, res, deps, cookie, current, Buffer.from(built.bytes), input.repoId, built.directory, built.filename)
+    })
   } catch (error) {
     if (res.destroyed || controller.signal.aborted) return
     if (error instanceof BundleBuildError) { sendJson(res, error.status, { error: error.code }); return }
