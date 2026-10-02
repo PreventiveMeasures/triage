@@ -19,7 +19,7 @@ const { renderBundleSourceModal, renderBundlesList } = await import('../ui/view/
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
   if (value?.strings) return value.strings.map((text, index) => text + renderText(value.values[index])).join('')
-  return typeof value === 'string' ? value : ''
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
 }
 
 beforeEach(() => {
@@ -104,5 +104,48 @@ test('bundle Overview displays origin links from full contents and cached manage
     const markup = renderText(renderBundlesList([entry]))
     assert.match(markup, /<dt>Name<\/dt><dd>app\.stasis\.code\.br<\/dd>/u)
     assert.doesNotMatch(markup, /<dt>GitHub<\/dt>|<dt>npm<\/dt>/u)
+  }
+})
+
+test('bundle Overview lists entry points on the left and puts Size under Sources for local and managed metadata', async () => {
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-entries' }
+  const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
+    entries: new Set(['src/main.js', 'src/worker.js']),
+    modules: new Map([['.', { name: 'app', version: '1', files: {
+      'src/main.js': 'main', 'src/worker.js': 'worker', 'src/helper.js': 'helper',
+    } }]]),
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
+  state.selectedBundle = entry.integrity
+  state.bundles = [entry]
+  for (const [details, managedId] of [[full, undefined], [cached, 'managed-bundle']]) {
+    state.bundleDetails = details
+    const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
+    const firstMeta = markup.match(/<dl class="bundles-detail-meta">(.*?)<\/dl>/su)[1]
+    assert.match(firstMeta, /<dt>Prefix<\/dt><dd class="mono">src\/<\/dd>/u)
+    const points = firstMeta.match(/<dt>Entry points<\/dt><dd class="mono">(.*?)<\/dd>/su)[1]
+    assert.match(points, /data-bundle-view-source=src\/main\.js>main\.js<\/button>/u)
+    assert.match(points, /data-bundle-view-source=src\/worker\.js>worker\.js<\/button>/u)
+    assert.doesNotMatch(points, /helper/u)
+    assert.match(markup, /<dt>Sources<\/dt><dd>3<\/dd>\s*<dt>Size<\/dt><dd>123 B<\/dd>/u)
+    assert.doesNotMatch(firstMeta, /<dt>Size<\/dt>/u)
+  }
+})
+
+test('bundles without entry-point metadata keep their counts and Size without inventing entries', () => {
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-no-entries' }
+  const legacy = Bundle.parse(JSON.stringify({ version: 0, config: { scope: 'node_modules' },
+    sources: { 'node_modules/dep/a.js': 'dep' }, formats: {}, imports: {} }))
+  state.selectedBundle = entry.integrity
+  state.bundles = [entry]
+  for (const fields of [
+    { kind: 'stasis', bundle: new Bundle() },
+    { kind: 'stasis', bundle: legacy },
+    { kind: 'sourcemap', json: { version: 3, sources: ['src/main.js'], sourcesContent: ['main'] } },
+  ]) {
+    state.bundleDetails = { ...fields, integrity: entry.integrity, size: 200 }
+    const markup = renderText(renderBundlesList([entry]))
+    assert.doesNotMatch(markup, /<dt>Entry points<\/dt>/u)
+    assert.match(markup, /<dt>Sources<\/dt><dd>\d<\/dd>\s*<dt>Size<\/dt><dd>200 B<\/dd>/u)
   }
 })

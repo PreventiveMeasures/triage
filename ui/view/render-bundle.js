@@ -428,7 +428,7 @@ function renderBundleSizeDistribution(items) {
 // weigh in the Packages column and list among the Files like any other
 // file, but are counted apart from Sources and open no source viewer:
 // there is no source to show.
-function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, resources = null) {
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, resources = null } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Compute packages from the STRIPPED paths so the visualization
   // reflects what differs between files (a shared `dist/src/...`
@@ -550,8 +550,8 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
         <dl class="bundles-detail-meta">
           ${extras}
           <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
+          ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
           ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
-          ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
         </dl>
         ${exportsCol ?? nothing}
       </div>
@@ -2298,7 +2298,7 @@ function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
 // placeholder line.
 function renderBundleDetails(entry, details) {
   const origin = details?.integrity === entry.integrity && !details.error && details.kind === 'stasis' ? details.bundle : null
-  const meta = (prefix = '') => html`<dl class="bundles-detail-meta">
+  const meta = (prefix = '', includeSize = false) => html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
     ${bundleOriginLinks(origin, prefix).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
@@ -2306,7 +2306,11 @@ function renderBundleDetails(entry, details) {
       ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} title=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
     </dd>`)}
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
-    ${details && details.integrity === entry.integrity
+    ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
+    ${origin?.entries.size > 0 ? html`<dt>Entry points</dt><dd class="mono"><ul class="bundles-entry-points">
+      ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${stripPathPrefix(file, prefix)}</button></li>`)}
+    </ul></dd>` : nothing}
+    ${includeSize && details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
       : nothing}
   </dl>`
@@ -2324,9 +2328,9 @@ function renderBundleDetails(entry, details) {
   // loading branch shows just the metadata (name + integrity are
   // already known); a "Loading…" placeholder flickered too briefly
   // to be useful and pushed the columns down on every open.
-  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta(), exportsCol)
+  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta('', true), exportsCol)
   if (details.error) {
-    return renderBundleOverviewFallback(meta(), exportsCol,
+    return renderBundleOverviewFallback(meta('', true), exportsCol,
       html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>`)
   }
   if (details.kind === 'sourcemap' && details.json) {
@@ -2344,7 +2348,7 @@ function renderBundleDetails(entry, details) {
     `
     // Sourcemaps carry no package metadata — pass null so the panel
     // falls back to the path heuristic for bucketing.
-    return renderBundleSourcesPanel(meta, extras, sources, sizes, null, exportsCol)
+    return renderBundleSourcesPanel(meta, extras, sources, sizes, null, exportsCol, { bundleSize: details.size })
   }
   if (details.kind === 'stasis' && details.bundle) {
     const bundle = details.bundle
@@ -2380,12 +2384,12 @@ function renderBundleDetails(entry, details) {
     `
     // Stasis records authoritative package boundaries — feed them in so
     // workspace packages bucket apart from their shared parent dir.
-    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, resources)
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, { bundleSize: details.size, resources })
   }
   // Stasis without a parsed bundle — likely a brotli decompression
   // that failed silently (no error path filled in). Fall back to
   // the metadata block above plus a generic "not parsed" line,
   // wrapped in the same shell so layout is consistent.
-  return renderBundleOverviewFallback(meta(), exportsCol,
+  return renderBundleOverviewFallback(meta('', true), exportsCol,
     html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>`)
 }
