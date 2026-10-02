@@ -443,10 +443,13 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   for (let i = 0; i < stripped.length; i++) {
     packages.add(bundlePkgOf(stripped[i], { packageDir: pkgDirOf(i) }))
   }
-  // Stable alphabetical order — size signal is in the dist viz.
+  // Name ascends; Size puts the largest files first, with unknown
+  // sizes last and name order breaking ties in either view.
+  const filesSort = state.bundleOverviewFilesSort
   const order = stripped
     .map((_, i) => i)
-    .toSorted((a, b) => stripped[a].localeCompare(stripped[b]))
+    .toSorted((a, b) => (filesSort === 'size' ? (sizes[b] ?? -1) - (sizes[a] ?? -1) : 0)
+      || stripped[a].localeCompare(stripped[b]))
 
   const distItems = stripped.map((p, i) => ({ path: p, size: sizes[i], pkgDir: pkgDirOf(i) }))
   // `renderBundleSizeDistribution` returns `nothing` when no source
@@ -566,7 +569,10 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       </section>
       <section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
-          Files <span class="bundles-overview-col-count">${sources.length}</span>
+          <span class="bundles-overview-files-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
+          <span class="bundles-files-sort" role="group" aria-label="File order">
+            ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
+          </span>
         </header>
         <div class="bundles-overview-col-body bundles-overview-col-body--list">${filesTpl}</div>
       </section>
@@ -1151,6 +1157,17 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
   </div>`
 }
 
+// Stasis defaults stay in own source when it is bundled. Use recorded
+// package boundaries, just as the graph does, before falling back to
+// path heuristics for older bundles. Sourcemaps consider every source.
+function bundleCodeDefaultSources(details, sources) {
+  if (details.kind !== 'stasis') return sources
+  const packageDirs = bundlePackageDirs(details)
+  const ownSources = new Map([...sources].filter(([file]) =>
+    bundlePkgOf(file, { splitOwnDirs: false, packageDir: packageDirs?.get(file) }) === '__own__'))
+  return ownSources.size > 0 ? ownSources : sources
+}
+
 // Default file for the Code slide when nothing is selected yet —
 // the tab used to open on a "pick a file" placeholder, making the
 // first paint useless. Preference order:
@@ -1161,6 +1178,7 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
 //      stasis has an empty entries set and falls through);
 //   3. the largest source — for bundles without findings, the main
 //      chunk is the most informative default.
+// `sources` has already been restricted to own files when applicable.
 // Only files with actual string content qualify (a sourcemap can
 // list sources without carrying their text). Returns null when
 // nothing qualifies; the caller keeps the placeholder for that.
@@ -1236,6 +1254,10 @@ function renderBundleCodeView(details) {
   const issueIndex = details.fileHashes
     ? bundleFindingsByFile(details.fileHashes, 'issues')
     : new Map()
+  const defaultSources = bundleCodeDefaultSources(details, sources)
+  const defaultIssueIndex = details.kind === 'stasis'
+    ? new Map([...issueIndex].filter(([file]) => defaultSources.has(file)))
+    : issueIndex
   let path = state.bundleSourceFile
   // Any selection that isn't the untouched auto-pick (the user
   // clicked a file, came in via an Issues click, or switched
@@ -1250,15 +1272,15 @@ function renderBundleCodeView(details) {
     // coercions. The tab-switch handler nulls the pointer on entry,
     // so this runs once per visit and the pick stays sticky across
     // re-renders, EXCEPT the one-time findings upgrade below.
-    path = pickDefaultBundleCodeFile(details, sources, issueIndex)
+    path = pickDefaultBundleCodeFile(details, defaultSources, defaultIssueIndex)
     if (path) {
       state.bundleSourceFile = path
-      _bundleCodeAutoPick = { bundle: state.selectedBundle, path, hadIssues: issueIndex.size > 0 }
+      _bundleCodeAutoPick = { bundle: state.selectedBundle, path, hadIssues: defaultIssueIndex.size > 0 }
       // No tab-click fires on a boot restore straight into the Code
       // tab, so the reveal has to ride the pick itself.
       revealBundleCodeCurrent()
     }
-  } else if (_bundleCodeAutoPick && !_bundleCodeAutoPick.hadIssues && issueIndex.size > 0) {
+  } else if (_bundleCodeAutoPick && !_bundleCodeAutoPick.hadIssues && defaultIssueIndex.size > 0) {
     // Findings upgrade. A page refresh lands here before the hash
     // pass and the OPFS finding index finish, so the original pick
     // could only fall back to the entry / largest file — a file
@@ -1267,7 +1289,7 @@ function renderBundleCodeView(details) {
     // re-pick ONCE and follow it; the guard above ensures this only
     // happens while the fallback is still what's on screen.
     _bundleCodeAutoPick.hadIssues = true
-    const upgraded = pickDefaultBundleCodeFile(details, sources, issueIndex)
+    const upgraded = pickDefaultBundleCodeFile(details, defaultSources, defaultIssueIndex)
     if (upgraded && upgraded !== path) {
       path = upgraded
       state.bundleSourceFile = upgraded
