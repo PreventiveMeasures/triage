@@ -1722,12 +1722,14 @@ bundle-search {
     & dt { color: var(--muted); font-size: .72rem; font-weight: 600; align-self: center; }
     & dd { margin: 0; font-size: .78rem; word-break: break-all; }
     & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
+    & .bundle-origin-row { display: flex; align-items: center; gap: .65rem; }
     & .bundle-origin-link {
       display: inline-flex; align-items: center; gap: .35rem;
       max-width: 100%; color: inherit;
       & svg { flex-shrink: 0; }
       &:hover, &:focus-visible { text-decoration: underline; }
     }
+    & .bundle-commit-link { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   }
   /* The overview lays its meta blocks + exports out as columns in a
      wrapping flex row: name/integrity/size, parse-details, then the

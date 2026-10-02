@@ -12,7 +12,8 @@ export function bundleOriginLinks(bundle) {
     const path = directory.split('/').map(encodeURIComponent).join('/')
     const base = `https://github.com/${github}`
     links.push({ label: 'GitHub', text: github + (directory ? `/${directory}` : ''),
-      href: commit || directory ? `${base}/tree/${commit ?? 'HEAD'}${path ? `/${path}` : ''}` : base })
+      href: commit || directory ? `${base}/tree/${commit ?? 'HEAD'}${path ? `/${path}` : ''}` : base,
+      ...(commit ? { commit: { hash: commit, text: commit.slice(0, 7), href: `${base}/commit/${commit}` } } : {}) })
   }
   const npm = bundle?.package?.npm
   if (typeof npm?.name === 'string' && NPM_NAME_RE.test(npm.name)) {

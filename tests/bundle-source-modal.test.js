@@ -77,8 +77,9 @@ test('closing during loading keeps the popup closed after sources arrive', () =>
 
 test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
+  const commit = '0123456789abcdef'.repeat(3).slice(0, 40)
   const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
-    repo: { github: 'org/repo' }, package: { npm: { name: '@org/app', version: '1.2.3' } },
+    repo: { github: 'org/repo', commit }, package: { npm: { name: '@org/app', version: '1.2.3' } },
   }) }
   const cached = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
   state.selectedBundle = entry.integrity
@@ -86,8 +87,13 @@ test('bundle Overview displays origin links from full contents and cached manage
   for (const [details, managedId] of [[full, undefined], [cached, 'managed-bundle']]) {
     state.bundleDetails = details
     const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
-    assert.match(markup, /<dt>GitHub<\/dt><dd><a class="bundle-origin-link" href=https:\/\/github\.com\/org\/repo/u)
-    assert.match(markup, /<dt>npm<\/dt><dd><a class="bundle-origin-link" href=https:\/\/www\.npmjs\.com\/package\/@org\/app\/v\/1\.2\.3/u)
+    assert.match(markup, /<dt>GitHub<\/dt><dd class="bundle-origin-row">\s*<a class="bundle-origin-link" href=https:\/\/github\.com\/org\/repo/u)
+    assert.match(markup, /<dt>npm<\/dt><dd class="bundle-origin-row">\s*<a class="bundle-origin-link" href=https:\/\/www\.npmjs\.com\/package\/@org\/app\/v\/1\.2\.3/u)
+    const githubRow = markup.match(/<dt>GitHub<\/dt><dd class="bundle-origin-row">(.*?)<\/dd>/su)[1]
+    assert.ok(githubRow.includes(`href=https://github.com/org/repo/commit/${commit}`))
+    assert.match(githubRow, /<span>0123456<\/span>/u)
+    assert.match(githubRow, /class="bundle-origin-link bundle-commit-link"/u)
+    assert.doesNotMatch(markup, /<dt>Commit<\/dt>/u)
     assert.match(markup, /target="_blank" rel="noopener noreferrer"/u)
   }
   for (const details of [null, { ...full, integrity: 'previous' }, { ...full, error: 'broken' }, { ...full, bundle: new Bundle() }]) {
