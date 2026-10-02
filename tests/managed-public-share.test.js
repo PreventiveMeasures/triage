@@ -346,7 +346,7 @@ test('public security advisories require security opt-in and permission changes 
   const h = await fixture(t), token = await h.mint('whole')
   const id = hashToken(token)
   let inventories = 0
-  h.deps.bundleCache = { packageVersions() { inventories++; return Promise.resolve({}) } }
+  h.deps.bundleCache = { advisoryPackages() { inventories++; return Promise.resolve([]) } }
   await h.db.insertBundle({ id: 'stasis', integrity: 'stasis', filename: 'sources.stasis', kind: 'stasis', byteSize: 2, uploadedBy: h.sessions.manage.userId, uploadedByLogin: 'manage', repoId: 1 }, Date.now())
   assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 403)
   assert.equal(inventories, 0)
@@ -357,9 +357,9 @@ test('public security advisories require security opt-in and permission changes 
     await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
   }
   assert.equal((await h.request('/api/teams/whole/reports', { token })).status, 404)
-  h.deps.bundleCache.packageVersions = async () => {
+  h.deps.bundleCache.advisoryPackages = async () => {
     await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
-    return {}
+    return []
   }
   await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: true } })
   assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 404)

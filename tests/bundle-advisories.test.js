@@ -27,6 +27,29 @@ beforeEach(t => {
   t.after(() => { if (previous) Object.defineProperty(globalThis, 'localStorage', previous); else delete globalThis.localStorage })
 })
 
+test('managed advisories render separate ecosystems, unrated RustSec records, CVSS and repository links', async () => {
+  const details = { managedId: 'mixed-bundle', integrity: 'mixed-bundle', kind: 'stasis' }
+  result = {
+    packages: [{ ecosystem: 'cargo', name: 'log', versions: ['0.4.22'] }, { ecosystem: 'npm', name: 'log', versions: ['1.0.0'] }],
+    advisories: [
+      { ecosystem: 'cargo', name: 'log', source: 'osv', id: 'RUSTSEC-2026-0001', aliases: [], cwe: [],
+        informational: 'unmaintained', versions: ['0.4.22'] },
+      { ecosystem: 'npm', name: 'log', source: 'registry', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh',
+        title: 'npm vulnerability', severity: 'high', cvss: 8.1, cvssVector: 'CVSS:3.1/AV:N/AC:L',
+        range: '<2.0.0', aliases: [], cwe: ['CWE-79'], versions: ['1.0.0'] },
+    ],
+  }
+  await ensureBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  for (const word of ['cargo:log', 'RUSTSEC-2026-0001', 'Unrated', 'unmaintained', '0.4.22', 'npm vulnerability', '1.0.0', '8.1', 'CVSS:3.1/AV:N/AC:L']) {
+    assert.ok(text.includes(word), `renders ${word}`)
+  }
+  assert.match(text, /https:\/\/osv.dev\/vulnerability\/RUSTSEC-2026-0001/u)
+  assert.match(text, /https:\/\/github.com\/advisories\/GHSA-2345-6789-cfgh/u)
+  assert.match(text, /Matches <span class="mono">0\.4\.22<\/span>/u)
+  assert.match(text, /2 advisories\s+across 2 of 2 packages/u)
+})
+
 test('managed advisory view needs neither consent nor bundle contents or module metadata', async () => {
   const details = { managedId: 'bundle-id', integrity: 'same-hash', kind: 'stasis' }
   assert.equal(showAdvisoriesTab({ managedId: details.managedId, integrity: details.integrity, name: 'bundle.br' }, details), true)
@@ -83,6 +106,20 @@ test('managed request failures are retryable; e2e still posts its local inventor
   await ensureBundleAdvisories(local, () => {})
   assert.equal(calls[0].url, '/api/npm-advisories')
   assert.deepEqual(JSON.parse(calls[0].options.body), { dep: ['1.0.0'] })
+})
+
+test('local npm rows retain the GHSA link instead of displaying the numeric registry ID', async t => {
+  const details = { integrity: 'legacy-npm-advisory', kind: 'stasis', bundle: { modules: new Map([
+    ['node_modules/dep', { name: 'dep', version: '1.0.0' }],
+  ]) } }
+  grantAdvisoriesProxyConsent()
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ dep: [{
+    id: 123, title: 'npm vulnerability', severity: 'high', url: 'https://github.com/advisories/GHSA-2345-6789-cfgh',
+  }] })))
+  await ensureBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(text, />GHSA-2345-6789-cfgh<svg/u)
+  assert.doesNotMatch(text, />123<svg/u)
 })
 
 

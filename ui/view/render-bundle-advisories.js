@@ -1,4 +1,4 @@
-// Published npm advisories for bundled package versions. Local/e2e queries
+// Published advisories for bundled package versions. Local/e2e npm queries
 // use the browser's inventory; managed queries use the authorized bundle ID.
 // Keep results in memory, scoped to the current managed identity and teams.
 
@@ -105,6 +105,24 @@ function queryToWire(query) {
   return obj
 }
 
+const packageKey = pkg => pkg.ecosystem === 'npm' ? pkg.name : `${pkg.ecosystem}:${pkg.name}`
+
+function managedAdvisories(rows) {
+  const result = Object.create(null)
+  for (const row of rows) {
+    const key = packageKey(row)
+    const advisory = {
+      ...row, title: row.title || row.id, severity: row.severity ?? 'unknown',
+      url: row.ghsa ? `https://github.com/advisories/${row.ghsa}`
+        : row.source === 'osv' ? `https://osv.dev/vulnerability/${encodeURIComponent(row.id)}` : null,
+      cvss: { score: row.cvss, vectorString: row.cvssVector }, vulnerable_versions: row.range,
+    }
+    const list = result[key] ??= []
+    list.push(advisory)
+  }
+  return result
+}
+
 // Local/e2e mode already owns the bundle; managed mode supplies its ID and
 // receives the package inventory with the advisories from the authorized API.
 async function fetchLocalAdvisories(query) {
@@ -133,8 +151,11 @@ export async function ensureBundleAdvisories(details, renderFn) {
     let json
     if (details.managedId) {
       const result = await fetchBundleAdvisories(details.managedId, undefined, selected)
-      query = new Map(Object.entries(result.packages).map(([name, versions]) => [name, new Set(versions)]))
-      json = result.advisories
+      // Accept the former npm-only shape during a client/server upgrade.
+      query = Array.isArray(result.packages)
+        ? new Map(result.packages.map(pkg => [packageKey(pkg), new Set(pkg.versions)]))
+        : new Map(Object.entries(result.packages).map(([name, versions]) => [name, new Set(versions)]))
+      json = Array.isArray(result.advisories) ? managedAdvisories(result.advisories) : result.advisories
     } else {
       json = query.size > 0 ? await fetchLocalAdvisories(query) : {}
     }
@@ -181,6 +202,7 @@ function severityRank(s) {
 
 // Capitalise the npm severity tag for display.
 function severityLabel(s) {
+  if (s === 'unknown') return 'Unrated'
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
@@ -269,7 +291,7 @@ function renderAdvisoriesBody(details) {
   if (!details.managedId && !hasConsent()) return renderConsentPrompt()
   const entry = advisoryCache(details).get(cacheKey(details))
   if (!entry || entry.state === 'loading') {
-    return html`<div class="bundle-advisories-empty">Loading advisories from npm registry…</div>`
+    return html`<div class="bundle-advisories-empty">Loading advisories…</div>`
   }
   if (entry.state === 'error') {
     return html`<div class="bundle-advisories-empty is-error">
@@ -352,15 +374,13 @@ function renderAdvisoryRow(a) {
   const cvssScore = typeof a.cvss?.score === 'number' ? a.cvss.score.toFixed(1) : ''
   const cvssVector = typeof a.cvss?.vectorString === 'string' && a.cvss.vectorString ? a.cvss.vectorString : ''
   const vulnerable = typeof a.vulnerable_versions === 'string' ? a.vulnerable_versions : null
+  const matched = Array.isArray(a.versions) ? a.versions.filter(version => typeof version === 'string') : []
   const url = typeof a.url === 'string' && /^https?:\/\//iu.test(a.url) ? a.url : null
-  const ghsa = ghsaIdFrom(url)
+  const advisoryId = a.ghsa ?? ghsaIdFrom(url) ?? (typeof a.id === 'string' ? a.id : null)
   const cwes = Array.isArray(a.cwe) ? a.cwe.filter((c) => typeof c === 'string') : []
-  // GHSA — pinned to the right of the title row when present. Click
-  // opens the GitHub advisory page; the title itself stays a plain
-  // span so it isn't a duplicate pointer at the same upstream
-  // advisory (the GHSA chip is the single canonical link).
-  const ghsaEl = ghsa
-    ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${ghsa}${EXTERNAL_LINK_SVG}</a>`
+  // The ID is the canonical link to the advisory record.
+  const idEl = advisoryId && url
+    ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${advisoryId}${EXTERNAL_LINK_SVG}</a>`
     : nothing
   return html`<li class="bundle-advisory-row">
     <div class="bundle-advisory-rail">
@@ -370,11 +390,13 @@ function renderAdvisoryRow(a) {
     <div class="bundle-advisory-body">
       <div class="bundle-advisory-header">
         <span class="bundle-advisory-title">${title}</span>
-        ${ghsaEl}
+        ${idEl}
       </div>
       <div class="bundle-advisory-subrow">
         <div class="bundle-advisory-meta">
+          ${a.informational ? html`<span>${a.informational}</span>` : nothing}
           ${vulnerable ? html`<span>Affected <span class="mono">${vulnerable}</span></span>` : nothing}
+          ${matched.length > 0 ? html`<span>Matches <span class="mono">${matched.join(', ')}</span></span>` : nothing}
           ${cwes.length > 0 ? html`<span class="bundle-advisory-cwes">${cwes.map((c, i) => html`${i === 0 ? '' : ', '}${cweTemplate(c)}`)}</span>` : nothing}
         </div>
         ${cvssVector ? html`<div class="bundle-advisory-cvss-vector mono">${cvssVector}</div>` : nothing}

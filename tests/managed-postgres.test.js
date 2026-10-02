@@ -179,7 +179,7 @@ test('Postgres bundle delivery and advisories use bounded authorization reads', 
     byteSize: 12, uploadedBy: null, repoId: 1, repoDirectory: 'app' }, Date.now())
   const open = () => Promise.resolve({ stream: Readable.from(['cached bytes']), size: 12 })
   const handler = createManagedRequestHandler({ config, db, bundleStore: { open },
-    bundleCache: { open, packageVersions: () => Promise.resolve({}) },
+    bundleCache: { open, advisoryPackages: () => Promise.resolve([]) },
     originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
   for (const role of ['admin', 'manage', 'triage', 'view']) {
     await db.setUserRole(session.userId, role)

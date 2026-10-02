@@ -65,7 +65,7 @@ export class RepositoryDiscovery {
       // Cache the two sources separately so failed installation discovery is
       // retried without caching a degraded combined list for another minute.
       const [userRepos, installedRepos] = await Promise.all([
-        this.read(key, () => listUserRepos(token, this.fetchImpl)),
+        this.read(key, () => listUserRepos(token)),
         installed().catch((err: unknown) => {
           console.warn('managed: installed repo deduplication failed:', err)
           return []

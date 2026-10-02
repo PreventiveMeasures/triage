@@ -1,3 +1,5 @@
+import { HttpError } from '@preventive/upstream/github.js'
+
 // A failure carrying the HTTP status the router should surface. 401 passes
 // through so the user-token path can map it to "log in again".
 export class GithubApiError extends Error {
@@ -25,4 +27,23 @@ export async function throwGithubResponseError(res: Response): Promise<never> {
   if (res.status === 401) throw new GithubApiError(401, 'github-unauthorized')
   if (res.status === 404) throw new GithubApiError(404, 'github-not-found')
   throw new GithubApiError(502, `github-status-${res.status}`)
+}
+
+export async function upstreamGithub<T>(request: () => Promise<T>): Promise<T> {
+  try { return await request() } catch (error) {
+    if (error instanceof HttpError) {
+      // The upstream error includes GitHub's response text. Retain managed
+      // status handling, including rate limits, without exposing that text.
+      if (error.status === 401) throw new GithubApiError(401, 'github-unauthorized')
+      if (error.status === 404) throw new GithubApiError(404, 'github-not-found')
+      if (error.status === 429 || (error.status === 403 && /rate limit|abuse detection/iu.test(error.message))) {
+        throw new GithubApiError(429, 'github-rate-limited', 60)
+      }
+      throw new GithubApiError(502, `github-status-${error.status}`)
+    }
+    if (error instanceof Error && (error.name === 'AssertionError' || error.cause instanceof SyntaxError)) {
+      throw new GithubApiError(502, 'github-malformed')
+    }
+    throw new GithubApiError(502, 'github-unreachable')
+  }
 }

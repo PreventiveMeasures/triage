@@ -11,7 +11,7 @@ import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, teamRep
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
-import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/npm-advisories.ts'
+import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { serveTeamFeed } from './team-feed.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -109,14 +109,13 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
   if (!deps.bundleCache) { json(res, 503, { error: 'unavailable' }); return }
   if (part === 'advisories') {
     if (bundle.kind !== 'stasis') { json(res, 422, { error: 'unsupported-bundle' }); return }
-    const packages = await deps.bundleCache.packageVersions(bundle, url.searchParams.get('reason') ?? '')
+    const packages = await deps.bundleCache.advisoryPackages(bundle, url.searchParams.get('reason') ?? '')
     await recheck()
     if (packages === null) { json(res, 413, { error: 'payload-too-large' }); return }
     if (packages === undefined) { json(res, 400, { error: 'unknown-reason' }); return }
     const body = Buffer.from(JSON.stringify(packages))
     if (body.length > MAX_PACKAGE_INVENTORY_BYTES) { json(res, 413, { error: 'payload-too-large' }); return }
-    const result = Object.keys(packages).length === 0 ? { status: 200, body: {} }
-      : await fetchNpmAdvisories(body, AbortSignal.timeout(NPM_ADVISORIES_TIMEOUT_MS), deps.config.debug)
+    const result = await fetchBundleAdvisories(packages, AbortSignal.timeout(ADVISORIES_TIMEOUT_MS), deps.config.debug)
     await recheck()
     json(res, result.status, result.status === 200 ? { packages, advisories: result.body } : result.body); return
   }

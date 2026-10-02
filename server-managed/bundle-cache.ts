@@ -5,7 +5,8 @@ import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
 import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents } from '../common/bundle-metadata.js'
 import { bundleReasons } from '../common/bundle-reasons.js'
-import { bundlePackageVersions } from '../common/bundle-sources.js'
+import { bundleAdvisoryPackages } from '../common/bundle-sources.js'
+import type { Package } from '@preventive/upstream/advisories.js'
 import { decodeUtf8 } from '../common/utf8.js'
 import type { OpenedBlob } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -38,7 +39,7 @@ export interface BundleCacheStorage {
 }
 
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
-const packagesFilename = 'v2-package-versions.json'
+const packagesFilename = 'v3-advisory-packages.json'
 
 // All scopes share one bounded derivative. Never decode full bundle metadata
 // on advisory requests, including when selecting a reason. Persist null when
@@ -53,13 +54,13 @@ function encodePackageInventory(details: BundleDetails): Buffer {
     return true
   }
   function inventory(paths: Set<string> | null) {
-    if (!append('{')) return false
+    if (!append('[')) return false
     let first = true
-    for (const [name, versions] of bundlePackageVersions(details, paths)) {
-      if (!append(`${first ? '' : ','}${JSON.stringify(name)}:${JSON.stringify([...versions].toSorted())}`)) return false
+    for (const pkg of bundleAdvisoryPackages(details, paths)) {
+      if (!append(`${first ? '' : ','}${JSON.stringify(pkg)}`)) return false
       first = false
     }
-    return append('}')
+    return append(']')
   }
   append('{"all":')
   if (!inventory(null) || !append(',"reasons":{')) return Buffer.from('null')
@@ -133,8 +134,8 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       }
       return openCached(record, filename)
     },
-    async packageVersions(record: ManagedBundle, reason = ''): Promise<Record<string, string[]> | null | undefined> {
-      if (record.kind !== 'stasis') return {}
+    async advisoryPackages(record: ManagedBundle, reason = ''): Promise<Package[] | null | undefined> {
+      if (record.kind !== 'stasis') return []
       const cached = await openCached(record, packagesFilename)
       try {
         if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) return null

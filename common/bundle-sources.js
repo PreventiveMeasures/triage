@@ -282,3 +282,23 @@ export function bundlePackageVersions(details, paths = null) {
   }
   return versions
 }
+
+// Advisory identities include the ecosystem: npm's log and Cargo's log are
+// different packages. Older bundles only identify npm through node_modules.
+export function bundleAdvisoryPackages(details, paths = null) {
+  const packages = new Map()
+  if (details?.kind !== 'stasis' || !details.bundle?.modules) return []
+  const packageDirs = paths === null ? null : bundlePackageDirs(details)
+  const selectedDirs = paths === null ? null : new Set([...paths].map(path => packageDirs?.get(path)))
+  for (const [dir, info] of details.bundle.modules) {
+    if (dir === '.' || (selectedDirs && !selectedDirs.has(dir))) continue
+    const ecosystem = info?.ecosystem ?? (/(?:^|\/)node_modules\//u.test(dir) ? 'npm' : null)
+    if (!['npm', 'cargo', 'composer', 'soldeer', 'github'].includes(ecosystem)
+      || typeof info?.name !== 'string' || !info.name || typeof info.version !== 'string' || !info.version) continue
+    const key = JSON.stringify([ecosystem, ecosystem === 'github' ? info.name.toLowerCase() : info.name])
+    if (!packages.has(key)) packages.set(key, { ecosystem, name: info.name, versions: new Set() })
+    packages.get(key).versions.add(info.version)
+  }
+  return [...packages.values()].map(pkg => ({ ...pkg, versions: [...pkg.versions].toSorted() }))
+    .toSorted((a, b) => a.ecosystem.localeCompare(b.ecosystem) || a.name.localeCompare(b.name))
+}

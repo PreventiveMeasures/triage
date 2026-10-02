@@ -69,7 +69,7 @@ both permissions off until a manager explicitly enables them. The same finding
 filters apply to report data, comments, triage/history and cited sources. Future
 published reports in the team's repository paths are included; drafts and
 other workspaces are excluded. Whole-repository team grants also expose their
-bundles; published npm advisories require the security opt-in. Directory-only grants expose cited source
+bundles; published advisories require the security opt-in. Directory-only grants expose cited source
 files, not entire bundles. GitHub PR metadata and user avatars require account
 access and are not fetched in public views.
 
@@ -560,22 +560,37 @@ Clients are expected to support Brotli; no encoding negotiation is needed.
 Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
 
-`GET /api/bundles/:id/advisories` looks up published npm advisories using the
-stored bundle's dependency names and versions. Optional `?reason=<name>` limits
+`GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
+stored bundle's dependency ecosystems, names and versions. npm uses the registry,
+Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
+repository advisories through an anonymous GitHub client. Modules without an
+ecosystem retain the legacy npm lookup when installed under `node_modules`;
+the root module and unsupported ecosystems are excluded. Optional `?reason=<name>` limits
 the lookup to package versions with files in that bundle reason; unknown reasons
 return 400. A separate package inventory, including the named scopes, is persisted during the shared metadata build; advisory requests buffer at most
 1 MiB before parsing, without decompressing the full file inventory. Oversized package
-inventories return 413 without contacting npm. The API accepts no bundle body and
-returns `{ packages, advisories }`, without source contents or scan findings.
+inventories return 413 before contacting upstream. The versioned inventory
+rebuilds older npm-only caches. The API accepts no bundle body and returns
+`{ packages, advisories }`, both arrays: packages contain `{ ecosystem, name,
+versions }`, and advisory rows retain upstream's IDs, matched versions, source,
+and optional severity, title, CVSS and range. Failures return 502 with
+`upstream-unavailable`, without source contents or scan findings.
 The managed Advisories tab loads it directly, without a consent prompt.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.
 Managers and admins retain their normal full access to authorized bundles.
 An optional `?team=<id>` restricts the security grant to the selected team.
-Access is checked before reading inventory, before contacting npm, and before
+Access is checked before reading inventory, before contacting upstream, and before
 returning the result. The endpoint is available on standalone managed, combined,
 and managed Vercel servers.
+
+User repository discovery and public repository metadata also use
+`@preventive/upstream`'s GitHub client, with its argument validation, response
+limits and bounded pagination. Managed filtering still skips archived repos,
+requires explicit public visibility for public additions, and checks effective
+user permissions on installed nonpublic repositories. Installation discovery
+and token minting retain their managed credential cache.
 
 `GET /api/bundles/:id/download` preserves the uploaded filename and bytes:
 sourcemaps use HTTP Brotli decoding, while Stasis downloads remain .br archives.

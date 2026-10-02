@@ -15,12 +15,12 @@ const repositories = [
   { id: 3, full_name: 'Org/Other', private: true, visibility: 'private' },
 ]
 
-function fixture() {
+function fixture(t) {
   const calls = []
   const state = { permissionStatus: 200, allowed: true, userStatus: 200 }
   const fetch = async (url, options) => {
     const path = new URL(url).pathname
-    const token = options.headers.authorization
+    const token = new Headers(options.headers).get('authorization')
     calls.push({ path, token })
     await setImmediate()
     if (path === '/app/installations') return Response.json([{ id: 7 }])
@@ -36,13 +36,14 @@ function fixture() {
     }
     throw new Error(`Unexpected GitHub request: ${path}`)
   }
+  t.mock.method(globalThis, 'fetch', fetch)
   let now = 1000
   return { calls, state, fetch, advance: () => { now += 60_001 }, directory: new RepositoryDiscovery(config, fetch, () => now) }
 }
 const names = listing => listing.repositories.map(repo => repo.fullName)
 
-test('installed discovery checks effective GH access, isolates admins, and Show all skips user requests', async () => {
-  const { directory, calls } = fixture()
+test('installed discovery checks effective GH access, isolates admins, and Show all skips user requests', async (t) => {
+  const { directory, calls } = fixture(t)
   assert.deepEqual(names(await directory.list('installed', 'admin-a', 'alice')), ['Org/Public', 'Org/Team'])
   assert.deepEqual(names(await directory.list('installed', 'admin-b', 'bob')), ['Org/Other', 'Org/Public'])
   const beforeAll = calls.length
@@ -53,8 +54,8 @@ test('installed discovery checks effective GH access, isolates admins, and Show 
   assert.ok(!calls.some(call => call.path.includes('/Public/collaborators/')), 'public repos are already readable')
 })
 
-test('search/page discovery coalesces and caches, expires, and refresh bypasses both catalogue and permissions', async () => {
-  const { directory, calls, advance, state } = fixture()
+test('search/page discovery coalesces and caches, expires, and refresh bypasses both catalogue and permissions', async (t) => {
+  const { directory, calls, advance, state } = fixture(t)
   const [first, second] = await Promise.all([directory.list('installed', 'a', 'alice'), directory.list('installed', 'a', 'alice')])
   assert.deepEqual(first, second)
   const count = calls.length
@@ -72,8 +73,8 @@ test('search/page discovery coalesces and caches, expires, and refresh bypasses 
   assert.deepEqual(names(await directory.list('installed', 'a', 'bob')), ['Org/Other', 'Org/Public'])
 })
 
-test('missing/stale login, denied permissions and GitHub errors never expose all private repos', async () => {
-  const { directory, state } = fixture()
+test('missing/stale login, denied permissions and GitHub errors never expose all private repos', async (t) => {
+  const { directory, state } = fixture(t)
   const missing = await directory.list('installed', 'a', null)
   assert.deepEqual(names(missing), ['Org/Public'])
   assert.equal(missing.tokenMissing, true)
@@ -89,8 +90,8 @@ test('missing/stale login, denied permissions and GitHub errors never expose all
   assert.deepEqual(names(await directory.list('installed', 'a', 'alice', false, true)), ['Org/Public'])
 })
 
-test('public discovery preserves the uninstalled-only list and caches both GitHub sources', async () => {
-  const { directory, calls } = fixture()
+test('public discovery preserves the uninstalled-only list and caches both GitHub sources', async (t) => {
+  const { directory, calls } = fixture(t)
   assert.deepEqual(names(await directory.list('public', 'a', 'alice')), ['Org/Uninstalled'])
   const count = calls.length
   await directory.list('public', 'a', 'alice')
@@ -98,12 +99,12 @@ test('public discovery preserves the uninstalled-only list and caches both GitHu
   assert.ok(!calls.some(call => call.path.includes('/collaborators/')))
 })
 
-test('permission lookup uses fresh identity and rejects a permission response for another account', async () => {
-  const { fetch } = fixture()
-  const directory = new RepositoryDiscovery(config, (url, options) => {
+test('permission lookup uses fresh identity and rejects a permission response for another account', async (t) => {
+  const { fetch } = fixture(t)
+  const directory = new RepositoryDiscovery(config, t.mock.method(globalThis, 'fetch', (url, options) => {
     if (new URL(url).pathname.includes('/collaborators/')) return Promise.resolve(Response.json({ permission: 'admin', user: { id: 999 } }))
     return fetch(url, options)
-  })
+  }))
   assert.deepEqual(names(await directory.list('installed', 'a', 'alice')), ['Org/Public'])
 })
 
@@ -134,8 +135,8 @@ test('all installation pages are listed with bounded parallel installation work'
   assert.equal(peak, 4)
 })
 
-test('internal and unknown visibility require permission checks even with private=false', async () => {
-  const { fetch, state } = fixture()
+test('internal and unknown visibility require permission checks even with private=false', async (t) => {
+  const { fetch, state } = fixture(t)
   const extra = [
     { id: 11, full_name: 'Org/InternalAllowed', private: false, visibility: 'internal' },
     { id: 12, full_name: 'Org/InternalDenied', private: false, visibility: 'internal' },
@@ -143,7 +144,7 @@ test('internal and unknown visibility require permission checks even with privat
     { id: 14, full_name: 'Org/Unexpected', private: false, visibility: 'unexpected' },
   ]
   const checked = []
-  const directory = new RepositoryDiscovery(config, (url, options) => {
+  const directory = new RepositoryDiscovery(config, t.mock.method(globalThis, 'fetch', (url, options) => {
     const path = new URL(url).pathname
     if (path === '/installation/repositories') return Promise.resolve(Response.json({ total_count: 7, repositories: [...repositories, ...extra] }))
     if (extra.some(repo => path.startsWith(`/repos/${repo.full_name}/collaborators/`))) {
@@ -153,7 +154,7 @@ test('internal and unknown visibility require permission checks even with privat
     }
     if (path === '/user/repos') return Promise.resolve(Response.json([...extra, { id: 15, full_name: 'Org/UserPublic', private: false, visibility: 'public' }]))
     return fetch(url, options)
-  })
+  }))
   assert.deepEqual(names(await directory.list('installed', 'a', 'alice')), ['Org/InternalAllowed', 'Org/Public', 'Org/Team'])
   assert.equal(checked.length, 4, 'internal, missing and unrecognized visibility all get checked')
   assert.deepEqual(names(await directory.list('installed', 'a', null)), ['Org/Public'])
@@ -166,20 +167,20 @@ test('internal and unknown visibility require permission checks even with privat
   state.userStatus = 200
   // None of the nonpublic user repos are installed in this fixture response.
   // Public discovery still requires explicit public visibility.
-  const publicDirectory = new RepositoryDiscovery(config, (url, options) => {
+  const publicDirectory = new RepositoryDiscovery(config, t.mock.method(globalThis, 'fetch', (url, options) => {
     if (new URL(url).pathname === '/user/repos') return Promise.resolve(Response.json([...extra, { id: 15, full_name: 'Org/UserPublic', private: false, visibility: 'public' }]))
     return fetch(url, options)
-  })
+  }))
   assert.deepEqual(names(await publicDirectory.list('public', 'a', 'alice')), ['Org/UserPublic'])
 })
 
 for (const failure of [401, 403, 429, 503, 'network', 'malformed']) {
   test(`public discovery survives installation failure (${failure}) and retries after recovery`, async (t) => {
-    const { fetch, calls } = fixture()
+    const { fetch, calls } = fixture(t)
     t.mock.method(console, 'warn', () => {})
     let broken = true
     let installationAttempts = 0
-    const directory = new RepositoryDiscovery(config, (url, options) => {
+    const directory = new RepositoryDiscovery(config, t.mock.method(globalThis, 'fetch', (url, options) => {
       if (new URL(url).pathname === '/app/installations') {
         installationAttempts++
         if (broken) {
@@ -189,7 +190,7 @@ for (const failure of [401, 403, 429, 503, 'network', 'malformed']) {
         }
       }
       return fetch(url, options)
-    })
+    }))
     const fallback = await directory.list('public', 'a', 'alice')
     assert.equal(fallback.tokenMissing, false, 'installation failures do not invalidate the user login')
     assert.deepEqual(names(fallback), ['Org/Public', 'Org/Uninstalled'])
@@ -203,31 +204,32 @@ for (const failure of [401, 403, 429, 503, 'network', 'malformed']) {
 }
 
 test('public discovery still surfaces user-repository failures independently of installation discovery', async (t) => {
-  const { fetch } = fixture()
+  const { fetch } = fixture(t)
   t.mock.method(console, 'warn', () => {})
   let userStatus = 403
-  const directory = new RepositoryDiscovery(config, (url, options) => {
+  const directory = new RepositoryDiscovery(config, t.mock.method(globalThis, 'fetch', (url, options) => {
     const path = new URL(url).pathname
     if (path === '/app/installations') return Promise.resolve(Response.json({}, { status: 503 }))
     if (path === '/user/repos') return Promise.resolve(Response.json({}, { status: userStatus }))
     return fetch(url, options)
-  })
+  }))
   await assert.rejects(directory.list('public', 'a', 'alice'), /github-status-403/u)
   userStatus = 401
   assert.deepEqual(await directory.list('public', 'a', 'alice'), { repositories: [], tokenMissing: true })
 })
 
-test('GitHub repository discovery reads beyond twenty upstream pages without truncation', async () => {
+test('GitHub repository discovery reads beyond twenty upstream pages without truncation', async (t) => {
   const total = 2001
   const pageRepos = page => Array.from({ length: Math.min(100, total - (page - 1) * 100) }, (_, i) => ({
     id: (page - 1) * 100 + i + 1, full_name: `Org/repo-${(page - 1) * 100 + i + 1}`, visibility: 'public',
   }))
   const userPages = []
-  const userRepos = await listUserRepos('user-token', url => {
+  t.mock.method(globalThis, 'fetch', url => {
     const page = Number(new URL(url).searchParams.get('page'))
     userPages.push(page)
     return Promise.resolve(Response.json(pageRepos(page)))
   })
+  const userRepos = await listUserRepos('user-token')
   assert.equal(userRepos.length, total)
   assert.equal(userPages.at(-1), 21)
   const installationPages = []
@@ -241,4 +243,22 @@ test('GitHub repository discovery reads beyond twenty upstream pages without tru
   })
   assert.equal(installedRepos.length, total)
   assert.equal(installationPages.at(-1), 21)
+})
+
+test('upstream repository discovery rejects malformed pages and pagination overflow instead of returning a partial list', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ repositories: [] })))
+  await assert.rejects(listUserRepos('user-token'), /github-malformed/u)
+  const page = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, full_name: `Org/repo-${i}` }))
+  fetch.mock.mockImplementation(() => Promise.resolve(Response.json(page)))
+  await assert.rejects(listUserRepos('user-token'), /github-malformed/u)
+  assert.equal(fetch.mock.callCount(), 102, 'one malformed request, then at most 101 pages including the overflow probe')
+})
+
+test('upstream repository discovery preserves unauthorized, missing and rate-limit errors', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({}, { status: 401 })))
+  await assert.rejects(listUserRepos('user-token'), error => error.status === 401 && error.message === 'github-unauthorized')
+  for (const [status, message] of [[404, 'Not Found'], [429, 'Too Many Requests'], [403, 'API rate limit exceeded']]) {
+    fetch.mock.mockImplementation(() => Promise.resolve(Response.json({ message }, { status })))
+    await assert.rejects(listUserRepos('user-token'), error => error.status === (status === 404 ? 404 : 429))
+  }
 })

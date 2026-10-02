@@ -4,8 +4,9 @@
 // permissions. Discovery itself is read-only and skips archived repositories.
 import { Buffer } from 'node:buffer'
 import { createHash, createSign } from 'node:crypto'
+import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
-import { GithubApiError, throwGithubResponseError } from './github-errors.ts'
+import { GithubApiError, throwGithubResponseError, upstreamGithub } from './github-errors.ts'
 
 export { GithubApiError } from './github-errors.ts'
 
@@ -124,10 +125,9 @@ export function publicRepositoryName(raw: unknown): string | null {
 // Public additions must be readable by the server without the acting user's
 // credentials. Require explicit public visibility and use GitHub's canonical
 // metadata, never client-supplied ids, installation ids, or branches.
-export async function fetchPublicRepository(fullName: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo> {
+export async function fetchPublicRepository(fullName: string): Promise<ConnectedRepo> {
   if (publicRepositoryName(fullName) !== fullName) throw new GithubApiError(400, 'bad-repository')
-  const path = fullName.split('/').map(encodeURIComponent).join('/')
-  const repo = parseRepo(await githubJson(`${GITHUB_API}/repos/${path}`, null, fetchImpl), null)
+  const repo = parseRepo(await upstreamGithub(() => createClient({ token: null, userAgent: USER_AGENT }).getRepo({ repo: fullName })), null)
   if (repo == null || repo.private || repo.visibility !== 'public') throw new GithubApiError(409, 'repo-not-public')
   if (publicRepositoryName(repo.fullName) !== repo.fullName || repo.fullName.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(502, 'github-malformed')
   return { ...repo, htmlUrl: `https://github.com/${repo.fullName}` }
@@ -138,17 +138,12 @@ export async function fetchPublicRepository(fullName: string, fetchImpl: typeof 
 // List the authenticated user's repositories (GET /user/repos), paginated until
 // a short page, deduped + sorted. With an identity-only token this returns the
 // user's PUBLIC repos. READ-ONLY.
-export async function listUserRepos(accessToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
+export async function listUserRepos(accessToken: string): Promise<ConnectedRepo[]> {
   const byName = new Map<string, ConnectedRepo>()
-  for (let page = 1; ; page++) {
-    const url = `${GITHUB_API}/user/repos?per_page=${PER_PAGE}&page=${page}&sort=full_name`
-    const body = await githubJson(url, accessToken, fetchImpl)
-    if (!Array.isArray(body)) break
-    for (const r of body) {
-      const repo = parseRepo(r, null)
-      if (repo != null) byName.set(repo.fullName, repo)
-    }
-    if (body.length < PER_PAGE) break
+  const body = await upstreamGithub(() => createClient({ token: accessToken, userAgent: USER_AGENT }).listUserRepos())
+  for (const r of body) {
+    const repo = parseRepo(r, null)
+    if (repo != null) byName.set(repo.fullName, repo)
   }
   return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
 }
@@ -373,7 +368,7 @@ export async function collectRepos(config: ManagedConfig, userToken: string | nu
   const lists: ConnectedRepo[][] = []
   if (userToken != null) {
     try {
-      lists.push(await listUserRepos(userToken, fetchImpl))
+      lists.push(await listUserRepos(userToken))
     } catch (err) {
       if (err instanceof GithubApiError && err.status === 401) tokenMissing = true
       else console.warn('managed: public repo list failed:', err)
