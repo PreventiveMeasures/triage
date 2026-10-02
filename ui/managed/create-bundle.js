@@ -65,6 +65,7 @@ export class ManagedCreateBundle extends LitElement {
     this._path = ''
     this._entries = null
     this._selected = new Set()
+    this._dismissedSuggestions = new Set()
     this._bundleConditions = defaultBundleConditions()
     this._packageEntryPoints = []
     this._solidityEntryPoints = []
@@ -125,6 +126,7 @@ export class ManagedCreateBundle extends LitElement {
     this._refsRequest?.abort()
     this._request?.abort()
     this._directories.clear()
+    this._dismissedSuggestions.clear()
     this._packageEntryPoints = []
     this._solidityEntryPoints = []
     this._soliditySuggestionsLimited = false
@@ -140,6 +142,7 @@ export class ManagedCreateBundle extends LitElement {
     this._path = ''
     this._commit = ''
     this._selected = new Set()
+    this._dismissedSuggestions.clear()
     this._packageEntryPoints = []
     this._solidityEntryPoints = []
     this._soliditySuggestionsLimited = false
@@ -313,6 +316,9 @@ export class ManagedCreateBundle extends LitElement {
       this._packageEntryPoints = data.packageEntryPoints ?? []
       this._solidityEntryPoints = data.solidityEntryPoints ?? []
       this._soliditySuggestionsLimited = data.soliditySuggestionsLimited ?? false
+      const suggestions = [...this._packageEntryPoints, ...this._solidityEntryPoints]
+        .filter(entry => !this._dismissedSuggestions.has(entry))
+      this._selected = new Set([...this._selected, ...suggestions])
       if (/^[a-f\d]{40}$/iu.test(data.commit)) {
         const cacheKey = JSON.stringify([this._repoId, data.commit, path])
         this._directories.set(cacheKey, { entries: this._entries, limited: this._limited, packageEntryPoints: this._packageEntryPoints,
@@ -331,9 +337,23 @@ export class ManagedCreateBundle extends LitElement {
 
   toggleFile(path) {
     const next = new Set(this._selected)
-    if (next.has(path)) next.delete(path)
-    else next.add(path)
+    if (next.has(path)) {
+      next.delete(path)
+      this._dismissedSuggestions.add(path)
+    } else {
+      next.add(path)
+      this._dismissedSuggestions.delete(path)
+    }
     this._selected = next
+  }
+
+  clearFiles() {
+    for (const path of this._selected) this._dismissedSuggestions.add(path)
+    this._selected = new Set()
+  }
+
+  hasScriptEntryPoints() {
+    return [...this._selected].some(path => /\.[mc]?[jt]s$/iu.test(path))
   }
 
   render() {
@@ -372,11 +392,11 @@ export class ManagedCreateBundle extends LitElement {
       </section>
       ${packageEntryPointSuggestions(this._packageEntryPoints, this._selected, paths => { this._selected = new Set([...this._selected, ...paths]) })}
       ${solidityEntryPointSuggestions(this._solidityEntryPoints, this._selected, paths => { this._selected = new Set([...this._selected, ...paths]) }, this._soliditySuggestionsLimited)}
-      <section class="entry-points" aria-label="Selected entry points"><div class="selection"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="btn clear-selection" @click=${() => { this._selected = new Set() }}>Clear all</button>` : nothing}</div>
+      <section class="entry-points" aria-label="Selected entry points"><div class="selection"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="btn clear-selection" @click=${this.clearFiles}>Clear all</button>` : nothing}</div>
         ${this._selected.size > 0 ? html`<ul>${[...this._selected].map(path => html`<li>${sourceFileIcon(path)}<span data-tooltip=${path}>${path}</span><button type="button" aria-label=${`Remove ${path}`} @click=${() => this.toggleFile(path)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>` : html`<p class="note">Select files above. You can choose entry points from multiple directories.</p>`}
         </div>
       </section>
-      <bundle-conditions @conditions-change=${event => { this._bundleConditions = event.detail }}><button type="button" slot="actions" class="btn primary" disabled>Create a bundle</button></bundle-conditions>
+      <bundle-conditions .showConditions=${this.hasScriptEntryPoints()} @conditions-change=${event => { this._bundleConditions = event.detail }}><button type="button" slot="actions" class="btn primary" disabled>Create a bundle</button></bundle-conditions>
     `
   }
 }

@@ -25,7 +25,7 @@ test('bundle conditions default to Node.js and changes preserve selected files a
   await page.loadDirectory('src')
   page.toggleFile('src/entry.ts')
   const view = page.render()
-  const handler = view.values[view.strings.findIndex(string => string.includes('<bundle-conditions @conditions-change='))]
+  const handler = view.values[view.strings.findIndex(string => string.includes('@conditions-change='))]
   const detail = { preset: 'metro', conditions: ['react-native', 'development'], platforms: ['ios'] }
   handler({ detail })
   assert.deepEqual(page._bundleConditions, detail)
@@ -34,6 +34,31 @@ test('bundle conditions default to Node.js and changes preserve selected files a
   assert.deepEqual([...page._selected], ['src/entry.ts'])
   assert.equal(page._commit, commit)
   assert.match(view.strings.join(''), /disabled>Create a bundle/u)
+})
+
+test('conditions depend on selected JS/TS entry-file extensions, including mixed selections', () => {
+  const page = new ManagedCreateBundle()
+  const shown = () => {
+    const view = page.render()
+    return view.values[view.strings.findIndex(string => string.includes('.showConditions='))]
+  }
+  assert.equal(shown(), false)
+  for (const path of ['Contract.sol', 'src/main.rs', 'package.json', 'component.jsx', 'component.tsx', 'dir.js/source.sol', 'app.js.map']) {
+    page.toggleFile(path)
+    assert.equal(shown(), false, path)
+  }
+  for (const path of ['index.js', 'index.mjs', 'index.cjs', 'index.ts', 'index.mts', 'index.cts', 'src/INDEX.JS']) {
+    page.toggleFile(path)
+    assert.equal(shown(), true, path)
+    page.toggleFile(path)
+    assert.equal(shown(), false, `last script removed: ${path}`)
+  }
+  page.toggleFile('one.js')
+  page.toggleFile('two.ts')
+  page.toggleFile('one.js')
+  assert.equal(shown(), true)
+  page.clearFiles()
+  assert.equal(shown(), false)
 })
 
 test('the picker installs the host-provided shared tooltip listener on its own root', () => {
@@ -253,79 +278,79 @@ test('directory navigation reuses pinned listings with their sorting, limits, an
   assert.equal(calls[1].get('ref'), commit)
 })
 
-test('package suggestions are opt-in, additive, deduplicated, and cached with the pinned directory', async t => {
+test('package suggestions are auto-selected, additive, deduplicated, and stay cleared on cached navigation', async t => {
   let calls = 0
   t.mock.method(globalThis, 'fetch', url => {
     calls++
     const path = new URL(url, 'https://test.invalid').searchParams.get('path')
-    return Promise.resolve(Response.json({ commit, entries, ...(path === '' ? { packageEntryPoints: ['src/entry.ts', 'cli.js'] } : {}) }))
+    return Promise.resolve(Response.json({ commit, entries, ...(path === '' ? { packageEntryPoints: ['src/entry.ts', 'cli.js', 'cli.js'] } : {}) }))
   })
   const page = new ManagedCreateBundle()
   page._repoId = 1
   page.changeRevision('branch', 'main')
-  await page.loadDirectory('')
-  assert.equal(page._selected.size, 0, 'discovery never selects files automatically')
-  assert.deepEqual(page._packageEntryPoints, ['src/entry.ts', 'cli.js'])
-  page.toggleFile('src/entry.ts')
   page.toggleFile('manual.js')
+  await page.loadDirectory('')
+  assert.deepEqual([...page._selected], ['manual.js', 'src/entry.ts', 'cli.js'])
   const suggestion = () => templates(page.render()).find(template => template.strings[0].includes('class="package-suggestions"'))
-  assert.ok(suggestion())
-  suggestion().values.find(value => typeof value === 'function')()
-  assert.deepEqual([...page._selected], ['src/entry.ts', 'manual.js', 'cli.js'])
-  assert.equal(suggestion(), undefined, 'the prompt disappears once all suggested paths are selected')
+  assert.equal(suggestion(), undefined, 'the prompt is unnecessary once suggestions are auto-selected')
   page.toggleFile('cli.js')
   assert.ok(suggestion(), 'removed suggestions can be added again')
+  templates(suggestion()).find(template => template.strings.join('').includes('>Use suggestions</button>'))
+    .values.find(value => typeof value === 'function')()
+  assert.deepEqual([...page._selected], ['manual.js', 'src/entry.ts', 'cli.js'])
+  assert.ok(templates(page.render()).some(template => template.strings.join('').includes('>Clear all</button>')))
+  page.clearFiles()
+  assert.equal(page._selected.size, 0)
   await page.loadDirectory('src')
   assert.deepEqual(page._packageEntryPoints, [])
   await page.loadDirectory('')
-  assert.deepEqual(page._packageEntryPoints, ['src/entry.ts', 'cli.js'])
+  assert.equal(page._selected.size, 0, 'cached suggestions do not undo Clear all')
+  assert.ok(suggestion())
   assert.equal(calls, 2, 'returning to the directory does not fetch its package again')
   page.changeRevision('tag', 'v1')
   assert.deepEqual(page._packageEntryPoints, [])
   await page.loadDirectory('')
   assert.equal(calls, 3)
+  assert.deepEqual([...page._selected], ['src/entry.ts', 'cli.js'], 'new revisions start with their suggestions')
   page.disconnectedCallback()
   assert.deepEqual(page._packageEntryPoints, [])
 })
 
-test('Solidity suggestions coexist with package suggestions, preserve selection, and reuse the pinned cache', async t => {
+test('Solidity and package suggestions auto-select together, retain limit warnings, and respect dismissed paths', async t => {
   let reads = 0
   t.mock.method(globalThis, 'fetch', url => {
     reads++
     const path = new URL(url, 'https://test.invalid').searchParams.get('path')
     return Promise.resolve(Response.json({ commit, entries, ...(path === '' ? {
       packageEntryPoints: ['cli.js'], solidityEntryPoints: ['contracts/Token.sol', 'contracts/Vault.sol'], soliditySuggestionsLimited: true,
-    } : {}) }))
+    } : { solidityEntryPoints: ['contracts/Token.sol', 'contracts/Extra.sol'] }) }))
   })
   const page = new ManagedCreateBundle()
   page._repoId = 1
   page.changeRevision('branch', 'main')
   await page.loadDirectory('')
-  assert.equal(page._selected.size, 0)
+  assert.deepEqual([...page._selected], ['cli.js', 'contracts/Token.sol', 'contracts/Vault.sol'])
   const suggestions = () => templates(page.render()).filter(template => template.strings[0].includes('class="package-suggestions"'))
-  assert.equal(suggestions().length, 2)
-  page.toggleFile('manual.js')
-  page.toggleFile('contracts/Token.sol')
-  suggestions()[0].values.find(value => typeof value === 'function')()
-  assert.deepEqual([...page._selected], ['manual.js', 'contracts/Token.sol', 'cli.js'])
+  assert.equal(suggestions().length, 1)
   const solidity = suggestions()[0]
   assert.ok(solidity.values.includes('Suggested Solidity sources'))
   assert.ok(templates(solidity).some(template => template.strings.join('').includes('Suggestions are limited')))
-  solidity.values.find(value => typeof value === 'function')()
-  assert.deepEqual([...page._selected], ['manual.js', 'contracts/Token.sol', 'cli.js', 'contracts/Vault.sol'])
-  assert.equal(suggestions().length, 0)
+  assert.equal(templates(solidity).some(template => template.strings.join('').includes('>Use suggestions</button>')), false)
+  page.clearFiles()
   await page.loadDirectory('contracts')
-  assert.deepEqual(page._solidityEntryPoints, [])
+  assert.deepEqual([...page._selected], ['contracts/Extra.sol'], 'a new listing cannot re-select previously cleared paths')
   assert.equal(page._soliditySuggestionsLimited, false)
   await page.loadDirectory('')
   assert.deepEqual(page._solidityEntryPoints, ['contracts/Token.sol', 'contracts/Vault.sol'])
   assert.equal(page._soliditySuggestionsLimited, true)
+  assert.deepEqual([...page._selected], ['contracts/Extra.sol'])
   assert.equal(reads, 2)
   page.changeRevision('tag', 'v1')
   assert.deepEqual(page._solidityEntryPoints, [])
   assert.equal(page._soliditySuggestionsLimited, false)
   await page.loadDirectory('')
   assert.equal(reads, 3)
+  assert.deepEqual([...page._selected], ['cli.js', 'contracts/Token.sol', 'contracts/Vault.sol'])
   page.disconnectedCallback()
   assert.deepEqual(page._solidityEntryPoints, [])
 })
@@ -384,6 +409,7 @@ test('cached navigation cancels in-flight reads, and failures invalidate cached 
   assert.deepEqual(page._entries, [])
   assert.deepEqual(page._packageEntryPoints, ['root.js'])
   assert.deepEqual(page._solidityEntryPoints, ['Root.sol'])
+  assert.deepEqual([...page._selected], ['root.js', 'Root.sol'], 'cancelled responses cannot auto-select stale suggestions')
   const retry = page.loadDirectory('src')
   assert.equal(directoryReads, 3, 'cancelled reads cannot populate the cache')
   finish(Response.json({ commit, entries }))
