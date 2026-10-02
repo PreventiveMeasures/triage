@@ -1,5 +1,6 @@
 :host { padding: 0; margin: 1.2rem 0; }
 .conditions-head { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; }
+.conditions-head[data-conditions-hidden] > :not(slot) { visibility: hidden; }
 slot[name=actions]::slotted(*) { flex: none; }
 h2 { margin: 0; font-size: .8rem; font-weight: 500; }
 .presets { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }

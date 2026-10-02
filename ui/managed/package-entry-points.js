@@ -10,11 +10,11 @@ export function solidityEntryPointSuggestions(paths, selected, apply, limited) {
 
 function entryPointSuggestions(paths, selected, apply, label, name, limited = false) {
   const pending = paths.filter(path => !selected.has(path))
-  if (pending.length === 0) return nothing
+  if (pending.length === 0 && !limited) return nothing
   return html`<aside class="package-suggestions" aria-label=${name}>
     <div><p>${label}</p>
-      <ul>${pending.map(path => html`<li><code data-tooltip=${path}>${path}</code></li>`)}</ul>
+      ${pending.length > 0 ? html`<ul>${pending.map(path => html`<li><code data-tooltip=${path}>${path}</code></li>`)}</ul>` : nothing}
       ${limited ? html`<p class="suggestions-note">Suggestions are limited. Browse the source directories to select more files.</p>` : nothing}
-    </div><button type="button" class="btn" @click=${() => apply(pending)}>Use suggestions</button>
+    </div>${pending.length > 0 ? html`<button type="button" class="btn" @click=${() => apply(pending)}>Use suggestions</button>` : nothing}
   </aside>`
 }
