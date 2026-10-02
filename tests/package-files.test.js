@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { isBuiltin } from 'node:module'
@@ -37,6 +37,20 @@ test('package.json "files" includes every exports and bin target', () => {
     .map(([sub, rel]) => `${sub} → ${rel}`)
   assert.deepEqual(missing, [], `entry points missing from "files":\n  ${missing.join('\n  ')}`)
 })
+
+// Both tarballs ship the license texts beside the modules. They have to be
+// named in `files`: pnpm packs a LICENSE-* file regardless, but npm only packs
+// LICENSE or LICENSE.<ext> unasked, so `npm publish` would ship neither.
+for (const dir of ['', 'report/']) {
+  test(`${dir}package.json "files" includes LICENSE-APACHE and LICENSE-MIT`, () => {
+    const pkg = JSON.parse(readFileSync(new URL(`../${dir}package.json`, import.meta.url), 'utf8'))
+    assert.equal(pkg.license, 'MIT OR Apache-2.0')
+    for (const name of ['LICENSE-APACHE', 'LICENSE-MIT']) {
+      assert.ok(pkg.files.includes(name), `${name} is not in ${dir}package.json files, so npm would publish without it`)
+      assert.ok(existsSync(new URL(`../${dir}${name}`, import.meta.url)), `${name} is in ${dir}package.json files but not in ${dir || 'the root'}`)
+    }
+  })
+}
 
 test('published entry points include their complete runtime dependency graph', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
