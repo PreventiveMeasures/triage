@@ -8,6 +8,7 @@ export function sourceFileType(path) {
   if (['ts', 'tsx', 'mts', 'cts'].includes(extension)) return 'ts'
   if (extension === 'sol') return 'solidity'
   if (extension === 'rs') return 'rust'
+  if (extension === 'json') return 'json'
   return 'generic'
 }
 
@@ -19,7 +20,9 @@ export function sourceFileIcon(path) {
       ? svg`<path d="m8 1 4 6-4 2-4-2Z" fill="currentColor"/><path d="m4 8 4 2 4-2-4 7Z" fill="currentColor" opacity=".65"/>`
       : type === 'rust'
         ? svg`<path d="m7 0 2 0 .4 1.6 1.3.5 1.4-.9 1.4 1.4-.9 1.4.5 1.3 1.6.4v2l-1.6.4-.5 1.3.9 1.4-1.4 1.4-1.4-.9-1.3.5-.4 1.6H7l-.4-1.6-1.3-.5-1.4.9-1.4-1.4.9-1.4-.5-1.3L1.3 9V7l1.6-.4.5-1.3-.9-1.4 1.4-1.4 1.4.9 1.3-.5Z" fill="#c97d5d"/><circle cx="8" cy="8" r="4.4" fill="var(--surface, #fff)"/><text x="8" y="10.8" text-anchor="middle" fill="currentColor" font-family="serif" font-size="8" font-weight="700">R</text>`
-        : svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
+        : type === 'json'
+          ? svg`<path d="M3 1h6l5 5v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" fill="#e6c84f"/><path d="M9 1v4a1 1 0 0 0 1 1h4Z" fill="#202020" opacity=".2"/><path d="M6.5 6.5h-.75a.75.75 0 0 0-.75.75v1.5L4 9.5l1 .75v1.5a.75.75 0 0 0 .75.75h.75m3-6h.75a.75.75 0 0 1 .75.75v1.5l1 .75-1 .75v1.5a.75.75 0 0 1-.75.75H9.5" fill="none" stroke="#202020" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`
+          : svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
   return html`<svg class="source-file-icon" data-file-type=${type} width="16" height="16" viewBox="0 0 16 16" style="flex: none" aria-hidden="true">${mark}</svg>`
 }
 
