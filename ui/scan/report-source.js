@@ -1,4 +1,4 @@
-import { isAppFinding, readReport, reportEntries, reportRepoGithub } from '../../report/index.js'
+import { isAppFinding, readReport, reportEntries, reportRepoGithub } from '@preventive/report'
 import { formatBytes } from './metrics.js'
 
 // Saved reports and raw scan results are different catalogues. Never infer

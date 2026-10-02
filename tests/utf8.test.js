@@ -32,7 +32,7 @@ describe('encodeUtf8', () => {
     assert.throws(() => encodeUtf8('\uD83D'), /lone surrogates/u)
   })
 
-  // `report/src/utf8.js` carries a copy of this encoder — the library
+  // `@preventive/report/src/utf8.js` carries a copy of this encoder — the library
   // imports nothing from outside its directory, so it holds the one
   // function it needs rather than reaching into `common/`. The copy is
   // only safe while the two behave identically: a fix made to one and
@@ -41,7 +41,7 @@ describe('encodeUtf8', () => {
   //
   // The two are pinned to the same expectations rather than to each
   // other — this list and its bytes are asserted again, of the library's
-  // copy, in `report/tests/utf8.test.js`. Neither suite imports the
+  // copy, in @preventive/report's own utf8 suite. Neither suite imports the
   // other's module, so the library's stays runnable on its own; a change
   // to one encoder alone fails whichever suite it was not made in. Keep
   // the two lists in step.

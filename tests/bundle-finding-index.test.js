@@ -224,7 +224,7 @@ describe('bundle-finding-index — original report rows', () => {
   })
 
   it('uses derived IDs in grouped findings, matching the report viewer', async () => {
-    const { loadFindings } = await import('../report/index.js')
+    const { loadFindings } = await import('@preventive/report')
     const data = { groups: [[{ description: 'Grouped without ID A' }, { description: 'Grouped without ID B' }]] }
     const name = await seedReport(data)
     const { findings } = await loadFindings(JSON.stringify(data))
@@ -244,7 +244,7 @@ describe('bundle-finding-index — original report rows', () => {
         { id: id + '-native', source: 'deepview', revalidate: 'revalidation' },
         { id: id + '-claude', source: 'claude-security', revalidate: 'confirmed' },
         // The field is an enumeration, read as the data spells it —
-        // a value that drifted is no stamp (report/src/finding.js
+        // a value that drifted is no stamp (@preventive/report/src/finding.js
         // revalidateKindOf), not a stamp to be folded back here.
         { id: id + '-drifted', source: 'claude-security', revalidate: ' CONFIRMED ' },
       ]],

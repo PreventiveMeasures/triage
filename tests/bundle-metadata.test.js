@@ -4,7 +4,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
 import { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
 import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
-import { computeFileHash } from '../report/index.js'
+import { computeFileHash } from '@preventive/report'
 
 function details() {
   return { integrity: 'sha512-test', kind: 'stasis', size: 2345, bundle: new Bundle({

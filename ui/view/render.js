@@ -16,7 +16,7 @@ import { activeTabFor, canTriageFinding, clearMergedGroups, drawnTabs, findingRe
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
-import { SOURCE_LABELS, revalidateKindOf } from '../../report/index.js'
+import { SOURCE_LABELS, revalidateKindOf } from '@preventive/report'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'

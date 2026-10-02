@@ -65,7 +65,7 @@ import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/mana
 import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
-import { reportRepoGithub } from '../report/index.js'
+import { reportRepoGithub } from '@preventive/report'
 import { loadManagedFindings, readManagedReport } from '../common/managed/report-content.ts'
 import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'

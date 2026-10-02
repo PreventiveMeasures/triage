@@ -1,6 +1,6 @@
 import { managedFetch } from './request.js'
 import { getPublicShare, publicShareBootstrapPath } from './public-share.js'
-import { reportEntries } from '../../report/index.js'
+import { reportEntries } from '@preventive/report'
 // Managed-mode client auth. Loaded lazily (see ui/view/client-managed.js) so
 // this managed-only code stays out of the main view bundle, mirroring
 // client/sync. For now it covers the session lifecycle against the managed

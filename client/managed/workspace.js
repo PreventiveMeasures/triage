@@ -2,7 +2,7 @@
 // serves links/cards from those reports only; it never reads local storage.
 import { isManagedUiMode, state } from '../state.ts'
 import { collectDuplicates } from '../linked-findings.js'
-import { findingTitle, inheritReportMeta, isAppFinding, reportEntries } from '../../report/index.js'
+import { findingTitle, inheritReportMeta, isAppFinding, reportEntries } from '@preventive/report'
 
 let workspace = null
 export function clearManagedWorkspace() { workspace = null }

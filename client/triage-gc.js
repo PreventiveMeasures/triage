@@ -20,7 +20,7 @@ import { state } from './state.ts'
 import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { SESSION_ID_RE, saveTriage } from './triage.js'
 import { listFiles, readFile } from './storage.js'
-import { loadFindings } from '../report/index.js'
+import { loadFindings } from '@preventive/report'
 
 // Walk every OPFS-stored report in `names`, parse it, and return
 // the union of finding ids reachable from those reports. Reads through

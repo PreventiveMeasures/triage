@@ -1,4 +1,4 @@
-import { revalidateKindOf } from '../../report/index.js'
+import { revalidateKindOf } from '@preventive/report'
 import { recordRevalidationCopies } from './revalidation-conflicts.js'
 import { effectiveSeverity } from './format.js'
 
@@ -19,7 +19,7 @@ export function mergeDuplicateFields(survivor, dup) {
     if (value === undefined || value === null) continue
     // The stamp is compared as the app READS it, not as the file
     // wrote it: the reader trims and case-folds, and answers "no
-    // stamp" for anything it doesn't recognise (report/src/finding.js
+    // stamp" for anything it doesn't recognise (@preventive/report/src/finding.js
     // revalidateKindOf). So `confirmed` and ` Confirmed ` agree, and
     // a value the app can't read is no answer at all — it neither
     // blocks the other copy's real stamp from landing nor takes the

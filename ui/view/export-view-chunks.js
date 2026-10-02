@@ -26,7 +26,7 @@
 //
 // Pure: lines in, `[start, end)` pairs out, covering every line exactly
 // once. Nothing here knows about the DOM.
-import { fenceRanges } from '../../report/index.js'
+import { fenceRanges } from '@preventive/report'
 
 // Lines a chunk aims for, and the point past which any safe cut is
 // taken rather than waiting for a paragraph end. A chunk is what gets

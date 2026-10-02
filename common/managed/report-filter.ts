@@ -1,7 +1,7 @@
 // Apply report permissions before serving findings, triage, or source files.
 // Security uses the same complete-row classification as the UI. Dependency
 // access is per finding: App, own source, and the own-source organizations stay.
-import { inheritReportMeta, isAppFinding, reportRepoGithub, stampSecurityGroups } from '../../report/index.js'
+import { inheritReportMeta, isAppFinding, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { readManagedReport } from './report-content.ts'
 
 export interface ViewerPermissions {

@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { isAppFinding } from '../report/index.js'
+import { isAppFinding } from '@preventive/report'
 
 // format.js → frontend-global.js throws at module load when the
 // `@rray/frontend` slot isn't installed. Tests don't run the boot path
@@ -49,7 +49,7 @@ describe('isAppFinding', () => {
     assert.equal(isAppFinding({ revalidate: 'revalidation' }), true)
     // Read as the app reads it — which is as the data spells it: the
     // field is an enumeration, and a value that drifted is no stamp
-    // (report/src/finding.js revalidateKindOf).
+    // (@preventive/report/src/finding.js revalidateKindOf).
     assert.equal(isAppFinding({ revalidate: ' Revalidation ' }), false)
   })
 

@@ -109,7 +109,7 @@ function buildBundleTree(details) {
 }
 
 // SHA-512 of each bundle source, in the canonical `sha512-${base64}`
-// SRI form that `computeFileHash` (report/src/finding-id.js) produces —
+// SRI form that `computeFileHash` (@preventive/report/src/finding-id.js) produces —
 // the same hashing the analyzer stamps on findings, so the strings
 // compare equal. Async because crypto.subtle.digest is. Returns
 // Map<file, integrity>.

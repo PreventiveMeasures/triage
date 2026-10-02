@@ -11,6 +11,9 @@ importers:
       '@exodus/stasis-core':
         specifier: ^1.0.0-beta.4
         version: 1.0.0-beta.4
+      '@preventive/report':
+        specifier: 1.0.0-alpha.4
+        version: 1.0.0-alpha.4
       ws:
         specifier: ^8.20.1
         version: 8.21.0
@@ -459,6 +462,10 @@ packages:
 
   '@preventive/diff@1.0.0':
     resolution: {integrity: sha512-voZPhZLUkbM1R8N4TxZ1LjHYmAoy8/4cohXYq5gL5DXYag3MQ/XehTSGa+871V6ffsNptixV9iURVtqqMHLOHg==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.0.tgz}
+    engines: {node: '>=24.14.0'}
+
+  '@preventive/report@1.0.0-alpha.4':
+    resolution: {integrity: sha512-1cGfq3vdC3fcs4DqarP0moc2WCZPpcoKiYIwPELYMw5il3UKDVMWybJnhvvQ8OEspJ2zmNT4/obdpWh8fdk7xg==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.4.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/terminal@2.0.0-beta.1':
@@ -1343,6 +1350,8 @@ snapshots:
     optional: true
 
   '@preventive/diff@1.0.0': {}
+
+  '@preventive/report@1.0.0-alpha.4': {}
 
   '@preventive/terminal@2.0.0-beta.1':
     dependencies:

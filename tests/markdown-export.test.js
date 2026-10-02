@@ -1,6 +1,6 @@
 // `ui/view/markdown-export.js` — the Download button's adapter over
-// the report library's writer. The document itself is pinned in
-// report/tests/write-md.test.js; this suite pins what the adapter
+// the report library's writer. The document itself is pinned by
+// @preventive/report's own write-md suite; this suite pins what the adapter
 // feeds it: the on-screen selection (the triage bucket, the filters,
 // the merged groups, the sort), the header the confirmation dialog's
 // summary supplies, and the viewer's own answers — annotations off the

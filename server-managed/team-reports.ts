@@ -1,7 +1,7 @@
 // Team content is filtered as one workspace, with separate report envelopes.
 // Bounded snapshots retain filtered content and visibility for repeated reads.
 import { Buffer } from 'node:buffer'
-import { backfillFindingIds, reportEntries, stampSecurityGroups } from '../report/index.js'
+import { backfillFindingIds, reportEntries, stampSecurityGroups } from '@preventive/report'
 import { managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
 import type { BlobStore } from './blob-store.ts'

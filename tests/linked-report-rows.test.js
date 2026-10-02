@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { parseLinkedFindings } from '../client/linked-findings.js'
 import { groupLinkedReportRows } from '../ui/view/linked-report-rows.js'
-import { isAppFinding } from '../report/index.js'
+import { isAppFinding } from '@preventive/report'
 
 // Mirror what the index stamps on each member (client/bundle-finding-index.js):
 // the layer answer, derived once from the producer and the revalidation stamp.

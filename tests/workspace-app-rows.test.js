@@ -14,7 +14,7 @@ const { canDropRevalidation, configureDepsDir, configureRevalidation, stampUpstr
 const { applyFilters, applyOpeningFilters, shouldLockConfirmed } = await import('../ui/view/filters.js')
 const { findGroupById, getMergedGroups, getShownGroups, getRevalidationConflicts, groupKey, groupWithPassRows, sortTabs, underlyingFindingsShown } = await import('../ui/view/group.js')
 
-const { isAppFinding, stampSecurityGroups } = await import('../report/index.js')
+const { isAppFinding, stampSecurityGroups } = await import('@preventive/report')
 const source = (id, extra = {}) => ({ id, severity: 'high', confidence: 9, file: 'src/auth.js', description: `Finding ${id}`, isApp: isAppFinding(extra, extra.source ?? extra._source), ...extra })
 const app = (id) => source(id, { revalidate: 'revalidation' })
 const report = (fileName, ...groups) => {
