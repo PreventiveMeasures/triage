@@ -79,7 +79,8 @@ test('bundle Overview displays origin links from full contents and cached manage
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
   const commit = '0123456789abcdef'.repeat(3).slice(0, 40)
   const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
-    repo: { github: 'org/repo', commit }, package: { npm: { name: '@org/app', version: '1.2.3' } },
+    repo: { github: 'org/repo', directory: 'packages/app', commit }, package: { npm: { name: '@org/app', version: '1.2.3' } },
+    modules: new Map([['.', { name: 'app', version: '1.2.3', files: { 'src/a.js': 'a', 'src/b.js': 'b' } }]]),
   }) }
   const cached = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
   state.selectedBundle = entry.integrity
@@ -90,6 +91,8 @@ test('bundle Overview displays origin links from full contents and cached manage
     assert.match(markup, /<dt>GitHub<\/dt><dd class="bundle-origin-row">\s*<a class="bundle-origin-link" href=https:\/\/github\.com\/org\/repo/u)
     assert.match(markup, /<dt>npm<\/dt><dd class="bundle-origin-row">\s*<a class="bundle-origin-link" href=https:\/\/www\.npmjs\.com\/package\/@org\/app\/v\/1\.2\.3/u)
     const githubRow = markup.match(/<dt>GitHub<\/dt><dd class="bundle-origin-row">(.*?)<\/dd>/su)[1]
+    assert.ok(githubRow.includes(`href=https://github.com/org/repo/tree/${commit}/packages/app/src`))
+    assert.match(markup, /<dt>Prefix<\/dt><dd class="mono">src\/<\/dd>/u)
     assert.ok(githubRow.includes(`href=https://github.com/org/repo/commit/${commit}`))
     assert.match(githubRow, /<span>0123456<\/span>/u)
     assert.match(githubRow, /class="bundle-origin-link bundle-commit-link"/u)
@@ -98,6 +101,8 @@ test('bundle Overview displays origin links from full contents and cached manage
   }
   for (const details of [null, { ...full, integrity: 'previous' }, { ...full, error: 'broken' }, { ...full, bundle: new Bundle() }]) {
     state.bundleDetails = details
-    assert.doesNotMatch(renderText(renderBundlesList([entry])), /<dt>GitHub<\/dt>|<dt>npm<\/dt>/u)
+    const markup = renderText(renderBundlesList([entry]))
+    assert.match(markup, /<dt>Name<\/dt><dd>app\.stasis\.code\.br<\/dd>/u)
+    assert.doesNotMatch(markup, /<dt>GitHub<\/dt>|<dt>npm<\/dt>/u)
   }
 })

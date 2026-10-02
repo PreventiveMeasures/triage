@@ -428,7 +428,7 @@ function renderBundleSizeDistribution(items) {
 // weigh in the Packages column and list among the Files like any other
 // file, but are counted apart from Sources and open no source viewer:
 // there is no source to show.
-function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exportsCol, resources = null) {
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, resources = null) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Compute packages from the STRIPPED paths so the visualization
   // reflects what differs between files (a shared `dist/src/...`
@@ -546,7 +546,7 @@ function renderBundleSourcesPanel(meta, extras, sources, sizes, packageDirs, exp
   return html`<div class="bundles-overview">
     <div class="bundles-overview-summary">
       <div class="bundles-detail-meta-row">
-        ${meta}
+        ${renderMeta(prefix)}
         <dl class="bundles-detail-meta">
           ${extras}
           <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
@@ -2298,10 +2298,10 @@ function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
 // placeholder line.
 function renderBundleDetails(entry, details) {
   const origin = details?.integrity === entry.integrity && !details.error && details.kind === 'stasis' ? details.bundle : null
-  const meta = html`<dl class="bundles-detail-meta">
+  const meta = (prefix = '') => html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
-    ${bundleOriginLinks(origin).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
+    ${bundleOriginLinks(origin, prefix).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
       <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
       ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} title=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
     </dd>`)}
@@ -2324,9 +2324,9 @@ function renderBundleDetails(entry, details) {
   // loading branch shows just the metadata (name + integrity are
   // already known); a "Loading…" placeholder flickered too briefly
   // to be useful and pushed the columns down on every open.
-  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta, exportsCol)
+  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta(), exportsCol)
   if (details.error) {
-    return renderBundleOverviewFallback(meta, exportsCol,
+    return renderBundleOverviewFallback(meta(), exportsCol,
       html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>`)
   }
   if (details.kind === 'sourcemap' && details.json) {
@@ -2386,6 +2386,6 @@ function renderBundleDetails(entry, details) {
   // that failed silently (no error path filled in). Fall back to
   // the metadata block above plus a generic "not parsed" line,
   // wrapped in the same shell so layout is consistent.
-  return renderBundleOverviewFallback(meta, exportsCol,
+  return renderBundleOverviewFallback(meta(), exportsCol,
     html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>`)
 }

@@ -41,3 +41,13 @@ test('commit links show seven characters, use the full commit URL and reject mal
     assert.equal(bundleOriginLinks({ repo: { github: 'org/repo', commit } })[0].commit, undefined)
   }
 })
+
+test('GitHub links use the displayed source prefix relative to the declared repository directory', () => {
+  const commit = 'a'.repeat(40)
+  const link = bundleOriginLinks({ repo: { github: 'org/repo', directory: 'packages/app', commit } }, 'src/')[0]
+  assert.equal(link.href, `https://github.com/org/repo/tree/${commit}/packages/app/src`)
+  assert.equal(link.text, 'org/repo/packages/app/src')
+  assert.equal(link.commit.href, `https://github.com/org/repo/commit/${commit}`)
+  assert.equal(bundleOriginLinks({ repo: { github: 'org/repo' } }, 'packages/my app/')[0].href,
+    'https://github.com/org/repo/tree/HEAD/packages/my%20app')
+})
