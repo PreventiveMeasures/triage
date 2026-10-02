@@ -7,7 +7,7 @@ import type { OpenedBlob } from './blob-store.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
 import { sendJson } from './http-response.ts'
 import { hashToken } from './crypto.ts'
-import { TeamReportsError, loadTeamReports, teamReportVisibility } from './team-reports.ts'
+import { TeamReportsError, loadTeamAnnotations, loadTeamReports, teamReportVisibility } from './team-reports.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
@@ -28,7 +28,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   const method = req.method ?? 'GET'
   if (method !== 'GET' && method !== 'HEAD') { json(res, 403, { error: 'share-read-only' }); return }
   const shareRoute = /^\/api\/shares\/([A-Za-z0-9_-]+)\/workspace$/u.exec(url.pathname)
-  const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports|feed)$/u.exec(url.pathname)
+  const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports|feed|annotations)$/u.exec(url.pathname)
   const reportRoute = /^\/api\/reports\/([^/]+)\/(triage|comments|sources)$/u.exec(url.pathname)
   const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories)$/u.exec(url.pathname)
   if (!shareRoute && !teamRoute && !reportRoute && !bundleRoute) { json(res, 403, { error: 'share-scope-required' }); return }
@@ -73,6 +73,9 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     if (teamRoute[2] === 'feed') {
       if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
       await serveTeamFeed(res, deps, snapshot, recheck); return
+    }
+    if (teamRoute[2] === 'annotations') {
+      await send(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot)); return
     }
     if (teamRoute[2] === 'shared') { await sendTeam(); return }
     await send({ reports: await loadTeamReports(deps.db, deps.reportStore, snapshot) }); return

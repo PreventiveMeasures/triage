@@ -39,13 +39,13 @@ export function managedCommentScope(reportId) {
     && state.reports === reports && state.managedReports.some(report => report.id === reportId)
 }
 
-export async function loadManagedReportComments(reportId, { signal } = {}) {
+export async function loadManagedReportComments(reportId, { signal, readAnnotations } = {}) {
   const current = managedCommentScope(reportId)
   if (!current()) return false
   const ids = new Set(state.reports.filter(report => report._managedReportId === reportId)
     .flatMap(report => report.groups.flatMap(group => group.map(finding => finding.id))))
   const before = new Map([...ids].map(id => [id, state.managedComments.get(id)]))
-  const comments = await fetchReportComments(reportId, state.currentManagedTeam, { signal })
+  const comments = readAnnotations ? (await readAnnotations(reportId))?.comments : await fetchReportComments(reportId, state.currentManagedTeam, { signal })
   if (!current() || comments == null || signal?.aborted) return false
   const grouped = new Map([...ids].map(id => [id, []]))
   for (const comment of comments) if (grouped.has(comment.findingId)) grouped.get(comment.findingId).push(comment)

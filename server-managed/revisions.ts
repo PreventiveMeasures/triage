@@ -12,13 +12,17 @@ export function revisionSchema(postgres = false): string {
     const update = `UPDATE managed_change_revision SET ${column} = ${column} + 1 WHERE id = 1;`
     if (postgres) {
       sql += `CREATE OR REPLACE FUNCTION managed_${column}_changed() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN ${update} RETURN NULL; END $$;`
+        BEGIN IF EXISTS (SELECT 1 FROM managed_revision_rows) THEN ${update} END IF; RETURN NULL; END $$;`
     }
     for (const table of tables) {
       if (postgres) {
-        sql += `DROP TRIGGER IF EXISTS ${table}_revision ON ${table};
-          CREATE TRIGGER ${table}_revision AFTER INSERT OR UPDATE OR DELETE ON ${table}
-          FOR EACH STATEMENT EXECUTE FUNCTION managed_${column}_changed();`
+        sql += `DROP TRIGGER IF EXISTS ${table}_revision ON ${table};`
+        for (const event of ['INSERT', 'UPDATE', 'DELETE']) {
+          sql += `DROP TRIGGER IF EXISTS ${table}_revision_${event} ON ${table};
+            CREATE TRIGGER ${table}_revision_${event} AFTER ${event} ON ${table}
+            REFERENCING ${event === 'DELETE' ? 'OLD' : 'NEW'} TABLE AS managed_revision_rows
+            FOR EACH STATEMENT EXECUTE FUNCTION managed_${column}_changed();`
+        }
       } else {
         for (const event of ['INSERT', 'UPDATE', 'DELETE']) {
           sql += `CREATE TRIGGER IF NOT EXISTS ${table}_revision_${event}

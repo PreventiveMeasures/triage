@@ -80,7 +80,7 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAc
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { TeamReportsError, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
+import { TeamReportsError, loadTeamAnnotations, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
 import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
@@ -2158,6 +2158,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleWorkspaceFixes(res, deps, cookie, teamFixes[1]!); return
     }
+    const teamAnnotations = /^\/api\/teams\/([^/]+)\/annotations$/u.exec(path)
+    if (teamAnnotations) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const snapshot = await teamSnapshot(db, workspaceSession!.session.id, teamAnnotations[1]!)
+      const annotations = await loadTeamAnnotations(db, deps.reportStore, snapshot)
+      await recheckTeam(db, workspaceSession!.session.id, snapshot)
+      sendJson(res, 200, annotations); return
+    }
     const teamReports = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
     if (teamReports) {
       if (method !== 'GET') { send405(res, 'GET'); return }
@@ -2226,7 +2234,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
 
   return (req, res) => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
-    const work = (db.withRequest ? db.withRequest(() => route(req, res)) : route(req, res)).catch((err) => {
+    // Feeds lease a connection per poll, never across streaming sleeps. This
+    // also covers capability-authenticated feeds handled by public-workspace.
+    const feed = /^\/api\/teams(?:\/[^/?]+)?\/feed(?:\?|$)/u.test(req.url ?? '')
+    const work = (db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res)).catch((err) => {
       if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError || err instanceof ManagedMutationError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)
       if (res.headersSent) { try { res.destroy() } catch {} }

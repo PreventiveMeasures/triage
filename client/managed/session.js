@@ -148,13 +148,47 @@ export async function fetchTeamReports(teamId, { signal } = {}) {
 
 export function teamQuery(teamId) { return teamId ? `?team=${encodeURIComponent(teamId)}` : '' }
 
-// GET /api/reports/<id>/triage → the server's triage entries for a team
-// report's findings, as `{ <findingId>: { color?, triage?, fix?,
-// flagged? } | null }` — null for an entry cleared server-side (its
-// tombstone), an absent id for one the server has never seen — restricted
-// server-side to the findings this viewer may see; null on any failure / no
-// access. `ignoredReports` never rides this wire — the per-report ignore stays
-// a client-local concept.
+// Keep shared annotation bodies normalized until a consumer asks for one
+// report. Projections preserve each report's visibility and server comment order.
+export async function fetchTeamAnnotations(teamId, options) {
+  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/annotations`, null, options)
+  const { reports, entries, comments } = body ?? {}
+  if (!reports || typeof reports !== 'object' || Array.isArray(reports)
+      || !entries || typeof entries !== 'object' || Array.isArray(entries) || !Array.isArray(comments)) return null
+  if (Object.values(reports).some(ids => !Array.isArray(ids) || ids.some(id => typeof id !== 'string'))
+      || comments.some(comment => !comment || typeof comment.findingId !== 'string')) return null
+  const commentIndices = new Map()
+  for (const [index, comment] of comments.entries()) {
+    const findingId = comment.findingId
+    const indices = commentIndices.get(findingId) ?? []
+    indices.push(index)
+    commentIndices.set(findingId, indices)
+  }
+  const byFindings = new Map(), byReport = new Map()
+  return reportId => {
+    if (!Object.hasOwn(reports, reportId)) return null
+    if (byReport.has(reportId)) return byReport.get(reportId)
+    // Repeated scans can have identical finding references. Share their arrays
+    // too, so caching does not recreate the normalized batch's duplication.
+    const key = JSON.stringify(reports[reportId])
+    let projection = byFindings.get(key)
+    if (!projection) {
+      const ids = [...new Set(reports[reportId])]
+      const indices = ids.flatMap(id => commentIndices.get(id) ?? [])
+      projection = {
+        entries: Object.fromEntries(ids.filter(id => Object.hasOwn(entries, id)).map(id => [id, entries[id]])),
+        comments: indices.toSorted((a, b) => a - b).map(index => comments[index]),
+      }
+      byFindings.set(key, projection)
+    }
+    byReport.set(reportId, projection)
+    return projection
+  }
+}
+
+// GET /api/reports/<id>/triage returns this report's visible annotations.
+// Null entries are tombstones; absent IDs have never been written. Local
+// ignoredReports never rides the wire. A failed or unauthorized read is null.
 export async function fetchReportTriage(id, teamId, options) {
   const body = await getJson(`/api/reports/${encodeURIComponent(id)}/triage${teamQuery(teamId)}`, null, options)
   const entries = body?.entries

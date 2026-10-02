@@ -173,3 +173,12 @@ test('live comment reads cannot overwrite a POST that lands during the read', as
   assert.equal(await refresh, true)
   assert.equal(managedCommentsFor(finding)[0].body, 'new')
 })
+
+test('batched comment reads preserve a comment posted while the shared read is pending', async () => {
+  const response = Promise.withResolvers()
+  const read = loadManagedReportComments('r', { readAnnotations: () => response.promise })
+  await writeManagedComment(finding, 'Note')
+  response.resolve({ comments: [], entries: {} })
+  assert.equal(await read, true)
+  assert.deepEqual(managedCommentsFor(finding), [comment])
+})

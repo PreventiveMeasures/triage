@@ -2,7 +2,7 @@ import { isManagedUiMode, state } from '#client/index.js'
 import { store } from '@rray/frontend/state-management'
 import { watchTeamFeed } from './client-managed.js'
 import { loadManagedReportComments } from './managed-comments.js'
-import { refreshManagedReportTriage } from './managed-triage.js'
+import { createManagedAnnotationRead, refreshManagedReportTriage } from './managed-triage.js'
 import { currentViewSignal } from './view-navigation.js'
 
 let active = null
@@ -170,11 +170,14 @@ async function readTargetUpdates(subscription, target, signal) {
   if (target.hydration && !(await waitForHydration(target.hydration.start(), signal))) return false
   while (target.current() && !signal.aborted && target.version < subscription.version) {
     const version = subscription.version
-    for (const report of state.managedReports) {
-      if (!target.reports.some(loaded => loaded._managedReportId === report.id)) continue // links
-      if (!(await refreshManagedReportTriage(report.id, { signal }))) return false
-      if (!target.current() || signal.aborted || !(await loadManagedReportComments(report.id, { signal }))) return false
-    }
+    const readAnnotations = createManagedAnnotationRead(subscription.teamId, signal)
+    // Capture each consumer's local-edit baseline before the shared read settles.
+    const reports = state.managedReports.filter(report => target.reports.some(loaded => loaded._managedReportId === report.id))
+    const results = await Promise.all(reports.flatMap(report => [
+      refreshManagedReportTriage(report.id, { signal, readAnnotations }),
+      loadManagedReportComments(report.id, { signal, readAnnotations }),
+    ]))
+    if (!results.every(Boolean)) return false
     if (!target.current() || signal.aborted) return false
     target.version = version
   }

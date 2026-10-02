@@ -30,7 +30,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 10 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 11 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function initialize(db: PgConnection): Promise<void> {
@@ -102,8 +102,11 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query('INSERT INTO managed_schema_version VALUES (9)')
     }
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 10')).rows.length === 0) {
+      await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (10)')
+    }
+    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)))
-      await db.query('INSERT INTO managed_schema_version VALUES (10)')
+      await db.query('INSERT INTO managed_schema_version VALUES (11)')
     }
     await db.query('COMMIT')
   } catch (err) {

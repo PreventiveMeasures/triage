@@ -32,6 +32,7 @@ export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
 export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
   sessionId: string, user: StoredUser, teamId: string | null, options: FeedOptions = {}): Promise<void> {
   let ids: string[] = [], visibilityKey: string | undefined
+  let focusedKey: string | undefined
   let previousState: { catalog: number; annotations: number } | undefined
   const checkUser = (current: { user: Pick<StoredUser, 'id' | 'role'> } | null) => {
     if (!current) throw new TeamReportsError(401, 'unauthenticated')
@@ -43,6 +44,17 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
     const state = await deps.db.getFeedState(sessionId, Date.now())
     checkUser(state)
     if (state!.catalog === previousState?.catalog && (!teamId || state!.annotations === previousState?.annotations)) return
+    if (teamId && focusedKey !== undefined && state!.catalog === previousState?.catalog) {
+      // Annotation changes cannot change visibility. Read only this workspace's
+      // IDs, then fence against concurrent access/content changes before sending.
+      const triage = JSON.stringify([focusedKey, await deps.db.getAnnotationRevision(ids)])
+      const after = await deps.db.getFeedState(sessionId, Date.now())
+      checkUser(after)
+      if (after!.catalog !== state!.catalog) return
+      publish('triage', triage)
+      if (after!.annotations === state!.annotations) previousState = state!
+      return
+    }
     const catalog = await deps.db.getUserTeamFeedSnapshot(sessionId, Date.now())
     checkUser(catalog)
     checkUser(await deps.db.getReportAccessSnapshot(sessionId, Date.now(), []))
@@ -78,6 +90,7 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
     checkUser(current)
     if (!current || teamSnapshotKey(current) !== key) return
     publish('triage', triage)
+    focusedKey = snapshot.teamId ? key : undefined
     const after = await deps.db.getFeedState(sessionId, Date.now())
     checkUser(after)
     if (after!.catalog === state!.catalog && after!.annotations === state!.annotations) previousState = state!
@@ -120,7 +133,8 @@ async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: (publ
       return true
     }
     while (!stopped()) {
-      await read(publish)
+      if (deps.db.withRequest) await deps.db.withRequest(() => read(publish))
+      else await read(publish)
       if (stopped()) break
       if (Date.now() - heartbeat >= HEARTBEAT_MS) {
         if (!write(': keepalive\n\n')) break

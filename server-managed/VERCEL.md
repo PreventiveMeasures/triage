@@ -28,7 +28,9 @@ timers exist only for the lifetime of their awaited request. Missing derivatives
 are built during authorized reads. Build deduplication and queues are local to each
 instance; caches are shared, and builders recheck database references after
 publishing to handle concurrent deletion. Access is checked again after cold
-builds. Each Neon operation closes its connection before returning.
+builds. Finite HTTP requests reuse one Neon connection and close it before returning.
+Feeds reuse a connection within each polling iteration and release it before
+waiting for the next poll.
 
 Ordinary managed requests start a due session/upload sweep alongside the normal
 response and await it before the invocation returns. Sweeps are coalesced and
@@ -157,13 +159,19 @@ transient failures retry with backoff. Navigation aborts the previous request.
 
 The function stays awaited until the stream closes. It polls shared database
 state every three seconds using short read-only transactions, releasing each
-Neon connection before waiting. Catalog polling reads membership, scope and
-report/bundle metadata; only focused triage needs report visibility and
-annotation revisions. No background process, sticky routing, persistent
+Neon connection before waiting. Unchanged polls read only session/role and internal invalidation counters.
+Catalog changes reload membership, scope and report/bundle metadata; annotation
+changes alone read the focused workspace revision without rebuilding its catalog. No background process, sticky routing, persistent
 database connection, or instance-local notification bus is required. Each
 signed-in browser feed, including on landing, occupies a streaming invocation
 and incurs those reads; see Vercel's
 [streaming and duration guidance](https://vercel.com/docs/functions/streaming-functions#function-duration).
+
+Team annotation hydration and refresh use one `GET /api/teams/:id/annotations`
+request for triage and comments across the workspace. Shared annotation bodies
+are returned once, with per-report finding references preserving visibility.
+Access is rechecked after reading the batch. Individual management
+previews retain their report-scoped endpoints.
 
 Session and team visibility are rechecked during polling. Membership loss stops
 focused triage while retaining catalog notifications; logout, expiry or role

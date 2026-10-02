@@ -26,6 +26,7 @@ let pushStatus = 200
 // What GET /api/reports/<id>/triage answers, per report id; null = failure.
 // A function answers with a promise the test controls.
 let serverEntries = {}
+let annotationCalls = [], annotationResult = {}
 const pushes = () => calls.filter((c) => c.fetch === undefined)
 
 mock.module('../client/index.js', { namedExports: {
@@ -34,6 +35,11 @@ mock.module('../client/index.js', { namedExports: {
   saveTriage: () => { saves++; notifier(); return Promise.resolve() },
 } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
+  fetchTeamAnnotations: async (teamId, options) => {
+    annotationCalls.push({ teamId, options })
+    const reports = await (typeof annotationResult === 'function' ? annotationResult() : annotationResult)
+    return reports ? id => Object.hasOwn(reports, id) ? reports[id] : null : null
+  },
   fetchReportTriage: (id, teamId, options) => {
     calls.push({ fetch: id })
     if (typeof serverEntries === 'function') return serverEntries(id, teamId, options)
@@ -44,7 +50,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
 mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedFixes: teamId => { invalidations.push(teamId) } } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.method(console, 'warn', () => {})
-const { hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } = await import('../ui/view/managed-triage.js')
+const { createManagedAnnotationRead, hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } = await import('../ui/view/managed-triage.js')
 const { saveTriage } = await import('../client/index.js')
 
 mock.timers.enable({ apis: ['setTimeout'] })
@@ -76,6 +82,7 @@ beforeEach(async () => {
   state.currentManagedTeam = null
   state.managedSession = { role: 'triage', csrfToken: 'tok' }
   saves = 0; renders = 0; calls = []; invalidations = []; pushStatus = 200; serverEntries = {}
+  annotationCalls = []; annotationResult = {}
   initManagedTriagePush()
 })
 
@@ -608,4 +615,48 @@ test('the feed watchdog escapes a stalled triage POST without cancelling or repl
   await edit('x', { color: 'blue' })
   await drain()
   assert.deepEqual(pushes(), [push('B', { x: { color: 'red' } }), push('B', { x: { color: 'blue' } })])
+})
+
+test('team hydration and refresh share one snapshot and preserve edits during the batch', async () => {
+  state.currentManagedTeam = 'team'
+  state.managedReports = [{ id: 'A' }, { id: 'B' }]
+  state.reports = [
+    { _managedReportId: 'A', groups: [[{ id: 'x' }]] },
+    { _managedReportId: 'B', groups: [[{ id: 'y' }]] },
+  ]
+  annotationResult = { A: { entries: { x: { color: 'blue' } }, comments: [] }, B: { entries: {}, comments: [] } }
+  let readAnnotations = createManagedAnnotationRead('team')
+  assert.deepEqual(await Promise.all(['A', 'B'].map(id => hydrateManagedReportTriage(id, { readAnnotations, renderView: false }))), [true, true])
+  assert.equal(annotationCalls.length, 1)
+  assert.equal(state.triage.get('x').color, 'blue')
+  assert.equal(calls.filter(call => call.fetch).length, 0, 'no per-report HTTP reads')
+  const response = Promise.withResolvers()
+  annotationResult = () => response.promise
+  readAnnotations = createManagedAnnotationRead('team')
+  const refreshes = ['A', 'B'].map(id => refreshManagedReportTriage(id, { readAnnotations }))
+  await settle()
+  await edit('y', { color: 'red' })
+  await drain()
+  response.resolve({ A: { entries: { x: { color: 'green' } }, comments: [] }, B: { entries: { y: { color: 'blue' } }, comments: [] } })
+  assert.deepEqual(await Promise.all(refreshes), [true, true])
+  assert.equal(annotationCalls.length, 2, 'each refresh gets a new snapshot')
+  assert.equal(state.triage.get('x').color, 'green')
+  assert.equal(state.triage.get('y').color, 'red', 'the batch cannot undo an edit posted while it was in flight')
+})
+
+test('team annotation reads wait for pending writes and respect cancellation', async () => {
+  await open('B', ['x'])
+  const write = Promise.withResolvers()
+  pushStatus = () => write.promise
+  await edit('x', { color: 'red' })
+  const controller = new AbortController()
+  const read = createManagedAnnotationRead('team', controller.signal)
+  const result = read('B')
+  await settle()
+  assert.equal(annotationCalls.length, 0)
+  controller.abort()
+  assert.equal(await result, null)
+  write.resolve(200)
+  await settle()
+  assert.equal(annotationCalls.length, 0)
 })

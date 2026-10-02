@@ -17,7 +17,7 @@ import { bucketOf, saveTriage, setEntry, setManagedTriageChangeNotifier, state }
 import { clearManagedWorkspace } from '../../client/managed/workspace.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_COLOR, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_TEXT } from '../../common/managed/triage.ts'
-import { fetchReportTriage, pushReportTriage } from './client-managed.js'
+import { fetchReportTriage, fetchTeamAnnotations, pushReportTriage } from './client-managed.js'
 import { invalidateManagedFixes } from './managed-pull-requests.js'
 import { render } from './render.js'
 
@@ -276,7 +276,7 @@ export function resetManagedTriage() {
 // which the follow-up push carries up: the user's triage of those findings,
 // never uploaded. Pushes for the report wait for this to finish. Returns true
 // only when the server state was adopted and this is still the active view.
-export async function hydrateManagedReportTriage(reportId, { renderView = true, signal } = {}) {
+export async function hydrateManagedReportTriage(reportId, { renderView = true, signal, readAnnotations } = {}) {
   const reports = state.reports, teamId = state.currentManagedTeam
   const role = state.managedSession?.role, userId = state.managedSession?.id
   const isCurrent = () => !signal?.aborted && state.serverMode === 'managed' && state.localMode !== true
@@ -290,7 +290,7 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true, 
   // not what it reverts.
   flushPending()
   if (!(await waitForTriageFlush(signal)) || !isCurrent()) return false
-  const entries = await fetchReportTriage(reportId, teamId, { signal })
+  const entries = readAnnotations ? (await readAnnotations(reportId))?.entries : await fetchReportTriage(reportId, teamId, { signal })
   // Bail when the fetch failed or the user already navigated elsewhere.
   if (entries == null || !isCurrent()) return false
   let changed = false
@@ -336,7 +336,7 @@ function waitForTriageFlush(signal) {
 
 // Live reads preserve edits captured locally or posted while the GET was in
 // flight. Flush first so a notification from our own POST cannot roll it back.
-export async function refreshManagedReportTriage(reportId, { signal } = {}) {
+export async function refreshManagedReportTriage(reportId, { signal, readAnnotations } = {}) {
   const reports = state.reports, teamId = state.currentManagedTeam
   const role = state.managedSession?.role, userId = state.managedSession?.id
   const current = () => !signal?.aborted && state.serverMode === 'managed' && !state.localMode
@@ -348,7 +348,7 @@ export async function refreshManagedReportTriage(reportId, { signal } = {}) {
   if (!(await waitForTriageFlush(signal)) || !current()) return false
   const ids = findingIdsForManagedReport(reportId)
   const before = new Map([...ids].map(id => [id, baseline.get(id)]))
-  const entries = await fetchReportTriage(reportId, teamId, { signal })
+  const entries = readAnnotations ? (await readAnnotations(reportId))?.entries : await fetchReportTriage(reportId, teamId, { signal })
   if (entries == null || !current()) return false
   let changed = false, fixChanged = false
   for (const id of ids) {
@@ -367,4 +367,21 @@ export async function refreshManagedReportTriage(reportId, { signal } = {}) {
     render()
   }
   return true
+}
+
+// Full-team views share one read per hydration/refresh across reports and both
+// consumers. Focused reports and management previews keep report-scoped reads.
+// Flush all pending edits before taking the server snapshot.
+export function createManagedAnnotationRead(teamId, signal) {
+  if (!teamId || state.currentManagedReport != null) return undefined
+  let snapshotRead
+  return async reportId => {
+    snapshotRead ??= (async () => {
+      flushPending()
+      if (!(await waitForTriageFlush(signal)) || signal?.aborted) return null
+      return fetchTeamAnnotations(teamId, { signal })
+    })()
+    const readReport = await snapshotRead
+    return readReport?.(reportId) ?? null
+  }
 }

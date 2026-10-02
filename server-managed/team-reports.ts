@@ -6,6 +6,7 @@ import { managedFindingSourcePaths, readManagedReport } from '../common/managed/
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
+import { triageWireEntry } from './triage-response.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 
 type Finding = Record<string, unknown>
@@ -189,4 +190,17 @@ export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId
   const visible = await teamReportVisibility(db, store, snapshot, reportId)
   await recheckTeam(db, sessionId, snapshot)
   return visible.sourcePaths
+}
+
+// Serialize shared annotation bodies once. Reports carry only the annotated
+// finding IDs visible in that report; callers revalidate access before sending.
+export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
+  const visible = await teamVisibility(db, store, snapshot)
+  const ids = new Set<string>()
+  for (const report of visible.values()) for (const id of report.ids) ids.add(id)
+  const { triage, comments } = await db.getAnnotations([...ids])
+  const entries = Object.fromEntries(triage.map(row => [row.findingId, triageWireEntry(row)]))
+  const annotated = new Set([...triage.map(row => row.findingId), ...comments.map(comment => comment.findingId)])
+  const reports = Object.fromEntries([...visible].map(([id, report]) => [id, [...report.ids].filter(finding => annotated.has(finding))]))
+  return { reports, entries, comments }
 }
