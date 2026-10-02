@@ -12,6 +12,30 @@ function templates(value) {
   return value?.strings ? [value, ...value.values.flatMap(templates)] : []
 }
 
+test('bundle conditions default to Node.js and changes preserve selected files and cached directories', async t => {
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', () => {
+    reads++
+    return Promise.resolve(Response.json({ commit, entries }))
+  })
+  const page = new ManagedCreateBundle()
+  assert.deepEqual(page._bundleConditions, { preset: 'node', conditions: ['node'], platforms: [] })
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('src')
+  page.toggleFile('src/entry.ts')
+  const view = page.render()
+  const handler = view.values[view.strings.findIndex(string => string.includes('<bundle-conditions @conditions-change='))]
+  const detail = { preset: 'metro', conditions: ['react-native', 'development'], platforms: ['ios'] }
+  handler({ detail })
+  assert.deepEqual(page._bundleConditions, detail)
+  await page.loadDirectory('src')
+  assert.equal(reads, 1, 'condition changes do not invalidate the immutable directory cache')
+  assert.deepEqual([...page._selected], ['src/entry.ts'])
+  assert.equal(page._commit, commit)
+  assert.match(view.strings.join(''), /disabled>Create a bundle/u)
+})
+
 test('the picker installs the host-provided shared tooltip listener on its own root', () => {
   const page = new ManagedCreateBundle()
   const root = {}

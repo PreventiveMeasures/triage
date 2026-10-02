@@ -1,0 +1,50 @@
+:host { padding: 0; margin: 1.2rem 0; }
+section { padding: .85rem 1rem; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+.conditions-head { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; margin-bottom: .75rem; }
+h2 { margin: 0; font-size: .8rem; font-weight: 500; }
+.presets { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.presets button {
+  display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .65rem; border: 0; border-radius: 3px;
+  background: transparent; color: var(--muted); font-size: .75rem;
+}
+.presets button:hover { background: var(--surface-active); color: var(--text); }
+.presets button[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 15%, var(--bg)); color: var(--accent); }
+.presets button:focus-visible { outline-offset: -1px; }
+svg { width: 1rem; height: 1rem; flex: none; }
+.platforms { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; font-size: .75rem; }
+.platforms > span { color: var(--muted); }
+.platforms label { display: inline-flex; align-items: center; gap: .35rem; }
+.platforms input { margin: 0; width: .85rem; height: .85rem; }
+.condition-editor {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; min-height: 2.25rem; padding: .3rem;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--bg);
+}
+.condition-editor:focus-within { border-color: var(--accent); }
+ul { display: flex; flex-wrap: wrap; gap: .35rem; max-width: 100%; margin: 0; padding: 0; list-style: none; }
+li {
+  display: inline-flex; align-items: center; gap: .35rem; min-width: 0; max-width: 100%; padding: .1rem .25rem .1rem .5rem;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); font-size: .73rem;
+}
+li code { overflow-wrap: anywhere; }
+li button, .add-condition {
+  display: grid; place-items: center; flex: none; width: 1.3rem; height: 1.3rem; padding: 0;
+  border: 0; border-radius: 3px; background: transparent; color: var(--muted);
+}
+li button:hover { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, transparent); }
+.condition-input { display: flex; align-items: center; flex: 1; min-width: 9rem; }
+.condition-editor input {
+  flex: 1; width: 0; min-width: 0; min-height: 1.5rem; padding: .15rem .4rem;
+  border: 0; border-radius: 0; background: transparent; font-size: .75rem;
+}
+.condition-editor input:focus-visible { outline: none; }
+.add-condition { width: 1.6rem; height: 1.6rem; }
+.add-condition:hover:not(:disabled) { color: var(--accent); background: var(--surface-active); }
+p { margin: .5rem 0 0; color: var(--muted); font-size: .7rem; }
+.error { color: var(--critical); }
+@container (width <= 30rem) {
+  section { padding: .75rem; }
+  .conditions-head { gap: .6rem; }
+  .presets { margin-left: auto; }
+  .presets button { padding-inline: .4rem; }
+  .platforms { flex-basis: 100%; }
+}
