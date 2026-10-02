@@ -164,11 +164,12 @@ export class ManagedCreateBundle extends LitElement {
     this._refsRequest = request
     this._loadingRefs = true
     try {
-      const refs = await browseRepository('refs', { repoId }, request.signal)
+      const { defaultContents, ...refs } = await browseRepository('refs', { repoId, withDefault: 'true' }, request.signal)
       if (request.signal.aborted) return
       this._refs = refs
       this._refName = refs.defaultBranch || refs.branches[0] || ''
-      if (this._refName) void this.loadDirectory('')
+      if (defaultContents) this.useDirectory(defaultContents, '')
+      else if (this._refName) void this.loadDirectory('')
     } catch (error) {
       if (!request.signal.aborted) this._refsError = error.message
     } finally {
@@ -177,6 +178,8 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   changeRevision(kind, name) {
+    this._refsRequest?.abort()
+    this._loadingRefs = false
     this.resetFiles()
     this._refKind = kind
     this._refName = name
@@ -310,21 +313,7 @@ export class ManagedCreateBundle extends LitElement {
     try {
       const data = await browseRepository('contents', { repoId: this._repoId, ref, path }, request.signal)
       if (request.signal.aborted) return
-      this._commit = data.commit
-      this._entries = data.entries.toSorted((a, b) => Number(b.type === 'dir') - Number(a.type === 'dir') || a.name.localeCompare(b.name))
-      this._limited = data.limited
-      this._packageEntryPoints = data.packageEntryPoints ?? []
-      this._solidityEntryPoints = data.solidityEntryPoints ?? []
-      this._soliditySuggestionsLimited = data.soliditySuggestionsLimited ?? false
-      const suggestions = [...this._packageEntryPoints, ...this._solidityEntryPoints]
-        .filter(entry => !this._dismissedSuggestions.has(entry))
-      this._selected = new Set([...this._selected, ...suggestions])
-      if (/^[a-f\d]{40}$/iu.test(data.commit)) {
-        const cacheKey = JSON.stringify([this._repoId, data.commit, path])
-        this._directories.set(cacheKey, { entries: this._entries, limited: this._limited, packageEntryPoints: this._packageEntryPoints,
-          solidityEntryPoints: this._solidityEntryPoints, soliditySuggestionsLimited: this._soliditySuggestionsLimited })
-        if (this._directories.size > MAX_CACHED_DIRECTORIES) this._directories.delete(this._directories.keys().next().value)
-      }
+      this.useDirectory(data, path)
     } catch (error) {
       if (!request.signal.aborted) {
         this._directories.clear()
@@ -332,6 +321,25 @@ export class ManagedCreateBundle extends LitElement {
       }
     } finally {
       if (!request.signal.aborted) this._loading = false
+    }
+  }
+
+  useDirectory(data, path) {
+    this._path = path
+    this._commit = data.commit
+    this._entries = data.entries.toSorted((a, b) => Number(b.type === 'dir') - Number(a.type === 'dir') || a.name.localeCompare(b.name))
+    this._limited = data.limited
+    this._packageEntryPoints = data.packageEntryPoints ?? []
+    this._solidityEntryPoints = data.solidityEntryPoints ?? []
+    this._soliditySuggestionsLimited = data.soliditySuggestionsLimited ?? false
+    const suggestions = [...this._packageEntryPoints, ...this._solidityEntryPoints]
+      .filter(entry => !this._dismissedSuggestions.has(entry))
+    this._selected = new Set([...this._selected, ...suggestions])
+    if (/^[a-f\d]{40}$/iu.test(data.commit)) {
+      const cacheKey = JSON.stringify([this._repoId, data.commit, path])
+      this._directories.set(cacheKey, { entries: this._entries, limited: this._limited, packageEntryPoints: this._packageEntryPoints,
+        solidityEntryPoints: this._solidityEntryPoints, soliditySuggestionsLimited: this._soliditySuggestionsLimited })
+      if (this._directories.size > MAX_CACHED_DIRECTORIES) this._directories.delete(this._directories.keys().next().value)
     }
   }
 

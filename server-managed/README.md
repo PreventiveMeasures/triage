@@ -494,6 +494,14 @@ require a user permission check. Admin status does not bypass the GitHub gate.
 
 `GET /api/admin/repositories/refs?repoId=…` returns the default branch and up to
 100 branch/tag suggestions; any branch or tag name can also be entered.
+With `&withDefault=true`, the same response includes `defaultContents`: the
+default branch's root directory and resolved commit, or `null` when no default
+branch is available. The bundle picker uses this to load revisions and files in
+one request. A nullable `managed_selected_repo.cached_default_branch` stores the
+last live default independently of the repository-selection metadata. Branch/tag
+suggestions and the cached branch's directory are read concurrently. If the
+default changed (or was not cached), the server updates the hint and reads the
+current default's directory before returning either result.
 `GET /api/admin/repositories/contents?repoId=…&ref=…&path=…` returns directory
 entries and a resolved commit SHA, which pins subsequent navigation. These
 read-only endpoints independently enforce the same two gates.

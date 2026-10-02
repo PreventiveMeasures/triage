@@ -73,6 +73,30 @@ async function database(t, options = {}) {
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
 
+test('Postgres upgrades and persists nullable repository default caches without changing selection metadata', async t => {
+  const { db, connect } = await database(t)
+  await db.selectRepo({ repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, 1)
+  let [repo] = await db.listSelectedRepos()
+  assert.equal(repo.cachedDefaultBranch, null)
+  assert.equal(await db.cacheRepoDefaultBranch(repo, 'release'), true)
+  assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, 'release')
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_selected_repo DROP COLUMN cached_default_branch; DELETE FROM managed_schema_version WHERE version = 12;') }
+  finally { await legacy.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  ;[repo] = await upgraded.listSelectedRepos()
+  assert.equal(repo.cachedDefaultBranch, null)
+  assert.equal(repo.defaultBranch, 'main')
+  assert.equal(await upgraded.cacheRepoDefaultBranch({ ...repo, fullName: 'wrong/repo' }, 'bad'), false)
+  assert.equal(await upgraded.cacheRepoDefaultBranch(repo, 'next'), true)
+  const reopened = await openPostgresManagedDb(connect)
+  t.after(() => reopened.close())
+  assert.equal((await reopened.listSelectedRepos())[0].cachedDefaultBranch, 'next')
+  assert.equal(await reopened.cacheRepoDefaultBranch(repo, null), true)
+  assert.equal((await reopened.listSelectedRepos())[0].cachedDefaultBranch, null)
+})
+
 test('Postgres management catalogs preserve permission and linked-bundle filtering', async t => {
   const { db } = await database(t)
   await checkManagementCatalog(db)

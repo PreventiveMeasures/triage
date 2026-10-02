@@ -573,7 +573,7 @@ test('db: selectRepo upserts (keeps added_at/by), listSelectedRepos reads, desel
   const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, 1000)
   await db.selectRepo({ repoId: 42, fullName: 'o/repo', private: true, installationId: 7, defaultBranch: 'main', htmlUrl: 'https://github.com/o/repo', addedBy: uid }, 2000)
   let rows = await db.listSelectedRepos()
-  assert.deepEqual(rows, [{ repoId: 42, fullName: 'o/repo', private: true, installationId: 7, defaultBranch: 'main', htmlUrl: 'https://github.com/o/repo', addedBy: uid, addedAt: 2000 }])
+  assert.deepEqual(rows, [{ repoId: 42, fullName: 'o/repo', private: true, installationId: 7, defaultBranch: 'main', cachedDefaultBranch: null, htmlUrl: 'https://github.com/o/repo', addedBy: uid, addedAt: 2000 }])
   // Re-select refreshes the mutable context (rename, now public, no install) but
   // keeps the original added_at (audit).
   await db.selectRepo({ repoId: 42, fullName: 'o/renamed', private: false, installationId: null, defaultBranch: 'dev', htmlUrl: 'https://github.com/o/renamed', addedBy: uid }, 5000)

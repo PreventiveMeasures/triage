@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
@@ -96,13 +101,195 @@ async function fixture(t, { role = 'manage', selectedRepo = repo, member = true,
   await db.setTeamRepo('team', 1, 'src/allowed')
   if (member) await db.setTeamMember('team', userId, { dependencies: true, security: true })
   const handler = createManagedRequestHandler({ config: fixtureConfig, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  const responses = []
   const request = async (query, { method = 'GET', signedIn = true, route = 'contents' } = {}) => {
-    const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
+    const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body; responses.push(body) } }
     await handler({ method, url: `/api/admin/repositories/${route}?${new URLSearchParams(query)}`, headers: { cookie: signedIn ? session.setCookie.split(';')[0] : undefined } }, res)
     return { status: res.status, body: JSON.parse(res.body), headers: res.headers }
   }
-  return { db, userId, request }
+  return { db, userId, request, responses }
 }
+
+for (const first of ['refs', 'contents']) {
+  test(`refs withDefault reads cached default contents concurrently and waits for ${first === 'refs' ? 'contents' : 'refs'}`, async t => {
+    const { db, request, responses } = await fixture(t, { role: 'admin' })
+    await db.cacheRepoDefaultBranch((await db.listSelectedRepos())[0], 'main')
+    let finishContents, finishRefs
+    t.mock.method(globalThis, 'fetch', url => {
+      const { pathname, searchParams } = new URL(url)
+      if (pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+      if (pathname.endsWith('/branches')) return new Promise(resolve => { finishRefs = () => resolve(Response.json([{ name: 'main' }])) })
+      if (pathname.endsWith('/tags')) return Promise.resolve(Response.json([{ name: 'v1' }]))
+      if (pathname.endsWith('/commits/heads%2Fmain')) return Promise.resolve(Response.json({ sha: commit }))
+      assert.equal(pathname, '/repos/org/repo/contents/')
+      assert.equal(searchParams.get('ref'), commit)
+      return new Promise(resolve => { finishContents = () => resolve(Response.json([{ name: 'entry.ts', path: 'entry.ts', type: 'file' }])) })
+    })
+    const pending = request({ repoId: '1', withDefault: 'true' }, { route: 'refs' })
+    await setImmediate()
+    assert.equal(typeof finishRefs, 'function')
+    assert.equal(typeof finishContents, 'function', 'contents starts while refs are still pending')
+    assert.deepEqual(responses, [])
+    if (first === 'refs') finishRefs()
+    else finishContents()
+    await setImmediate()
+    assert.deepEqual(responses, [], 'neither half is sent early')
+    if (first === 'refs') finishContents()
+    else finishRefs()
+    assert.deepEqual(await pending, { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: {
+      defaultBranch: 'main', branches: ['main'], tags: ['v1'], defaultContents: {
+        entries: [{ name: 'entry.ts', path: 'entry.ts', type: 'file' }], limited: false, path: '', commit,
+      },
+    } })
+    assert.equal(responses.length, 1)
+  })
+}
+
+for (const deleted of [false, true]) {
+  test(`refs withDefault replaces a ${deleted ? 'deleted' : 'renamed'} cached default before responding`, async t => {
+    const { db, request, responses } = await fixture(t, { role: 'admin' })
+    await db.cacheRepoDefaultBranch((await db.listSelectedRepos())[0], 'old/default')
+    let finishOld, finishRefs
+    const commits = []
+    const currentCommit = 'b'.repeat(40)
+    t.mock.method(globalThis, 'fetch', async url => {
+      const { pathname, searchParams } = new URL(url)
+      if (pathname === '/repos/org/repo') return Response.json({ ...publicMetadata, default_branch: 'release/current' })
+      if (pathname.endsWith('/branches')) return new Promise(resolve => { finishRefs = () => resolve(Response.json([{ name: 'feature' }])) })
+      if (pathname.endsWith('/tags')) return Response.json([])
+      if (pathname.includes('/commits/')) {
+        const ref = decodeURIComponent(pathname.split('/commits/')[1])
+        commits.push(ref)
+        if (ref === 'heads/old/default') return new Promise(resolve => { finishOld = () => resolve(deleted ? Response.json({}, { status: 404 }) : Response.json({ sha: commit })) })
+        assert.equal(ref, 'heads/release/current')
+        assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, 'release/current', 'the cache is updated before refetching')
+        return Response.json({ sha: currentCommit })
+      }
+      assert.equal(pathname, '/repos/org/repo/contents/')
+      const name = searchParams.get('ref') === currentCommit ? 'current.ts' : 'stale.ts'
+      return Response.json([{ name, path: name, type: 'file' }])
+    })
+    const pending = request({ repoId: '1', withDefault: 'true' }, { route: 'refs' })
+    await setImmediate()
+    finishRefs()
+    await setImmediate()
+    assert.deepEqual(commits, ['heads/old/default'], 'replacement waits for the original contents attempt too')
+    assert.deepEqual(responses, [])
+    finishOld()
+    const result = await pending
+    assert.equal(result.status, 200)
+    assert.equal(result.body.defaultBranch, 'release/current')
+    assert.deepEqual(result.body.branches, ['feature'], 'the default need not occur on the first suggestions page')
+    assert.deepEqual(result.body.defaultContents.entries, [{ name: 'current.ts', path: 'current.ts', type: 'file' }])
+    assert.equal(result.body.defaultContents.commit, currentCommit)
+    assert.deepEqual(commits, ['heads/old/default', 'heads/release/current'])
+    assert.equal(responses.length, 1)
+  })
+}
+
+test('refs withDefault populates a cold cache and can clear a missing default', async t => {
+  const { db, request } = await fixture(t, { role: 'admin' })
+  assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, null)
+  let commitReads = 0, defaultBranch = 'main'
+  t.mock.method(globalThis, 'fetch', async url => {
+    const path = new URL(url).pathname
+    if (path === '/repos/org/repo') return Response.json({ ...publicMetadata, default_branch: defaultBranch })
+    if (path.endsWith('/branches') || path.endsWith('/tags')) return Response.json([])
+    if (path.includes('/commits/')) {
+      commitReads++
+      if (!defaultBranch) return Response.json({}, { status: 404 })
+      assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, 'main')
+      return Response.json({ sha: commit })
+    }
+    return Response.json([])
+  })
+  const cold = await request({ repoId: '1', withDefault: 'true' }, { route: 'refs' })
+  assert.equal(cold.status, 200)
+  assert.equal(cold.body.defaultContents.commit, commit)
+  assert.equal(commitReads, 1)
+  assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, 'main')
+  defaultBranch = ''
+  const missing = await request({ repoId: '1', withDefault: 'true' }, { route: 'refs' })
+  assert.equal(missing.status, 200)
+  assert.equal(missing.body.defaultContents, null)
+  assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, null)
+  const plain = await request({ repoId: '1', withDefault: 'false' }, { route: 'refs' })
+  assert.deepEqual(plain.body, { defaultBranch: '', branches: [], tags: [] })
+  assert.equal(commitReads, 2, 'plain refs does not fetch contents')
+})
+
+for (const failure of ['refs', 'contents']) {
+  test(`refs withDefault suppresses the full response when ${failure} fails`, async t => {
+    const { db, request, responses } = await fixture(t, { role: 'admin' })
+    await db.cacheRepoDefaultBranch((await db.listSelectedRepos())[0], 'main')
+    let finishContents
+    t.mock.method(globalThis, 'fetch', url => {
+      const path = new URL(url).pathname
+      if (path === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+      if (path.endsWith('/branches')) return Promise.resolve(failure === 'refs' ? Response.json({}, { status: 503 }) : Response.json([{ name: 'main' }]))
+      if (path.endsWith('/tags')) return Promise.resolve(Response.json([]))
+      if (path.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
+      return new Promise(resolve => { finishContents = () => resolve(failure === 'contents' ? Response.json({}, { status: 404 }) : Response.json([])) })
+    })
+    const pending = request({ repoId: '1', withDefault: 'true' }, { route: 'refs' })
+    await setImmediate()
+    assert.deepEqual(responses, [])
+    finishContents()
+    const result = await pending
+    assert.equal(result.status, failure === 'refs' ? 502 : 404)
+    assert.equal(result.body.defaultBranch, undefined)
+    assert.equal(result.body.defaultContents, undefined)
+    assert.equal(responses.length, 1)
+  })
+}
+
+test('combined refs honors virtual root scopes and rechecks managed and GitHub access', async t => {
+  const { db, request, userId } = await fixture(t)
+  let duringRead = () => {}, metadata = publicMetadata
+  t.mock.method(globalThis, 'fetch', async url => {
+    const path = new URL(url).pathname
+    if (path === '/repos/org/repo') return Response.json(metadata)
+    if (path.endsWith('/branches') || path.endsWith('/tags')) return Response.json([])
+    assert.equal(path, '/repos/org/repo/commits/heads%2Fmain', 'scoped ancestors never fetch the upstream root directory')
+    await duringRead()
+    return Response.json({ sha: commit })
+  })
+  const query = { repoId: '1', withDefault: 'true' }
+  const result = await request(query, { route: 'refs' })
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.defaultContents, { entries: [{ name: 'src', path: 'src', type: 'dir' }], limited: false,
+    path: '', commit, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false })
+  duringRead = () => db.removeTeamMember('team', userId)
+  assert.equal((await request(query, { route: 'refs' })).status, 404)
+  await db.setTeamMember('team', userId, { dependencies: true, security: true })
+  duringRead = () => { metadata = { ...publicMetadata, private: true, visibility: 'private' } }
+  assert.equal((await request(query, { route: 'refs' })).status, 404)
+})
+
+test('SQLite upgrades repository default caches as nullable and preserves selection metadata', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'managed-repo-default-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const path = join(dir, 'db.sqlite')
+  let db = openSqliteManagedDb(path)
+  await db.selectRepo(repo, 1)
+  await db.close()
+  const legacy = new DatabaseSync(path)
+  legacy.exec('ALTER TABLE managed_selected_repo DROP COLUMN cached_default_branch')
+  legacy.close()
+  db = openSqliteManagedDb(path)
+  let [selected] = await db.listSelectedRepos()
+  assert.equal(selected.cachedDefaultBranch, null)
+  assert.equal(await db.cacheRepoDefaultBranch(selected, 'release'), true)
+  await db.close()
+  db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  ;[selected] = await db.listSelectedRepos()
+  assert.equal(selected.cachedDefaultBranch, 'release', 'the cache survives reopening')
+  assert.equal(selected.defaultBranch, 'main', 'selection metadata is independent')
+  assert.equal(await db.cacheRepoDefaultBranch({ ...selected, fullName: 'wrong/repo' }, 'bad'), false)
+  assert.equal(await db.cacheRepoDefaultBranch(selected, null), true)
+  assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, null)
+})
 
 test('browser endpoints require manage access, honor path grants, and recheck changes during GitHub reads', async t => {
   const { db, userId, request } = await fixture(t)
