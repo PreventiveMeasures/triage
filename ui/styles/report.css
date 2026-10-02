@@ -2920,22 +2920,12 @@ body.report-fullscreen {
    the report so a "critical" advisory reads the same red as a
    critical finding. */
 .bundle-advisories-panel {
-  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   overflow: hidden;
   container: bundle-advisories / inline-size;
-}
-.bundle-advisories-panel:has(.bundle-advisories-recheck) .bundle-advisories-toolbar {
-  min-height: 2.25rem;
-  padding-right: 14rem;
-}
-.bundle-advisories-recheck {
-  position: absolute;
-  top: .5rem;
-  right: .75rem;
 }
 .bundle-advisories-recheck:disabled { opacity: .6; }
 .bundle-advisories-skipped {
@@ -2956,7 +2946,9 @@ body.report-fullscreen {
 }
 .bundle-advisories-scopes {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: .75rem;
   margin-left: auto;
   min-width: 0;
   max-width: 100%;

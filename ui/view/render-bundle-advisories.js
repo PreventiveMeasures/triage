@@ -266,10 +266,11 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
   const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
   const summary = renderAdvisoriesSummary(details)
   return html`<div class="bundle-advisories-panel">
-    ${renderRepositoryRecheck(details, renderFn)}
     ${summary !== nothing || reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-toolbar">
     ${summary}
-    ${reasons.length > 0 ? html`<div class="bundle-advisories-scopes"><bundle-scope-selector
+    ${reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-scopes">
+    ${renderRepositoryRecheck(details, renderFn)}
+    ${reasons.length > 0 ? html`<bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
       @scope-change=${event => {
         const reason = event.detail.value.replace(/^reason:/u, '')
@@ -277,7 +278,8 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
         const loading = ensureBundleAdvisories(details, renderFn)
         renderFn()
         return loading
-      }}></bundle-scope-selector></div>` : nothing}
+      }}></bundle-scope-selector>` : nothing}
+    </div>` : nothing}
     </div>` : nothing}
     ${renderAdvisoriesBody(details)}
   </div>`
