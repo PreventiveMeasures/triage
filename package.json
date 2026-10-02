@@ -2,7 +2,7 @@
   "name": "@preventive/triage",
   "version": "1.0.0-alpha.27",
   "description": "Client & relay server for triaging of automated reports",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "author": {
     "name": "Nikita Skovoroda",
     "email": "chalkerx@gmail.com",
@@ -42,6 +42,8 @@
     "triage-managed-server": "server-managed/cli.js"
   },
   "files": [
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
     "api/reap.ts",
     "cli.js",
     "server.ts",

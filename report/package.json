@@ -2,7 +2,7 @@
   "name": "@preventive/report",
   "version": "1.0.0-alpha.4",
   "description": "Parsers for security-scan reports, and a markdown writer whose document reads back in",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "author": {
     "name": "Nikita Skovoroda",
     "email": "chalkerx@gmail.com",
@@ -31,6 +31,8 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
     "index.js",
     "src/finding-id.js",
     "src/finding.js",

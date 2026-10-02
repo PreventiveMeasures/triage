@@ -854,4 +854,5 @@ relay behaviour, listed here so the trust boundary is explicit.
 
 ## License
 
-MIT.
+MIT OR Apache-2.0, at your option: see [LICENSE-MIT](../LICENSE-MIT) and
+[LICENSE-APACHE](../LICENSE-APACHE).
