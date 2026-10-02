@@ -97,7 +97,6 @@ button:disabled, input:disabled { opacity: .5; }
 .package-suggestions li { min-width: 0; max-width: 100%; }
 .package-suggestions li code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .package-suggestions .btn { flex: none; font-size: .72rem; }
-.entry-points > .btn { flex: none; }
 .selection { flex: 1; min-width: 0; }
 .selection .note { margin: .5rem 0 0; }
 .selection-head { display: flex; align-items: center; gap: .75rem; }

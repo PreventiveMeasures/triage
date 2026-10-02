@@ -51,7 +51,7 @@ test('custom conditions support adding, deduplicating, removing, and restoring a
   const control = new BundleConditions()
   control._draft = ' development, custom:condition node development '
   const form = templates(control.render()).find(template => template.strings.some(string => string.includes('class="condition-editor"')))
-  const submit = form.values.find(value => typeof value === 'function')
+  const submit = form.values[form.strings.findIndex(string => string.includes('<form class="condition-editor"'))]
   let prevented = false
   submit({ preventDefault() { prevented = true } })
   assert.equal(prevented, true)

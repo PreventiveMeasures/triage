@@ -372,11 +372,11 @@ export class ManagedCreateBundle extends LitElement {
       </section>
       ${packageEntryPointSuggestions(this._packageEntryPoints, this._selected, paths => { this._selected = new Set([...this._selected, ...paths]) })}
       ${solidityEntryPointSuggestions(this._solidityEntryPoints, this._selected, paths => { this._selected = new Set([...this._selected, ...paths]) }, this._soliditySuggestionsLimited)}
-      <bundle-conditions @conditions-change=${event => { this._bundleConditions = event.detail }}></bundle-conditions>
       <section class="entry-points" aria-label="Selected entry points"><div class="selection"><div class="selection-head"><h2>Entry points <span aria-live="polite">${this._selected.size}</span></h2>${this._selected.size > 0 ? html`<button type="button" class="btn clear-selection" @click=${() => { this._selected = new Set() }}>Clear all</button>` : nothing}</div>
         ${this._selected.size > 0 ? html`<ul>${[...this._selected].map(path => html`<li>${sourceFileIcon(path)}<span data-tooltip=${path}>${path}</span><button type="button" aria-label=${`Remove ${path}`} @click=${() => this.toggleFile(path)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>` : html`<p class="note">Select files above. You can choose entry points from multiple directories.</p>`}
-        </div><button type="button" class="btn primary" disabled>Create a bundle</button>
+        </div>
       </section>
+      <bundle-conditions @conditions-change=${event => { this._bundleConditions = event.detail }}><button type="button" slot="actions" class="btn primary" disabled>Create a bundle</button></bundle-conditions>
     `
   }
 }
