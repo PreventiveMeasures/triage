@@ -68,6 +68,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec('PRAGMA foreign_keys = ON;')
     migrateManagedTableNames(db)
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA)
+    ensureColumn(db, 'managed_selected_repo', 'cached_default_branch', 'TEXT')
     for (const table of ['managed_report', 'managed_bundle']) {
       ensureColumn(db, table, 'data_key', 'TEXT')
       ensureColumn(db, table, 'storage_encrypted', 'INTEGER NOT NULL DEFAULT 0')

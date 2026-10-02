@@ -7,6 +7,79 @@ import { ManagedCreateBundle } from '../ui/managed/create-bundle.js'
 const commit = 'a'.repeat(40)
 const entries = [{ name: 'entry.ts', path: 'src/entry.ts', type: 'file' }]
 
+test('repository selection loads refs and default contents in one request and seeds immutable navigation', async t => {
+  const calls = []
+  const files = [{ name: 'z.ts', path: 'z.ts', type: 'file' }, { name: 'src', path: 'src', type: 'dir' }]
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const request = new URL(url, 'https://test.invalid')
+    calls.push(request)
+    assert.equal(request.pathname, '/api/admin/repositories/refs')
+    assert.equal(request.searchParams.get('withDefault'), 'true')
+    assert.equal(options.signal.aborted, false)
+    return Promise.resolve(Response.json({ defaultBranch: 'release', branches: ['develop'], tags: ['v1'],
+      defaultContents: { path: '', commit, entries: files, limited: true, packageEntryPoints: ['z.ts'], solidityEntryPoints: ['Root.sol'], soliditySuggestionsLimited: true } }))
+  })
+  const page = new ManagedCreateBundle()
+  await page.selectRepository(1)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(page._refs, { defaultBranch: 'release', branches: ['develop'], tags: ['v1'] })
+  assert.equal(page._refName, 'release')
+  assert.equal(page._commit, commit)
+  assert.deepEqual(page._entries, [files[1], files[0]])
+  assert.deepEqual([...page._selected], ['z.ts', 'Root.sol'])
+  assert.equal(page._limited, true)
+  assert.equal(page._soliditySuggestionsLimited, true)
+  await page.loadDirectory('')
+  assert.equal(calls.length, 1, 'initial contents seeds the same commit-pinned cache as normal navigation')
+})
+
+test('late combined refs cannot overwrite a newer repository, revision, or detached view', async t => {
+  const pending = []
+  t.mock.method(globalThis, 'fetch', (_url, { signal }) => new Promise(resolve => { pending.push({ resolve, signal }) }))
+  const data = { defaultBranch: 'main', branches: ['main'], tags: [], defaultContents: { commit, entries, limited: false, packageEntryPoints: ['old.ts'] } }
+  const page = new ManagedCreateBundle()
+  const first = page.selectRepository(1)
+  const second = page.selectRepository(2)
+  assert.equal(pending[0].signal.aborted, true)
+  pending[0].resolve(Response.json(data))
+  await first
+  assert.equal(page._repoId, 2)
+  assert.equal(page._entries, null)
+  pending[1].resolve(Response.json({ ...data, defaultBranch: 'release' }))
+  await second
+  assert.equal(page._refName, 'release')
+  assert.equal(page._commit, commit)
+  const third = page.selectRepository(3)
+  page.changeRevision('commit', 'b'.repeat(40))
+  assert.equal(pending[2].signal.aborted, true)
+  pending[2].resolve(Response.json(data))
+  await third
+  assert.equal(page._refName, 'b'.repeat(40))
+  assert.equal(page._entries, null)
+  assert.equal(page._selected.size, 0)
+  const fourth = page.selectRepository(4)
+  page.disconnectedCallback()
+  pending[3].resolve(Response.json(data))
+  await fourth
+  assert.equal(page._entries, null)
+  assert.equal(page._commit, '')
+})
+
+test('a combined response with no default or branches leaves the picker ready for a typed revision', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(url)
+    return Promise.resolve(Response.json({ defaultBranch: '', branches: [], tags: [], defaultContents: null }))
+  })
+  const page = new ManagedCreateBundle()
+  await page.selectRepository(1)
+  assert.equal(calls.length, 1)
+  assert.equal(page._refName, '')
+  assert.equal(page._entries, null)
+  assert.equal(page._refsError, '')
+  assert.equal(page._loadingRefs, false)
+})
+
 function templates(value) {
   if (Array.isArray(value)) return value.flatMap(templates)
   return value?.strings ? [value, ...value.values.flatMap(templates)] : []

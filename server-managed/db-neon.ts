@@ -30,7 +30,13 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 11 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 12 }, (_, i) => i + 1).every(version => versions.has(version))
+}
+
+async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 12')).rows.length > 0) return
+  await db.query('ALTER TABLE managed_selected_repo ADD COLUMN IF NOT EXISTS cached_default_branch TEXT')
+  await db.query('INSERT INTO managed_schema_version VALUES (12)')
 }
 
 async function initialize(db: PgConnection): Promise<void> {
@@ -105,9 +111,9 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (10)')
     }
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
-      await db.query(postgresSchema(revisionSchema(true)))
-      await db.query('INSERT INTO managed_schema_version VALUES (11)')
+      await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
+    await migrateRepositoryDefaultCache(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

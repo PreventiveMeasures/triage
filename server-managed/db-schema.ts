@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS managed_selected_repo (
   is_private      INTEGER NOT NULL,
   installation_id INTEGER,
   default_branch  TEXT NOT NULL,
+  -- Live browser hint; independent of the default discovered at selection.
+  cached_default_branch TEXT,
   html_url        TEXT NOT NULL,
   added_by        TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
   added_at        INTEGER NOT NULL,

@@ -59,7 +59,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedBundle, ManagedDb, ManagedSession, ReportRecord, StoredUser, TriageEventRow } from './db.ts'
+import type { ManagedBundle, ManagedDb, ManagedSession, ReportRecord, SelectedRepo, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -76,7 +76,7 @@ import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, public
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
-import { createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
+import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
@@ -995,6 +995,40 @@ async function handleBrowsableRepositories(res: ServerResponse, deps: ManagedHtt
   sendJson(res, 200, { repos: selectableRepos(await bundleRepos(deps, s.user)) })
 }
 
+type RepositoryReader = Awaited<ReturnType<ReturnType<typeof createRepositoryBrowser>['reader']>>
+type RepositoryContents = Awaited<ReturnType<typeof readRepositoryContents>>
+type RepositoryRefs = Awaited<ReturnType<RepositoryReader['refs']>> & { defaultContents?: RepositoryContents | null }
+
+async function readRepositoryContents(reader: RepositoryReader, ref: string, path: string, virtualEntries: RepositoryEntry[] | null) {
+  const commit = await reader.commit(ref)
+  const contents = virtualEntries ? { entries: virtualEntries, limited: false } : await reader.directory(path, commit)
+  return { ...contents, path, commit }
+}
+
+async function readRepositoryRefs(db: ManagedDb, reader: RepositoryReader, repo: SelectedRepo, withDefault: boolean, virtualEntries: RepositoryEntry[] | null): Promise<RepositoryRefs> {
+  // Wait for both, including failures: a deleted cached branch must not prevent
+  // a successful live default lookup from recovering the initial directory.
+  const [refs, contents] = await Promise.allSettled([
+    reader.refs(),
+    withDefault && repo.cachedDefaultBranch ? readRepositoryContents(reader, `heads/${repo.cachedDefaultBranch}`, '', virtualEntries) : Promise.resolve(null),
+  ])
+  if (refs.status === 'rejected') throw refs.reason
+  const defaultBranch = refs.value.defaultBranch || null
+  const changed = defaultBranch !== repo.cachedDefaultBranch
+  if (changed) await db.cacheRepoDefaultBranch(repo, defaultBranch)
+  if (!withDefault) return refs.value
+  if (!defaultBranch) return { ...refs.value, defaultContents: null }
+  if (changed) return { ...refs.value, defaultContents: await readRepositoryContents(reader, `heads/${defaultBranch}`, '', virtualEntries) }
+  if (contents.status === 'rejected') throw contents.reason
+  return { ...refs.value, defaultContents: contents.value }
+}
+
+function scopeRepositoryContents(contents: RepositoryContents | null, virtualEntries: RepositoryEntry[] | null) {
+  return contents && { ...contents, ...(virtualEntries ? {
+    entries: virtualEntries, limited: false, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false,
+  } : {}) }
+}
+
 // Recheck repository/path grants after upstream reads, before returning names.
 async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams, refs: boolean): Promise<void> {
   const repoId = Number(query.get('repoId'))
@@ -1003,7 +1037,8 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  const path = normalized.path ?? ''
+  const withDefault = refs && query.get('withDefault') === 'true'
+  const path = refs ? '' : normalized.path ?? ''
   const authorize = async () => {
     const s = await readManageSession(res, deps, cookie)
     if (!s) return null
@@ -1011,7 +1046,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
     const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
     const virtualEntries = scopedDirectory(path, scopes)
-    if (!refs && virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
+    if ((!refs || withDefault) && virtualEntries?.length === 0) { sendJson(res, 404, { error: 'no-directory' }); return null }
     return { repo, virtualEntries, user: s.user }
   }
   const access = await authorize()
@@ -1019,16 +1054,19 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   try {
     const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id))
     const reader = await browser.reader(access.repo)
-    const commit = refs ? '' : await reader.commit(ref)
-    const result = refs ? await reader.refs() : access.virtualEntries
-      ? { entries: access.virtualEntries, limited: false } : await reader.directory(path, commit)
+    const revisions = refs ? await readRepositoryRefs(deps.db, reader, access.repo, withDefault, access.virtualEntries) : null
+    const contents = refs ? null : await readRepositoryContents(reader, ref, path, access.virtualEntries)
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
-    if (JSON.stringify(current.repo) !== JSON.stringify(access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, refs ? result : {
-      ...result, ...(current.virtualEntries ? { entries: current.virtualEntries, limited: false, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false } : {}), path, commit,
-    })
+    // This request (or another reader) may have refreshed the shared hint. It
+    // does not change repository identity, credentials, or managed grants.
+    if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
+      sendJson(res, 409, { error: 'repository-changed' }); return
+    }
+    sendJson(res, 200, refs ? { ...revisions, ...(withDefault ? {
+      defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),
+    } : {}) } : scopeRepositoryContents(contents, current.virtualEntries))
   } catch (err) {
     if (err instanceof GithubApiError) {
       sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })

@@ -73,6 +73,9 @@ export interface SelectedRepo {
   private: boolean
   installationId: number | null
   defaultBranch: string
+  // Last live default observed by the repository browser, independent of the
+  // selection/discovery snapshot above. NULL means unknown or unavailable.
+  cachedDefaultBranch: string | null
   htmlUrl: string
   addedBy: string | null
   addedAt: number
@@ -87,7 +90,7 @@ export interface ManagedRepo extends SelectedRepo {
 
 // What a caller supplies to select (upsert) a repo; the store stamps the
 // timestamps.
-export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt'>
+export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt' | 'cachedDefaultBranch'>
 
 // A stored report's metadata. The bytes live in the blob-store keyed by `id`;
 // `contentType` + `filename` ride here so a download can label them, `sha256`
@@ -339,6 +342,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // mutable context while keeping the original added_by/added_at; deselectRepo
   // resolves true iff a row was removed.
   selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
+  cacheRepoDefaultBranch(repo: SelectedRepo, branch: string | null): Promise<boolean>
   connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean>
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
@@ -541,6 +545,8 @@ function prepareStatements(db: ManagedSql) {
       WHERE repo_id = ? AND full_name = ? AND added_at = ? AND installation_id IS NULL
         AND EXISTS (SELECT 1 FROM managed_session s JOIN managed_user u ON u.id = s.user_id
           WHERE s.id = ? AND s.expires_at > ? AND u.role = 'admin')`),
+    cacheRepoDefaultBranchStmt: db.prepare(`UPDATE managed_selected_repo SET cached_default_branch = ?
+      WHERE repo_id = ? AND full_name = ? AND added_at = ? AND active = 1`),
     deleteRepoStmt: db.prepare(`DELETE FROM managed_selected_repo WHERE repo_id = ?`),
     deactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 0 WHERE repo_id = ? AND active = 1`),
     reactivateRepoStmt: db.prepare(`UPDATE managed_selected_repo SET active = 1 WHERE repo_id = ? AND active = 0`),
@@ -558,13 +564,13 @@ function prepareStatements(db: ManagedSql) {
       UNION SELECT finding_id FROM managed_finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))) AS annotations`),
     selectReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
-              installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
+              installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
               added_by AS addedBy, added_at AS addedAt, active AS active
          FROM managed_selected_repo WHERE active = 1 ORDER BY full_name ASC`,
     ),
     selectAllReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
-              installation_id AS installId, default_branch AS branch, html_url AS htmlUrl,
+              installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
               added_by AS addedBy, added_at AS addedAt, active AS active
          FROM managed_selected_repo ORDER BY full_name ASC`,
     ),
@@ -860,7 +866,7 @@ function prepareStatements(db: ManagedSql) {
 
 type RepoRow = {
   repoId: number; fullName: string; priv: number; installId: number | null
-  branch: string; htmlUrl: string; addedBy: string | null; addedAt: number; active: number
+  branch: string; cachedDefaultBranch: string | null; htmlUrl: string; addedBy: string | null; addedAt: number; active: number
 }
 
 // The repo-selection slice of ManagedDb, split out to keep openSqliteManagedDb
@@ -870,7 +876,7 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     selectReportsForRepoStmt, selectBundlesForRepoStmt, deleteReportsForRepoStmt, deleteBundlesForRepoStmt } = stmts
   const readRepo = (r: RepoRow): SelectedRepo => ({
     repoId: r.repoId, fullName: r.fullName, private: r.priv === 1,
-    installationId: r.installId, defaultBranch: r.branch, htmlUrl: r.htmlUrl,
+    installationId: r.installId, defaultBranch: r.branch, cachedDefaultBranch: r.cachedDefaultBranch, htmlUrl: r.htmlUrl,
     addedBy: r.addedBy, addedAt: r.addedAt,
   })
   const readManagedRepo = (r: RepoRow): ManagedRepo => ({ ...readRepo(r), active: r.active === 1 })
@@ -880,6 +886,9 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
         repo.repoId, repo.fullName, repo.private ? 1 : 0, repo.installationId,
         repo.defaultBranch, repo.htmlUrl, repo.addedBy, now, now,
       )
+    },
+    async cacheRepoDefaultBranch(repo: SelectedRepo, branch: string | null): Promise<boolean> {
+      return Number((await stmts.cacheRepoDefaultBranchStmt.run(branch, repo.repoId, repo.fullName, repo.addedAt)).changes) > 0
     },
     async deselectRepo(repoId: number): Promise<boolean> {
       return Number((await deleteRepoStmt.run(repoId)).changes) > 0

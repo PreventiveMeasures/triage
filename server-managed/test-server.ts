@@ -317,11 +317,10 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   }
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
-  if (url.pathname.endsWith('/refs')) {
-    sendJson(res, 200, { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] }); return
-  }
-  const path = url.searchParams.get('path') ?? ''
-  const ref = url.searchParams.get('ref') ?? 'heads/main'
+  const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)] } : null
+  if (refs && url.searchParams.get('withDefault') !== 'true') { sendJson(res, 200, refs); return }
+  const path = refs ? '' : url.searchParams.get('path') ?? ''
+  const ref = refs ? 'heads/main' : url.searchParams.get('ref') ?? 'heads/main'
   const files = repo.id === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
     : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol', 'native/src/lib.rs', 'test/index.test.ts', 'package.json', 'README.md']
   if (ref === 'heads/develop' || ref === 'b'.repeat(40)) files.push('src/experimental.ts')
@@ -332,10 +331,11 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
     const name = rest.split('/')[0]!
     entries.set(name, { name, path: prefix + name, type: rest.includes('/') ? 'dir' : 'file' })
   }
-  sendJson(res, 200, { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false,
+  const contents = { path, commit: /^[a-f\d]{40}$/iu.test(ref) ? ref : (ref === 'heads/develop' ? 'b' : 'a').repeat(40), entries: [...entries.values()], limited: false,
     ...(entries.has('package.json') ? { packageEntryPoints: ['src/index.ts', 'src/app.tsx', 'src/utils/format.js'] } : {}),
     ...(repo.id !== 102 && (path === '' || path === 'contracts') ? { solidityEntryPoints: ['contracts/Token.sol', ...(path === '' ? ['contracts/vault/Vault.sol'] : [])], soliditySuggestionsLimited: false } : {}),
-  })
+  }
+  sendJson(res, 200, refs ? { ...refs, defaultContents: contents } : contents)
 }
 
 async function connectAppFixture(req: IncomingMessage, res: ServerResponse): Promise<void> {
