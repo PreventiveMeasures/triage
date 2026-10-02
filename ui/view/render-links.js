@@ -8,7 +8,7 @@ import { bucketOf, encodeFindingRef, ensureBundleFindingsIndexed, findingTitleFo
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { displayFindingId, shortFindingId } from './format.js'
 import { groupLinkedReportRows } from './linked-report-rows.js'
-import { TRIAGE_LABELS } from '../../report/index.js'
+import { TRIAGE_LABELS } from '@preventive/report'
 
 function count(n, singular, plural) {
   return `${n} ${n === 1 ? singular : plural}`

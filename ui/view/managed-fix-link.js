@@ -1,7 +1,7 @@
 import { css, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { HoverPreviewElement } from './hover-preview.js'
-import { isHttpUrl } from '../../report/index.js'
+import { isHttpUrl } from '@preventive/report'
 import { parseGithubIssueUrl, parseGithubPrUrl } from '../../common/github-pr.ts'
 import { managedFixes, subscribeFixes } from './managed-pull-requests.js'
 import { GITHUB_ICON_SVG } from './icons.js'

@@ -244,7 +244,7 @@ const scoresItself = (f) => f.confidence !== undefined || f.critical === true
 //     an import" it gave the same answer for every producer that emits
 //     no confidence — and the wrong one for DeepSec, which rates every
 //     finding it reports and whose words this app places on the scale
-//     itself (report/src/parse-deepsec.js). A workspace of nothing but
+//     itself (@preventive/report/src/parse-deepsec.js). A workspace of nothing but
 //     DeepSec reports is a real range over real numbers, and asking
 //     for a non-import took the slider, the confidence sort and the
 //     opening floor away from exactly the load whose producer had
@@ -318,7 +318,7 @@ export function defaultConfidenceFloor(groups, tabs = drawnTabs) {
 //
 // But a product can run a pass of its own and write down what it
 // concluded. DeepSec does, and this app reads it
-// (report/src/parse-deepsec.js). There the stand-in would be a claim
+// (@preventive/report/src/parse-deepsec.js). There the stand-in would be a claim
 // the document doesn't make — a finding that report left unjudged is
 // not one it confirmed — and applied to every unstamped row it would
 // empty Confirmed of meaning for exactly the imports that arrive with

@@ -1,7 +1,7 @@
 // Compare the reports' own rows and ratings, before viewer deduplication,
 // linking, filters or triage can combine them. Finding identity is the id
 // written in the report; missing ids are counted and excluded explicitly.
-import { effectiveSeverity, readReport, reportEntries, revalidateKindOf } from '../../report/index.js'
+import { effectiveSeverity, readReport, reportEntries, revalidateKindOf } from '@preventive/report'
 import { parseLinkedFindings } from '../../client/linked-findings.js'
 
 export function parseComparisonReport(content) {

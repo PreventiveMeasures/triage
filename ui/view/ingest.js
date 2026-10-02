@@ -17,7 +17,7 @@ import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.
 import { resetBundleTerminal } from './terminal-attach.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
 import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bundle-load.js'
-import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '../../report/index.js'
+import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
@@ -465,7 +465,7 @@ async function addFiles(files) {
         continue
       }
       const content = await file.text()
-      // Codex is named by the file, not its content (see report/index.js);
+      // Codex is named by the file, not its content (see @preventive/report);
       // `lower` has the download-duplicate suffix stripped already.
       if (detectFormat(content, lower) === 'codex') {
         const scans = parseCodexCsvToScans(content)
@@ -1323,7 +1323,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // already shows stored marks/deletions for matching findings.
     await ensureTriageLoaded()
     if (stale()) return
-    // Format dispatch lives in the report library (report/index.js),
+    // Format dispatch lives in the report library (@preventive/report),
     // which also words the failure — usually a malformed dump rather
     // than an unknown format.
     // Managed responses are already parsed. Clone before stamping IDs so the
@@ -1337,7 +1337,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // flow). Gates both the filter reset and the auto-tune below.
     const isFirst = state.reports.length === 0
     // The report's entries, under whichever of the two names it files
-    // them (report/index.js reportEntries): `findings`, or `groups`
+    // them (@preventive/report reportEntries): `findings`, or `groups`
     // for a report that arrives already deduplicated — a native dump
     // that merged its runs, and every markdown export of a view that
     // showed a finding as one card with several cases. Read as
@@ -1368,7 +1368,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // Per producer rather than per document, because a document can
     // hold several: a re-imported export carries a revalidated
     // analysis beside imports the pass never saw
-    // (report/src/parse-deepview-md.js stamps each row's own source),
+    // (@preventive/report/src/parse-deepview-md.js stamps each row's own source),
     // and the analysis being judged says nothing about them. Read off
     // each finding's own marker, the same one `_source` takes below.
     const judgedSources = new Set(rawFindings
@@ -1427,10 +1427,10 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
         // (file-display.js PRODUCER_LABELS names that bucket). Its own
         // marker when it carries one — a re-imported markdown export
         // that mixed a product's findings with the analyzer's own runs
-        // stamps them per finding (report/src/parse-deepview-md.js),
+        // stamps them per finding (@preventive/report/src/parse-deepview-md.js),
         // and such a finding is that product's whatever report it now
         // sits in — else its report's. The same answer the markdown
-        // writer's `sourceReader` gives (report/src/write-md.js), read
+        // writer's `sourceReader` gives (@preventive/report/src/write-md.js), read
         // off the finding so the filters don't have to find its report.
         filled._source = filled.source ?? data.source ?? null
         // Which LAYER this finding describes — the app as it runs, or

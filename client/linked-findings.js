@@ -8,7 +8,7 @@
 // no severity, no title, no file, no prose. That is the whole format.
 //
 // It is NOT a report, and this module deliberately sits outside
-// `report/` because of it. A report carries findings; a links file
+// `@preventive/report` because of it. A report carries findings; a links file
 // carries only ids of findings that must already live in reports the
 // reader holds. So it never reaches `ingestReport` / `state.reports`,
 // it has its own view (`ui/view/render-links.js`) that points at the

@@ -2,7 +2,7 @@
 // never run the findings view's cross-report merge or change its active load.
 import { html, nothing, unsafeCSS } from 'lit'
 import { LINKS_KIND, getKind, isManagedUiMode, listFiles, readFile, state } from '#client/index.js'
-import { findingTitle } from '../../../report/index.js'
+import { findingTitle } from '@preventive/report'
 import { computeReportDiff, parseComparisonReport, reportValues } from '../report-compare-diff.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import reportCompareCSS from './dialog-report-compare.css'

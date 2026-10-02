@@ -1,5 +1,5 @@
 import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, reportRowsForFindingIds, state } from '#client/index.js'
-import { stampSecurityGroups } from '../../report/index.js'
+import { stampSecurityGroups } from '@preventive/report'
 import { SEVERITY_ORDER, canDropRevalidation, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
@@ -287,7 +287,7 @@ export function findingRepoFallback(f) {
 // `{ github, directory }` pair format.js's link builders take, and so
 // what every caller rendering a file / line / evidence link passes.
 // `_repoDirectory` is the ingest stamp of the report header's
-// `repo.directory` (report/src/meta.js repoDirectory): where inside
+// `repo.directory` (@preventive/report/src/meta.js repoDirectory): where inside
 // the repository the tree the report describes sits, which is a fact
 // about that report's paths rather than about one repo, so it
 // qualifies whichever repo answers for the report above — the one it

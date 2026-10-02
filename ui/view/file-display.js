@@ -1,7 +1,7 @@
 import { LINKS_KIND, getKind } from '#client/index.js'
 import { REPORT_FILE_ICONS, REPORT_LOGOS } from './report-logos.js'
 export { REPORT_LOGOS } from './report-logos.js'
-import { SOURCE_LABELS } from '../../report/index.js'
+import { SOURCE_LABELS } from '@preventive/report'
 import { LINKS_ICON_SVG } from './icons.js'
 
 // Shared file-row affordances — the brand-marked "sticker" icons,
@@ -31,7 +31,7 @@ export const FILE_ICONS = {
 }
 
 // The named buckets, by the `source` marker a report carries
-// (report/src/labels.js SOURCE_LABELS names the same four). A report
+// (@preventive/report/src/labels.js SOURCE_LABELS names the same four). A report
 // naming none — the analyzer's own dump — belongs to `default`.
 const SOURCE_GROUPS = new Set(['claude-security', 'codex-security', 'deepsec', 'piolium'])
 

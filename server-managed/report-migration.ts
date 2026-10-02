@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
-import { reportRepoGithub } from '../report/index.js'
+import { reportRepoGithub } from '@preventive/report'
 import { readManagedReport } from '../common/managed/report-content.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 

@@ -4,7 +4,7 @@ import { upsertWorkspace } from './workspaces.js'
 import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
-import { loadFindings } from '../report/index.js'
+import { loadFindings } from '@preventive/report'
 import { bucketOf, patchEntry, setReportIgnored } from './triage-entry.ts'
 
 // Pure-logic side of workspace import. The DOM-touching layer (unlock

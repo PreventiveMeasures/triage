@@ -5,7 +5,7 @@ import { state } from '../client/state.ts'
 import { clearManagedWorkspace, setManagedWorkspace } from '../client/managed/workspace.js'
 import { duplicatesOf, ensureLinkedFindingsIndexed, linkFiles } from '../client/linked-findings-index.js'
 import { findingTitleForId, reportRowsForFindingIds } from '../client/bundle-finding-index.js'
-import { stampSecurityGroups } from '../report/index.js'
+import { stampSecurityGroups } from '@preventive/report'
 
 const repo = { github: 'org/app', directory: '' }
 const records = [

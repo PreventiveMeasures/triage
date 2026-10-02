@@ -1,4 +1,4 @@
-import { descriptionSections, locationLabel, stripExportMarker } from '../../../report/index.js'
+import { descriptionSections, locationLabel, stripExportMarker } from '@preventive/report'
 
 const FIELDS = [
   ['impact', 'Impact'],

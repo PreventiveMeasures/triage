@@ -13,7 +13,7 @@
 // bucket yet" — the lazy fetch runs in the background and re-renders
 // when each entry lands.
 import { readFile } from './storage.js'
-import { analyzeReport } from '../report/index.js'
+import { analyzeReport } from '@preventive/report'
 import { LINKS_KIND, countLinkedIds, parseLinkedFindings } from './linked-findings.js'
 import { getItem as getSecureItem, hydrateKey, setItem as setSecureItem } from './secure-storage.js'
 

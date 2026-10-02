@@ -1,5 +1,5 @@
 import { parseLinkedFindings } from '../../client/linked-findings.js'
-import { detectFormat, loadFindings, parseCodexCsvToScans, readReport } from '../../report/index.js'
+import { detectFormat, loadFindings, parseCodexCsvToScans, readReport } from '@preventive/report'
 
 // A managed blob retains one server identity even when a CSV contains several
 // scans. Keep all their findings (and upstream ids) under that identity. CSV

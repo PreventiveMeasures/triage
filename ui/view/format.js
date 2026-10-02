@@ -1,4 +1,4 @@
-import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '../../report/index.js'
+import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '@preventive/report'
 import { html, nothing } from './frontend-global.js'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
@@ -13,7 +13,7 @@ import { parseFindingUrl } from '../../client/finding-link.js'
 // below (revalidateKind, formatRunMeta) apply this module's state.
 export { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, locationLabel, prettyModel, splitDescription, stripExportMarker, titledDescription }
 // The one http(s)-URL gate every `<a>` in the viewer goes through is
-// the writer's too (report/src/md-text.js); one definition.
+// the writer's too (@preventive/report/src/md-text.js); one definition.
 export { isHttpUrl }
 
 // ── Revalidation ─────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ export { isHttpUrl }
 // — the pass that hides the pass's own rows, the scan that decides
 // whether to offer the switch at all, and the export header that
 // names the layer — read the raw field through the exports below it
-// (report/src/finding.js's `revalidateKindOf`).
+// (@preventive/report/src/finding.js's `revalidateKindOf`).
 //
 // The flag is module state, set once per render by render.js from
 // `state.showRevalidation` and `state.upstreamOnly` (see configureDepsDir below for the same
@@ -463,11 +463,11 @@ export function findingText(f) {
   return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, ...reval, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
 }
 
-// The per-finding run-meta line (report/src/finding.js runMetaLine) under
+// The per-finding run-meta line (@preventive/report/src/finding.js runMetaLine) under
 // the revalidation layer's state: the pass's row names itself only
 // while the layer is on. Led by the finding's category where a report
 // filed it under one (Claude Security's `**Category:**`,
-// report/src/parse-md.js) — the meta line is where a row says what kind
+// @preventive/report/src/parse-md.js) — the meta line is where a row says what kind
 // of thing it is, and for a product that is one analyzer with no run
 // meta, the category is all there is to say.
 export function formatRunMeta(f) {
@@ -538,7 +538,7 @@ export function isPkgRef(file) {
 // (reaching here as the resolved fallback) and on a finding of its
 // own. `directory` says where inside the repository the tree the
 // report describes sits (`{ github: 'babel/babel', directory:
-// 'packages/babel-core' }`, report/src/meta.js repoDirectory), so it
+// 'packages/babel-core' }`, @preventive/report/src/meta.js repoDirectory), so it
 // comes back as the PREFIX the file path hangs off — and it comes
 // back only with the repo it was declared beside, never applied to
 // the other one.
@@ -690,7 +690,7 @@ function flowRun(run, keepLead, keepTail) {
 // and trigger) splits into paragraphs, and the halves that hold no
 // fence line read as ordinary hard-wrapped prose and get folded into
 // one line. So the fenced ranges come out first (the same reading the
-// parsers use — report/src/md-structure.js) and only the prose between
+// parsers use — @preventive/report/src/md-structure.js) and only the prose between
 // them is reflowed, which also means prose sharing a paragraph with a
 // snippet now flows instead of being pinned by it.
 export function flowText(text) {
@@ -735,7 +735,7 @@ export function flowText(text) {
 //
 // Text with no fence in it comes back as a single-element array
 // holding it unchanged, so the caller can take a plain-text fast path.
-// Pairing is `fenceRanges`' (report/src/md-structure.js), the same reading
+// Pairing is `fenceRanges`' (@preventive/report/src/md-structure.js), the same reading
 // the parsers use — so what a parser treated as code is what the card
 // draws as code, an unclosed fence running to end of input included.
 const FENCE_LINE_RE = /^( *)(`{3,}|~{3,})(.*)$/u
@@ -1345,7 +1345,7 @@ function githubRefToken(candidate) {
 
 // Short id shown in a self-link's label. Findings carry a uuid in the
 // overwhelming majority of cases (the analyzer's, or the one
-// `report/src/finding-id.js` derives), and abbreviating it to its first
+// `@preventive/report/src/finding-id.js` derives), and abbreviating it to its first
 // group mirrors how the commit label abbreviates a sha. The codex
 // importer's finding-URL ids show the first eight characters after
 // their URL prefix.

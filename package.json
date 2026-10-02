@@ -30,7 +30,6 @@
   },
   "exports": {
     "./reap": "./api/reap.ts",
-    "./report": "./report/index.js",
     "./server": "./server.ts",
     "./server-e2e": "./server-e2e/index.ts",
     "./strip-types-loader": "./strip-types-loader.js",
@@ -165,28 +164,6 @@
     "server-common/storage-crypto.ts",
     "server-common/vercel-blob.ts",
     "server-common/scan-config.ts",
-    "report/index.js",
-    "report/src/finding-id.js",
-    "report/src/finding.js",
-    "report/src/severity.js",
-    "report/src/security.js",
-    "report/src/labels.js",
-    "report/src/md-structure.js",
-    "report/src/md-text.js",
-    "report/src/meta.js",
-    "report/src/parse-codex.js",
-    "report/src/parse-deepsec.js",
-    "report/src/parse-deepview-fields.js",
-    "report/src/parse-deepview-md.js",
-    "report/src/parse-md-id.js",
-    "report/src/parse-md.js",
-    "report/src/parse-piolium-id.js",
-    "report/src/parse-piolium-rows.js",
-    "report/src/parse-piolium-tokens.js",
-    "report/src/parse-piolium.js",
-    "report/src/utf8.js",
-    "report/src/write-md-finding.js",
-    "report/src/write-md.js",
     "common/bundle-metadata.d.ts",
     "common/bundle-metadata.js",
     "common/bundle-reasons.d.ts",
@@ -241,7 +218,7 @@
   ],
   "scripts": {
     "lint": "node --run lint:js && node --run lint:css && node --run lint:ts",
-    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./cli.js ./server.ts ./tests/ ./common/ ./report/ ./server-common/ ./server-e2e/ ./server-managed/ ./client/ ./ui/ ./api/",
+    "lint:js": "oxlint -c .oxlintrc.json --ignore-pattern=ui/logs.js ./cli.js ./server.ts ./tests/ ./common/ ./server-common/ ./server-e2e/ ./server-managed/ ./client/ ./ui/ ./api/",
     "lint:css": "stylelint 'ui/**/*.css'",
     "lint:ts": "tsc --noEmit",
     "prepack": "node --run build",
@@ -251,7 +228,7 @@
     "server-e2e": "node server-e2e/index.ts",
     "server-managed": "node server-managed/index.ts",
     "server-managed-test": "node server-managed/test-server.ts",
-    "test": "node --js-base-64 --import=./tests/_resource-loader.js --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js ./report/tests/*.test.js"
+    "test": "node --js-base-64 --import=./tests/_resource-loader.js --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.5",
@@ -274,6 +251,7 @@
   },
   "dependencies": {
     "@exodus/stasis-core": "^1.0.0-beta.4",
+    "@preventive/report": "1.0.0-alpha.4",
     "ws": "^8.20.1"
   },
   "peerDependencies": {

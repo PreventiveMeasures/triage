@@ -1,7 +1,7 @@
 // The "Download report" button's adapter: reads the viewer — which
 // findings are on screen, what the reader wrote on them, where their
 // locations link, which report each came from — and hands the plain
-// facts to the report library's writer (report/src/write-md.js). Nothing
+// facts to the report library's writer (@preventive/report/src/write-md.js). Nothing
 // about markdown lives here.
 //
 // The set is the on-screen one: the active triage bucket (live, or a
@@ -22,7 +22,7 @@ import { activeFilterDescriptions, exportBucketGroups, exportBucketLabel } from 
 import { activeFilters, applyFilters, applySorting } from './filters.js'
 import { commitUrl, commonPrefix, evidenceUrl, findingUrl, hasRevalidateField, hasSeverityCorrection, isModule } from './format.js'
 import { activeTabFor, findingRepoTarget, isIgnored, sortTabs, triageEntry, underlyingFindingsShown } from './group.js'
-import { writeMarkdown } from '../../report/index.js'
+import { writeMarkdown } from '@preventive/report'
 
 // The bucket's groups the selection in force lets through, in on-screen
 // order, each group's cases in the order the card's tab strip shows

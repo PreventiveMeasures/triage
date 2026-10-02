@@ -1,7 +1,7 @@
 import { parseWorkspaceBundleBytes, parseWorkspaceJson } from '../workspace-format.js'
 import { isEncryptedBundle } from '../workspace-bundle-crypto.js'
 import { loadManagedFindings, readManagedReport } from '../../common/managed/report-content.ts'
-import { reportRepoGithub } from '../../report/index.js'
+import { reportRepoGithub } from '@preventive/report'
 import { normalizeEntry } from '../triage-entry.ts'
 import { MAX_FINDING_ID, parseTriageEntryPatch } from '../../common/managed/triage.ts'
 import { importTriageEntries } from './triage-import.js'

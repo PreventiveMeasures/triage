@@ -3,7 +3,7 @@
 // triage store and the original report's source/bundle metadata.
 import { computeLinkHint, duplicatesOf, ensureTriageLoaded, isManagedUiMode, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
 import { store } from '@rray/frontend/state-management'
-import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '../../report/index.js'
+import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 
 let preview = null
 let generation = 0

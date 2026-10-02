@@ -28,7 +28,7 @@ import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
 import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { findingTitle, inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '../report/index.js'
+import { findingTitle, inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '@preventive/report'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -519,7 +519,7 @@ async function indexOne(name) {
     if (findings.length === 0) return false
     // Run-level meta (type / model / think / effort / exportsMode) is
     // inherited from the report header, field by field, under the same
-    // rule the report view follows — see report/src/meta.js (which also
+    // rule the report view follows — see @preventive/report/src/meta.js (which also
     // holds the source-marked opt-out). The bundle viewer's source
     // panel reads these through prettyModel + the meta chain; without
     // the inheritance the chain stays empty for every finding that

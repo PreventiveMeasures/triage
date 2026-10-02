@@ -1,4 +1,4 @@
-import { REVALIDATE_KINDS, revalidateKindOf } from '../../report/index.js'
+import { REVALIDATE_KINDS, revalidateKindOf } from '@preventive/report'
 
 // Keep only the pass's fields, before gap-filling changes the survivor.
 // In particular, a verdict borrowed from report B must never be attributed

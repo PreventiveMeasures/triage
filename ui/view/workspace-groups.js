@@ -1,4 +1,4 @@
-import { revalidateKindOf } from '../../report/index.js'
+import { revalidateKindOf } from '@preventive/report'
 import { mergeReportDuplicateFields } from './finding-duplicates.js'
 import { splitRevalidationInputs } from './revalidation-input-groups.js'
 

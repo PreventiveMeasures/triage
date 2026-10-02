@@ -33,7 +33,7 @@ if (!globalThis[slotKey]) {
 }
 
 const { state } = await import('../client/state.ts')
-const { readReport } = await import('../report/index.js')
+const { readReport } = await import('@preventive/report')
 const { applyFilters, applyOpeningFilters, applySorting, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, priorityApplies, priorityForGroup, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')
 const { activeTabFor, getMergedGroups, getShownGroups, groupKey, linkableGroups, mergeDuplicateFields, sortTabs } = await import('../ui/view/group.js')
 const {
@@ -120,7 +120,7 @@ describe('revalidateKind — reading the field', () => {
     for (const kind of REVALIDATE_KINDS) assert.equal(revalidateKind({ revalidate: kind }), kind)
     // …and only as they are spelt: the field is an enumeration, and a
     // value that drifted is a document's problem, folded back by the
-    // document's own reader (report/src/finding.js revalidateKindOf).
+    // document's own reader (@preventive/report/src/finding.js revalidateKindOf).
     for (const drifted of ['Refuted', ' refuted ', 'REFUTED']) {
       assert.equal(revalidateKind({ revalidate: drifted }), '', drifted)
     }
@@ -1014,7 +1014,7 @@ describe('the findings the pass never saw', () => {
       [makeFinding('D1', { confidence: 9, revalidate: 'confirmed' }), makeFinding('D1r', { confidence: 9, revalidate: 'revalidation' })],
     ]
     // A Claude Security import carries no confidence of its own
-    // (report/src/parse-md.js reads none) and no stamp.
+    // (@preventive/report/src/parse-md.js reads none) and no stamp.
     const claude = [[imported('C1', { _source: 'claude-security' })]]
     // The interim answer, from the member that happened to load
     // first: the import alone is not a revalidation report.

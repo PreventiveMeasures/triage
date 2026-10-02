@@ -1,6 +1,6 @@
 import { bundleCodeStats } from './bundle-stats.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { computeFileHash } from '../report/index.js'
+import { computeFileHash } from '@preventive/report'
 import { utf8ByteLength } from './utf8.js'
 import { bundleFileSizes, bundleSourcesAsMap, bundleUnsizedFiles } from './bundle-sources.js'
 

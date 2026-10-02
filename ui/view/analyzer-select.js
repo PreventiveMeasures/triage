@@ -51,7 +51,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, modelOfFinding } from './filters.js'
-import { SOURCE_LABELS } from '../../report/index.js'
+import { SOURCE_LABELS } from '@preventive/report'
 
 // Friendly labels for analyzers reported with a `source: <key>` field —
 // the report library's own names for the producers it reads, so the
