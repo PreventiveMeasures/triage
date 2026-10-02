@@ -1731,6 +1731,16 @@ bundle-search {
       &:hover > span, &:focus-visible > span { border-bottom-color: currentcolor; }
     }
     & .bundle-commit-link { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    & .bundles-entry-points {
+      list-style: none; margin: 0; padding: 0;
+      max-height: 6rem; overflow: auto;
+    }
+    & .bundle-entry-point {
+      max-width: 100%; padding: 0; background: transparent;
+      border: 0; border-bottom: 1px dotted transparent;
+      color: inherit; font: inherit; text-align: left;
+      &:hover, &:focus-visible { border-bottom-color: currentcolor; }
+    }
   }
   /* The overview lays its meta blocks + exports out as columns in a
      wrapping flex row: name/integrity/size, parse-details, then the
