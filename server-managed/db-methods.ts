@@ -406,6 +406,11 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null>
   resolveBundleUpload(integrity: string): Promise<ManagedBundle | null>
   getBundle(id: string): Promise<ManagedBundle | null>
+  // One read snapshot of the live session, bundle and grants. Passing a team
+  // (or null for any team) also checks advisory security access; omission skips it.
+  getBundleAccessSnapshot(sessionId: string, now: number, id: string, advisoriesTeamId?: string | null): Promise<{
+    bundle: ManagedBundle | null; canReadAdvisories: boolean
+  } | null>
   listBundles(userId?: string): Promise<AdminBundle[]>
   listReadableBundleIds(userId: string, ids: readonly string[]): Promise<string[]>
   userCanReadBundle(userId: string, id: string): Promise<boolean>
@@ -1207,6 +1212,23 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     async getBundle(id: string): Promise<ManagedBundle | null> {
       const row = (await selectBundleStmt.get(id)) as BundleRow | undefined
       return row == null ? null : mapBundle(row)
+    },
+    async getBundleAccessSnapshot(sessionId: string, now: number, id: string, advisoriesTeamId?: string | null) {
+      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
+      if (!session) return null
+      const denied = { bundle: null, canReadAdvisories: false }
+      if (!roleAtLeast(session.role, 'view')) return denied
+      const row = await selectBundleStmt.get(id) as BundleRow | undefined
+      if (!row) return denied
+      const manager = roleAtLeast(session.role, 'manage')
+      if (session.role !== 'admin') {
+        const allowed = manager ? await selectBundleReadableStmt.get(id, session.uid, session.uid)
+          : row.repoId !== null && await selectRepoPathReadableStmt.get(row.repoDirectory, row.repoId, session.uid)
+        if (!allowed) return denied
+      }
+      const canReadAdvisories = manager || (advisoriesTeamId !== undefined
+        && await stmts.selectBundleSecurityStmt.get(id, session.uid, advisoriesTeamId, advisoriesTeamId) != null)
+      return { bundle: mapBundle(row), canReadAdvisories }
     },
     async listBundles(userId?: string): Promise<AdminBundle[]> {
       const rows = (await selectBundlesStmt.all(userId ?? null, userId ?? null, userId ?? null)) as BundleListRow[]
