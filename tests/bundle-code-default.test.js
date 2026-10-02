@@ -78,6 +78,38 @@ test('Stasis selects the first entry point when only dependencies have issues', 
   assert.equal(state.bundleSourceFile, 'src/z.js')
 })
 
+test('named app and workspace modules are own source even without a dot-root module', () => {
+  findings('app/src/issue.js', ['low'])
+  findings('packages/shared/index.js', ['high'])
+  findings('app/node_modules/dep/index.js', ['critical'])
+  const render = openBundle({ kind: 'stasis', bundle: new Bundle({
+    entries: new Set(['app/src/entry.js']),
+    modules: new Map([
+      ['app', { name: 'app', version: '1', files: { 'src/entry.js': 'entry', 'src/issue.js': 'issue' } }],
+      ['packages/shared', { name: 'shared', version: '1', files: { 'index.js': 'shared' } }],
+      ['app/node_modules/dep', { name: 'dep', version: '1', files: { 'index.js': 'dep' } }],
+    ]),
+  }) })
+  assert.equal(state.bundleSourceFile, 'packages/shared/index.js')
+  findingsByHash.delete('hash:packages/shared/index.js')
+  state.bundleSourceFile = null
+  render()
+  assert.equal(state.bundleSourceFile, 'app/src/issue.js')
+  findingsByHash.delete('hash:app/src/issue.js')
+  state.bundleSourceFile = null
+  render()
+  assert.equal(state.bundleSourceFile, 'app/src/entry.js')
+  findings('app/src/issue.js', ['low'])
+  render()
+  assert.equal(state.bundleSourceFile, 'app/src/issue.js')
+})
+
+test('node_modules files in a flat root capture are still dependencies', () => {
+  findings('node_modules/dep/index.js', ['critical'])
+  openBundle(stasis({ 'src/main.js': 'own', 'node_modules/dep/index.js': 'dep' }, {}, ['src/main.js']))
+  assert.equal(state.bundleSourceFile, 'src/main.js')
+})
+
 test('Stasis preserves severity, count, and path ordering among own files', () => {
   findings('src/high.js', ['high'])
   findings('src/a.js', ['low', 'low'])

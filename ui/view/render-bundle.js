@@ -1157,14 +1157,17 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
   </div>`
 }
 
-// Stasis defaults stay in own source when it is bundled. Use recorded
-// package boundaries, just as the graph does, before falling back to
-// path heuristics for older bundles. Sourcemaps consider every source.
+// A named app/workspace module is still own source: package grouping
+// is not dependency ownership. node_modules paths remain dependencies
+// even in a flat capture; other dependency directories use recorded
+// module boundaries so an app's internal dependencies/ folder stays own.
+// Sourcemaps consider every source.
 function bundleCodeDefaultSources(details, sources) {
   if (details.kind !== 'stasis') return sources
   const packageDirs = bundlePackageDirs(details)
   const ownSources = new Map([...sources].filter(([file]) =>
-    bundlePkgOf(file, { splitOwnDirs: false, packageDir: packageDirs?.get(file) }) === '__own__'))
+    !/(?:^|\/)node_modules(?:\/|$)/u.test(file)
+      && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(packageDirs?.get(file) ?? file)))
   return ownSources.size > 0 ? ownSources : sources
 }
 
