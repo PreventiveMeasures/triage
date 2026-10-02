@@ -194,6 +194,36 @@ test('catalog responses recheck membership and repository scope after cached sum
   assert.deepEqual((await h.send('/api/admin/bundles', 'manager')).json().bundles, [])
 })
 
+test('catalogs sharing a cold summary still recheck each caller independently', async t => {
+  const h = await setup(t), record = await h.seed({ repoId: 1 })
+  await h.cache.prebuild(record)
+  const cold = createBundleCache(h.cacheStorage, h.db, h.store)
+  const gate = Promise.withResolvers(), started = Promise.withResolvers()
+  const open = h.cacheStorage.open
+  let callers = 0, reads = 0
+  t.mock.method(h.cacheStorage, 'open', async (...args) => {
+    reads++
+    await gate.promise
+    return open(...args)
+  })
+  t.mock.method(h.cache, 'summaryStatus', bundle => {
+    if (++callers === 2) started.resolve()
+    return cold.summaryStatus(bundle)
+  })
+  const viewer = h.send('/api/teams', 'viewer')
+  const manager = h.send('/api/admin/bundles', 'manager')
+  try {
+    await started.promise
+    assert.equal(reads, 1)
+    await h.db.removeTeamMember(h.team, h.users.viewer.userId)
+  } finally { gate.resolve() }
+  assert.deepEqual((await viewer).json().teams, [])
+  const bundles = (await manager).json().bundles
+  assert.deepEqual(bundles.map(bundle => bundle.id), [record.id])
+  assert.deepEqual(bundles[0].summary, { files: 3, codeFiles: 2, lines: 2 })
+  assert.equal(reads, 1)
+})
+
 for (const catalog of ['teams', 'admin', 'shared']) {
   test(`${catalog} catalogs respond while a cold summary backfill is stalled`, async t => {
     const h = await setup(t)

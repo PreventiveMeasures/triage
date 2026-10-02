@@ -31,22 +31,33 @@ async function readSummary(storage: BundleCacheStorage, id: string): Promise<Cac
 
 export function createBundleSummaryCache(storage: BundleCacheStorage, build: (record: BundleCacheRecord) => Promise<BundleSummary>, exists: (id: string) => Promise<unknown>) {
   const entries = new Map<string, { id: string; value: CachedSummary }>()
+  const reads = new Map<string, { id: string; job: Promise<CachedSummary | null> }>()
   const active = new Map<string, Promise<void>>()
   let pending: Promise<void> | null = null
   function remember(record: BundleCacheRecord, value: CachedSummary) {
+    // A completed build supersedes any older storage read still in flight.
+    reads.delete(record.integrity)
     // Summaries are tiny and immutable by integrity. Refuse overflow admission
     // instead of evicting the next hit during a scan larger than the cache.
     if (entries.size >= 4096 && !entries.has(record.integrity)) return
     entries.set(record.integrity, { id: record.id, value })
   }
-  async function read(record: BundleCacheRecord) {
+  function read(record: BundleCacheRecord): Promise<CachedSummary | null> {
     const known = entries.get(record.integrity)
-    if (known) return known.value
-    let value
-    try { value = await readSummary(storage, record.id) }
-    catch (error) { if (error instanceof CacheMissError) return null; throw error }
-    remember(record, value)
-    return value
+    if (known) return Promise.resolve(known.value)
+    const existing = reads.get(record.integrity)
+    if (existing) return existing.job
+    // Concurrent catalogs share the decoded summary, never the response stream.
+    // Only in-flight work is shared: misses and failures remain retryable.
+    const job: Promise<CachedSummary | null> = readSummary(storage, record.id).then(value => {
+      if (reads.get(record.integrity)?.job === job) remember(record, value)
+      return entries.get(record.integrity)?.value ?? value
+    }).catch(error => {
+      if (error instanceof CacheMissError) return null
+      throw error
+    }).finally(() => { if (reads.get(record.integrity)?.job === job) reads.delete(record.integrity) })
+    reads.set(record.integrity, { id: record.id, job })
+    return job
   }
   async function publish(record: BundleCacheRecord, value: CachedSummary) {
     if (!await exists(record.id)) return
@@ -96,6 +107,9 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
       // backfill elsewhere must not delay removing these bytes or responding.
       await active.get(id)
       for (const [hash, entry] of entries) if (entry.id === id) entries.delete(hash)
+      // Do not wait for remote reads during deletion. Their callers still own
+      // and drain them, but a late response must not repopulate this cache.
+      for (const [hash, entry] of reads) if (entry.id === id) reads.delete(hash)
     },
   }
 }

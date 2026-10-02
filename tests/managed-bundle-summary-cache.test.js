@@ -129,3 +129,100 @@ test('summary reads distinguish missing data from storage outages', async () => 
     else await assert.rejects(cache.summary(record), /storage unavailable/u)
   }
 })
+
+test('concurrent cold catalogs share remote summary reads within the instance', async t => {
+  let active = 0, peak = 0, reads = 0
+  const summary = { files: 3, codeFiles: 2, lines: 42 }
+  const storage = {
+    async open() {
+      reads++; active++; peak = Math.max(peak, active)
+      await setImmediate()
+      active--
+      return { stream: Readable.from([JSON.stringify(summary)]) }
+    },
+  }
+  const cache = createBundleSummaryCache(storage, () => assert.fail('catalog reads must not build'), () => Promise.resolve(true))
+  const records = Array.from({ length: 64 }, (_, i) => ({ id: String(i), integrity: `hash-${i}`, kind: 'stasis' }))
+  const catalogs = await Promise.all(Array.from({ length: 10 }, () => bundleSummaries(records, cache)))
+  for (const catalog of catalogs) {
+    assert.equal(catalog.size, records.length)
+    for (const value of catalog.values()) assert.deepEqual(value, { summary, summaryRetryAt: null })
+  }
+  t.diagnostic(`10 concurrent catalogs, 64 bundles: ${reads} storage reads, peak ${peak} in flight`)
+  assert.equal(reads, 64)
+  assert.equal(peak, 8)
+})
+
+for (const failure of ['missing', 'outage', 'malformed']) {
+  test(`shared summary reads retry after ${failure} without caching the failure`, async () => {
+    const record = { id: 'bundle', integrity: 'hash', kind: 'stasis' }
+    const summary = { files: 1, codeFiles: 1, lines: 2 }
+    let reads = 0
+    const streams = []
+    const cache = createBundleSummaryCache({
+      async open() {
+        const first = ++reads === 1
+        await setImmediate()
+        if (first && failure === 'missing') throw new CacheMissError()
+        if (first && failure === 'outage') throw new Error('storage unavailable')
+        const stream = Readable.from([first ? 'malformed' : JSON.stringify(summary)])
+        streams.push(stream)
+        return { stream }
+      },
+    }, () => assert.fail('reads must not build'), () => Promise.resolve(true))
+    const results = await Promise.allSettled(Array.from({ length: 10 }, () => cache.summary(record)))
+    assert.equal(reads, 1)
+    for (const result of results) {
+      assert.equal(result.status, failure === 'missing' ? 'fulfilled' : 'rejected')
+      if (failure === 'missing') assert.equal(result.value, null)
+    }
+    assert.deepEqual(await cache.summary(record), summary, 'the next request can observe a repaired or newly published summary')
+    assert.equal(reads, 2)
+    assert.ok(streams.every(stream => stream.destroyed), 'each shared stream is drained or closed')
+  })
+}
+
+test('deletion invalidates pending summary reads without waiting or discarding a later read', async () => {
+  const record = { id: 'bundle', integrity: 'hash', kind: 'stasis' }
+  const gates = [Promise.withResolvers(), Promise.withResolvers()]
+  const oldSummary = { files: 1, codeFiles: 1, lines: 2 }
+  const newSummary = { files: 1, codeFiles: 1, lines: 3 }
+  let reads = 0
+  const cache = createBundleSummaryCache({
+    async open() {
+      const index = reads++
+      assert.ok(index < 2, 'the later read must remain shared')
+      await gates[index].promise
+      return { stream: Readable.from([JSON.stringify(index === 0 ? oldSummary : newSummary)]) }
+    },
+  }, () => assert.fail('reads must not build'), () => Promise.resolve(true))
+  const oldRead = cache.summary(record)
+  const removal = cache.forget(record.id)
+  await removal
+  const newRead = cache.summary(record)
+  gates[0].resolve()
+  assert.deepEqual(await oldRead, oldSummary)
+  const joined = cache.summary(record)
+  assert.equal(reads, 2)
+  gates[1].resolve()
+  assert.deepEqual(await Promise.all([newRead, joined]), [newSummary, newSummary])
+  assert.deepEqual(await cache.summary(record), newSummary, 'a late pre-deletion read cannot become a cache hit')
+  assert.equal(reads, 2)
+})
+
+test('a freshly built summary supersedes an older shared storage read', async () => {
+  const record = { id: 'bundle', integrity: 'hash', kind: 'stasis' }
+  const summary = { files: 1, codeFiles: 1, lines: 2 }
+  const gate = Promise.withResolvers()
+  const cache = createBundleSummaryCache({
+    async open() {
+      await gate.promise
+      return { stream: Readable.from(['{"retryAt":1234}']) }
+    },
+  }, () => assert.fail('reads must not build'), () => Promise.resolve(true))
+  const pending = [cache.summaryStatus(record), cache.summaryStatus(record)]
+  cache.remember(record, summary)
+  gate.resolve()
+  for (const result of await Promise.all(pending)) assert.deepEqual(result, { summary, summaryRetryAt: null })
+  assert.deepEqual(await cache.summaryStatus(record), { summary, summaryRetryAt: null })
+})
