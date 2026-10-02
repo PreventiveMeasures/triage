@@ -1737,9 +1737,8 @@ bundle-search {
     }
     & .bundle-entry-point {
       max-width: 100%; padding: 0; background: transparent;
-      border: 0; border-bottom: 1px dotted transparent;
+      border: 0;
       color: inherit; font: inherit; text-align: left;
-      &:hover, &:focus-visible { border-bottom-color: currentcolor; }
     }
   }
   /* The overview lays its meta blocks + exports out as columns in a

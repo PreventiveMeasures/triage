@@ -552,7 +552,6 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
           <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
           ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
           ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
-          ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
         </dl>
         ${exportsCol ?? nothing}
       </div>
@@ -2307,6 +2306,10 @@ function renderBundleDetails(entry, details) {
       ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} title=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
     </dd>`)}
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
+    ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
+    ${origin?.entries.size > 0 ? html`<dt>Entry points</dt><dd class="mono"><ul class="bundles-entry-points">
+      ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${file}</button></li>`)}
+    </ul></dd>` : nothing}
     ${includeSize && details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
       : nothing}
@@ -2375,9 +2378,6 @@ function renderBundleDetails(entry, details) {
     const sizes = sourceNames.map((s) => sizeMap.get(s))
     const extras = html`
       <dt>Version</dt><dd>${String(bundle.version)}</dd>
-      ${bundle.entries.size > 0 ? html`<dt>Entry points</dt><dd class="mono"><ul class="bundles-entry-points">
-        ${[...bundle.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${file}</button></li>`)}
-      </ul></dd>` : nothing}
       ${sortedKinds.length > 0
         ? html`<dt>Resolution kinds</dt><dd>${sortedKinds.join(', ')}</dd>`
         : nothing}
