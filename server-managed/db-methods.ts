@@ -12,6 +12,7 @@ import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
 import { ManagedMutationError, type ManagementStore, managementMethods } from './management.ts'
+import { type ManagementCatalogStore, managementCatalogMethods } from './management-catalog.ts'
 import { type StorageKey } from '../server-common/storage-crypto.ts'
 import { type StorageDb, type StoredTokens, decodeStorageTokens, encodeStorageTokens, storageMethods, storageState, validateStorageUpload } from './storage-db.ts'
 
@@ -313,7 +314,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, StorageDb {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -406,6 +407,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   resolveBundleUpload(integrity: string): Promise<ManagedBundle | null>
   getBundle(id: string): Promise<ManagedBundle | null>
   listBundles(userId?: string): Promise<AdminBundle[]>
+  listReadableBundleIds(userId: string, ids: readonly string[]): Promise<string[]>
   userCanReadBundle(userId: string, id: string): Promise<boolean>
   userCanReadRepo(userId: string, repoId: number): Promise<boolean>
   userCanReadBundleAdvisories(userId: string, bundleId: string, teamId: string | null): Promise<boolean>
@@ -720,6 +722,11 @@ function prepareStatements(db: ManagedSql) {
     ),
     selectBundleReadableStmt: db.prepare(
       `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR EXISTS (
+          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+          WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?))`,
+    ),
+    selectReadableBundleIdsStmt: db.prepare(
+      `SELECT b.id FROM managed_bundle b WHERE b.id IN (SELECT value FROM json_each(?)) AND (b.uploaded_by = ? OR EXISTS (
           SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
           WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?))`,
     ),
@@ -1212,6 +1219,11 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     async userCanReadBundle(userId: string, id: string): Promise<boolean> {
       return (await selectBundleReadableStmt.get(id, userId, userId)) != null
     },
+    async listReadableBundleIds(userId: string, ids: readonly string[]): Promise<string[]> {
+      if (ids.length === 0) return []
+      const rows = await stmts.selectReadableBundleIdsStmt.all(JSON.stringify([...new Set(ids)]), userId, userId) as { id: string }[]
+      return rows.map(row => row.id)
+    },
     async userCanReadRepo(userId: string, repoId: number): Promise<boolean> {
       return (await selectRepoReadableStmt.get(repoId, userId)) != null
     },
@@ -1383,7 +1395,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
   } = stmts
 
-  const methods: Omit<ManagedDb, keyof ManagementStore> = {
+  const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
     ...storageMethods(db, key),
     async claimMaintenanceLease(owner, now, until, migration = false) {
       return !!await db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
@@ -1468,5 +1480,5 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       await db.close()
     },
   }
-  return { ...methods, ...managementMethods(methods) }
+  return { ...methods, ...managementMethods(methods), ...managementCatalogMethods(methods) }
 }

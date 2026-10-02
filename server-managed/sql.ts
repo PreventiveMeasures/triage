@@ -20,7 +20,8 @@ export interface ManagedSqlDriver extends ManagedSql {
 // that statement an atomic snapshot; an explicit BEGIN/COMMIT adds only trips.
 // Lease writes coordinate through their conditional UPSERT/UPDATE alone.
 const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption',
-  'listReports', 'listBundles', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage', 'getFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease'])
+  'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
+  'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease'])
 
 export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver): ManagedDb {
   const entries = Object.entries(methods).map(([name, method]) => {

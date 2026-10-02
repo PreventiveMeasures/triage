@@ -10,7 +10,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { TEAM_FEED_LIFETIME_MS, serveTeamFeed, serveUserTeamFeed } from '../server-managed/team-feed.ts'
-import { recheckTeam, teamSnapshot } from '../server-managed/team-reports.ts'
+import { TeamReportsError, recheckTeam, teamSnapshot } from '../server-managed/team-reports.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 
 // Node HTTP responses use EventEmitter.
@@ -77,7 +77,22 @@ async function fixture(t) {
     await until(() => res.frames.length > 0)
     return { res, done }
   }
-  return { db, writer, session, deps, request, feed, userFeed }
+  async function shareFeed(options = {}) {
+    await db.setUserRole(session.userId, 'manage')
+    await db.createWorkspaceShare(session.id, Date.now(), 'team', 'share')
+    const snapshot = await db.getWorkspaceShare('share')
+    const recheck = async () => {
+      const current = await db.getWorkspaceShare('share')
+      if (JSON.stringify(current) !== JSON.stringify(snapshot)) throw new TeamReportsError(404, 'workspace-changed')
+    }
+    const res = new Response()
+    const done = serveTeamFeed(res, deps, snapshot, recheck, { pollMs: 10, lifetimeMs: 10000,
+      readState: () => db.getWorkspaceShareFeedState('share'), ...options })
+    feeds.push({ res, done })
+    await until(() => res.frames.length > 0)
+    return { res, done }
+  }
+  return { db, writer, session, deps, request, feed, userFeed, shareFeed }
 }
 
 test('GET feed checks session, role, team and method before subscribing', async t => {
@@ -197,6 +212,63 @@ test('revocation during a revision read closes before emitting an update', async
 const teamEvents = res => res.frames.filter(frame => frame.startsWith('event: teams\n')).length
 const eventNames = res => res.frames.map(frame => frame.split('\n')[0])
 const triageEvents = res => res.frames.filter(frame => frame === 'event: triage\ndata: {}\n\n').length
+
+test('public feeds skip unchanged snapshots and ignore unrelated annotation changes', async t => {
+  const h = await fixture(t)
+  const snapshots = t.mock.method(h.db, 'getWorkspaceShare')
+  const revisions = t.mock.method(h.db, 'getAnnotationRevision')
+  const states = t.mock.method(h.db, 'getWorkspaceShareFeedState')
+  const { res } = await h.shareFeed()
+  await until(() => states.mock.callCount() >= 5)
+  assert.equal(snapshots.mock.callCount(), 2, 'initial snapshot and first-poll fence only')
+  assert.equal(revisions.mock.callCount(), 1)
+  await h.writer.setTriage('unrelated', { color: 'red' }, null, null, 1)
+  await until(() => revisions.mock.callCount() === 2)
+  assert.equal(snapshots.mock.callCount(), 2, 'annotation-only changes cannot alter visibility')
+  assert.equal(triageEvents(res), 1)
+  await h.writer.setTriage('visible', { color: 'blue' }, null, null, 2)
+  await until(() => triageEvents(res) === 2)
+  assert.ok(res.frames.every(frame => frame === 'event: triage\ndata: {}\n\n'), 'no grant or global counters reach the client')
+})
+
+const shareChanges = {
+  permissions: h => h.writer.updateWorkspaceShare(h.session.id, Date.now(), 'team', 'share', { security: true, dependencies: false }),
+  revocation: h => h.writer.revokeWorkspaceShares(h.session.id, Date.now(), 'team', 'share'),
+  issuerRole: h => h.writer.setUserRole(h.session.userId, 'view'),
+  issuerMembership: h => h.writer.removeTeamMember('team', h.session.userId),
+  reportVisibility: h => h.writer.setReportVisible('report', false),
+}
+for (const [name, change] of Object.entries(shareChanges)) {
+  test(`public feed closes on ${name} changes despite cached annotation revisions`, async t => {
+    const h = await fixture(t)
+    const { res, done } = await h.shareFeed()
+    await change(h)
+    await done
+    assert.deepEqual(res.frames, ['event: triage\ndata: {}\n\n', 'event: close\ndata: {}\n\n'])
+  })
+}
+
+test('public feed fences revocation during a revision read and retries writes during a read', async t => {
+  const h = await fixture(t)
+  const original = h.db.getAnnotationRevision
+  let reads = 0
+  h.db.getAnnotationRevision = async ids => {
+    const revision = await original(ids)
+    if (++reads === 1) await h.writer.setTriage('visible', { color: 'red' }, null, null, 1)
+    return revision
+  }
+  const { res, done } = await h.shareFeed()
+  await until(() => triageEvents(res) === 2)
+  h.db.getAnnotationRevision = async ids => {
+    const revision = await original(ids)
+    await h.writer.revokeWorkspaceShares(h.session.id, Date.now(), 'team', 'share')
+    return revision
+  }
+  await h.writer.setTriage('visible', { color: 'blue' }, null, null, 2)
+  await done
+  assert.equal(triageEvents(res), 2, 'a revoked share cannot receive the next revision')
+  assert.equal(res.frames.at(-1), 'event: close\ndata: {}\n\n')
+})
 
 test('REST catalogs and feed confirmations share a version that changes with this user\'s visible access', async t => {
   const h = await fixture(t)

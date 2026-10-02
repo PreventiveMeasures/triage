@@ -6,6 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { checkBundleLocations } from './_managed-bundle-location.js'
+import { checkManagementCatalog } from './_managed-catalog.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
 import { checkStorageDb, checkStorageMigrationOrder, storageTestKey } from './_managed-storage-db.js'
@@ -13,6 +14,7 @@ import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { config, harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
 import { reportReferenceSnapshot } from '../server-managed/management.ts'
 import { hashToken } from '../server-managed/crypto.ts'
+import { serveTeamFeed } from '../server-managed/team-feed.ts'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
 
 // Tests in this file run sequentially. Reuse the expensive WASM engine, but
@@ -69,6 +71,72 @@ async function database(t, options = {}) {
   return { db, connect, queries, faults }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+test('Postgres management catalogs preserve permission and linked-bundle filtering', async t => {
+  const { db } = await database(t)
+  await checkManagementCatalog(db)
+})
+
+test('Postgres management catalogs use a fixed query budget as reports and bundles grow', async t => {
+  const { db, queries, connect } = await database(t), session = await setup(db)
+  const bundles = memoryStore(), reports = memoryStore(), send = harness(db, reports, bundles)
+  await db.createTeam('team', 'Team', 1)
+  await db.setTeamRepo('team', 1, '')
+  await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
+  const budgets = { admin: [9, 14], manage: [11, 16] }
+  for (let count = 1; count <= 20; count++) {
+    const bundle = await seedBundle(db, bundles, session.userId)
+    const report = await seedReport(db, reports, session.userId)
+    const connection = await connect()
+    try { await connection.query('UPDATE managed_report SET bundle_id=$1 WHERE id=$2', [bundle, report]) }
+    finally { await connection.release() }
+    if (count !== 1 && count !== 20) continue
+    if (count === 20) {
+      for (let repoId = 3; repoId <= 25; repoId++) {
+        await db.selectRepo({ repoId, fullName: `org/repo${repoId}`, private: true,
+          installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: session.userId }, 1)
+      }
+    }
+    for (const role of ['admin', 'manage']) {
+      await db.setUserRole(session.userId, role)
+      for (const [index, kind] of ['reports', 'bundles'].entries()) {
+        queries.length = 0
+        const response = await send(`/api/admin/${kind}`, { session, method: 'GET' })
+        assert.equal(response.status, 200)
+        assert.equal(JSON.parse(response.body)[kind].length, count)
+        assert.equal(queries.length, budgets[role][index])
+      }
+    }
+  }
+})
+
+test('Postgres public feed validates idle polls with one SQL statement', async t => {
+  const { db, queries } = await database(t), reports = memoryStore(), session = await setup(db)
+  const sessionId = hashToken(session.setCookie.split(';')[0].slice(4))
+  await db.createTeam('team', 'Team', 1)
+  await db.setTeamRepo('team', 1, '')
+  await db.setReportVisible(await seedReport(db, reports, session.userId), true)
+  await db.createWorkspaceShare(sessionId, Date.now(), 'team', 'share')
+  const snapshot = await db.getWorkspaceShare('share')
+  const state = await db.getWorkspaceShareFeedState('share')
+  const perPoll = []
+  db.withRequest = async work => {
+    const before = queries.length
+    await work()
+    perPoll.push(queries.length - before)
+  }
+  // eslint-disable-next-line unicorn/prefer-event-target
+  const res = new EventEmitter()
+  Object.assign(res, { headersSent: false, destroyed: false, writeHead() { this.headersSent = true }, flushHeaders() {}, write() { return true }, end() {} })
+  await serveTeamFeed(res, { db, reportStore: reports, isShuttingDown: () => perPoll.length === 3 }, snapshot,
+    async () => assert.deepEqual(await db.getWorkspaceShare('share'), snapshot),
+    { pollMs: 1, readState: () => db.getWorkspaceShareFeedState('share') })
+  assert.deepEqual(perPoll, [12, 1, 1])
+  await db.updateWorkspaceShare(sessionId, Date.now(), 'team', 'share', { security: true, dependencies: false })
+  assert.notEqual((await db.getWorkspaceShareFeedState('share')).grant, state.grant)
+  await db.revokeWorkspaceShares(sessionId, Date.now(), 'team', 'share')
+  assert.equal(await db.getWorkspaceShareFeedState('share'), null)
+})
 
 test('Postgres migration orders reports before bundles, smallest first, and resumes old cursors', async t => {
   const { db } = await database(t, { storageEncryptionKey: storageTestKey })
