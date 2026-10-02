@@ -57,7 +57,7 @@ import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
-import { bundleIntegrity, bundleKind, reportBundleHashes } from './bundle.ts'
+import { bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedBundle, ManagedDb, ManagedSession, ReportRecord, SelectedRepo, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
@@ -1184,7 +1184,8 @@ async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, dep
 
 // POST /api/admin/bundles — upload a bundle. Mutation: same-origin + CSRF,
 // admin|manage. Raw bytes; X-Bundle-Filename names it, optional X-Repo-Id and
-// X-Repo-Directory assign a repository location. The bundle's identity is its content hash (sha512), UNIQUE — a
+// X-Repo-Directory assign a repository location; Stasis repo headers default
+// to a matching connected repository. The bundle's identity is its content hash (sha512), UNIQUE — a
 // re-upload of identical bytes dedupes to the existing row (no second copy).
 // After storing, any reports that declared this integrity but weren't linked yet
 // get attached (auto-link). 413 over the cap, 400 on empty.
@@ -1206,21 +1207,35 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const repo = await resolveUploadRepoId(req, res, deps)
   if (!repo.ok) return
-  let rawDirectory
+  const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
+  const kind = bundleKind(filename)
+  // Explicit locations override embedded defaults. Reuploads keep their
+  // stored location, so only new bundles need their origin header decoded.
+  const integrity = bundleIntegrity(bytes)
+  const existing = await deps.db.getBundleByIntegrity(integrity)
+  let rawDirectory: unknown
   try { rawDirectory = decodeURIComponent(firstHeader(req.headers['x-repo-directory']) ?? '') }
   catch { sendJson(res, 400, { error: 'bad-directory' }); return }
+  if (!existing && repo.repoId == null && kind === 'stasis') {
+    const embedded = await bundleRepo(bytes)
+    const github = reportRepoGithub({ repo: embedded })
+    const selected = github == null ? null : (await deps.db.listSelectedRepos())
+      .find(candidate => candidate.fullName.toLowerCase() === github.toLowerCase())
+    if (selected) {
+      repo.repoId = selected.repoId
+      if (req.headers['x-repo-directory'] == null) rawDirectory = embedded?.directory ?? ''
+    }
+    s = await checkMutation(req, res, deps, cookie)
+    if (!s || !requireManageRole(res, s.user)) return
+  }
   const normalized = normalizeTeamPath(rawDirectory)
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
   const directory = repo.repoId == null ? '' : normalized.path ?? ''
   if (repo.repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repo.repoId, directory))) {
     sendJson(res, 403, { error: 'forbidden' }); return
   }
-  const integrity = bundleIntegrity(bytes)
-  const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
-  const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
-  const kind = bundleKind(filename)
   const dataKey = await deps.bundleStore.put(id, bytes, kind)
   try {
     await deps.db.insertBundle({

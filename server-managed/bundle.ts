@@ -7,6 +7,8 @@
 // report auto-links to its bundle.
 import { createHash } from 'node:crypto'
 import type { Buffer } from 'node:buffer'
+import { StringDecoder } from 'node:string_decoder'
+import { createBrotliDecompress } from 'node:zlib'
 
 // `sha512-<base64>` identity for a bundle's bytes. MUST stay byte-identical to
 // the client's common/integrity.js (SHA-512 → standard base64 WITH padding) so
@@ -25,6 +27,68 @@ export function bundleKind(filename: string): 'sourcemap' | 'stasis' | null {
   if (lower.endsWith('.map')) return 'sourcemap'
   if (lower === 'stasis.code.br' || lower.endsWith('.stasis.code.br')) return 'stasis'
   return null
+}
+
+interface BundleRepo { github?: unknown; directory?: unknown }
+const HEADER_KEYS = new Set(['version', 'config', 'repo', 'package'])
+const MAX_HEADER_BYTES = 64 * 1024
+
+// Stasis writes origin metadata before entries, formats and source bodies.
+// undefined means another chunk is needed; null means the header has no repo.
+function headerRepo(text: string): BundleRepo | null | undefined {
+  let depth = 0, escaped = false, expectKey = false, quoted = false
+  let key = '', start = 0, valueStart = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (quoted) {
+      if (escaped) { escaped = false; continue }
+      if (c === '\\') { escaped = true; continue }
+      if (c !== '"') continue
+      quoted = false
+      if (depth === 1 && expectKey) {
+        key = JSON.parse(text.slice(start, i + 1)) as string
+        if (!HEADER_KEYS.has(key)) return null
+        expectKey = false
+      }
+      continue
+    }
+    if (c === '"') { quoted = true; start = i; continue }
+    if (c === '{' || c === '[') {
+      if (depth === 0 && c !== '{') return null
+      depth++
+      if (depth === 1) expectKey = true
+    } else if (depth === 1 && (c === ',' || c === '}')) {
+      if (key === 'repo') {
+        const repo: unknown = JSON.parse(text.slice(valueStart, i))
+        return repo != null && typeof repo === 'object' && !Array.isArray(repo) ? repo as BundleRepo : null
+      }
+      if (c === '}') return null
+      expectKey = true
+    } else if (c === '}' || c === ']') depth--
+    else if (depth === 1 && c === ':') valueStart = i + 1
+    else if (depth === 0 && c?.trim()) return null
+  }
+  return undefined
+}
+
+// Decode only a bounded prefix, stopping as soon as repo is read or the
+// header ends. Unknown/malformed archives remain uploadable as opaque bytes.
+export async function bundleRepo(bytes: Buffer): Promise<BundleRepo | null> {
+  const stream = createBrotliDecompress({ chunkSize: 4096 })
+  const decoder = new StringDecoder('utf8')
+  let size = 0, text = ''
+  stream.end(bytes)
+  try {
+    for await (const chunk of stream) {
+      size += chunk.length
+      if (size > MAX_HEADER_BYTES) return null
+      text += decoder.write(chunk)
+      const repo = headerRepo(text)
+      if (repo !== undefined) return repo
+    }
+    return null
+  } catch { return null }
+  finally { stream.destroy() }
 }
 
 // Extract the bundle integrities a report declares (its top-level

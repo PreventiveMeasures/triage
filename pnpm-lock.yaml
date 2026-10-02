@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@exodus/stasis-core':
-        specifier: ^1.0.0-beta.4
-        version: 1.0.0-beta.4
+        specifier: ^1.0.0-beta.5
+        version: 1.0.0-beta.5
       '@preventive/report':
         specifier: 1.0.0-alpha.4
         version: 1.0.0-alpha.4
@@ -289,8 +289,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@exodus/bytes@1.15.1':
-    resolution: {integrity: sha512-S6mL0yNB/Abt9Ei4tq8gDhcczc4S3+vQ4ra7vxnAf+YHC02srtqxKKZghx2Dq6p0e66THKwR6r8N6P95wEty7Q==, tarball: https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.1.tgz}
+  '@exodus/bytes@1.16.0':
+    resolution: {integrity: sha512-IcpW84uEn3N7ETtNZMlxKhfl6Pec8rUNGOTBtWbK1FKhJxIFAptZyVrvVRVBimAJxJCgc3PxepxkdWWG4DVzfA==, tarball: https://registry.npmjs.org/@exodus/bytes/-/bytes-1.16.0.tgz}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
     peerDependencies:
       '@noble/hashes': ^1.8.0 || ^2.0.0
@@ -298,8 +298,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@exodus/stasis-core@1.0.0-beta.4':
-    resolution: {integrity: sha512-OVwi73QqIIe++le21zTeJUcrw/2DUSg//qcagzU+VdA+P1Kb/qcikLEVwXs1QuY8pu71prjl1ehjzreBzNJEbA==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.4.tgz}
+  '@exodus/stasis-core@1.0.0-beta.5':
+    resolution: {integrity: sha512-DMaYThoWdo6kOFegpR24RKTeThEShC5ewR0O9Z2mz3uF1x0uNBki9g/pAG4h+M/vG4cmsQMMn1TvSmfCePTciw==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.5.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
 
@@ -1258,9 +1258,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@exodus/bytes@1.15.1': {}
+  '@exodus/bytes@1.16.0': {}
 
-  '@exodus/stasis-core@1.0.0-beta.4': {}
+  '@exodus/stasis-core@1.0.0-beta.5': {}
 
   '@keyv/bigmap@1.3.1(keyv@5.6.0)':
     dependencies:
@@ -1355,7 +1355,7 @@ snapshots:
 
   '@preventive/terminal@2.0.0-beta.1':
     dependencies:
-      '@exodus/bytes': 1.15.1
+      '@exodus/bytes': 1.16.0
       '@preventive/diff': 1.0.0
     transitivePeerDependencies:
       - '@noble/hashes'

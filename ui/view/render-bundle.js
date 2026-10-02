@@ -36,6 +36,7 @@ import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPath
 import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleCodeStats } from '../../common/bundle-stats.js'
+import { bundleOriginLinks } from './bundle-origin-links.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
@@ -2296,9 +2297,11 @@ function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
 // bundle with no parsed `bundle`, gets the metadata row plus a
 // placeholder line.
 function renderBundleDetails(entry, details) {
+  const origin = details?.integrity === entry.integrity && !details.error && details.kind === 'stasis' ? details.bundle : null
   const meta = html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
+    ${bundleOriginLinks(origin).map(link => html`<dt>${link.label}</dt><dd><a href=${link.href} target="_blank" rel="noopener noreferrer">${link.text}</a></dd>`)}
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
     ${details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`

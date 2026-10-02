@@ -10,7 +10,8 @@ import { bundleFileSizes, bundleSourcesAsMap, bundleUnsizedFiles } from './bundl
 // and a base64 resource for its spelling; after, it left every resource
 // out. Either way its sizes are not file sizes, so it is read for its
 // hashes alone and rebuilt on open.
-export const BUNDLE_METADATA_VERSION = 2
+// Version 3 also retains the bundle's repository and package origin metadata.
+export const BUNDLE_METADATA_VERSION = 3
 const INDEX_VERSION = BUNDLE_METADATA_VERSION
 const hashJobs = new WeakMap()
 const SOURCE_TABS = new Set(['terminal', 'code', 'search', 'compare'])
@@ -76,7 +77,7 @@ export async function createBundleMetadata(details) {
     result.namesCount = names?.length ?? null
   } else {
     const b = details.bundle
-    const bundle = { version: b.version, config: b.config, formats: mapObject(b.formats), imports: mapObject(b.imports), reason: b.reason, executable: [...b.executable] }
+    const bundle = { version: b.version, config: b.config, repo: b.repo, package: b.package, formats: mapObject(b.formats), imports: mapObject(b.imports), reason: b.reason, executable: [...b.executable] }
     if (b.version === 0) {
       bundle.sources = Object.fromEntries([...sizes.keys()].map((path) => [path, null]))
     } else {
@@ -108,20 +109,21 @@ export function createBundleSummary(details, metadata) {
 }
 
 // `stale` marks an index this version did not write: its hashes still
-// answer report lookups, but its sizes and line counts are not trusted,
-// and an open rebuilds it.
+// answer report lookups, but an open rebuilds it for current sizes, line
+// counts and origin metadata.
 export function parseBundleMetadata(data, integrity) {
-  if ((data?.version !== 1 && data?.version !== INDEX_VERSION) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
+  if (![1, 2, INDEX_VERSION].includes(data?.version) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
       || !Number.isSafeInteger(data.size) || data.size < 0 || !Array.isArray(data.files)) throw new Error('Invalid bundle metadata')
   const stale = data.version !== INDEX_VERSION
+  const legacySizes = data.version === 1
   const fileHashes = new Map(), fileSizes = new Map(), lineCounts = new Map()
   for (const row of data.files) {
     // Version 1 rows predate the line count, and gave every sized entry a hash.
-    if (!Array.isArray(row) || (row.length !== 4 && !(stale && row.length === 3))) throw new Error('Invalid bundle metadata file')
+    if (!Array.isArray(row) || (row.length !== 4 && !(legacySizes && row.length === 3))) throw new Error('Invalid bundle metadata file')
     const [path, size, hash, lines] = row
     if (typeof path !== 'string' || fileSizes.has(path) || (size !== null && (!Number.isSafeInteger(size) || size < 0))
         || (hash !== null && (typeof hash !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(hash)))
-        || (size === null && hash !== null) || (stale && size !== null && hash === null)
+        || (size === null && hash !== null) || (legacySizes && size !== null && hash === null)
         || (lines !== undefined && lines !== null && (!Number.isSafeInteger(lines) || lines < 0))) throw new Error('Invalid bundle metadata file')
     fileSizes.set(path, size)
     if (hash !== null) fileHashes.set(path, hash)
@@ -129,7 +131,7 @@ export function parseBundleMetadata(data, integrity) {
   }
   // Only a sizeless row can name a mounted file with no size, and only once.
   const unsized = new Set(data.unsized ?? [])
-  if ((data.unsized !== undefined && (stale || !Array.isArray(data.unsized) || unsized.size !== data.unsized.length))
+  if ((data.unsized !== undefined && (legacySizes || !Array.isArray(data.unsized) || unsized.size !== data.unsized.length))
       || [...unsized].some((path) => typeof path !== 'string' || !fileSizes.has(path) || fileSizes.get(path) !== null)) throw new Error('Invalid bundle metadata')
   const details = { integrity, kind: data.kind, size: data.size, metadataOnly: true, fileSizes, fileHashes, lineCounts, unsizedFiles: unsized, stale }
   if (data.kind === 'stasis') {
@@ -140,7 +142,7 @@ export function parseBundleMetadata(data, integrity) {
     // no hash. And only a base64 resource can be mounted without a size.
     // Both are checked against the formats, which only the bundle carries.
     const formats = details.bundle.formats
-    if (!stale && [...fileSizes].some(([path, size]) => fileHashes.has(path) !== (size !== null && !Bundle.isResourceFormat(formats.get(path))))) {
+    if (!legacySizes && [...fileSizes].some(([path, size]) => fileHashes.has(path) !== (size !== null && !Bundle.isResourceFormat(formats.get(path))))) {
       throw new Error('Invalid bundle metadata inventory')
     }
     if ([...unsized].some((path) => formats.get(path) !== 'resource:base64')) throw new Error('Invalid bundle metadata inventory')

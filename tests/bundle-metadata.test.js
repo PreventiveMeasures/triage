@@ -16,6 +16,8 @@ function details() {
     formats: new Map([['src/main.js', 'module']]),
     imports: new Map([['node,import', new Map([['src/main.js', new Map([['dep', new Map([['ios', 'node_modules/dep/a.js'], ['android', 'src/empty.js']])]])]])]]),
     reason: { run: ['src/main.js', 'node_modules/dep/a.js'] },
+    repo: { github: 'org/app', directory: 'packages/app', commit: 'a'.repeat(40) },
+    package: { npm: { name: '@org/app', version: '1.0.0' } },
   }) }
 }
 
@@ -42,6 +44,8 @@ it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, an
   assert.deepEqual(bundlePackageDirs(cached), bundlePackageDirs(full))
   assert.deepEqual(bundleImportsAsMap(cached), bundleImportsAsMap(full))
   assert.deepEqual(cached.bundle.entries, full.bundle.entries)
+  assert.deepEqual(cached.bundle.repo, full.bundle.repo)
+  assert.deepEqual(cached.bundle.package, full.bundle.package)
   assert.deepEqual(bundleGraphReasons(cached, cached.fileHashes.keys()), bundleGraphReasons(full, full.fileHashes.keys()))
   assert.equal(bundleSourcesAsMap(cached).size, 0, 'metadata cannot masquerade as source bodies')
   for (const [file, content] of bundleSourcesAsMap(full)) assert.equal(cached.fileHashes.get(file), await computeFileHash(content))
@@ -72,7 +76,7 @@ it('supports legacy Stasis bundles and sourcemaps with absent source content', a
 it('rejects wrong integrities, versions, invalid sizes/hashes and mismatched inventories', async () => {
   const data = await createBundleMetadata(details())
   for (const corrupt of [
-    { ...data, integrity: 'other' }, { ...data, version: 3 },
+    { ...data, integrity: 'other' }, { ...data, version: 4 },
     { ...data, files: data.files.map((row) => row.slice(0, 3)) },
     { ...data, files: [['src/main.js', -1, 'bad']] },
     { ...data, files: [['src/main.js', 12, 'bad']] },
@@ -114,7 +118,7 @@ function withResources() {
 it('keeps a resource\'s byte size, and no hash or line count, since it is no source', async () => {
   const full = withResources()
   const data = await createBundleMetadata(full)
-  assert.equal(data.version, 2)
+  assert.equal(data.version, 3)
   const rows = new Map(data.files.map(([path, ...rest]) => [path, rest]))
   assert.deepEqual(rows.get('assets/logo.png'), [7, null, null])
   assert.deepEqual(rows.get('assets/icon.svg'), [6, null, null])
@@ -125,6 +129,14 @@ it('keeps a resource\'s byte size, and no hash or line count, since it is no sou
   assert.deepEqual(bundleFileSizes(cached), bundleFileSizes(full))
   assert.deepEqual(bundleFileKinds(cached), bundleFileKinds(full), 'a metadata-only open tells resources apart too')
   assert.deepEqual([...cached.fileHashes.keys()], ['src/main.js'])
+})
+
+it('reads version 2 hashes but rebuilds metadata that predates bundle origins', async () => {
+  const full = withResources()
+  const data = { ...await createBundleMetadata(full), version: 2 }
+  const cached = parseBundleMetadata(data, full.integrity)
+  assert.equal(cached.stale, true)
+  assert.deepEqual(cached.fileHashes, full.fileHashes)
 })
 
 it('records a base64 resource that does not decode without a size, and reads it back', async () => {

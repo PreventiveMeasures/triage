@@ -521,7 +521,7 @@ The GitHub Contents API limits directory listings to
 
 `GET /api/bundles/:id/metadata` returns the shared `common/bundle-metadata.js`
 format: file inventory, byte sizes, source hashes and line counts, package
-identity, imports, entry points, executable flags and language/code statistics.
+identity, repository/package origins, imports, entry points, executable flags and language/code statistics.
 It excludes source bodies and binary resources. `GET /api/bundles/:id/contents`
 returns the original sourcemap or Stasis JSON after HTTP decoding.
 Both endpoints use `Content-Encoding: br`. Metadata is cached as Brotli;
@@ -586,7 +586,12 @@ Manage lists and repository pickers enforce these rules on the server.
 Bundles store a repository and an optional directory, editable together from
 Manage → Bundles, just like report locations. Uploads accept `X-Repo-Id` and a
 URL-encoded `X-Repo-Directory`; `POST /api/admin/bundles/set-repo` accepts
-`{ bundleId, repoId, directory }`. Root is stored as an empty directory; existing
+`{ bundleId, repoId, directory }`. For new Stasis uploads without an explicit
+repository, the bundle's `repo.github` defaults to a matching connected repository
+(case-insensitive), with `repo.directory` as the directory default. Explicit upload
+locations override these defaults; unmatched origins remain unattached. Only the
+bounded origin header is decoded, before any source contents. The usual repository
+and directory grants apply. Root is stored as an empty directory; existing
 bundles migrate to root. Detaching clears the directory, and deduplicated uploads
 preserve the stored location.
 

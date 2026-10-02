@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
 import '../ui/view/frontend-install.js'
+import { Bundle } from '@exodus/stasis-core/bundle'
+import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
 
 // Keep the real modal and bundle source rendering without unrelated page
 // navigation, tooltip listeners, or asynchronous syntax highlighting.
@@ -12,7 +14,7 @@ mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: () => null } }
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath: () => null, langForTag: () => null, highlight: () => Promise.resolve(null) } })
 const { state } = await import('../client/state.ts')
-const { renderBundleSourceModal } = await import('../ui/view/render-bundle.js')
+const { renderBundleSourceModal, renderBundlesList } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -71,4 +73,25 @@ test('closing during loading keeps the popup closed after sources arrive', () =>
   assert.equal(renderText(renderBundleSourceModal()), '')
   state.bundleDetails = { kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent: ['ready'] } }
   assert.equal(renderText(renderBundleSourceModal()), '')
+})
+
+test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
+  const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
+    repo: { github: 'org/repo' }, package: { npm: { name: '@org/app', version: '1.2.3' } },
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
+  state.selectedBundle = entry.integrity
+  state.bundles = [entry]
+  for (const [details, managedId] of [[full, undefined], [cached, 'managed-bundle']]) {
+    state.bundleDetails = details
+    const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
+    assert.match(markup, /<dt>GitHub<\/dt><dd><a href=https:\/\/github\.com\/org\/repo/u)
+    assert.match(markup, /<dt>npm<\/dt><dd><a href=https:\/\/www\.npmjs\.com\/package\/@org\/app\/v\/1\.2\.3/u)
+    assert.match(markup, /target="_blank" rel="noopener noreferrer"/u)
+  }
+  for (const details of [null, { ...full, integrity: 'previous' }, { ...full, error: 'broken' }, { ...full, bundle: new Bundle() }]) {
+    state.bundleDetails = details
+    assert.doesNotMatch(renderText(renderBundlesList([entry])), /<dt>GitHub<\/dt>|<dt>npm<\/dt>/u)
+  }
 })
