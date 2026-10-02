@@ -86,8 +86,8 @@ test('bundle Overview displays origin links from full contents and cached manage
   for (const [details, managedId] of [[full, undefined], [cached, 'managed-bundle']]) {
     state.bundleDetails = details
     const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
-    assert.match(markup, /<dt>GitHub<\/dt><dd><a href=https:\/\/github\.com\/org\/repo/u)
-    assert.match(markup, /<dt>npm<\/dt><dd><a href=https:\/\/www\.npmjs\.com\/package\/@org\/app\/v\/1\.2\.3/u)
+    assert.match(markup, /<dt>GitHub<\/dt><dd><a class="bundle-origin-link" href=https:\/\/github\.com\/org\/repo/u)
+    assert.match(markup, /<dt>npm<\/dt><dd><a class="bundle-origin-link" href=https:\/\/www\.npmjs\.com\/package\/@org\/app\/v\/1\.2\.3/u)
     assert.match(markup, /target="_blank" rel="noopener noreferrer"/u)
   }
   for (const details of [null, { ...full, integrity: 'previous' }, { ...full, error: 'broken' }, { ...full, bundle: new Bundle() }]) {

@@ -25,7 +25,7 @@ import { sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -2301,7 +2301,7 @@ function renderBundleDetails(entry, details) {
   const meta = html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
-    ${bundleOriginLinks(origin).map(link => html`<dt>${link.label}</dt><dd><a href=${link.href} target="_blank" rel="noopener noreferrer">${link.text}</a></dd>`)}
+    ${bundleOriginLinks(origin).map(link => html`<dt>${link.label}</dt><dd><a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a></dd>`)}
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
     ${details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
