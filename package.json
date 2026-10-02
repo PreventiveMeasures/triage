@@ -120,6 +120,7 @@
     "server-managed/import-triage.ts",
     "server-managed/managed-issues.ts",
     "server-managed/management.ts",
+    "server-managed/management-catalog.ts",
     "server-managed/object-storage.ts",
     "server-managed/object-storage-disk.ts",
     "server-managed/object-storage-vercel.ts",

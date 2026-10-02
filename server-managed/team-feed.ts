@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { ManagedHttpDeps } from './http.ts'
 import type { StoredUser, TeamReportAccessSnapshot } from './db.ts'
 import { TeamReportsError, teamSnapshotKey, teamWorkspaceFindingIds } from './team-reports.ts'
+import type { WorkspaceShareFeedState } from './workspace-shares.ts'
 
 // Short database reads work across instances without pinning a Neon connection.
 // All polling belongs to the awaited request; nothing runs after it completes.
@@ -15,14 +16,30 @@ type Publish = (event: 'teams' | 'triage', revision: string | undefined) => bool
 
 // Public capabilities remain scoped to their single shared workspace.
 export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
-  snapshot: TeamReportAccessSnapshot, recheck: () => Promise<void>, options: FeedOptions = {}): Promise<void> {
+  snapshot: TeamReportAccessSnapshot, recheck: () => Promise<void>,
+  options: FeedOptions & { readState?: () => Promise<WorkspaceShareFeedState | null> } = {}): Promise<void> {
   let ids: string[] | undefined
+  let previous: WorkspaceShareFeedState | undefined
+  const sameAccess = (a: WorkspaceShareFeedState, b?: WorkspaceShareFeedState) => a.grant === b?.grant && a.catalog === b.catalog
+  const readState = async () => {
+    const state = await options.readState!()
+    if (!state) throw new TeamReportsError(404, 'workspace-changed')
+    return state
+  }
   await serveFeed(res, deps, async publish => {
-    await recheck()
+    const state = options.readState ? await readState() : undefined
+    // The first poll still compares the full snapshot loaded before the stream.
+    // Unchanged polls validate the live grant without reading report catalogs.
+    if (state && sameAccess(state, previous)) {
+      if (state.annotations === previous!.annotations) return
+    } else await recheck()
     ids ??= [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
     const triage = await deps.db.getAnnotationRevision(ids)
-    await recheck()
+    const after = options.readState ? await readState() : undefined
+    if (!after || !sameAccess(after, state)) await recheck()
     publish('triage', triage)
+    // A write during the read must remain pending for the following poll.
+    if (after?.annotations === state?.annotations) previous = after
   }, options)
 }
 

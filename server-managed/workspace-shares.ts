@@ -31,6 +31,7 @@ export interface ManagedWorkspaceShare extends WorkspaceShareInfo {
   teamName: string
   teamSlug: string
 }
+export type WorkspaceShareFeedState = { grant: string; catalog: number; annotations: number }
 export interface WorkspaceShareStore {
   createWorkspaceShare(sessionId: string, now: number, teamId: string, tokenHash: string, permissions?: TeamUserPermissions): Promise<boolean>
   listWorkspaceShares(sessionId: string, now: number, teamId: string): Promise<WorkspaceShareInfo[] | null>
@@ -38,6 +39,7 @@ export interface WorkspaceShareStore {
   updateWorkspaceShare(sessionId: string, now: number, teamId: string, id: string, permissions: TeamUserPermissions): Promise<boolean>
   revokeWorkspaceShares(sessionId: string, now: number, teamId: string, id?: string): Promise<boolean>
   getWorkspaceShare(tokenHash: string): Promise<WorkspaceShareSnapshot | null>
+  getWorkspaceShareFeedState(tokenHash: string): Promise<WorkspaceShareFeedState | null>
 }
 
 // A share is a capability, never a user session. Its issuer must still manage
@@ -63,11 +65,17 @@ function shareQueries(db: ManagedSql) {
     JOIN managed_user u ON u.id = s.created_by JOIN managed_team t ON t.id = s.team_id
     WHERE ? = 'admin' OR EXISTS (SELECT 1 FROM managed_team_user tu WHERE tu.user_id = ? AND tu.team_id = s.team_id)
     ORDER BY t.name, t.id, s.created_at DESC, s.token_hash`)
-  const share = db.prepare(`SELECT t.id, t.slug, t.name, s.dependencies, s.security FROM managed_workspace_share s
+  const shareGrant = `FROM managed_workspace_share s
     JOIN managed_user u ON u.id = s.created_by
     JOIN managed_team t ON t.id = s.team_id
     WHERE s.token_hash = ? AND (u.role = 'admin' OR (u.role = 'manage'
-      AND EXISTS (SELECT 1 FROM managed_team_user tu WHERE tu.user_id = u.id AND tu.team_id = s.team_id)))`)
+      AND EXISTS (SELECT 1 FROM managed_team_user tu WHERE tu.user_id = u.id AND tu.team_id = s.team_id)))`
+  const share = db.prepare(`SELECT t.id, t.slug, t.name, s.dependencies, s.security ${shareGrant}`)
+  // Validate the capability and its issuer every poll; global counters are
+  // internal hints that let unchanged feeds skip rebuilding the full catalog.
+  const feed = db.prepare(`SELECT t.id, s.dependencies, s.security,
+    (SELECT catalog FROM managed_change_revision WHERE id = 1) AS catalog,
+    (SELECT annotations FROM managed_change_revision WHERE id = 1) AS annotations ${shareGrant}`)
   const repositories = db.prepare(`SELECT tr.repo_id AS repoId, sr.full_name AS github, tr.path
     FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
     WHERE tr.team_id = ? ORDER BY tr.repo_id, tr.path`)
@@ -85,7 +93,7 @@ function shareQueries(db: ManagedSql) {
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
     WHERE tr.team_id = ? AND (tr.path = '' OR b.repo_directory = tr.path
       OR substr(b.repo_directory, 1, length(tr.path) + 1) = tr.path || '/') ORDER BY b.id`)
-  return { manager, insert, remove, update, list, session, all, share, repositories, reports, bundles }
+  return { manager, insert, remove, update, list, session, all, share, feed, repositories, reports, bundles }
 }
 
 function shareInfo<T extends { dependencies: number; security: number }>(row: T) {
@@ -122,6 +130,10 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       if (!await q.manager.get(teamId, sessionId, now)) return false
       const result = await q.remove.run(teamId, id ?? null, id ?? null)
       return id === undefined || result.changes > 0
+    },
+    async getWorkspaceShareFeedState(tokenHash) {
+      const row = await q.feed.get(tokenHash) as { id: string; dependencies: number; security: number; catalog: number; annotations: number } | undefined
+      return row ? { grant: JSON.stringify([row.id, row.dependencies, row.security]), catalog: row.catalog, annotations: row.annotations } : null
     },
     async getWorkspaceShare(tokenHash) {
       const grant = await q.share.get(tokenHash) as { id: string; slug: string; name: string; dependencies: number; security: number } | undefined

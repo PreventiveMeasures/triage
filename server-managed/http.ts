@@ -51,6 +51,7 @@ import { NPM_ADVISORIES_TIMEOUT_MS, fetchNpmAdvisories } from '../server-common/
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, putUploadPart, readUpload, validUpload, validUploadPart } from './uploads.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
+import { contentAccess } from './content-access.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
@@ -746,12 +747,6 @@ async function resolveUploadRepoId(req: IncomingMessage, res: ServerResponse, de
   return { ok: true, repoId: n }
 }
 
-async function canChangeReportRepo(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
-  if (!roleAtLeast(user.role, 'manage') || !(await canViewReport(deps, user, reportId))) return false
-  const report = await deps.db.getReport(reportId)
-  return report != null && (user.role === 'admin' || report.repoId === null || await deps.db.userCanReadReport(user.id, reportId))
-}
-
 // POST /api/admin/reports/set-repo — attach / detach a stored report's repo
 // + directory link. Mutation: same-origin + CSRF, admin|manage. Body
 // { reportId, repoId, directory }, where repoId is null (detach) or a
@@ -813,18 +808,10 @@ async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, de
 // Visible to admin|manage. Read-only, so no CSRF (like /api/admin/users).
 // `maxBytes` lets the page show / pre-check the upload size cap; `repos` feeds
 // the upload repo picker.
-async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await readManageSession(res, deps, cookie)
-  if (s == null) return
+async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession): Promise<void> {
   sendJson(res, 200, {
-    reports: await Promise.all((await deps.db.listReports(s.user.role === 'admin' ? undefined : s.user.id)).map(async report => {
-      const bundleAllowed = report.bundleId != null && await canAccessBundle(deps, s.user, report.bundleId)
-      return { ...report, canChangeRepo: await canChangeReportRepo(deps, s.user, report.id),
-        bundleId: bundleAllowed ? report.bundleId : null, bundleFilename: bundleAllowed ? report.bundleFilename : null }
-    })),
+    ...await deps.db.getReportCatalog(session.id, Date.now()),
     maxBytes: deps.config.maxReportBytes,
-    repos: selectableRepos(await bundleRepos(deps, s.user)),
-    repoScopes: s.user.role === 'admin' ? null : await deps.db.listRepoScopesForUser(s.user.id),
   })
 }
 
@@ -987,15 +974,10 @@ async function canAccessBundle(deps: ManagedHttpDeps, user: StoredUser, id: stri
   return rec.repoId !== null && deps.db.userCanReadRepoPath(user.id, rec.repoId, rec.repoDirectory)
 }
 
-async function canChangeBundleRepo(deps: ManagedHttpDeps, user: StoredUser, repoId: number | null, directory: string) {
-  return roleAtLeast(user.role, 'manage') && (user.role === 'admin' || repoId === null || await deps.db.userCanReadRepoPath(user.id, repoId, directory))
-}
-
 async function bundleRepos(deps: ManagedHttpDeps, user: StoredUser) {
   const repos = await deps.db.listSelectedRepos()
-  if (user.role === 'admin') return repos
-  const allowed = await Promise.all(repos.map(repo => deps.db.userCanReadRepo(user.id, repo.repoId)))
-  return repos.filter((_, index) => allowed[index])
+  const access = await contentAccess(deps.db, user)
+  return repos.filter(access.bundle)
 }
 
 async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
@@ -1137,24 +1119,19 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
 // GET /api/admin/bundles — the uploaded bundles for the "Manage bundles" page.
 // admin|manage, read-only (no CSRF). `maxBytes` is the upload cap; `repos` feeds
 // the upload repo picker.
-async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  let s = await readManageSession(res, deps, cookie)
-  if (s == null) return
-  const summaries = await bundleSummaries(await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id), deps.bundleCache)
+async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession): Promise<void> {
+  const before = await deps.db.getBundleCatalog(session.id, Date.now())
+  const summaries = await bundleSummaries(before.bundles, deps.bundleCache)
   // Even cached storage reads may outlast changes to access or locations.
-  s = await readManageSession(res, deps, cookie)
-  if (s == null) return
-  const bundles = await deps.db.listBundles(s.user.role === 'admin' ? undefined : s.user.id)
+  const catalog = await deps.db.getBundleCatalog(session.id, Date.now())
   sendJson(res, 200, {
-    bundles: await Promise.all(bundles.map(async bundle => ({
+    ...catalog,
+    bundles: catalog.bundles.map(bundle => ({
       ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }),
-      canChangeRepo: await canChangeBundleRepo(deps, s.user, bundle.repoId, bundle.repoDirectory),
-    }))),
+    })),
     maxBytes: deps.config.maxBundleBytes,
-    repos: selectableRepos(await bundleRepos(deps, s.user)),
-    repoScopes: s.user.role === 'admin' ? null : await deps.db.listRepoScopesForUser(s.user.id),
   })
-  await backfillBundleSummaries(bundles, deps.bundleCache)
+  await backfillBundleSummaries(catalog.bundles, deps.bundleCache)
 }
 
 type UploadedBundle = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'byteSize' | 'repoId' | 'repoDirectory'>
@@ -2084,7 +2061,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // Reports: list / upload on the exact path, download / delete per-id on the
     // prefix. Method-dispatched here since each path carries two verbs.
     if (path === ADMIN_REPORTS_PATH) {
-      if (method === 'GET') { await handleListReports(res, deps, cookie); return }
+      if (method === 'GET') { await handleListReports(res, deps, workspaceSession!.session); return }
       if (method === 'POST') { await handleUploadReport(req, res, deps, cookie); return }
       send405(res, 'GET, POST'); return
     }
@@ -2130,7 +2107,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       return
     }
     if (path === ADMIN_BUNDLES_PATH) {
-      if (method === 'GET') { await handleListBundles(res, deps, cookie); return }
+      if (method === 'GET') { await handleListBundles(res, deps, workspaceSession!.session); return }
       if (method === 'POST') { await handleUploadBundle(req, res, deps, cookie); return }
       send405(res, 'GET, POST'); return
     }

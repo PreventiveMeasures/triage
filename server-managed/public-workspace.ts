@@ -72,7 +72,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     if (teamRoute[1] !== snapshot.teamId) { json(res, 404, { error: 'no-team' }); return }
     if (teamRoute[2] === 'feed') {
       if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
-      await serveTeamFeed(res, deps, snapshot, recheck); return
+      await serveTeamFeed(res, deps, snapshot, recheck, { readState: () => deps.db.getWorkspaceShareFeedState(tokenHash) }); return
     }
     if (teamRoute[2] === 'annotations') {
       await send(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot)); return
