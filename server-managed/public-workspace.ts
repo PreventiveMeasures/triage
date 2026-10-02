@@ -5,9 +5,9 @@ import type { ManagedHttpDeps } from './http.ts'
 import type { ManagedBundle } from './db.ts'
 import type { OpenedBlob } from './blob-store.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
-import { sendJson } from './http-response.ts'
+import { sendJson, writeResponse } from './http-response.ts'
 import { hashToken } from './crypto.ts'
-import { TeamReportsError, loadTeamAnnotations, loadTeamReports, teamReportVisibility } from './team-reports.ts'
+import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, teamReportVisibility } from './team-reports.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
@@ -78,7 +78,10 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
       await send(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot, url.searchParams.get('reportId'))); return
     }
     if (teamRoute[2] === 'shared') { await sendTeam(); return }
-    await send({ reports: await loadTeamReports(deps.db, deps.reportStore, snapshot) }); return
+    const body = await loadTeamReportsResponse(deps.db, deps.reportStore, snapshot)
+    await recheck()
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' })
+    writeResponse(res, body); return
   }
   if (reportRoute) {
     const id = reportRoute[1]!, part = reportRoute[2]!

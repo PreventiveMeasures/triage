@@ -81,7 +81,7 @@ import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAc
 import { clearCookie, endSession, readSession } from './session.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { TeamReportsError, loadTeamAnnotations, loadTeamReports, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
+import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
 import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
@@ -1478,13 +1478,10 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
 // or links file to evade classification through the rest of their team.
 async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, teamId: string): Promise<void> {
   const snapshot = await teamSnapshot(deps.db, session.id, teamId)
-  const reports = await loadTeamReports(deps.db, deps.reportStore, snapshot)
+  const body = await loadTeamReportsResponse(deps.db, deps.reportStore, snapshot)
   await recheckTeam(deps.db, session.id, snapshot)
-  const parts = [Buffer.from('{"reports":[')]
-  for (const [index, report] of reports.entries()) parts.push(Buffer.from(`${index ? ',' : ''}${JSON.stringify(report)}`))
-  parts.push(Buffer.from(']}'))
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
-  writeResponse(res, Buffer.concat(parts))
+  writeResponse(res, body)
 }
 
 // Triage requires both a writing role and access to the report itself.

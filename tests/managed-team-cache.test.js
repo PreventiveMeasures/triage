@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { loadTeamReports, teamFindingIds, teamSourcePaths } from '../server-managed/team-reports.ts'
+import { loadTeamReports, loadTeamReportsResponse, teamFindingIds, teamSourcePaths } from '../server-managed/team-reports.ts'
 
-function fixture(pathCount) {
-  const content = Buffer.from(JSON.stringify({ findings: [{ id: 'finding', evidence: Array.from({ length: pathCount }, (_, i) => ({ file: `src/${i}.js` })) }] }))
+function fixture(pathCount, description = '') {
+  const content = Buffer.from(JSON.stringify({ findings: [{ id: 'finding', description, evidence: Array.from({ length: pathCount }, (_, i) => ({ file: `src/${i}.js` })) }] }))
   const snapshots = new Map()
   let reads = 0
   const db = { getTeamReportAccessSnapshot: (_session, _now, team) => Promise.resolve(snapshots.get(team)) }
@@ -20,10 +20,56 @@ function fixture(pathCount) {
   return {
     get reads() { return reads },
     load: team => loadTeamReports(db, store, snapshot(team)),
+    response: team => loadTeamReportsResponse(db, store, snapshot(team)),
     ids: team => teamFindingIds(db, store, 'session', team, 'report'),
     paths: team => teamSourcePaths(db, store, 'session', team, 'report'),
   }
 }
+
+test('warm team responses reuse encoded JSON without parsing or serializing report data', async t => {
+  const h = fixture(2, 'Finding €😀 and escaped "quotes"\n')
+  const body = await h.response('team')
+  const reports = await h.load('team')
+  assert.equal(body.toString(), JSON.stringify({ reports }))
+  const stringify = JSON.stringify
+  t.mock.method(JSON, 'parse', () => assert.fail('warm HTTP responses must not parse reports'))
+  t.mock.method(JSON, 'stringify', (value, ...args) => {
+    assert.ok(Array.isArray(value) && value[0] === 'user', 'only the access snapshot key needs serialization')
+    return stringify(value, ...args)
+  })
+  assert.equal(await h.response('team'), body)
+  assert.equal(h.reads, 1)
+})
+
+test('object readers cannot mutate concurrent or cached team response bodies', async () => {
+  const h = fixture(1, 'Original')
+  const [first, second, body] = await Promise.all([h.load('team'), h.load('team'), h.response('team')])
+  const original = body.toString()
+  first[0].data.findings[0].description = 'Changed'
+  first[0].repo.github = 'changed/repo'
+  assert.equal(second[0].data.findings[0].description, 'Original')
+  assert.equal(second[0].repo.github, null)
+  assert.equal((await h.response('team')).toString(), original)
+  assert.deepEqual(await h.load('team'), second)
+  assert.equal(h.reads, 1)
+})
+
+test('encoded report caching stays bounded by bytes as well as snapshot count', async () => {
+  const h = fixture(1, 'x'.repeat(6 * 1024 * 1024))
+  await h.response('first')
+  const second = await h.response('second')
+  await h.response('third')
+  const full = h.reads
+  assert.equal(await h.response('second'), second)
+  await h.response('third')
+  assert.equal(h.reads, full, 'two six-MiB responses remain cached')
+  await h.response('first')
+  assert.equal(h.reads, full + 1, 'the oldest response was evicted before exceeding 16 MiB')
+  const large = fixture(1, 'x'.repeat(17 * 1024 * 1024))
+  const before = await large.response('large')
+  assert.deepEqual(await large.response('large'), before)
+  assert.equal(large.reads, 2, 'oversized bodies remain usable without being retained')
+})
 
 test('visibility eviction includes the incoming snapshot and permits exactly the total limit', async () => {
   // Each snapshot contains one ID and 124,999 paths: two fit exactly.
