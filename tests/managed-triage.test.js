@@ -35,7 +35,11 @@ mock.module('../client/index.js', { namedExports: {
   saveTriage: () => { saves++; notifier(); return Promise.resolve() },
 } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
-  fetchTeamAnnotations: (teamId, options) => { annotationCalls.push({ teamId, options }); return Promise.resolve(typeof annotationResult === 'function' ? annotationResult() : annotationResult) },
+  fetchTeamAnnotations: async (teamId, options) => {
+    annotationCalls.push({ teamId, options })
+    const reports = await (typeof annotationResult === 'function' ? annotationResult() : annotationResult)
+    return reports ? id => Object.hasOwn(reports, id) ? reports[id] : null : null
+  },
   fetchReportTriage: (id, teamId, options) => {
     calls.push({ fetch: id })
     if (typeof serverEntries === 'function') return serverEntries(id, teamId, options)

@@ -32,16 +32,26 @@ test('managed report loads never fall back to report metadata when the response 
   }
 })
 
-test('team annotation transport validates batches and forwards cancellation', async t => {
+test('team annotation transport validates batches and filters report views lazily', async t => {
   const controller = new AbortController()
-  let body = { reports: { r: { entries: { f: null }, comments: [] } } }
+  let body = { reports: { r: ['f', 'shared'], s: ['g', 'shared'], empty: [] },
+    entries: { f: null, g: { color: 'red' }, shared: { fix: 'Shared' } },
+    comments: [{ id: 'one', findingId: 'shared' }, { id: 'two', findingId: 'f' }, { id: 'three', findingId: 'g' }] }
   t.mock.method(globalThis, 'fetch', (url, options) => {
     assert.equal(url, '/api/teams/team%20id/annotations')
     assert.equal(options.signal, controller.signal)
     return Promise.resolve(Response.json(body))
   })
-  assert.deepEqual(await fetchTeamAnnotations('team id', { signal: controller.signal }), body.reports)
-  for (body of [{}, { reports: [] }, { reports: { r: { entries: [], comments: [] } } }, { reports: { r: { entries: {}, comments: null } } }]) {
+  const read = await fetchTeamAnnotations('team id', { signal: controller.signal })
+  assert.deepEqual(read('r'), { entries: { f: null, shared: body.entries.shared }, comments: body.comments.slice(0, 2) })
+  assert.deepEqual(read('s'), { entries: { g: body.entries.g, shared: body.entries.shared }, comments: [body.comments[0], body.comments[2]] })
+  assert.equal(read('r').comments[0], read('s').comments[0], 'shared comment bodies stay shared in memory')
+  assert.deepEqual(read('empty'), { entries: {}, comments: [] })
+  assert.equal(read('missing'), null)
+  assert.equal(read('toString'), null, 'inherited properties are not reports')
+  for (body of [{}, { reports: [], entries: {}, comments: [] }, { reports: { r: [null] }, entries: {}, comments: [] },
+    { reports: {}, entries: [], comments: [] }, { reports: {}, entries: {}, comments: [null] },
+    { reports: {}, entries: {}, comments: [{}] }, { reports: {}, entries: {}, comments: null }]) {
     assert.equal(await fetchTeamAnnotations('team id', { signal: controller.signal }), null)
   }
 })

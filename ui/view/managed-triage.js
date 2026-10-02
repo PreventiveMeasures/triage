@@ -380,7 +380,7 @@ export function createManagedAnnotationRead(teamId, signal) {
       if (!(await waitForTriageFlush(signal)) || signal?.aborted) return null
       return fetchTeamAnnotations(teamId, { signal })
     })()
-    const reports = await snapshotRead
-    return reports && Object.hasOwn(reports, reportId) ? reports[reportId] : null
+    const readReport = await snapshotRead
+    return readReport?.(reportId) ?? null
   }
 }

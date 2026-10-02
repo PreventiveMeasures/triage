@@ -168,8 +168,9 @@ and incurs those reads; see Vercel's
 [streaming and duration guidance](https://vercel.com/docs/functions/streaming-functions#function-duration).
 
 Team annotation hydration and refresh use one `GET /api/teams/:id/annotations`
-request for triage and comments across the workspace. Results remain filtered
-per report, with access rechecked after reading the batch. Individual management
+request for triage and comments across the workspace. Shared annotation bodies
+are returned once, with per-report finding references preserving visibility.
+Access is rechecked after reading the batch. Individual management
 previews retain their report-scoped endpoints.
 
 Session and team visibility are rechecked during polling. Membership loss stops

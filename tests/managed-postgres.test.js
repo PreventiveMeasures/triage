@@ -827,9 +827,10 @@ test('Postgres team annotation batches have a constant query budget across repor
   queries.length = 0
   const response = await send('/api/teams/team/annotations', { session, method: 'GET' })
   assert.equal(response.status, 200)
-  const batch = JSON.parse(response.body).reports
-  assert.equal(Object.keys(batch).length, 10)
-  assert.ok(Object.values(batch).every(value => value.entries['shared-finding'].color === 'red'))
+  const batch = JSON.parse(response.body)
+  assert.equal(Object.keys(batch.reports).length, 10)
+  assert.ok(Object.values(batch.reports).every(ids => ids.includes('shared-finding')))
+  assert.deepEqual(batch.entries, { 'shared-finding': { color: 'red' } })
   assert.equal(queries.length, 20, 'one presence update, two access snapshots, and one annotation snapshot')
   assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
 })

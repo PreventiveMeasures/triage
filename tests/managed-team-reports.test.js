@@ -251,10 +251,16 @@ test('team annotation batches match report reads and preserve per-report permiss
       const batch = await h.request(`/api/teams/${team}/annotations`, role)
       assert.equal(batch.status, 200)
       assert.equal(Object.hasOwn(batch.body.reports, 'foreign-links'), false)
+      const allowedIds = new Set(Object.values(batch.body.reports).flat())
+      assert.ok(Object.keys(batch.body.entries).every(id => allowedIds.has(id)))
+      assert.ok(batch.body.comments.every(comment => allowedIds.has(comment.findingId)))
       for (const report of ['a', 'b']) {
         const triage = await h.request(`/api/reports/${report}/triage?team=${team}`, role)
         const comments = await h.request(`/api/reports/${report}/comments?team=${team}`, role)
-        assert.deepEqual(batch.body.reports[report], { entries: triage.body.entries, comments: comments.body.comments }, `${role}/${team}/${report}`)
+        const allowed = new Set(batch.body.reports[report])
+        const entries = Object.fromEntries(Object.entries(batch.body.entries).filter(([id]) => allowed.has(id)))
+        const visibleComments = batch.body.comments.filter(comment => allowed.has(comment.findingId))
+        assert.deepEqual({ entries, comments: visibleComments }, { entries: triage.body.entries, comments: comments.body.comments }, `${role}/${team}/${report}`)
       }
     }
   }
@@ -283,3 +289,17 @@ for (const change of ['role', 'membership', 'permission', 'publication']) {
     assert.equal(JSON.stringify(result.body).includes('private value'), false)
   })
 }
+
+test('repeated scans serialize shared annotations once instead of once per report', async t => {
+  const h = await fixture(t)
+  const commentCount = 32, reportCount = 128
+  for (let i = 0; i < reportCount; i++) await h.seed(`repeat-${i}`, { findings: [{ id: 'shared', file: 'src/shared.js' }] })
+  await h.db.setTriage('shared', { fix: 'x'.repeat(4096) }, null, null, 1)
+  for (let i = 0; i < commentCount; i++) await h.db.createComment({ findingId: 'shared', body: 'x'.repeat(1024), authorId: null, authorLogin: null }, i)
+  const response = await h.request('/api/teams/broad/annotations')
+  assert.equal(response.status, 200)
+  assert.ok(Buffer.byteLength(JSON.stringify(response.body)) < 64 * 1024, 'annotation bodies must not grow with the number of repeated scans')
+  assert.equal(response.body.comments.length, commentCount)
+  assert.deepEqual(Object.keys(response.body.entries), ['shared'])
+  for (let i = 0; i < reportCount; i++) assert.deepEqual(response.body.reports[`repeat-${i}`], ['shared'])
+})

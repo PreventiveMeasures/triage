@@ -192,27 +192,15 @@ export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId
   return visible.sourcePaths
 }
 
-// Read shared annotation rows once, then partition by each report's filtered
-// visibility. Callers revalidate the snapshot after this read before sending.
+// Serialize shared annotation bodies once. Reports carry only the annotated
+// finding IDs visible in that report; callers revalidate access before sending.
 export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
   const visible = await teamVisibility(db, store, snapshot)
   const ids = new Set<string>()
   for (const report of visible.values()) for (const id of report.ids) ids.add(id)
   const { triage, comments } = await db.getAnnotations([...ids])
-  const entries = new Map(triage.map(row => [row.findingId, triageWireEntry(row)]))
-  const reports = Object.fromEntries([...visible].map(([id, report]) => [id, {
-    entries: Object.fromEntries([...report.ids].filter(finding => entries.has(finding)).map(finding => [finding, entries.get(finding)])),
-    comments: [] as typeof comments,
-  }]))
-  const owners = new Map<string, string[]>()
-  for (const [id, report] of visible) {
-    for (const finding of report.ids) {
-      const list = owners.get(finding) ?? []
-      list.push(id); owners.set(finding, list)
-    }
-  }
-  // Partition in the original listComments order without scanning every
-  // comment once per report. Shared findings retain all owning reports.
-  for (const comment of comments) for (const id of owners.get(comment.findingId) ?? []) reports[id]!.comments.push(comment)
-  return reports
+  const entries = Object.fromEntries(triage.map(row => [row.findingId, triageWireEntry(row)]))
+  const annotated = new Set([...triage.map(row => row.findingId), ...comments.map(comment => comment.findingId)])
+  const reports = Object.fromEntries([...visible].map(([id, report]) => [id, [...report.ids].filter(finding => annotated.has(finding))]))
+  return { reports, entries, comments }
 }

@@ -356,7 +356,9 @@ test('shared annotation batches retain capability filtering and recheck revocati
   assert.equal(Object.hasOwn(batch.body.reports, 'foreign'), false)
   const triage = await h.request('/api/reports/visible/triage', { token })
   const comments = await h.request('/api/reports/visible/comments', { token })
-  assert.deepEqual(batch.body.reports.visible, { entries: triage.body.entries, comments: comments.body.comments })
+  const visibleIds = new Set(batch.body.reports.visible)
+  assert.deepEqual(Object.fromEntries(Object.entries(batch.body.entries).filter(([id]) => visibleIds.has(id))), triage.body.entries)
+  assert.deepEqual(batch.body.comments.filter(comment => visibleIds.has(comment.findingId)), comments.body.comments)
   assert.equal((await h.request('/api/teams/other/annotations', { token })).status, 404)
   const original = h.db.getAnnotations
   h.db.getAnnotations = async ids => {

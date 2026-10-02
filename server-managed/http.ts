@@ -2162,9 +2162,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (teamAnnotations) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const snapshot = await teamSnapshot(db, workspaceSession!.session.id, teamAnnotations[1]!)
-      const reports = await loadTeamAnnotations(db, deps.reportStore, snapshot)
+      const annotations = await loadTeamAnnotations(db, deps.reportStore, snapshot)
       await recheckTeam(db, workspaceSession!.session.id, snapshot)
-      sendJson(res, 200, { reports }); return
+      sendJson(res, 200, annotations); return
     }
     const teamReports = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
     if (teamReports) {
