@@ -150,8 +150,9 @@ export function teamQuery(teamId) { return teamId ? `?team=${encodeURIComponent(
 
 // Keep shared annotation bodies normalized until a consumer asks for one
 // report. Projections preserve each report's visibility and server comment order.
-export async function fetchTeamAnnotations(teamId, options) {
-  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/annotations`, null, options)
+export async function fetchTeamAnnotations(teamId, { reportId: selectedReportId, ...options } = {}) {
+  const query = selectedReportId == null ? '' : `?reportId=${encodeURIComponent(selectedReportId)}`
+  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/annotations${query}`, null, options)
   const { reports, entries, comments } = body ?? {}
   if (!reports || typeof reports !== 'object' || Array.isArray(reports)
       || !entries || typeof entries !== 'object' || Array.isArray(entries) || !Array.isArray(comments)) return null

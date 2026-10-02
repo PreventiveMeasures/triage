@@ -80,6 +80,7 @@ beforeEach(async () => {
   state.triage.clear(); state.reports = []; state.managedReport = null; state.managedReports = []
   state.localMode = false
   state.currentManagedTeam = null
+  state.currentManagedReport = null
   state.managedSession = { role: 'triage', csrfToken: 'tok' }
   saves = 0; renders = 0; calls = []; invalidations = []; pushStatus = 200; serverEntries = {}
   annotationCalls = []; annotationResult = {}
@@ -642,6 +643,15 @@ test('team hydration and refresh share one snapshot and preserve edits during th
   assert.equal(annotationCalls.length, 2, 'each refresh gets a new snapshot')
   assert.equal(state.triage.get('x').color, 'green')
   assert.equal(state.triage.get('y').color, 'red', 'the batch cannot undo an edit posted while it was in flight')
+})
+
+test('management previews and focused links views retain individual annotation reads', () => {
+  state.currentManagedReport = 'A'
+  state.managedReports = [{ id: 'A' }]
+  assert.equal(createManagedAnnotationRead(null), undefined)
+  state.currentManagedReport = 'links'
+  state.managedReports = [{ id: 'A' }, { id: 'links' }]
+  assert.equal(createManagedAnnotationRead('team'), undefined)
 })
 
 test('team annotation reads wait for pending writes and respect cancellation', async () => {

@@ -369,17 +369,20 @@ export async function refreshManagedReportTriage(reportId, { signal, readAnnotat
   return true
 }
 
-// Full-team views share one read per hydration/refresh across reports and both
-// consumers. Focused reports and management previews keep report-scoped reads.
+// Share one read per hydration/refresh across reports and both consumers,
+// restricting focused views to their report. Management previews and focused
+// links views spanning multiple reports retain their individual reads.
 // Flush all pending edits before taking the server snapshot.
 export function createManagedAnnotationRead(teamId, signal) {
-  if (!teamId || state.currentManagedReport != null) return undefined
+  if (!teamId) return undefined
+  const selectedReportId = state.currentManagedReport
+  if (selectedReportId != null && (state.managedReports.length !== 1 || state.managedReports[0].id !== selectedReportId)) return undefined
   let snapshotRead
   return async reportId => {
     snapshotRead ??= (async () => {
       flushPending()
       if (!(await waitForTriageFlush(signal)) || signal?.aborted) return null
-      return fetchTeamAnnotations(teamId, { signal })
+      return fetchTeamAnnotations(teamId, { signal, reportId: selectedReportId })
     })()
     const readReport = await snapshotRead
     return readReport?.(reportId) ?? null
