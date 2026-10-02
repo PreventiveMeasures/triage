@@ -1726,9 +1726,9 @@ bundle-search {
     & .bundle-origin-link {
       display: inline-flex; align-items: center; gap: .35rem;
       max-width: 100%; color: inherit; text-decoration: none;
-      padding-bottom: 2px; border-bottom: 1px solid transparent;
       & svg { flex-shrink: 0; }
-      &:hover, &:focus-visible { border-bottom-color: currentcolor; }
+      & > span { border-bottom: 1px dotted transparent; }
+      &:hover > span, &:focus-visible > span { border-bottom-color: currentcolor; }
     }
     & .bundle-commit-link { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   }
