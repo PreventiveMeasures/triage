@@ -1048,19 +1048,18 @@ function prebuildBundle(deps: ManagedHttpDeps, id: string) {
 
 // GET /api/bundles/:id/{metadata,contents}. Source/cache bytes are already encoded;
 // the browser's HTTP stack decompresses them without a Brotli JS dependency.
-async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, part: BundleCachePart) {
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!s) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  const rec = await deps.db.getBundle(id)
+async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, part: BundleCachePart) {
+  const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+  if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const rec = access.bundle
   if (!rec) { sendJson(res, 404, { error: 'no-bundle' }); return }
   if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
   let cached
   try { cached = await deps.bundleCache.open(rec, part) }
   catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
   // A cold build can outlast a session or membership change.
-  const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || !(await canAccessBundle(deps, current.user, id))) {
+  const current = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+  if (!current?.bundle) {
     cached.stream.destroy()
     sendJson(res, current ? 404 : 401, { error: current ? 'no-bundle' : 'unauthenticated' })
     return
@@ -1076,19 +1075,18 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
 
 // Published npm advisories require security access, independently of access to
 // unpublished dependency findings. Managers retain their normal bundle access.
-async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string, teamId: string | null, reason: string) {
+async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, reason: string) {
   const authorize = async () => {
-    const session = await readSession(deps.config, deps.db, cookie, Date.now())
-    if (!session) { sendJson(res, 401, { error: 'unauthenticated' }); return false }
-    if (!(await canAccessBundle(deps, session.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return false }
-    if (!roleAtLeast(session.user.role, 'manage') && !(await deps.db.userCanReadBundleAdvisories(session.user.id, id, teamId))) {
-      sendJson(res, 403, { error: 'security-access-required' }); return false
+    const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id, teamId)
+    if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    if (!access.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
+    if (!access.canReadAdvisories) {
+      sendJson(res, 403, { error: 'security-access-required' }); return null
     }
-    return true
+    return access.bundle
   }
-  if (!(await authorize())) return
-  const record = await deps.db.getBundle(id)
-  if (!record) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  const record = await authorize()
+  if (!record) return
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
   if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
   let packages: Record<string, string[]> | null | undefined
@@ -1213,16 +1211,15 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
 // are opaque archives, so served as application/octet-stream. Sourcemaps use
 // HTTP Brotli decoding to restore the uploaded .map bytes. 404 no such
 // bundle; 503 row-without-bytes (store desync).
-async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
-  const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (!(await canAccessBundle(deps, s.user, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  const rec = await deps.db.getBundle(id)
+async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string): Promise<void> {
+  const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+  if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const rec = access.bundle
   if (rec == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
   const stored = await deps.bundleStore.open(id, rec.kind)
   if (stored == null) { sendJson(res, 503, { error: 'unavailable' }); return }
-  const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || !(await canAccessBundle(deps, current.user, id))) {
+  const current = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+  if (!current?.bundle) {
     stored.stream.destroy()
     sendJson(res, current ? 404 : 401, { error: 'no-bundle' }); return
   }
@@ -2095,15 +2092,15 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const bundleAdvisories = /^\/api\/bundles\/([a-f\d-]{36})\/advisories$/iu.exec(path)
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleBundleAdvisories(res, deps, cookie, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '')
+      await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '')
       return
     }
     const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download)$/iu.exec(path)
     if (bundleRead) {
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       const id = bundleRead[1]!
-      if (bundleRead[2] === 'download') await handleGetBundle(req, res, deps, cookie, id)
-      else await handleBundleCache(req, res, deps, cookie, id, bundleRead[2] as BundleCachePart)
+      if (bundleRead[2] === 'download') await handleGetBundle(req, res, deps, workspaceSession!.session, id)
+      else await handleBundleCache(req, res, deps, workspaceSession!.session, id, bundleRead[2] as BundleCachePart)
       return
     }
     if (path === ADMIN_BUNDLES_PATH) {
@@ -2117,7 +2114,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path.startsWith(BUNDLE_PREFIX)) {
       const id = path.slice(BUNDLE_PREFIX.length)
-      if (method === 'GET') { await handleGetBundle(req, res, deps, cookie, id); return }
+      if (method === 'GET') { await handleGetBundle(req, res, deps, workspaceSession!.session, id); return }
       if (method === 'DELETE') { await handleDeleteBundle(req, res, deps, cookie, id); return }
       send405(res, 'GET, DELETE'); return
     }

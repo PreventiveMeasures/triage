@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { Readable } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
-import { checkBundleLocations } from './_managed-bundle-location.js'
+import { checkBundleAccessSnapshots, checkBundleLocations } from './_managed-bundle-location.js'
 import { checkManagementCatalog } from './_managed-catalog.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
@@ -136,6 +137,41 @@ test('Postgres public feed validates idle polls with one SQL statement', async t
   assert.notEqual((await db.getWorkspaceShareFeedState('share')).grant, state.grant)
   await db.revokeWorkspaceShares(sessionId, Date.now(), 'team', 'share')
   assert.equal(await db.getWorkspaceShareFeedState('share'), null)
+})
+
+test('Postgres bundle access snapshots preserve role, owner, directory and advisory grants', async t => {
+  const { db } = await database(t)
+  await checkBundleAccessSnapshots(db)
+})
+
+test('Postgres bundle delivery and advisories use bounded authorization reads', async t => {
+  const { db, queries } = await database(t), session = await setup(db)
+  const bundleId = randomUUID()
+  await db.createTeam('team', 'Team', Date.now())
+  await db.setTeamRepo('team', 1, 'app')
+  await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
+  await db.insertBundle({ id: bundleId, integrity: 'hash', filename: 'app.stasis.code.br', kind: 'stasis',
+    byteSize: 12, uploadedBy: null, repoId: 1, repoDirectory: 'app' }, Date.now())
+  const open = () => Promise.resolve({ stream: Readable.from(['cached bytes']), size: 12 })
+  const handler = createManagedRequestHandler({ config, db, bundleStore: { open },
+    bundleCache: { open, packageVersions: () => Promise.resolve({}) },
+    originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  for (const role of ['admin', 'manage', 'triage', 'view']) {
+    await db.setUserRole(session.userId, role)
+    for (const part of ['metadata', 'contents', 'download', 'advisories']) {
+      // eslint-disable-next-line unicorn/prefer-event-target
+      const res = new EventEmitter()
+      Object.assign(res, { writeHead(status) { this.status = status }, end() { this.writableEnded = true } })
+      queries.length = 0
+      await handler({ url: `/api/bundles/${bundleId}/${part}?team=team`, method: part === 'advisories' ? 'GET' : 'HEAD',
+        headers: { cookie: session.setCookie.split(';')[0] } }, res)
+      assert.equal(res.status, 200, `${role}/${part}`)
+      const snapshotQueries = role === 'admin' ? 4 : part === 'advisories' && role !== 'manage' ? 6 : 5
+      assert.equal(queries.length, 4 + snapshotQueries * (part === 'advisories' ? 3 : 2))
+      assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
+      t.diagnostic(`${role}/${part}: ${queries.length} SQL statements, ${queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length} presence writes`)
+    }
+  }
 })
 
 test('Postgres migration orders reports before bundles, smallest first, and resumes old cursors', async t => {

@@ -1,5 +1,40 @@
 import assert from 'node:assert/strict'
 
+export async function checkBundleAccessSnapshots(db) {
+  const user = await db.upsertUser({ githubUserId: 1, login: 'member', name: null, avatarUrl: null }, 1)
+  await db.createSession({ id: 'session', userId: user, csrfToken: 'csrf', expiresAt: 1000 }, 1)
+  await db.selectRepo({ repoId: 1, fullName: 'org/repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: user }, 1)
+  for (const [team, security] of [['secure', true], ['plain', false]]) {
+    await db.createTeam(team, team, 1)
+    await db.setTeamRepo(team, 1, 'app')
+    await db.setTeamMember(team, user, { dependencies: false, security })
+  }
+  for (const [id, repoId, directory, uploadedBy] of [
+    ['root', 1, '', null], ['child', 1, 'app/sub', null], ['sibling', 1, 'application', null],
+    ['owned', 1, 'elsewhere', user], ['unassigned', null, '', null], ['owned-unassigned', null, '', user],
+  ]) {
+    await db.insertBundle({ id, integrity: id, filename: `${id}.stasis`, kind: 'stasis', byteSize: 12,
+      repoId, repoDirectory: directory, uploadedBy }, 2)
+  }
+  for (const role of ['admin', 'manage', 'triage', 'view', 'none']) {
+    await db.setUserRole(user, role)
+    for (const id of ['root', 'child', 'sibling', 'owned', 'unassigned', 'owned-unassigned', 'missing']) {
+      const bundle = await db.getBundle(id)
+      const allowed = bundle && role !== 'none' && (role === 'admin' || (role === 'manage'
+        ? await db.userCanReadBundle(user, id) : bundle.repoId !== null && await db.userCanReadRepoPath(user, bundle.repoId, bundle.repoDirectory)))
+      for (const team of [undefined, null, 'secure', 'plain', 'missing']) {
+        const access = await db.getBundleAccessSnapshot('session', 10, id, team)
+        assert.deepEqual(access.bundle, allowed ? bundle : null, `${role}/${id}/${team}`)
+        const security = Boolean(allowed && (['admin', 'manage'].includes(role)
+          || team !== undefined && await db.userCanReadBundleAdvisories(user, id, team)))
+        assert.equal(access.canReadAdvisories, security, `${role}/${id}/${team}`)
+      }
+    }
+  }
+  assert.equal(await db.getBundleAccessSnapshot('missing', 10, 'child'), null)
+  assert.equal(await db.getBundleAccessSnapshot('session', 1000, 'child'), null)
+}
+
 // Run the same scope checks through both SQL adapters, including activity and
 // public snapshots: none of those surfaces should fall back to repo-only access.
 export async function checkBundleLocations(db) {

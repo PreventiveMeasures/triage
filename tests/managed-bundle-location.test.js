@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { checkBundleLocations } from './_managed-bundle-location.js'
+import { checkBundleAccessSnapshots, checkBundleLocations } from './_managed-bundle-location.js'
+
+test('bundle access snapshots preserve role, owner, directory and advisory grants', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  await checkBundleAccessSnapshots(db)
+})
 
 test('SQLite bundle directories scope team catalogs, access, advisories, public links, and activity', async t => {
   const db = openSqliteManagedDb(':memory:')

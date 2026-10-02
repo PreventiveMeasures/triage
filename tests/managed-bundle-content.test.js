@@ -15,6 +15,7 @@ import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
+import { hashToken } from '../server-managed/crypto.ts'
 import { parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const config = {
@@ -504,7 +505,7 @@ test('deletion during a cold build cannot leave cache files behind or serve dele
 })
 
 for (const part of ['metadata', 'contents', 'download']) {
-  for (const change of ['membership', 'directory']) {
+  for (const change of ['membership', 'directory', 'role', 'session']) {
     test(`a revoked ${change} grant while loading ${part} prevents serving it`, async t => {
       const h = await setup(t), record = await h.seed({ repoId: 1, repoDirectory: 'foo' })
       await h.db.removeTeamRepo(h.team, 1, null)
@@ -515,9 +516,11 @@ for (const part of ['metadata', 'contents', 'download']) {
       const response = h.send(`/api/bundles/${record.id}/${part}`, 'viewer')
       await started.promise
       if (change === 'membership') await h.db.removeTeamMember(h.team, h.users.viewer.userId)
-      else await h.db.setBundleRepo(record.id, 1, 'foobar')
+      if (change === 'directory') await h.db.setBundleRepo(record.id, 1, 'foobar')
+      if (change === 'role') await h.db.setUserRole(h.users.viewer.userId, 'none')
+      if (change === 'session') await h.db.deleteSession(hashToken(h.users.viewer.cookie.slice(4)))
       gate.resolve()
-      assert.equal((await response).status, 404)
+      assert.equal((await response).status, change === 'session' ? 401 : 404)
     })
   }
 }
