@@ -124,8 +124,8 @@ test('bundle Overview lists entry points on the left and puts Size under Sources
     const firstMeta = markup.match(/<dl class="bundles-detail-meta">(.*?)<\/dl>/su)[1]
     assert.match(firstMeta, /<dt>Prefix<\/dt><dd class="mono">src\/<\/dd>/u)
     const points = firstMeta.match(/<dt>Entry points<\/dt><dd class="mono">(.*?)<\/dd>/su)[1]
-    assert.match(points, /data-bundle-view-source=src\/main\.js>src\/main\.js<\/button>/u)
-    assert.match(points, /data-bundle-view-source=src\/worker\.js>src\/worker\.js<\/button>/u)
+    assert.match(points, /data-bundle-view-source=src\/main\.js>main\.js<\/button>/u)
+    assert.match(points, /data-bundle-view-source=src\/worker\.js>worker\.js<\/button>/u)
     assert.doesNotMatch(points, /helper/u)
     assert.match(markup, /<dt>Sources<\/dt><dd>3<\/dd>\s*<dt>Size<\/dt><dd>123 B<\/dd>/u)
     assert.doesNotMatch(firstMeta, /<dt>Size<\/dt>/u)

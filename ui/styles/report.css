@@ -1732,6 +1732,7 @@ bundle-search {
     }
     & .bundle-commit-link { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     & .bundles-entry-points {
+      display: flex; flex-wrap: wrap; gap: .25rem .75rem;
       list-style: none; margin: 0; padding: 0;
       max-height: 6rem; overflow: auto;
     }

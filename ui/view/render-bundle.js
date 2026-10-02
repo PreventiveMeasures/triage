@@ -2308,7 +2308,7 @@ function renderBundleDetails(entry, details) {
     <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
     ${origin?.entries.size > 0 ? html`<dt>Entry points</dt><dd class="mono"><ul class="bundles-entry-points">
-      ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${file}</button></li>`)}
+      ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${stripPathPrefix(file, prefix)}</button></li>`)}
     </ul></dd>` : nothing}
     ${includeSize && details && details.integrity === entry.integrity
       ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
