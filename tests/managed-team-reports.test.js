@@ -212,6 +212,25 @@ test('team response cache reuses immutable content and invalidates on permission
   assert.equal(ids(changed.body.reports[1]).includes('secret'), false)
 })
 
+test('warm encoded team responses recheck access before sending cached findings', async t => {
+  const h = await fixture(t)
+  assert.equal((await workspace(h, 'broad')).status, 200)
+  const reads = h.reads.length, snapshot = h.db.getTeamReportAccessSnapshot
+  let first = true
+  t.mock.method(h.db, 'getTeamReportAccessSnapshot', async (...args) => {
+    const result = await snapshot(...args)
+    if (first) {
+      first = false
+      await h.db.removeTeamMember('broad', h.sessions.triage.userId)
+    }
+    return result
+  })
+  const result = await workspace(h, 'broad')
+  assert.equal(result.status, 404)
+  assert.equal(result.body.reports, undefined)
+  assert.equal(h.reads.length, reads, 'the rejected response came from the warm cache')
+})
+
 test('team report loads overlap remote reads while retaining stable output order', async t => {
   const gate = Promise.withResolvers(), h = await fixture(t)
   let active = 0, maximum = 0

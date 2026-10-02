@@ -18,8 +18,7 @@ const VISIBILITY_CACHE_MAX_SNAPSHOTS = 32
 const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
 const REPORT_CACHE_BYTES = 16 * 1024 * 1024
 const reportCaches = new WeakMap<ManagedDb, Map<string, Buffer>>()
-function retainReports(db: ManagedDb, key: string, reports: TeamReport[]) {
-  const bytes = Buffer.from(JSON.stringify(reports))
+function retainReports(db: ManagedDb, key: string, bytes: Buffer) {
   if (bytes.length > REPORT_CACHE_BYTES) return
   let cache = reportCaches.get(db)
   if (!cache) { cache = new Map(); reportCaches.set(db, cache) }
@@ -77,7 +76,7 @@ function linksOf(data: unknown): string[][] | null {
   if (!record.links.every(ids => Array.isArray(ids) && ids.every(id => typeof id === 'string'))) throw new TeamReportsError(422, 'unreadable-links')
   return record.links
 }
-async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<{ reports: TeamReport[]; visible: Visibility }> {
+async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<{ body: Buffer; visible: Visibility }> {
   if (snapshot.reports.length > MAX_REPORT_QUERY_COUNT || snapshot.reports.reduce((n, r) => n + r.byteSize, 0) > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   const reports: TeamReport[] = []
   let inputBytes = 0, next = 0
@@ -134,13 +133,19 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
     if (links) report.data = { source: 'links', findings: [], links: links.map(ids => [...new Set(ids.filter(id => allIds.has(id)))]).filter(ids => ids.length >= 2) }
   }
   let outputBytes = 14
-  for (const report of reports) {
-    outputBytes += Buffer.byteLength(JSON.stringify(report)) + 1
+  const parts = [Buffer.from('{"reports":[')]
+  for (const [index, report] of reports.entries()) {
+    const bytes = Buffer.from(JSON.stringify(report))
+    outputBytes += bytes.length + 1
     if (outputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+    if (index) parts.push(Buffer.from(','))
+    parts.push(bytes)
   }
+  parts.push(Buffer.from(']}'))
+  const body = Buffer.concat(parts)
   retainVisibility(db, teamSnapshotKey(snapshot), visible)
-  retainReports(db, teamSnapshotKey(snapshot), reports)
-  return { reports, visible }
+  retainReports(db, teamSnapshotKey(snapshot), body)
+  return { body, visible }
 }
 const pendingWorkspaces = new WeakMap<ManagedDb, Map<string, ReturnType<typeof buildTeamWorkspace>>>()
 async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
@@ -153,11 +158,16 @@ async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Team
   pending.set(key, job)
   try { return await job } finally { pending.delete(key) }
 }
-export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
+// Treat the encoded body as immutable and recheck access before sending it.
+// Warm HTTP reads need neither a parsed copy nor another serialization pass.
+export async function loadTeamReportsResponse(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Buffer> {
   const cached = reportCaches.get(db)?.get(teamSnapshotKey(snapshot))
-  // Never share mutable parsed objects across callers or permission scopes.
-  if (cached) return JSON.parse(cached.toString('utf8')) as TeamReport[]
-  return (await loadTeamWorkspace(db, store, snapshot)).reports
+  return cached ?? (await loadTeamWorkspace(db, store, snapshot)).body
+}
+export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
+  // Object consumers get their own copy, including when sharing a cold load.
+  const body = await loadTeamReportsResponse(db, store, snapshot)
+  return (JSON.parse(body.toString('utf8')) as { reports: TeamReport[] }).reports
 }
 async function teamVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Visibility> {
   const key = teamSnapshotKey(snapshot)

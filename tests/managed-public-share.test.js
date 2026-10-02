@@ -254,6 +254,23 @@ test('public capabilities cannot enter the WebSocket upgrade transport', () => {
   server.close()
 })
 
+test('warm encoded public responses recheck the live capability before sending cached findings', async t => {
+  const h = await fixture(t), token = await h.mint()
+  const path = '/api/teams/team/reports'
+  assert.equal((await h.request(path, { token })).status, 200)
+  const reads = h.reads.length, snapshot = h.db.getWorkspaceShare
+  let first = true
+  t.mock.method(h.db, 'getWorkspaceShare', async (...args) => {
+    const result = await snapshot(...args)
+    if (first) { first = false; h.config.allowShare = false }
+    return result
+  })
+  const result = await h.request(path, { token })
+  assert.equal(result.status, 404)
+  assert.equal(result.body.reports, undefined)
+  assert.equal(h.reads.length, reads)
+})
+
 test('link permissions are independent opt-ins and edits filter cached findings, annotations and sources', async t => {
   const h = await fixture(t)
   const findings = [
