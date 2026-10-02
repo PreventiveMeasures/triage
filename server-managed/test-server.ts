@@ -19,6 +19,7 @@ import { readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { randomUUID } from 'node:crypto'
 import { teamCatalogRevision } from './team-catalog.ts'
+import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -347,6 +348,30 @@ async function connectAppFixture(req: IncomingMessage, res: ServerResponse): Pro
   sendJson(res, 200, { connected: true })
 }
 
+async function createBundleFixture(req: IncomingMessage, res: ServerResponse, method: string): Promise<void> {
+  if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (req.headers['x-csrf-token'] !== 'fixture-csrf-token') { sendJson(res, 403, { error: 'forbidden' }); return }
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk)
+    size += bytes.length
+    if (size > 128 * 1024) { sendJson(res, 413, { error: 'too-large' }); return }
+    chunks.push(bytes)
+  }
+  try {
+    const input = parseBundleBuild(JSON.parse(Buffer.concat(chunks).toString()))
+    const repo = repoById(input.repoId)
+    if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return }
+    const id = randomUUID()
+    const bundle = { id, slug: id, filename: githubBundleFilename(repo.fullName, input.directory, input.commit), kind: 'stasis',
+      repoDirectory: input.directory, integrity: `sha512-fixture-${id}`, byteSize: 1024, repoId: input.repoId,
+      uploadedByLogin: 'managed-preview', uploadedAt: Date.now() }
+    bundles.unshift(bundle)
+    sendJson(res, 201, bundle)
+  } catch (error) { sendJson(res, 400, { error: error instanceof BundleBuildError ? error.code : 'bad-body' }) }
+}
+
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
   const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
@@ -355,6 +380,7 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
   }
   if (handleAdminCatalog(url, method, res)) return
   if (repositoryBrowser) { handleRepositoryBrowserFixture(url, method, res); return }
+  if (url.pathname === '/api/admin/bundles/create') { await createBundleFixture(req, res, method); return }
   if (url.pathname === '/api/admin/repositories/connect-app' && method === 'POST') { await connectAppFixture(req, res); return }
   if (url.pathname === '/api/admin/reports/set-visible' && method === 'POST') {
     sendJson(res, 200, { ok: true })

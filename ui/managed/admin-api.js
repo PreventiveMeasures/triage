@@ -112,6 +112,34 @@ export async function fetchReports(signal) {
   return await readJson('/api/admin/reports', signal)
 }
 
+export async function createBundle(input, csrfToken, signal) {
+  const res = await managedFetch('/api/admin/bundles/create', {
+    method: 'POST', credentials: 'same-origin', signal,
+    headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: JSON.stringify(input),
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    const messages = {
+      'unsupported-entries': 'Select JavaScript/TypeScript files or Solidity files. Stasis cannot mix languages or use JSON, JSX, TSX, or Rust as remote entry points.',
+      'bad-conditions': 'Check the export conditions and selected platforms.',
+      'metro-conditions': 'Stasis’s Metro preset requires the react-native condition without manual changes.',
+      'build-lockfile': 'Stasis needs a supported lockfile: pnpm-lock.yaml, yarn.lock (Yarn 1), package-lock.json, or soldeer.lock.',
+      'build-scope': 'Your team needs access to the bundle’s project root, including its lockfile and dependencies.',
+      'build-busy': 'A bundle is already being built, or the server is busy. Try again shortly.',
+      'build-timeout': 'The bundle build timed out. Try a smaller selection or retry.',
+      'too-large': 'This bundle exceeds the server’s size limit.',
+      'github-rate-limited': 'GitHub’s API rate limit has been reached. Retry after the limit resets.',
+      'github-build-failed': 'Could not fetch the repository from GitHub. Check access and retry.',
+      'repository-changed': 'The repository connection changed during the build. Reload and try again.',
+      'bundle-conflict': 'This bundle already exists but is outside your current access.',
+      'build-failed': 'Stasis could not build this selection. Check that its lockfile is supported and all entry points and imports exist at this commit.',
+    }
+    throw new Error(messages[data.error] ?? (res.status === 401 ? 'Sign in again to create a bundle.'
+      : res.status === 403 || res.status === 404 ? 'Repository access is required to create this bundle.' : 'Could not create the bundle. Try again.'))
+  }
+  return data
+}
+
 // Upload one report file: the raw bytes as the body and the display name in the
 // X-Report-Filename header. Repository, directory, and analyzer metadata come
 // from the report header; CSRF rides the double-submit token. The server stores

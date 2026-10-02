@@ -106,7 +106,48 @@ test('bundle conditions default to Node.js and changes preserve selected files a
   assert.equal(reads, 1, 'condition changes do not invalidate the immutable directory cache')
   assert.deepEqual([...page._selected], ['src/entry.ts'])
   assert.equal(page._commit, commit)
-  assert.match(view.strings.join(''), /disabled>Create a bundle/u)
+})
+
+test('creation submits pinned entries and conditions once, and reports successful storage', async () => {
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page._commit = commit
+  page._selected = new Set(['src/entry.ts'])
+  let finish
+  const calls = [], events = []
+  page.createBundle = (input, signal) => { calls.push({ input, signal }); return new Promise(resolve => { finish = resolve }) }
+  page.dispatchEvent = event => events.push(event)
+  const pending = page.buildBundle()
+  assert.equal(page._building, true)
+  await page.buildBundle()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].input, { repoId: 1, commit, entries: ['src/entry.ts'], conditions: page._bundleConditions })
+  const result = { id: 'stored-bundle', filename: 'org-repo.src.aaaaaaa.stasis.code.br' }
+  finish(result)
+  await pending
+  assert.equal(page._building, false)
+  assert.equal(events[0].type, 'bundle-created')
+  assert.deepEqual(events[0].detail, result)
+})
+
+test('creation preserves selections after failures and cancels when the page detaches', async () => {
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page._commit = commit
+  page._selected = new Set(['entry.js'])
+  page.createBundle = () => Promise.reject(new Error('Build failed'))
+  await page.buildBundle()
+  assert.equal(page._buildError, 'Build failed')
+  assert.deepEqual([...page._selected], ['entry.js'])
+  let finish, signal
+  page.createBundle = (_input, value) => { signal = value; return new Promise(resolve => { finish = resolve }) }
+  page.dispatchEvent = () => assert.fail('detached creation must not navigate')
+  const pending = page.buildBundle()
+  page.disconnectedCallback()
+  assert.equal(signal.aborted, true)
+  finish({ id: 'stale' })
+  await pending
+  assert.equal(page._building, false)
 })
 
 test('conditions depend on selected JS/TS entry-file extensions, including mixed selections', () => {

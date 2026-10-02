@@ -97,6 +97,9 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
   const defaultBranch = typeof current.default_branch === 'string' ? current.default_branch : ''
   return {
     recheckAccess: () => checkAccess(true),
+    // Server-only credential, selected by the same live visibility/permission
+    // gate as directory browsing. Never included in an HTTP response.
+    readToken: () => token,
     async refs() {
       // Suggestions are bounded; the input also accepts any branch or tag name.
       const results = await Promise.all(['branches', 'tags'].map(async kind => {

@@ -93,6 +93,7 @@ import { serveUserTeamFeed } from './team-feed.ts'
 import { hashToken, randomToken } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
+import { BundleBuildError, buildRepositoryBundle, parseBundleBuild } from './bundle-build.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -115,6 +116,7 @@ const REPORT_SET_REPO_PATH = '/api/admin/reports/set-repo'
 const REPORT_SET_VISIBLE_PATH = '/api/admin/reports/set-visible'
 const REPORT_PREFIX = '/api/admin/reports/'
 const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
+const BUNDLE_CREATE_PATH = '/api/admin/bundles/create'
 const BUNDLE_SET_REPO_PATH = '/api/admin/bundles/set-repo'
 const BUNDLE_PREFIX = '/api/admin/bundles/'
 const MY_TEAMS_PATH = '/api/teams'
@@ -1182,6 +1184,51 @@ async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, dep
   sendJson(res, deduped ? 200 : 201, { id, integrity, filename, repoId, repoDirectory, ...(deduped ? { deduped: true } : { byteSize }) })
 }
 
+async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const initial = await manageMutation(req, res, deps, cookie)
+  if (!initial) return
+  const controller = new AbortController()
+  const onClose = () => controller.abort()
+  res.on('close', onClose)
+  try {
+    let body: unknown
+    try { body = await readJsonBody(req, 128 * 1024) } catch { throw new BundleBuildError(400, 'bad-body') }
+    const input = parseBundleBuild(body)
+    const authorize = async (directory: string) => {
+      const session = await manageMutation(req, res, deps, cookie)
+      if (!session) return null
+      const repo = (await bundleRepos(deps, session.user)).find(item => item.repoId === input.repoId)
+      if (!repo) throw new BundleBuildError(404, 'no-repository')
+      const scopes = session.user.role === 'admin' ? [null]
+        : (await deps.db.listRepoScopesForUser(session.user.id)).filter(scope => scope.repoId === input.repoId).map(scope => scope.path)
+      if (scopedDirectory(directory, scopes) !== null) throw new BundleBuildError(403, 'build-scope')
+      return { ...session, repo, scopes }
+    }
+    const access = await authorize(input.directory)
+    if (!access) return
+    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const built = await buildRepositoryBundle(access.user.id, {
+      input, github: access.repo.fullName, token: reader.readToken(), maxBytes: deps.config.maxBundleBytes, scopes: access.scopes,
+    }, controller.signal)
+    if (controller.signal.aborted) return
+    await reader.recheckAccess()
+    const current = await authorize(built.directory)
+    if (!current) return
+    if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
+      throw new BundleBuildError(409, 'repository-changed')
+    }
+    await storeUploadedBundle(req, res, deps, cookie, current, Buffer.from(built.bytes), input.repoId, built.directory, built.filename)
+  } catch (error) {
+    if (res.destroyed || controller.signal.aborted) return
+    if (error instanceof BundleBuildError) { sendJson(res, error.status, { error: error.code }); return }
+    if (error instanceof GithubApiError) {
+      sendJson(res, error.status === 401 ? 502 : error.status, { error: error.message }, error.retryAfter == null ? {} : { 'retry-after': String(error.retryAfter) })
+      return
+    }
+    throw error
+  } finally { res.off('close', onClose) }
+}
+
 // POST /api/admin/bundles — upload a bundle. Mutation: same-origin + CSRF,
 // admin|manage. Raw bytes; X-Bundle-Filename names it, optional X-Repo-Id and
 // X-Repo-Directory assign a repository location. The bundle's identity is its content hash (sha512), UNIQUE — a
@@ -1215,8 +1262,13 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   if (repo.repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repo.repoId, directory))) {
     sendJson(res, 403, { error: 'forbidden' }); return
   }
-  const integrity = bundleIntegrity(bytes)
   const filename = sanitizeFilename(firstHeader(req.headers['x-bundle-filename']), 'bundle')
+  await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename)
+}
+
+async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined,
+  s: { session: ManagedSession; user: StoredUser }, bytes: Buffer, repoId: number | null, directory: string, filename: string): Promise<void> {
+  const integrity = bundleIntegrity(bytes)
   const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
@@ -1225,7 +1277,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   try {
     await deps.db.insertBundle({
       id, integrity, filename, kind, dataKey,
-      byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: repo.repoId, repoDirectory: directory,
+      byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId, repoDirectory: directory,
     }, Date.now(), s.session.id)
   } catch (err) {
     // A concurrent upload of identical bytes can insert this integrity (UNIQUE)
@@ -1242,7 +1294,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     if (raced.id !== id) { await sendUploadedBundle(req, res, deps, cookie, raced, true); return }
     // Our insert committed: continue with the ordinary creation response.
   }
-  await sendUploadedBundle(req, res, deps, cookie, { id, integrity, filename, byteSize: bytes.length, repoId: repo.repoId, repoDirectory: directory }, false)
+  await sendUploadedBundle(req, res, deps, cookie, { id, integrity, filename, byteSize: bytes.length, repoId, repoDirectory: directory }, false)
 }
 
 // GET /api/admin/bundles/<id> — download a stored bundle (admin|manage). Bytes
@@ -2137,6 +2189,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (bundleRead[2] === 'download') await handleGetBundle(req, res, deps, workspaceSession!.session, id)
       else await handleBundleCache(req, res, deps, workspaceSession!.session, id, bundleRead[2] as BundleCachePart)
       return
+    }
+    if (path === BUNDLE_CREATE_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleCreateBundle(req, res, deps, cookie); return
     }
     if (path === ADMIN_BUNDLES_PATH) {
       if (method === 'GET') { await handleListBundles(res, deps, workspaceSession!.session); return }

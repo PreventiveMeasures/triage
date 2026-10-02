@@ -92,6 +92,8 @@
     "server-managed/blob-store.ts",
     "server-managed/brotli.ts",
     "server-managed/bundle-cache.ts",
+    "server-managed/bundle-build.ts",
+    "server-managed/bundle-build-worker.js",
     "server-managed/bundle-catalog.ts",
     "server-managed/bundle-store.ts",
     "server-managed/bundle-summary-cache.ts",
@@ -251,8 +253,10 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@exodus/stasis-core": "^1.0.0-beta.4",
+    "@exodus/stasis": "1.0.0-beta.5",
+    "@exodus/stasis-core": "1.0.0-beta.5",
     "@preventive/report": "1.0.0-alpha.4",
+    "@preventive/upstream": "1.0.0-alpha.4",
     "ws": "^8.20.1"
   },
   "peerDependencies": {
