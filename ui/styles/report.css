@@ -1720,6 +1720,7 @@ bundle-search {
     margin: 0 0 .75rem;
 
     & dt { color: var(--muted); font-size: .72rem; font-weight: 600; align-self: center; }
+    & dt:has(+ dd > .bundles-entry-points) { align-self: start; }
     & dd { margin: 0; font-size: .78rem; word-break: break-all; }
     & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
     & dd:has(.bundles-entry-points) { cursor: default; }
