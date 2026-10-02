@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { setImmediate } from 'node:timers/promises'
 import { BUNDLE_METADATA_VERSION } from '../common/bundle-metadata.js'
+import { CacheMissError } from './cache-storage.ts'
 import { decodeUtf8 } from '../common/utf8.js'
 import type { BundleCacheRecord, BundleCacheStorage, BundleSummary } from './bundle-cache.ts'
 
@@ -33,14 +34,17 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
   const active = new Map<string, Promise<void>>()
   let pending: Promise<void> | null = null
   function remember(record: BundleCacheRecord, value: CachedSummary) {
-    if (entries.size >= 256) entries.delete(entries.keys().next().value!)
+    // Summaries are tiny and immutable by integrity. Refuse overflow admission
+    // instead of evicting the next hit during a scan larger than the cache.
+    if (entries.size >= 4096 && !entries.has(record.integrity)) return
     entries.set(record.integrity, { id: record.id, value })
   }
   async function read(record: BundleCacheRecord) {
     const known = entries.get(record.integrity)
     if (known) return known.value
-    if (!await storage.exists(record.id, SUMMARY_FILENAME)) return null
-    const value = await readSummary(storage, record.id)
+    let value
+    try { value = await readSummary(storage, record.id) }
+    catch (error) { if (error instanceof CacheMissError) return null; throw error }
     remember(record, value)
     return value
   }

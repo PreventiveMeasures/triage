@@ -347,3 +347,24 @@ test('public security advisories require security opt-in and permission changes 
   await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: true } })
   assert.equal((await h.request('/api/bundles/stasis/advisories', { token })).status, 404)
 })
+
+test('shared annotation batches retain capability filtering and recheck revocation', async t => {
+  const h = await fixture(t), token = await h.mint()
+  await h.db.setTriage('visible-finding', { color: 'blue' }, null, null, 1)
+  const batch = await h.request('/api/teams/team/annotations', { token })
+  assert.equal(batch.status, 200)
+  assert.equal(Object.hasOwn(batch.body.reports, 'foreign'), false)
+  const triage = await h.request('/api/reports/visible/triage', { token })
+  const comments = await h.request('/api/reports/visible/comments', { token })
+  assert.deepEqual(batch.body.reports.visible, { entries: triage.body.entries, comments: comments.body.comments })
+  assert.equal((await h.request('/api/teams/other/annotations', { token })).status, 404)
+  const original = h.db.getAnnotations
+  h.db.getAnnotations = async ids => {
+    const data = await original(ids)
+    h.config.allowShare = false
+    return data
+  }
+  const revoked = await h.request('/api/teams/team/annotations', { token })
+  assert.equal(revoked.status, 404)
+  assert.equal(revoked.body.reports, undefined)
+})

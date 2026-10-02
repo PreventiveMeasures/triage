@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { fetchReport } from '../client/managed/session.js'
+import { fetchReport, fetchTeamAnnotations } from '../client/managed/session.js'
 
 test('managed report loads request content with the server repository assignment', async (t) => {
   const body = { data: { repo: { github: 'wrong/embedded' }, findings: [] }, repo: { github: 'server/assigned', directory: 'packages/ui' } }
@@ -29,5 +29,19 @@ test('managed report loads never fall back to report metadata when the response 
   for (const status of [401, 403, 404, 503]) {
     response = new Response(null, { status })
     assert.equal(await fetchReport('id'), null)
+  }
+})
+
+test('team annotation transport validates batches and forwards cancellation', async t => {
+  const controller = new AbortController()
+  let body = { reports: { r: { entries: { f: null }, comments: [] } } }
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    assert.equal(url, '/api/teams/team%20id/annotations')
+    assert.equal(options.signal, controller.signal)
+    return Promise.resolve(Response.json(body))
+  })
+  assert.deepEqual(await fetchTeamAnnotations('team id', { signal: controller.signal }), body.reports)
+  for (body of [{}, { reports: [] }, { reports: { r: { entries: [], comments: [] } } }, { reports: { r: { entries: {}, comments: null } } }]) {
+    assert.equal(await fetchTeamAnnotations('team id', { signal: controller.signal }), null)
   }
 })

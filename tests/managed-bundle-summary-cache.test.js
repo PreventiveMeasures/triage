@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Readable } from 'node:stream'
 import { setImmediate } from 'node:timers/promises'
+import { CacheMissError } from '../server-managed/cache-storage.ts'
+import { bundleSummaries } from '../server-managed/bundle-catalog.ts'
 import { SUMMARY_FILENAME, createBundleSummaryCache } from '../server-managed/bundle-summary-cache.ts'
 
 function fixture() {
@@ -9,7 +11,7 @@ function fixture() {
   const storage = {
     exists: (id, file) => Promise.resolve(files.has(`${id}/${file}`)),
     put: (id, file, value) => { files.set(`${id}/${file}`, value); return Promise.resolve() },
-    open: (id, file) => Promise.resolve({ stream: Readable.from([files.get(`${id}/${file}`)]) }),
+    open: (id, file) => files.has(`${id}/${file}`) ? Promise.resolve({ stream: Readable.from([files.get(`${id}/${file}`)]) }) : Promise.reject(new CacheMissError()),
     delete: id => { files.delete(`${id}/${SUMMARY_FILENAME}`); return Promise.resolve() },
   }
   const records = Array.from({ length: 10 }, (_, n) => ({ id: String(n), integrity: `hash-${n}`, kind: 'sourcemap' }))
@@ -101,4 +103,29 @@ test('forget waits only for the named bundle, never a later bundle in the same b
     assert.equal(completed, true, 'a stalled later build cannot hold up removal')
     await removal
   } finally { first.resolve(); second.resolve(); await pending }
+})
+
+test('summary scans avoid HEADs and retain hits when the catalog exceeds the cache', async () => {
+  let reads = 0
+  const storage = { exists() { assert.fail('summary reads must not HEAD') },
+    open() { reads++; return Promise.resolve({ stream: Readable.from(['{"files":1,"codeFiles":1,"lines":2}']) }) } }
+  const cache = createBundleSummaryCache(storage, () => { assert.fail('ready summaries must not build') }, () => Promise.resolve(true))
+  const records = Array.from({ length: 4100 }, (_, i) => ({ id: String(i), integrity: String(i), kind: 'stasis' }))
+  await bundleSummaries(records.slice(0, 300), cache)
+  reads = 0
+  await bundleSummaries(records.slice(0, 300), cache)
+  assert.equal(reads, 0, '300 bundles remain warm')
+  await bundleSummaries(records, cache)
+  reads = 0
+  await bundleSummaries(records, cache)
+  assert.equal(reads, 4, 'overflow scans cannot evict the next cached entry')
+})
+
+test('summary reads distinguish missing data from storage outages', async () => {
+  const record = { id: 'id', integrity: 'hash', kind: 'stasis' }
+  for (const error of [new CacheMissError(), new Error('storage unavailable')]) {
+    const cache = createBundleSummaryCache({ open: () => Promise.reject(error) }, () => assert.fail('unexpected build'), () => Promise.resolve(true))
+    if (error instanceof CacheMissError) assert.equal(await cache.summary(record), null)
+    else await assert.rejects(cache.summary(record), /storage unavailable/u)
+  }
 })

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { setTimeout as delay } from 'node:timers/promises'
+import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
@@ -7,7 +10,7 @@ import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
 import { checkStorageDb, checkStorageMigrationOrder, storageTestKey } from './_managed-storage-db.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
-import { harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
+import { config, harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
 import { reportReferenceSnapshot } from '../server-managed/management.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
@@ -810,4 +813,66 @@ test('request-owned connections rollback failures and reconnect before subsequen
   await assert.rejects(db.withRequest(async () => { await db.getReport('missing'); throw new Error('request failed') }), /request failed/u)
   assert.equal(opened, 3)
   assert.equal(released, 3, 'request failures also close the socket')
+})
+
+test('Postgres team annotation batches have a constant query budget across reports', async t => {
+  const { db, queries } = await database(t)
+  const reports = memoryStore(), send = harness(db, reports), session = await setup(db)
+  await db.setUserRole(session.userId, 'triage')
+  await db.createTeam('team', 'Team', Date.now())
+  await db.setTeamRepo('team', 1, null)
+  await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
+  for (let i = 0; i < 10; i++) await db.setReportVisible(await seedReport(db, reports, session.userId), true)
+  await db.setTriage('shared-finding', { color: 'red' }, null, null, 1)
+  queries.length = 0
+  const response = await send('/api/teams/team/annotations', { session, method: 'GET' })
+  assert.equal(response.status, 200)
+  const batch = JSON.parse(response.body).reports
+  assert.equal(Object.keys(batch).length, 10)
+  assert.ok(Object.values(batch).every(value => value.entries['shared-finding'].color === 'red'))
+  assert.equal(queries.length, 20, 'one presence update, two access snapshots, and one annotation snapshot')
+  assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
+})
+
+test('Postgres zero-row mutations do not invalidate feeds, including after upgrade', async t => {
+  const { db, connect } = await database(t), session = await setup(db)
+  const id = hashToken(session.setCookie.split(';')[0].slice(4))
+  const connection = await connect()
+  try { await connection.query('DELETE FROM managed_schema_version WHERE version = 11') }
+  finally { await connection.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  const before = await upgraded.getFeedState(id, Date.now())
+  await upgraded.setReportVisible('missing', true)
+  await upgraded.removeTeamMember('missing', session.userId)
+  await upgraded.deleteTriage(['missing'])
+  assert.deepEqual(await upgraded.getFeedState(id, Date.now()), before)
+  await upgraded.createTeam('team', 'Team', Date.now())
+  assert.ok((await upgraded.getFeedState(id, Date.now())).catalog > before.catalog)
+})
+
+test('HTTP feeds release their request connection before polling sleeps', async t => {
+  const { connect } = await database(t)
+  let active = 0
+  const db = await openPostgresManagedDb(async () => {
+    const connection = await connect(); active++
+    return { query: connection.query, async release() { active--; await connection.release() } }
+  }, {}, true)
+  t.after(() => db.close())
+  const session = await setup(db)
+  const handler = createManagedRequestHandler({ config, db, reportStore: memoryStore(),
+    originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  // eslint-disable-next-line unicorn/prefer-event-target
+  const res = new EventEmitter()
+  let published = false
+  Object.assign(res, { headersSent: false, destroyed: false, writeHead() { this.headersSent = true }, flushHeaders() {},
+    write() { published = true; return true }, end() {}, destroy() { this.destroyed = true; this.emit('close') } })
+  const done = handler({ url: '/api/teams/feed', method: 'GET', headers: { cookie: session.setCookie.split(';')[0] } }, res)
+  try {
+    for (let i = 0; i < 100; i++) { if (published) break; await delay(5) }
+    assert.equal(published, true)
+    await delay(20)
+    assert.equal(active, 0, 'no connection remains leased during the three-second wait')
+  } finally { res.destroy(); await done }
+  assert.equal(active, 0)
 })

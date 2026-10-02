@@ -16,6 +16,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   },
 } })
 mock.module('../ui/view/managed-triage.js', { namedExports: {
+  createManagedAnnotationRead: () => () => Promise.resolve(null),
   refreshManagedReportTriage: (id, options) => { refreshes.push(['triage', id]); return refresh(options) },
 } })
 mock.module('../ui/view/managed-comments.js', { namedExports: {
@@ -69,7 +70,7 @@ test('navigation during refresh drops the old continuation and refreshes only th
   beginViewNavigation(); open('two')
   pending.resolve(true)
   assert.equal(await update, false)
-  assert.deepEqual(refreshes, [['triage', 'one-report']], 'no comment refresh under the next team scope')
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']], 'parallel reads retain the old team scope')
 })
 
 test('reused reports retain their connection; local mode and account changes stop old subscriptions', () => {
@@ -157,7 +158,7 @@ test('catalog and triage refreshes use connection cancellation without stopping 
   assert.equal(readSignal.aborted, true)
   triage.resolve(true)
   assert.equal(await update, false)
-  assert.deepEqual(refreshes, [['triage', 'one-report']], 'a timed-out triage read cannot start a comment refresh')
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']], 'cancellation stops the shared annotation refresh')
   assert.equal(calls[0].signal.aborted, false)
 })
 
@@ -347,7 +348,7 @@ test('same-team navigation cancels old reads without making the feed reconnect o
   pending.resolve(true)
   await settle()
   assert.equal(calls.length, 1)
-  assert.deepEqual(refreshes, [['triage', 'one-report'], ['triage', 'one-report'], ['comments', 'one-report']])
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report'], ['triage', 'one-report'], ['comments', 'one-report']])
 })
 
 test('an event during retained-stream hydration is applied after that hydration finishes', async () => {
@@ -379,7 +380,7 @@ test('failed catch-up refreshes reconnect and retry instead of consuming the mis
   assert.equal(calls[0].signal.aborted, true)
   refresh = () => Promise.resolve(true)
   assert.equal(await calls[1].onUpdate(calls[1].signal), true)
-  assert.deepEqual(refreshes, [['triage', 'one-report'], ['triage', 'one-report'], ['comments', 'one-report']])
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report'], ['triage', 'one-report'], ['comments', 'one-report']])
 })
 
 test('a live event joining navigation catch-up propagates its watchdog to the shared read', async () => {
@@ -391,14 +392,14 @@ test('a live event joining navigation catch-up propagates its watchdog to the sh
   refresh = ({ signal }) => { readSignal = signal; return pending.promise }
   startManagedTeamFeed()
   const update = calls[0].onUpdate(connection.signal)
-  assert.deepEqual(refreshes, [['triage', 'one-report']], 'catch-up and live refresh share their read')
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']], 'catch-up and live refresh share their read')
   connection.abort()
   assert.equal(readSignal.aborted, true)
   assert.equal(await update, false)
   pending.resolve(false)
   await settle()
   assert.equal(calls.length, 2)
-  assert.deepEqual(refreshes, [['triage', 'one-report']], 'a canceled read cannot start comments')
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']], 'a canceled read cannot start another refresh')
   refresh = () => Promise.resolve(true)
   assert.equal(await calls[1].onUpdate(calls[1].signal), true)
 })

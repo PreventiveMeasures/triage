@@ -81,6 +81,10 @@ export async function fetchReports(ids) {
   return (await loadManagedBundle()).fetchReports(ids)
 }
 
+export async function fetchTeamAnnotations(teamId, options) {
+  return (await loadManagedBundle()).fetchTeamAnnotations(teamId, options)
+}
+
 export async function fetchReportTriage(id, teamId = state.currentManagedTeam, options) {
   return (await loadManagedBundle()).fetchReportTriage(id, teamId, options)
 }

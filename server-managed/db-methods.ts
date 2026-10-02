@@ -317,7 +317,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
-  // Reuse connections only within the awaited request, including bounded feeds.
+  // Reuse connections within a finite request or one feed polling iteration.
   withRequest?<T>(work: () => Promise<T>): Promise<T>
   // Upsert the identity; returns the user's opaque id (stable across logins).
   // Initial-admin approval comes only from trusted login configuration. It
@@ -388,6 +388,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // stamp nor the trail. Every change also appends to managed_finding_triage_event;
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
+  getAnnotations(findingIds: readonly string[]): Promise<{ triage: TriageRow[]; comments: Awaited<ReturnType<CommentStore['listComments']>> }>
   // A content-free fingerprint of current annotations, read in one snapshot.
   getAnnotationRevision(findingIds: readonly string[]): Promise<string>
   setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
@@ -1454,6 +1455,9 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...selectedRepoMethods(stmts),
     ...activity,
     ...comments,
+    async getAnnotations(ids) {
+      return { triage: await triage.listTriage(ids), comments: await comments.listComments(ids) }
+    },
     ...workspaceShareMethods(db),
     ...reports,
     ...triage,

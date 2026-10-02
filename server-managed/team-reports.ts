@@ -6,6 +6,7 @@ import { managedFindingSourcePaths, readManagedReport } from '../common/managed/
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
+import { triageWireEntry } from './triage-response.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 
 type Finding = Record<string, unknown>
@@ -189,4 +190,29 @@ export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId
   const visible = await teamReportVisibility(db, store, snapshot, reportId)
   await recheckTeam(db, sessionId, snapshot)
   return visible.sourcePaths
+}
+
+// Read shared annotation rows once, then partition by each report's filtered
+// visibility. Callers revalidate the snapshot after this read before sending.
+export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
+  const visible = await teamVisibility(db, store, snapshot)
+  const ids = new Set<string>()
+  for (const report of visible.values()) for (const id of report.ids) ids.add(id)
+  const { triage, comments } = await db.getAnnotations([...ids])
+  const entries = new Map(triage.map(row => [row.findingId, triageWireEntry(row)]))
+  const reports = Object.fromEntries([...visible].map(([id, report]) => [id, {
+    entries: Object.fromEntries([...report.ids].filter(finding => entries.has(finding)).map(finding => [finding, entries.get(finding)])),
+    comments: [] as typeof comments,
+  }]))
+  const owners = new Map<string, string[]>()
+  for (const [id, report] of visible) {
+    for (const finding of report.ids) {
+      const list = owners.get(finding) ?? []
+      list.push(id); owners.set(finding, list)
+    }
+  }
+  // Partition in the original listComments order without scanning every
+  // comment once per report. Shared findings retain all owning reports.
+  for (const comment of comments) for (const id of owners.get(comment.findingId) ?? []) reports[id]!.comments.push(comment)
+  return reports
 }
