@@ -75,7 +75,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
       await serveTeamFeed(res, deps, snapshot, recheck, { readState: () => deps.db.getWorkspaceShareFeedState(tokenHash) }); return
     }
     if (teamRoute[2] === 'annotations') {
-      await send(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot)); return
+      await send(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot, url.searchParams.get('reportId'))); return
     }
     if (teamRoute[2] === 'shared') { await sendTeam(); return }
     await send({ reports: await loadTeamReports(deps.db, deps.reportStore, snapshot) }); return

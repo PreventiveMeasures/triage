@@ -60,8 +60,9 @@ function annotationScopeTest(publicShare, reportId) {
       let body
       if (url === '/api/teams/team/annotations') {
         body = { reports: { small: ['small'], other: ['other'] }, entries: entries(), comments: comments() }
-      } else if (url === '/api/reports/small/triage?team=team') body = { entries: { small: { color } } }
-      else if (url === '/api/reports/small/comments?team=team') body = { comments: comments().slice(0, 1) }
+      } else if (url === '/api/teams/team/annotations?reportId=small') {
+        body = { reports: { small: ['small'] }, entries: { small: { color } }, comments: comments().slice(0, 1) }
+      }
       else assert.fail(`Unexpected annotation request: ${url}`)
       return Promise.resolve(Response.json(body))
     })
@@ -74,7 +75,7 @@ function annotationScopeTest(publicShare, reportId) {
       return results.every(Boolean)
     } })
     const expected = reportId
-      ? ['/api/reports/small/comments?team=team', '/api/reports/small/triage?team=team']
+      ? ['/api/teams/team/annotations?reportId=small']
       : ['/api/teams/team/annotations']
     assert.equal(await feeds[0].onUpdate(feeds[0].signal), true)
     assert.equal(await ready, true)

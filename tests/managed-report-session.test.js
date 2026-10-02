@@ -56,6 +56,20 @@ test('team annotation transport validates batches and filters report views lazil
   }
 })
 
+test('focused annotation transport encodes its selector and forwards cancellation', async t => {
+  const controller = new AbortController()
+  const reportId = 'report /?&id'
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    assert.equal(url, '/api/teams/team%20id/annotations?reportId=report%20%2F%3F%26id')
+    assert.equal(options.signal, controller.signal)
+    assert.equal(Object.hasOwn(options, 'reportId'), false)
+    return Promise.resolve(Response.json({ reports: { [reportId]: [] }, entries: {}, comments: [] }))
+  })
+  const read = await fetchTeamAnnotations('team id', { signal: controller.signal, reportId })
+  assert.deepEqual(read(reportId), { entries: {}, comments: [] })
+  assert.equal(read('unrelated'), null)
+})
+
 test('annotation projections use indexed comments and are reused by both report consumers', async t => {
   const commentCount = 400, reportCount = 100
   let findingReads = 0

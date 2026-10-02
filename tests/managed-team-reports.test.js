@@ -261,6 +261,9 @@ test('team annotation batches match report reads and preserve per-report permiss
         const entries = Object.fromEntries(Object.entries(batch.body.entries).filter(([id]) => allowed.has(id)))
         const visibleComments = batch.body.comments.filter(comment => allowed.has(comment.findingId))
         assert.deepEqual({ entries, comments: visibleComments }, { entries: triage.body.entries, comments: comments.body.comments }, `${role}/${team}/${report}`)
+        const focused = await h.request(`/api/teams/${team}/annotations?reportId=${report}`, role)
+        assert.equal(focused.status, 200)
+        assert.deepEqual(focused.body, { reports: { [report]: batch.body.reports[report] }, entries, comments: visibleComments }, `focused ${role}/${team}/${report}`)
       }
     }
   }
@@ -269,26 +272,45 @@ test('team annotation batches match report reads and preserve per-report permiss
   }
   assert.equal((await h.request('/api/teams/missing/annotations')).status, 404)
   assert.equal((await h.request('/api/teams/broad/annotations', 'triage', 'POST', {})).status, 405)
+  for (const report of ['missing', 'private-links', 'foreign-links', '']) {
+    assert.equal((await h.request(`/api/teams/broad/annotations?reportId=${report}`)).status, 404)
+  }
 })
 
-for (const change of ['role', 'membership', 'permission', 'publication']) {
-  test(`team annotations discard a batch after a concurrent ${change} change`, async t => {
-    const h = await fixture(t)
-    await h.db.setTriage('own', { fix: 'private value' }, null, null, 1)
-    const original = h.db.getAnnotations
-    h.db.getAnnotations = async findingIds => {
-      const result = await original(findingIds)
-      if (change === 'role') await h.db.setUserRole(h.sessions.triage.userId, 'none')
-      if (change === 'membership') await h.db.removeTeamMember('broad', h.sessions.triage.userId)
-      if (change === 'permission') await h.db.setTeamMember('broad', h.sessions.triage.userId, { dependencies: false, security: false })
-      if (change === 'publication') await h.db.setReportVisible('a', false)
-      return result
-    }
-    const result = await h.request('/api/teams/broad/annotations')
-    assert.equal(result.status, 404)
-    assert.equal(JSON.stringify(result.body).includes('private value'), false)
-  })
+for (const focused of [false, true]) {
+  for (const change of ['role', 'membership', 'permission', 'publication']) {
+    test(`${focused ? 'focused' : 'team'} annotations discard a batch after a concurrent ${change} change`, async t => {
+      const h = await fixture(t)
+      await h.db.setTriage('own', { fix: 'private value' }, null, null, 1)
+      const original = h.db.getAnnotations
+      h.db.getAnnotations = async findingIds => {
+        const result = await original(findingIds)
+        if (change === 'role') await h.db.setUserRole(h.sessions.triage.userId, 'none')
+        if (change === 'membership') await h.db.removeTeamMember('broad', h.sessions.triage.userId)
+        if (change === 'permission') await h.db.setTeamMember('broad', h.sessions.triage.userId, { dependencies: false, security: false })
+        if (change === 'publication') await h.db.setReportVisible('a', false)
+        return result
+      }
+      const result = await h.request(`/api/teams/broad/annotations${focused ? '?reportId=a' : ''}`)
+      assert.equal(result.status, 404)
+      assert.equal(JSON.stringify(result.body).includes('private value'), false)
+    })
+  }
 }
+
+test('focused annotations query only findings visible in the selected report', async t => {
+  const h = await fixture(t)
+  await h.db.setTriage('own', { color: 'blue' }, null, null, 1)
+  for (let i = 0; i < 100; i++) await h.db.createComment({ findingId: 'secret', body: 'unrelated', authorId: null, authorLogin: null }, i)
+  const original = h.db.getAnnotations
+  let queried
+  h.db.getAnnotations = findingIds => { queried = findingIds; return original(findingIds) }
+  const response = await h.request('/api/teams/restricted/annotations?reportId=a')
+  assert.equal(response.status, 200)
+  assert.ok(queried.includes('own'))
+  for (const id of ['secret', 'downgraded', 'linked', 'transitive', 'dependent']) assert.equal(queried.includes(id), false, id)
+  assert.deepEqual(response.body, { reports: { a: ['own'] }, entries: { own: { color: 'blue' } }, comments: [] })
+})
 
 test('repeated scans serialize shared annotations once instead of once per report', async t => {
   const h = await fixture(t)

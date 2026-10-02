@@ -890,7 +890,12 @@ test('Postgres team annotation batches have a constant query budget across repor
   await db.createTeam('team', 'Team', Date.now())
   await db.setTeamRepo('team', 1, null)
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
-  for (let i = 0; i < 10; i++) await db.setReportVisible(await seedReport(db, reports, session.userId), true)
+  const reportIds = []
+  for (let i = 0; i < 10; i++) {
+    const id = await seedReport(db, reports, session.userId)
+    reportIds.push(id)
+    await db.setReportVisible(id, true)
+  }
   await db.setTriage('shared-finding', { color: 'red' }, null, null, 1)
   queries.length = 0
   const response = await send('/api/teams/team/annotations', { session, method: 'GET' })
@@ -901,6 +906,22 @@ test('Postgres team annotation batches have a constant query budget across repor
   assert.deepEqual(batch.entries, { 'shared-finding': { color: 'red' } })
   assert.equal(queries.length, 20, 'one presence update, two access snapshots, and one annotation snapshot')
   assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
+
+  queries.length = 0
+  const triage = await send(`/api/reports/${reportIds[0]}/triage?team=team`, { session, method: 'GET' })
+  const comments = await send(`/api/reports/${reportIds[0]}/comments?team=team`, { session, method: 'GET' })
+  assert.equal(triage.status, 200)
+  assert.equal(comments.status, 200)
+  const separateQueries = queries.length
+  queries.length = 0
+  const focused = await send(`/api/teams/team/annotations?reportId=${reportIds[0]}`, { session, method: 'GET' })
+  assert.equal(focused.status, 200)
+  assert.deepEqual(JSON.parse(focused.body), { reports: { [reportIds[0]]: ['shared-finding'] },
+    entries: JSON.parse(triage.body).entries, comments: JSON.parse(comments.body).comments })
+  assert.equal(queries.length, 20, 'focused hydration and refresh share the same constant query budget')
+  assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
+  assert.ok(queries.length < separateQueries)
+  t.diagnostic(`Focused annotations: ${separateQueries} SQL statements in two requests -> ${queries.length} in one request`)
 })
 
 test('Postgres zero-row mutations do not invalidate feeds, including after upgrade', async t => {

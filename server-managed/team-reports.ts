@@ -194,8 +194,11 @@ export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId
 
 // Serialize shared annotation bodies once. Reports carry only the annotated
 // finding IDs visible in that report; callers revalidate access before sending.
-export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
-  const visible = await teamVisibility(db, store, snapshot)
+export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot, reportId: string | null = null) {
+  // Restrict annotation reads only after classifying the complete workspace:
+  // links and findings in other reports can affect this report's visibility.
+  const visible = reportId === null ? await teamVisibility(db, store, snapshot)
+    : new Map([[reportId, await teamReportVisibility(db, store, snapshot, reportId)]])
   const ids = new Set<string>()
   for (const report of visible.values()) for (const id of report.ids) ids.add(id)
   const { triage, comments } = await db.getAnnotations([...ids])
