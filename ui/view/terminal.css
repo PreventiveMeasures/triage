@@ -24,7 +24,7 @@
   overscroll-behavior: none;
   -webkit-app-region: no-drag; app-region: no-drag;
   scrollbar-gutter: stable;
-  padding: 12px 14px 6px;
+  padding: var(--terminal-output-padding, 12px 14px 6px);
   cursor: text;
 }
 
@@ -85,7 +85,7 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding: 8px 14px 10px;
+  padding: var(--terminal-form-padding, 8px 14px 10px);
   border-top: 1px solid var(--border, #2c2c2c);
 }
 

@@ -265,6 +265,8 @@ body.theme-paper {
   --switch-input-size: .85rem;
   --switch-input-opacity: 1;
   --switch-track-display: none;
+  --terminal-output-padding: 0 0 6px;
+  --terminal-form-padding: 8px 0 0;
   accent-color: #000;
   scrollbar-color: #000 #fff;
 
@@ -283,7 +285,29 @@ body.theme-paper {
   }
 
   & .bundles-overview-summary,
-  & .bundles-overview-columns { padding: 0; }
+  & .bundles-overview-columns,
+  & .bundle-issues { padding: 0; }
+
+  & .bundle-code-rail-head,
+  & .bundle-code-rail-body { padding-left: 0; }
+  & .bundle-code-main-bar { padding-right: 0; }
+  & bundle-code-search {
+    margin-left: 0;
+    background: #fff;
+    &:has(input:focus) { background: #fff; }
+  }
+  & .bundle-code-search-mode {
+    position: relative;
+    background: transparent;
+    &.active::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px solid currentcolor;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+  }
 
   & .page-head {
     --header-tag-border: 0;
