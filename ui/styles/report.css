@@ -1047,10 +1047,8 @@ bundle-code-search {
   background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
   color: var(--text);
 }
-/* Per-file issue count chip — small severity-tinted pill on the
-   row's right edge. Compact: dark text on the severity color
-   (mirrors the .badge palette) so the count reads at a glance
-   without dominating the row. */
+/* Per-file issue count chip — small severity-tinted pill on the row's right
+   edge. Pale themes use white text on their darker severity fills. */
 .bundle-code-tree-count {
   flex-shrink: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1065,10 +1063,13 @@ bundle-code-search {
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
   &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); }
+  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
   &.sev-high_bug      { background: var(--high-bug); }
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
+}
+body:is(.theme-light, .theme-pink) .bundle-code-tree-count:is(.sev-critical, .sev-high, .sev-high_bug, .sev-bug) {
+  color: #fff;
 }
 
 /* Right column — header (selected file path) + body (source +

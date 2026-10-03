@@ -78,7 +78,7 @@ function drawCracks(group, model, animate) {
 }
 
 // One shot per page load. The callback changes the theme beneath the glass.
-// All animations share a start time; mask and outlines cannot drift apart.
+// All animations run at double speed and share a start time so masks and outlines stay synchronized.
 export function playScreenCrack(onReveal) {
   const height = window.innerHeight, width = window.innerWidth
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !width || !height || !Element.prototype.animate) {
@@ -92,6 +92,7 @@ export function playScreenCrack(onReveal) {
   const animations = []
   const animate = (element, keyframes, options) => {
     const animation = element.animate(keyframes, { fill: 'both', ...options })
+    animation.playbackRate = 2
     animation.startTime = start
     animations.push(animation)
     return animation
@@ -129,14 +130,16 @@ export function playScreenCrack(onReveal) {
     { transform: 'translate(2px, 2px)' }, { transform: 'translate(0, 0)' },
   ], { duration: 450 })
   const crackDone = Math.max(...model.cracks.map(crack => crack.delay + crack.duration))
-  animate(glass, [{ opacity: 0 }, { opacity: 1 }], { duration: 500, delay: crackDone, easing: 'ease-out' })
+  const frostDuration = 500
+  // Frost develops with the cracks; shards start falling as the last cracks spread.
+  const fallStart = Math.max(frostDuration, crackDone * .8)
+  animate(glass, [{ opacity: 0 }, { opacity: 1 }], { duration: frostDuration, easing: 'ease-out' })
   // An opacity animation on the overlay would isolate its backdrop, stopping
   // the glass from blurring the page. Use the decorative flash as the clock.
   const themeCue = animate(flash, [{ visibility: 'visible' }, { visibility: 'visible' }], {
-    duration: 1, delay: crackDone + 600,
+    duration: 1, delay: fallStart - 1,
   })
   void themeCue.finished.then(reveal, () => {})
-  const fallStart = crackDone + 1200
   animate(cracks, [{ opacity: 1 }, { opacity: 0 }], { duration: 450, delay: fallStart, easing: 'ease-out' })
   for (const { masked, outlined, outline, piece } of shards) {
     const delay = fallStart + piece.delay
