@@ -24,7 +24,7 @@ test('direct-provider defaults contain only their own models and keep GPT Pro pa
   assert.equal(defaultScanModels('moonshot').defaultModel, 'moonshotai/kimi-k3')
   assert.deepEqual(modelRows(defaultScanModels('openai').models).map(model => [model.id, model.pro?.id]), [
     ['openai/gpt-6-astra', 'openai/gpt-6-astra-pro'],
-    ['openai/gpt-6-sol', 'openai/gpt-6-sol-pro'],
+    ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro'],
     ['openai/gpt-6-luna', 'openai/gpt-6-luna-pro'],
   ])
 })
