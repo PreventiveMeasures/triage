@@ -39,12 +39,13 @@
 }
 
 /* Compact detail tooltips retain the muted reference style of issue/PR previews. */
-#styled-tooltip:has(.tooltip-repo, .tooltip-bundle) {
+#styled-tooltip:has(.tooltip-repo, .tooltip-bundle, .tooltip-package) {
   padding: 7px;
   line-height: 1.4;
 }
 #styled-tooltip .tooltip-repo,
-#styled-tooltip .tooltip-bundle {
+#styled-tooltip .tooltip-bundle,
+#styled-tooltip .tooltip-package {
   display: flex;
   align-items: baseline;
   gap: .4rem;
@@ -52,6 +53,8 @@
   color: var(--muted);
   font: 12px/1.4 system-ui, sans-serif;
 }
+#styled-tooltip .tooltip-package { color: var(--text); }
+#styled-tooltip .tooltip-package svg { flex: none; align-self: center; }
 #styled-tooltip .tooltip-repo svg,
 #styled-tooltip .tooltip-bundle :is(svg, img) {
   width: 12px;

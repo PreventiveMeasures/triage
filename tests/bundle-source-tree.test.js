@@ -469,6 +469,17 @@ test('Soldeer recognition does not guess ecosystems or fold a src directory with
   assert.ok(compactSourceDirectory('pkg-1.0.0', pkg, 1).node.dirs.has('src'))
 })
 
+test('package tooltip file counts survive filtering, prefix stripping, and pnpm folding', () => {
+  const dir = '/repo/node_modules/.pnpm/pkg@1.0.0/node_modules/pkg'
+  const paths = [`${dir}/index.js`, `${dir}/lib/helper.js`]
+  const modules = new Map([[dir, { name: 'pkg', version: '1.0.0', files: { 'package.json': '{"repository":"org/pkg"}' } }]])
+  const tree = buildBundleSourceTree(paths.map(path => path.slice('/repo/'.length)), paths, modules)
+  for (const view of [tree, filterBundleSourceTree(tree, 'index.js', '/repo/')]) {
+    const pkg = pnpmStore(view).dirs.get('pkg@1.0.0')
+    assert.deepEqual(pkg.packageInfo, { name: 'pkg', version: '1.0.0', ecosystem: 'npm', github: 'org/pkg', fileCount: 2 })
+  }
+})
+
 test('untagged PHP-only vendor modules use Composer rows and preserve package roots under common prefixes', () => {
   const dir = 'vendor/symfony/deprecation-contracts'
   const bundle = Bundle.parse(new Bundle({ modules: new Map([

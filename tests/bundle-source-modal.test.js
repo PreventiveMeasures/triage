@@ -141,6 +141,24 @@ test('Code retains the dependencies row for bundles containing only multiple Sol
   }
 })
 
+test('Code package tooltips include recorded identities and counts even while filtering', () => {
+  const entry = { name: 'npm.stasis', integrity: 'sha512-package-tooltip' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['node_modules/alias', { name: 'actual-package', version: '1.2.3', files: {
+      'package.json': JSON.stringify({ repository: 'org/actual-package' }), 'index.js': 'index', 'lib/helper.js': 'helper',
+    } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleSourceFile: 'node_modules/alias/index.js', bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '',
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  for (const query of ['', 'index.js']) {
+    state.bundleCodeSearchQuery = query
+    const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
+    const pkg = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).find(row => row.includes('class="bundle-code-tree-npm"'))
+    for (const attr of ['data-tooltip-package=actual-package', 'data-tooltip-version=1.2.3', 'data-tooltip-files=3', 'data-tooltip-repo=org/actual-package', 'data-tooltip=node_modules/alias>']) assert.ok(pkg.includes(attr), attr)
+  }
+})
+
 test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
   const commit = '0123456789abcdef'.repeat(3).slice(0, 40)

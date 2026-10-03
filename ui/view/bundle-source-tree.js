@@ -1,5 +1,7 @@
 // Display paths may omit a common prefix; leaf values always retain the
 // original bundle key used to open the source and look up findings.
+import { bundleSourcePackageInfo } from './bundle-source-package.js'
+
 const vendoredEcosystems = new Set(['cargo', 'composer', 'soldeer'])
 
 function moduleEcosystem(dir, info, sourcePaths) {
@@ -30,7 +32,13 @@ export function buildBundleSourceTree(paths, originals = paths, modules = null) 
     }
     node.files.set(parts.at(-1), originals[index])
   }
-  return presentDependencyDirectories(root, modules, modules ? new Set(originals) : null)
+  presentDependencyDirectories(root, modules, modules ? new Set(originals) : null)
+  const describe = node => {
+    if (node.package) node.packageInfo = bundleSourcePackageInfo(node.package, modules?.get(node.sourcePath), node.fileCount)
+    for (const child of node.dirs.values()) describe(child)
+  }
+  describe(root)
+  return root
 }
 
 // Keep dependency/package boundaries in the tree, even when every captured
@@ -52,6 +60,9 @@ export function bundleSourceTreePrefix(prefix, modules = null, sources = null) {
 
 function presentDependencyDirectories(node, packageModules, sourcePaths) {
   for (const child of node.dirs.values()) presentDependencyDirectories(child, packageModules, sourcePaths)
+  // Count before filtering and folding so a package keeps its full source
+  // count while a search shows only some of its files.
+  node.fileCount = node.files.size + [...node.dirs.values()].reduce((sum, child) => sum + child.fileCount, 0)
   const info = packageModules?.get(node.sourcePath)
   const ecosystem = moduleEcosystem(node.sourcePath, info, sourcePaths)
   if (vendoredEcosystems.has(ecosystem) && info.name) {

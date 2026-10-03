@@ -958,7 +958,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const pkg = child.package
       const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer' || pkg?.ecosystem === 'soldeer'
       const packageIcon = pkg?.ecosystem === 'composer' ? sourceComposerIcon : pkg?.ecosystem === 'cargo' ? sourceCargoIcon : pkg?.ecosystem === 'soldeer' ? sourceSoldeerIcon : sourceNpmIcon
-      const tooltip = pkg?.variant ? `Variant ${pkg.variant}\n${compact.node.sourcePath}` : compact.node.sourcePath
+      const tooltip = pkg?.variant ? `${compact.node.sourcePath}\nVariant ${pkg.variant}` : compact.node.sourcePath
+      const info = child.packageInfo
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
       // where the issues live (the per-file chips only help once
@@ -966,7 +967,13 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const stats = dirIssueStats(child, issueIndex)
       return html`<li class="bundle-code-tree-dir">
         <details .open=${live(computeOpen(childPath, child))}>
-          <summary @click=${onSummaryClick(childPath)} data-tooltip=${tooltip}>
+          <summary @click=${onSummaryClick(childPath)}
+            data-tooltip-package=${info?.name ?? nothing}
+            data-tooltip-ecosystem=${info?.ecosystem ?? nothing}
+            data-tooltip-version=${info?.version ?? nothing}
+            data-tooltip-files=${info?.fileCount ?? nothing}
+            data-tooltip-repo=${info?.github ?? nothing}
+            data-tooltip=${tooltip}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
             ${pkg ? packageIcon : nothing}
             <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored })}>

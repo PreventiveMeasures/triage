@@ -33,6 +33,9 @@ importers:
       '@preventive/diff':
         specifier: ^1.0.0
         version: 1.0.0
+      '@preventive/lockfile':
+        specifier: 1.0.0-alpha.5
+        version: 1.0.0-alpha.5
       '@preventive/terminal':
         specifier: 2.0.0-beta.1
         version: 2.0.0-beta.1
