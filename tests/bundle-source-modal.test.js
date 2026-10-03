@@ -27,6 +27,7 @@ beforeEach(() => {
   state.bundleDetailsTab = 'overview'
   state.bundleSourceFile = 'src/main.js'
   state.bundleSourceFindingIdx = null
+  state.bundleOverviewFilesSort = 'name'
   state.bundleDetails = null
 })
 
@@ -148,4 +149,45 @@ test('bundles without entry-point metadata keep their counts and Size without in
     assert.doesNotMatch(markup, /<dt>Entry points<\/dt>/u)
     assert.match(markup, /<dt>Sources<\/dt><dd>\d<\/dd>\s*<dt>Size<\/dt><dd>200 B<\/dd>/u)
   }
+})
+
+test('the Overview Files header offers Name and Size ordering for local and cached managed bundles', async () => {
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-file-order' }
+  const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files: {
+      'src/z.js': '123456', 'src/b.js': '123', 'src/a.js': '😀', 'src/c.js': '123',
+    } }]]),
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
+  state.selectedBundle = entry.integrity
+  state.bundles = [entry]
+  for (const [details, managedId] of [[full, undefined], [cached, 'managed-bundle']]) {
+    state.bundleDetails = details
+    for (const [sort, expected] of [
+      ['name', ['a.js', 'b.js', 'c.js', 'z.js']],
+      ['size', ['z.js', 'a.js', 'b.js', 'c.js']],
+    ]) {
+      state.bundleOverviewFilesSort = sort
+      const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
+      const header = markup.match(/<header class="bundles-overview-col-head">\s*<span class="bundles-overview-files-title">(.*?)<\/header>/su)[1]
+      assert.match(header, /role="group" aria-label="File order"/u)
+      assert.match(header, new RegExp(`aria-pressed=${sort === 'name'}[^>]*>Name<`, 'u'))
+      assert.match(header, new RegExp(`aria-pressed=${sort === 'size'}[^>]*>Size<`, 'u'))
+      const files = markup.match(/<ul class="bundles-sources-list">(.*?)<\/ul>/su)[1]
+      assert.deepEqual([...files.matchAll(/class="bundles-source-path">(.*?)<\/span>/gu)].map(match => match[1]), expected)
+      assert.match(files, /data-bundle-view-source=src\/a\.js/u)
+    }
+  }
+})
+
+test('Overview Size ordering puts known zero-byte sourcemap files before unknown sizes', () => {
+  const entry = { name: 'app.map', integrity: 'sha512-map-file-order' }
+  state.selectedBundle = entry.integrity
+  state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 123, json: {
+    version: 3, sources: ['src/missing.js', 'src/empty.js', 'src/full.js'], sourcesContent: [null, '', 'content'],
+  } }
+  state.bundleOverviewFilesSort = 'size'
+  const markup = renderText(renderBundlesList([entry]))
+  const files = markup.match(/<ul class="bundles-sources-list">(.*?)<\/ul>/su)[1]
+  assert.deepEqual([...files.matchAll(/class="bundles-source-path">(.*?)<\/span>/gu)].map(match => match[1]), ['full.js', 'empty.js', 'missing.js'])
 })
