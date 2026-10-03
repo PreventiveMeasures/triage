@@ -363,7 +363,7 @@ export function setCurrentBundleGraphPrep(prep) {
 // panel — same `pkgColor` palette so the colors carry meaning
 // across both views (a `@noble/hashes` package shows the same hue
 // in the bundle-size chart and the canvas).
-function renderBundleSizeDistribution(items) {
+function renderBundleSizeDistribution(items, sort) {
   // items: Array<{path, size, pkgDir}>; size may be 0 / null when the
   // bundle didn't carry per-source content (rare for sourcemaps).
   // `pkgDir` is the path's stasis package dir (undefined for sourcemap
@@ -377,7 +377,8 @@ function renderBundleSizeDistribution(items) {
     total += size
   }
   if (total === 0) return nothing
-  const sorted = [...totalByPkg.entries()].toSorted((a, b) => b[1] - a[1])
+  const sorted = [...totalByPkg.entries()].toSorted((a, b) => (sort === 'size' ? b[1] - a[1] : 0)
+    || pkgLabel(a[0]).localeCompare(pkgLabel(b[0])) || a[0].localeCompare(b[0]))
   return html`<div class="bundles-dist">
     <div class="bundles-dist-bar" aria-hidden="true">
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
@@ -457,7 +458,8 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // inline `sourcesContent`). Mirror the Files / Reports column
   // empty-state so the Packages column doesn't render as a card
   // with a header and a yawning blank body.
-  const distContent = renderBundleSizeDistribution(distItems)
+  const packagesSort = state.bundleOverviewPackagesSort
+  const distContent = renderBundleSizeDistribution(distItems, packagesSort)
   const distTpl = distContent === nothing
     ? html`<p class="bundles-overview-col-empty">No size information for this bundle's sources.</p>`
     : distContent
@@ -563,14 +565,17 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
     <div class="bundles-overview-columns">
       <section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
-          Packages <span class="bundles-overview-col-count">${packages.size}</span>
+          <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
+          <span class="bundles-overview-sort" role="group" aria-label="Package order">
+            ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(packagesSort === value)} @click=${() => { state.bundleOverviewPackagesSort = value; render() }}>${label}</button>`)}
+          </span>
         </header>
         <div class="bundles-overview-col-body">${distTpl}</div>
       </section>
       <section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
-          <span class="bundles-overview-files-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
-          <span class="bundles-files-sort" role="group" aria-label="File order">
+          <span class="bundles-overview-col-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
+          <span class="bundles-overview-sort" role="group" aria-label="File order">
             ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
           </span>
         </header>
@@ -2331,7 +2336,7 @@ function renderBundleDetails(entry, details) {
       <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
       ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} title=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
     </dd>`)}
-    <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
+    <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
     ${origin?.entries.size > 0 ? html`<dt>Entry points</dt><dd class="mono"><ul class="bundles-entry-points">
       ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${stripPathPrefix(file, prefix)}</button></li>`)}

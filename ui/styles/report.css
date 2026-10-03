@@ -599,8 +599,8 @@
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
 }
-.bundles-overview-files-title { display: inline-flex; align-items: center; gap: .5rem; }
-.bundles-files-sort {
+.bundles-overview-col-title { display: inline-flex; align-items: center; gap: .5rem; }
+.bundles-overview-sort {
   display: inline-flex;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1741,6 +1741,7 @@ bundle-search {
     & dt:has(+ dd > .bundles-entry-points) { align-self: start; }
     & dd { margin: 0; font-size: .78rem; word-break: break-all; }
     & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
+    & dd.bundle-integrity { color: var(--muted); }
     & dd:has(.bundles-entry-points) { cursor: default; }
     & .bundle-origin-row { display: flex; align-items: center; gap: 1rem; }
     & .bundle-origin-link {

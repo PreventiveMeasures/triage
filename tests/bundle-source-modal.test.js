@@ -13,6 +13,7 @@ mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: ()
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: () => null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath: () => null, langForTag: () => null, highlight: () => Promise.resolve(null) } })
+mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { state } = await import('../client/state.ts')
 const { renderBundleSourceModal, renderBundlesList } = await import('../ui/view/render-bundle.js')
 
@@ -28,6 +29,7 @@ beforeEach(() => {
   state.bundleSourceFile = 'src/main.js'
   state.bundleSourceFindingIdx = null
   state.bundleOverviewFilesSort = 'name'
+  state.bundleOverviewPackagesSort = 'size'
   state.bundleDetails = null
 })
 
@@ -169,7 +171,7 @@ test('the Overview Files header offers Name and Size ordering for local and cach
     ]) {
       state.bundleOverviewFilesSort = sort
       const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
-      const header = markup.match(/<header class="bundles-overview-col-head">\s*<span class="bundles-overview-files-title">(.*?)<\/header>/su)[1]
+      const header = markup.match(/<header class="bundles-overview-col-head">\s*<span class="bundles-overview-col-title">Files (.*?)<\/header>/su)[1]
       assert.match(header, /role="group" aria-label="File order"/u)
       assert.match(header, new RegExp(`aria-pressed=${sort === 'name'}[^>]*>Name<`, 'u'))
       assert.match(header, new RegExp(`aria-pressed=${sort === 'size'}[^>]*>Size<`, 'u'))
@@ -190,4 +192,41 @@ test('Overview Size ordering puts known zero-byte sourcemap files before unknown
   const markup = renderText(renderBundlesList([entry]))
   const files = markup.match(/<ul class="bundles-sources-list">(.*?)<\/ul>/su)[1]
   assert.deepEqual([...files.matchAll(/class="bundles-source-path">(.*?)<\/span>/gu)].map(match => match[1]), ['full.js', 'empty.js', 'missing.js'])
+})
+
+test('the Overview Packages header sorts by total bytes or displayed name independently of Files', async () => {
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-package-order' }
+  const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
+    modules: new Map([
+      ['vendor/zeta', { name: 'zeta', version: '1', files: { 'a.rs': '1234', 'b.rs': '5678' } }],
+      ['vendor/beta', { name: 'beta', version: '1', files: { 'a.rs': '😀' } }],
+      ['vendor/aaa', { name: 'aaa', version: '1', files: { 'a.rs': 'a' } }],
+      ['vendor/alpha', { name: 'alpha', version: '1', files: { 'a.rs': 'abcd' } }],
+    ]),
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
+  const sourcemap = { integrity: entry.integrity, kind: 'sourcemap', size: 123, json: {
+    version: 3,
+    sources: ['node_modules/zeta/a.js', 'node_modules/zeta/b.js', 'node_modules/beta/a.js', 'node_modules/aaa/a.js', 'node_modules/alpha/a.js'],
+    sourcesContent: ['1234', '5678', '😀', 'a', 'abcd'],
+  } }
+  state.selectedBundle = entry.integrity
+  state.bundles = [entry]
+  for (const [details, managedId] of [[full, undefined], [cached, 'managed-bundle'], [sourcemap, undefined]]) {
+    state.bundleDetails = details
+    for (const [sort, expected] of [
+      ['size', ['zeta', 'alpha', 'beta', 'aaa']],
+      ['name', ['aaa', 'alpha', 'beta', 'zeta']],
+    ]) {
+      state.bundleOverviewPackagesSort = sort
+      const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
+      const header = markup.match(/<header class="bundles-overview-col-head">\s*<span class="bundles-overview-col-title">Packages (.*?)<\/header>/su)[1]
+      assert.match(header, /role="group" aria-label="Package order"/u)
+      assert.match(header, new RegExp(`aria-pressed=${sort === 'name'}[^>]*>Name<`, 'u'))
+      assert.match(header, new RegExp(`aria-pressed=${sort === 'size'}[^>]*>Size<`, 'u'))
+      const packages = markup.match(/<ul class="bundles-dist-list">(.*?)<\/ul>/su)[1]
+      assert.deepEqual([...packages.matchAll(/class="bundles-dist-pkg"[^>]*>(.*?)<\/span>/gu)].map(match => match[1]), expected)
+      assert.equal(state.bundleOverviewFilesSort, 'name')
+    }
+  }
 })

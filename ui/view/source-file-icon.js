@@ -32,4 +32,4 @@ export const sourceFolderIcon = html`<svg width="16" height="16" viewBox="0 0 16
 
 export const sourceNpmIcon = html`<svg class="bundle-code-tree-npm" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M1 1h14v14H1Zm3 3v8h4V6h2v6h2V4Z"/></svg>`
 
-export const sourceCargoIcon = html`<svg class="bundle-code-tree-cargo" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">${rustMark}</svg>`
+export const sourceCargoIcon = html`<svg class="bundle-code-tree-cargo" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><path d="m8 1 6.5 3.5v7L8 15l-6.5-3.5v-7Zm-6.5 3.5L8 8l6.5-3.5M8 8v7M1.5 4.5 8 15l6.5-10.5M4.75 2.75l6.5 3.5"/></svg>`

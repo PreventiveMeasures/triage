@@ -135,7 +135,7 @@ export function compactSourceDirectory(name, node, depth) {
     const src = node.dirs.get('src')
     const files = new Map(node.files)
     for (const [file, original] of src.files) files.set(node.srcNameConflicts.has(file) ? `src/${file}` : file, original)
-    return { names, node: { ...node, files, dirs: src.dirs } }
+    return { names, node: { ...node, sourcePath: src.sourcePath, files, dirs: src.dirs } }
   }
   if (name === 'node_modules' && node.files.size === 0 && node.dirs.size === 1 && node.dirs.has('.pnpm')) {
     return { names: ['node_modules', '.pnpm'], node: node.dirs.get('.pnpm') }

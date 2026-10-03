@@ -204,7 +204,7 @@ test('Cargo rows use recorded package identities and fold a sole src directory',
   assert.deepEqual(compact.names, ['ahash'])
   assert.deepEqual([...compact.node.files.keys()].toSorted(), ['hash.rs', 'lib.rs'])
   assert.ok(compact.node.dirs.has('deep'))
-  assert.equal(compact.node.sourcePath, 'vendor/ahash')
+  assert.equal(compact.node.sourcePath, 'vendor/ahash/src', 'the tooltip includes the folded directory')
   assert.deepEqual(leaves(compact.node), leaves(pkg), 'flattening retains every original source key')
   assert.ok(pkg.dirs.has('src'), 'presentation must not mutate the captured tree')
 })
@@ -223,9 +223,17 @@ test('Cargo keeps src visible when another directory is captured, even after sea
   const tree = cargoTree({ 'src/lib.rs': 'source', 'examples/demo.rs': 'example' })
   const pkg = tree.dirs.get('vendor').dirs.get('ahash')
   assert.equal(compactSourceDirectory('ahash', pkg, 1).node, pkg)
+  assert.equal(compactSourceDirectory('ahash', pkg, 1).node.sourcePath, 'vendor/ahash')
   assert.ok(pkg.dirs.has('src'))
   const filtered = filterBundleSourceTree(tree, 'lib.rs').dirs.get('vendor').dirs.get('ahash')
   assert.ok(compactSourceDirectory('ahash', filtered, 1).node.dirs.has('src'))
+  assert.equal(compactSourceDirectory('ahash', filtered, 1).node.sourcePath, 'vendor/ahash')
+})
+
+test('Cargo rows without src retain their package path in the tooltip', () => {
+  const tree = cargoTree({ 'lib.rs': 'root', 'hash/a.rs': 'hash' })
+  const pkg = tree.dirs.get('vendor').dirs.get('ahash')
+  assert.equal(compactSourceDirectory('ahash', pkg, 1).node.sourcePath, 'vendor/ahash')
 })
 
 test('Cargo filtering matches name-version labels with hidden src paths and physical paths', () => {

@@ -134,6 +134,7 @@ export interface State {
   bundleSourceFile: string | null
   bundleSourceFindingIdx: number | null
   bundleOverviewFilesSort: 'name' | 'size'
+  bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
   bundleCodeSearchMode: string
   bundleCodeSearchQuery: string
@@ -622,6 +623,7 @@ export const state: State = store<State>({
   // bundleSourceFile.
   bundleSourceFindingIdx: null,
   bundleOverviewFilesSort: 'name',
+  bundleOverviewPackagesSort: 'size',
   bundleCodeHistory: null,
   // Code-slide search state — `mode` selects what gets filtered
   // by `query`: file paths (default), source content, or matched
