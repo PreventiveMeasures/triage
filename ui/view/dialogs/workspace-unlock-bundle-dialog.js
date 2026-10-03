@@ -80,7 +80,7 @@ class WorkspaceUnlockBundleDialog extends AppDialog {
       <header>
         <h3>Unlock encrypted workspace</h3>
       </header>
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         This workspace bundle is password-protected. Enter the password
         the sender shared with you separately to decrypt and import it.
       </p>

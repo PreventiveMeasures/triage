@@ -655,7 +655,7 @@ class ManagedAdminRepos extends ManagedPage {
     const bundles = this._impact?.bundles ?? []
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       <div class="head">${this._back()}<h1>${repo.fullName}</h1></div>
-      <p class="intro">Repository settings and stored data.</p>
+      <p class="intro ui-hint">Repository settings and stored data.</p>
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
       <section class="section" aria-label="Repository connection">
         <h2>Connection</h2>
@@ -1298,13 +1298,13 @@ class ManagedAdminTeams extends ManagedPage {
       <div class="team-body">
       <div class="sub">
         <h3 class="sub-title">Repositories <span class="count">${team.repos.length}</span></h3>
-        ${team.repos.length === 0 ? html`<p class="muted">No repositories linked.</p>`
+        ${team.repos.length === 0 ? html`<p class="muted ui-hint">No repositories linked.</p>`
           : html`<ul class="links">${team.repos.map((r) => this._repoRow(team, r))}</ul>`}
         ${this._addRepoRow(team)}
       </div>
       <div class="sub">
         <h3 class="sub-title">Members <span class="count">${team.members.length}</span></h3>
-        ${team.members.length === 0 ? html`<p class="muted">No members.</p>`
+        ${team.members.length === 0 ? html`<p class="muted ui-hint">No members.</p>`
           : html`<ul class="links">${team.members.map((m) => this._memberRow(team, m))}</ul>`}
         ${this._addMemberRow(team)}
       </div>
@@ -1322,7 +1322,7 @@ class ManagedAdminTeams extends ManagedPage {
 
   _addRepoRow(team) {
     const repos = Array.isArray(this._data.repos) ? this._data.repos : []
-    if (repos.length === 0) return html`<p class="muted">No selected repositories to link — pick some on “Manage repositories”.</p>`
+    if (repos.length === 0) return html`<p class="muted ui-hint">No selected repositories to link — pick some on “Manage repositories”.</p>`
     return html`<div class="add-row">
       <repository-selector class="add-repo-sel" label=${`Repository to add to ${team.name}`} placeholder="Add repository…" ?disabled=${this._busy}
         .options=${repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))} .value=${this._repoChoices.get(team.id) ?? null}

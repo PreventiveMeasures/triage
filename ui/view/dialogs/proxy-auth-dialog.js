@@ -33,12 +33,12 @@ class ProxyAuthDialog extends AppDialog {
       <header>
         <h3>Sign in to keep syncing</h3>
       </header>
-      <p class="nwd-intro">
+      <p class="nwd-intro ui-hint">
         Triage can't reach the sync server — the connection is being redirected to an
         <strong>authentication proxy</strong> (for example Cloudflare Access). This
         usually means your access session has expired.
       </p>
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         Reload the page to sign in again. Your triage is saved on this device, so
         reloading won't lose anything — or keep working offline and reload later.
       </p>

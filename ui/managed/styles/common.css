@@ -15,6 +15,50 @@
 *::after {
   box-sizing: border-box;
 }
+/* These pages have shadow roots, so document chrome styles do not reach them.
+   Scope instructions to their containers: other .intro text includes paths. */
+button,
+summary,
+select,
+label,
+legend,
+h1,
+h2,
+h3,
+.section-heading,
+.ui-hint,
+.page-intro > .intro,
+.count,
+.result-count,
+.repository-count,
+.breadcrumb-separator,
+.list-head,
+.report-list-head,
+.history-head,
+.drop-copy,
+.upload-copy,
+.local-import-copy,
+.location-field > span,
+.empty:not(.error, [role='alert']),
+.msg:not(.error, [role='alert']),
+.local-import-message:not(.error, [role='status']),
+.data-empty,
+.revision-empty {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* Text entry and copyable content inside labels remain selectable. */
+input:not([type=checkbox], [type=radio]),
+textarea,
+[contenteditable],
+pre,
+code,
+.mono {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
 .wrap {
   width: 100%;
   max-width: 76rem;

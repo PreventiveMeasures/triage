@@ -202,7 +202,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
           Unmatched data stays in this browser.<br>
           Conflicting values prompt for resolution; per-report ignores are skipped.</p>
         </section>
-        <h2>Import workspace</h2><p class="intro">Create a new team from a workspace export or a workspace stored in this browser.</p>
+        <h2>Import workspace</h2><p class="intro ui-hint">Create a new team from a workspace export or a workspace stored in this browser.</p>
         <section class=${`workspace-drop ${this._drag ? 'dragging' : ''}`} aria-label="Workspace files">
           <strong>Drop workspace files here</strong><span>Encrypted exports, JSON, or compressed JSON. Encrypted files prompt for a password.</span>
           <div class="actions"><button type="button" class="btn" ?disabled=${this._busy || !this._catalog} @click=${() => this._browse()}>Choose files</button>
@@ -211,7 +211,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
         ${this._localOpen ? html`<section class="local-choice"><label for="local-workspace">Local workspace</label>
           <select id="local-workspace" .value=${this._localId} ?disabled=${this._busy} @change=${e => { this._localId = e.target.value }}><option value="">Choose a workspace…</option>${this._workspaces.map(ws => html`<option value=${ws.id}>${ws.name}</option>`)}</select>
           <button type="button" class="btn" ?disabled=${this._busy || !this._localId} @click=${() => this._readLocal()}>Select workspace</button>
-          ${!this._busy && this._workspaces.length === 0 ? html`<p>No unlocked local workspaces. Choose local workspace to unlock or refresh.</p>` : nothing}</section>` : nothing}
+          ${!this._busy && this._workspaces.length === 0 ? html`<p class="ui-hint">No unlocked local workspaces. Choose local workspace to unlock or refresh.</p>` : nothing}</section>` : nothing}
         ${plan ? html`<section class="import-preview" aria-label="Import options">
           ${plan.team ? html`<p>Team ${plan.team.name} has been created. Retry continues its remaining import steps.</p>` : nothing}
           <label for="import-team">New team name</label><input id="import-team" maxlength="100" .value=${plan.name} ?disabled=${this._busy || !!plan.team} @input=${e => { plan.name = e.target.value; this.requestUpdate() }}>

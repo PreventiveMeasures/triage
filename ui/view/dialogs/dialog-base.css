@@ -9,6 +9,39 @@ a { cursor: default; }
 /* Shadow trees don't inherit theme.css's global reset. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Dialog controls and guidance are chrome; messages with diagnostics and
+   the dialog's report, comment, and history content stay copyable. */
+button,
+summary,
+select,
+label,
+legend,
+header h3,
+.section-title,
+.ui-hint,
+.hint,
+.note,
+.lwd-note,
+.lwd-empty,
+.empty:not(.error, [role='alert']),
+.empty-discussion,
+.history-state[role='status'],
+.history-summary {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+input:not([type=checkbox], [type=radio]),
+textarea,
+[contenteditable],
+pre,
+code,
+.mono {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 dialog {
   /* Offset showModal()'s centering down ~5rem (auto bottom margin) so
      tall dialogs don't punch through the viewport. */

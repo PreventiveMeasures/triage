@@ -96,7 +96,7 @@ class StoragePersistDialog extends AppDialog {
         <li>Keep using the site — regular visits raise its engagement
           score.</li>
       </ul>
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         The browser re-evaluates on every request, so after any of the
         above press <strong>Try again</strong>.${localhostNote}
       </p>`

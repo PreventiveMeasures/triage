@@ -266,7 +266,7 @@ class PasskeySetupDialog extends AppDialog {
           still encrypted under it is <strong>unreadable</strong> and
           cannot be recovered.
         </p>
-        <p class="nwd-note">
+        <p class="nwd-note ui-hint">
           To enable encryption, DeepView will <strong>permanently delete
           ALL local DeepView data on this device</strong> — including
           any plaintext workspaces or reports you may have added after
@@ -299,7 +299,7 @@ class PasskeySetupDialog extends AppDialog {
     }
     if (this._success) {
       return html`
-        <p class="nwd-note">
+        <p class="nwd-note ui-hint">
           <strong>Encryption is on.</strong> Your triage data and report
           files are now sealed under your passkey. You'll be asked to
           unlock with the passkey on every fresh load.
@@ -312,7 +312,7 @@ class PasskeySetupDialog extends AppDialog {
     }
     const supported = isPasskeyEnvironmentSupported()
     return html`
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         Passkey encryption protects your local triage and report data
         with a hardware-backed key (TouchID, Windows Hello, security
         key). Without the passkey, the data on disk is unreadable —
@@ -326,7 +326,7 @@ class PasskeySetupDialog extends AppDialog {
         sync, or a second registered device) before relying on
         encryption for important data.
       </p>
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         <strong>Opt-in.</strong> You can disable encryption later from
         the lock icon in the sidebar header — the data is rewritten as
         plaintext and DeepView signals your authenticator to remove

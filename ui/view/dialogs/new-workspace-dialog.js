@@ -60,7 +60,7 @@ class NewWorkspaceDialog extends AppDialog {
         @input=${this._onInput}
         @keydown=${this._onKeydown}
       >
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         Workspace triage is synchronized by default over an
         end-to-end encrypted channel. Triage on unattached
         reports stays local to this browser.

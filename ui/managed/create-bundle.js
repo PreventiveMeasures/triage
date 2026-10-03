@@ -390,7 +390,7 @@ export class ManagedCreateBundle extends LitElement {
     const treeUrl = repo && this._commit ? `https://github.com/${[...repo.fullName.split('/'), 'tree', this._commit, ...parts].map(encodeURIComponent).join('/')}` : null
     const choices = this.revisionSuggestions()
     const revisionLabel = this._refKind === 'commit' ? 'Commit SHA' : this._refKind === 'tag' ? 'Tag' : 'Branch'
-    return html`<p class="intro">Choose a repository and revision, then select files to use as entry points.</p>
+    return html`<p class="intro ui-hint">Choose a repository and revision, then select files to use as entry points.</p>
       <div ?inert=${this._building}>
       <div class="source-fields">
         <div class="field"><span>Repository</span><repository-selector label="Repository" ?disabled=${this._loadingRepos} .options=${this._repos.map(item => ({ value: item.repoId, label: item.fullName }))} .value=${this._repoId} @repository-change=${event => this.selectRepository(event.detail.value)}></repository-selector></div>

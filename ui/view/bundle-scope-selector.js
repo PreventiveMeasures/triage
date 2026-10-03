@@ -19,9 +19,10 @@ export class BundleScopeSelector extends LitElement {
   static styles = css`
     :host { display: block; min-width: 0; }
     * { box-sizing: border-box; }
+    .scope-toggle, .scope-field { cursor: default; user-select: none; -webkit-user-select: none; }
     .scope-toggle { display: flex; align-items: center; justify-content: end; flex-wrap: wrap; gap: .4rem .7rem; min-width: 0; min-height: 2rem; }
     .scope-options { display: flex; flex-shrink: 0; min-width: 0; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; background: var(--bg); }
-    .scope-option { position: relative; flex: 1 0 auto; user-select: none; }
+    .scope-option { position: relative; flex: 1 0 auto; }
     .scope-option + .scope-option { border-left: 1px solid var(--border); }
     .scope-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
     .scope-option span { display: grid; place-items: center; height: calc(2rem - 2px); padding: .3rem .55rem; color: var(--muted); font-size: .74rem; white-space: nowrap; }
