@@ -1,5 +1,5 @@
-// The selected theme persists; the six-press counter and green/pink unlock
-// live only in this module and reset on reload. Dark remains the default.
+// The selected theme persists; the press counter and green/pink unlock live
+// only in this module and reset on reload. Dark remains the default.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { ensureHostAria } from './host-aria.js'
 import { playScreenCrack } from './screen-crack.js'
@@ -148,7 +148,8 @@ class ThemeToggle extends LitElement {
 
   _toggle = () => {
     if (themeUnlocking) return
-    if (!themesUnlocked && ++themePresses === 6) {
+    // After six presses, the first activation from dark cracks into green.
+    if (!themesUnlocked && ++themePresses >= 6 && currentTheme === 'dark') {
       themesUnlocked = true
       themeUnlocking = true
       announceTheme()
