@@ -74,18 +74,15 @@
    report.css so the chain survives the move into shadow DOM). */
 
 /* ── Top bar ───────────────────────────────────────────────── */
-/* Padding / gap / font-size match the findings `.toolbar` (.6rem
-   .75rem padding, .5rem inter-row gap, .825rem font) so the View row
-   reads at the same height and the "View:" label is the same size.
-   Horizontal padding lives on the rows (.75rem/side) so each row's
-   flex layout owns its gutter; vertical padding lives on the topbar.
-   No margin to the stage — the grid keeps them in one enclosure. */
+/* Default padding, row gap, and font size match the findings toolbar.
+   Bundle hosts can override the padding through --graph-topbar-padding.
+   The grid keeps the topbar and stage in one enclosure. */
 .graph2-topbar {
   grid-area: topbar;
   display: flex;
   flex-direction: column;
   gap: .5rem;
-  padding: .6rem .75rem;
+  padding: var(--graph-topbar-padding, .6rem .75rem);
   font-size: .825rem;
   background: var(--surface);
   backdrop-filter: var(--glass-blur);

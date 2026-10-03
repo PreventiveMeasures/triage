@@ -635,6 +635,8 @@
   font-style: italic;
 }
 
+.bundle-graph-slot > graph-layout { --graph-topbar-padding: .35rem .5rem; }
+
 .bundles-slide-body > .bundle-graph-slot,
 .bundles-slide-body > .bundle-terminal-slot {
   display: flex;
