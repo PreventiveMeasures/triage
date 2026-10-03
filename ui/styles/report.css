@@ -599,8 +599,8 @@
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
 }
-.bundles-overview-files-title { display: inline-flex; align-items: center; gap: .5rem; }
-.bundles-files-sort {
+.bundles-overview-col-title { display: inline-flex; align-items: center; gap: .5rem; }
+.bundles-overview-sort {
   display: inline-flex;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -634,6 +634,8 @@
   font-size: .78rem;
   font-style: italic;
 }
+
+.bundle-graph-slot > graph-layout { --graph-topbar-padding: .35rem .5rem; }
 
 .bundles-slide-body > .bundle-graph-slot,
 .bundles-slide-body > .bundle-terminal-slot {
@@ -1004,8 +1006,11 @@ bundle-code-search {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bundle-code-tree-separator { color: var(--muted); padding-inline: 1px; }
-.bundle-code-tree-npm { flex: none; color: var(--muted); }
+.bundle-code-tree-npm,
+.bundle-code-tree-cargo,
+.bundle-code-tree-composer { flex: none; color: var(--muted); }
 .bundle-code-tree-dirname.bundle-code-tree-package { display: flex; align-items: baseline; }
+.bundle-code-tree-dirname.bundle-code-tree-package-vendored { gap: .4em; }
 .bundle-code-tree-package-name { overflow: hidden; text-overflow: ellipsis; }
 .bundle-code-tree-package-version { flex-shrink: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .bundle-code-tree-variant { flex: none; font: .6rem var(--font-ui, system-ui); color: var(--muted); }
@@ -1739,6 +1744,7 @@ bundle-search {
     & dt:has(+ dd > .bundles-entry-points) { align-self: start; }
     & dd { margin: 0; font-size: .78rem; word-break: break-all; }
     & dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .68rem; }
+    & dd.bundle-integrity { color: var(--muted); }
     & dd:has(.bundles-entry-points) { cursor: default; }
     & .bundle-origin-row { display: flex; align-items: center; gap: 1rem; }
     & .bundle-origin-link {

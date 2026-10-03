@@ -21,7 +21,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
+import { sourceCargoIcon, sourceComposerIcon, sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
@@ -363,7 +363,7 @@ export function setCurrentBundleGraphPrep(prep) {
 // panel — same `pkgColor` palette so the colors carry meaning
 // across both views (a `@noble/hashes` package shows the same hue
 // in the bundle-size chart and the canvas).
-function renderBundleSizeDistribution(items) {
+function renderBundleSizeDistribution(items, sort) {
   // items: Array<{path, size, pkgDir}>; size may be 0 / null when the
   // bundle didn't carry per-source content (rare for sourcemaps).
   // `pkgDir` is the path's stasis package dir (undefined for sourcemap
@@ -377,7 +377,8 @@ function renderBundleSizeDistribution(items) {
     total += size
   }
   if (total === 0) return nothing
-  const sorted = [...totalByPkg.entries()].toSorted((a, b) => b[1] - a[1])
+  const sorted = [...totalByPkg.entries()].toSorted((a, b) => (sort === 'size' ? b[1] - a[1] : 0)
+    || pkgLabel(a[0]).localeCompare(pkgLabel(b[0])) || a[0].localeCompare(b[0]))
   return html`<div class="bundles-dist">
     <div class="bundles-dist-bar" aria-hidden="true">
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
@@ -457,7 +458,8 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // inline `sourcesContent`). Mirror the Files / Reports column
   // empty-state so the Packages column doesn't render as a card
   // with a header and a yawning blank body.
-  const distContent = renderBundleSizeDistribution(distItems)
+  const packagesSort = state.bundleOverviewPackagesSort
+  const distContent = renderBundleSizeDistribution(distItems, packagesSort)
   const distTpl = distContent === nothing
     ? html`<p class="bundles-overview-col-empty">No size information for this bundle's sources.</p>`
     : distContent
@@ -563,14 +565,17 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
     <div class="bundles-overview-columns">
       <section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
-          Packages <span class="bundles-overview-col-count">${packages.size}</span>
+          <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
+          <span class="bundles-overview-sort" role="group" aria-label="Package order">
+            ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(packagesSort === value)} @click=${() => { state.bundleOverviewPackagesSort = value; render() }}>${label}</button>`)}
+          </span>
         </header>
         <div class="bundles-overview-col-body">${distTpl}</div>
       </section>
       <section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
-          <span class="bundles-overview-files-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
-          <span class="bundles-files-sort" role="group" aria-label="File order">
+          <span class="bundles-overview-col-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
+          <span class="bundles-overview-sort" role="group" aria-label="File order">
             ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
           </span>
         </header>
@@ -951,6 +956,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const childPath = child.path
       const compact = compactSourceDirectory(name, child, depth)
       const pkg = child.package
+      const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer'
+      const packageIcon = pkg?.ecosystem === 'composer' ? sourceComposerIcon : pkg?.ecosystem === 'cargo' ? sourceCargoIcon : sourceNpmIcon
       const tooltip = pkg?.variant ? `Variant ${pkg.variant}\n${compact.node.sourcePath}` : compact.node.sourcePath
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
@@ -961,9 +968,9 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
         <details .open=${live(computeOpen(childPath, child))}>
           <summary @click=${onSummaryClick(childPath)} data-tooltip=${tooltip}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
-            ${pkg ? sourceNpmIcon : nothing}
-            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg })}>
-              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">@${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
+            ${pkg ? packageIcon : nothing}
+            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored })}>
+              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${vendored ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
             </span>
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
@@ -1243,13 +1250,14 @@ function renderBundleCodeView(details) {
     _bundleTreeCurrentPath = null
   }
   const allPaths = [...sources.keys()].toSorted()
-  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix)
+  const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
+  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules, allPaths)
   const stripped = allPaths.map(p => stripPathPrefix(p, prefix))
   // Tree built from STRIPPED paths so the visual hierarchy
   // doesn't waste horizontal space on a shared root prefix.
   // Stripped → original mapping lets the click handlers (and
   // sources.get) recover the full key.
-  const tree = buildBundleSourceTree(stripped, allPaths)
+  const tree = buildBundleSourceTree(stripped, allPaths, packageModules)
   // Per-file finding index for the tree's count chips, the default-
   // file pick, and the Issues-mode hidden-when-empty gate. Computed
   // once and reused — the tree walk reads it as
@@ -2330,7 +2338,7 @@ function renderBundleDetails(entry, details) {
       <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
       ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} title=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
     </dd>`)}
-    <dt>Integrity</dt><dd class="mono">${entry.integrity}</dd>
+    <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
     ${origin?.entries.size > 0 ? html`<dt>Entry points</dt><dd class="mono"><ul class="bundles-entry-points">
       ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${stripPathPrefix(file, prefix)}</button></li>`)}
