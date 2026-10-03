@@ -24,7 +24,7 @@ export function sourceNameLinks(tokens, language, resolve) {
 }
 
 function rustLinks(source, resolve) {
-  const pattern = /(?<![$#\p{XID_Continue}])(?<!::)(?:(?:use|extern|as)(?![\p{XID_Continue}])|(?:::)?(?:r#)?[_\p{XID_Start}][_\p{XID_Continue}]*(?:\s*::\s*(?:r#)?[_\p{XID_Start}][_\p{XID_Continue}]*)*(?![#\p{XID_Continue}]))|[{};,]/gu
+  const pattern = /(?<![$#\p{XID_Continue}])(?<!::)(?:(?:use|extern|as|mod)(?![\p{XID_Continue}])|(?:::)?(?:r#)?[_\p{XID_Start}][_\p{XID_Continue}]*(?:\s*::\s*(?:r#)?[_\p{XID_Start}][_\p{XID_Continue}]*)*(?![#\p{XID_Continue}]))|[{};,]/gu
   const links = []
   let importing = false
   let alias = false
@@ -32,20 +32,31 @@ function rustLinks(source, resolve) {
   let pending = ''
   let previous = ''
   let beforePrevious = ''
+  let modulePrefix = ''
+  let inlineModule = ''
   const groups = []
+  const scopes = []
   for (const match of source.matchAll(pattern)) {
     const spelling = match[0]
     const externalRoot = beforePrevious === 'extern' && previous === 'crate'
+    const moduleDeclaration = previous === 'mod'
     beforePrevious = previous
     previous = spelling
     if (spelling === 'use' || spelling === ';') {
       importing = spelling === 'use'
       alias = false
       prefix = pending = ''
+      inlineModule = ''
       groups.length = 0
       continue
     }
     if (/^[{};,]$/u.test(spelling)) {
+      if (spelling === '{') {
+        scopes.push(modulePrefix)
+        if (inlineModule) modulePrefix += `${inlineModule}::`
+      }
+      if (spelling === '}') modulePrefix = scopes.pop() ?? ''
+      inlineModule = ''
       if (importing && spelling === '{') { groups.push(prefix); prefix = pending ? `${pending}::` : prefix }
       if (importing && spelling === '}') prefix = groups.pop() ?? ''
       pending = ''
@@ -55,6 +66,15 @@ function rustLinks(source, resolve) {
     if (importing && spelling === 'as') { alias = true; continue }
     if (alias) continue
     const name = spelling.replace(/^::/u, '').replaceAll(/\s+|\br#/gu, '')
+    inlineModule = moduleDeclaration ? name : ''
+    if (moduleDeclaration) {
+      // Only out-of-line declarations load another file. Stasis prefixes
+      // their keys with the enclosing inline modules, if any.
+      const target = /^[\s\0]*;/u.test(source.slice(match.index + spelling.length))
+        ? resolve(`mod ${modulePrefix}${name}`) : null
+      if (target) links.push({ start: match.index, end: match.index + spelling.length, target })
+      continue
+    }
     const expanded = prefix && name === 'self' ? prefix.slice(0, -2) : prefix + name
     pending = expanded
     let target = resolve(expanded)

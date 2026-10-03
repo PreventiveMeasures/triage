@@ -229,6 +229,7 @@ test('PHP and Rust names obey per-file visibility and conflicting import conditi
   for (const [language, parent, name, code] of [
     ['php', 'src/main.php', 'A\\B', '<?php use A\\B; new \\A\\B();'],
     ['rust', 'src/main.rs', 'crate::a::B', 'use crate::a::B; use crate::a::{B};'],
+    ['rust', 'src/main.rs', 'mod borsh', 'pub mod borsh;'],
   ]) {
     const imports = { a: { [parent]: { [name]: 'one' } }, b: { [parent]: { [name]: 'two' } } }
     const details = stasis(imports, [parent, 'other', 'one', 'two'])
@@ -237,6 +238,44 @@ test('PHP and Rust names obey per-file visibility and conflicting import conditi
     assert.deepEqual(sourceLinks(code, language, bundleSourceLinkResolver(stasis(imports, [parent]), parent)), [])
     assert.equal(highlight(code, language, () => null), highlight(code, language))
   }
+})
+
+test('Rust module declarations use mod keys, including inline module prefixes', () => {
+  const parent = 'src/lib.rs'
+  const details = stasis({ rust: { [parent]: {
+    'mod borsh': 'src/borsh.rs',
+    'mod outer::borsh': 'src/outer/borsh.rs',
+    'mod outer::nested::borsh': 'src/outer/nested/borsh.rs',
+    'use borsh': 'vendor/borsh/src/lib.rs',
+    borsh: 'src/other.rs',
+  } } }, [parent, 'src/borsh.rs', 'src/outer/borsh.rs', 'src/outer/nested/borsh.rs', 'vendor/borsh/src/lib.rs', 'src/other.rs'])
+  const code = `pub mod borsh;
+mod borsh;
+pub(crate) mod borsh;
+pub(in crate::private) mod borsh;
+pub mod /* comment */ r#borsh;
+mod outer {
+    mod borsh;
+    fn unrelated() { let value = 1; }
+    mod nested { pub mod borsh; }
+    pub mod borsh;
+}
+pub mod borsh;
+mod borsh {}
+mod borsh_extra;
+mod missing { mod borsh; }
+// pub mod borsh;
+/* mod borsh; */
+let text = "mod borsh;";
+use borsh;`
+  assert.deepEqual(sourceLinks(code, 'rust', bundleSourceLinkResolver(details, parent)), [
+    ['borsh', 'src/borsh.rs'], ['borsh', 'src/borsh.rs'], ['borsh', 'src/borsh.rs'],
+    ['borsh', 'src/borsh.rs'], ['r#borsh', 'src/borsh.rs'], ['borsh', 'src/outer/borsh.rs'],
+    ['borsh', 'src/outer/nested/borsh.rs'], ['borsh', 'src/outer/borsh.rs'],
+    ['borsh', 'src/borsh.rs'], ['borsh', 'src/other.rs'],
+  ])
+  details.bundle.imports.get('rust').get(parent).set('mod borsh', 'missing.rs')
+  assert.deepEqual(sourceLinks('pub mod borsh;', 'rust', bundleSourceLinkResolver({ ...details, bundle: Bundle.parse(details.bundle.serialize()) }, parent)), [])
 })
 
 test('Rust path links remain valid when the viewer splits highlighted source into lines', () => {
