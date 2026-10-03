@@ -1356,6 +1356,9 @@ function renderBundleCodeView(details) {
         ])}
       </div>
     </aside>
+    <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical"
+      aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"
+    ></bundle-code-splitter>
     <div class=${classMap({ 'bundle-code-main': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${path
         ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings)
