@@ -32,26 +32,6 @@ select:focus-visible {
   color: var(--muted);
   font-size: .75rem;
 }
-.upload-controls {
-  display: flex;
-  align-items: end;
-  gap: .65rem;
-}
-.repo-picker {
-  width: 14rem;
-  display: grid;
-  gap: .3rem;
-  min-width: 0;
-}
-.repo-picker-label {
-  color: var(--muted);
-  font-size: .75rem;
-}
-.repo-select {
-  min-width: 0;
-  width: 100%;
-  max-width: 18rem;
-}
 .drop-browse {
   height: 2rem;
   flex-shrink: 0;
@@ -164,11 +144,11 @@ select:focus-visible {
 }
 .bundle-group-head,
 .bundles {
-  min-width: 51rem;
+  min-width: 52rem;
 }
 .bundle-row {
   display: grid;
-  grid-template-columns: minmax(12rem, 1fr) 17rem minmax(8rem, 12rem) auto;
+  grid-template-columns: minmax(12rem, 1fr) 8rem 6.5rem 4.5rem minmax(8rem, 12rem) 6.4rem;
   align-items: center;
   gap: .85rem;
   padding: .35rem .85rem;
@@ -186,6 +166,7 @@ select:focus-visible {
 }
 .actions {
   display: flex;
+  justify-content: flex-end;
   gap: .2rem;
   grid-column: auto;
   grid-row: auto;
@@ -230,21 +211,17 @@ select:focus-visible {
   white-space: nowrap;
 }
 .meta {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: .3rem .6rem;
+  min-width: 0;
   color: var(--muted);
   font-size: .65rem;
   line-height: 1.5;
-  overflow: hidden;
-  white-space: nowrap;
-}
-.meta > span { flex-shrink: 0; }
-.meta > span:last-child {
-  flex-shrink: 1;
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bundle-size {
+  text-align: right;
 }
 .upload-panel {
   display: grid;
@@ -283,28 +260,9 @@ select:focus-visible {
 .summary > span {
   min-width: 5.5rem;
 }
-@container (max-width: 55rem) {
+@container (max-width: 30rem) {
   .upload-panel {
     grid-template-columns: 1fr;
-  }
-  .upload-controls {
-    justify-content: space-between;
-    padding-left: 2.8rem;
-  }
-  .repo-picker {
-    flex: 1;
-  }
-  .repo-select {
-    max-width: none;
-  }
-}
-@container (max-width: 30rem) {
-  .upload-controls {
-    padding-left: 0;
-    flex-wrap: wrap;
-  }
-  .repo-picker {
-    flex-basis: 100%;
   }
   .section-head {
     align-items: flex-start;
@@ -317,7 +275,6 @@ select:focus-visible {
 .bundle-open:hover { color: var(--accent); }
 
 .bundle-row > .location-editor { grid-column: 1 / -1; }
-.upload-directory { width: 12rem; }
 
 .breadcrumb { flex-wrap: wrap; }
 .breadcrumb .breadcrumb-current { margin: 0; color: var(--text); font-size: .85rem; font-weight: 500; }

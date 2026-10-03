@@ -23,7 +23,8 @@ export function bundleIntegrity(bytes: Buffer): string {
 // `bundleKind`: sourcemap (.map) or stasis (stasis.code.br / .stasis.code.br).
 // null for anything else (stored anyway; the kind is informational).
 export function bundleKind(filename: string): 'sourcemap' | 'stasis' | null {
-  const lower = filename.toLowerCase()
+  // Browsers insert a duplicate-download counter before the final extension.
+  const lower = filename.toLowerCase().replace(/ \(\d+\)(?=\.[^.]*$)/u, '')
   if (lower.endsWith('.map')) return 'sourcemap'
   if (lower === 'stasis.code.br' || lower.endsWith('.stasis.code.br')) return 'stasis'
   return null

@@ -766,16 +766,8 @@ function formatBytes(n) {
 }
 
 // Keep managed numeric repository IDs and null (unattached) intact.
-function repoOptions(repos, allowUnassigned = true) {
-  return [...(allowUnassigned ? [{ value: null, label: 'No repository', special: true }] : []), ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
-}
-
-function repoPickerTemplate(repos, selected, onChange, label = 'Repository for new bundles', allowUnassigned = true) {
-  const loading = !Array.isArray(repos)
-  return html`<div class="repo-picker"><span class="repo-picker-label">${label}</span>
-    <repository-selector class="repo-select" .options=${loading ? [{ value: null, label: 'Loading repositories…' }] : repoOptions(repos, allowUnassigned)} .value=${selected} label=${label} ?disabled=${loading || repos.length === 0}
-      @repository-change=${event => onChange(event.detail.value)}></repository-selector>
-  </div>`
+function repoOptions(repos) {
+  return [{ value: null, label: 'No repository', special: true }, ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
 }
 
 // Reports are uploaded with their own repository metadata. New reports remain
@@ -796,8 +788,6 @@ class ManagedAdminReports extends ManagedPage {
     _locationRepo: { state: true },
     _locationDirectory: { state: true },
     _locationBusy: { state: true },
-    _repoId: { state: true },
-    _repoDirectory: { state: true },
   }
 
   static styles = [unsafeCSS(reportsStyles), unsafeCSS(locationStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
@@ -817,12 +807,10 @@ class ManagedAdminReports extends ManagedPage {
     this._locationRepo = null
     this._locationDirectory = ''
     this._locationBusy = false
-    this._repoId = null
-    this._repoDirectory = ''
     this._teardownDrop = null
     this._queue = []
     this._localImport = new ManagedLocalImport(this, 'report', file => uploadLocalFile(this, file,
-      selected => uploadReport(selected, this._csrf, this._repoId, this._repoDirectory.trim()), ['reports', 'repo-impact', 'history', 'scan-sources']))
+      selected => uploadReport(selected, this._csrf), ['reports', 'repo-impact', 'history', 'scan-sources']))
   }
 
   connectedCallback() {
@@ -853,7 +841,6 @@ class ManagedAdminReports extends ManagedPage {
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
-        <div class="location-editor" aria-label="Location for reports without repository metadata"><div class="location-field"><span>Repository (when absent from report)</span><repository-selector label="Repository for new reports" .options=${repoOptions(this._data?.repos ?? [])} .value=${this._repoId} ?disabled=${!this._data?.repos?.length} @repository-change=${event => { this._repoId = event.detail.value }}></repository-selector></div><div class="location-field"><label for="report-upload-directory">Directory</label><input id="report-upload-directory" placeholder="Repository root" .value=${this._repoDirectory} @input=${event => { this._repoDirectory = event.target.value }}></div></div>
         ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
         ${this._body()}
       </div>`
@@ -866,7 +853,7 @@ class ManagedAdminReports extends ManagedPage {
       && (this._visibility === 'all' || Boolean(report.visible) === (this._visibility === 'visible')))
     return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : `${filtered.length} of ${reports.length} reports`}</span></div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by / date / size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
+      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
   }
 
   _row(report) {
@@ -881,7 +868,9 @@ class ManagedAdminReports extends ManagedPage {
         <span class="report-mark" aria-hidden="true">${unsafeHTML(logo)}</span>
         <span class="report-name" data-tooltip-truncated data-tooltip=${report.filename}>${report.filename}</span>
         <span class="report-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
-        <span class="report-meta"><span data-tooltip-truncated data-tooltip=${report.uploadedByLogin ?? ''}>${report.uploadedByLogin ?? 'Uploader removed'}</span><span>${when} · ${formatBytes(report.byteSize)}</span></span>
+        <span class="report-meta report-uploader" data-tooltip-truncated data-tooltip=${report.uploadedByLogin ?? 'Uploader removed'}>${report.uploadedByLogin ?? 'Uploader removed'}</span>
+        <span class="report-meta report-date">${when}</span>
+        <span class="report-meta report-size">${formatBytes(report.byteSize)}</span>
         <span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span>
         <span class="report-actions">
           ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${report.filename}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
@@ -961,7 +950,7 @@ class ManagedAdminReports extends ManagedPage {
   }
 
   async _upload(files) {
-    await uploadFiles(this, files, file => uploadReport(file, this._csrf, this._repoId, this._repoDirectory.trim()), ['reports', 'repo-impact', 'history', 'scan-sources'])
+    await uploadFiles(this, files, file => uploadReport(file, this._csrf), ['reports', 'repo-impact', 'history', 'scan-sources'])
   }
 
   async _delete(report) {
@@ -991,8 +980,6 @@ class ManagedAdminBundles extends ManagedPage {
     _query: { state: true },
     _creating: { state: true },
     _data: { state: true },
-    _repoId: { state: true },
-    _repoDirectory: { state: true },
     _locationBundle: { state: true },
     _locationRepo: { state: true },
     _locationDirectory: { state: true },
@@ -1011,8 +998,6 @@ class ManagedAdminBundles extends ManagedPage {
     this._data = null
     this._error = null
     this._busy = false
-    this._repoId = null // null = no repo link; otherwise a selected repo id (for new uploads)
-    this._repoDirectory = ''
     this._locationBundle = null
     this._locationRepo = null
     this._locationDirectory = ''
@@ -1021,7 +1006,7 @@ class ManagedAdminBundles extends ManagedPage {
     this._teardownDrop = null
     this._queue = [] // files awaiting upload; a drop during an in-flight upload joins it
     this._localImport = new ManagedLocalImport(this, 'bundle', file => uploadLocalFile(this, file,
-      selected => uploadBundle(selected, this._csrf, this._repoId, this._repoDirectory.trim()), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources']))
+      selected => uploadBundle(selected, this._csrf), ['bundles', 'reports', 'repo-impact', 'history', 'scan-sources']))
   }
 
   connectedCallback() {
@@ -1054,7 +1039,6 @@ class ManagedAdminBundles extends ManagedPage {
 
   willUpdate(changed) {
     if (changed.has('createRepoId')) {
-      this._repoId = this.createRepoId ?? null
       this._creating = this.createRepoId != null
     }
   }
@@ -1068,7 +1052,7 @@ class ManagedAdminBundles extends ManagedPage {
         <button type="button" class="breadcrumb-manage" aria-label="Back to bundles" @click=${() => this._showCreate(false)}>Bundles</button>
         <span class="breadcrumb-separator" aria-hidden="true">›</span><h1 class="breadcrumb-current">Create a bundle</h1>
       </div>
-      <managed-create-bundle .initialRepoId=${this._repoId} .installTooltips=${this.installTooltips}
+      <managed-create-bundle .initialRepoId=${this.createRepoId ?? null} .installTooltips=${this.installTooltips}
         .createBundle=${this._csrf ? (input, signal) => this.appState.mutate(() => createBundle(input, this._csrf, signal), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources']) : undefined}
         @bundle-created=${() => { void this._load(); this._showCreate(false) }}></managed-create-bundle>
     </div>`
@@ -1081,7 +1065,7 @@ class ManagedAdminBundles extends ManagedPage {
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
         <section class="upload-panel" aria-label="Upload bundles">
           <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>
-          <div class="upload-controls">${repoPickerTemplate(this._data?.repos, this._repoId, (v) => { this._repoId = v }, 'Repository')}<div class="location-field upload-directory"><label for="bundle-upload-directory">Directory</label><input id="bundle-upload-directory" type="text" placeholder="Repository root" .value=${this._repoDirectory} @input=${event => { this._repoDirectory = event.target.value }}></div><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+          <button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button>
         </section>
         ${this._body()}
       </div>`
@@ -1106,7 +1090,9 @@ class ManagedAdminBundles extends ManagedPage {
       <span class="identity"><span class="bundle-icon" aria-hidden="true">${b.kind === 'stasis' ? html`<img src="./stasis.svg" width="16" height="16" alt="">` : BUNDLE_ICON}</span>
         <button type="button" class="filename bundle-open" data-tooltip-truncated data-tooltip=${b.filename} @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: b, bubbles: true, composed: true }))}>${b.filename}</button>
       </span>
-      <span class="meta"><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span data-tooltip-truncated data-tooltip=${`@${b.uploadedByLogin}`}>@${b.uploadedByLogin}</span>` : nothing}</span>
+      <span class="meta bundle-uploader" data-tooltip-truncated data-tooltip=${b.uploadedByLogin ? `@${b.uploadedByLogin}` : ''}>${b.uploadedByLogin ? `@${b.uploadedByLogin}` : ''}</span>
+      <span class="meta bundle-date">${when}</span>
+      <span class="meta bundle-size">${formatBytes(b.byteSize)}</span>
       <span class="bundle-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
       <span class="actions">
         ${b.canChangeRepo === false ? nothing : html`<button type="button" class="action" aria-label=${`Set location for ${b.filename}`} data-tooltip="Set repository location" ?disabled=${this._locationBusy} @click=${() => this._openLocation(b)}>${adminIcon('repo')}</button>`}
@@ -1143,7 +1129,7 @@ class ManagedAdminBundles extends ManagedPage {
   }
 
   async _upload(files) {
-    await uploadFiles(this, files, file => uploadBundle(file, this._csrf, this._repoId, this._repoDirectory.trim()), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
+    await uploadFiles(this, files, file => uploadBundle(file, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
   }
 
   async _delete(b) {

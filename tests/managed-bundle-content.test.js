@@ -306,6 +306,21 @@ test('bundle upload origin defaults allow unmatched repos and honor explicit loc
   assert.equal(absent.json().repoId, null)
 })
 
+test('browser-renamed Stasis uploads still infer their repository and directory', async t => {
+  const h = await setup(t)
+  const bundle = Bundle.parse(stasis)
+  bundle.repo = { github: 'org/repo1', directory: 'packages/app' }
+  const bytes = brotliCompressSync(Buffer.from(bundle.serialize()))
+  const response = await h.send('/api/admin/bundles', 'manager', 'POST', bytes,
+    { 'x-bundle-filename': encodeURIComponent('app.stasis.code (1).br') })
+  assert.equal(response.status, 201)
+  const stored = await h.db.getBundle(response.json().id)
+  assert.equal(stored.filename, 'app.stasis.code (1).br')
+  assert.equal(stored.kind, 'stasis')
+  assert.equal(stored.repoId, 1)
+  assert.equal(stored.repoDirectory, 'packages/app')
+})
+
 test('automatic bundle locations enforce current directory grants using only the header', async t => {
   const h = await setup(t)
   await h.db.removeTeamRepo(h.team, 1, null)
