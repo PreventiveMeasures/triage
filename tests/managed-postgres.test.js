@@ -7,6 +7,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { checkBundleAccessSnapshots, checkBundleLocations } from './_managed-bundle-location.js'
+import { checkBundleBuildLeases } from './_managed-bundle-build-leases.js'
 import { checkManagementCatalog } from './_managed-catalog.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
@@ -920,6 +921,39 @@ test('maintenance leases coordinate instances and an expired owner cannot releas
   assert.equal(await db.claimMaintenanceLease('third', 102, 300), false)
   await peer.finishMaintenanceLease('second', 105)
   assert.equal(await db.claimMaintenanceLease('third', 105, 300), true)
+})
+
+test('Postgres bundle build admission is atomic across instances and recovers expired owners', async t => {
+  const { db, connect, queries } = await database(t)
+  const peer = await openPostgresManagedDb(connect)
+  t.after(() => peer.close())
+  await checkBundleBuildLeases(db, peer, async owner => {
+    const connection = await connect()
+    try { await connection.query('UPDATE managed_bundle_build_lease SET expires_at = 0 WHERE owner = $1', [owner]) }
+    finally { await connection.release() }
+  })
+  queries.length = 0
+  const claims = await Promise.all(Array.from({ length: 8 }, (_, i) => (i % 2 ? db : peer).claimBundleBuildLease(`user-${i}`, `owner-${i}`)))
+  assert.equal(claims.filter(Boolean).length, 2)
+  assert.equal(queries.filter(query => query.includes('pg_advisory_xact_lock')).length, 8, 'admission snapshots are serialized across connections')
+  for (const [i, won] of claims.entries()) if (won) await db.releaseBundleBuildLease(`owner-${i}`)
+  const duplicates = await Promise.all([db.claimBundleBuildLease('same-user', 'one'), peer.claimBundleBuildLease('same-user', 'two')])
+  assert.equal(duplicates.filter(Boolean).length, 1)
+})
+
+test('Postgres upgrades build leases once without hot-start DDL', async t => {
+  const { connect, queries } = await database(t)
+  const previous = await connect()
+  try { await previous.query('DROP TABLE managed_bundle_build_lease; DELETE FROM managed_schema_version WHERE version = 13;') }
+  finally { await previous.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.equal(await upgraded.claimBundleBuildLease('user', 'owner'), true)
+  queries.length = 0
+  const reopened = await openPostgresManagedDb(connect)
+  t.after(() => reopened.close())
+  assert.ok(queries.every(query => query.startsWith('SELECT')))
+  assert.equal(await reopened.claimBundleBuildLease('user', 'duplicate'), false)
 })
 
 test('request-owned connections rollback failures and reconnect before subsequent operations', async t => {

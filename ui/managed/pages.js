@@ -11,7 +11,7 @@ import { REPORT_LOGOS } from '../view/report-logos.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
-import { addPublicRepository, connectRepositoryApp, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import localImportStyles from './styles/local-import.css'
 import commonStyles from './styles/common.css'
@@ -1067,7 +1067,9 @@ class ManagedAdminBundles extends ManagedPage {
         <button type="button" class="breadcrumb-manage" aria-label="Back to bundles" @click=${() => this._showCreate(false)}>Bundles</button>
         <span class="breadcrumb-separator" aria-hidden="true">›</span><h1 class="breadcrumb-current">Create a bundle</h1>
       </div>
-      <managed-create-bundle .initialRepoId=${this._repoId} .installTooltips=${this.installTooltips}></managed-create-bundle>
+      <managed-create-bundle .initialRepoId=${this._repoId} .installTooltips=${this.installTooltips}
+        .createBundle=${this._csrf ? (input, signal) => this.appState.mutate(() => createBundle(input, this._csrf, signal), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources']) : undefined}
+        @bundle-created=${() => { void this._load(); this._showCreate(false) }}></managed-create-bundle>
     </div>`
     }
     return html`

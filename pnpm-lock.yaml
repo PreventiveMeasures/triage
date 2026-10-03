@@ -8,10 +8,16 @@ importers:
 
   .:
     dependencies:
+      '@exodus/stasis':
+        specifier: 1.0.0-beta.5
+        version: 1.0.0-beta.5(esbuild@0.28.2)
       '@exodus/stasis-core':
-        specifier: ^1.0.0-beta.5
+        specifier: 1.0.0-beta.5
         version: 1.0.0-beta.5
       '@preventive/report':
+        specifier: 1.0.0-alpha.4
+        version: 1.0.0-alpha.4
+      '@preventive/upstream':
         specifier: 1.0.0-alpha.4
         version: 1.0.0-alpha.4
       ws:
@@ -85,6 +91,9 @@ packages:
 
   '@cacheable/utils@2.5.0':
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==, tarball: https://registry.npmjs.org/@cacheable/utils/-/utils-2.5.0.tgz}
+
+  '@chalker/queue@1.0.1':
+    resolution: {integrity: sha512-j8iu20wUUgTnW3V5r5UKuUab3hT2odAGBlB7G2qxu+BFw9GFO8se2B/Su9SAtLj/CcKZzMFrwHREIG9hDIFo2Q==, tarball: https://registry.npmjs.org/@chalker/queue/-/queue-1.0.1.tgz}
 
   '@csstools/css-calc@3.3.0':
     resolution: {integrity: sha512-c5ihYsPkdG6JCkU2zTMm4+k6r7RXuGxtWYhu5DHMIiF1FHzrfmHL5so11AoFpUv/tu61xfcmT4AmKoFfMPoqdQ==, tarball: https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.3.0.tgz}
@@ -303,6 +312,23 @@ packages:
     engines: {node: '>=24.14.0'}
     hasBin: true
 
+  '@exodus/stasis-plugins@1.0.0-beta.5':
+    resolution: {integrity: sha512-B86taKxe/QmxydQITU/Z15DdMRW/Z/NQWXxzMYjPx1NORwq8/6b0FUhE6SWM9jsfhsgnvuvGCInQQRllT/Wb9w==, tarball: https://registry.npmjs.org/@exodus/stasis-plugins/-/stasis-plugins-1.0.0-beta.5.tgz}
+    engines: {node: '>=24.14.0'}
+
+  '@exodus/stasis@1.0.0-beta.5':
+    resolution: {integrity: sha512-0e3/DPcy2d4DWg9tZLAJHLArZInS4IKNV8YEndmgodhEgvfz0Gc8sTqGWm8rKxSbWVn5hzGNmQvd5LLF89VRxA==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-beta.5.tgz}
+    engines: {node: '>=24.14.0'}
+    hasBin: true
+    peerDependencies:
+      esbuild: '*'
+      flow-remove-types: '*'
+    peerDependenciesMeta:
+      esbuild:
+        optional: true
+      flow-remove-types:
+        optional: true
+
   '@keyv/bigmap@1.3.1':
     resolution: {integrity: sha512-WbzE9sdmQtKy8vrNPa9BRnwZh5UF4s1KTmSK0KUVLo3eff5BlQNNWDnFOouNpKfPKDnms9xynJjsMYjMaT/aFQ==, tarball: https://registry.npmjs.org/@keyv/bigmap/-/bigmap-1.3.1.tgz}
     engines: {node: '>= 18'}
@@ -317,6 +343,13 @@ packages:
 
   '@lit/reactive-element@2.1.2':
     resolution: {integrity: sha512-pbCDiVMnne1lYUIaYNN5wrwQXDtHaYtg7YEFPeW+hws6U47WeFvISGUWekPGKWOP1ygrs0ef0o1VJMk1exos5A==, tarball: https://registry.npmjs.org/@lit/reactive-element/-/reactive-element-2.1.2.tgz}
+
+  '@napi-rs/wasm-runtime@1.2.4':
+    resolution: {integrity: sha512-AJxoUD2/15ESHbvpcyjU274nsAPLuOtPHCk0vKJM5pj//Fg/B1FXNWjPnXTT9PymCYYiHo4zPj0ZomXBKhoy7g==, tarball: https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.2.4.tgz}
+    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
+    peerDependencies:
+      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
+      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
 
   '@noble/ciphers@2.3.0':
     resolution: {integrity: sha512-Clu/xdfgVTf9o7ngLOURaxePwR0j8sjclKEtVij10/jGulwFsPWCvvRgG/XjUVf8Nei+jLG6uwyXzUTGY1DQrw==, tarball: https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.3.0.tgz}
@@ -337,6 +370,104 @@ packages:
   '@nx-js/observer-util@4.2.2':
     resolution: {integrity: sha512-9OayX1xkdGjdnsDiO2YdaYJ6aMyCF7/NY4QWVgIgjSAZJ4OX2fD766Ts79hEzBscenQy2DCaSoY8VkguIMB1ZA==, tarball: https://registry.npmjs.org/@nx-js/observer-util/-/observer-util-4.2.2.tgz}
     engines: {node: '>=6.5.0'}
+
+  '@oxc-parser/binding-android-arm64@0.94.0':
+    resolution: {integrity: sha512-Ficqj6MggRGFkemU4pVFTyth3jWVL/zpIWjGMTXaPU81l46ZDcYVFWp9ia6nfE5mm8UdVSI2trvmK+BpNUim7g==, tarball: https://registry.npmjs.org/@oxc-parser/binding-android-arm64/-/binding-android-arm64-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [android]
+
+  '@oxc-parser/binding-darwin-arm64@0.94.0':
+    resolution: {integrity: sha512-uYyeMH9vMfb0JAdm6ZwHTgcTv53030elQKMnUbux9K5rxOCWbHUyeVACEv86V+E/Ft6RtkvWDIqUY4sYZRmcuQ==, tarball: https://registry.npmjs.org/@oxc-parser/binding-darwin-arm64/-/binding-darwin-arm64-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@oxc-parser/binding-darwin-x64@0.94.0':
+    resolution: {integrity: sha512-Ek1fh8dw6b+/hzLo5jjPuxkshRxekjtTfhfWZ4RehMYiApT8Rj4k+7kcQ+zV1ZaF+1+yLgNqNja2RMRqx3MHzQ==, tarball: https://registry.npmjs.org/@oxc-parser/binding-darwin-x64/-/binding-darwin-x64-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [darwin]
+
+  '@oxc-parser/binding-freebsd-x64@0.94.0':
+    resolution: {integrity: sha512-81bE/8F252Ew179uVo9FU67dmRc+n8QSMhj6mmMxisdI3ao5MjCI5jDL19mH3UeQ9uRUBSPFILmHBDQYNZ9oKw==, tarball: https://registry.npmjs.org/@oxc-parser/binding-freebsd-x64/-/binding-freebsd-x64-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@oxc-parser/binding-linux-arm-gnueabihf@0.94.0':
+    resolution: {integrity: sha512-aGOU8IYXVYGN2aRrvcU5+UdM7BzIVlm4m0REQzjpblQKRdZfWFtDBRJez+fK/F10g0H1AU5DQVgbW5aeko49Jw==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm]
+    os: [linux]
+
+  '@oxc-parser/binding-linux-arm-musleabihf@0.94.0':
+    resolution: {integrity: sha512-69/ZuYSZ4dd7UWoEOyf+pXYPtvUZguDQqjhxMx8fI0J30sEEqs1d/DBLLnog/afHmaapPEIEr6rp9jF6bYcgNw==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-arm-musleabihf/-/binding-linux-arm-musleabihf-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm]
+    os: [linux]
+
+  '@oxc-parser/binding-linux-arm64-gnu@0.94.0':
+    resolution: {integrity: sha512-u55PGVVfZF/frpEcv/vowfuqsCd5VKz3wta8KZ3MBxboat7XxgRIMS8VQEBiJ3aYE80taACu5EfPN1y9DhiU0Q==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-arm64-musl@0.94.0':
+    resolution: {integrity: sha512-Qm2SEU7/f2b2Rg76Pj49BdMFF7Vv7+2qLPxaae4aH1515kzVv6nZW0bqCo4fPDDyiE4bryF7Jr+WKhllBxvXPw==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-arm64-musl/-/binding-linux-arm64-musl-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@oxc-parser/binding-linux-riscv64-gnu@0.94.0':
+    resolution: {integrity: sha512-bZO3QAt0lsZjk351mVM85obMivbXG+tDiah5XmmOaGO8k4vEYmoiKr2YHJoA2eNpKhPJF8dNyIS7U+XAvirr9g==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-riscv64-gnu/-/binding-linux-riscv64-gnu-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-s390x-gnu@0.94.0':
+    resolution: {integrity: sha512-IdbJ/rwsaEPQx11mQwGoClqhAmVaAF9+3VmDRYVmfsYsrhX1Ue1HvBdVHDvtHzJDuumC/X/codkVId9Ss+7fVg==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [s390x]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-x64-gnu@0.94.0':
+    resolution: {integrity: sha512-TbtpRdViF3aPCQBKuEo+TcucwW3KFa6bMHVakgaJu12RZrFpO4h1IWppBbuuBQ9X7SfvpgC1YgCDGve9q6fpEA==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-x64-gnu/-/binding-linux-x64-gnu-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oxc-parser/binding-linux-x64-musl@0.94.0':
+    resolution: {integrity: sha512-hlfoDmWvgSbexoJ9u3KwAJwpeu91FfJR6++fQjeYXD2InK4gZow9o3DRoTpN/kslZwzUNpiRURqxey/RvWh8JQ==, tarball: https://registry.npmjs.org/@oxc-parser/binding-linux-x64-musl/-/binding-linux-x64-musl-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@oxc-parser/binding-wasm32-wasi@0.94.0':
+    resolution: {integrity: sha512-VoCtQZIsRZN8mszbdizh+5MwzbgbMxsPgT2hOzzILQLNY2o2OXG3xSiFNFakVhbWc9qSTaZ/MRDsqR+IM3fLFw==, tarball: https://registry.npmjs.org/@oxc-parser/binding-wasm32-wasi/-/binding-wasm32-wasi-0.94.0.tgz}
+    engines: {node: '>=14.0.0'}
+    cpu: [wasm32]
+
+  '@oxc-parser/binding-win32-arm64-msvc@0.94.0':
+    resolution: {integrity: sha512-3wsbMqV8V7WaLdiQ2oawdgKkCgMHXJ7VDuo6uIcXauU3wK6CG0QyDXRV9bPWzorGLRBUHndu/2VB1+9dgT9fvg==, tarball: https://registry.npmjs.org/@oxc-parser/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [win32]
+
+  '@oxc-parser/binding-win32-x64-msvc@0.94.0':
+    resolution: {integrity: sha512-UTQQ1576Nzhh4jr/YmvzqnuwTPOauB/TPzsnWzT+w8InHxL5JA1fmy01wB1F2BWT9AD6YV4BTB1ozRICYdAgjw==, tarball: https://registry.npmjs.org/@oxc-parser/binding-win32-x64-msvc/-/binding-win32-x64-msvc-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [x64]
+    os: [win32]
+
+  '@oxc-project/types@0.94.0':
+    resolution: {integrity: sha512-+UgQT/4o59cZfH6Cp7G0hwmqEQ0wE+AdIwhikdwnhWI9Dp8CgSY081+Q3O67/wq3VJu8mgUEB93J9EHHn70fOw==, tarball: https://registry.npmjs.org/@oxc-project/types/-/types-0.94.0.tgz}
 
   '@oxlint/binding-android-arm-eabi@1.79.0':
     resolution: {integrity: sha512-TebFaaMklO/RXzTv7PucaCq9l3X6D1gA+C8H6K4njtjFOV+zWE9MKLpulcJZN9bzytbUbQIY0mZuz12nQ5Kv4Q==, tarball: https://registry.npmjs.org/@oxlint/binding-android-arm-eabi/-/binding-android-arm-eabi-1.79.0.tgz}
@@ -460,8 +591,20 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@preventive/archive@1.0.0-beta.3':
+    resolution: {integrity: sha512-2WLNnHNoUCJezrusJrA9QVIJTmo+34KF/6ODd+a8x6Ks5fk/GOWVaWTl8+A4DzOw5dO43Uf5fX1N6ga/gB7TIw==, tarball: https://registry.npmjs.org/@preventive/archive/-/archive-1.0.0-beta.3.tgz}
+    engines: {node: '>=24.14.0'}
+
+  '@preventive/deptree@1.0.0-alpha.6':
+    resolution: {integrity: sha512-y/78ovoxKkvuKN0wtDiDWiXBDm2doTrSOXqFu7Y1/jwAUktyOeXSxuGSB+8YsV4YqVO4daUJ0qqISA6ix838Gg==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.0-alpha.6.tgz}
+    engines: {node: '>=24.14.0'}
+
   '@preventive/diff@1.0.0':
     resolution: {integrity: sha512-voZPhZLUkbM1R8N4TxZ1LjHYmAoy8/4cohXYq5gL5DXYag3MQ/XehTSGa+871V6ffsNptixV9iURVtqqMHLOHg==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.0.tgz}
+    engines: {node: '>=24.14.0'}
+
+  '@preventive/lockfile@1.0.0-alpha.5':
+    resolution: {integrity: sha512-yMeHF6Wy6U2L+jcu+YWEtDmxQcDE0ptJmYMG5f8+N1ObzBOgl97I643MZOhH6YDSFG7DQyW9YmQxto+FJvHgmQ==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.5.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/report@1.0.0-alpha.4':
@@ -470,6 +613,14 @@ packages:
 
   '@preventive/terminal@2.0.0-beta.1':
     resolution: {integrity: sha512-BBvLkWrjwYryQze4ceY0JnAGwRgIIxpnkOxBF7JaH2oILR0TZNwub+SmUE9pufOS+puoTHPmVlyf8ewU4jRzPA==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.1.tgz}
+
+  '@preventive/upstream@1.0.0-alpha.4':
+    resolution: {integrity: sha512-Dr5fB7NHri6YWAoA8O5owm0+ZslqIXqNZmrvFTh4JKW8trKjeGsgoBMYcqEHha5NdEKa9D3HNpWGx6mMKKO3wQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.4.tgz}
+    engines: {node: '>=24.14.0'}
+
+  '@preventive/vfs@1.0.0-beta.3':
+    resolution: {integrity: sha512-tuDr8A5IMZCXIwG1VPy1BCmFSnLGBX+WXeLUYc0EWUvVsGxARphajjkA+lzRokXQglPHgE7HqepX0g49zjcFGw==, tarball: https://registry.npmjs.org/@preventive/vfs/-/vfs-1.0.0-beta.3.tgz}
+    engines: {node: '>=24.14.0'}
 
   '@rray/frontend@1.0.0':
     resolution: {integrity: sha512-FgJTZ89e42pR3a1ALQId3SGgt47FIfY/7ydsphu94wY7oyuwOed3/GOTn279ypvA8hz/3fcnoMFg2M3uuqcrSg==, tarball: https://registry.npmjs.org/@rray/frontend/-/frontend-1.0.0.tgz}
@@ -482,6 +633,9 @@ packages:
     resolution: {integrity: sha512-xbyxPeaO9Vns6A8/0MQV6PzZ5nNZCoGV4q1ERaNd5EBAKlWt+YcpaPapNYNUkZaiQg98+xPbikdA58ehquJG3g==, tarball: https://registry.npmjs.org/@stylistic/stylelint-plugin/-/stylelint-plugin-5.3.0.tgz}
     peerDependencies:
       stylelint: ^17.6.0
+
+  '@tybys/wasm-util@0.10.4':
+    resolution: {integrity: sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A==, tarball: https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.4.tgz}
 
   '@types/clean-css@4.2.11':
     resolution: {integrity: sha512-Y8n81lQVTAfP2TOdtJJEsCoYl1AnOkqDqMvXb9/7pfgZZ7r8YrEyurrAvAoAjHOGXKRybay+5CsExqIH6liccw==, tarball: https://registry.npmjs.org/@types/clean-css/-/clean-css-4.2.11.tgz}
@@ -926,6 +1080,10 @@ packages:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==, tarball: https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz}
     engines: {node: '>=0.10.0'}
 
+  oxc-parser@0.94.0:
+    resolution: {integrity: sha512-refms9HQoAlTYIazONYkuX5A3rFGPddbD6Otyc+A0/pj1WTttR8TsZRlMzQxCfhexxfrbinqd7ebkEoYNuCmLQ==, tarball: https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.94.0.tgz}
+    engines: {node: ^20.19.0 || >=22.12.0}
+
   oxlint@1.79.0:
     resolution: {integrity: sha512-hVJ9hq9m2unPS+Of4eJJgCPdIeCC+3DHEUX3tkmrPJr3OK2hz7PhXwgC+ZP71ZcYu8cCDEtQrqLxWNvxBppBVg==, tarball: https://registry.npmjs.org/oxlint/-/oxlint-1.79.0.tgz}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -1080,6 +1238,9 @@ packages:
     resolution: {integrity: sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==, tarball: https://registry.npmjs.org/to-regex-range/-/to-regex-range-5.0.1.tgz}
     engines: {node: '>=8.0'}
 
+  tslib@2.8.1:
+    resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==, tarball: https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz}
+
   typescript@4.9.5:
     resolution: {integrity: sha512-1FXk9E2Hm+QzZQ7z+McJiHL4NW1F2EzMu9Nq9i3zAaGqibafqYwCVU6WyWAuyQRRzOlxou8xZSyXLEN8oKj24g==, tarball: https://registry.npmjs.org/typescript/-/typescript-4.9.5.tgz}
     engines: {node: '>=4.2.0'}
@@ -1149,6 +1310,8 @@ snapshots:
     dependencies:
       hashery: 1.5.1
       keyv: 5.6.0
+
+  '@chalker/queue@1.0.1': {}
 
   '@csstools/css-calc@3.3.0(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)':
     dependencies:
@@ -1262,6 +1425,28 @@ snapshots:
 
   '@exodus/stasis-core@1.0.0-beta.5': {}
 
+  '@exodus/stasis-plugins@1.0.0-beta.5':
+    dependencies:
+      '@exodus/stasis-core': 1.0.0-beta.5
+
+  '@exodus/stasis@1.0.0-beta.5(esbuild@0.28.2)':
+    dependencies:
+      '@exodus/bytes': 1.16.0
+      '@exodus/stasis-core': 1.0.0-beta.5
+      '@exodus/stasis-plugins': 1.0.0-beta.5
+      '@preventive/archive': 1.0.0-beta.3
+      '@preventive/deptree': 1.0.0-alpha.6
+      '@preventive/lockfile': 1.0.0-alpha.5
+      '@preventive/upstream': 1.0.0-alpha.4
+      '@preventive/vfs': 1.0.0-beta.3
+      oxc-parser: 0.94.0
+    optionalDependencies:
+      esbuild: 0.28.2
+    transitivePeerDependencies:
+      - '@emnapi/core'
+      - '@emnapi/runtime'
+      - '@noble/hashes'
+
   '@keyv/bigmap@1.3.1(keyv@5.6.0)':
     dependencies:
       hashery: 1.5.1
@@ -1275,6 +1460,11 @@ snapshots:
   '@lit/reactive-element@2.1.2':
     dependencies:
       '@lit-labs/ssr-dom-shim': 1.6.0
+
+  '@napi-rs/wasm-runtime@1.2.4':
+    dependencies:
+      '@tybys/wasm-util': 0.10.4
+    optional: true
 
   '@noble/ciphers@2.3.0': {}
 
@@ -1291,6 +1481,58 @@ snapshots:
       fastq: 1.20.1
 
   '@nx-js/observer-util@4.2.2': {}
+
+  '@oxc-parser/binding-android-arm64@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-darwin-arm64@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-darwin-x64@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-freebsd-x64@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm-gnueabihf@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm-musleabihf@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm64-gnu@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-arm64-musl@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-riscv64-gnu@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-s390x-gnu@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-x64-gnu@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-linux-x64-musl@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-wasm32-wasi@0.94.0':
+    dependencies:
+      '@napi-rs/wasm-runtime': 1.2.4
+    transitivePeerDependencies:
+      - '@emnapi/core'
+      - '@emnapi/runtime'
+    optional: true
+
+  '@oxc-parser/binding-win32-arm64-msvc@0.94.0':
+    optional: true
+
+  '@oxc-parser/binding-win32-x64-msvc@0.94.0':
+    optional: true
+
+  '@oxc-project/types@0.94.0': {}
 
   '@oxlint/binding-android-arm-eabi@1.79.0':
     optional: true
@@ -1349,7 +1591,30 @@ snapshots:
   '@oxlint/binding-win32-x64-msvc@1.79.0':
     optional: true
 
+  '@preventive/archive@1.0.0-beta.3':
+    dependencies:
+      '@exodus/bytes': 1.16.0
+    transitivePeerDependencies:
+      - '@noble/hashes'
+
+  '@preventive/deptree@1.0.0-alpha.6':
+    dependencies:
+      '@chalker/queue': 1.0.1
+      '@preventive/archive': 1.0.0-beta.3
+      '@preventive/diff': 1.0.0
+      '@preventive/lockfile': 1.0.0-alpha.5
+      '@preventive/upstream': 1.0.0-alpha.4
+      '@preventive/vfs': 1.0.0-beta.3
+    transitivePeerDependencies:
+      - '@noble/hashes'
+
   '@preventive/diff@1.0.0': {}
+
+  '@preventive/lockfile@1.0.0-alpha.5':
+    dependencies:
+      '@exodus/bytes': 1.16.0
+    transitivePeerDependencies:
+      - '@noble/hashes'
 
   '@preventive/report@1.0.0-alpha.4': {}
 
@@ -1359,6 +1624,10 @@ snapshots:
       '@preventive/diff': 1.0.0
     transitivePeerDependencies:
       - '@noble/hashes'
+
+  '@preventive/upstream@1.0.0-alpha.4': {}
+
+  '@preventive/vfs@1.0.0-beta.3': {}
 
   '@rray/frontend@1.0.0':
     dependencies:
@@ -1377,6 +1646,11 @@ snapshots:
       postcss-value-parser: 4.2.0
       style-search: 0.1.0
       stylelint: 17.14.1(typescript@7.0.2)
+
+  '@tybys/wasm-util@0.10.4':
+    dependencies:
+      tslib: 2.8.1
+    optional: true
 
   '@types/clean-css@4.2.11':
     dependencies:
@@ -1768,6 +2042,29 @@ snapshots:
 
   normalize-path@3.0.0: {}
 
+  oxc-parser@0.94.0:
+    dependencies:
+      '@oxc-project/types': 0.94.0
+    optionalDependencies:
+      '@oxc-parser/binding-android-arm64': 0.94.0
+      '@oxc-parser/binding-darwin-arm64': 0.94.0
+      '@oxc-parser/binding-darwin-x64': 0.94.0
+      '@oxc-parser/binding-freebsd-x64': 0.94.0
+      '@oxc-parser/binding-linux-arm-gnueabihf': 0.94.0
+      '@oxc-parser/binding-linux-arm-musleabihf': 0.94.0
+      '@oxc-parser/binding-linux-arm64-gnu': 0.94.0
+      '@oxc-parser/binding-linux-arm64-musl': 0.94.0
+      '@oxc-parser/binding-linux-riscv64-gnu': 0.94.0
+      '@oxc-parser/binding-linux-s390x-gnu': 0.94.0
+      '@oxc-parser/binding-linux-x64-gnu': 0.94.0
+      '@oxc-parser/binding-linux-x64-musl': 0.94.0
+      '@oxc-parser/binding-wasm32-wasi': 0.94.0
+      '@oxc-parser/binding-win32-arm64-msvc': 0.94.0
+      '@oxc-parser/binding-win32-x64-msvc': 0.94.0
+    transitivePeerDependencies:
+      - '@emnapi/core'
+      - '@emnapi/runtime'
+
   oxlint@1.79.0:
     optionalDependencies:
       '@oxlint/binding-android-arm-eabi': 1.79.0
@@ -1952,6 +2249,9 @@ snapshots:
   to-regex-range@5.0.1:
     dependencies:
       is-number: 7.0.0
+
+  tslib@2.8.1:
+    optional: true
 
   typescript@4.9.5: {}
 

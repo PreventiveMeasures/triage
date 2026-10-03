@@ -479,11 +479,38 @@ cannot be safely assigned to an account after a rename or login reuse. Users
 without attributable history show Unknown. Triage retention/deletion still
 applies because Last Activity is derived from the retained history.
 
-# Bundle creation preview
+# Bundle creation
 
 Manage → Bundles → Create opens a page for choosing a connected repository,
 branch, tag, or commit SHA and selecting entry-point files across directories.
-The final **Create a bundle** action is disabled; selections are not saved.
+**Create a bundle** calls `POST /api/admin/bundles/create`, building and storing
+a Brotli-compressed Stasis source bundle at the selected immutable commit.
+`@exodus/stasis/vfs-bundle` fetches the GitHub tree and reconstructs dependencies
+in memory from its lockfile; repository code and install scripts are not run.
+Supported remote projects are JavaScript/TypeScript with pnpm, Yarn 1, or npm
+lockfiles, and Solidity with Soldeer. Entries must be of one supported language.
+Node.js and Browser pass the selected export conditions; Metro uses Stasis's
+Metro resolver for iOS/Android and requires its `react-native` condition unchanged.
+
+Builds use the common parent directory of the selected entry points. Filenames
+follow `stasis github-bundle`: `owner-repo.<short-commit>.stasis.code.br`, or
+`owner-repo.<directory-with-dashes>.<short-commit>.stasis.code.br`. Nonportable
+characters become underscores; long directories are truncated with a hash to
+fit 255 characters. The stored directory comes from Stasis's actual build root.
+
+Creation requires same-origin, CSRF, manager/admin and live GitHub read access.
+The caller must have a managed grant covering the resulting project root, which
+can be above the selected files when a workspace lockfile installs them. Access
+and repository identity are rechecked after building and storage authorization
+is transactional. Duplicate bytes reuse the existing authorized bundle.
+Shared database leases allow two builds across all instances using the managed
+database, one per user, including on Vercel. Admission is atomic and precedes
+GitHub requests. The three-minute budget starts before admission; disconnects
+cancel builds and slots are released only after worker termination. Leases
+expire after four minutes using the database clock to recover from crashes;
+only the claiming request can release its slot. Each worker has a 512 MiB heap
+limit, and no persistent Stasis cache is enabled. Output is bounded by 200 MiB
+decoded and the configured bundle upload size limit.
 
 `GET /api/admin/repositories/browsable` provides the creation page's repository
 picker. A repository must be active, and both access gates must pass: the caller
