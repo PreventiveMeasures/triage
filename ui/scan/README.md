@@ -129,7 +129,7 @@ URL path prefixes are preserved in requests. The discovered service URL is
 not persisted in the protocol cache; each page load discovers it again.
 
 Local/E2E shows a built-in model catalogue before connecting, with Claude Opus
-5.5 selected by default. GPT-6 Astra, Sol, and Luna each include a Pro variant,
+5.5 selected by default. GPT-6 Astra, GPT-6.1 Sol, and GPT-6 Luna each include a Pro variant,
 shown as one family row with a Pro toggle in the selected model box.
 No provider is selected initially. Selecting Anthropic limits the catalogue to
 Claude models, OpenAI to GPT models, Moonshot to Kimi models, and OpenRouter
