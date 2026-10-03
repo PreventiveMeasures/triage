@@ -283,8 +283,13 @@ body.theme-paper {
     padding: 0;
   }
 
-  & .page-head { --header-tag-border: 0; }
+  & .page-head {
+    --header-tag-border: 0;
+    --header-column-gap: 1.25rem;
+    --header-tag-padding: .625rem;
+  }
   & .kanban-card .kanban-analyzer { border: 0; }
+  & .kanban-column-header .count { background: none; }
 }
 
 /* Green — easter-egg theme reachable only via
