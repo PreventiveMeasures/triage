@@ -293,16 +293,30 @@ known reasons. An eligible item with no metadata has
 
 `managed_github_metadata` persists titles, descriptions, statuses, closure reasons and fetch times
 without eviction. Records are shared by stable repository ID, item type and
-number. Every read
-requires the current user’s membership in the selected team, that team’s repo
-grant, a visible finding carrying the Fix link, and a successful live GitHub
-repository lookup using the viewer’s own token. The returned repository ID and
-name must match the managed connection. This check applies to admins and to
-cached closed or merged items on every request. Missing or expired credentials,
-denied access, redirects, malformed responses, and failed access checks return
-`unavailable` without exposing cached titles or bodies. Cached data never grants
+number. Every read requires the current user’s membership in the selected team,
+that team’s repo grant, and a visible finding carrying the Fix link. GitHub
+repository ID and name must match the managed connection. Explicitly public
+visibility (`private: false` and `visibility: public`) is persisted in
+`managed_github_repository_visibility` and reused across viewers for one minute.
+Only public visibility is an access grant; private permissions are never cached
+across requests. Internal repos and unknown visibility still require user access.
+
+For private or unknown repositories, one live `/user/repos?visibility=private`
+request using the viewer’s own token authorizes matching repositories with read
+permission from its first 100 results. Repositories omitted from that page, or
+left unverified by a failed/malformed list, get individual repository lookups.
+Pagination is not followed: absence from the list is unknown access, not denial.
+These checks apply to admins and cached closed or merged items on every request.
+Missing or expired credentials, denied access, redirects, malformed responses,
+and failed access checks return `unavailable` without exposing cached titles or
+bodies. Cached data never grants
 access to another team, repository, hidden finding, or unauthorized GitHub user.
-Both SQLite and PostgreSQL create the table for existing installations. Cached
+Recently public cached metadata can remain visible until the next visibility
+check after a repository becomes private. Public metadata refreshes are anonymous
+so newly private titles and bodies cannot enter the cache through that path;
+failed refreshes keep the previously public data. A newer private observation
+from another request also invalidates an in-flight public cache read. Both SQLite
+and PostgreSQL create these tables for existing installations. Cached
 merged PRs are never requested again. Closed items also stay cached; only open
 items (including draft PRs) older than one minute are queued for refresh.
 An exception is closed issues cached before closure reasons were stored: they
@@ -321,16 +335,19 @@ by their latest successful fetch or refresh attempt. Failed attempts rotate behi
 recently, without updating their successful fetch time, so repeated failures
 cannot monopolize the backfill queue. Only started reads record attempts;
 entries skipped by the cap, deadline, or absent credentials keep their place.
-Live access checks cover only eligible Fix repositories, deduplicate repository
-IDs, and are capped at 200 repositories per request in addition to the 200-item
-metadata queue. Repositories beyond the access-check budget return `unavailable`.
+Live access checks cover only eligible Fix repositories and deduplicate repository
+IDs. Recently public repositories need no upstream permission checks or user
+credentials. Other repositories share one private-list request followed by at
+most 200 direct repository checks, in addition to the 200-item metadata queue.
+Unverified repositories beyond the direct-check budget return `unavailable`.
 There are at most four upstream calls in flight, with one shared 10-second
 deadline for token refresh, repository authorization, and metadata reads.
 
 Requests use the selected repository's stored full name and the validated item
-number, with the signed-in user's GitHub token only. Installation credentials
-are never substituted, redirects are rejected, and returned repository/item
-identity is validated. Workspace access and persisted Fix links are rechecked
+number, using anonymous public metadata reads or the signed-in user's own GitHub
+token for private access. Installation credentials are never substituted,
+redirects are rejected, and returned repository/item identity is validated.
+Workspace access and persisted Fix links are rechecked
 after upstream work before any metadata is released.
 
 HTTP responses use `no-store`. The browser keeps workspace metadata in JS memory

@@ -1,53 +1,88 @@
 import { type GithubFixRef, type GithubFixResult, type GithubFixStatus, githubIssueClosedReason, isGithubRepoName, parseGithubFixUrl } from '../common/github-pr.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
-import type { GithubMetadata } from './github-metadata.ts'
+import type { GithubMetadata, GithubRepositoryVisibility } from './github-metadata.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
 
 type Metadata = Pick<GithubMetadata, 'title' | 'description' | 'status' | 'stateReason'>
 const MAX_GITHUB_LOOKUPS = 200
 const GITHUB_LOOKUP_TIMEOUT_MS = 10_000
 const GITHUB_METADATA_TTL_MS = 60_000
+const GITHUB_PUBLIC_VISIBILITY_TTL_MS = 60_000
+const GITHUB_PRIVATE_REPOSITORIES_URL = 'https://api.github.com/user/repos?visibility=private&per_page=100&page=1'
 
-// Cache contents are shared, but GitHub access is checked for this viewer on
-// every request, including completed items. Use only their user token and
-// validate the stable repo ID so a renamed/replaced repository cannot grant
-// access to another repository's cached metadata.
-async function readableRepositories(repositories: TeamReportAccessSnapshot['repositories'], token: string, signal: AbortSignal, fetchImpl: typeof fetch): Promise<Set<string>> {
-  const readable = new Set<string>()
-  const pending = [...new Map(repositories.map(repo => [repo.repoId, repo])).values()].slice(0, MAX_GITHUB_LOOKUPS)
+type Repository = TeamReportAccessSnapshot['repositories'][number]
+type RepositoryPayload = { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; permissions?: { pull?: unknown } }
+
+function githubRequest(token: string | null): RequestInit {
+  return {
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}), accept: 'application/vnd.github+json',
+      'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28',
+    },
+    redirect: 'error',
+  }
+}
+
+function repositoryMatches(repo: Repository, body: RepositoryPayload | null): boolean {
+  return body?.id === repo.repoId && typeof body.full_name === 'string' && body.full_name.toLowerCase() === repo.github.toLowerCase()
+}
+
+async function listPrivateRepositories(token: string, signal: AbortSignal, fetchImpl: typeof fetch): Promise<(RepositoryPayload | null)[]> {
+  try {
+    const response = await fetchImpl(GITHUB_PRIVATE_REPOSITORIES_URL, githubRequest(token))
+    if (!response.ok) return []
+    const body = await response.json() as (RepositoryPayload | null)[] | null
+    return Array.isArray(body) && body.length <= 100 && !signal.aborted ? body : []
+  } catch { return [] } // A failed list is unknown access; direct checks can still verify it.
+}
+
+// Public visibility can be reused briefly across users. Private access stays
+// request-local: one page of the viewer's own repo list grants matching repos,
+// then direct checks cover omissions, pagination and failed list requests.
+async function readableRepositories(db: ManagedDb, repositories: Repository[], visibility: GithubRepositoryVisibility[], publicRepos: Set<string>, token: string | null, signal: AbortSignal, fetchImpl: typeof fetch): Promise<Set<string>> {
+  const readable = new Set(publicRepos)
+  const byId = new Map(repositories.map(repo => [repo.repoId, repo]))
+  const unverified = repositories.filter(repo => !readable.has(repo.github))
+  const updates = new Map<number, GithubRepositoryVisibility>()
+  const grant = (repo: Repository, body: RepositoryPayload, checkedAt: number) => {
+    const isPublic = body.private === false && body.visibility === 'public'
+    readable.add(repo.github)
+    if (isPublic) publicRepos.add(repo.github)
+    updates.set(repo.repoId, { repoId: repo.repoId, github: repo.github, public: isPublic, checkedAt })
+  }
+  if (token && unverified.length > 0 && !signal.aborted) {
+    const checkedAt = Date.now()
+    for (const entry of await listPrivateRepositories(token, signal, fetchImpl)) {
+      const repo = typeof entry?.id === 'number' ? byId.get(entry.id) : undefined
+      if (repo && !readable.has(repo.github) && repositoryMatches(repo, entry) && entry?.permissions?.pull === true) grant(repo, entry, checkedAt)
+    }
+  }
+  const formerlyPublic = new Set(visibility.filter(entry => entry.public
+    && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => entry.repoId))
+  const pending = unverified.filter(repo => !readable.has(repo.github) && (token || formerlyPublic.has(repo.repoId))).slice(0, MAX_GITHUB_LOOKUPS)
   for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
     await Promise.all(pending.slice(i, i + 4).map(async repo => {
       if (signal.aborted) return
+      const checkedAt = Date.now()
       try {
-        const response = await fetchImpl(`https://api.github.com/repos/${repo.github}`, {
-          headers: {
-            authorization: `Bearer ${token}`, accept: 'application/vnd.github+json',
-            'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28',
-          },
-          redirect: 'error',
-        })
+        const response = await fetchImpl(`https://api.github.com/repos/${repo.github}`, githubRequest(token))
         if (!response.ok) return
-        const body = await response.json() as { id?: unknown; full_name?: unknown } | null
-        if (!signal.aborted && body?.id === repo.repoId && typeof body.full_name === 'string'
-          && body.full_name.toLowerCase() === repo.github.toLowerCase()) readable.add(repo.github)
+        const body = await response.json() as RepositoryPayload | null
+        if (!signal.aborted && body && repositoryMatches(repo, body)
+          && (token || (body.private === false && body.visibility === 'public'))) grant(repo, body, checkedAt)
       } catch { /* Unverified access must never expose cached metadata. */ }
     }))
   }
+  if (updates.size > 0) await db.setGithubRepositoryVisibility([...updates.values()])
   return readable
 }
 
 // ref.repo is always the canonical name from managed_selected_repo, never an
 // owner/repo/path taken from a Fix URL. Redirects cannot move the user token.
-async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof fetch): Promise<Metadata | null> {
+async function fetchMetadata(ref: GithubFixRef, token: string | null, fetchImpl: typeof fetch): Promise<Metadata | null> {
   try {
-    const response = await fetchImpl(`https://api.github.com/repos/${ref.repo}/${ref.kind === 'pull' ? 'pulls' : 'issues'}/${ref.number}`, {
-      headers: {
-        authorization: `Bearer ${token}`, accept: 'application/vnd.github+json',
-        'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28',
-      },
-      redirect: 'error',
-    })
+    const response = await fetchImpl(`https://api.github.com/repos/${ref.repo}/${ref.kind === 'pull' ? 'pulls' : 'issues'}/${ref.number}`, githubRequest(token))
     if (!response.ok) return null
     const body = await response.json() as { number?: unknown; title?: unknown; body?: unknown; state?: unknown; merged?: unknown;
       draft?: unknown; base?: { repo?: { full_name?: unknown } }; repository_url?: unknown; pull_request?: unknown; state_reason?: unknown } | null
@@ -71,8 +106,8 @@ async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof
 }
 
 // The workspace handler checks user -> team membership and finding visibility.
-// Every shared cache read also requires this viewer's live GitHub access to the
-// team's repository, including for admins; a cache hit is never an access grant.
+// Shared private metadata also requires this viewer's live GitHub access,
+// including for admins. Only recently verified public repos skip that check.
 export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot, urls: string[], fetchImpl: typeof fetch = globalThis.fetch): Promise<GithubFixResult[]> {
   const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
   const parsed = urls.map(parseGithubFixUrl)
@@ -91,9 +126,18 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
     signal.throwIfAborted()
     return fetchImpl(input, { ...init, signal })
   }
-  const token = await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline)
-  const repositories = [...jobs.values()].map(ref => allowed.get(ref.repo.toLowerCase())!)
-  const readable = token ? await readableRepositories(repositories, token, signal, fetchWithinDeadline) : new Set<string>()
+  const repositories = [...new Map([...jobs.values()].map(ref => {
+    const repo = allowed.get(ref.repo.toLowerCase())!
+    return [repo.repoId, repo] as const
+  })).values()]
+  const visibility = await db.listGithubRepositoryVisibility(repositories.map(repo => repo.repoId))
+  const byId = new Map(repositories.map(repo => [repo.repoId, repo]))
+  const publicRepos = new Set(visibility.filter(entry => entry.public && entry.checkedAt <= now
+    && entry.checkedAt + GITHUB_PUBLIC_VISIBILITY_TTL_MS > now
+    && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => byId.get(entry.repoId)!.github))
+  const token = repositories.some(repo => !publicRepos.has(repo.github))
+    ? await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline) : null
+  const readable = await readableRepositories(db, repositories, visibility, publicRepos, token, signal, fetchWithinDeadline)
   const authorized = [...jobs.entries()].filter(([, ref]) => readable.has(ref.repo))
   const metadata = new Map((await db.listGithubMetadata(authorized.map(([key]) => key))).map(entry => [entry.key, entry]))
   const lastCheckedAt = (key: string) => {
@@ -112,17 +156,16 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   if (pending.length > 0) {
     const fresh: Omit<GithubMetadata, 'attemptedAt'>[] = []
     const attempted: string[] = []
-    if (token) {
-      // Access checks, token refresh and all waves share one deadline, with at
-      // most four calls in flight. Only verified viewers get stale metadata.
-      for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
-        await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
-          if (signal.aborted) return
-          if (metadata.has(key)) attempted.push(key)
-          const result = await fetchMetadata(ref, token, fetchWithinDeadline)
-          if (result) fresh.push({ key, ...result, fetchedAt: Date.now() })
-        }))
-      }
+    // Public reads stay anonymous: if a repo turns private during its public
+    // TTL, refreshes cannot add newly private content to the shared cache.
+    // All waves and access checks still share one deadline and four-call limit.
+    for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
+      await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
+        if (signal.aborted) return
+        if (metadata.has(key)) attempted.push(key)
+        const result = await fetchMetadata(ref, publicRepos.has(ref.repo) ? null : token, fetchWithinDeadline)
+        if (result) fresh.push({ key, ...result, fetchedAt: Date.now() })
+      }))
     }
     // Only started cached reads rotate. Missing entries retain priority, and
     // jobs skipped by the cap, deadline or absent token keep their place.
@@ -132,6 +175,14 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
       // A concurrent merged result must win over a slower open/closed read.
       for (const entry of await db.listGithubMetadata(fresh.map(row => row.key))) metadata.set(entry.key, entry)
     }
+  }
+  if (publicRepos.size > 0) {
+    // Another request may already have discovered a public -> private change
+    // and written new private metadata. Honor that newer visibility observation.
+    const current = await db.listGithubRepositoryVisibility(repositories.filter(repo => publicRepos.has(repo.github)).map(repo => repo.repoId))
+    const stillPublic = new Set(current.filter(entry => entry.public
+      && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => byId.get(entry.repoId)!.github))
+    for (const [key, ref] of authorized) if (publicRepos.has(ref.repo) && !stillPublic.has(ref.repo)) metadata.delete(key)
   }
   // The handler rechecks workspace access and saved Fix links before returning.
   return urls.flatMap((url, index): GithubFixResult[] => {

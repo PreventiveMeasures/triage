@@ -14,12 +14,16 @@ test('SQLite upgrades existing databases and retains GitHub metadata across rest
   await openSqliteManagedDb(path).close()
   const legacy = new DatabaseSync(path)
   legacy.exec('DROP TABLE managed_github_metadata')
+  legacy.exec('DROP TABLE managed_github_repository_visibility')
   legacy.close()
   const db = openSqliteManagedDb(path)
   const merged = await checkGithubMetadataStore(db)
   await db.close()
   const reopened = openSqliteManagedDb(path)
-  try { assert.deepEqual(await reopened.listGithubMetadata([merged.key]), [merged]) }
+  try {
+    assert.deepEqual(await reopened.listGithubMetadata([merged.key]), [merged])
+    assert.deepEqual(await reopened.listGithubRepositoryVisibility([8]), [{ repoId: 8, github: 'Org/Public', public: true, checkedAt: 1 }])
+  }
   finally { await reopened.close() }
 })
 
@@ -34,6 +38,7 @@ test('SQLite adds closure reasons and attempts to an existing metadata table wit
   const legacy = new DatabaseSync(path)
   legacy.exec('ALTER TABLE managed_github_metadata DROP COLUMN state_reason')
   legacy.exec('ALTER TABLE managed_github_metadata DROP COLUMN attempted_at')
+  legacy.exec('DROP TABLE managed_github_repository_visibility')
   legacy.close()
   for (let i = 0; i < 2; i++) {
     const upgraded = openSqliteManagedDb(path)
