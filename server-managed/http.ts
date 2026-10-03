@@ -1136,8 +1136,7 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   if (!(await authorize())) return
   if (inventory === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   if (inventory === undefined) { sendJson(res, 400, { error: 'unknown-reason' }); return }
-  const body = Buffer.from(JSON.stringify(inventory))
-  if (body.length > MAX_PACKAGE_INVENTORY_BYTES) { sendJson(res, 413, { error: 'payload-too-large' }); return }
+  if (Buffer.byteLength(JSON.stringify(inventory)) > MAX_PACKAGE_INVENTORY_BYTES) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
@@ -1152,7 +1151,7 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
     const result = await fetchBundleAdvisories(inventory.packages, controller.signal, { debug: deps.config.debug, repoAdvisories, githubToken })
     if (res.destroyed || !(await authorize())) return
     // Return just inventory and public advisories, never source or report data.
-    sendJson(res, result.status, result.status >= 200 && result.status < 300 ? { ...inventory, advisories: result.body } : result.body)
+    sendJson(res, result.status, result.status === 200 ? { ...inventory, advisories: result.body } : result.body)
   } finally {
     clearTimeout(timer)
     res.off('close', onClose)

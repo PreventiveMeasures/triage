@@ -113,8 +113,7 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
     await recheck()
     if (inventory === null) { json(res, 413, { error: 'payload-too-large' }); return }
     if (inventory === undefined) { json(res, 400, { error: 'unknown-reason' }); return }
-    const body = Buffer.from(JSON.stringify(inventory))
-    if (body.length > MAX_PACKAGE_INVENTORY_BYTES) { json(res, 413, { error: 'payload-too-large' }); return }
+    if (Buffer.byteLength(JSON.stringify(inventory)) > MAX_PACKAGE_INVENTORY_BYTES) { json(res, 413, { error: 'payload-too-large' }); return }
     const result = await fetchBundleAdvisories(inventory.packages, AbortSignal.timeout(ADVISORIES_TIMEOUT_MS), {
       debug: deps.config.debug, repoAdvisories: url.searchParams.get('repoAdvisories') === 'true',
     })
