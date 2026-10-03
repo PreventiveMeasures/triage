@@ -257,6 +257,7 @@ body.theme-paper {
   --graph-canvas-bg: #fff;
   --graph-hover-bg: #fff;
   --graph-divider: #000;
+  --kanban-column-bg: #fff;
   --mark-red-bg: #fff; --mark-red-tab-border: #000;
   --mark-blue-bg: #fff; --mark-blue-tab-border: #000;
   --mark-green-bg: #fff; --mark-green-tab-border: #000;
@@ -274,6 +275,16 @@ body.theme-paper {
     border-color: #000;
     box-shadow: none;
   }
+
+  & .toolbar,
+  & .bundles-slide-body,
+  & .drop-import-icon {
+    border: 0;
+    padding: 0;
+  }
+
+  & .page-head { --header-tag-border: 0; }
+  & .kanban-card .kanban-analyzer { border: 0; }
 }
 
 /* Green — easter-egg theme reachable only via
@@ -305,8 +316,8 @@ body.theme-green {
   --bug: #6a7a6a;
   --info: #56c3ff;
   --surface-active: #15301a;
-  --theme-toggle-bg: var(--accent);
-  --theme-toggle-hover-bg: color-mix(in srgb, var(--theme-toggle-bg) 88%, var(--text));
+  --theme-toggle-bg: rgb(from var(--accent) r g b / .18);
+  --theme-toggle-hover-bg: rgb(from var(--accent) r g b / .26);
   --theme-toggle-border: 1px solid var(--border);
   --action-bg: #0f6;
   --action-text: #050a05;

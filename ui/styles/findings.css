@@ -266,7 +266,7 @@
 .kanban-column {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
-  background: rgb(from var(--text) r g b / .025);
+  background: var(--kanban-column-bg, rgb(from var(--text) r g b / .025));
   border: var(--kanban-col-border, 1px) solid var(--border); border-radius: var(--ui-radius, 10px);
   overflow: hidden;
   transition: border-color .12s, background .12s;

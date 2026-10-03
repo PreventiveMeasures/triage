@@ -112,7 +112,7 @@
       min-height: 24px; box-sizing: border-box;
       padding: .125rem .5rem .125rem .4rem;
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: var(--header-tag-border, 1px solid var(--border));
       border-radius: var(--ui-radius, 999px);
       color: var(--muted);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -182,7 +182,7 @@
       display: inline-flex; align-items: center;
       padding: 1px .375rem;
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: var(--header-tag-border, 1px solid var(--border));
       border-radius: 4px;
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -210,7 +210,7 @@
       padding: .125rem .5rem;
       background: var(--surface);
       color: var(--muted);
-      border: 1px solid var(--border);
+      border: var(--header-tag-border, 1px solid var(--border));
       border-radius: var(--ui-radius, 999px);
       font-family: inherit;
       font-size: .72rem;
@@ -242,7 +242,7 @@
       padding: .125rem .5rem .125rem .4rem;
       background: var(--surface);
       color: var(--muted);
-      border: 1px solid var(--border);
+      border: var(--header-tag-border, 1px solid var(--border));
       border-radius: 999px;
       font-family: inherit;
       font-size: .72rem;
