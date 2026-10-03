@@ -1,4 +1,4 @@
-// Published npm advisories for bundled package versions. Local/e2e queries
+// Published advisories for bundled package versions. Local/e2e npm queries
 // use the browser's inventory; managed queries use the authorized bundle ID.
 // Keep results in memory, scoped to the current managed identity and teams.
 
@@ -88,21 +88,35 @@ export function showAdvisoriesTab(entry, details) {
   return bundleHasAdvisoryCandidates(details)
 }
 
-// Materialise the query as the wire shape the npm registry expects:
-// `{ packageName: [version, version, ...] }`. Versions are sorted
-// so the request body is byte-stable across re-issues for the same
-// bundle. `Object.create(null)` over `{}` — a hostile / malformed
-// bundle could in principle stamp `__proto__` or `constructor` as
-// a module name; the prototype-less object makes the subsequent
-// `obj[name] = …` strictly a property write rather than reaching
-// Object.prototype's setter. JSON.stringify treats both forms
-// identically on the wire.
+// Object.fromEntries safely preserves package names such as __proto__.
 function queryToWire(query) {
-  const obj = Object.create(null)
-  for (const [name, versions] of query) {
-    obj[name] = [...versions].toSorted()
+  return Object.fromEntries([...query].map(([name, versions]) => [name, [...versions].toSorted()]))
+}
+
+const packageKey = pkg => pkg.ecosystem === 'npm' ? pkg.name : `${pkg.ecosystem}:${pkg.name}`
+
+function managedAdvisory(row) {
+  return {
+    ...row, title: row.title || row.id, severity: row.severity ?? 'unknown',
+    url: row.ghsa ? `https://github.com/advisories/${row.ghsa}`
+      : row.source === 'osv' ? `https://osv.dev/vulnerability/${encodeURIComponent(row.id)}` : null,
+    cvss: { score: row.cvss, vectorString: row.cvssVector }, vulnerable_versions: row.range,
   }
-  return obj
+}
+
+// Managed responses are flat rows; local and older managed responses are keyed by package.
+function groupAdvisories(data) {
+  const groups = Array.isArray(data) ? Map.groupBy(data.map(managedAdvisory), packageKey) : new Map(Object.entries(data ?? {}))
+  for (const [name, rows] of groups) {
+    const valid = Array.isArray(rows) ? rows.filter(row => row && typeof row.title === 'string' && typeof row.severity === 'string') : []
+    if (valid.length > 0) groups.set(name, valid)
+    else groups.delete(name)
+  }
+  return groups
+}
+
+function canRecheckRepositories(details, entry) {
+  return Boolean(details?.managedId && entry?.state === 'ok' && !entry.recheckingRepositories && entry.query.size > 0)
 }
 
 // Local/e2e mode already owns the bundle; managed mode supplies its ID and
@@ -122,34 +136,45 @@ async function fetchLocalAdvisories(query) {
   return res.json()
 }
 
-export async function ensureBundleAdvisories(details, renderFn) {
+export function ensureBundleAdvisories(details, renderFn) {
+  return loadBundleAdvisories(details, renderFn)
+}
+
+export function recheckBundleAdvisories(details, renderFn) {
+  return loadBundleAdvisories(details, renderFn, true)
+}
+
+async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
   if (!details?.integrity || (!details.managedId && !hasConsent())) return
   const cache = advisoryCache(details), key = cacheKey(details)
-  if (cache.has(key)) return
+  const previous = cache.get(key)
+  if (repoAdvisories) {
+    if (!canRecheckRepositories(details, previous)) return
+    cache.set(key, { ...previous, recheckingRepositories: true, repositoryError: null })
+    renderFn()
+  } else if (previous) return
   const { reasons, selected } = advisoryScope(details)
   let query = details.managedId ? new Map() : bundlePackageVersions(details, reasons.get(selected) ?? null)
-  cache.set(key, { state: 'loading', query })
+  if (!repoAdvisories) cache.set(key, { state: 'loading', query })
   try {
-    let json
+    let json, skipped = []
     if (details.managedId) {
-      const result = await fetchBundleAdvisories(details.managedId, undefined, selected)
-      query = new Map(Object.entries(result.packages).map(([name, versions]) => [name, new Set(versions)]))
+      const result = await fetchBundleAdvisories(details.managedId, undefined, selected, repoAdvisories)
+      // Accept the former npm-only shape during a client/server upgrade.
+      query = Array.isArray(result.packages)
+        ? new Map(result.packages.map(pkg => [packageKey(pkg), new Set(pkg.versions)]))
+        : new Map(Object.entries(result.packages).map(([name, versions]) => [name, new Set(versions)]))
       json = result.advisories
+      skipped = Array.isArray(result.skipped) ? result.skipped : []
     } else {
       json = query.size > 0 ? await fetchLocalAdvisories(query) : {}
     }
-    const byPackage = new Map()
-    if (json && typeof json === 'object') {
-      for (const [name, list] of Object.entries(json)) {
-        if (!Array.isArray(list)) continue
-        const normalised = list.filter(a => a && typeof a === 'object'
-          && typeof a.title === 'string' && typeof a.severity === 'string')
-        if (normalised.length > 0) byPackage.set(name, normalised)
-      }
-    }
-    cache.set(key, { state: 'ok', byPackage, query })
+    cache.set(key, { state: 'ok', byPackage: groupAdvisories(json), query, skipped })
   } catch (err) {
-    cache.set(key, { state: 'error', reason: err?.message ?? 'fetch-failed', query })
+    const reason = err?.message ?? 'fetch-failed'
+    cache.set(key, repoAdvisories && ![401, 403, 404].includes(err?.status)
+      ? { ...previous, recheckingRepositories: false, repositoryError: reason }
+      : { state: 'error', reason, query })
   }
   renderFn()
 }
@@ -181,6 +206,7 @@ function severityRank(s) {
 
 // Capitalise the npm severity tag for display.
 function severityLabel(s) {
+  if (s === 'unknown') return 'Unrated'
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
@@ -227,9 +253,11 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
   const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
   const summary = renderAdvisoriesSummary(details)
   return html`<div class="bundle-advisories-panel">
-    ${summary !== nothing || reasons.length > 0 ? html`<div class="bundle-advisories-toolbar">
+    ${summary !== nothing || reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-toolbar">
     ${summary}
-    ${reasons.length > 0 ? html`<div class="bundle-advisories-scopes"><bundle-scope-selector
+    ${reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-scopes">
+    ${renderRepositoryRecheck(details, renderFn)}
+    ${reasons.length > 0 ? html`<bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
       @scope-change=${event => {
         const reason = event.detail.value.replace(/^reason:/u, '')
@@ -237,10 +265,22 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
         const loading = ensureBundleAdvisories(details, renderFn)
         renderFn()
         return loading
-      }}></bundle-scope-selector></div>` : nothing}
+      }}></bundle-scope-selector>` : nothing}
+    </div>` : nothing}
     </div>` : nothing}
     ${renderAdvisoriesBody(details)}
   </div>`
+}
+
+function renderRepositoryRecheck(details, renderFn) {
+  if (!details?.managedId) return nothing
+  const entry = advisoryCache(details).get(cacheKey(details))
+  const busy = Boolean(entry?.recheckingRepositories)
+  return html`<button type="button" class="bundle-advisories-retry bundle-advisories-recheck"
+    ?disabled=${!canRecheckRepositories(details, entry)}
+    aria-busy=${String(busy)} @click=${() => recheckBundleAdvisories(details, renderFn)}>
+    ${busy ? 'Rechecking…' : 'Recheck against repositories'}
+  </button>`
 }
 
 function renderAdvisoriesSummary(details) {
@@ -249,9 +289,12 @@ function renderAdvisoriesSummary(details) {
   if (entry?.state !== 'ok') return nothing
   const totalPackagesQueried = entry.query.size
   const packagesWithAdvisories = entry.byPackage.size
+  if (totalPackagesQueried === 0 && entry.skipped.length > 0) {
+    return html`<div class="bundle-advisories-summary">No packages could be audited.</div>`
+  }
   if (packagesWithAdvisories === 0) {
     return html`<div class="bundle-advisories-summary">
-      No advisories for the ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
+      No advisories for the ${totalPackagesQueried} ${entry.skipped.length > 0 ? 'audited ' : ''}${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
     </div>`
   }
   const totalAdvisories = [...entry.byPackage.values()].reduce((n, list) => n + list.length, 0)
@@ -269,7 +312,7 @@ function renderAdvisoriesBody(details) {
   if (!details.managedId && !hasConsent()) return renderConsentPrompt()
   const entry = advisoryCache(details).get(cacheKey(details))
   if (!entry || entry.state === 'loading') {
-    return html`<div class="bundle-advisories-empty">Loading advisories from npm registry…</div>`
+    return html`<div class="bundle-advisories-empty">Loading advisories…</div>`
   }
   if (entry.state === 'error') {
     return html`<div class="bundle-advisories-empty is-error">
@@ -277,7 +320,7 @@ function renderAdvisoriesBody(details) {
       <button type="button" class="bundle-advisories-retry" data-advisories-retry>Retry</button>
     </div>`
   }
-  if (entry.byPackage.size === 0) return nothing
+  if (entry.byPackage.size === 0 && entry.skipped.length === 0 && !entry.repositoryError) return nothing
   // Sort sections by the worst severity inside the section, then
   // by name — surfaces the most urgent stuff at the top while
   // keeping the rest deterministic across re-renders.
@@ -288,6 +331,13 @@ function renderAdvisoriesBody(details) {
     return na.localeCompare(nb)
   })
   return html`<div class="bundle-advisories">
+    ${entry.repositoryError ? html`<div class="bundle-advisories-empty is-error" role="alert">
+      Repository recheck failed: ${entry.repositoryError}. Previous results are shown.
+    </div>` : nothing}
+    ${entry.skipped.length > 0 ? html`<section class="bundle-advisories-skipped" aria-label="Dependencies not audited">
+      <h3>Not audited</h3>
+      <ul>${entry.skipped.map(pkg => html`<li><span class="mono">${packageKey(pkg)}@${pkg.version}</span>: ${pkg.because}</li>`)}</ul>
+    </section>` : nothing}
     <ul class="bundle-advisories-list">
       ${sections.map(([pkg, list]) => renderAdvisorySection(pkg, list, entry.query.get(pkg)))}
     </ul>
@@ -352,15 +402,13 @@ function renderAdvisoryRow(a) {
   const cvssScore = typeof a.cvss?.score === 'number' ? a.cvss.score.toFixed(1) : ''
   const cvssVector = typeof a.cvss?.vectorString === 'string' && a.cvss.vectorString ? a.cvss.vectorString : ''
   const vulnerable = typeof a.vulnerable_versions === 'string' ? a.vulnerable_versions : null
+  const matched = Array.isArray(a.versions) ? a.versions.filter(version => typeof version === 'string') : []
   const url = typeof a.url === 'string' && /^https?:\/\//iu.test(a.url) ? a.url : null
-  const ghsa = ghsaIdFrom(url)
+  const advisoryId = a.ghsa ?? ghsaIdFrom(url) ?? (typeof a.id === 'string' ? a.id : null)
   const cwes = Array.isArray(a.cwe) ? a.cwe.filter((c) => typeof c === 'string') : []
-  // GHSA — pinned to the right of the title row when present. Click
-  // opens the GitHub advisory page; the title itself stays a plain
-  // span so it isn't a duplicate pointer at the same upstream
-  // advisory (the GHSA chip is the single canonical link).
-  const ghsaEl = ghsa
-    ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${ghsa}${EXTERNAL_LINK_SVG}</a>`
+  // The ID is the canonical link to the advisory record.
+  const idEl = advisoryId && url
+    ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${advisoryId}${EXTERNAL_LINK_SVG}</a>`
     : nothing
   return html`<li class="bundle-advisory-row">
     <div class="bundle-advisory-rail">
@@ -370,11 +418,13 @@ function renderAdvisoryRow(a) {
     <div class="bundle-advisory-body">
       <div class="bundle-advisory-header">
         <span class="bundle-advisory-title">${title}</span>
-        ${ghsaEl}
+        ${idEl}
       </div>
       <div class="bundle-advisory-subrow">
         <div class="bundle-advisory-meta">
+          ${a.informational ? html`<span>${a.informational}</span>` : nothing}
           ${vulnerable ? html`<span>Affected <span class="mono">${vulnerable}</span></span>` : nothing}
+          ${matched.length > 0 ? html`<span>Matches <span class="mono">${matched.join(', ')}</span></span>` : nothing}
           ${cwes.length > 0 ? html`<span class="bundle-advisory-cwes">${cwes.map((c, i) => html`${i === 0 ? '' : ', '}${cweTemplate(c)}`)}</span>` : nothing}
         </div>
         ${cvssVector ? html`<div class="bundle-advisory-cvss-vector mono">${cvssVector}</div>` : nothing}

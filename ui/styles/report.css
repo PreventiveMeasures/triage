@@ -2927,6 +2927,16 @@ body.report-fullscreen {
   overflow: hidden;
   container: bundle-advisories / inline-size;
 }
+.bundle-advisories-recheck:disabled { opacity: .6; }
+.bundle-advisories-skipped {
+  color: var(--muted);
+  font-size: .78rem;
+  margin: .5rem 0 .75rem;
+  overflow-wrap: anywhere;
+}
+.bundle-advisories-skipped h3 { font-size: inherit; margin: 0 0 .25rem; }
+.bundle-advisories-skipped ul { margin: 0; padding-left: 1.25rem; }
+.bundle-advisories-skipped li + li { margin-top: .25rem; }
 .bundle-advisories-toolbar {
   display: flex;
   align-items: center;
@@ -2936,7 +2946,9 @@ body.report-fullscreen {
 }
 .bundle-advisories-scopes {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: .75rem;
   margin-left: auto;
   min-width: 0;
   max-width: 100%;

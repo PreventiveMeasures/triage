@@ -376,10 +376,10 @@ test('a second Blob-backed instance reads the bounded package inventory without 
   await cache.prebuild(record)
   calls.length = 0
   const cold = createBundleCache(storage.cacheStorage, db, { get() { throw new Error('must use persisted inventory') } })
-  assert.deepEqual(await cold.packageVersions(record), { dep: ['1.2.3'] })
+  assert.deepEqual(await cold.advisoryInventory(record), { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.2.3'] }], skipped: [] })
   assert.equal(calls.filter(call => call.op === 'get').length, 1)
-  const inventory = objects.get(`.managed/cache/bundles/${id}/v2-package-versions.json`)
-  assert.deepEqual(JSON.parse(inventory.bytes), { all: { dep: ['1.2.3'] }, reasons: {} })
+  const inventory = objects.get(`.managed/cache/bundles/${id}/v4-advisory-inventory.json`)
+  assert.deepEqual(JSON.parse(inventory.bytes), { all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.2.3'] }], skipped: [] }, reasons: {} })
   await cold.delete(id)
   assert.equal([...objects.keys()].some(key => key.includes('/cache/')), false)
 })

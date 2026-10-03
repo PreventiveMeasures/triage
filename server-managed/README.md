@@ -69,7 +69,7 @@ both permissions off until a manager explicitly enables them. The same finding
 filters apply to report data, comments, triage/history and cited sources. Future
 published reports in the team's repository paths are included; drafts and
 other workspaces are excluded. Whole-repository team grants also expose their
-bundles; published npm advisories require the security opt-in. Directory-only grants expose cited source
+bundles; published advisories require the security opt-in. Directory-only grants expose cited source
 files, not entire bundles. GitHub PR metadata and user avatars require account
 access and are not fetched in public views.
 
@@ -560,22 +560,61 @@ Clients are expected to support Brotli; no encoding negotiation is needed.
 Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
 
-`GET /api/bundles/:id/advisories` looks up published npm advisories using the
-stored bundle's dependency names and versions. Optional `?reason=<name>` limits
-the lookup to package versions with files in that bundle reason; unknown reasons
-return 400. A separate package inventory, including the named scopes, is persisted during the shared metadata build; advisory requests buffer at most
+`GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
+stored bundle's dependency ecosystems, names and versions. npm uses the registry,
+Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
+repository advisories. Modules without an
+ecosystem retain the legacy npm lookup when installed under `node_modules`;
+the root module is excluded. As in `stasis audit`, a dependency must have a recorded
+evidence file: manifests and the verified browser stubs of `ws` (through 8.21.1)
+and `node-fetch` (through 2.7.0) do not count. Entry and manually added code count
+without an import edge. Composer dev versions, git or unknown-source crates, and
+unsupported ecosystems are returned as `skipped`, with a reason, without being
+sent upstream. GitHub branch `.` is normalized to the unknown-version placeholder
+`0.0.0`, which upstream conservatively matches against every advisory range.
+Optional `?reason=<name>` limits the lookup and skipped list to dependencies with
+evidence files in that bundle reason; unknown reasons return 400.
+A separate inventory, including the named scopes, is persisted during the shared metadata build; advisory requests buffer at most
 1 MiB before parsing, without decompressing the full file inventory. Oversized package
-inventories return 413 without contacting npm. The API accepts no bundle body and
-returns `{ packages, advisories }`, without source contents or scan findings.
-The managed Advisories tab loads it directly, without a consent prompt.
+inventories return 413 before contacting upstream. The versioned inventory
+rebuilds older npm-only and unfiltered caches. The API accepts no bundle body and returns
+`{ packages, skipped, advisories }`, all arrays: packages contain `{ ecosystem, name,
+versions }`, skipped entries contain `{ ecosystem, name, version, because }`, and advisory rows retain upstream's IDs, matched versions, source,
+and optional severity, title, CVSS and range. Failures return 502 with
+`upstream-unavailable`, without source contents or scan findings.
+The managed Advisories tab loads it directly, without a consent prompt, and lists
+dependencies that could not be audited separately from the results.
+Its **Recheck against repositories** button, immediately left of Scope, requests `?repoAdvisories=true`,
+passing the same upstream option as `stasis audit --repo-advisories`. This adds
+maintainer-published advisories for npm, Cargo and Composer dependencies, including
+ones not yet in the registry/OSV results, with upstream's version matching and
+deduplication. Rechecks use the selected reason;
+GitHub rate limits and the 30-second caller deadline still apply. The button shows
+**Rechecking…** and is disabled during the request. Transient failures preserve
+the previous results; a denied or missing bundle discards them.
+For both initial audits and repository rechecks, GitHub requests use the current
+viewer's stored access token, refreshing it within the audit deadline when needed.
+Public shares and viewers without a usable token use an anonymous client. Credentials
+are sent only to GitHub, never to npm, OSV or the other registries. If GitHub rejects
+the token with 401, that repository lookup is retried anonymously and the rest of
+the audit uses anonymous GitHub access. Other failures do not trigger this fallback.
+Ordinary npm-only audits contact only npm; GitHub requests are added by the
+repository recheck.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.
 Managers and admins retain their normal full access to authorized bundles.
 An optional `?team=<id>` restricts the security grant to the selected team.
-Access is checked before reading inventory, before contacting npm, and before
+Access is checked before reading inventory, before contacting upstream, and before
 returning the result. The endpoint is available on standalone managed, combined,
 and managed Vercel servers.
+
+User repository discovery and public repository metadata also use
+`@preventive/upstream`'s GitHub client, with its argument validation, response
+limits and bounded pagination. Managed filtering still skips archived repos,
+requires explicit public visibility for public additions, and checks effective
+user permissions on installed nonpublic repositories. Installation discovery
+and token minting retain their managed credential cache.
 
 `GET /api/bundles/:id/download` preserves the uploaded filename and bytes:
 sourcemaps use HTTP Brotli decoding, while Stasis downloads remain .br archives.

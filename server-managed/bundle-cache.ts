@@ -5,7 +5,7 @@ import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
 import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents } from '../common/bundle-metadata.js'
 import { bundleReasons } from '../common/bundle-reasons.js'
-import { bundlePackageVersions } from '../common/bundle-sources.js'
+import { type BundleAdvisoryInventory, bundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { decodeUtf8 } from '../common/utf8.js'
 import type { OpenedBlob } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -38,7 +38,7 @@ export interface BundleCacheStorage {
 }
 
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
-const packagesFilename = 'v2-package-versions.json'
+const packagesFilename = 'v4-advisory-inventory.json'
 
 // All scopes share one bounded derivative. Never decode full bundle metadata
 // on advisory requests, including when selecting a reason. Persist null when
@@ -52,14 +52,18 @@ function encodePackageInventory(details: BundleDetails): Buffer {
     parts.push(part)
     return true
   }
-  function inventory(paths: Set<string> | null) {
-    if (!append('{')) return false
+  function entries(rows: unknown[]) {
+    if (!append('[')) return false
     let first = true
-    for (const [name, versions] of bundlePackageVersions(details, paths)) {
-      if (!append(`${first ? '' : ','}${JSON.stringify(name)}:${JSON.stringify([...versions].toSorted())}`)) return false
+    for (const row of rows) {
+      if (!append(`${first ? '' : ','}${JSON.stringify(row)}`)) return false
       first = false
     }
-    return append('}')
+    return append(']')
+  }
+  function inventory(paths: Set<string> | null) {
+    const { packages, skipped } = bundleAdvisoryInventory(details, paths)
+    return append('{"packages":') && entries(packages) && append(',"skipped":') && entries(skipped) && append('}')
   }
   append('{"all":')
   if (!inventory(null) || !append(',"reasons":{')) return Buffer.from('null')
@@ -133,8 +137,8 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       }
       return openCached(record, filename)
     },
-    async packageVersions(record: ManagedBundle, reason = ''): Promise<Record<string, string[]> | null | undefined> {
-      if (record.kind !== 'stasis') return {}
+    async advisoryInventory(record: ManagedBundle, reason = ''): Promise<BundleAdvisoryInventory | null | undefined> {
+      if (record.kind !== 'stasis') return { packages: [], skipped: [] }
       const cached = await openCached(record, packagesFilename)
       try {
         if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) return null

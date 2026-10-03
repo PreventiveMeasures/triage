@@ -4,27 +4,51 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
-let allowed = false, managedCalls = [], managedReasons = [], pending = null, result
+let allowed = false, managedCalls = [], managedReasons = [], pending = null, repositoryChecks = [], result
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason) => {
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories) => {
   managedCalls.push(id)
   managedReasons.push(reason)
+  repositoryChecks.push(repoAdvisories)
   return pending ?? Promise.resolve(result)
 } } })
-const { ensureBundleAdvisories, grantAdvisoriesProxyConsent, renderBundleAdvisoriesTab, retryBundleAdvisories, showAdvisoriesTab } = await import('../ui/view/render-bundle-advisories.js')
+const { ensureBundleAdvisories, grantAdvisoriesProxyConsent, recheckBundleAdvisories, renderBundleAdvisoriesTab, retryBundleAdvisories, showAdvisoriesTab } = await import('../ui/view/render-bundle-advisories.js')
 function renderText(value) {
   if (value?.strings && value?.values) return value.strings.map((text, i) => text + renderText(value.values[i])).join('')
   if (Array.isArray(value)) return value.map(renderText).join('')
   return value == null || typeof value === 'symbol' ? '' : String(value)
 }
 beforeEach(t => {
-  managedCalls = []; managedReasons = []; allowed = false; pending = null
+  managedCalls = []; managedReasons = []; repositoryChecks = []; allowed = false; pending = null
   state.managedTeams = []
   result = { packages: { dep: ['1.0.0'] }, advisories: { dep: [{ title: 'Public vulnerability', severity: 'high', url: 'https://example.com/advisory' }] } }
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => allowed ? '1' : null, setItem: () => { allowed = true } } })
   t.after(() => { if (previous) Object.defineProperty(globalThis, 'localStorage', previous); else delete globalThis.localStorage })
+})
+
+test('managed advisories render separate ecosystems, unrated RustSec records, CVSS and repository links', async () => {
+  const details = { managedId: 'mixed-bundle', integrity: 'mixed-bundle', kind: 'stasis' }
+  result = {
+    packages: [{ ecosystem: 'cargo', name: 'log', versions: ['0.4.22'] }, { ecosystem: 'npm', name: 'log', versions: ['1.0.0'] }],
+    advisories: [
+      { ecosystem: 'cargo', name: 'log', source: 'osv', id: 'RUSTSEC-2026-0001', aliases: [], cwe: [],
+        informational: 'unmaintained', versions: ['0.4.22'] },
+      { ecosystem: 'npm', name: 'log', source: 'registry', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh',
+        title: 'npm vulnerability', severity: 'high', cvss: 8.1, cvssVector: 'CVSS:3.1/AV:N/AC:L',
+        range: '<2.0.0', aliases: [], cwe: ['CWE-79'], versions: ['1.0.0'] },
+    ],
+  }
+  await ensureBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  for (const word of ['cargo:log', 'RUSTSEC-2026-0001', 'Unrated', 'unmaintained', '0.4.22', 'npm vulnerability', '1.0.0', '8.1', 'CVSS:3.1/AV:N/AC:L']) {
+    assert.ok(text.includes(word), `renders ${word}`)
+  }
+  assert.match(text, /https:\/\/osv.dev\/vulnerability\/RUSTSEC-2026-0001/u)
+  assert.match(text, /https:\/\/github.com\/advisories\/GHSA-2345-6789-cfgh/u)
+  assert.match(text, /Matches <span class="mono">0\.4\.22<\/span>/u)
+  assert.match(text, /2 advisories\s+across 2 of 2 packages/u)
 })
 
 test('managed advisory view needs neither consent nor bundle contents or module metadata', async () => {
@@ -39,6 +63,78 @@ test('managed advisory view needs neither consent nor bundle contents or module 
   assert.match(text, /1\.0\.0/u)
   await ensureBundleAdvisories({ ...details, managedId: 'other-id' }, () => {})
   assert.deepEqual(managedCalls, ['bundle-id', 'other-id'], 'equal hashes do not mix managed identities')
+})
+
+test('skipped dependencies remain visible when none of the bundle could be audited', async () => {
+  const details = { managedId: 'skipped-bundle', integrity: 'skipped-bundle', kind: 'stasis' }
+  result = { packages: [], advisories: [], skipped: [
+    { ecosystem: 'composer', name: 'vendor/pkg', version: 'dev-main', because: 'Composer dev versions cannot be matched against release advisories.' },
+    { ecosystem: 'cargo-git', name: 'private-crate', version: '1.0.0', because: 'Crate vendored from git; its identity is not a crates.io package.' },
+  ] }
+  await ensureBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(text, /No packages could be audited/u)
+  assert.match(text, /Not audited/u)
+  assert.match(text, /composer:vendor\/pkg@dev-main/u)
+  assert.match(text, /cargo-git:private-crate@1\.0\.0/u)
+  assert.match(text, /cannot be matched against release advisories/u)
+  assert.doesNotMatch(text, /No advisories/u)
+  assert.match(text, /\?disabled=true/u)
+  await recheckBundleAdvisories(details, () => {})
+  assert.equal(managedCalls.length, 1, 'no repository lookup when every dependency was skipped')
+})
+
+test('repository recheck button shows a busy state, prevents duplicate requests and replaces results on completion', async () => {
+  const details = { managedId: 'recheck-bundle', integrity: 'recheck-bundle', kind: 'stasis' }
+  let renders = 0
+  await ensureBundleAdvisories(details, () => {})
+  assert.match(renderText(renderBundleAdvisoriesTab(details)), /Recheck against repositories/u)
+  const gate = Promise.withResolvers()
+  pending = gate.promise
+  const checking = recheckBundleAdvisories(details, () => { renders++ })
+  assert.equal(renders, 1, 'busy state renders before the request completes')
+  const busy = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(busy, /Rechecking…/u)
+  assert.match(busy, /aria-busy=true/u)
+  assert.match(busy, /\?disabled=true/u)
+  assert.match(busy, /Public vulnerability/u, 'existing results remain readable during the recheck')
+  await recheckBundleAdvisories(details, () => {})
+  assert.deepEqual(repositoryChecks, [false, true])
+  gate.resolve({ packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0'] }], skipped: [], advisories: [
+    { ecosystem: 'npm', name: 'dep', source: 'repository', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh', versions: ['1.0.0'], title: 'Maintainer vulnerability' },
+  ] })
+  await checking
+  const done = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(done, /Maintainer vulnerability/u)
+  assert.doesNotMatch(done, /Public vulnerability|Rechecking…/u)
+  assert.match(done, /aria-busy=false/u)
+  assert.match(done, /\?disabled=false/u)
+  assert.equal(renders, 2)
+})
+
+test('failed repository rechecks preserve results and can be retried with the same button', async () => {
+  const details = { managedId: 'retry-recheck', integrity: 'retry-recheck', kind: 'stasis' }
+  await ensureBundleAdvisories(details, () => {})
+  pending = Promise.reject(new Error('upstream-unavailable'))
+  await recheckBundleAdvisories(details, () => {})
+  const failed = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(failed, /Repository recheck failed: upstream-unavailable/u)
+  assert.match(failed, /Public vulnerability/u)
+  assert.match(failed, /aria-busy=false/u)
+  pending = null
+  await recheckBundleAdvisories(details, () => {})
+  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /Repository recheck failed/u)
+  assert.deepEqual(repositoryChecks, [false, true, true])
+})
+
+test('repository rechecks discard prior results when bundle or security access is revoked', async () => {
+  const details = { managedId: 'revoked-recheck', integrity: 'revoked-recheck', kind: 'stasis' }
+  await ensureBundleAdvisories(details, () => {})
+  pending = Promise.reject(Object.assign(new Error('Security access required'), { status: 403 }))
+  await recheckBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(text, /Security access required/u)
+  assert.doesNotMatch(text, /Public vulnerability|Previous results are shown/u)
 })
 
 test('managed results cannot populate another session or team cache', async () => {
@@ -83,6 +179,23 @@ test('managed request failures are retryable; e2e still posts its local inventor
   await ensureBundleAdvisories(local, () => {})
   assert.equal(calls[0].url, '/api/npm-advisories')
   assert.deepEqual(JSON.parse(calls[0].options.body), { dep: ['1.0.0'] })
+  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(local)), /Recheck against repositories/u)
+  await recheckBundleAdvisories(local, () => {})
+  assert.equal(calls.length, 1, 'the repository action is managed-only')
+})
+
+test('local npm rows retain the GHSA link instead of displaying the numeric registry ID', async t => {
+  const details = { integrity: 'legacy-npm-advisory', kind: 'stasis', bundle: { modules: new Map([
+    ['node_modules/dep', { name: 'dep', version: '1.0.0' }],
+  ]) } }
+  grantAdvisoriesProxyConsent()
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ dep: [{
+    id: 123, title: 'npm vulnerability', severity: 'high', url: 'https://github.com/advisories/GHSA-2345-6789-cfgh',
+  }] })))
+  await ensureBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(text, />GHSA-2345-6789-cfgh<svg/u)
+  assert.doesNotMatch(text, />123<svg/u)
 })
 
 
@@ -167,4 +280,37 @@ test('a late response for the old reason cannot replace the selected reason', as
   const text = renderText(renderBundleAdvisoriesTab(details))
   assert.match(text, /Current run vulnerability/u)
   assert.doesNotMatch(text, /Old metro vulnerability/u)
+})
+
+test('repository rechecks and skipped lists stay scoped when the selected reason changes', async () => {
+  const details = { ...reasonBundle('recheck-scopes'), managedId: 'recheck-scopes' }
+  result = { ...result, skipped: [{ ecosystem: 'composer', name: 'metro/pkg', version: 'dev-main', because: 'Not a release.' }] }
+  await selectReason(details, 'reason:metro')
+  const gate = Promise.withResolvers()
+  pending = gate.promise
+  const checking = recheckBundleAdvisories(details, () => {})
+  pending = null
+  result = { packages: [], advisories: [], skipped: [{ ecosystem: 'cargo-git', name: 'run-crate', version: '1.0.0', because: 'Git crate.' }] }
+  await selectReason(details, 'reason:run')
+  gate.resolve({ packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0'] }], advisories: [],
+    skipped: [{ ecosystem: 'composer', name: 'metro/pkg', version: 'dev-main', because: 'Not a release.' }] })
+  await checking
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(text, /run-crate/u)
+  assert.doesNotMatch(text, /metro\/pkg|Rechecking…/u)
+  assert.deepEqual(managedReasons, ['metro', 'metro', 'run'])
+  assert.deepEqual(repositoryChecks, [false, true, false])
+})
+
+test('a late repository recheck cannot repopulate results after the managed identity changes', async () => {
+  const details = { managedId: 'recheck-session', integrity: 'recheck-session', kind: 'stasis' }
+  await ensureBundleAdvisories(details, () => {})
+  const gate = Promise.withResolvers()
+  pending = gate.promise
+  const checking = recheckBundleAdvisories(details, () => {})
+  state.managedSession = { id: 'different-viewer', role: 'view', csrfToken: 'different-session' }
+  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /Public vulnerability/u)
+  gate.resolve(result)
+  await checking
+  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /Public vulnerability/u)
 })

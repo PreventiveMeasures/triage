@@ -532,12 +532,12 @@ test('listInstalledRepos: aggregates the separate App\'s installations, skips ar
   assert.deepEqual(await listInstalledRepos({ ...config }, fetchImpl), [])
 })
 
-test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', async () => {
+test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', async t => {
   const calls = []
   const fetchImpl = (url, opts) => {
     const u = String(url)
     calls.push(`${opts?.method ?? 'GET'} ${u}`)
-    assert.equal(opts.headers.authorization, 'Bearer utok')
+    assert.equal(new Headers(opts.headers).get('authorization'), 'Bearer utok')
     const page = new URL(u).searchParams.get('page')
     // Full first page (length === per_page) → a second page is fetched.
     if (page === '1') {
@@ -556,7 +556,8 @@ test('listUserRepos: paginates GET /user/repos, dedupes + sorts (read-only)', as
     }
     return jsonResponse([])
   }
-  const repos = await listUserRepos('utok', fetchImpl)
+  t.mock.method(globalThis, 'fetch', fetchImpl)
+  const repos = await listUserRepos('utok')
   // 100 from page 1 + zeta from page 2; r000 deduped, o/old archived-skipped.
   assert.equal(repos.length, 101)
   assert.equal(repos[0].fullName, 'o/r000')
@@ -586,7 +587,7 @@ test('db: selectRepo upserts (keeps added_at/by), listSelectedRepos reads, desel
   await db.close()
 })
 
-test('collectRepos: merges public + private (install-tagged); tokenMissing without a user token', async () => {
+test('collectRepos: merges public + private (install-tagged); tokenMissing without a user token', async t => {
   const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
   const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem, githubAppSlug: 'app' }
   const fetchImpl = (url) => {
@@ -597,6 +598,7 @@ test('collectRepos: merges public + private (install-tagged); tokenMissing witho
     if (u.includes('/installation/repositories')) return jsonResponse({ total_count: 1, repositories: [{ id: 2, full_name: 'o/priv', private: true, default_branch: 'release', html_url: 'h' }] })
     return jsonResponse({}, 404)
   }
+  t.mock.method(globalThis, 'fetch', fetchImpl)
   const out = await collectRepos(cfg, 'user-token', fetchImpl)
   assert.equal(out.tokenMissing, false)
   // Both sources, sorted; private carries its installation id + default branch.
@@ -3039,7 +3041,7 @@ test('arbitrary public additions require server admin AND WHITEHAT identity, nev
     calls.push({ url, options })
     assert.equal(url, 'https://api.github.com/repos/example/repo')
     assert.equal(options.headers.authorization, undefined, 'public readability is independent of user credentials')
-    assert.equal(options.redirect, 'error')
+    assert.equal(options.redirect, 'manual')
     if (demote) await db.setUserRole(session.userId, 'manage')
     return Response.json(metadata, { status })
   })
