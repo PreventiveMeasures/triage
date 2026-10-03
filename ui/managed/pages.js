@@ -866,7 +866,7 @@ class ManagedAdminReports extends ManagedPage {
       && (this._visibility === 'all' || Boolean(report.visible) === (this._visibility === 'visible')))
     return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : `${filtered.length} of ${reports.length} reports`}</span></div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report / repository</span><span>Uploaded by</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
+      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by / date / size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
   }
 
   _row(report) {
@@ -879,7 +879,8 @@ class ManagedAdminReports extends ManagedPage {
     return html`<li class="report">
       <div class="report-main">
         <span class="report-mark" aria-hidden="true">${unsafeHTML(logo)}</span>
-        <span class="report-copy"><span class="report-name" data-tooltip-truncated data-tooltip=${report.filename}>${report.filename}</span><span class="report-location" data-tooltip-truncated data-tooltip=${location}>${location}</span></span>
+        <span class="report-name" data-tooltip-truncated data-tooltip=${report.filename}>${report.filename}</span>
+        <span class="report-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
         <span class="report-meta"><span data-tooltip-truncated data-tooltip=${report.uploadedByLogin ?? ''}>${report.uploadedByLogin ?? 'Uploader removed'}</span><span>${when} · ${formatBytes(report.byteSize)}</span></span>
         <span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span>
         <span class="report-actions">
@@ -980,7 +981,7 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
 
 // Bundles — full-view page for admin/manage. Uploads a bundle (sourcemap /
 // stasis archive, content-addressed by sha512 so dupes collapse) and lists what's
-// stored, with download + delete, uploader/repo attribution, and the kind. Own
+// stored, with download + delete and uploader/repo attribution. Own
 // chunk, fetches its own data; no main-bundle state.
 class ManagedAdminBundles extends ManagedPage {
   static properties = {
@@ -1102,10 +1103,10 @@ class ManagedAdminBundles extends ManagedPage {
     const location = b.repoFullName ? `${b.repoFullName}${b.repoDirectory ? `/${b.repoDirectory}` : ''}` : 'No repository assigned'
     const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
     return html`<li class="bundle-row">
-      <span class="identity"><span class="bundle-icon" aria-hidden="true">${BUNDLE_ICON}</span><span class="who">
-        <button type="button" class="filename bundle-open" @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: b, bubbles: true, composed: true }))}>${b.filename}</button>
-        <span class="meta"><span class="kind">${b.kind === 'stasis' ? 'Stasis' : 'Sourcemaps'}</span><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span>@${b.uploadedByLogin}</span>` : nothing}</span>
-      </span></span>
+      <span class="identity"><span class="bundle-icon" aria-hidden="true">${b.kind === 'stasis' ? html`<img src="./stasis.svg" width="16" height="16" alt="">` : BUNDLE_ICON}</span>
+        <button type="button" class="filename bundle-open" data-tooltip-truncated data-tooltip=${b.filename} @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: b, bubbles: true, composed: true }))}>${b.filename}</button>
+      </span>
+      <span class="meta"><span>${formatBytes(b.byteSize)}</span><span>${when}</span>${b.uploadedByLogin ? html`<span data-tooltip-truncated data-tooltip=${`@${b.uploadedByLogin}`}>@${b.uploadedByLogin}</span>` : nothing}</span>
       <span class="bundle-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
       <span class="actions">
         ${b.canChangeRepo === false ? nothing : html`<button type="button" class="action" aria-label=${`Set location for ${b.filename}`} data-tooltip="Set repository location" ?disabled=${this._locationBusy} @click=${() => this._openLocation(b)}>${adminIcon('repo')}</button>`}
