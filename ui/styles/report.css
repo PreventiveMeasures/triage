@@ -1044,7 +1044,7 @@ bundle-code-search {
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
 }
-body:is(.theme-light, .theme-pink) .bundle-code-tree-count:is(.sev-critical, .sev-high, .sev-high_bug, .sev-bug) {
+body:is(.theme-light, .theme-pink, .theme-paper) .bundle-code-tree-count:is(.sev-critical, .sev-high, .sev-high_bug, .sev-bug) {
   color: #fff;
 }
 

@@ -3,14 +3,14 @@
 /* Default = dark. Other themes are opt-in via `body.theme-${name}`,
    set by view/theme.js from a localStorage flag. The `<theme-toggle>`
    button initially cycles between dark and light; the first press from dark
-   on or after the sixth press unlocks green and pink until reload. All themes
+   on or after the eighth press unlocks green, pink, and paper until reload. All themes
    remain available through `DeepView.setTheme(name)` (see view/api.js). We deliberately do NOT honor
    `prefers-color-scheme`:
    dark-by-default is part of the product's identity (the report
    viewer is meant to feel like an IDE panel, not a document). The
    graph-tab canvas has its own per-theme palette baked into
    view/graph/canvas.js (a CSS-var round-trip per draw frame would
-   cost too much); pink + light land on the light canvas palette,
+   cost too much); pink + light + paper land on light canvas palettes,
    dark + green on the dark one.
 
    Matte-glass aesthetic: the body holds a soft multi-color radial
@@ -161,7 +161,8 @@
   scrollbar-width: thin;
 }
 
-body.theme-light {
+body.theme-light,
+body.theme-paper {
   color-scheme: light;
   --bg: #fff;
   --theme-bar: #f6f6fa;
@@ -237,6 +238,43 @@ body.theme-light {
   & .tree-view .tree-count-chip.low { color: #fff; }
 }
 
+/* Paper shares the light palette, with white surfaces and black chrome. */
+body.theme-paper {
+  --bg: #fff;
+  --theme-bar: #fff;
+  --surface: #fff;
+  --surface-active: #fff;
+  --surface-raised: #fff;
+  --theme-toggle-bg: #fff;
+  --theme-toggle-hover-bg: #fff;
+  --text: #000;
+  --muted: #000;
+  --accent: #000;
+  --border: #000;
+  --action-bg: #fff;
+  --action-text: #000;
+  --gradient-stop-a: #fff;
+  --gradient-stop-b: #fff;
+  --gradient-stop-c: #fff;
+  --graph-canvas-bg: #fff;
+  --graph-hover-bg: #fff;
+  --graph-divider: #000;
+  --mark-red-bg: #fff; --mark-red-tab-border: #000;
+  --mark-blue-bg: #fff; --mark-blue-tab-border: #000;
+  --mark-green-bg: #fff; --mark-green-tab-border: #000;
+  --mark-gray-bg: #fff; --mark-gray-tab-border: #000;
+  --shadow-glass: none;
+  accent-color: #000;
+  scrollbar-color: #000 #fff;
+
+  & .drop-import-icon,
+  & .drop-prompt-action {
+    background: #fff;
+    border-color: #000;
+    box-shadow: none;
+  }
+}
+
 /* Green — easter-egg theme reachable only via
    `DeepView.setTheme('green')`. Same dark-mode structural pattern
    as the default (color-scheme: dark, dark-text-friendly mark-bgs
@@ -266,6 +304,9 @@ body.theme-green {
   --bug: #6a7a6a;
   --info: #56c3ff;
   --surface-active: #15301a;
+  --theme-toggle-bg: #9be8b7;
+  --action-bg: #0f6;
+  --action-text: #050a05;
   --gradient-stop-a: rgb(0 255 65 / .08);
   --gradient-stop-b: rgb(0 255 100 / .05);
   --gradient-stop-c: rgb(0 200 60 / .04);
@@ -315,6 +356,8 @@ body.theme-pink {
   --bug: #8c5e6c;
   --info: #218bff;
   --surface-active: #ffd1e8;
+  --action-bg: #bd0d66;
+  --action-text: #fff;
   /* Same reason as `body.theme-light`: the :root syntax pastels are
      unreadable on a pale page, so the darkened set is used here too. */
   --code-comment: #6e7781;

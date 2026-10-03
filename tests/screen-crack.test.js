@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { createCrackModel } from '../ui/view/screen-crack-model.js'
 import { playScreenCrack } from '../ui/view/screen-crack.js'
 
 test('the effect reveals once, synchronizes the mask, and cleans up on completion or interruption', async t => {
@@ -62,9 +63,12 @@ test('the effect reveals once, synchronizes the mask, and cleans up on completio
   const endsAt = motion => startsAt(motion) + motion.options.duration / motion.playbackRate
   const crackMotions = motions.filter(motion => 'strokeDashoffset' in motion.keyframes[0])
   const lastCrack = Math.max(...crackMotions.map(endsAt))
+  const priorCrackDuration = Math.max(...createCrackModel(1280, 720).cracks.map(crack => crack.delay + crack.duration)) / 2
+  assert.ok(Math.abs(lastCrack - priorCrackDuration * 1.5) < 1e-6, 'crack propagation takes 1.5 times as long')
   const frost = motions.find(motion => motion.element === glass)
   const falls = motions.filter(motion => motion.keyframes.at(-1).transform?.includes('rotate('))
   const firstFall = Math.min(...falls.map(startsAt))
+  assert.ok(falls.every(motion => motion.options.duration / motion.playbackRate === 850), 'every shard keeps its existing fall duration')
   assert.ok(startsAt(frost) < lastCrack, 'blur develops while cracks are still propagating')
   assert.ok(endsAt(frost) <= firstFall, 'the glass covers the theme change before shards fall')
   assert.ok(firstFall < lastCrack, 'the fall overlaps the end of cracking without a separate blur stage')

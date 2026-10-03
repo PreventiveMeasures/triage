@@ -172,9 +172,10 @@ class DependencyMatrix extends LitElement {
     const ctx = this.canvas.getContext('2d'), dpr = window.devicePixelRatio || 1
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const styles = getComputedStyle(this), value = (name) => styles.getPropertyValue(name).trim()
-    const light = document.body.classList.contains('theme-light') || document.body.classList.contains('theme-pink')
+    const paper = document.body.classList.contains('theme-paper')
+    const light = paper || document.body.classList.contains('theme-light') || document.body.classList.contains('theme-pink')
     const theme = { bg: value('--graph-canvas-bg') || '#0c0c0c', surface: value('--surface'), text: value('--text'), muted: value('--muted'),
-      border: value('--border'), grid: light ? '#0000000b' : '#ffffff0b', highlight: light ? '#0969da18' : '#ffffff12', cycle: light ? '#a21caf' : '#e879c7' }
+      border: value('--border'), grid: light ? '#0000000b' : '#ffffff0b', highlight: paper ? '#fff' : light ? '#0969da18' : '#ffffff12', cycle: paper ? '#000' : light ? '#a21caf' : '#e879c7' }
     this.style.setProperty('--matrix-cycle', theme.cycle)
     const c = this.model.index.get(this.selection?.to), r = this.model.index.get(this.selection?.from)
     paintMatrix(ctx, this.model, this.view, { width: this.width, height: this.height, theme, colorOf: pkgColor,

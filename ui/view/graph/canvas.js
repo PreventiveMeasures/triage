@@ -94,6 +94,18 @@ const G2_THEMES = {
   },
 }
 
+const G2_PAPER_THEME = {
+  ...G2_THEMES.light,
+  bg: '#fff',
+  selectRing: '#000',
+  edgeIntra: (alpha) => `rgba(0, 0, 0, ${alpha})`,
+  labelFill: '#000',
+  labelShadow: '#fff',
+  labelOutline: '#fff',
+  labelDefault: '#000',
+  labelHover: '#000',
+}
+
 function currentTheme() {
   // Each named light-style theme picks its own G2_THEMES entry so
   // the canvas fill matches the surrounding page chrome; anything
@@ -101,6 +113,7 @@ function currentTheme() {
   // The body-class observer in attachGraph2Interaction requestDraws
   // on any class swap, so theme changes repaint with the new palette.
   const c = document.body.classList
+  if (c.contains('theme-paper')) return G2_PAPER_THEME
   if (c.contains('theme-pink')) return G2_THEMES.pink
   if (c.contains('theme-light')) return G2_THEMES.light
   return G2_THEMES.dark

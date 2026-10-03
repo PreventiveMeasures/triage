@@ -11,7 +11,7 @@ class ToggleHost extends EventTarget {
   disconnectedCallback() {}
 }
 
-test('the first activation from dark at or after six presses unlocks a page-local green/pink cycle', async t => {
+test('the first activation from dark at or after eight presses unlocks a page-local bonus-theme cycle', async t => {
   const stored = new Map()
   let plays = 0, resolveAnimation, reveal, session = 0
   t.mock.module('lit', { namedExports: {
@@ -76,13 +76,15 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   assert.equal(page.meta.getAttribute('content'), '#646464')
   window.dispatchEvent(new Event('afterprint'))
   assert.equal(page.meta.getAttribute('content'), '#f6f6fa')
-  click(page.button)
-  assert.equal(page.api.getTheme(), 'dark')
-  assert.equal(plays, 0, 'the sixth activation from light only switches to dark')
+  for (const expected of ['dark', 'light', 'dark']) {
+    click(page.button)
+    assert.equal(page.api.getTheme(), expected)
+    assert.equal(plays, 0, 'starting from dark does not trigger within the first eight activations')
+  }
   click(page.button)
   assert.equal(page.api.getTheme(), 'dark', 'the animation begins on the dark theme')
   assert.equal(page.button.render(), '☾', 'the icon stays dark until the green theme is revealed')
-  assert.equal(plays, 1, 'starting from dark triggers on the seventh activation')
+  assert.equal(plays, 1, 'starting from dark triggers on the ninth activation')
   assert.equal(page.button.getAttribute('aria-disabled'), 'true')
   click(page.button)
   key(page.button, 'Enter')
@@ -94,8 +96,8 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   resolveAnimation()
   await setImmediate()
   assert.equal(page.button.getAttribute('aria-disabled'), 'false')
-  assert.match(page.button.render(), /<svg\b/u, 'the active green theme shows a sunglasses icon')
-  for (const expected of ['pink', 'light', 'dark', 'green', 'pink', 'light', 'dark', 'green']) {
+  assert.equal(page.button.render(), '🕶️', 'the active green theme shows the sunglasses glyph')
+  for (const expected of ['pink', 'light', 'paper', 'dark', 'green', 'pink', 'light', 'paper', 'dark', 'green']) {
     click(page.button)
     assert.equal(page.api.getTheme(), expected)
   }
@@ -107,13 +109,12 @@ test('the first activation from dark at or after six presses unlocks a page-loca
     page.button.disconnectedCallback()
     page = await boot()
     assert.equal(page.api.getTheme(), saved, 'a reload keeps the selected bonus theme')
-    if (saved === 'green') assert.match(page.button.render(), /<svg\b/u, 'a reload shows the persisted green icon')
-    else assert.equal(page.button.render(), '✿', 'a reload shows the persisted pink icon')
-    for (const expected of ['light', 'dark', 'light', 'dark', 'light']) {
+    assert.equal(page.button.render(), saved === 'green' ? '🕶️' : '✿', 'a reload shows the persisted theme')
+    for (const expected of ['light', 'dark', 'light', 'dark', 'light', 'dark', 'light']) {
       click(page.button)
       assert.equal(page.api.getTheme(), expected)
     }
-    assert.equal(plays, saved === 'green' ? 1 : 2, 'a reload resets the six-press counter')
+    assert.equal(plays, saved === 'green' ? 1 : 2, 'a reload resets the eight-press counter')
     click(page.button)
     assert.equal(page.api.getTheme(), 'dark')
     assert.equal(plays, saved === 'green' ? 1 : 2, 'a saved bonus theme waits for an activation from dark')
@@ -133,13 +134,13 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   page.button.disconnectedCallback()
   stored.set('deepview.theme', 'light')
   page = await boot()
-  for (const expected of ['dark', 'light', 'dark', 'light', 'dark']) {
+  for (const expected of ['dark', 'light', 'dark', 'light', 'dark', 'light', 'dark']) {
     click(page.button)
     assert.equal(page.api.getTheme(), expected)
   }
   assert.equal(plays, 3)
   click(page.button)
-  assert.equal(plays, 4, 'starting from white triggers on the sixth activation')
+  assert.equal(plays, 4, 'starting from white triggers on the eighth activation')
   assert.equal(page.api.getTheme(), 'dark')
   page.api.setTheme('pink')
   page.api.setTheme('dark')
@@ -152,18 +153,37 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   page.button.disconnectedCallback()
 
   page = await boot()
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 10; i++) {
     page.api.setTheme('light')
     click(page.button)
     assert.equal(page.api.getTheme(), 'dark')
     assert.equal(plays, 4, 'activations from other themes never trigger the animation')
   }
   click(page.button)
-  assert.equal(plays, 5, 'the first eligible activation can be later than the seventh')
+  assert.equal(plays, 5, 'the first eligible activation can be later than the ninth')
   assert.equal(page.api.getTheme(), 'dark')
   reveal()
   assert.equal(page.api.getTheme(), 'green')
   resolveAnimation()
   await setImmediate()
+  page.button.disconnectedCallback()
+
+  page.api.setTheme('paper')
+  assert.deepEqual([...page.classes], ['theme-paper'], 'paper replaces the previous theme class')
+  assert.equal(page.meta.getAttribute('content'), '#ffffff')
+  window.dispatchEvent(new Event('beforeprint'))
+  assert.equal(page.meta.getAttribute('content'), '#666666')
+  window.dispatchEvent(new Event('afterprint'))
+  assert.equal(page.meta.getAttribute('content'), '#ffffff')
+  assert.equal(stored.get('deepview.theme'), 'paper')
+  page = await boot()
+  assert.equal(page.api.getTheme(), 'paper', 'paper persists across reloads')
+  assert.equal(page.button.render(), '▤')
+  click(page.button)
+  assert.equal(page.api.getTheme(), 'light', 'a reload restores the default switcher even when paper is selected')
+  click(page.button)
+  assert.equal(page.api.getTheme(), 'dark')
+  assert.deepEqual([...page.classes], [], 'leaving paper removes its body class')
+  assert.equal(plays, 5, 'reloading paper resets the unlock counter')
   page.button.disconnectedCallback()
 })

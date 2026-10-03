@@ -1,4 +1,4 @@
-// The selected theme persists; the press counter and green/pink unlock live
+// The selected theme persists; the press counter and bonus-theme unlock live
 // only in this module and reset on reload. Dark remains the default.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { ensureHostAria } from './host-aria.js'
@@ -13,8 +13,8 @@ const THEME_KEY = 'deepview.theme'
 
 // Canonical theme list. `dark` is the default (no body class). The
 // rest map to `body.theme-${name}` blocks in styles/theme.css.
-const THEMES = Object.freeze(['dark', 'light', 'green', 'pink'])
-const UNLOCKED_CYCLE = Object.freeze(['green', 'pink', 'light', 'dark'])
+const THEMES = Object.freeze(['dark', 'light', 'green', 'pink', 'paper'])
+const UNLOCKED_CYCLE = Object.freeze(['green', 'pink', 'light', 'paper', 'dark'])
 
 // Per-theme `<meta name="theme-color">` values. `base` paints the
 // WCO title-bar / Android browser chrome normally. `dim` swaps in
@@ -30,16 +30,11 @@ const THEME_COLOR = {
   light: { base: '#f6f6fa', dim: '#646464' },
   green: { base: '#0a140a', dim: '#050a05' },
   pink:  { base: '#ffe4ee', dim: '#a3727f' },
+  paper: { base: '#ffffff', dim: '#666666' },
 }
 
 // The glyph reflects the active theme.
-const ICONS = {
-  light: '☀', dark: '☾', pink: '✿',
-  green: html`<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-    <path d="M2 9h7.5l-.8 5a3 3 0 0 1-5.8 0L2 9Zm12.5 0H22l-.9 5a3 3 0 0 1-5.8 0l-.8-5Z" fill="currentColor"/>
-    <path d="M9.5 10a3.5 3.5 0 0 1 5 0M1 7l1 2m21-2-1 2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-  </svg>`,
-}
+const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', paper: '▤' }
 
 // Fires on every applyTheme call (including the boot-time replay).
 // The toggle button listens so its icon stays in sync when an
@@ -151,8 +146,8 @@ class ThemeToggle extends LitElement {
 
   _toggle = () => {
     if (themeUnlocking) return
-    // After six presses, the first activation from dark cracks into green.
-    if (!themesUnlocked && ++themePresses >= 6 && currentTheme === 'dark') {
+    // From the eighth press onward, the first activation from dark cracks into green.
+    if (!themesUnlocked && ++themePresses >= 8 && currentTheme === 'dark') {
       themesUnlocked = true
       themeUnlocking = true
       announceTheme()
