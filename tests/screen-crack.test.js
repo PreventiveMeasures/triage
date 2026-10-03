@@ -58,7 +58,18 @@ test('the effect reveals once, synchronizes the mask, and cleans up on completio
   assert.equal(mask.attributes.get('height'), '720')
   assert.ok(motions.every(motion => motion.startTime === 1234), 'all phases share one clock')
   assert.ok(motions.every(motion => motion.element !== overlay), 'the overlay never isolates the glass backdrop')
+  const startsAt = motion => (motion.options.delay ?? 0) / motion.playbackRate
+  const endsAt = motion => startsAt(motion) + motion.options.duration / motion.playbackRate
+  const crackMotions = motions.filter(motion => 'strokeDashoffset' in motion.keyframes[0])
+  const lastCrack = Math.max(...crackMotions.map(endsAt))
+  const frost = motions.find(motion => motion.element === glass)
+  const falls = motions.filter(motion => motion.keyframes.at(-1).transform?.includes('rotate('))
+  const firstFall = Math.min(...falls.map(startsAt))
+  assert.ok(startsAt(frost) < lastCrack, 'blur develops while cracks are still propagating')
+  assert.ok(endsAt(frost) <= firstFall, 'the glass covers the theme change before shards fall')
+  assert.ok(firstFall < lastCrack, 'the fall overlaps the end of cracking without a separate blur stage')
   const cue = motions.find(motion => motion.options.duration === 1)
+  assert.ok(endsAt(cue) >= endsAt(frost) && endsAt(cue) <= firstFall, 'green is revealed under the glass before the fall')
   cue.resolve()
   await Promise.resolve()
   assert.equal(reveals, 1)

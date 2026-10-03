@@ -33,7 +33,13 @@ const THEME_COLOR = {
 }
 
 // The glyph reflects the active theme.
-const ICONS = { light: '☀', dark: '☾', green: '☘', pink: '✿' }
+const ICONS = {
+  light: '☀', dark: '☾', pink: '✿',
+  green: html`<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+    <path d="M2 9h7.5l-.8 5a3 3 0 0 1-5.8 0L2 9Zm12.5 0H22l-.9 5a3 3 0 0 1-5.8 0l-.8-5Z" fill="currentColor"/>
+    <path d="M9.5 10a3.5 3.5 0 0 1 5 0M1 7l1 2m21-2-1 2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>`,
+}
 
 // Fires on every applyTheme call (including the boot-time replay).
 // The toggle button listens so its icon stays in sync when an
