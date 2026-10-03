@@ -5,8 +5,8 @@
   --switch-track-width: 26px;
   --switch-track-height: 14px;
 }
-button {
-  display: inline-flex;
+button,
+.checkbox-mode {
   align-items: center;
   gap: 8px;
   box-sizing: border-box;
@@ -23,11 +23,22 @@ button {
   line-height: 1;
   white-space: nowrap;
   cursor: default;
+}
+button {
+  display: var(--switch-button-display, inline-flex);
 
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .04); }
   &[aria-pressed='true'] { color: var(--text); }
   &:disabled { opacity: .4; }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+}
+.checkbox-mode {
+  display: var(--switch-checkbox-display, none);
+  border: 0;
+  color: var(--text);
+
+  &:has(:disabled) { opacity: .4; }
+  & input { width: .85rem; height: .85rem; margin: 0; accent-color: var(--accent); }
 }
 .track {
   position: relative;
@@ -58,13 +69,13 @@ button[aria-pressed='true'] .track {
   }
 }
 /* App shares a frame with its adjacent detail/upstream buttons. */
-:host([borderless]) button { height: 100%; border: 0; border-radius: 0; }
+:host([borderless]) :is(button, .checkbox-mode) { height: 100%; border: 0; border-radius: 0; }
 /* Preserve the treemap header's original compact switch dimensions. */
 :host([compact]) {
   --switch-track-width: 22px;
   --switch-track-height: 12px;
 }
-:host([compact]) button {
+:host([compact]) :is(button, .checkbox-mode) {
   height: auto;
   gap: 7px;
   padding: 2px 8px;

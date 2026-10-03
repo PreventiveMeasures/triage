@@ -35,7 +35,10 @@ class ScanModelPicker extends LitElement {
     .selected-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; font-weight: 500; }
     .selected-copy small { color: var(--muted); font-size: .63rem; }
     .pro-space { width: 3.65rem; flex: 0 0 3.65rem; }
-    .pro-toggle { position: absolute; right: 2.05rem; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; gap: .3rem; width: 3.65rem; height: 1.65rem; padding: .2rem .3rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); color: var(--muted); font: inherit; font-size: .65rem; font-weight: 600; cursor: default; user-select: none; }
+    .pro-toggle, .pro-checkbox { position: absolute; right: 2.05rem; top: 50%; transform: translateY(-50%); align-items: center; justify-content: center; gap: .3rem; width: 3.65rem; height: 1.65rem; padding: .2rem .3rem; color: var(--muted); font: inherit; font-size: .65rem; font-weight: 600; cursor: default; user-select: none; }
+    .pro-toggle { display: var(--switch-button-display, inline-flex); border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); }
+    .pro-checkbox { display: var(--switch-checkbox-display, none); }
+    .pro-checkbox input { width: .85rem; height: .85rem; margin: 0; accent-color: var(--accent); }
     .pro-toggle:hover { border-color: var(--muted); color: var(--text); }
     .pro-track { position: relative; flex: 0 0 1.3rem; height: .8rem; border-radius: var(--ui-radius, 999px); background: var(--border); }
     .pro-track::after { content: ''; position: absolute; top: .15rem; left: .15rem; width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); transition: transform .12s, background .12s; }
@@ -276,7 +279,7 @@ class ScanModelPicker extends LitElement {
         <div class="model-control"><details @toggle=${this._toggleMenu} @keydown=${(event) => { if (event.key === 'Escape') { this._close(); this.renderRoot.querySelector('summary')?.focus() } }}>
           <summary aria-labelledby="model-label selected-model" @click=${this._resetMenuPosition}><span class=${`icon ${developer.key}`} aria-hidden="true">${providerIcon(developer.key)}</span><span class="selected-copy"><strong id="selected-model">${modelName(selectedRow.id)}</strong><small>${developer.name}</small></span>${selectedRow.pro ? html`<span class="pro-space" aria-hidden="true"></span>` : nothing}${CHEVRON}</summary>
           <div class="menu"><div class="groups">${columns.map(column => html`<div class="provider-column">${column.map(section => this._modelSection(section))}</div>`)}</div></div>
-        </details>${selectedRow.pro ? html`<button type="button" class="pro-toggle" role="switch" aria-label="Pro model" aria-checked=${selected.id === selectedRow.pro.id} @click=${this._togglePro}><span>Pro</span><span class="pro-track" aria-hidden="true"></span></button>` : nothing}</div>
+        </details>${selectedRow.pro ? html`<button type="button" class="pro-toggle" role="switch" aria-label="Pro model" aria-checked=${selected.id === selectedRow.pro.id} @click=${this._togglePro}><span>Pro</span><span class="pro-track" aria-hidden="true"></span></button><label class="pro-checkbox"><input type="checkbox" aria-label="Pro model" .checked=${selected.id === selectedRow.pro.id} @change=${this._togglePro}><span>Pro</span></label>` : nothing}</div>
       </div>
       ${selected.efforts.length > 0 ? this._effortSlider(selected.efforts) : html`<div class="field" aria-hidden="true"></div>`}
       ${this.hasExtra ? html`<div class="extra"><slot name="effort-extra"></slot></div>` : nothing}

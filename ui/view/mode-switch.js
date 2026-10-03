@@ -22,10 +22,21 @@ class ModeSwitch extends LitElement {
     this.accessibleLabel = ''
   }
 
+  _checkboxClick(event) {
+    // A label click also synthesizes an input click. Only the input click
+    // reaches the owner, so clicking either the box or its text toggles once.
+    if (this.disabled || event.target.tagName !== 'INPUT') event.stopPropagation()
+  }
+
   render() {
     return html`<button type="button" part="button" aria-pressed=${String(this.checked)}
       aria-label=${this.accessibleLabel || this.label} ?disabled=${this.disabled}
-    ><span>${this.label}</span><span class="track" part="track" aria-hidden="true"></span></button>`
+    ><span>${this.label}</span><span class="track" part="track" aria-hidden="true"></span></button>
+    <label class="checkbox-mode" @click=${this._checkboxClick}>
+      <input type="checkbox" part="checkbox" .checked=${this.checked} ?disabled=${this.disabled}
+        aria-label=${this.accessibleLabel || this.label}>
+      <span>${this.label}</span>
+    </label>`
   }
 }
 

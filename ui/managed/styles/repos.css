@@ -94,12 +94,18 @@
 .search input {
   width: 100%;
 }
-.show-all {
-  display: inline-flex;
+.show-all,
+.show-all-paper {
   align-items: center;
   gap: .5rem;
   white-space: nowrap;
   font-size: .78rem;
+}
+.show-all { display: var(--switch-button-display, inline-flex); }
+.show-all-paper {
+  display: var(--switch-checkbox-display, none);
+
+  & input { width: .85rem; height: .85rem; margin: 0; accent-color: var(--accent); }
 }
 .show-all input {
   appearance: none;
