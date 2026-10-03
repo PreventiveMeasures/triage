@@ -105,6 +105,33 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.style.transform, 'none')
       hideTooltip()
     }
+    await t.test('dependency tooltips keep the path first and add literal identity, icon, file count, and GitHub', () => {
+      const icon = { tagName: 'svg', className: 'bundle-code-tree-soldeer' }
+      const packageTarget = {
+        dataset: { tooltip: 'dependencies/pkg-1.0.0/src', tooltipPackage: '<img onerror=alert(1)>', tooltipEcosystem: 'soldeer', tooltipVersion: '1.0.0', tooltipFiles: '1', tooltipRepo: 'org/pkg' },
+        querySelector: () => ({ cloneNode: () => icon }),
+      }
+      showTooltip(packageTarget)
+      assert.equal(node.textContent, 'dependencies/pkg-1.0.0/src', 'the original directory stays first')
+      assert.equal(node.children[0].className, 'tooltip-package')
+      assert.equal(node.children[0].children[0], icon, 'reuse the row ecosystem icon')
+      const packageFields = () => node.children[0].children[1].children
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '1.0.0', '1 file'])
+      assert.ok(packageFields().every(field => field.innerHTML === undefined), 'package fields never become HTML')
+      assert.equal(node.children[1].children[0].textContent, 'org/pkg')
+      packageTarget.dataset.tooltipVersion = '2.0.0'
+      packageTarget.dataset.tooltipFiles = '12'
+      showTooltip(packageTarget)
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files'])
+      delete packageTarget.dataset.tooltipVersion
+      delete packageTarget.dataset.tooltipRepo
+      showTooltip(packageTarget)
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '12 files'])
+      assert.equal(node.children.length, 1)
+      showTooltip({ dataset: { tooltip: 'ordinary/file.sol' } })
+      assert.equal(node.children.length, 0, 'ordinary tooltips do not inherit dependency details')
+      hideTooltip()
+    })
     await t.test('picker tooltips update when internal transitions never reach the outer root', nested => {
       nested.mock.timers.enable({ apis: ['setTimeout'] })
       const outerListeners = {}

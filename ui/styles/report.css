@@ -667,9 +667,8 @@
 /* Code slide — file tree on the left, source viewer on the
    right (and an optional finding panel inside the right column
    when a per-line dot is clicked). flex chain so both columns
-   take the slide's full height with their own internal scroll;
-   the rail caps at 320px so a deep tree doesn't dominate the
-   viewport. */
+   take the slide's full height with their own internal scroll.
+   The rail starts at 320px and can be resized for this page session. */
 .bundles-slide-body > .bundle-code-view {
   display: flex;
   flex: 1;
@@ -678,14 +677,18 @@
 }
 .bundle-code-rail {
   flex-shrink: 0;
-  width: 320px;
-  border-right: 1px solid var(--border);
+  width: var(--bundle-code-rail-width, 320px);
   display: flex; flex-direction: column;
   background: var(--surface);
 }
+.bundle-code-rail-head,
+.bundle-code-main-bar {
+  flex-shrink: 0;
+  height: calc(2.15rem + 1px);
+}
 .bundle-code-rail-head {
   display: flex; align-items: center; gap: .5rem;
-  padding: .35rem .5rem .35rem .75rem;
+  padding: .4rem .5rem .4rem .75rem;
   border-bottom: 1px solid var(--border);
 }
 .bundle-code-rail-label {
@@ -706,7 +709,7 @@
 }
 .bundle-code-rail-action {
   display: grid; place-items: center;
-  width: 26px; height: 26px;
+  width: 1.35rem; height: 1.35rem;
   border: 0; border-radius: 4px;
   background: transparent;
   color: var(--muted);
@@ -732,6 +735,26 @@
   scrollbar-gutter: stable;
   -webkit-app-region: no-drag; app-region: no-drag;
   padding: .35rem .25rem .5rem;
+}
+/* A one-pixel divider with a wider grab area over the pane edges. */
+bundle-code-splitter {
+  flex: none;
+  position: relative; z-index: 1;
+  width: 7px; margin-inline: -3px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+
+  &::before {
+    content: '';
+    position: absolute; inset: 0 3px;
+    background: var(--border);
+  }
+  &:hover::before, &:focus-visible::before, &.dragging::before { background: var(--accent); }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+}
+.bundle-code-view:has(> bundle-code-splitter.dragging) {
+  &, & * { cursor: col-resize; user-select: none; }
 }
 /* Search bar — bordered strip: lens icon left, query input
    flexing to fill, Files / Code / Issues mode toggles pinned right.
@@ -971,7 +994,7 @@ bundle-code-search {
 .bundle-code-tree.root { margin-left: 0; padding-left: 0; border-left: 0; }
 .bundle-code-tree-dir > details > summary,
 .bundle-code-tree-link {
-  display: flex; align-items: center; gap: .35rem;
+  display: flex; align-items: center; gap: .25rem;
   min-height: 22px;
   width: 100%;
   padding: .1rem .4rem;
@@ -1062,7 +1085,6 @@ bundle-code-search {
    the issue stepper pin right via the spacer. The path shrinks
    (ellipsis) before anything else gives up space. */
 .bundle-code-main-bar {
-  flex-shrink: 0;
   display: flex; align-items: center; gap: .5rem;
   padding: .4rem .75rem;
   border-bottom: 1px solid var(--border);

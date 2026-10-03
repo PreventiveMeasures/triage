@@ -50,10 +50,7 @@ function raise(node) {
 }
 
 let currentTarget = null
-let currentText = ''
-let currentRepo = ''
-let currentBundle = ''
-let currentStats = ''
+let currentContent = ''
 let showTimer = null
 
 // Last known cursor position — captured by the passive mousemove
@@ -84,13 +81,33 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const repo = el.dataset.tooltipRepo ?? ''
   const bundle = ['stasis', 'sourcemap'].includes(el.dataset.tooltipBundle) ? el.dataset.tooltipBundle : ''
   const stats = el.dataset.tooltipStats ?? ''
+  const packageName = el.dataset.tooltipPackage ?? ''
+  const ecosystem = el.dataset.tooltipEcosystem ?? ''
+  const version = el.dataset.tooltipVersion ?? ''
+  const files = el.dataset.tooltipFiles ?? ''
+  const content = JSON.stringify([text, repo, bundle, stats, packageName, ecosystem, version, files])
   if (!text) return
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
   // segments. Reuse the visible node in that case instead of hiding and
   // re-showing it for every child.
-  if (currentTarget === el && currentText === text && currentRepo === repo && currentBundle === bundle && currentStats === stats) return
+  if (currentTarget === el && currentContent === content) return
   node.textContent = text
+  if (packageName) {
+    const row = document.createElement('div')
+    row.className = 'tooltip-package'
+    const icon = el.querySelector('svg')?.cloneNode(true)
+    if (icon) row.append(icon)
+    const label = document.createElement('span')
+    label.className = 'tooltip-package-details'
+    for (const value of [packageName, version, /^\d+$/u.test(files) ? `${files} ${files === '1' ? 'file' : 'files'}` : ''].filter(Boolean)) {
+      const field = document.createElement('span')
+      field.textContent = value
+      label.append(field)
+    }
+    row.append(label)
+    node.append(row)
+  }
   if (repo) {
     const row = document.createElement('div')
     row.className = 'tooltip-repo'
@@ -144,10 +161,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const top = Math.max(VIEWPORT_MARGIN_PX, Math.min(preferredTop, maxTop))
   node.style.top = `${Math.round(top)}px`
   currentTarget = el
-  currentText = text
-  currentRepo = repo
-  currentBundle = bundle
-  currentStats = stats
+  currentContent = content
 }
 
 export function hideTooltip() {
