@@ -3,6 +3,7 @@ import { beforeEach, mock, test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { managedAppState } from '../ui/managed/state.js'
 import { clearReportSources, fetchReportSources, readReportSources } from '../ui/managed/report-sources.js'
+import { langForPath } from '../common/code-language.js'
 
 // Exercise the real dialog controller and shared loader without a browser.
 // Browser verification covers native modal stacking, focus, and code scrolling.
@@ -19,8 +20,9 @@ mock.module('../ui/view/dialogs/app-dialog.js', { namedExports: { AppDialog: Tes
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchReportSources, readReportSources } })
 mock.module('../ui/view/format.js', { namedExports: { lineRange: () => ({ start: 80, end: 85 }) } })
 let highlighting
+const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: {
-  langForPath: () => 'javascript', highlight: content => highlighting?.promise ?? Promise.resolve(content),
+  langForPath, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return highlighting?.promise ?? Promise.resolve(content) },
 } })
 await import('../ui/view/dialogs/finding-source-dialog.js')
 const Dialog = customElements.get('finding-source-dialog')
@@ -28,7 +30,7 @@ const content = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n'
 let calls, responseGate
 beforeEach(t => {
   managedAppState.reset(); managedAppState.setSession({ id: 'alice', role: 'view' })
-  calls = 0; responseGate = null; highlighting = null
+  calls = 0; responseGate = null; highlighting = null; highlightCalls.length = 0
   t.mock.method(managedAppState, 'notify', () => {})
   t.mock.method(globalThis, 'fetch', async () => {
     calls++
@@ -37,6 +39,16 @@ beforeEach(t => {
   })
 })
 function dialog() { return Object.assign(new Dialog(), { reportId: 'report', file: 'main.js', line: '80-85' }) }
+
+test('the source popup uses the recorded format after resolving a report path alias', async t => {
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ integrity: 'bundle',
+    files: [['bin/example', 'const example = 1']], paths: [['main.js', 'bin/example']], formats: [['bin/example', 'commonjs']] })))
+  const view = dialog()
+  await view._load()
+  assert.equal(view._path, 'bin/example')
+  assert.deepEqual(highlightCalls, [{ content: 'const example = 1', lang: 'javascript' }])
+  view._finish(null)
+})
 
 test('the popup resolves the full file and reuses report source memory across opens', async () => {
   const first = dialog()

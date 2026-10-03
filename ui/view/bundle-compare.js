@@ -222,8 +222,10 @@ class BundleCompare extends LitElement {
   }
 
   _openFile(path, kind) {
+    const details = kind === 'removed' ? this.details : this._otherDetails
     void openBundleFileDialog({
       path, kind, baseName: this._nameFor(this.integrity), otherName: this._nameFor(this._targetIntegrity),
+      format: details?.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined,
       before: bundleFilesAsMap(this.details).get(path), after: bundleFilesAsMap(this._otherDetails).get(path),
     }).catch(err => showToast(err.message, { kind: 'error' }))
   }

@@ -3,6 +3,7 @@ import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
 import '../ui/view/frontend-install.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { langForPath } from '../common/code-language.js'
 import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
 
 // Keep the real modal and bundle source rendering without unrelated page
@@ -12,7 +13,8 @@ mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: () => null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
-mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath: () => null, langForTag: () => null, highlight: () => Promise.resolve(null) } })
+const highlightCalls = []
+mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { state } = await import('../client/state.ts')
 const { renderBundleSourceModal, renderBundlesList } = await import('../ui/view/render-bundle.js')
@@ -24,6 +26,7 @@ function renderText(value) {
 }
 
 beforeEach(() => {
+  highlightCalls.length = 0
   state.currentView = 'findings'
   state.bundleDetailsTab = 'overview'
   state.bundleSourceFile = 'src/main.js'
@@ -31,6 +34,30 @@ beforeEach(() => {
   state.bundleOverviewFilesSort = 'name'
   state.bundleOverviewPackagesSort = 'size'
   state.bundleDetails = null
+})
+
+test('extensionless Stasis sources use recorded formats in tree, filtered tree, header, and modal', () => {
+  const path = 'node_modules/example/bin/example'
+  const content = 'const example = require("example")'
+  const entry = { name: 'formats.stasis', integrity: 'sha512-format-language' }
+  const bundle = Bundle.parse(new Bundle({
+    modules: new Map([['node_modules/example', { name: 'example', version: '1.0.0', files: { 'bin/example': content } }]]),
+    formats: new Map([[path, 'commonjs']]),
+  }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', bundleSourceFile: path,
+    bundleCodeSearchMode: 'files', selectedBundle: entry.integrity, bundles: [entry],
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  for (const query of ['', 'bin/example']) {
+    state.bundleCodeSearchQuery = query
+    const markup = renderText(renderBundlesList([entry]))
+    assert.match(markup.match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1], /data-file-type=js/u)
+    assert.match(markup.match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1], /data-file-type=js/u)
+    assert.match(markup, /<code class=language-javascript>/u)
+  }
+  assert.deepEqual(highlightCalls, [{ content, lang: 'javascript' }])
+  state.currentView = 'findings'
+  state.bundleDetailsTab = 'overview'
+  assert.match(renderText(renderBundleSourceModal()), /<code class=language-javascript>/u)
 })
 
 test('the source popup shows loading through a cold open and metadata upgrade, then displays the file', () => {

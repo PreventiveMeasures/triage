@@ -126,6 +126,7 @@ describe('langForTag — allowlist matches the prism bundle', () => {
     // so every quoted value in it is a language name one of them can
     // return — a new entry is covered here the day it's added.
     const resolverSrc = await readFile(new URL('../ui/view/prism-highlight.js', import.meta.url), 'utf8')
+      + await readFile(new URL('../common/code-language.js', import.meta.url), 'utf8')
     const named = new Set([...resolverSrc.matchAll(/:\s*'([a-z0-9-]+)'/gu)].map((m) => m[1]))
     assert.ok(named.size > 10, 'no language values found in prism-highlight.js')
     for (const lang of named) {

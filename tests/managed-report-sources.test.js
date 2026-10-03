@@ -67,7 +67,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
   for (const role of ['manage', 'view', 'none']) await db.setTeamMember(team, users[role].userId, { dependencies: true, security: true })
   const bytes = kind === 'stasis' ? brotliCompressSync(Buffer.from(new Bundle({
     modules: new Map([['.', { name: 'app', version: '1', files: { ...files, 'image.png': 'AP8=' } }]]),
-    formats: new Map([['image.png', 'resource:base64']]), entries: new Set(), executable: new Set(),
+    formats: new Map([...Object.keys(files).map(file => [file, 'commonjs']), ['image.png', 'resource:base64']]), entries: new Set(), executable: new Set(),
     imports: new Map([
       ['node', new Map([
         ['src/main.js', new Map([['proof', 'src/evidence.js'], ['conditional', 'src/evidence.js'], ['./evidence.js', 'src/evidence.js'], ['platform', new Map([['ios', 'src/evidence.js']])], ['hidden', 'unrelated.js'], ['security', 'secret.js']])],
@@ -117,8 +117,12 @@ function sourcesTests(backend) {
       ['proof', 'src/evidence.js'], ['conditional', null], ['./evidence.js', null], ['platform', null], ['hidden', null], ['security', 'secret.js'],
     ]))
     assert.equal(new Map(admin.imports).has('unrelated.js'), false)
+    assert.deepEqual(new Map(admin.formats), new Map(admin.files.map(([file]) => [file, 'commonjs'])))
     await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
     const restricted = (await h.send(h.report.id, 'view')).json()
+    assert.deepEqual(new Map(restricted.formats), new Map(restricted.files.map(([file]) => [file, 'commonjs'])))
+    assert.equal(new Map(restricted.formats).has('secret.js'), false)
+    assert.equal(new Map(restricted.formats).has('unrelated.js'), false)
     const imports = new Map(restricted.imports)
     assert.equal(imports.has('secret.js'), false)
     assert.equal(new Map(imports.get('src/main.js')).get('security'), null)
@@ -136,6 +140,7 @@ function sourcesTests(backend) {
       assert.equal(Number(res.headers['content-length']), res.bytes.length)
       assert.match(res.headers['cache-control'], /no-store/u)
       const data = res.json()
+      if (kind === 'sourcemap') assert.deepEqual(data.formats, [])
       assert.equal(data.integrity, h.bundle.integrity)
       assert.deepEqual(Object.fromEntries(data.files), Object.fromEntries(Object.entries(files).filter(([key]) => !['a/shared.js', 'b/shared.js', 'unrelated.js'].includes(key))))
       assert.equal(new Map(data.paths).get('evidence.js'), 'src/evidence.js')

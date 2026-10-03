@@ -9,7 +9,7 @@ import codeTokensCSS from '../../styles/code-tokens.css'
 import styles from './dialog-bundle-file.css'
 
 class BundleFileDialog extends AppDialog {
-  static properties = { path: {}, before: { attribute: false }, after: { attribute: false }, baseName: {}, otherName: {}, kind: {}, _lines: { state: true }, _error: { state: true }, _highlighted: { state: true } }
+  static properties = { path: {}, format: {}, before: { attribute: false }, after: { attribute: false }, baseName: {}, otherName: {}, kind: {}, _lines: { state: true }, _error: { state: true }, _highlighted: { state: true } }
   static styles = [...AppDialog.styles, unsafeCSS(codeTokensCSS), unsafeCSS(styles)]
   constructor() { super(); this._lines = null; this._error = null; this._highlighted = null }
   beforeOpen() {
@@ -22,7 +22,7 @@ class BundleFileDialog extends AppDialog {
     }
   }
   async _highlight(content) {
-    const highlighted = await highlight(content, langForPath(this.path))
+    const highlighted = await highlight(content, langForPath(this.path, this.format))
     if (this.isConnected) this._highlighted = highlighted
   }
   render() {

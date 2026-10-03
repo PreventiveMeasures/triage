@@ -1,6 +1,6 @@
 // Prism syntax highlighter — loaded lazily, and only when something
 // asks for a language it bundles: the bundle source viewer opening a
-// file whose extension we know, a finding card drawing a fenced code
+// file whose format or extension we know, a finding card drawing a fenced code
 // block / source preview (view/code-highlight.js), or the export-view
 // dialog colouring its Markdown preview. Built as a separate esbuild entry point so prismjs
 // (~50KB minified for the core + the languages we care about)

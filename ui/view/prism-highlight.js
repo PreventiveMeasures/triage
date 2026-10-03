@@ -4,7 +4,7 @@
 // the import; subsequent calls share the promise so prism downloads
 // + parses once per session.
 //
-// Languages are detected from file extension (`langForPath`, for the
+// Languages are detected from Stasis format with file extension fallback (`langForPath`, for the
 // source viewers) or from a fence's info string (`langForTag`, for the
 // code blocks in finding descriptions). Unknown ones resolve to null
 // so the caller falls back to plain text without paying the import

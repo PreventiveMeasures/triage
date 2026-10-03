@@ -7,7 +7,8 @@ mock.module('../client/index.js', { namedExports: { state: { bundles: [
   { integrity: 'base', name: 'Before' }, { integrity: 'other', name: 'After' },
 ] } } })
 mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails() {} } })
-mock.module('../ui/view/dialogs/bundle-file-dialog.js', { namedExports: { openBundleFileDialog() {} } })
+let fileDialogProps
+mock.module('../ui/view/dialogs/bundle-file-dialog.js', { namedExports: { openBundleFileDialog(props) { fileDialogProps = props; return Promise.resolve() } } })
 mock.module('../ui/view/toast.js', { namedExports: { showToast() {} } })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
@@ -35,6 +36,16 @@ function compare() {
   view._otherDetails = details('other', 'b.js')
   return view
 }
+
+test('file previews receive the format from the displayed side of the comparison', () => {
+  const view = compare()
+  view.details.bundle.formats.set('app.js', 'commonjs')
+  view._otherDetails.bundle.formats.set('app.js', 'commonjs-typescript')
+  view._openFile('app.js', 'added')
+  assert.equal(fileDialogProps.format, 'commonjs-typescript')
+  view._openFile('app.js', 'removed')
+  assert.equal(fileDialogProps.format, 'commonjs')
+})
 
 test('Differences renders resolution-only changes with before/after targets and a summary count', () => {
   const view = compare()

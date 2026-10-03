@@ -663,7 +663,7 @@ function _topSeverityOf(findings) {
 function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null) {
   const lineCount = content.split('\n').length
   const digits = String(lineCount).length
-  const lang = langForPath(path)
+  const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
   const cacheKey = `${details?.integrity ?? ''}\0${path}`
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
@@ -924,7 +924,7 @@ function dirIssueStats(node, issueIndex) {
 // so the user can drill in. Selected file gets a `current` class
 // for its background; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false) {
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false, formats = null) {
   const dirs = [...node.dirs.entries()].toSorted(([a, an], [b, bn]) => sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path))
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
@@ -982,7 +982,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
           </summary>
-          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll)}
+          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll, formats)}
         </details>
       </li>`
     })}
@@ -1001,7 +1001,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
           aria-current=${full === currentPath ? 'true' : nothing}
           data-tooltip=${full}
         >
-          ${sourceFileIcon(name)}<span class="bundle-code-tree-name">${name}</span>
+          ${sourceFileIcon(full, formats?.get(full))}<span class="bundle-code-tree-name">${name}</span>
           ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} title=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
         </button>
       </li>`
@@ -1020,8 +1020,8 @@ function stripPathPrefix(p, prefix) {
 
 // Filter the full presentation so package boundaries and variant labels stay
 // stable. Both physical paths and the displayed package names are searchable.
-function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '') {
-  if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex)
+function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '', formats = null) {
+  if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex, false, formats)
   const filtered = filterBundleSourceTree(tree, query, prefix)
   if (!filtered) {
     return html`<div class="bundle-code-search-empty">No files match.</div>`
@@ -1030,7 +1030,7 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
   // exists because something inside it matched, so opening them
   // all means the user sees every hit at a glance instead of
   // having to click every level open after typing.
-  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true)
+  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true, formats)
 }
 
 // Code-mode result pane — flat list of files, each with up to
@@ -1357,7 +1357,7 @@ function renderBundleCodeView(details) {
       <bundle-code-search .modes=${searchModes}></bundle-code-search>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
-          ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix)],
+          ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix, details.kind === 'stasis' ? details.bundle.formats : null)],
           ['code', () => renderBundleCodeContentResults(sources, query, path, prefix)],
           ['issues', () => renderBundleCodeIssuesResults(details, query, path, prefix)],
         ])}
@@ -1398,7 +1398,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
         </button>
       </span>
-      ${sourceFileIcon(path)}
+      ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
       <span class="bundle-code-main-path mono" title=${path}>${path}</span>
       <button
         type="button"
