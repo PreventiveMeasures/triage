@@ -31,7 +31,7 @@ class BundleFileDialog extends AppDialog {
     const binary = changed ? this._lines === null : typeof content !== 'string'
     const size = value => formatBytes(bundleFileByteLength(value) ?? 0)
     return html`<dialog aria-labelledby="file-title" @close=${this._onClose}>
-      <header><div class="file-heading"><h3 id="file-title">${this.path}</h3><button type="button" aria-label="Close file" @click=${this._onClose}><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></div>
+      <header><div class="file-heading"><h3 id="file-title" class="mono">${this.path}</h3><button type="button" aria-label="Close file" @click=${this._onClose}><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></div>
         <div class="file-details">
           <p class="file-context">${changed ? `${this.baseName} → ${this.otherName}` : this.kind === 'removed' ? this.baseName : this.otherName}</p>
           ${changed ? html`<p class="file-legend"><span class="removed">− Before</span><span class="added">+ After</span><span>${size(this.before)} → ${size(this.after)}</span></p>` : nothing}
