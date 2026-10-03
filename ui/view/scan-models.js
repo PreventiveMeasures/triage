@@ -25,7 +25,7 @@ const DEVELOPER_NAMES = new Map([
 const WORD_REPLACEMENTS = new Map([
   ['gpt', 'GPT'], ['gptoss', 'GPT OSS'], ['oss', 'OSS'], ['o', 'O'], ['ai', 'AI'], ['api', 'API'],
   ['4o', '4o'],
-  ['k3', 'K3'], ['k4', 'K4'], ['qwen', 'Qwen'], ['kimi', 'Kimi'], ['gemini', 'Gemini'],
+  ['k3', 'K3'], ['k4', 'K4'], ['qwen', 'Qwen'], ['kimi', 'Kimi'], ['mimo', 'MiMo'], ['gemini', 'Gemini'],
   ['claude', 'Claude'], ['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'],
   ['astra', 'Astra'], ['terra', 'Terra'], ['luna', 'Luna'], ['codex', 'Codex'],
   ['deepseek', 'DeepSeek'], ['nemotron', 'Nemotron'], ['gemma', 'Gemma'],

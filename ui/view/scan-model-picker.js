@@ -16,8 +16,9 @@ class ScanModelPicker extends LitElement {
   static styles = css`
     :host { display: block; min-width: 0; container: scan-controls / inline-size; }
     * { box-sizing: border-box; }
-    .layout { display: grid; grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr); gap: 1.25rem; align-items: start; }
-    .layout.with-extra { grid-template-columns: minmax(13rem, .9fr) minmax(14rem, 1.2fr) minmax(14rem, auto); }
+    /* Fit the default model names alongside their icon and Pro toggle. */
+    .layout { display: grid; grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr); gap: 1.25rem; align-items: start; }
+    .layout.with-extra { grid-template-columns: minmax(16rem, .9fr) minmax(14rem, 1.2fr) minmax(14rem, auto); }
     .field { min-width: 0; min-height: 4.9rem; }
     .model-placeholder { height: 3.25rem; display: flex; align-items: center; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--bg); font-size: .75rem; }
     .effort-placeholder { height: .3rem; margin: 1rem .6rem; border-radius: 999px; background: var(--surface-active); }
@@ -53,6 +54,7 @@ class ScanModelPicker extends LitElement {
     .icon.nvidia { color: #76b900; }
     .icon.qwen { color: #f97316; }
     .icon.deepseek { color: #4d8dff; }
+    .icon.xiaomi { color: #ff6900; }
     /* These marks have generous or unusually dense source viewBoxes.  A
        small optical correction keeps every provider mark the same apparent
        weight in both the selected value and the menu heading. */
@@ -101,8 +103,8 @@ class ScanModelPicker extends LitElement {
     .message { margin: 0; color: var(--muted); font-size: .75rem; }
     .error { color: var(--critical, #e5534b); }
     .retry { margin-left: .5rem; padding: .2rem .4rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font: inherit; }
-    @container scan-controls (max-width: 50rem) { .layout.with-extra { grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr); } .layout.with-extra .extra { grid-column: 1 / -1; align-self: start; min-height: 0; } }
-    @container scan-controls (max-width: 30rem) { .layout, .layout.with-extra { grid-template-columns: minmax(0, 1fr); gap: 1rem; } .layout.with-extra .extra { grid-column: auto; } }
+    @container scan-controls (max-width: 50rem) { .layout.with-extra { grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr); } .layout.with-extra .extra { grid-column: 1 / -1; align-self: start; min-height: 0; } }
+    @container scan-controls (max-width: 33rem) { .layout, .layout.with-extra { grid-template-columns: minmax(0, 1fr); gap: 1rem; } .layout.with-extra .extra { grid-column: auto; } }
   `
 
   constructor() {
