@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { Bundle } from '@exodus/stasis-core/bundle'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, sourceDirectoryLabel } from '../ui/view/bundle-source-tree.js'
 
 test('display paths retain original source keys, including special directory names', () => {
@@ -182,4 +183,82 @@ test('pnpm shortcuts apply recursively to workspace and nested package installs'
   assert.equal(innerPkg.path, nested)
   assert.equal(pnpmStore(tree.dirs.get('packages').dirs.get('tools')).dirs.get('ws@8.20.0').package.version, '8.20.0')
   assert.deepEqual(leaves(tree), paths.toSorted())
+})
+
+function cargoTree(files) {
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['vendor/ahash', { name: 'ahash', version: '0.8.12', ecosystem: 'cargo', files }],
+  ]) }).serialize())
+  const paths = [...bundle.sources.keys()]
+  return buildBundleSourceTree(paths, paths, bundle.modules)
+}
+
+test('Cargo rows use recorded package identities and fold a sole src directory', () => {
+  const tree = cargoTree({ 'src/lib.rs': 'lib', 'src/hash.rs': 'hash', 'src/deep/a.rs': 'deep' })
+  const vendor = tree.dirs.get('vendor')
+  const pkg = vendor.dirs.get('ahash')
+  assert.deepEqual(pkg.package, { name: 'ahash', version: '0.8.12', ecosystem: 'cargo' })
+  assert.equal(sourceDirectoryLabel('ahash', pkg), 'ahash - 0.8.12')
+  assert.deepEqual(compactSourceDirectory('vendor', vendor, 0).names, ['vendor'], 'the package boundary keeps the vendor group visible')
+  const compact = compactSourceDirectory('ahash', pkg, 1)
+  assert.deepEqual(compact.names, ['ahash'])
+  assert.deepEqual([...compact.node.files.keys()].toSorted(), ['hash.rs', 'lib.rs'])
+  assert.ok(compact.node.dirs.has('deep'))
+  assert.equal(compact.node.sourcePath, 'vendor/ahash')
+  assert.deepEqual(leaves(compact.node), leaves(pkg), 'flattening retains every original source key')
+  assert.ok(pkg.dirs.has('src'), 'presentation must not mutate the captured tree')
+})
+
+test('Cargo src folding preserves root files and disambiguates duplicate names through filtering', () => {
+  const tree = cargoTree({ 'Cargo.toml': 'manifest', 'lib.rs': 'root', 'src/lib.rs': 'source' })
+  const pkg = tree.dirs.get('vendor').dirs.get('ahash')
+  const compact = compactSourceDirectory('ahash', pkg, 1)
+  assert.deepEqual([...compact.node.files.keys()].toSorted(), ['Cargo.toml', 'lib.rs', 'src/lib.rs'])
+  assert.deepEqual(leaves(compact.node), leaves(pkg))
+  const filtered = filterBundleSourceTree(tree, 'ahash - 0.8.12/src/lib.rs').dirs.get('vendor').dirs.get('ahash')
+  assert.deepEqual([...compactSourceDirectory('ahash', filtered, 1).node.files], [['src/lib.rs', 'vendor/ahash/src/lib.rs']])
+})
+
+test('Cargo keeps src visible when another directory is captured, even after search filtering', () => {
+  const tree = cargoTree({ 'src/lib.rs': 'source', 'examples/demo.rs': 'example' })
+  const pkg = tree.dirs.get('vendor').dirs.get('ahash')
+  assert.equal(compactSourceDirectory('ahash', pkg, 1).node, pkg)
+  assert.ok(pkg.dirs.has('src'))
+  const filtered = filterBundleSourceTree(tree, 'lib.rs').dirs.get('vendor').dirs.get('ahash')
+  assert.ok(compactSourceDirectory('ahash', filtered, 1).node.dirs.has('src'))
+})
+
+test('Cargo filtering matches name-version labels with hidden src paths and physical paths', () => {
+  const tree = cargoTree({ 'src/lib.rs': 'lib', 'src/hash.rs': 'hash' })
+  for (const query of ['AHASH - 0.8.12', 'vendor/ahash/src/']) {
+    assert.deepEqual(leaves(filterBundleSourceTree(tree, query)), leaves(tree))
+  }
+  assert.deepEqual(leaves(filterBundleSourceTree(tree, 'ahash - 0.8.12/lib.rs')), ['vendor/ahash/src/lib.rs'])
+  assert.equal(filterBundleSourceTree(tree, 'ahash - 9.9.9'), null)
+})
+
+test('Cargo package metadata follows original paths when a checkout prefix is stripped', () => {
+  const original = '/checkout/vendor/renamed/src/lib.rs'
+  const modules = new Map([
+    ['/checkout/vendor/renamed', { name: 'ahash', version: '0.8.12', ecosystem: 'cargo' }],
+  ])
+  const tree = buildBundleSourceTree(['vendor/renamed/src/lib.rs'], [original], modules)
+  const pkg = tree.dirs.get('vendor').dirs.get('renamed')
+  assert.equal(sourceDirectoryLabel('renamed', pkg), 'ahash - 0.8.12')
+  assert.deepEqual(leaves(compactSourceDirectory('renamed', pkg, 1).node), [original])
+  assert.equal(bundleSourceTreePrefix('/checkout/vendor/renamed/src/', modules), '/checkout/')
+  assert.equal(bundleSourceTreePrefix('vendor/renamed/src/', new Map([
+    ['vendor/renamed', { name: 'ahash', ecosystem: 'cargo' }],
+  ])), '')
+  assert.equal(bundleSourceTreePrefix('/checkout/vendor/renamed/src/'), '/checkout/vendor/renamed/src/', 'ordinary source trees keep their prefix behavior')
+})
+
+test('vendored packages without Cargo ecosystem metadata retain ordinary directory labels', () => {
+  const path = 'vendor/org/package/src/a.php'
+  const tree = buildBundleSourceTree([path], [path], new Map([
+    ['vendor/org/package', { name: 'org/package', version: '1.0.0', ecosystem: 'composer' }],
+  ]))
+  const pkg = tree.dirs.get('vendor').dirs.get('org').dirs.get('package')
+  assert.equal(pkg.package, undefined)
+  assert.equal(sourceDirectoryLabel('package', pkg), 'package')
 })

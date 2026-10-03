@@ -21,7 +21,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
+import { sourceCargoIcon, sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
@@ -961,9 +961,9 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
         <details .open=${live(computeOpen(childPath, child))}>
           <summary @click=${onSummaryClick(childPath)} data-tooltip=${tooltip}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
-            ${pkg ? sourceNpmIcon : nothing}
-            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg })}>
-              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">@${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
+            ${pkg ? pkg.ecosystem === 'cargo' ? sourceCargoIcon : sourceNpmIcon : nothing}
+            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-cargo': pkg?.ecosystem === 'cargo' })}>
+              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${pkg.ecosystem === 'cargo' ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
             </span>
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
@@ -1243,13 +1243,14 @@ function renderBundleCodeView(details) {
     _bundleTreeCurrentPath = null
   }
   const allPaths = [...sources.keys()].toSorted()
-  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix)
+  const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
+  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules)
   const stripped = allPaths.map(p => stripPathPrefix(p, prefix))
   // Tree built from STRIPPED paths so the visual hierarchy
   // doesn't waste horizontal space on a shared root prefix.
   // Stripped → original mapping lets the click handlers (and
   // sources.get) recover the full key.
-  const tree = buildBundleSourceTree(stripped, allPaths)
+  const tree = buildBundleSourceTree(stripped, allPaths, packageModules)
   // Per-file finding index for the tree's count chips, the default-
   // file pick, and the Issues-mode hidden-when-empty gate. Computed
   // once and reused — the tree walk reads it as
