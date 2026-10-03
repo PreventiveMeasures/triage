@@ -187,6 +187,22 @@ select:focus-visible {
 .bundle-open:hover { color: var(--accent); }
 
 .bundle-row > .location-editor { grid-column: 1 / -1; }
+.location-field-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.location-field-header > :first-child { flex-shrink: 0; }
+.location-metadata {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .location-origin {
   grid-column: 1 / -1;
   margin: 0;
