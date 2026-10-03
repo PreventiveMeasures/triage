@@ -21,7 +21,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourceCargoIcon, sourceComposerIcon, sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
+import { sourceCargoIcon, sourceComposerIcon, sourceFileIcon, sourceNpmIcon, sourceSoldeerIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
@@ -956,8 +956,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const childPath = child.path
       const compact = compactSourceDirectory(name, child, depth)
       const pkg = child.package
-      const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer'
-      const packageIcon = pkg?.ecosystem === 'composer' ? sourceComposerIcon : pkg?.ecosystem === 'cargo' ? sourceCargoIcon : sourceNpmIcon
+      const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer' || pkg?.ecosystem === 'soldeer'
+      const packageIcon = pkg?.ecosystem === 'composer' ? sourceComposerIcon : pkg?.ecosystem === 'cargo' ? sourceCargoIcon : pkg?.ecosystem === 'soldeer' ? sourceSoldeerIcon : sourceNpmIcon
       const tooltip = pkg?.variant ? `Variant ${pkg.variant}\n${compact.node.sourcePath}` : compact.node.sourcePath
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows

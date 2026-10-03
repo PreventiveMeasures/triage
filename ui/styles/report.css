@@ -1008,6 +1008,7 @@ bundle-code-search {
 .bundle-code-tree-separator { color: var(--muted); padding-inline: 1px; }
 .bundle-code-tree-npm,
 .bundle-code-tree-cargo,
+.bundle-code-tree-soldeer,
 .bundle-code-tree-composer { flex: none; color: var(--muted); }
 .bundle-code-tree-dirname.bundle-code-tree-package { display: flex; align-items: baseline; }
 .bundle-code-tree-dirname.bundle-code-tree-package-vendored { gap: .4em; }
