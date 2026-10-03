@@ -14,7 +14,7 @@ import { render } from './render.js'
 import { report } from './dom.js'
 import { revealCitedLines } from './reveal-cited.js'
 
-// integrity → { sources, imports, loading, error }
+// integrity → { sources, imports, formats, loading, error }
 const sourcesCache = new Map()
 
 // integrity\0file → highlighted HTML string, or null when prism
@@ -27,10 +27,10 @@ const highlightPending = new Set()
 const managedHighlights = new WeakMap()
 const managedLoads = new Set()
 
-function kickHighlight(integrity, file, content, resolveString, cache = highlightCache, pending = highlightPending) {
+function kickHighlight(integrity, file, content, format, resolveString, cache = highlightCache, pending = highlightPending) {
   const key = `${integrity}\0${file}`
   if (cache.has(key) || pending.has(key)) return
-  const lang = langForPath(file)
+  const lang = langForPath(file, format)
   if (!lang) {
     cache.set(key, null)
     return
@@ -58,7 +58,7 @@ async function loadSources(integrity) {
   try {
     const details = await buildBundleDetails(integrity, entry)
     const sources = bundleSourcesAsMap(details)
-    sourcesCache.set(integrity, { sources, imports: bundleSourceImports(details, sources), loading: false, error: details.error ?? null })
+    sourcesCache.set(integrity, { sources, imports: bundleSourceImports(details, sources), formats: details.kind === 'stasis' ? details.bundle?.formats : null, loading: false, error: details.error ?? null })
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
@@ -152,7 +152,7 @@ function managedSource(reportId, file, kick) {
   if (typeof content !== 'string') return null
   let highlights = managedHighlights.get(data)
   if (!highlights) { highlights = { cache: new Map(), pending: new Set() }; managedHighlights.set(data, highlights) }
-  kickHighlight(data.integrity, file, content, sourceLinkResolver(data.sources, file, data.imports), highlights.cache, highlights.pending)
+  kickHighlight(data.integrity, file, content, data.formats?.get(file), sourceLinkResolver(data.sources, file, data.imports), highlights.cache, highlights.pending)
   return { content, highlighted: highlights.cache.get(`${data.integrity}\0${file}`) ?? null, loading: false }
 }
 
@@ -193,7 +193,7 @@ export function bundleSource(integrity, file, { kick = true, reportId = null } =
   if (typeof content !== 'string') return null
   // Kick Prism highlight if we haven't yet — render() runs again when
   // the highlighted HTML lands and the second pass picks it up.
-  kickHighlight(integrity, file, content, sourceLinkResolver(cached.sources, file, cached.imports))
+  kickHighlight(integrity, file, content, cached.formats?.get(file), sourceLinkResolver(cached.sources, file, cached.imports))
   const key = `${integrity}\0${file}`
   return {
     content,

@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleSourceImports } from '../common/bundle-source-links.js'
+import type { BundleDetails } from '../common/bundle-metadata.js'
 import { loadManagedFindings, managedFindingSourcePaths } from '../common/managed/report-content.ts'
 import { type ViewerPermissions, filterReportContent } from '../common/managed/report-filter.ts'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
@@ -28,7 +29,7 @@ function formatDirectory(bundleId: string, sha256: string, name: string) {
 }
 function sourceCacheFilename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>) {
   const key = createHash('sha256').update(JSON.stringify([
-    'finding-access-v5', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
+    'finding-access-v6', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
   ])).digest('hex')
   return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
 }
@@ -60,6 +61,14 @@ function selectSources(sourcePaths: Set<string>, sources: Map<string, string>) {
   return { files: [...files], paths: [...paths] }
 }
 
+function encodeSources(integrity: string, details: BundleDetails, selection: ReturnType<typeof selectSources>) {
+  const sources = new Map(selection.files)
+  const imports = [...bundleSourceImports(details, sources)].map(([parent, targets]) => [parent, [...targets]])
+  const bundle = details.kind === 'stasis' ? details.bundle as { formats: Map<string, string> } : null
+  const formats = [...(bundle?.formats ?? [])].filter(([file]) => sources.has(file))
+  return compress(Buffer.from(JSON.stringify({ integrity, ...selection, imports, formats })), { level: 6 })
+}
+
 // Immutable report hashes share a derivative across duplicate uploads. Bundle
 // identity and visibility are part of the key: a broader viewer's sources must
 // never populate a restricted response. Group derivatives by hash and filename
@@ -89,8 +98,7 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     const details = await readBundleDetails(bundle, bundles)
     if (!details) return false
     const selection = selectSources(sourcePaths, bundleSourcesAsMap(details))
-    const imports = [...bundleSourceImports(details, new Map(selection.files))].map(([parent, targets]) => [parent, [...targets]])
-    const body = await compress(Buffer.from(JSON.stringify({ integrity: bundle.integrity, ...selection, imports })), { level: 6 })
+    const body = await encodeSources(bundle.integrity, details, selection)
     // A duplicate with the same hash AND format can use these parsed bytes.
     // Another format must not keep a deleted variant's late build alive.
     if (!(await referenced(report, bundle))) return false

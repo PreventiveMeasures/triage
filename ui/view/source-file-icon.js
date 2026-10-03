@@ -1,4 +1,5 @@
 import { html, svg } from 'lit'
+import { langForPath } from '../../common/code-language.js'
 
 const pythonMark = svg`<path d="M8 1C4.5 1 4 1.5 4 3v1h4v1H3C1.5 5 1 6 1 8s.5 3 2 3h1V9c0-1.5 1-2 2.5-2H10c1.5 0 2-.5 2-2V3c0-1.5-.5-2-4-2Z" fill="#3776ab"/><path d="M8 1C4.5 1 4 1.5 4 3v1h4v1H3C1.5 5 1 6 1 8s.5 3 2 3h1V9c0-1.5 1-2 2.5-2H10c1.5 0 2-.5 2-2V3c0-1.5-.5-2-4-2Z" fill="#ffd43b" transform="rotate(180 8 8)"/><circle cx="6" cy="2.8" r=".65" fill="#fff"/><circle cx="10" cy="13.2" r=".65" fill="#fff"/>`
 
@@ -29,21 +30,16 @@ const rustMark = svg`<path d="m7 0 2 0 .4 1.6 1.3.5 1.4-.9 1.4 1.4-.9 1.4.5 1.3 
 const phpMark = svg`<g fill="#8892bf" transform="translate(0 .5) scale(.5)"><path d="M28 10a4 4 0 0 0-4-4h-6v6a6 6 0 0 1-6 6h-2v2h2v6h4v-6h8v6h4V16h2v-4a2 2 0 0 0-2-2"/><path d="M12 4H8v2a6 6 0 0 0-6 6v6a2 2 0 0 0 2 2v2H2.5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5H6a2 2 0 0 0 2-2v-8h4a4 4 0 0 0 4-4V8a4 4 0 0 0-4-4M6 14H4v-2h2Z"/></g>`
 
 // Source-file icons shared by the repository picker and bundle Code view.
-export function sourceFileType(path) {
-  const name = String(path).split('/').at(-1)
-  const extension = name.includes('.') ? name.split('.').at(-1).toLowerCase() : ''
-  if (['js', 'jsx', 'mjs', 'cjs'].includes(extension)) return 'js'
-  if (['ts', 'tsx', 'mts', 'cts'].includes(extension)) return 'ts'
-  if (extension === 'sol') return 'solidity'
-  if (extension === 'rs') return 'rust'
-  if (['php', 'phtml'].includes(extension)) return 'php'
-  if (['py', 'pyw', 'pyi'].includes(extension)) return 'python'
-  if (extension === 'json') return 'json'
+export function sourceFileType(path, format) {
+  const lang = langForPath(path, format)
+  if (['javascript', 'jsx'].includes(lang)) return 'js'
+  if (['typescript', 'tsx'].includes(lang)) return 'ts'
+  if (['solidity', 'rust', 'php', 'python', 'json'].includes(lang)) return lang
   return 'generic'
 }
 
-export function sourceFileIcon(path) {
-  const type = sourceFileType(path)
+export function sourceFileIcon(path, format) {
+  const type = sourceFileType(path, format)
   const mark = type === 'js' || type === 'ts'
     ? svg`<rect x="1" y="1" width="14" height="14" rx="2" fill=${type === 'js' ? '#e6c84f' : '#3178c6'}/><text x="8" y="11.5" text-anchor="middle" fill=${type === 'js' ? '#202020' : '#fff'} font-family="sans-serif" font-size="8" font-weight="700">${type.toUpperCase()}</text>`
     : type === 'solidity'

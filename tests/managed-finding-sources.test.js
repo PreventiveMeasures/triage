@@ -6,6 +6,7 @@ import { clearReportSources, fetchReportSources, readReportSources } from '../ui
 import { pushed, stepped } from '../ui/view/focus-code-history.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { highlight } from '../ui/prism.js'
+import { langForPath } from '../common/code-language.js'
 
 let fullBundleLoads = 0, localDetails, localIntegrity = 'bundle', managed = true
 const state = { focusCodeTick: 0, focusCodeStack: [], focusCodeAt: 0, bundles: [] }
@@ -23,7 +24,7 @@ mock.module('../ui/view/group.js', { namedExports: { activeTabFor: group => grou
 mock.module('../ui/view/format.js', { namedExports: { lineRange: line => line ? { start: Number(line), end: Number(line) } : null } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: { querySelectorAll: () => [] } } })
-mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath: () => 'javascript', highlight: (...args) => Promise.resolve(highlight(...args)) } })
+mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, highlight: (...args) => Promise.resolve(highlight(...args)) } })
 const { attachedBundle, bundleSource, findingSourcePath, focusCodeHistory, focusCodeLinkPosition, focusCodePosition, getFocusCode } = await import('../ui/view/focus-code.js')
 const finding = { _managedReportId: 'report/id', _bundleHashes: ['bundle'], file: 'main.js', line: 1, evidence: [{ file: 'evidence.js' }] }
 const payload = { integrity: 'bundle', files: [['src/main.js', 'main source'], ['src/evidence.js', 'proof source']], paths: [['main.js', 'src/main.js'], ['evidence.js', 'src/evidence.js']] }
@@ -222,6 +223,27 @@ test('local Stasis focus/fullscreen sources retain imports across chained naviga
   assert.match(getFocusCode([local]).highlighted, /data-bundle-source-link="src\/other.js"/u)
   assert.equal(focusCodeLinkPosition([local], localIntegrity, pos.file, 'src/other.js').file, 'src/other.js')
   assert.equal(fullBundleLoads, 1); assert.equal(calls.length, 0)
+})
+
+test('local and managed finding previews retain the format for an extensionless source', async t => {
+  const content = 'const example = require("pkg")', path = 'bin/example'
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ integrity: 'format-managed',
+    files: [[path, content]], paths: [['example', path]], formats: [[path, 'commonjs']] })))
+  await fetchReportSources('format-report')
+  bundleSource('format-managed', 'example', { reportId: 'format-report' })
+  await setImmediate()
+  assert.match(bundleSource('format-managed', path, { reportId: 'format-report' }).highlighted, /class="token keyword">const/u)
+
+  managed = false; localIntegrity = 'format-local'
+  state.bundles = [{ integrity: localIntegrity, name: 'formats.stasis' }]
+  localDetails = { kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { files: { [path]: content } }]]), formats: new Map([[path, 'commonjs']]),
+  }) }
+  bundleSource(localIntegrity, path)
+  await setImmediate()
+  bundleSource(localIntegrity, path)
+  await setImmediate()
+  assert.match(bundleSource(localIntegrity, path).highlighted, /class="token keyword">const/u)
 })
 
 const sourceCatalog = (bundles = []) => [

@@ -45,7 +45,7 @@ class FindingSourceDialog extends AppDialog {
       await this.updateComplete
       if (this._settled || !this.isConnected) return
       revealCitedLines(this.renderRoot.querySelector('.source-scroll'), this.renderRoot.querySelectorAll('.cited'))
-      const lang = langForPath(this._path)
+      const lang = langForPath(this._path, data?.formats?.get(this._path))
       if (lang && this._content !== null) {
         const highlighted = await highlight(this._content, lang)
         if (!this._settled && this.isConnected) this._highlighted = highlighted
