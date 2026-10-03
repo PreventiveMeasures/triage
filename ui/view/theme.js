@@ -1,12 +1,8 @@
-// Theme system + the dark/light toggle button. Defaults to dark;
-// other themes are opt-in and persisted under THEME_KEY. The
-// `<theme-toggle>` element only ever cycles dark↔light — the
-// green / pink easter-egg themes are reachable only via
-// `DeepView.setTheme(name)` (see view/api.js). We do NOT honor the
-// system `prefers-color-scheme` — dark-by-default is intentional
-// (see the comment in styles/theme.css).
+// The selected theme persists; the six-press counter and green/pink unlock
+// live only in this module and reset on reload. Dark remains the default.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { ensureHostAria } from './host-aria.js'
+import { playScreenCrack } from './screen-crack.js'
 // Imported as a text string at build time (see build.js — the
 // lit-css-as-text plugin routes JS-side `.css` imports through the
 // text loader). unsafeCSS just wraps the literal in a CSSResult; the
@@ -18,6 +14,7 @@ const THEME_KEY = 'deepview.theme'
 // Canonical theme list. `dark` is the default (no body class). The
 // rest map to `body.theme-${name}` blocks in styles/theme.css.
 const THEMES = Object.freeze(['dark', 'light', 'green', 'pink'])
+const UNLOCKED_CYCLE = Object.freeze(['green', 'pink', 'light', 'dark'])
 
 // Per-theme `<meta name="theme-color">` values. `base` paints the
 // WCO title-bar / Android browser chrome normally. `dim` swaps in
@@ -38,8 +35,7 @@ const THEME_COLOR = {
 // Sun glyph reads as "switch to light"; moon reads as "switch to dark".
 // The glyph reflects what clicking would DO, not the current state —
 // matches the affordance pattern used by most editors.
-const ICON_LIGHT = '☀'
-const ICON_DARK = '☾'
+const ICONS = { light: '☀', dark: '☾', green: '☘', pink: '✿' }
 
 // Fires on every applyTheme call (including the boot-time replay).
 // The toggle button listens so its icon stays in sync when an
@@ -48,6 +44,19 @@ const THEME_CHANGED = 'deepview-theme-changed'
 
 let currentTheme = 'dark'
 let printDialogOpen = false
+let themePresses = 0
+let themesUnlocked = false
+let themeUnlocking = false
+let themeSelectionVersion = 0
+
+function nextTheme() {
+  if (!themesUnlocked) return currentTheme === 'light' ? 'dark' : 'light'
+  return UNLOCKED_CYCLE[(UNLOCKED_CYCLE.indexOf(currentTheme) + 1) % UNLOCKED_CYCLE.length]
+}
+
+function announceTheme() {
+  window.dispatchEvent(new CustomEvent(THEME_CHANGED, { detail: { theme: currentTheme } }))
+}
 
 function readStored() {
   try {
@@ -74,7 +83,7 @@ function applyTheme(name) {
     const { base, dim } = THEME_COLOR[name]
     meta.setAttribute('content', printDialogOpen ? dim : base)
   }
-  window.dispatchEvent(new CustomEvent(THEME_CHANGED, { detail: { theme: name } }))
+  announceTheme()
 }
 
 // Apply the persisted theme at module evaluation time so the body
@@ -97,22 +106,19 @@ window.addEventListener('afterprint', () => {
 // fall back to dark (which would also clobber the persisted theme).
 export function setTheme(name) {
   if (!THEMES.includes(name)) throw new TypeError('unknown theme')
+  themeSelectionVersion++
   applyTheme(name)
 }
 export function getTheme() { return currentTheme }
 
 class ThemeToggle extends LitElement {
-  static properties = { _light: { state: true } }
+  static properties = { _nextTheme: { state: true } }
 
   static styles = unsafeCSS(themeToggleCSS)
 
   constructor() {
     super()
-    // Read document state, not the persisted theme, so a green / pink
-    // workspace lands on `false` and shows ☀ ("click to go light").
-    // The click handler reads the same way, so a click behaves right
-    // regardless of how we reached the current theme.
-    this._light = document.body.classList.contains('theme-light')
+    this._nextTheme = nextTheme()
   }
 
   connectedCallback() {
@@ -125,6 +131,7 @@ class ThemeToggle extends LitElement {
     // storage events someday) need to update the icon so the
     // affordance the button promises stays accurate.
     window.addEventListener(THEME_CHANGED, this._onThemeChanged)
+    this._onThemeChanged()
   }
 
   disconnectedCallback() {
@@ -135,26 +142,42 @@ class ThemeToggle extends LitElement {
   }
 
   _onThemeChanged = () => {
-    this._light = document.body.classList.contains('theme-light')
+    this._nextTheme = nextTheme()
+    this.setAttribute('aria-disabled', String(themeUnlocking))
   }
 
-  // Only ever lands on dark or light — green / pink are locked behind
-  // the DeepView API. Reads document state (not `this._light`) so a
-  // click from a non-light easter-egg theme switches to light.
   _toggle = () => {
-    const nowLight = document.body.classList.contains('theme-light')
-    applyTheme(nowLight ? 'dark' : 'light')
+    if (themeUnlocking) return
+    if (!themesUnlocked && ++themePresses === 6) {
+      themesUnlocked = true
+      themeUnlocking = true
+      announceTheme()
+      const versionAtStart = themeSelectionVersion
+      const reveal = () => {
+        // An explicit API selection during the effect still takes precedence.
+        if (themeSelectionVersion === versionAtStart) applyTheme('green')
+      }
+      const complete = () => { themeUnlocking = false; announceTheme() }
+      try {
+        void playScreenCrack(reveal).catch(reveal).finally(complete)
+      } catch {
+        reveal()
+        complete()
+      }
+      return
+    }
+    applyTheme(nextTheme())
   }
 
   _onKeydown = (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      this._toggle()
+      if (!e.repeat) this._toggle()
     }
   }
 
   render() {
-    return html`${this._light ? ICON_DARK : ICON_LIGHT}`
+    return html`${ICONS[this._nextTheme]}`
   }
 }
 

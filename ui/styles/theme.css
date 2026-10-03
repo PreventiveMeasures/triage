@@ -2,9 +2,10 @@
 
 /* Default = dark. Other themes are opt-in via `body.theme-${name}`,
    set by view/theme.js from a localStorage flag. The `<theme-toggle>`
-   button cycles between dark and light only; `green` and `pink` are
-   reachable from the console via `DeepView.setTheme(name)` (see
-   view/api.js). We deliberately do NOT honor `prefers-color-scheme`:
+   button initially cycles between dark and light; six presses unlock
+   green and pink until reload. All themes remain available through
+   `DeepView.setTheme(name)` (see view/api.js). We deliberately do NOT honor
+   `prefers-color-scheme`:
    dark-by-default is part of the product's identity (the report
    viewer is meant to feel like an IDE panel, not a document). The
    graph-tab canvas has its own per-theme palette baked into
