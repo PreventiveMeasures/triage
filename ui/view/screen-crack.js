@@ -2,6 +2,7 @@ import { createCrackModel } from './screen-crack-model.js'
 import screenCrackCSS from './screen-crack.css'
 
 const NS = 'http://www.w3.org/2000/svg'
+const CRACK_TIME_SCALE = 1.5
 let effectId = 0
 
 function svgElement(tag, attributes = {}) {
@@ -71,7 +72,7 @@ function drawCracks(group, model, animate) {
       path.style.strokeDashoffset = String(crack.length)
       group.append(path)
       animate(path, [{ strokeDashoffset: String(crack.length) }, { strokeDashoffset: '0' }], {
-        duration: crack.duration, delay: crack.delay, easing: 'cubic-bezier(.2,.7,.2,1)',
+        duration: crack.duration * CRACK_TIME_SCALE, delay: crack.delay * CRACK_TIME_SCALE, easing: 'cubic-bezier(.2,.7,.2,1)',
       })
     }
   }
@@ -129,7 +130,7 @@ export function playScreenCrack(onReveal) {
     { transform: 'translate(3px, -2px)' }, { transform: 'translate(-2px, -2px)' },
     { transform: 'translate(2px, 2px)' }, { transform: 'translate(0, 0)' },
   ], { duration: 450 })
-  const crackDone = Math.max(...model.cracks.map(crack => crack.delay + crack.duration))
+  const crackDone = Math.max(...model.cracks.map(crack => crack.delay + crack.duration)) * CRACK_TIME_SCALE
   const frostDuration = 500
   // Frost develops with the cracks; shards start falling as the last cracks spread.
   const fallStart = Math.max(frostDuration, crackDone * .8)
