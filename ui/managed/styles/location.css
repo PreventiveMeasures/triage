@@ -29,7 +29,7 @@
   padding: .4rem .65rem;
   min-height: 2.25rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   color: var(--text);
   background: var(--bg);
   font-size: .78rem;

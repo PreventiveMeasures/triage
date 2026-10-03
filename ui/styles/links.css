@@ -36,7 +36,7 @@
   padding: .35rem .55rem;
   border-left: 3px solid var(--muted);
   background: rgb(from var(--muted) r g b / .08);
-  border-radius: 0 4px 4px 0;
+  border-radius: var(--ui-radius, 0 4px 4px 0);
   color: var(--muted);
   font-size: .76rem;
 }
@@ -68,7 +68,7 @@
 
 .links-group {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: var(--surface);
   box-shadow: var(--shadow-glass);
   overflow: hidden;
@@ -107,7 +107,7 @@
 }
 .links-report-row {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   background: var(--bg);
   overflow: hidden;
 }

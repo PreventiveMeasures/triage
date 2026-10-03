@@ -283,7 +283,7 @@
 
   &::before { content: ''; position: absolute; inset: -.25rem -2px; }
   &:hover { color: var(--accent); }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 2px); }
 }
 
 /* The hover tooltip — the same snippet the `</>` opens, shown while
@@ -315,7 +315,7 @@
      preview composites onto exactly what it composites onto when
      clicked. */
   background: var(--bg);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
 
   & .code-preview { margin: 0; }
 }
@@ -336,7 +336,7 @@
 .code-preview {
   margin: .3rem 0 .1rem;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   /* The focus view's code pane, in miniature: its glass surface, with
      the gutter's own faint tint over it (below). Source is a thing
      being quoted from somewhere else, and the pane already says so
@@ -610,7 +610,7 @@ details[open] > summary.section-label::after { transform: translateY(-2px) rotat
   color: var(--accent); text-decoration: none;
 
   &:is(a, [role='link']):hover { text-decoration: underline; }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 2px); }
 }
 /* The location links and the marks beside them keep the ordinary text
    cursor: the colour change on hover already says they are live, and a
@@ -684,7 +684,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   white-space: normal;
   margin: .5rem 0;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   /* A neutral tint of the text colour rather than `--surface-active`
      (which `.inline-code` wears): that token is the theme's ACTIVE
      fill — a saturated blue in the light themes — and a whole block
@@ -740,7 +740,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   margin-top: .35rem;
   padding: .1rem .45rem;
   background: transparent;
-  border: 1px solid var(--border); border-radius: 999px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 999px);
   color: var(--muted);
   font: inherit; font-size: .65rem; font-weight: 500;
   white-space: nowrap;
@@ -936,7 +936,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .duplicates-block .file-icon { flex-shrink: 0; }
 
 .mark-action-group {
-  display: inline-flex; border: 1px solid var(--border); border-radius: 3px;
+  display: inline-flex; border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   /* Match row controls without allowing the surrounding surface to tint them. */
   background: linear-gradient(var(--surface), var(--surface)), var(--bg);
   /* Keep each group of action buttons intact when the footer wraps. */
@@ -989,7 +989,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   cursor: default;
   background: linear-gradient(var(--surface), var(--surface)), var(--bg);
   border: 1px solid var(--border); color: var(--muted);
-  border-radius: 3px; padding: 0 .3rem; height: 1.5rem;
+  border-radius: var(--ui-radius, 3px); padding: 0 .3rem; height: 1.5rem;
   display: inline-flex; align-items: center; justify-content: center;
   gap: .25rem;
   font: inherit;
@@ -1022,7 +1022,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   min-width: 7rem;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   padding: .25rem;
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
   display: flex; flex-direction: column;
@@ -1043,7 +1043,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   font-size: .78rem;
   color: var(--text);
   text-align: left;
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
   font-family: inherit;
 }
 .triage-menu-item:not(:disabled):hover { background: var(--surface); }
@@ -1090,7 +1090,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   background: transparent;
   border: 1px solid var(--border);
   padding: .2rem .5rem;
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
   font-size: .72rem;
   font-weight: 500;
   text-transform: uppercase;
@@ -1183,7 +1183,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   grid-column: 1;
   display: block;
   width: 24px; height: 12px;
-  border-radius: 0 0 6px 6px;
+  border-radius: var(--ui-radius, 0 0 6px 6px);
   background: currentcolor;
   box-shadow: inset 0 0 0 1px rgb(from var(--text) r g b / .15);
 }
@@ -1205,7 +1205,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   padding: .35rem .55rem;
   border-left: 3px solid var(--accent);
   background: rgb(from var(--accent) r g b / .08);
-  border-radius: 0 4px 4px 0;
+  border-radius: var(--ui-radius, 0 4px 4px 0);
   font-size: .82rem; color: var(--text);
 }
 .comment-block {
@@ -1234,7 +1234,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   gap: .6rem;
   padding: .45rem .65rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: rgb(from var(--muted) r g b / .04);
   word-break: normal;
   & .fix-label { flex: none; font-size: .75rem; font-weight: 500; }
@@ -1263,7 +1263,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   padding: .35rem .55rem;
   border-left: 3px solid var(--muted);
   background: rgb(from var(--muted) r g b / .1);
-  border-radius: 0 4px 4px 0;
+  border-radius: var(--ui-radius, 0 4px 4px 0);
   font-size: .82rem; color: var(--text);
   /* No `margin-right` on this label, unlike its comment / fix
      siblings: the flex `gap` above already spaces it off the first
@@ -1311,7 +1311,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
 .npm-link {
   display: inline-block;
   padding: 0 .4rem;
-  border: 1px solid var(--border); border-radius: 3px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   font-size: .72rem; font-weight: 500;
   color: var(--muted); text-decoration: none;
 }

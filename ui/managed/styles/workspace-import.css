@@ -3,18 +3,25 @@ h2 { font-size: 1.1rem; margin-bottom: .5rem; }
 .triage-import { display: flex; gap: 1rem; align-items: center; margin: 1.5rem 0 2rem; }
 .triage-import .btn { flex-shrink: 0; }
 .triage-import p { margin: 0; }
-.workspace-drop { display: grid; gap: .8rem; padding: 2rem; margin: 1.5rem 0; border: 1px dashed var(--border); border-radius: 8px; }
+.workspace-drop {
+  display: grid;
+  gap: .8rem;
+  padding: 2rem;
+  margin: 1.5rem 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--ui-radius, 8px);
+}
 .workspace-drop.dragging { border-color: var(--accent); background: rgb(from var(--accent) r g b / .08); }
 .workspace-drop span, p, li span { color: var(--muted); line-height: 1.5; }
 .actions, .local-choice { display: flex; gap: .8rem; flex-wrap: wrap; align-items: center; }
 .local-choice { margin-bottom: 1.5rem; }
 .import-preview { display: grid; gap: .8rem; }
 input:not([type=radio]), select {
-  padding: .55rem; border: 1px solid var(--border); border-radius: 5px;
+  padding: .55rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   color: var(--text); background: var(--bg); font: inherit;
 }
 .import-preview input:not([type=radio]), .import-preview select { width: 100%; box-sizing: border-box; }
-fieldset { display: grid; gap: .8rem; padding: 1rem; border: 1px solid var(--border); border-radius: 5px; }
+fieldset { display: grid; gap: .8rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); }
 fieldset label { display: flex; gap: .5rem; align-items: center; }
 li { padding: .4rem 0; overflow-wrap: anywhere; }
 li span { display: block; font-size: .8rem; }

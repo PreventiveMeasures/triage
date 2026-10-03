@@ -245,8 +245,6 @@ body.theme-paper {
   --surface: #fff;
   --surface-active: #fff;
   --surface-raised: #fff;
-  --theme-toggle-bg: #fff;
-  --theme-toggle-hover-bg: #fff;
   --text: #000;
   --muted: #000;
   --accent: #000;
@@ -264,6 +262,9 @@ body.theme-paper {
   --mark-green-bg: #fff; --mark-green-tab-border: #000;
   --mark-gray-bg: #fff; --mark-gray-tab-border: #000;
   --shadow-glass: none;
+  /* Inherits into shadow roots; each control and panel keeps its own
+     fallback corner shape in the other themes. */
+  --ui-radius: 0;
   accent-color: #000;
   scrollbar-color: #000 #fff;
 
@@ -304,7 +305,9 @@ body.theme-green {
   --bug: #6a7a6a;
   --info: #56c3ff;
   --surface-active: #15301a;
-  --theme-toggle-bg: #9be8b7;
+  --theme-toggle-bg: var(--accent);
+  --theme-toggle-hover-bg: color-mix(in srgb, var(--theme-toggle-bg) 88%, var(--text));
+  --theme-toggle-border: 1px solid var(--border);
   --action-bg: #0f6;
   --action-text: #050a05;
   --gradient-stop-a: rgb(0 255 65 / .08);
@@ -568,7 +571,7 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
   max-width: min(36rem, calc(100vw - 2rem));
   padding: .55rem .75rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-glass);

@@ -14,7 +14,7 @@ const THEME_KEY = 'deepview.theme'
 // Canonical theme list. `dark` is the default (no body class). The
 // rest map to `body.theme-${name}` blocks in styles/theme.css.
 const THEMES = Object.freeze(['dark', 'light', 'green', 'pink', 'paper'])
-const UNLOCKED_CYCLE = Object.freeze(['green', 'pink', 'light', 'paper', 'dark'])
+const UNLOCKED_CYCLE = Object.freeze(['dark', 'green', 'pink', 'paper', 'light'])
 
 // Per-theme `<meta name="theme-color">` values. `base` paints the
 // WCO title-bar / Android browser chrome normally. `dim` swaps in
@@ -34,7 +34,7 @@ const THEME_COLOR = {
 }
 
 // The glyph reflects the active theme.
-const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', paper: '▤' }
+const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', paper: '📄' }
 
 // Fires on every applyTheme call (including the boot-time replay).
 // The toggle button listens so its icon stays in sync when an

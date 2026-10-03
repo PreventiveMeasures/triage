@@ -28,7 +28,7 @@
   gap: .85rem;
   padding: 1.35rem;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--ui-radius, 12px);
   color: var(--text);
   background: var(--panel);
   text-align: left;
@@ -51,7 +51,7 @@
   width: 2.5rem;
   height: 2.5rem;
   border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
-  border-radius: 9px;
+  border-radius: var(--ui-radius, 9px);
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
   color: var(--accent);
 }

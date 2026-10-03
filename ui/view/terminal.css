@@ -209,7 +209,7 @@
   box-sizing: border-box;
   padding: 5px 9px;
   border: 1px solid var(--border, #2c2c2c);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   /* Opaque: these overlap live output, which would otherwise show
      through and make both unreadable. */
   background: var(--bg, #0c0c0c);

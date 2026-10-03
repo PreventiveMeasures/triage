@@ -5,7 +5,7 @@
   padding: 0;
   overflow: hidden;
   background: transparent;
-  border: 1px solid var(--border); border-radius: 3px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   color: var(--muted);
   font: inherit;
   font-size: .7rem;

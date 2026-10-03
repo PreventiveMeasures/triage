@@ -28,7 +28,7 @@
   top: 50%;
   height: var(--rs-track-height);
   transform: translateY(-50%);
-  border-radius: 99px;
+  border-radius: var(--ui-radius, 99px);
   background:
     linear-gradient(to right,
       var(--rs-rail) 0,

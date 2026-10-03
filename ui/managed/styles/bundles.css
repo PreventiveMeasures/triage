@@ -16,7 +16,7 @@ select:focus-visible {
   display: grid;
   place-items: center;
   border: 2px dashed var(--accent);
-  border-radius: 10px;
+  border-radius: var(--ui-radius, 10px);
   background: rgb(from var(--bg) r g b / .94);
   color: var(--accent);
   font-size: 1rem;
@@ -57,7 +57,7 @@ select:focus-visible {
   flex-shrink: 0;
   padding: .3rem .75rem;
   border: 1px solid var(--accent);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   color: var(--bg);
   background: var(--accent);
   font-size: .75rem;
@@ -131,7 +131,7 @@ select:focus-visible {
   height: 2rem;
   padding: .45rem;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: transparent;
   color: var(--muted);
   text-decoration: none;
@@ -164,7 +164,7 @@ select:focus-visible {
 .bundle-group {
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ui-radius, 10px);
   background: var(--panel);
   overflow-x: auto;
 }
@@ -222,7 +222,7 @@ select:focus-visible {
   height: 1.6rem;
   flex-shrink: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--ui-radius, 7px);
   background: transparent;
   color: var(--muted);
 }
@@ -262,7 +262,7 @@ select:focus-visible {
   padding: .7rem .85rem;
   margin-bottom: 1rem;
   border: 1px dashed color-mix(in srgb, var(--muted) 45%, var(--border));
-  border-radius: 11px;
+  border-radius: var(--ui-radius, 11px);
   background: var(--panel);
 }
 .upload-copy strong {
@@ -283,7 +283,7 @@ select:focus-visible {
   height: 1.8rem;
   flex-shrink: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ui-radius, 8px);
   color: var(--muted);
   background: transparent;
 }

@@ -82,7 +82,7 @@
     padding: 0; margin: 0;
     font: inherit;
     color: inherit;
-    border-radius: 4px;
+    border-radius: var(--ui-radius, 4px);
 
     &:focus-visible {
       outline: 2px solid var(--accent);
@@ -91,7 +91,7 @@
   }
   & .brand-tag {
     padding: .08rem .25rem;
-    border: 0; border-radius: 4px;
+    border: 0; border-radius: var(--ui-radius, 4px);
     background: transparent;
     font: inherit;
     font-size: .65rem; font-weight: 500;
@@ -146,7 +146,7 @@
   width: 22px; height: 22px;
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 4px;
+  border: 0; border-radius: var(--ui-radius, 4px);
   padding: 0;
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
@@ -168,7 +168,7 @@
   width: 22px; height: 22px;
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 4px;
+  border: 0; border-radius: var(--ui-radius, 4px);
   padding: 0;
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
@@ -192,7 +192,7 @@
   margin: 0 .55rem .25rem;
   padding: 0 .25rem 0 .55rem;
   background: rgb(from var(--bg) r g b / .45);
-  border: 1px solid var(--border); border-radius: 7px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 7px);
   transition: background .12s, border-color .12s;
   /* The whole row catches click-to-focus on the input (anywhere —
      icon, padding) via the input's `flex: 1` width plus the row's
@@ -250,7 +250,7 @@ sidebar-view-button[hidden] { display: none !important; }
   width: 20px; height: 20px;
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 3px;
+  border: 0; border-radius: var(--ui-radius, 3px);
   padding: 0;
   margin-left: 2px;
   transition: background .12s, color .12s;
@@ -332,7 +332,7 @@ sidebar-view-button[hidden] { display: none !important; }
   width: 18px; height: 18px;
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
-  border: 1px solid transparent; border-radius: 4px;
+  border: 1px solid transparent; border-radius: var(--ui-radius, 4px);
   padding: 0;
 
   &:hover { color: var(--text); border-color: var(--accent); }
@@ -340,7 +340,7 @@ sidebar-view-button[hidden] { display: none !important; }
 
 /* Workspace row layout: name (flex-fill) | hover-revealed share /
    export / leave buttons, hidden until the row is hovered. */
-.file-item.workspace-item { display: block; border-radius: 0 5px 5px 0; }
+.file-item.workspace-item { display: block; border-radius: var(--ui-radius, 0 5px 5px 0); }
 .workspace-heading { display: flex; align-items: stretch; gap: .15rem; }
 .file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
 .workspace-meta {
@@ -353,7 +353,7 @@ sidebar-view-button[hidden] { display: none !important; }
 .workspace-findings { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .workspace-sections {
   display: inline-flex; flex-shrink: 0; margin-left: auto;
-  border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); overflow: hidden;
 }
 .workspace-sections button {
   padding: .06rem .25rem; border: 0;
@@ -375,7 +375,7 @@ sidebar-view-button[hidden] { display: none !important; }
   height: 22px;
   display: none; place-items: center;
   background: transparent; color: var(--muted);
-  border: 1px solid transparent; border-radius: 4px;
+  border: 1px solid transparent; border-radius: var(--ui-radius, 4px);
   padding: 0;
 
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
@@ -407,7 +407,7 @@ sidebar-view-button[hidden] { display: none !important; }
 .workspace-rename-input {
   width: 100%; box-sizing: border-box;
   background: var(--surface); color: var(--text);
-  border: 1px solid var(--accent); border-radius: 3px;
+  border: 1px solid var(--accent); border-radius: var(--ui-radius, 3px);
   padding: 0 .25rem; margin: -1px 0;
   font: inherit; font-size: .76rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -453,7 +453,7 @@ sidebar-view-button[hidden] { display: none !important; }
   transform: translateY(-50%);
   width: 3px; height: 18px;
   background: var(--accent);
-  border-radius: 0 2px 2px 0;
+  border-radius: var(--ui-radius, 0 2px 2px 0);
   pointer-events: none;
 }
 
@@ -462,7 +462,7 @@ sidebar-view-button[hidden] { display: none !important; }
   width: 100%; box-sizing: border-box;
   padding: .2rem .3rem .2rem .55rem;
   background: transparent; color: var(--text);
-  border: 1px solid transparent; border-radius: 0 5px 5px 0;
+  border: 1px solid transparent; border-radius: var(--ui-radius, 0 5px 5px 0);
   font-family: inherit; font-size: .78rem;
   text-align: left;
 
@@ -506,7 +506,7 @@ sidebar-view-button[hidden] { display: none !important; }
 .file-item.workspace-item button.file-name:hover { background: transparent; }
 .file-item.workspace-item.current {
   background: rgb(from var(--accent) r g b / .09);
-  border-radius: 0 5px 5px 0;
+  border-radius: var(--ui-radius, 0 5px 5px 0);
   box-shadow: inset 0 0 0 1px rgb(from var(--accent) r g b / .16);
 }
 .file-item.workspace-item.current button.file-name {
@@ -593,7 +593,7 @@ button:focus-visible {
 }
 .file-group-header.drag-over {
   background: rgb(from var(--accent) r g b / .12);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
 }
 
 .sidebar-actions {
@@ -605,7 +605,7 @@ button:focus-visible {
 
   & button {
     background: transparent; border: 1px solid var(--border); color: var(--muted);
-    border-radius: 4px; padding: .2rem .5rem;
+    border-radius: var(--ui-radius, 4px); padding: .2rem .5rem;
     font-size: .72rem; font-family: inherit;
     /* WCO: the sidebar is a drag surface (theme.css's body baseline
        can't reach this shadow root), so opt the action buttons back
@@ -702,7 +702,7 @@ sidebar-delete-current button {
   padding: .3rem .55rem;
   background: rgb(from var(--medium) r g b / .12);
   border: 1px solid rgb(from var(--medium) r g b / .3);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   color: light-dark(#b25b00, #f0a060);
   font-size: .72rem; font-family: inherit;
   cursor: default; text-align: left;
@@ -730,7 +730,7 @@ sidebar-delete-current button {
 #auth-status[data-authed='1'] {
   display: inline-flex; align-items: center; gap: .4rem;
   max-width: 12rem; padding: .2rem .35rem;
-  border-color: transparent; border-radius: 5px;
+  border-color: transparent; border-radius: var(--ui-radius, 5px);
 }
 #auth-status[data-authed='1']:hover { border-color: transparent; background: rgb(from var(--text) r g b / .07); }
 #manage-status[hidden] { display: none; }
@@ -770,7 +770,7 @@ sidebar-delete-current button {
   flex-direction: column; gap: .1rem;
   background: var(--surface, var(--bg));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   padding: .3rem;
   box-shadow: 0 4px 14px rgb(0 0 0 / .28);
 }
@@ -793,7 +793,7 @@ sidebar-delete-current button {
 }
 .user-menu-row {
   display: block; width: 100%; text-align: left;
-  background: transparent; border: 0; border-radius: 4px;
+  background: transparent; border: 0; border-radius: var(--ui-radius, 4px);
   padding: .4rem .5rem;
   font: inherit; font-size: .82rem; color: var(--text);
 }

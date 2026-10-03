@@ -29,7 +29,7 @@ textarea {
   display: block; width: 100%; box-sizing: border-box;
   min-height: 9rem; max-height: 50vh; resize: vertical;
   padding: .55rem .65rem;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: var(--bg, var(--surface));
   color: var(--text);
   font: inherit; font-size: .88rem; line-height: 1.4;

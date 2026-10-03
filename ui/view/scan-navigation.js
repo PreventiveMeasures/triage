@@ -144,10 +144,10 @@ class LocalScanPage extends LitElement {
   static styles = css`
     :host { display: block; }
     * { box-sizing: border-box; }
-    button { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .5rem; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 5px; font: inherit; font-size: .8rem; cursor: default; }
+    button { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .5rem; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); font: inherit; font-size: .8rem; cursor: default; }
     button:hover:not(:disabled) { color: var(--text); background: var(--surface); }
     button:disabled { opacity: .5; }
-    .access { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); container: scan-access / inline-size; }
+    .access { min-width: 0; border: 1px solid var(--border); border-radius: var(--ui-radius, 9px); background: var(--surface); container: scan-access / inline-size; }
     .access-heading { display: flex; align-items: center; justify-content: space-between; min-height: 2.5rem; padding: .45rem .9rem; border-bottom: 1px solid var(--border); }
     .access h2 { margin: 0; color: var(--text); font-size: .86rem; font-weight: 600; }
     .save-access { min-height: 1.6rem; margin-left: auto; flex-shrink: 0; }
@@ -156,10 +156,10 @@ class LocalScanPage extends LitElement {
     .connection-row { grid-template-columns: minmax(0, 1fr) auto; width: min(42rem, 100%); }
     .provider-row { grid-template-columns: max-content minmax(0, 1fr); width: 100%; }
     .access label { display: grid; gap: .3rem; min-width: 0; color: var(--muted); font-size: .72rem; }
-    input { min-width: 0; width: 100%; height: 2rem; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: inherit; font-size: .8rem; }
+    input { min-width: 0; width: 100%; height: 2rem; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); color: var(--text); font: inherit; font-size: .8rem; }
     .provider-field { min-width: 0; margin: 0; padding: 0; border: 0; }
     .provider-field legend { margin-bottom: .3rem; padding: 0; color: var(--muted); font-size: .72rem; }
-    .provider-options { display: flex; width: fit-content; max-width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); overflow: hidden; }
+    .provider-options { display: flex; width: fit-content; max-width: 100%; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); overflow: hidden; }
     .access .provider-choice { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: .35rem; height: calc(2rem - 2px); padding: .3rem .6rem; color: var(--muted); font-size: .74rem; white-space: nowrap; user-select: none; }
     .provider-choice + .provider-choice { border-left: 1px solid var(--border); }
     .provider-choice:hover { color: var(--text); background: var(--surface); }

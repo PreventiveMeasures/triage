@@ -6,7 +6,7 @@
 .tree-file {
   padding: .6rem .8rem;
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   scroll-margin-top: 1rem;
 }
@@ -40,7 +40,7 @@
   margin-left: .5rem;
   padding: .1rem .45rem;
   background: transparent;
-  border: 1px solid var(--border); border-radius: 999px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 999px);
   color: var(--muted);
   font: inherit; font-size: .65rem; font-weight: 500;
   white-space: nowrap;
@@ -89,7 +89,7 @@
     height: 30px; box-sizing: border-box;
     padding: 0 .65rem;
     background: var(--bg);
-    border: 1px solid var(--border); border-radius: 6px;
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
 
     &:focus-within { border-color: var(--accent); }
 
@@ -140,7 +140,7 @@
 
 .tree-table-list {
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   overflow: hidden;
 }
@@ -156,10 +156,10 @@
   /* Match the parent `.tree-table-list`'s 6px radius on edge
      rows so a `.selected` outline traces the rounded clip
      rather than painting a square inside it. */
-  &:first-child { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+  &:first-child { border-top-left-radius: var(--ui-radius, 6px); border-top-right-radius: var(--ui-radius, 6px); }
   &:last-child {
     border-bottom: none;
-    border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+    border-bottom-left-radius: var(--ui-radius, 6px); border-bottom-right-radius: var(--ui-radius, 6px);
   }
   &.selected { background: rgb(from var(--text) r g b / .06); outline: 1px solid var(--accent); outline-offset: -1px; }
 
@@ -200,7 +200,7 @@
 
 .tree-table-details {
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   display: flex; flex-direction: column;
   position: sticky; top: 1rem;
@@ -221,7 +221,7 @@
 .tree-table-details-close {
   background: transparent; border: 0; color: var(--muted);
   font-size: 1rem; line-height: 1;
-  padding: .15rem .35rem; border-radius: 3px;
+  padding: .15rem .35rem; border-radius: var(--ui-radius, 3px);
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 }
 .tree-table-details-body {

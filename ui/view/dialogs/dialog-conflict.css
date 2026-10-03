@@ -18,7 +18,7 @@ header p {
 .bulk button,
 .actions button {
   background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: 5px;
+  color: var(--text); border-radius: var(--ui-radius, 5px);
   padding: .3rem .8rem;
   font: inherit; font-size: .78rem;
 
@@ -37,7 +37,7 @@ header p {
 /* One card per finding id: head row (severity badge, file:line, id
    chip), description preview, then per-property decision rows. */
 .card {
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   padding: .55rem .7rem .6rem;
   background: rgb(from var(--text) r g b / .02);
 }
@@ -57,7 +57,7 @@ header p {
   font-size: .68rem; color: var(--muted);
   padding: 1px .3rem;
   background: rgb(from var(--text) r g b / .05);
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
 }
 .desc {
   font-size: .78rem; color: var(--muted);
@@ -86,7 +86,7 @@ header p {
   position: relative;
   display: flex; flex-direction: column; gap: .15rem;
   padding: .35rem .5rem;
-  border: 1px solid var(--border); border-radius: 5px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   min-width: 0;
 
   &:has(input:checked) {
