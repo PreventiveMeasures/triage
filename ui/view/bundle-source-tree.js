@@ -1,6 +1,6 @@
 // Display paths may omit a common prefix; leaf values always retain the
 // original bundle key used to open the source and look up findings.
-const vendoredEcosystems = new Set(['cargo', 'composer'])
+const vendoredEcosystems = new Set(['cargo', 'composer', 'soldeer'])
 
 function moduleEcosystem(dir, info, sourcePaths) {
   if (info?.ecosystem !== undefined) return info.ecosystem
@@ -40,9 +40,10 @@ export function bundleSourceTreePrefix(prefix, modules = null, sources = null) {
   let end = match ? match.index + (match[0].startsWith('/') ? 1 : 0) : prefix.length
   const sourcePaths = sources ? new Set(sources) : null
   for (const [dir, info] of modules ?? []) {
-    if (!vendoredEcosystems.has(moduleEcosystem(dir, info, sourcePaths)) || !info.name || dir === '.' || !prefix.startsWith(`${dir}/`)) continue
-    const vendor = /(?:^|\/)vendor\//u.exec(`${dir}/`)
-    const boundary = vendor ? vendor.index + (vendor[0].startsWith('/') ? 1 : 0) : dir.lastIndexOf('/') + 1
+    const ecosystem = moduleEcosystem(dir, info, sourcePaths)
+    if (!vendoredEcosystems.has(ecosystem) || !info.name || dir === '.' || !prefix.startsWith(`${dir}/`)) continue
+    const container = (ecosystem === 'soldeer' ? /(?:^|\/)dependencies\//u : /(?:^|\/)vendor\//u).exec(`${dir}/`)
+    const boundary = container ? container.index + (container[0].startsWith('/') ? 1 : 0) : dir.lastIndexOf('/') + 1
     end = Math.min(end, boundary)
   }
   return prefix.slice(0, end)
@@ -60,6 +61,7 @@ function presentDependencyDirectories(node, packageModules, sourcePaths) {
     node.hideSrc = node.dirs.size === 1 && node.dirs.has('src')
     if (node.hideSrc) node.srcNameConflicts = new Set([...node.dirs.get('src').files.keys()].filter(name => node.files.has(name)))
   }
+  if (/(?:^|\/)dependencies$/u.test(node.path) && [...node.dirs.values()].some(child => child.package?.ecosystem === 'soldeer')) node.boundary = true
   if (/(?:^|\/)vendor$/u.test(node.path)) {
     const dirs = new Map()
     for (const [name, child] of node.dirs) {

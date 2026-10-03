@@ -369,11 +369,12 @@ test('Composer identities follow custom install paths and preserve package roots
   assert.equal(bundleSourceTreePrefix('src/', new Map([['.', { name: 'org/app', ecosystem: 'composer' }]])), 'src/', 'the root workspace is not a dependency')
 })
 
-test('Cargo, Composer, and npm packages retain their own grouping in a mixed-language bundle', () => {
-  const paths = ['vendor/ahash/src/lib.rs', 'vendor/org/package/src/main.php', 'node_modules/@scope/pkg/index.js']
+test('Cargo, Composer, Soldeer, and npm packages retain their own grouping in a mixed-language bundle', () => {
+  const paths = ['vendor/ahash/src/lib.rs', 'vendor/org/package/src/main.php', 'dependencies/@openzeppelin-contracts-5.2.0/Token.sol', 'node_modules/@scope/pkg/index.js']
   const tree = buildBundleSourceTree(paths, paths, new Map([
     ['vendor/ahash', { name: 'ahash', version: '0.8.12', ecosystem: 'cargo' }],
     ['vendor/org/package', { name: 'org/package', version: '1.2.3', ecosystem: 'composer' }],
+    ['dependencies/@openzeppelin-contracts-5.2.0', { name: '@openzeppelin-contracts', version: '5.2.0', ecosystem: 'soldeer' }],
   ]))
   const vendor = tree.dirs.get('vendor')
   assert.equal(sourceDirectoryLabel('ahash', vendor.dirs.get('ahash')), 'ahash - 0.8.12')
@@ -381,7 +382,71 @@ test('Cargo, Composer, and npm packages retain their own grouping in a mixed-lan
   const npm = tree.dirs.get('node_modules').dirs.get('@scope/pkg')
   assert.equal(sourceDirectoryLabel('@scope/pkg', npm), '@scope/pkg')
   assert.equal(npm.package.ecosystem, undefined)
+  const soldeer = tree.dirs.get('dependencies').dirs.get('@openzeppelin-contracts-5.2.0')
+  assert.equal(sourceDirectoryLabel('@openzeppelin-contracts-5.2.0', soldeer), '@openzeppelin-contracts - 5.2.0')
   assert.deepEqual(leaves(tree), paths.toSorted())
+})
+
+test('Soldeer uses recorded identities and keeps versions and original source paths distinct', () => {
+  const modules = new Map([
+    ['dependencies/@openzeppelin-contracts-5.2.0', { name: '@openzeppelin-contracts', version: '5.2.0', ecosystem: 'soldeer', files: { 'contracts/Token.sol': 'token' } }],
+    ['dependencies/@openzeppelin-contracts-4.9.6', { name: '@openzeppelin-contracts', version: '4.9.6', ecosystem: 'soldeer', files: { 'contracts/Token.sol': 'old token' } }],
+    ['dependencies/renamed-install', { name: 'solmate', ecosystem: 'soldeer', files: { 'src/Token.sol': 'solmate' } }],
+  ])
+  const bundle = Bundle.parse(new Bundle({ modules }).serialize())
+  const paths = [...bundle.sources.keys()]
+  const tree = buildBundleSourceTree(paths, paths, bundle.modules)
+  const dependencies = tree.dirs.get('dependencies')
+  assert.equal(dependencies.boundary, true)
+  for (const version of ['5.2.0', '4.9.6']) {
+    const name = `@openzeppelin-contracts-${version}`
+    const pkg = dependencies.dirs.get(name)
+    assert.deepEqual(pkg.package, { name: '@openzeppelin-contracts', version, ecosystem: 'soldeer' })
+    assert.equal(sourceDirectoryLabel(name, pkg), `@openzeppelin-contracts - ${version}`)
+    assert.deepEqual(compactSourceDirectory(name, pkg, 1).names, [name])
+    assert.deepEqual(leaves(filterBundleSourceTree(tree, `@openzeppelin-contracts - ${version}`)), [`dependencies/${name}/contracts/Token.sol`])
+  }
+  const renamed = dependencies.dirs.get('renamed-install')
+  assert.equal(sourceDirectoryLabel('renamed-install', renamed), 'solmate', 'use metadata instead of parsing the directory name')
+  assert.equal(compactSourceDirectory('renamed-install', renamed, 1).node.sourcePath, 'dependencies/renamed-install/src')
+  assert.deepEqual(leaves(filterBundleSourceTree(tree, 'solmate/Token.sol')), ['dependencies/renamed-install/src/Token.sol'])
+  assert.deepEqual(leaves(filterBundleSourceTree(tree, 'dependencies/renamed-install/src/')), ['dependencies/renamed-install/src/Token.sol'])
+  assert.deepEqual(leaves(tree), paths.toSorted())
+})
+
+test('Soldeer retains its dependencies group when every source shares a package prefix', () => {
+  for (const checkout of ['', '/checkout/', 'packages/app/']) {
+    const dir = `${checkout}dependencies/@openzeppelin-contracts-5.2.0`
+    const file = `${dir}/src/Token.sol`
+    const modules = new Map([[dir, { name: '@openzeppelin-contracts', version: '5.2.0', ecosystem: 'soldeer' }]])
+    const prefix = bundleSourceTreePrefix(`${dir}/src/`, modules)
+    assert.equal(prefix, checkout)
+    const tree = buildBundleSourceTree([file.slice(prefix.length)], [file], modules)
+    const dependencies = tree.dirs.get('dependencies')
+    assert.equal(dependencies.boundary, true)
+    assert.deepEqual(compactSourceDirectory('dependencies', dependencies, 0).names, ['dependencies'])
+    const pkg = dependencies.dirs.get('@openzeppelin-contracts-5.2.0')
+    assert.deepEqual(leaves(compactSourceDirectory('@openzeppelin-contracts-5.2.0', pkg, 1).node), [file])
+    assert.deepEqual(leaves(filterBundleSourceTree(tree, '@openzeppelin-contracts - 5.2.0/Token.sol', prefix)), [file])
+  }
+})
+
+test('Soldeer recognition does not guess ecosystems or fold a src directory with siblings', () => {
+  const dir = 'dependencies/pkg-1.0.0'
+  const paths = [`${dir}/src/Token.sol`, `${dir}/test/Token.t.sol`]
+  const info = { name: 'pkg', version: '1.0.0' }
+  for (const ecosystem of [undefined, 'github', 'npm']) {
+    const modules = new Map([[dir, { ...info, ecosystem }]])
+    const tree = buildBundleSourceTree(paths, paths, modules)
+    const pkg = tree.dirs.get('dependencies').dirs.get('pkg-1.0.0')
+    assert.equal(pkg.package, undefined)
+    assert.equal(sourceDirectoryLabel('pkg-1.0.0', pkg), 'pkg-1.0.0')
+    assert.equal(bundleSourceTreePrefix(`${dir}/src/`, modules), `${dir}/src/`)
+  }
+  const tree = buildBundleSourceTree(paths, paths, new Map([[dir, { ...info, ecosystem: 'soldeer' }]]))
+  const pkg = filterBundleSourceTree(tree, 'src/Token.sol').dirs.get('dependencies').dirs.get('pkg-1.0.0')
+  assert.equal(pkg.hideSrc, false)
+  assert.ok(compactSourceDirectory('pkg-1.0.0', pkg, 1).node.dirs.has('src'))
 })
 
 test('untagged PHP-only vendor modules use Composer rows and preserve package roots under common prefixes', () => {

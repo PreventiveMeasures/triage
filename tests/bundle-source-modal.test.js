@@ -78,7 +78,7 @@ test('closing during loading keeps the popup closed after sources arrive', () =>
   assert.equal(renderText(renderBundleSourceModal()), '')
 })
 
-test('Code renders Composer package rows, PHP file icons, and physical tooltips alongside Cargo and npm', () => {
+test('Code renders Composer and Soldeer package rows with physical tooltips alongside Cargo and npm', () => {
   const entry = { name: 'mixed.stasis', integrity: 'sha512-composer-code' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([
     ['.', { name: 'app', files: { 'index.PHP': 'own', 'views/main.phtml': 'view' } }],
@@ -86,6 +86,7 @@ test('Code renders Composer package rows, PHP file icons, and physical tooltips 
     ['vendor/org/dirs', { name: 'org/dirs', version: 'dev-main', ecosystem: 'composer', files: { 'src/main.php': 'main', 'lib/helper.php': 'helper' } }],
     ['vendor/org/root', { name: 'org/root', ecosystem: 'composer', files: { 'main.php': 'main' } }],
     ['vendor/ahash', { name: 'ahash', version: '0.8.12', ecosystem: 'cargo', files: { 'src/lib.rs': 'lib' } }],
+    ['dependencies/@openzeppelin-contracts-5.2.0', { name: '@openzeppelin-contracts', version: '5.2.0', ecosystem: 'soldeer', files: { 'contracts/Token.sol': 'contract Token {}' } }],
     ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'dep' } }],
   ]) }).serialize())
   state.currentView = 'bundles'
@@ -101,6 +102,11 @@ test('Code renders Composer package rows, PHP file icons, and physical tooltips 
   assert.equal(rail.match(/class="bundle-code-tree-composer"/gu).length, 3)
   assert.equal(rail.match(/class="bundle-code-tree-cargo"/gu).length, 1)
   assert.equal(rail.match(/class="bundle-code-tree-npm"/gu).length, 1)
+  const soldeerRows = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).filter(row => row.includes('class="bundle-code-tree-soldeer"'))
+  assert.equal(soldeerRows.length, 1)
+  assert.match(soldeerRows[0], /class="bundle-code-tree-package-name">@openzeppelin-contracts<\/span><span class="bundle-code-tree-package-version">- 5\.2\.0<\/span>/u)
+  assert.match(soldeerRows[0], /data-tooltip=dependencies\/@openzeppelin-contracts-5\.2\.0>/u)
+  assert.match(rail, /data-bundle-view-source=dependencies\/@openzeppelin-contracts-5\.2\.0\/contracts\/Token\.sol/u)
   const composerRows = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).filter(row => row.includes('class="bundle-code-tree-composer"')).join('')
   assert.match(composerRows, /class="bundle-code-tree-package-name">org\/package<\/span><span class="bundle-code-tree-package-version">- 1\.2\.3<\/span>/u)
   assert.match(composerRows, /class="bundle-code-tree-package-name">org\/dirs<\/span><span class="bundle-code-tree-package-version">- dev-main<\/span>/u)
