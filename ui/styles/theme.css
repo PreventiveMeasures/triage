@@ -228,14 +228,6 @@ body.theme-paper {
   --mark-green-bg: #aceebb; --mark-green-tab-border: #4ac26b;
   --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
   --badge-low-text: #fff;
-
-  /* Per-file count chip in the Files tab — flips to white text on
-     the saturated slate `--low` fill. The in-shadow-DOM badge gets
-     the same flip via `--badge-low-text` (defined above), so the
-     per-file chip and the row badge both read consistently. The
-     in-graph tree-count-chip / tt-chip variants stay on the dark
-     palette (graph view doesn't follow the theme). */
-  & .tree-view .tree-count-chip.low { color: #fff; }
 }
 
 /* Paper shares the light palette, with white surfaces and black chrome. */
@@ -289,6 +281,9 @@ body.theme-paper {
     border: 0;
     padding: 0;
   }
+
+  & .bundles-overview-summary,
+  & .bundles-overview-columns { padding: 0; }
 
   & .page-head {
     --header-tag-border: 0;

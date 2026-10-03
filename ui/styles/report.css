@@ -959,7 +959,7 @@ bundle-code-search {
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
   &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); }
+  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
   &.sev-high_bug      { background: var(--high-bug); }
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
@@ -984,8 +984,9 @@ bundle-code-search {
    Short directory chains share a row; nested groups retain a quiet guide. */
 .bundle-code-tree {
   list-style: none;
-  margin: 0 0 0 13px;
-  padding: 0 0 0 3px;
+  /* Move the guide right while preserving each nested row's total inset. */
+  margin: 0 0 0 14px;
+  padding: 0 0 0 2px;
   border-left: 1px solid var(--border);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .75rem;
@@ -1068,8 +1069,9 @@ bundle-code-search {
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
 }
-body:is(.theme-light, .theme-pink, .theme-paper) .bundle-code-tree-count:is(.sev-critical, .sev-high, .sev-high_bug, .sev-bug) {
-  color: #fff;
+body:is(.theme-light, .theme-pink, .theme-paper)
+  :is(.bundle-code-tree-count, .bundle-code-search-issue-sev, .bundle-issue-sev, .bundle-source-panel-sev, .bundle-advisory-severity) {
+  &:is(.sev-critical, .sev-high, .sev-high_bug, .sev-bug) { color: #fff; }
 }
 
 /* Right column — header (selected file path) + body (source +
@@ -1674,7 +1676,7 @@ bundle-search {
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
   &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); }
+  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
   &.sev-high_bug      { background: var(--high-bug); }
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
@@ -2264,7 +2266,7 @@ body.report-fullscreen {
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
   &.sev-medium        { background: var(--medium); }
-  &.sev-low           { background: var(--low); }
+  &.sev-low           { background: var(--low); color: var(--badge-low-text); }
   &.sev-high_bug      { background: var(--high-bug); }
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
@@ -3152,7 +3154,7 @@ body.report-fullscreen {
   &.sev-critical { background: var(--critical); color: #fff; }
   &.sev-high     { background: var(--high); }
   &.sev-moderate { background: var(--medium); }
-  &.sev-low      { background: var(--low); }
+  &.sev-low      { background: var(--low); color: var(--badge-low-text); }
   &.sev-info     { background: var(--info); color: #fff; }
 }
 .bundle-advisory-cvss-score {

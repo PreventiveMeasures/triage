@@ -17,7 +17,7 @@
   &.critical      { background: var(--critical); color: #fff; }
   &.high          { background: var(--high); color: #fff; }
   &.medium        { background: var(--medium); color: #000; }
-  &.low           { background: var(--low); color: #000; }
+  &.low           { background: var(--low); color: var(--badge-low-text); }
   &.high_bug      { background: var(--high-bug); color: #fff; }
   &.bug           { background: var(--bug); color: #fff; }
   &.informational { background: var(--info); color: #fff; }
