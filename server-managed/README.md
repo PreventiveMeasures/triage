@@ -563,7 +563,7 @@ Both endpoints support HEAD, compressed Content-Length when known, and
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,
 Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
-repository advisories through an anonymous GitHub client. Modules without an
+repository advisories. Modules without an
 ecosystem retain the legacy npm lookup when installed under `node_modules`;
 the root module is excluded. As in `stasis audit`, a dependency must have a recorded
 evidence file: manifests and the verified browser stubs of `ws` (through 8.21.1)
@@ -584,14 +584,19 @@ and optional severity, title, CVSS and range. Failures return 502 with
 `upstream-unavailable`, without source contents or scan findings.
 The managed Advisories tab loads it directly, without a consent prompt, and lists
 dependencies that could not be audited separately from the results.
-Its top-right **Recheck against repositories** button requests `?repoAdvisories=true`,
+Its **Recheck against repositories** button, immediately left of Scope, requests `?repoAdvisories=true`,
 passing the same upstream option as `stasis audit --repo-advisories`. This adds
 maintainer-published advisories for npm, Cargo and Composer dependencies, including
 ones not yet in the registry/OSV results, with upstream's version matching and
-deduplication. Rechecks use the selected reason and the same anonymous GitHub client;
+deduplication. Rechecks use the selected reason;
 GitHub rate limits and the 30-second caller deadline still apply. The button shows
 **Rechecking…** and is disabled during the request. Transient failures preserve
 the previous results; a denied or missing bundle discards them.
+For both initial audits and repository rechecks, GitHub requests use the current
+viewer's stored access token, refreshing it within the audit deadline when needed.
+Public shares and viewers without a usable token use an anonymous client. Credentials
+are sent only to GitHub, never to npm, OSV or the other registries. Ordinary npm-only
+audits contact only npm; GitHub requests are added by the repository recheck.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.
