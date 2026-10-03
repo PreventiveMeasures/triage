@@ -62,6 +62,7 @@ const TAG_TO_LANG = {
   sol: 'solidity', solidity: 'solidity',
   rs: 'rust', rust: 'rust',
   rb: 'ruby', ruby: 'ruby',
+  py: 'python', python: 'python', py3: 'python', python3: 'python',
   php: 'php', phtml: 'php',
   java: 'java',
   cpp: 'cpp', 'c++': 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', 'h++': 'cpp', h: 'cpp',

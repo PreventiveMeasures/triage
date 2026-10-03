@@ -54,6 +54,7 @@ describe('langForTag — recognized tags', () => {
     assert.equal(langForTag('java'), 'java')
     assert.equal(langForTag('rb'), 'ruby')
     assert.equal(langForTag('ruby'), 'ruby')
+    for (const tag of ['py', 'python', 'py3', 'python3']) assert.equal(langForTag(tag), 'python', tag)
   })
 
   it('maps the C-family tags', () => {
@@ -78,7 +79,7 @@ describe('langForTag — recognized tags', () => {
 
 describe('langForTag — everything else', () => {
   it('refuses a language the bundle carries no grammar for', () => {
-    for (const tag of ['python', 'py', 'go', 'sql', 'diff', 'text', 'swift', 'kotlin']) {
+    for (const tag of ['go', 'sql', 'diff', 'text', 'swift', 'kotlin']) {
       assert.equal(langForTag(tag), null, tag)
     }
   })
@@ -138,12 +139,12 @@ describe('langForTag — allowlist matches the prism bundle', () => {
       'sh', 'bash', 'shell', 'zsh', 'console', 'json', 'css', 'yml', 'yaml', 'md', 'markdown',
       'html', 'htm', 'xml', 'svg', 'markup', 'sol', 'solidity', 'rs', 'rust', 'php', 'phtml',
       'java', 'c', 'cpp', 'c++', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 'h++', 'h',
-      'objc', 'objectivec', 'objective-c', 'm', 'mm', 'rb', 'ruby',
+      'objc', 'objectivec', 'objective-c', 'm', 'mm', 'rb', 'ruby', 'py', 'python', 'py3', 'python3',
     ]
     for (const tag of tags) assert.ok(langForTag(tag), `${tag} should be allowlisted`)
     for (const ext of [
       'ts', 'tsx', 'js', 'jsx', 'json', 'css', 'html', 'yml', 'sh', 'md', 'sol', 'php', 'rs',
-      'java', 'c', 'h', 'cpp', 'cc', 'cxx', 'c++', 'hpp', 'hh', 'hxx', 'h++', 'm', 'mm', 'rb',
+      'java', 'c', 'h', 'cpp', 'cc', 'cxx', 'c++', 'hpp', 'hh', 'hxx', 'h++', 'm', 'mm', 'rb', 'py', 'pyw', 'pyi',
     ]) {
       assert.ok(langForPath(`a/b.${ext}`), `.${ext} should resolve for the source viewers`)
     }
