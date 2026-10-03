@@ -94,8 +94,8 @@ export const SCAN_PAGE_STYLES = css`
   .check { display: inline-flex; align-items: center; gap: .4rem; color: var(--text); font-size: .75rem; }
   .check input { width: .85rem; height: .85rem; accent-color: var(--accent); }
   .switch { display: inline-flex; align-items: center; gap: .45rem; color: var(--text); font-size: .74rem; cursor: default; }
-  .switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-  .switch-track { position: relative; width: 2rem; height: 1.1rem; border-radius: var(--ui-radius, 999px); background: var(--surface-active); transition: background .12s; }
+  .switch input { position: var(--switch-input-position, absolute); width: var(--switch-input-size, 1px); height: var(--switch-input-size, 1px); opacity: var(--switch-input-opacity, 0); margin: 0; accent-color: var(--accent); }
+  .switch-track { display: var(--switch-track-display, block); position: relative; width: 2rem; height: 1.1rem; border-radius: var(--ui-radius, 999px); background: var(--surface-active); transition: background .12s; }
   .switch-track::after { content: ''; position: absolute; top: .15rem; left: .15rem; width: .8rem; height: .8rem; border-radius: 50%; background: var(--muted); transition: transform .12s, background .12s; }
   .switch input:checked + .switch-track { background: rgb(from var(--accent) r g b / .4); }
   .switch input:checked + .switch-track::after { transform: translateX(.9rem); background: var(--accent); }

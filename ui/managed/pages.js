@@ -536,7 +536,7 @@ class ManagedAdminRepos extends ManagedPage {
       </div>` : nothing}
       <div class="toolbar">
         <label class="search"><input type="search" aria-label=${connected ? 'Search connected repositories' : `Search ${this._scope} repositories`} placeholder="Search by repository or owner…" .value=${this._query} @input=${(e) => this._search(e.target.value)}></label>
-        ${this._scope === 'installed' ? html`<label class="show-all"><input type="checkbox" role="switch" .checked=${this._showAll} @change=${(event) => this._setShowAll(event.target.checked)}><span>Show all</span></label>` : nothing}
+        ${this._scope === 'installed' ? html`<label class="show-all"><input type="checkbox" role="switch" .checked=${this._showAll} @change=${(event) => this._setShowAll(event.target.checked)}><span>Show all</span></label><label class="show-all-paper"><input type="checkbox" .checked=${this._showAll} @change=${(event) => this._setShowAll(event.target.checked)}><span>Show all</span></label>` : nothing}
         ${connected ? html`<span class="result-count" role="status">${this._data && (this._query.trim() || choices.activeFacet != null) ? `${choices.count} ${choices.count === 1 ? 'repository' : 'repositories'} out of ` : ''}${this._data?.connectedCount ?? '…'} connected</span>`
           : html`<button type="button" class="btn" ?disabled=${this._loading} @click=${() => { void this._load(true) }}>Refresh</button>`}
       </div>
