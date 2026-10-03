@@ -269,31 +269,10 @@ test('bundle location editing retains the collection and directory on failure, t
   assert.equal(page._error, null, 'a successful retry clears the previous action error')
 })
 
-test('bundle uploads include the selected repository and encoded directory', async t => {
-  const page = createPage(customElements.get('managed-admin-bundles'))
-  page.session = adminSession
-  page._repoId = 7
-  page._repoDirectory = '/foo/with space'
-  let uploaded = false
-  t.mock.method(globalThis, 'fetch', (_url, options) => {
-    if (options.method === 'POST') {
-      assert.equal(options.headers['x-repo-id'], '7')
-      assert.equal(options.headers['x-repo-directory'], '%2Ffoo%2Fwith%20space')
-      uploaded = true
-    }
-    return Promise.resolve(Response.json({ bundles: [], repos: [] }))
-  })
-  await page._upload([new File(['{}'], 'source.map')])
-  assert.equal(uploaded, true)
-  assert.equal(page._error, null)
-})
-
-test('upload batches preserve arrival order, use current metadata, and discard the rest on failure', async t => {
+test('upload batches preserve arrival order, use the current token without location overrides, and discard the rest on failure', async t => {
   for (const kind of ['report', 'bundle']) {
     const page = createPage(customElements.get(`managed-admin-${kind}s`))
     page.session = adminSession
-    page._repoId = 7
-    page._repoDirectory = ' first '
     const first = Promise.withResolvers()
     const requests = []
     let refreshes = 0
@@ -314,15 +293,13 @@ test('upload batches preserve arrival order, use current metadata, and discard t
       assert.equal(page._busy, true)
       assert.equal(requests.length, 1, 'only one upload runs at a time')
       page.session = { ...adminSession, csrfToken: 'rotated' }
-      page._repoId = 8
-      page._repoDirectory = ' next directory '
       first.resolve(Response.json({ ok: true }))
       await pending
       assert.deepEqual(requests.map(request => request.name), ['first.json', 'second.json'])
-      assert.equal(requests[0].headers['x-repo-id'], '7')
-      assert.equal(requests[0].headers['x-repo-directory'], 'first')
-      assert.equal(requests[1].headers['x-repo-id'], '8')
-      assert.equal(requests[1].headers['x-repo-directory'], 'next%20directory')
+      for (const request of requests) {
+        assert.equal(request.headers['x-repo-id'], undefined)
+        assert.equal(request.headers['x-repo-directory'], undefined)
+      }
       assert.equal(requests[1].headers['x-csrf-token'], 'rotated')
       assert.deepEqual(page._queue, [])
       assert.equal(page._busy, false)

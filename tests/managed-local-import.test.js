@@ -519,7 +519,6 @@ test('both managed pages send selected local files through their authenticated u
     page.appState = new ManagedAppState()
     const affected = ['history', 'scan-sources', 'repo-impact:101', ...(kind === 'bundle' ? ['reports'] : [])]
     for (const key of [...affected, 'users']) await page.appState.load(key, key, () => 'cached')
-    page._repoId = 101
     page.localImportSource = f.source
     const posts = []
     const fetch = t.mock.method(globalThis, 'fetch', (url, options = {}) => {
@@ -543,7 +542,8 @@ test('both managed pages send selected local files through their authenticated u
     assert.equal(url, `/api/admin/${kind}s`)
     assert.equal(options.credentials, 'same-origin')
     assert.equal(options.headers['x-csrf-token'], 'test-csrf')
-    assert.equal(options.headers['x-repo-id'], '101')
+    assert.equal(options.headers['x-repo-id'], undefined)
+    assert.equal(options.headers['x-repo-directory'], undefined)
     assert.equal(options.headers[`x-${kind}-filename`], kind === 'report' ? 'report.md' : 'source.map')
     assert.equal(options.body instanceof File, true)
     assert.equal(page._busy, false)

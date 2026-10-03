@@ -95,7 +95,7 @@
   background: var(--panel);
 }
 .reports {
-  min-width: 58rem;
+  min-width: 61rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -103,13 +103,13 @@
 .report-list-head,
 .report-main {
   display: grid;
-  grid-template-columns: 1.5rem minmax(12rem, 1fr) minmax(8rem, .6fr) 17rem 4.1rem 9rem;
+  grid-template-columns: 1.5rem minmax(12rem, 1fr) minmax(8rem, .6fr) 8rem 6.5rem 4.5rem 4.1rem 9rem;
   align-items: center;
   gap: .7rem;
   padding: .35rem .85rem;
 }
 .report-list-head {
-  min-width: 58rem;
+  min-width: 61rem;
   min-height: 2.25rem;
   color: var(--muted);
   background: rgb(from var(--text) r g b / .025);
@@ -151,7 +151,7 @@
 }
 .report-name,
 .report-location,
-.report-meta > span {
+.report-meta {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -162,21 +162,19 @@
   font-size: .7rem;
 }
 .report-meta {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: .65rem;
   color: var(--muted);
   font-size: .68rem;
   font-variant-numeric: tabular-nums;
 }
-.report-meta > span:first-child {
-  flex: 1;
+.report-uploader {
   color: var(--text);
   opacity: .8;
   font-size: .72rem;
 }
-.report-meta > span:last-child { flex-shrink: 0; }
+.report-size,
+.size-heading {
+  text-align: right;
+}
 .status {
   display: inline-flex;
   align-items: center;
