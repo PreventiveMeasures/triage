@@ -431,6 +431,26 @@ test('Soldeer retains its dependencies group when every source shares a package 
   }
 })
 
+test('vendored packages retain a shared container prefix when no project sources are captured', () => {
+  for (const [ecosystem, container, installs, file] of [
+    ['soldeer', 'dependencies', ['foo-1.0.0', 'bar-2.0.0'], 'src/Token.sol'],
+    ['cargo', 'vendor', ['foo', 'bar'], 'src/lib.rs'],
+    ['composer', 'vendor', ['org/foo', 'org/bar'], 'src/main.php'],
+  ]) {
+    for (const checkout of ['', '/checkout/', 'packages/app/']) {
+      const modules = new Map(installs.map(name => [`${checkout}${container}/${name}`, { name, ecosystem }]))
+      const paths = [...modules.keys()].map(dir => `${dir}/${file}`)
+      const prefix = bundleSourceTreePrefix(`${checkout}${container}/`, modules, paths)
+      assert.equal(prefix, checkout)
+      const tree = buildBundleSourceTree(paths.map(path => path.slice(prefix.length)), paths, modules)
+      assert.deepEqual([...tree.dirs.keys()], [container])
+      assert.equal(tree.dirs.get(container).boundary, true)
+      assert.equal(tree.dirs.get(container).dirs.size, 2)
+      assert.deepEqual(leaves(tree), paths.toSorted())
+    }
+  }
+})
+
 test('Soldeer recognition does not guess ecosystems or fold a src directory with siblings', () => {
   const dir = 'dependencies/pkg-1.0.0'
   const paths = [`${dir}/src/Token.sol`, `${dir}/test/Token.t.sol`]

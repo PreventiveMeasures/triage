@@ -41,7 +41,8 @@ export function bundleSourceTreePrefix(prefix, modules = null, sources = null) {
   const sourcePaths = sources ? new Set(sources) : null
   for (const [dir, info] of modules ?? []) {
     const ecosystem = moduleEcosystem(dir, info, sourcePaths)
-    if (!vendoredEcosystems.has(ecosystem) || !info.name || dir === '.' || !prefix.startsWith(`${dir}/`)) continue
+    if (!vendoredEcosystems.has(ecosystem) || !info.name || dir === '.') continue
+    if (!prefix.startsWith(`${dir}/`) && !dir.startsWith(prefix)) continue
     const container = (ecosystem === 'soldeer' ? /(?:^|\/)dependencies\//u : /(?:^|\/)vendor\//u).exec(`${dir}/`)
     const boundary = container ? container.index + (container[0].startsWith('/') ? 1 : 0) : dir.lastIndexOf('/') + 1
     end = Math.min(end, boundary)
