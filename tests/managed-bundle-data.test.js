@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { constants, createGzip } from 'node:zlib'
 import { beforeEach, test } from 'node:test'
-import { fetchBundleContents } from '../ui/managed/bundle-data.js'
+import { fetchBundleContents, fetchBundleMetadata, fetchBundleOrigin } from '../ui/managed/bundle-data.js'
 import { managedAppState } from '../ui/managed/state.js'
 import { beginViewNavigation, currentViewSignal } from '../ui/view/view-navigation.js'
 
@@ -89,6 +89,36 @@ test('rotating a token preserves an active contents request; actual failures sti
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response('', { status: 503 })))
   await assert.rejects(fetchBundleContents('bundle/id'), /503/u)
   assert.deepEqual(stream.notices, ["Couldn't load bundle contents: Bundle contents request failed (503)"])
+})
+
+test('origin reference failures stay local while ordinary metadata failures still notify', async t => {
+  const notices = []
+  t.mock.method(managedAppState, 'notify', message => notices.push(message))
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response('', { status: 503 })))
+  await assert.rejects(fetchBundleOrigin('bundle/id'), /503/u)
+  assert.deepEqual(notices, [])
+  await assert.rejects(fetchBundleMetadata('bundle/id'), /503/u)
+  assert.deepEqual(notices, ["Couldn't refresh bundle metadata: Bundle metadata request failed (503)"])
+})
+
+test('session changes abort origin reads and discard late response bodies', async t => {
+  const body = Promise.withResolvers()
+  const reading = Promise.withResolvers()
+  const notices = []
+  let signal
+  t.mock.method(managedAppState, 'notify', message => notices.push(message))
+  t.mock.method(globalThis, 'fetch', (_url, options) => {
+    signal = options.signal
+    return Promise.resolve({ ok: true, json: () => { reading.resolve(); return body.promise } })
+  })
+  const loading = fetchBundleOrigin('bundle/id')
+  const rejected = assert.rejects(loading, { name: 'AbortError' })
+  await reading.promise
+  managedAppState.reset()
+  assert.equal(signal.aborted, true)
+  body.resolve({ bundle: { repo: { github: 'previous/session' } } })
+  await rejected
+  assert.deepEqual(notices, [])
 })
 
 test('advisories send only an encoded bundle ID and team, using managed session cancellation', async t => {

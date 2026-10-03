@@ -11,6 +11,7 @@ import { REPORT_LOGOS } from '../view/report-logos.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
+import { fetchBundleOrigin } from './bundle-data.js'
 import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import localImportStyles from './styles/local-import.css'
@@ -840,7 +841,7 @@ class ManagedAdminReports extends ManagedPage {
         <h1 class="sr-only">Reports</h1>
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page, or browse your computer.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+        <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
         ${this._body()}
       </div>`
@@ -851,7 +852,8 @@ class ManagedAdminReports extends ManagedPage {
     const query = this._query.trim().toLocaleLowerCase()
     const filtered = reports.filter(report => [report.filename, report.repoFullName, report.repoDirectory, report.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
       && (this._visibility === 'all' || Boolean(report.visible) === (this._visibility === 'visible')))
-    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : `${filtered.length} of ${reports.length} reports`}</span></div>
+    const count = `${query || this._visibility !== 'all' ? `${filtered.length} of ` : ''}${reports.length} ${reports.length === 1 ? 'report' : 'reports'}`
+    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : count}</span></div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
   }
@@ -981,6 +983,8 @@ class ManagedAdminBundles extends ManagedPage {
     _creating: { state: true },
     _data: { state: true },
     _locationBundle: { state: true },
+    _locationOrigin: { state: true },
+    _locationOriginError: { state: true },
     _locationRepo: { state: true },
     _locationDirectory: { state: true },
     _locationBusy: { state: true },
@@ -999,6 +1003,9 @@ class ManagedAdminBundles extends ManagedPage {
     this._error = null
     this._busy = false
     this._locationBundle = null
+    this._locationOrigin = null
+    this._locationOriginError = null
+    this._locationOriginRequest = null
     this._locationRepo = null
     this._locationDirectory = ''
     this._locationBusy = false
@@ -1018,12 +1025,14 @@ class ManagedAdminBundles extends ManagedPage {
   disconnectedCallback() {
     super.disconnectedCallback()
     this._teardownDrop?.()
+    this._closeLocation()
   }
 
   async _load({ preserveError = false } = {}) {
     if (!preserveError) this._error = null
     await this._loadCollection('bundles', 'bundles', fetchBundles, data => {
       this._data = data
+      if (this._locationBundle && !data.bundles?.some(bundle => bundle.id === this._locationBundle)) this._closeLocation()
     })
   }
 
@@ -1073,12 +1082,18 @@ class ManagedAdminBundles extends ManagedPage {
 
   _body() {
     const bundles = Array.isArray(this._data?.bundles) ? this._data.bundles : []
-    const unassigned = bundles.filter((bundle) => bundle.repoId == null).length
-    const bytes = bundles.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
     const query = this._query.trim().toLocaleLowerCase()
     const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+    const unassigned = filtered.filter(bundle => bundle.repoId == null).length
+    const bytes = filtered.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
+    const count = `${query ? `${filtered.length} of ` : ''}${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}`
     const groups = Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')
-    return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}></div><div class="section-head"><h2>Stored bundles</h2><span class="summary"><span>${this._data == null ? '… bundles' : `${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}`}</span><span>${this._data == null ? '…' : formatBytes(bytes)}</span><span class="unassigned">${this._data == null ? '… unattached' : unassigned ? `${unassigned} unattached` : ''}</span></span></div>
+    return html`<div class="collection-toolbar" role="search">
+      <input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}>
+      <span class="summary result-count" role="status"><span>${this._data == null ? '… bundles' : count}</span><span>${this._data == null ? '…' : formatBytes(bytes)}</span>
+        ${this._data == null || unassigned ? html`<span class="unassigned">${this._data == null ? '… unattached' : `${unassigned} unattached`}</span>` : nothing}
+      </span>
+    </div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading bundles…')) : filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${query ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${query ? 'Try another filename or repository.' : 'Drop source archives here or browse files above.'}</p></div>`}</div>`
   }
@@ -1105,15 +1120,47 @@ class ManagedAdminBundles extends ManagedPage {
 
   _openLocation(bundle) {
     if (this._locationBusy || bundle.canChangeRepo === false) return
+    this._closeLocation()
     this._locationBundle = bundle.id
     this._locationRepo = bundle.repoId ?? null
     this._locationDirectory = bundle.repoDirectory ?? ''
     this._error = null
+    if (bundle.kind === 'stasis') void this._loadLocationOrigin(bundle)
+  }
+
+  _closeLocation() {
+    this._locationOriginRequest?.abort()
+    this._locationOriginRequest = null
+    this._locationBundle = null
+    this._locationOrigin = null
+    this._locationOriginError = null
+  }
+
+  async _loadLocationOrigin(bundle) {
+    this._locationOriginRequest?.abort()
+    const request = new AbortController()
+    this._locationOriginRequest = request
+    this._locationOrigin = undefined
+    this._locationOriginError = null
+    try {
+      const repo = await fetchBundleOrigin(bundle.id, { signal: request.signal })
+      if (this._locationOriginRequest !== request) return
+      this._locationOrigin = typeof repo?.github === 'string' && repo.github
+        ? { github: repo.github, directory: typeof repo.directory === 'string' ? repo.directory : repo.root === true ? '/' : null } : null
+    } catch (err) {
+      if (this._locationOriginRequest !== request) return
+      this._locationOrigin = null
+      if (err?.name !== 'AbortError') this._locationOriginError = "Couldn't load the bundle’s self-reported location."
+    }
   }
 
   _locationEditor(bundle) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label><input id=${`bundle-dir-${bundle.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}></div><div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => { this._locationBundle = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(bundle)}>Save</button></div></div>`
+    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label><input id=${`bundle-dir-${bundle.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}></div><div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(bundle)}>Save</button></div>
+      ${this._locationOrigin ? html`<p class="location-origin"><span class="ui-hint">Bundle self-reported:</span> <span>${this._locationOrigin.github}</span> · <span>${this._locationOrigin.directory ?? 'Directory not specified'}</span></p>`
+        : this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(bundle)}>Retry</button></p>`
+          : this._locationOrigin === undefined ? html`<p class="location-origin ui-hint" role="status">Loading bundle metadata…</p>` : nothing}
+    </div>`
   }
 
   async _saveLocation(bundle) {
@@ -1122,7 +1169,7 @@ class ManagedAdminBundles extends ManagedPage {
     this._error = null
     try {
       await this.appState.mutate(() => setBundleRepo(bundle.id, this._locationRepo, this._locationDirectory.trim(), this._csrf), ['bundles', 'teams', 'repo-impact', 'history', 'scan-sources'])
-      this._locationBundle = null
+      this._closeLocation()
       await this._load({ preserveError: true })
     } catch (err) { this._error = `Couldn't set bundle location: ${String(err?.message ?? err)}` }
     finally { this._locationBusy = false }

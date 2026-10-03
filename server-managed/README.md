@@ -664,8 +664,12 @@ URL-encoded `X-Repo-Directory`; `POST /api/admin/bundles/set-repo` accepts
 `{ bundleId, repoId, directory }`. For new Stasis uploads without an explicit
 repository, the bundle's `repo.github` defaults to a matching connected repository
 (case-insensitive), with `repo.directory` as the directory default. Explicit upload
-locations override these defaults; unmatched origins remain unattached. Only the
-bounded origin header is decoded, before any source contents. The usual repository
+locations override these defaults; unmatched origins and stamps outside the
+uploader's repository/directory grants remain unattached. Managers can assign their
+unattached uploads to an allowed location afterward; explicit upload destinations
+still require access. The location editor shows the original self-reported repository
+and directory from bundle metadata separately from the editable assignment. Upload
+inference decodes only the bounded origin header, before any source contents. The usual repository
 and directory grants apply. Root is stored as an empty directory; existing
 bundles migrate to root. Detaching clears the directory, and deduplicated uploads
 preserve the stored location.

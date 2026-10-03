@@ -12,6 +12,7 @@ export async function fetchManagedBundleCatalog() {
 async function requestBundle(id, part, signal) {
   const generation = managedAppState.generation
   const response = await managedFetch(`/api/bundles/${encodeURIComponent(id)}/${part}`, { credentials: 'same-origin', signal })
+  signal?.throwIfAborted()
   if (!response.ok) throw Object.assign(new Error(`Bundle ${part} request failed (${response.status})`), { status: response.status })
   const data = part === 'contents' ? await response.text() : await response.json()
   signal?.throwIfAborted()
@@ -21,6 +22,15 @@ async function requestBundle(id, part, signal) {
 export function fetchBundleMetadata(id, { signal } = {}) {
   return managedAppState.load(`bundle-metadata:${id}`, 'bundle metadata', requestSignal => requestBundle(id, 'metadata', requestSignal), { signal })
 }
+
+// The location editor handles failures inline. Its reference read must stop
+// with that editor instead of leaving a shared request that can raise a toast.
+export async function fetchBundleOrigin(id, { signal } = {}) {
+  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  const data = await requestBundle(id, 'metadata', signal)
+  return data?.bundle?.repo ?? null
+}
+
 export async function fetchBundleContents(id, { signal } = {}) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
   try { return await requestBundle(id, 'contents', signal) }

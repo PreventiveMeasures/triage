@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import './_polyfills.js'
 import '../ui/client-managed.js'
 import { ManagedPage } from '../ui/managed/page.js'
-import { ManagedAppState } from '../ui/managed/state.js'
+import { ManagedAppState, managedAppState } from '../ui/managed/state.js'
 
 function createPage(Page, appState = new ManagedAppState()) {
   const page = new Page()
@@ -268,6 +268,94 @@ test('bundle location editing retains the collection and directory on failure, t
   assert.equal(page._locationBundle, null)
   assert.equal(page._error, null, 'a successful retry clears the previous action error')
 })
+
+test('bundle origins load only for open Stasis editors and never replace the assignment', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  const requests = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const pending = Promise.withResolvers()
+    requests.push({ url, options, ...pending })
+    return pending.promise
+  })
+  const first = { id: 'origin-first', kind: 'stasis', repoId: null, repoDirectory: '' }
+  const second = { id: 'origin-second', kind: 'stasis', repoId: 7, repoDirectory: 'assigned' }
+  page._openLocation({ id: 'map', kind: 'sourcemap' })
+  assert.equal(requests.length, 0)
+  page._openLocation({ ...first, canChangeRepo: false })
+  assert.equal(requests.length, 0)
+  page._openLocation(first)
+  assert.equal(requests[0].url, '/api/bundles/origin-first/metadata')
+  assert.equal(page._locationOrigin, undefined)
+  page._openLocation(second)
+  page._locationDirectory = 'user edit'
+  requests[1].resolve(Response.json({ bundle: { repo: { github: 'source/repo', directory: 'original' } } }))
+  await setImmediate()
+  assert.deepEqual(page._locationOrigin, { github: 'source/repo', directory: 'original' })
+  assert.equal(page._locationRepo, 7)
+  assert.equal(page._locationDirectory, 'user edit')
+  requests[0].resolve(Response.json({ bundle: { repo: { github: 'stale/repo', directory: 'old' } } }))
+  await setImmediate()
+  assert.equal(page._locationOrigin.github, 'source/repo', 'late metadata cannot replace the current row')
+  page._closeLocation()
+  assert.equal(page._locationOrigin, null)
+  assert.equal(page._locationBundle, null)
+})
+
+test('bundle origin errors are retryable and cancelled editors ignore late metadata', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  const requests = []
+  const notices = []
+  t.mock.method(managedAppState, 'notify', message => notices.push(message))
+  t.mock.method(globalThis, 'fetch', () => {
+    const pending = Promise.withResolvers()
+    requests.push(pending)
+    return pending.promise
+  })
+  const bundle = { id: 'origin-retry', kind: 'stasis' }
+  page._openLocation(bundle)
+  requests[0].resolve(new Response('', { status: 503 }))
+  await setImmediate()
+  assert.match(page._locationOriginError, /Couldn't load/u)
+  assert.deepEqual(notices, [], 'active editor errors are shown inline without a duplicate global notice')
+  const retry = page._loadLocationOrigin(bundle)
+  requests[1].resolve(Response.json({ bundle: { repo: { github: 'source/root', root: true } } }))
+  await retry
+  assert.equal(page._locationOriginError, null)
+  assert.deepEqual(page._locationOrigin, { github: 'source/root', directory: '/' })
+  page._openLocation({ id: 'origin-absent', kind: 'stasis' })
+  requests[2].resolve(Response.json({ bundle: {} }))
+  await setImmediate()
+  assert.equal(page._locationOrigin, null)
+  assert.equal(page._locationOriginError, null)
+  page._openLocation({ id: 'origin-cancelled', kind: 'stasis' })
+  page.disconnectedCallback()
+  requests[3].resolve(Response.json({ bundle: { repo: { github: 'late/repo' } } }))
+  await setImmediate()
+  assert.equal(page._locationOrigin, null)
+  assert.equal(page._locationBundle, null)
+})
+
+for (const abandon of ['close', 'switch', 'disconnect']) {
+  test(`abandoned bundle origin failures stay silent after ${abandon}`, async t => {
+    const page = createPage(customElements.get('managed-admin-bundles'))
+    const notices = []
+    const pending = Promise.withResolvers()
+    let signal
+    t.mock.method(managedAppState, 'notify', message => notices.push(message))
+    // Deliberately settle after cancellation, as a response may already be in flight.
+    t.mock.method(globalThis, 'fetch', (_url, options) => { signal = options.signal; return pending.promise })
+    page._openLocation({ id: `origin-abandon-${abandon}`, kind: 'stasis' })
+    if (abandon === 'close') page._closeLocation()
+    else if (abandon === 'switch') page._openLocation({ id: 'another-bundle', kind: 'sourcemap' })
+    else page.disconnectedCallback()
+    pending.resolve(new Response('', { status: 503 }))
+    await setImmediate()
+    assert.deepEqual(notices, [], 'an abandoned editor must not emit a global failure notice')
+    assert.equal(signal.aborted, true, 'closing the editor also cancels its request')
+    assert.equal(page._locationOrigin, null)
+    assert.equal(page._locationOriginError, null)
+  })
+}
 
 test('upload batches preserve arrival order, use the current token without location overrides, and discard the rest on failure', async t => {
   for (const kind of ['report', 'bundle']) {
