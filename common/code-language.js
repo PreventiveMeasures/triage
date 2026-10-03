@@ -13,6 +13,7 @@ const EXT_TO_LANG = {
   php: 'php', phtml: 'php',
   rs: 'rust',
   rb: 'ruby',
+  py: 'python', pyw: 'python', pyi: 'python',
   java: 'java',
   // .h is claimed by C, C++ and Objective-C alike. The C++ grammar
   // extends the C one, so it is the superset that colours a header
