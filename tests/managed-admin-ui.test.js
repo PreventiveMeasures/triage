@@ -269,6 +269,69 @@ test('bundle location editing retains the collection and directory on failure, t
   assert.equal(page._error, null, 'a successful retry clears the previous action error')
 })
 
+test('bundle origins load only for open Stasis editors and never replace the assignment', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  const requests = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const pending = Promise.withResolvers()
+    requests.push({ url, options, ...pending })
+    return pending.promise
+  })
+  const first = { id: 'origin-first', kind: 'stasis', repoId: null, repoDirectory: '' }
+  const second = { id: 'origin-second', kind: 'stasis', repoId: 7, repoDirectory: 'assigned' }
+  page._openLocation({ id: 'map', kind: 'sourcemap' })
+  assert.equal(requests.length, 0)
+  page._openLocation({ ...first, canChangeRepo: false })
+  assert.equal(requests.length, 0)
+  page._openLocation(first)
+  assert.equal(requests[0].url, '/api/bundles/origin-first/metadata')
+  assert.equal(page._locationOrigin, undefined)
+  page._openLocation(second)
+  page._locationDirectory = 'user edit'
+  requests[1].resolve(Response.json({ bundle: { repo: { github: 'source/repo', directory: 'original' } } }))
+  await setImmediate()
+  assert.deepEqual(page._locationOrigin, { github: 'source/repo', directory: 'original' })
+  assert.equal(page._locationRepo, 7)
+  assert.equal(page._locationDirectory, 'user edit')
+  requests[0].resolve(Response.json({ bundle: { repo: { github: 'stale/repo', directory: 'old' } } }))
+  await setImmediate()
+  assert.equal(page._locationOrigin.github, 'source/repo', 'late metadata cannot replace the current row')
+  page._closeLocation()
+  assert.equal(page._locationOrigin, null)
+  assert.equal(page._locationBundle, null)
+})
+
+test('bundle origin errors are retryable and cancelled editors ignore late metadata', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  const requests = []
+  t.mock.method(globalThis, 'fetch', () => {
+    const pending = Promise.withResolvers()
+    requests.push(pending)
+    return pending.promise
+  })
+  const bundle = { id: 'origin-retry', kind: 'stasis' }
+  page._openLocation(bundle)
+  requests[0].resolve(new Response('', { status: 503 }))
+  await setImmediate()
+  assert.match(page._locationOriginError, /Couldn't load/u)
+  const retry = page._loadLocationOrigin(bundle)
+  requests[1].resolve(Response.json({ bundle: { repo: { github: 'source/root', root: true } } }))
+  await retry
+  assert.equal(page._locationOriginError, null)
+  assert.deepEqual(page._locationOrigin, { github: 'source/root', directory: '/' })
+  page._openLocation({ id: 'origin-absent', kind: 'stasis' })
+  requests[2].resolve(Response.json({ bundle: {} }))
+  await setImmediate()
+  assert.equal(page._locationOrigin, null)
+  assert.equal(page._locationOriginError, null)
+  page._openLocation({ id: 'origin-cancelled', kind: 'stasis' })
+  page.disconnectedCallback()
+  requests[3].resolve(Response.json({ bundle: { repo: { github: 'late/repo' } } }))
+  await setImmediate()
+  assert.equal(page._locationOrigin, null)
+  assert.equal(page._locationBundle, null)
+})
+
 test('upload batches preserve arrival order, use the current token without location overrides, and discard the rest on failure', async t => {
   for (const kind of ['report', 'bundle']) {
     const page = createPage(customElements.get(`managed-admin-${kind}s`))

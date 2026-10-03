@@ -1239,7 +1239,8 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
 // POST /api/admin/bundles — upload a bundle. Mutation: same-origin + CSRF,
 // admin|manage. Raw bytes; X-Bundle-Filename names it, optional X-Repo-Id and
 // X-Repo-Directory assign a repository location; Stasis repo headers default
-// to a matching connected repository. The bundle's identity is its content hash (sha512), UNIQUE — a
+// to a matching connected repository within the uploader's access, otherwise
+// the bundle stays unattached. Its identity is its content hash (sha512), UNIQUE — a
 // re-upload of identical bytes dedupes to the existing row (no second copy).
 // After storing, any reports that declared this integrity but weren't linked yet
 // get attached (auto-link). 413 over the cap, 400 on empty.
@@ -1267,6 +1268,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   // stored location, so only new bundles need their origin header decoded.
   const integrity = bundleIntegrity(bytes)
   const existing = await deps.db.getBundleByIntegrity(integrity)
+  let inferredLocation = false
   let rawDirectory: unknown
   try { rawDirectory = decodeURIComponent(firstHeader(req.headers['x-repo-directory']) ?? '') }
   catch { sendJson(res, 400, { error: 'bad-directory' }); return }
@@ -1277,16 +1279,23 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
       .find(candidate => candidate.fullName.toLowerCase() === github.toLowerCase())
     if (selected) {
       repo.repoId = selected.repoId
-      if (req.headers['x-repo-directory'] == null) rawDirectory = embedded?.directory ?? ''
+      if (req.headers['x-repo-directory'] == null) {
+        rawDirectory = embedded?.directory ?? ''
+        inferredLocation = true
+      }
     }
     s = await checkMutation(req, res, deps, cookie)
     if (!s || !requireManageRole(res, s.user)) return
   }
   const normalized = normalizeTeamPath(rawDirectory)
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
-  const directory = repo.repoId == null ? '' : normalized.path ?? ''
+  let directory = repo.repoId == null ? '' : normalized.path ?? ''
   if (repo.repoId !== null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repo.repoId, directory))) {
-    sendJson(res, 403, { error: 'forbidden' }); return
+    if (!inferredLocation) { sendJson(res, 403, { error: 'forbidden' }); return }
+    // A bundle's own stamp is a default, not a required destination. Retain
+    // it in the archive while letting the uploader assign an allowed location.
+    repo.repoId = null
+    directory = ''
   }
   await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename, integrity)
 }

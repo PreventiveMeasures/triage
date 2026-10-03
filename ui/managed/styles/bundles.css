@@ -23,19 +23,6 @@ select:focus-visible {
   font-weight: 600;
   pointer-events: none;
 }
-.section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: .75rem;
-  margin-bottom: .9rem;
-}
-.section-head h2 {
-  margin: 0;
-  font-size: .85rem;
-  font-weight: 600;
-}
 .summary {
   min-height: 1.5em;
   display: flex;
@@ -195,21 +182,25 @@ select:focus-visible {
   text-align: right;
 }
 
-.summary > span {
-  min-width: 5.5rem;
-}
-@container (max-width: 30rem) {
-  .section-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-}
-
 .bundle-actions { display: flex; align-items: center; gap: .5rem; }
 .bundle-open { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
 .bundle-open:hover { color: var(--accent); }
 
 .bundle-row > .location-editor { grid-column: 1 / -1; }
+.location-origin {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: .72rem;
+  overflow-wrap: anywhere;
+}
+.origin-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+}
 
 .breadcrumb { flex-wrap: wrap; }
 .breadcrumb .breadcrumb-current { margin: 0; color: var(--text); font-size: .85rem; font-weight: 500; }

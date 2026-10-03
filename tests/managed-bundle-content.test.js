@@ -321,7 +321,7 @@ test('browser-renamed Stasis uploads still infer their repository and directory'
   assert.equal(stored.repoDirectory, 'packages/app')
 })
 
-test('automatic bundle locations enforce current directory grants using only the header', async t => {
+test('automatic bundle locations use allowed stamps and leave inaccessible stamps unattached', async t => {
   const h = await setup(t)
   await h.db.removeTeamRepo(h.team, 1, null)
   await h.db.setTeamRepo(h.team, 1, 'allowed')
@@ -331,11 +331,54 @@ test('automatic bundle locations enforce current directory grants using only the
     return h.send('/api/admin/bundles', who, 'POST', brotliCompressSync(Buffer.from(text)), { 'x-bundle-filename': 'app.stasis.code.br' })
   }
   assert.equal((await upload('allowed/sub')).status, 201)
-  assert.equal((await upload('forbidden')).status, 403)
+  const unassigned = await upload('forbidden')
+  assert.equal(unassigned.status, 201)
+  assert.equal(unassigned.json().repoId, null)
+  assert.equal(unassigned.json().repoDirectory, '')
   assert.equal((await upload('allowed/sub', 'owner')).status, 409, 'deduped rows retain their access checks')
-  assert.equal((await upload('allowed/other', 'owner')).status, 403)
+  assert.equal((await upload('allowed/other', 'owner')).status, 201)
   assert.equal((await upload('../allowed', 'admin')).status, 400)
   assert.equal((await upload('allowed\\sub', 'admin')).status, 400)
+})
+
+test('scoped managers can import an unattached stamped bundle and assign an authorized location afterward', async t => {
+  const h = await setup(t)
+  await h.db.removeTeamRepo(h.team, 1, null)
+  await h.db.setTeamRepo(h.team, 1, 'allowed')
+  const bundle = Bundle.parse(stasis)
+  bundle.repo = { github: 'org/repo1', directory: 'outside' }
+  const bytes = brotliCompressSync(Buffer.from(bundle.serialize()))
+  const headers = { 'x-bundle-filename': 'app.stasis.code.br' }
+  const upload = extra => h.send('/api/admin/bundles', 'manager', 'POST', bytes, { ...headers, ...extra })
+  // Explicit destinations still require authorization, even with an inferred repo.
+  assert.equal((await upload({ 'x-repo-directory': 'outside' })).status, 403)
+  assert.equal((await upload({ 'x-repo-id': '1', 'x-repo-directory': 'outside' })).status, 403)
+  const response = await upload()
+  assert.equal(response.status, 201)
+  const { id, repoId, repoDirectory } = response.json()
+  assert.equal(repoId, null)
+  assert.equal(repoDirectory, '')
+  const row = (await h.send('/api/admin/bundles', 'manager')).json().bundles.find(item => item.id === id)
+  assert.equal(row.canChangeRepo, true)
+  const metadata = await h.send(`/api/bundles/${id}/metadata`, 'manager')
+  assert.equal(metadata.status, 200)
+  assert.deepEqual(metadata.json().bundle.repo, { ...bundle.repo })
+  for (const who of ['viewer', 'owner']) assert.equal((await h.send(`/api/bundles/${id}/metadata`, who)).status, 404)
+  const duplicate = await upload()
+  assert.equal(duplicate.status, 200)
+  assert.equal(duplicate.json().repoId, null)
+  const assign = directory => h.send('/api/admin/bundles/set-repo', 'manager', 'POST', JSON.stringify({ bundleId: id, repoId: 1, directory }))
+  assert.equal((await assign('outside')).status, 403)
+  assert.equal((await assign('allowed/sub')).status, 200)
+  const stored = await h.db.getBundle(id)
+  assert.equal(stored.repoId, 1)
+  assert.equal(stored.repoDirectory, 'allowed/sub')
+  const reassigned = await upload()
+  assert.equal(reassigned.status, 200)
+  assert.equal(reassigned.json().repoDirectory, 'allowed/sub')
+  const visible = await h.send(`/api/bundles/${id}/metadata`, 'viewer')
+  assert.equal(visible.status, 200)
+  assert.deepEqual(visible.json().bundle.repo, { ...bundle.repo }, 'assignment does not change the self-reported origin')
 })
 
 test('bundle locations enforce source and destination scopes on upload, edit, download, and delete', async t => {
