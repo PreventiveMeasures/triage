@@ -11,7 +11,7 @@ import { REPORT_LOGOS } from '../view/report-logos.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
-import { fetchBundleMetadata } from './bundle-data.js'
+import { fetchBundleOrigin } from './bundle-data.js'
 import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import localImportStyles from './styles/local-import.css'
@@ -1143,9 +1143,8 @@ class ManagedAdminBundles extends ManagedPage {
     this._locationOrigin = undefined
     this._locationOriginError = null
     try {
-      const data = await fetchBundleMetadata(bundle.id, { signal: request.signal })
+      const repo = await fetchBundleOrigin(bundle.id, { signal: request.signal })
       if (this._locationOriginRequest !== request) return
-      const repo = data?.bundle?.repo
       this._locationOrigin = typeof repo?.github === 'string' && repo.github
         ? { github: repo.github, directory: typeof repo.directory === 'string' ? repo.directory : repo.root === true ? '/' : null } : null
     } catch (err) {

@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import './_polyfills.js'
 import '../ui/client-managed.js'
 import { ManagedPage } from '../ui/managed/page.js'
-import { ManagedAppState } from '../ui/managed/state.js'
+import { ManagedAppState, managedAppState } from '../ui/managed/state.js'
 
 function createPage(Page, appState = new ManagedAppState()) {
   const page = new Page()
@@ -304,6 +304,8 @@ test('bundle origins load only for open Stasis editors and never replace the ass
 test('bundle origin errors are retryable and cancelled editors ignore late metadata', async t => {
   const page = createPage(customElements.get('managed-admin-bundles'))
   const requests = []
+  const notices = []
+  t.mock.method(managedAppState, 'notify', message => notices.push(message))
   t.mock.method(globalThis, 'fetch', () => {
     const pending = Promise.withResolvers()
     requests.push(pending)
@@ -314,6 +316,7 @@ test('bundle origin errors are retryable and cancelled editors ignore late metad
   requests[0].resolve(new Response('', { status: 503 }))
   await setImmediate()
   assert.match(page._locationOriginError, /Couldn't load/u)
+  assert.deepEqual(notices, [], 'active editor errors are shown inline without a duplicate global notice')
   const retry = page._loadLocationOrigin(bundle)
   requests[1].resolve(Response.json({ bundle: { repo: { github: 'source/root', root: true } } }))
   await retry
@@ -331,6 +334,28 @@ test('bundle origin errors are retryable and cancelled editors ignore late metad
   assert.equal(page._locationOrigin, null)
   assert.equal(page._locationBundle, null)
 })
+
+for (const abandon of ['close', 'switch', 'disconnect']) {
+  test(`abandoned bundle origin failures stay silent after ${abandon}`, async t => {
+    const page = createPage(customElements.get('managed-admin-bundles'))
+    const notices = []
+    const pending = Promise.withResolvers()
+    let signal
+    t.mock.method(managedAppState, 'notify', message => notices.push(message))
+    // Deliberately settle after cancellation, as a response may already be in flight.
+    t.mock.method(globalThis, 'fetch', (_url, options) => { signal = options.signal; return pending.promise })
+    page._openLocation({ id: `origin-abandon-${abandon}`, kind: 'stasis' })
+    if (abandon === 'close') page._closeLocation()
+    else if (abandon === 'switch') page._openLocation({ id: 'another-bundle', kind: 'sourcemap' })
+    else page.disconnectedCallback()
+    pending.resolve(new Response('', { status: 503 }))
+    await setImmediate()
+    assert.deepEqual(notices, [], 'an abandoned editor must not emit a global failure notice')
+    assert.equal(signal.aborted, true, 'closing the editor also cancels its request')
+    assert.equal(page._locationOrigin, null)
+    assert.equal(page._locationOriginError, null)
+  })
+}
 
 test('upload batches preserve arrival order, use the current token without location overrides, and discard the rest on failure', async t => {
   for (const kind of ['report', 'bundle']) {
