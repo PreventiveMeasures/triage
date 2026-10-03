@@ -186,7 +186,7 @@ class WorkspaceExportDialog extends AppDialog {
     const passwordsMatch = !this._password || !this._confirm || this._password === this._confirm
     const bundleCount = this._bundleCount()
     return html`
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         The export file carries this workspace's reports, triage state,
         comments, fixes, references to attached bundles (integrities only
         by default), and its private key. Encrypting the file with a

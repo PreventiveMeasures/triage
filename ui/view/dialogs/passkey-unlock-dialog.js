@@ -73,7 +73,7 @@ class PasskeyUnlockDialog extends AppDialog {
       <header>
         <h3>Unlock your data</h3>
       </header>
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         Your triage data and report files are encrypted with a passkey
         on this device. Unlock to load them.
       </p>

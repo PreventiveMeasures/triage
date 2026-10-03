@@ -35,7 +35,7 @@ class PersistenceDegradedDialog extends AppDialog {
         running a newer version of the app (to avoid overwriting that newer
         version's data, this tab has paused saving).
       </p>
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         Free up space if storage is full, and close or reload other tabs of
         this app to the same version. This notice clears on its own once
         saving works again.

@@ -91,7 +91,7 @@ h4 {
   font-variant-numeric: tabular-nums;
   margin-bottom: 3px;
 }
-.matrix-empty { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.matrix-empty { color: var(--muted); font-size: 11px; line-height: 1.6; cursor: default; user-select: none; -webkit-user-select: none; }
 .matrix-row-link { grid-template-columns: 6px minmax(0, 1fr) auto; }
 .matrix-row-link .g2-dist-dot { width: 6px; height: 6px; border-radius: 2px; }
 .matrix-row-link .g2-dist-name { color: var(--text); }

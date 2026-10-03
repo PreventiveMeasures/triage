@@ -133,6 +133,13 @@ header p {
 .color-name {
   text-transform: capitalize;
 }
+/* User-authored values must remain copyable inside the radio labels. */
+.comment-text,
+.fix-text {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
 .comment-text {
   display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical;

@@ -64,6 +64,18 @@
   color: var(--muted);
 }
 
+/* Welcome copy and instructions are interface chrome, including the
+   login prompt's alternative-mode label. Keep report content selectable. */
+.drop-prompt,
+.managed-login,
+.managed-landing-hero,
+.managed-landing-empty,
+.landing-github-link {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .managed-landing { display: none; }
 
 #drop-zone[data-server-mode-pending] { display: none; }

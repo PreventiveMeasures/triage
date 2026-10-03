@@ -171,7 +171,7 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
 
   _passwordStage() {
     return html`
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         Someone shared a workspace with you. Enter the password they
         sent separately to attach it to this browser.
       </p>
@@ -226,7 +226,7 @@ class WorkspaceUnlockLinkDialog extends AppDialog {
     const collision = this._nameCollision(sanitised)
     const canAttach = Boolean(sanitised) && !collision
     return html`
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         Pick a name for the workspace on this device. The shared
         identity is preserved either way — only the visible label
         changes.

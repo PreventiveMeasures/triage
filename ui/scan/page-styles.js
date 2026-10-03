@@ -18,7 +18,11 @@ export const SCAN_PAGE_STYLES = css`
   .source-choice.single-repository { grid-template-columns: 1fr; }
   .head-actions { margin-left: auto; display: flex; gap: .45rem; }
   button, select, input { font: inherit; }
-  button { cursor: default; }
+  button, summary, select, h1, .intro, .panel-head, .pane-head, .field > span, .field label, .bundle-label,
+  .bundle-stats, .check, .switch, .offline-help, .empty, .choice-empty {
+    cursor: default; user-select: none; -webkit-user-select: none;
+  }
+  input:not([type=checkbox], [type=radio]), textarea { cursor: text; user-select: text; -webkit-user-select: text; }
   a { cursor: default; text-decoration: none; }
   button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .intro-row { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; margin-bottom: 1.15rem; }

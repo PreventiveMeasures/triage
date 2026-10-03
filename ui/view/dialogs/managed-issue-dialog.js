@@ -95,7 +95,7 @@ class ManagedIssueDialog extends AppDialog {
         <p class="nwd-note">Opened by @${issue?.author ?? this.session?.login}</p>
         ${issue?.labels?.length ? html`<div class="issue-labels">${issue.labels.map(label => html`<span>${label}</span>`)}</div>` : nothing}
         <div class="issue-description">${this.renderBody ? this.renderBody(issue?.description ?? this.body) : issue?.description ?? this.body}</div>
-        <p class="nwd-note">Linked permanently to this finding. The Issue button will open this issue next time.</p>
+        <p class="nwd-note ui-hint">Linked permanently to this finding. The Issue button will open this issue next time.</p>
         ${this.detailsUnavailable ? html`<p class="nwd-note">GitHub’s latest details could not be loaded. The issue was created and its link is saved.</p>` : nothing}
       </section>` : savedWithoutAccess ? html`<p role="status">The issue was created and linked permanently to this finding. Its details cannot be shown because workspace access could not be confirmed. Check its status again once workspace access is available.</p>` : html`
         <label>Title<input class="nwd-input" maxlength="256" .value=${this.title} ?disabled=${editingDisabled} @input=${event => { this.title = event.target.value }}></label>
@@ -106,7 +106,7 @@ class ManagedIssueDialog extends AppDialog {
               ?disabled=${editingDisabled} @change=${event => this.toggleSection(section.id, event.target.checked)}>${section.label}</label>`)}
           </div>` : nothing}
         </div>
-        <p id="description-help" class="nwd-note description-help">${this.sections.length > 0 ? 'Add or remove sections above. Your edits are kept when toggling them.' : 'Edit the description before creating the issue.'}</p>
+        <p id="description-help" class="nwd-note description-help ui-hint">${this.sections.length > 0 ? 'Add or remove sections above. Your edits are kept when toggling them.' : 'Edit the description before creating the issue.'}</p>
         <textarea id="issue-description" class="nwd-input" maxlength="65536" .value=${this.body}
           aria-describedby="description-help" ?disabled=${editingDisabled} @input=${event => this.editBody(event.target.value)}></textarea>
         ${prepared?.labels?.length ? html`<p class="nwd-note">Labels: ${prepared.labels.join(', ')}</p>` : nothing}

@@ -158,7 +158,7 @@ class WorkspaceShareLinkDialog extends AppDialog {
   _body() {
     if (this._url) {
       return html`
-        <p class="nwd-note">
+        <p class="nwd-note ui-hint">
           Anyone with the link <strong>and</strong> the password can attach
           this workspace. Share them through separate channels.
         </p>
@@ -231,7 +231,7 @@ class WorkspaceShareLinkDialog extends AppDialog {
           @keydown=${this._onKeydown}
         >
       </label>
-      <p class="nwd-note">
+      <p class="nwd-note ui-hint">
         The link carries the workspace's identity (id, name, and
         private key) so the recipient joins the same sync chain.
         Triage, reports, and comments aren't in the link itself —

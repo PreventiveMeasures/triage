@@ -64,7 +64,7 @@ class SyncSuggestDialog extends AppDialog {
       <header><h3>Reports out of sync</h3></header>
       <p class="lwd-body">${intro}</p>
       ${this._list()}
-      <p class="nwd-note">Sync compares ${one ? 'it' : 'each one'} with the cloud. Where it's clear which copy is newer, the other is updated; otherwise you choose which to keep.</p>
+      <p class="nwd-note ui-hint">Sync compares ${one ? 'it' : 'each one'} with the cloud. Where it's clear which copy is newer, the other is updated; otherwise you choose which to keep.</p>
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
         <button type="button" data-role="dismiss" @click=${this._onDismiss}>Not now</button>

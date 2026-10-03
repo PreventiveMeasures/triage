@@ -803,7 +803,7 @@ function bundleViewerFindings(details, path, content) {
 // docked sidebar — path + the shared bundle-source-close action.
 function renderBundleSourceBar(path) {
   return html`<header class="bundle-source-bar">
-      <div class="bundle-source-title" title=${path}>${path}</div>
+      <div class="bundle-source-title mono" title=${path}>${path}</div>
       <button
         type="button"
         class="bundle-source-close"

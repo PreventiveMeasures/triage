@@ -62,7 +62,7 @@ class ManagedShareDialog extends AppDialog {
     const url = this.urls.get(this.selectedId)
     return html`<dialog @close=${this._onClose}>
       <header><h3>Share ${this.team?.name}</h3></header>
-      <p class="nwd-intro">Anyone with this link can read this workspace’s published reports, comments, triage, and available source files without signing in.<br>New published reports will also be included.</p>
+      <p class="nwd-intro ui-hint">Anyone with this link can read this workspace’s published reports, comments, triage, and available source files without signing in.<br>New published reports will also be included.</p>
       <label class="share-field">Public links
         <select class="nwd-input" ?disabled=${this.busy} @change=${event => this.select(event.target.value)}>
           <option value="" ?selected=${!this.selectedId}>Create a new link</option>
@@ -74,7 +74,7 @@ class ManagedShareDialog extends AppDialog {
         <label><input type="checkbox" .checked=${this.security} @change=${event => { this.security = event.target.checked }}> Security findings and advisories</label>
         <label><input type="checkbox" .checked=${this.dependencies} @change=${event => { this.dependencies = event.target.checked }}> Findings in dependencies</label>
       </fieldset>
-      <p class="nwd-note">Both options are off for new links.<br>Existing links keep their URL when permissions change.</p>
+      <p class="nwd-note ui-hint">Both options are off for new links.<br>Existing links keep their URL when permissions change.</p>
       ${url ? html`<label class="share-field">Public link<input class="nwd-input" readonly .value=${url} @focus=${event => event.target.select()}></label>` : nothing}
       ${this.message ? html`<p class="nwd-note" role="status">${this.message}</p>` : nothing}
       <footer class="nwd-actions">

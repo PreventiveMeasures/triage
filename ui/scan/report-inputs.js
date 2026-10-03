@@ -156,6 +156,7 @@ export class ReportInputs extends LitElement {
   static styles = css`
     :host { display: block; min-width: 0; }
     * { box-sizing: border-box; }
+    button, .field > span, .list-head, .empty:not([role='alert']) { cursor: default; user-select: none; -webkit-user-select: none; }
     .panel { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); overflow: hidden; }
     .source { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; padding: .85rem .9rem; border-bottom: 1px solid var(--border); }
     .field { display: grid; flex: 1 1 14rem; gap: .3rem; max-width: 32rem; min-width: 0; }

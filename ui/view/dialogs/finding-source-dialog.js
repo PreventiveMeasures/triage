@@ -77,7 +77,7 @@ class FindingSourceDialog extends AppDialog {
     const range = lineRange(this.line)
     return html`<dialog aria-labelledby="source-title" @close=${this._onClose} @keydown=${this._onKeydown} @click=${this._onBackdrop}>
       <header>
-        <h3 id="source-title">${this._path || this.file}</h3>
+        <h3 id="source-title" class="mono">${this._path || this.file}</h3>
         <button type="button" aria-label="Close source viewer" @click=${this._onClose}>×</button>
       </header>
       <div class="source-scroll" tabindex="0" aria-label="Full source code" aria-busy=${String(this._loading)}>

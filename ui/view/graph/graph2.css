@@ -791,6 +791,13 @@
 }
 
 /* ── Empty state ────────────────────────────────────────────── */
+.g2-empty-state,
+.g2-sel-section-empty,
+.g2-dist-empty {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
 .g2-empty-state {
   background: var(--graph-hover-bg);
   border: 1px dashed var(--border);
