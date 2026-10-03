@@ -113,7 +113,7 @@
       padding: .125rem .5rem .125rem .4rem;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 999px;
+      border-radius: var(--ui-radius, 999px);
       color: var(--muted);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: .72rem;
@@ -133,7 +133,7 @@
       place-items: center;
       background: var(--surface);
       backdrop-filter: var(--glass-blur);
-      border-radius: 999px;
+      border-radius: var(--ui-radius, 999px);
       color: var(--text);
       font-weight: 400;
       white-space: nowrap;
@@ -211,7 +211,7 @@
       background: var(--surface);
       color: var(--muted);
       border: 1px solid var(--border);
-      border-radius: 999px;
+      border-radius: var(--ui-radius, 999px);
       font-family: inherit;
       font-size: .72rem;
       font-weight: 500;
@@ -343,7 +343,7 @@
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   flex-shrink: 0;
 }
@@ -368,7 +368,7 @@
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   padding: .25rem .55rem;
   font-family: inherit;
   font-size: .8rem;
@@ -405,7 +405,7 @@
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   overflow: hidden;
 }
@@ -502,7 +502,7 @@
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   font-family: inherit;
   font-size: .78rem;
 
@@ -522,12 +522,12 @@
   border-radius: 0;
 }
 .bundles-export-pair .bundles-download-btn:first-child {
-  border-top-left-radius: 4px;
-  border-bottom-left-radius: 4px;
+  border-top-left-radius: var(--ui-radius, 4px);
+  border-bottom-left-radius: var(--ui-radius, 4px);
 }
 .bundles-export-pair .bundles-download-btn:last-child {
-  border-top-right-radius: 4px;
-  border-bottom-right-radius: 4px;
+  border-top-right-radius: var(--ui-radius, 4px);
+  border-bottom-right-radius: var(--ui-radius, 4px);
   margin-left: -1px;
 }
 .bundles-export-pair .bundles-download-btn:hover {
@@ -576,7 +576,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: var(--bg);
   overflow: hidden;
 }
@@ -603,7 +603,7 @@
 .bundles-overview-sort {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   overflow: hidden;
   font-size: .65rem;
   font-weight: 500;
@@ -710,7 +710,7 @@
 .bundle-code-rail-action {
   display: grid; place-items: center;
   width: 1.35rem; height: 1.35rem;
-  border: 0; border-radius: 4px;
+  border: 0; border-radius: var(--ui-radius, 4px);
   background: transparent;
   color: var(--muted);
 }
@@ -770,7 +770,7 @@ bundle-code-search {
   padding: 0 .2rem 0 .45rem;
   display: flex; align-items: center;
   background: rgb(from var(--text) r g b / .04);
-  border: 1px solid var(--border); border-radius: 5px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 5px);
   transition: background .12s, border-color .12s;
 
   /* `:has(input:focus)` instead of `:focus-within` — the latter
@@ -807,7 +807,7 @@ bundle-code-search {
   display: grid; place-items: center;
   padding: 0;
   background: transparent;
-  border: 0; border-radius: 2px;
+  border: 0; border-radius: var(--ui-radius, 2px);
   color: var(--muted);
   font: inherit; font-size: .9rem; line-height: 1;
   margin-right: .15rem;
@@ -831,7 +831,7 @@ bundle-code-search {
   width: 20px; height: 20px;
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 3px;
+  border: 0; border-radius: var(--ui-radius, 3px);
   padding: 0;
   transition: background .12s, color .12s;
 
@@ -880,7 +880,7 @@ bundle-code-search {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .72rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
 }
 .bundle-code-search-file-name:hover { background: var(--bg); }
 .bundle-code-search-file.current .bundle-code-search-file-name {
@@ -900,7 +900,7 @@ bundle-code-search {
   padding: .15rem .35rem;
   color: var(--muted);
   font: inherit;
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
 }
 .bundle-code-search-hit-link:hover { background: var(--bg); color: var(--text); }
 .bundle-code-search-hit-ln {
@@ -934,7 +934,7 @@ bundle-code-search {
   background: transparent;
   border: 0;
   padding: .35rem .4rem;
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
   font: inherit;
   border-bottom: 1px solid var(--border);
 }
@@ -998,7 +998,7 @@ bundle-code-search {
   min-height: 22px;
   width: 100%;
   padding: .1rem .4rem;
-  border: 0; border-radius: 4px;
+  border: 0; border-radius: var(--ui-radius, 4px);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -1103,7 +1103,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) .bundle-code-tree-count:is(.sev
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.35rem; height: 1.35rem;
   padding: 0;
-  border: 0; border-radius: 4px;
+  border: 0; border-radius: var(--ui-radius, 4px);
   background: transparent;
   color: var(--muted);
   cursor: default;
@@ -1132,7 +1132,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) .bundle-code-tree-count:is(.sev
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.35rem; height: 1.35rem;
   padding: 0;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   background: var(--surface);
   color: var(--text);
   font-size: .85rem; line-height: 1;
@@ -1193,7 +1193,7 @@ bundle-search {
   display: flex; align-items: center;
   padding: 0 .25rem 0 .55rem;
   background: rgb(from var(--text) r g b / .04);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   transition: background .12s, border-color .12s;
 
   &:has(.bundle-search-input:focus) {
@@ -1222,7 +1222,7 @@ bundle-search {
   display: grid; place-items: center;
   padding: 0; margin-right: .15rem;
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 3px;
+  border: 0; border-radius: var(--ui-radius, 3px);
   font: inherit; font-size: 1rem; line-height: 1;
 
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
@@ -1242,7 +1242,7 @@ bundle-search {
   display: grid; place-items: center;
   padding: 0 .3rem;
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 4px;
+  border: 0; border-radius: var(--ui-radius, 4px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .82rem; font-weight: 700; line-height: 1;
   transition: background .12s, color .12s;
@@ -1295,7 +1295,7 @@ bundle-search {
   margin: .35rem 0;
   padding: .65rem .75rem;
   border: 1px solid color-mix(in oklch, var(--critical) 45%, var(--border));
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: color-mix(in oklch, var(--critical) 8%, transparent);
 }
 .bundle-search-error-label { color: var(--text); font-size: .8rem; font-weight: 600; }
@@ -1324,7 +1324,7 @@ bundle-search {
    visually distinct. */
 .bundle-search-file {
   margin-bottom: .85rem;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: var(--surface);
   overflow: hidden;
 }
@@ -1344,7 +1344,7 @@ bundle-search {
   padding: .15rem .25rem;
   text-align: left;
   background: transparent; color: var(--text);
-  border: 0; border-radius: 3px;
+  border: 0; border-radius: var(--ui-radius, 3px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .76rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1627,7 +1627,7 @@ bundle-search {
   white-space: normal;
   margin: .4rem 0;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   /* A neutral tint of the text colour rather than `--surface-active`
      (which `.inline-code` wears): that token is the theme's ACTIVE
      fill — a saturated blue in the light themes — and a whole block
@@ -1692,7 +1692,7 @@ bundle-search {
   display: inline-flex; align-items: center;
   padding: 0; height: 1.3rem;
   overflow: hidden;
-  border: 1px solid var(--border); border-radius: 3px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   background: transparent;
   color: var(--muted); font-size: .68rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1929,7 +1929,7 @@ bundle-search {
          tint visibly framed against the column border. */
       padding: 0 .175rem;
       background: transparent;
-      border: 0; border-radius: 3px;
+      border: 0; border-radius: var(--ui-radius, 3px);
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: .72rem;
@@ -1970,7 +1970,7 @@ bundle-search {
       display: flex; align-items: center; gap: .4rem;
       width: 100%;
       padding: 0 .175rem; height: auto;
-      border: 0; border-radius: 3px;
+      border: 0; border-radius: var(--ui-radius, 3px);
       background: transparent;
       color: var(--text);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2062,7 +2062,7 @@ bundle-search {
 .findings-content.with-graph graph-layout {
   flex: 1;
   min-height: 0;
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   background: transparent;
   margin-bottom: 0;
@@ -2192,7 +2192,7 @@ body.report-fullscreen {
   width: 100%; max-width: 1100px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   overflow: hidden;
   box-shadow: 0 10px 40px rgb(0 0 0 / .3);
 }
@@ -2213,7 +2213,7 @@ body.report-fullscreen {
   flex-shrink: 0;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   width: 1.6rem; height: 1.6rem;
   font-size: 1rem; line-height: 1;
   color: var(--muted);
@@ -2309,7 +2309,7 @@ body.report-fullscreen {
   flex-shrink: 0;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   width: 1.4rem; height: 1.4rem;
   font-size: .9rem; line-height: 1;
   color: var(--muted);
@@ -2353,7 +2353,7 @@ body.report-fullscreen {
   display: inline-flex; align-items: center;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   background: transparent;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2462,7 +2462,7 @@ body.report-fullscreen {
 }
 .bundle-source-link {
   display: inline;
-  padding: 0; border: 0; border-radius: 2px;
+  padding: 0; border: 0; border-radius: var(--ui-radius, 2px);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -2605,7 +2605,7 @@ body.report-fullscreen {
   & .packages-details {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--ui-radius, 6px);
     box-shadow: var(--shadow-glass);
     display: flex; flex-direction: column;
     min-height: 0;
@@ -2626,7 +2626,7 @@ body.report-fullscreen {
   }
   & .packages-details-close {
     background: transparent; color: var(--muted);
-    border: 0; border-radius: 4px;
+    border: 0; border-radius: var(--ui-radius, 4px);
     width: 22px; height: 22px;
     display: grid; place-items: center;
     padding: 0;
@@ -2682,7 +2682,7 @@ body.report-fullscreen {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   font: inherit;
   font-size: .78rem;
   &:focus { outline: none; border-color: var(--accent); }
@@ -2719,7 +2719,7 @@ body.report-fullscreen {
 .packages-view .packages-list {
   list-style: none; margin: 0; padding: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: var(--surface);
   overflow: hidden;
 
@@ -2737,10 +2737,10 @@ body.report-fullscreen {
        against the parent's curved corner (the parent's
        overflow: hidden hides the row's overflowing rectangle but
        the inset outline stays visible inside the curve). */
-    &:first-child { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+    &:first-child { border-top-left-radius: var(--ui-radius, 6px); border-top-right-radius: var(--ui-radius, 6px); }
     &:last-child {
       border-bottom: none;
-      border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;
+      border-bottom-left-radius: var(--ui-radius, 6px); border-bottom-right-radius: var(--ui-radius, 6px);
     }
     &.selected {
       background: rgb(from var(--text) r g b / .06);
@@ -2807,7 +2807,7 @@ body.report-fullscreen {
     padding: .15rem .5rem .15rem .4rem;
     display: inline-flex; align-items: center; gap: .3rem;
     background: transparent;
-    border: 1px solid var(--border); border-radius: 999px;
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 999px);
     color: var(--muted);
     font: inherit; font-size: .72rem; font-weight: 500;
     white-space: nowrap;
@@ -2847,7 +2847,7 @@ body.report-fullscreen {
     margin-left: .25rem;
     padding: .15rem .55rem;
     background: transparent;
-    border: 1px solid var(--border); border-radius: 999px;
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 999px);
     color: var(--muted);
     font: inherit; font-size: .72rem; font-weight: 500;
     white-space: nowrap;
@@ -2882,7 +2882,7 @@ body.report-fullscreen {
 .packages-detail-reports {
   list-style: none; margin: 0; padding: 0;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   overflow: hidden;
 }
 .packages-detail-file {
@@ -3009,7 +3009,7 @@ body.report-fullscreen {
   gap: .75rem;
   padding: 1.25rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: var(--surface);
   text-align: center;
   /* Chrome UI, not user-authored content — disable selection on
@@ -3036,7 +3036,7 @@ body.report-fullscreen {
 .bundle-advisories-consent-btn {
   padding: .4rem 1.25rem;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   background: var(--accent, #58a6ff);
   color: #fff;
   font-size: .85rem;
@@ -3074,7 +3074,7 @@ body.report-fullscreen {
 .bundle-advisories-retry {
   padding: .2rem .7rem;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   background: var(--surface);
   color: var(--text);
   font-size: .72rem;

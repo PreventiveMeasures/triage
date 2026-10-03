@@ -36,7 +36,7 @@ dialog { max-width: 520px; width: min(94vw, 520px); }
 .wsl-link {
   display: block; width: 100%; box-sizing: border-box;
   padding: .5rem .65rem;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: var(--bg, var(--surface));
   color: var(--text);
   font: inherit; font-size: .78rem;
@@ -50,7 +50,7 @@ dialog { max-width: 520px; width: min(94vw, 520px); }
 }
 .wsl-warning {
   padding: .55rem .65rem;
-  border: 1px solid var(--critical, #f87171); border-radius: 6px;
+  border: 1px solid var(--critical, #f87171); border-radius: var(--ui-radius, 6px);
   background: rgb(from var(--critical, #f87171) r g b / .08);
 
   /* A warning that runs to several paragraphs (the export dialog's raw

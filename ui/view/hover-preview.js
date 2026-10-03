@@ -8,7 +8,7 @@ export class HoverPreviewElement extends StateElement {
     .preview {
       position: fixed; inset: auto; margin: 0; padding: 14px; box-sizing: border-box;
       width: min(24rem, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto;
-      border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); background: var(--bg); color: var(--text);
       box-shadow: 0 8px 28px rgb(0 0 0 / .25); font: 13px/1.45 system-ui, sans-serif;
       text-align: left; white-space: normal; overflow-wrap: anywhere; letter-spacing: normal; cursor: default;
     }

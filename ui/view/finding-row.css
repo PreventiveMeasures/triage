@@ -80,8 +80,8 @@
    radius so a selected edge row's outline traces the rounded clip, not
    a square inside it. Structural host pseudos let the row own this
    without the parent stamping classes per row. */
-:host(:first-of-type) .row { border-top-left-radius: 6px; border-top-right-radius: 6px; }
-:host(:last-of-type) .row { border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
+:host(:first-of-type) .row { border-top-left-radius: var(--ui-radius, 6px); border-top-right-radius: var(--ui-radius, 6px); }
+:host(:last-of-type) .row { border-bottom-left-radius: var(--ui-radius, 6px); border-bottom-right-radius: var(--ui-radius, 6px); }
 
 .row-score {
   grid-column: 1;
@@ -177,7 +177,7 @@
      the mark is a target the reader can miss without seeing why. */
   &::before { content: ''; position: absolute; inset: -.25rem -2px; }
   &:hover { color: var(--accent); }
-  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+  &:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: var(--ui-radius, 2px); }
 }
 
 .tabs-row {
@@ -251,7 +251,7 @@
 /* Group tabs share finding-tabs.css with the other finding surface. */
 
 .mark-action-group {
-  display: inline-flex; border: 1px solid var(--border); border-radius: 3px;
+  display: inline-flex; border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   /* Composite the normal surface over an opaque base, not the row's label color. */
   background: linear-gradient(var(--surface), var(--surface)), var(--bg);
   /* Keep each group of action buttons intact when the footer wraps. */
@@ -307,7 +307,7 @@
   cursor: default;
   background: linear-gradient(var(--surface), var(--surface)), var(--bg);
   border: 1px solid var(--border); color: var(--muted);
-  border-radius: 3px; padding: 0 .3rem; height: 1.5rem;
+  border-radius: var(--ui-radius, 3px); padding: 0 .3rem; height: 1.5rem;
   display: inline-flex; align-items: center; justify-content: center;
   gap: .25rem;
   font: inherit;
@@ -348,7 +348,7 @@
   min-width: 7rem;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   padding: .25rem;
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
   display: flex; flex-direction: column;
@@ -371,7 +371,7 @@
   font-size: .78rem;
   color: var(--text);
   text-align: left;
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
   font-family: inherit;
 }
 .triage-menu-item:not(:disabled):hover { background: var(--surface); }

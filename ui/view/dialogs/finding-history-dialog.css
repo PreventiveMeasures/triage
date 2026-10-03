@@ -39,7 +39,7 @@ header .detail-action { flex: none; width: 1.75rem; height: 1.75rem; }
 .username { color: var(--muted); font-size: .75rem; }
 time { color: var(--muted); font-size: .7rem; white-space: nowrap; }
 .event-action { margin-top: .1rem; color: var(--muted); font-size: .75rem; }
-.changes { margin-top: .65rem; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.changes { margin-top: .65rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 7px); overflow: hidden; }
 .change { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: baseline; gap: .65rem; padding: .4rem .6rem; }
 .change + .change { border-top: 1px solid var(--border); }
 dt { color: var(--muted); font-size: .75rem; }

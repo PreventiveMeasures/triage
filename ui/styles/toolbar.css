@@ -2,7 +2,7 @@
   display: flex; flex-direction: column; gap: .5rem;
   margin-bottom: 1rem; padding: .6rem .75rem;
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 10px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 10px);
   box-shadow: var(--shadow-glass);
   font-size: .825rem;
 
@@ -11,7 +11,7 @@
   & select {
     height: 30px; box-sizing: border-box;
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: .25rem .4rem; font-size: .8rem;
+    border-radius: var(--ui-radius, 4px); padding: .25rem .4rem; font-size: .8rem;
     &:focus { border-color: var(--accent); outline: none; }
   }
 
@@ -89,7 +89,7 @@
     min-width: 8.5rem;
     background: transparent;
     color: var(--text);
-    border: 1px solid var(--border); border-radius: 4px;
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
     font-family: inherit; font-size: .8rem; font-weight: 500;
 
     &:hover { border-color: var(--accent); }
@@ -152,7 +152,7 @@
     gap: .5rem;
     background: transparent;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--ui-radius, 4px);
 
     & .conf-range-label {
       color: var(--muted);
@@ -245,7 +245,7 @@
         transform: translateY(-50%);
         z-index: 1;
         padding: .1rem .3rem;
-        border-radius: 3px;
+        border-radius: var(--ui-radius, 3px);
         font: inherit;
         font-size: .66rem;
         line-height: 1.4;
@@ -278,7 +278,7 @@
 
   & input[type='text'] {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 8rem;
+    border-radius: var(--ui-radius, 4px); padding: .25rem .4rem; font-size: .8rem; flex: 1; min-width: 8rem;
     &:focus { border-color: var(--accent); outline: none; }
   }
 
@@ -307,7 +307,7 @@
   padding: .3rem;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
   font-size: .825rem;
   /* WCO: the popover sits in the top layer above body's drag baseline.
@@ -342,7 +342,7 @@
 .analyzer-menu-item {
   display: flex; align-items: center; gap: .45rem;
   background: transparent;
-  border: 0; border-radius: 3px;
+  border: 0; border-radius: var(--ui-radius, 3px);
   padding: .3rem .5rem;
   color: var(--text);
   text-align: left;
@@ -397,7 +397,7 @@ download-button { display: contents; }
      same faint tint the view-mode buttons use, so the two read as one
      family. */
   background: transparent; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   font-family: inherit;
   transition: background .12s, color .12s;
 
@@ -408,7 +408,7 @@ download-button { display: contents; }
 .trash-btn {
   height: 30px; box-sizing: border-box;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: .25rem .55rem; font-size: .8rem;
+  border-radius: var(--ui-radius, 4px); padding: .25rem .55rem; font-size: .8rem;
   font-family: inherit;
   &:hover { border-color: var(--accent); }
   &.active { border-color: var(--critical); color: var(--critical); }
@@ -436,7 +436,7 @@ triage-selector,
 slide-triage-tabs {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   overflow: hidden;
 }
 .toolbar triage-selector { margin-left: auto; }
@@ -462,7 +462,7 @@ slide-triage-tabs {
 revalidation-switch {
   display: inline-flex; align-items: center;
   height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   overflow: hidden;
 }
 .revalidation-toggle {
@@ -571,7 +571,7 @@ view-mode-buttons {
      from button intrinsic + group border, which exposed as a step
      against the 30px chip row. */
   height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   overflow: hidden;
 
   & .view-mode-btn {
@@ -601,7 +601,7 @@ view-mode-buttons {
 source-filter {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   overflow: hidden;
 
   & .source-chip {
@@ -630,7 +630,7 @@ severity-mode-switch {
   }
   & .severity-mode-chips {
     display: inline-flex; height: 30px; box-sizing: border-box;
-    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); overflow: hidden;
   }
   & .severity-mode-chip {
     background: transparent; border: none; color: var(--muted);
@@ -650,7 +650,7 @@ severity-mode-switch {
 annotation-filter {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   overflow: hidden;
 
   & .annotation-chip {
@@ -722,7 +722,7 @@ toolbar-search,
   height: 30px; box-sizing: border-box;
   padding: 0 .65rem;
   background: var(--bg);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
 
   /* `:has(input:focus)` not `:focus-within` — the latter would drag the
      accent border on when the trailing negate toggle takes focus. */
@@ -763,7 +763,7 @@ toolbar-search,
   width: 20px; height: 20px;
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
-  border: 0; border-radius: 3px;
+  border: 0; border-radius: var(--ui-radius, 3px);
   padding: 0;
   transition: background .12s, color .12s;
 
@@ -803,7 +803,7 @@ toolbar-search,
 severity-chips {
   display: inline-flex;
   height: 30px; box-sizing: border-box;
-  border: 1px solid var(--border); border-radius: 4px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
   overflow: hidden;
 }
 severity-chips > .sev-chip {
@@ -892,7 +892,7 @@ triage-filter {
   display: inline-flex; align-items: center;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   padding: 3px;
   height: 30px;
   gap: 1px;
@@ -900,7 +900,7 @@ triage-filter {
   & button {
     width: 22px; height: 22px;
     background: transparent;
-    border: 0; border-radius: 4px;
+    border: 0; border-radius: var(--ui-radius, 4px);
     padding: 0;
     display: grid; place-items: center;
     position: relative;

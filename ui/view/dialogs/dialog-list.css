@@ -18,14 +18,14 @@
 .lwd-note {
   margin: .2rem 0 .65rem;
   padding: .55rem .7rem;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: rgb(from var(--text) r g b / .03);
   color: var(--muted); font-size: .78rem; line-height: 1.45;
 }
 .lwd-choice {
   margin: .2rem 0 .65rem;
   padding: .55rem .7rem .6rem;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: rgb(from var(--text) r g b / .03);
 
   & legend {

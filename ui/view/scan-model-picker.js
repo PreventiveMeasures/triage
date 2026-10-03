@@ -20,13 +20,13 @@ class ScanModelPicker extends LitElement {
     .layout { display: grid; grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr); gap: 1.25rem; align-items: start; }
     .layout.with-extra { grid-template-columns: minmax(16rem, .9fr) minmax(14rem, 1.2fr) minmax(14rem, auto); }
     .field { min-width: 0; min-height: 4.9rem; }
-    .model-placeholder { height: 3.25rem; display: flex; align-items: center; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--bg); font-size: .75rem; }
+    .model-placeholder { height: 3.25rem; display: flex; align-items: center; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); color: var(--muted); background: var(--bg); font-size: .75rem; }
     .effort-placeholder { height: .3rem; margin: 1rem .6rem; border-radius: 999px; background: var(--surface-active); }
     .label { display: flex; justify-content: space-between; align-items: center; margin-bottom: .4rem; color: var(--muted); font-size: .72rem; }
     output { color: var(--text); font-size: .72rem; font-weight: 500; }
     details { position: relative; }
     .model-control { position: relative; }
-    summary { display: flex; align-items: center; gap: .55rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); list-style: none; transition: border-color .12s, background .12s; }
+    summary { display: flex; align-items: center; gap: .55rem; padding: .5rem .6rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); background: var(--bg); color: var(--text); list-style: none; transition: border-color .12s, background .12s; }
     summary:hover, details[open] summary { border-color: var(--muted); background: var(--surface-active); }
     summary::-webkit-details-marker { display: none; }
     summary, .menu { user-select: none; }
@@ -35,9 +35,9 @@ class ScanModelPicker extends LitElement {
     .selected-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; font-weight: 500; }
     .selected-copy small { color: var(--muted); font-size: .63rem; }
     .pro-space { width: 3.65rem; flex: 0 0 3.65rem; }
-    .pro-toggle { position: absolute; right: 2.05rem; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; gap: .3rem; width: 3.65rem; height: 1.65rem; padding: .2rem .3rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--muted); font: inherit; font-size: .65rem; font-weight: 600; cursor: default; user-select: none; }
+    .pro-toggle { position: absolute; right: 2.05rem; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; gap: .3rem; width: 3.65rem; height: 1.65rem; padding: .2rem .3rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); color: var(--muted); font: inherit; font-size: .65rem; font-weight: 600; cursor: default; user-select: none; }
     .pro-toggle:hover { border-color: var(--muted); color: var(--text); }
-    .pro-track { position: relative; flex: 0 0 1.3rem; height: .8rem; border-radius: 999px; background: var(--border); }
+    .pro-track { position: relative; flex: 0 0 1.3rem; height: .8rem; border-radius: var(--ui-radius, 999px); background: var(--border); }
     .pro-track::after { content: ''; position: absolute; top: .15rem; left: .15rem; width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); transition: transform .12s, background .12s; }
     .pro-toggle[aria-checked=true] { color: var(--accent); border-color: rgb(from var(--accent) r g b / .45); background: rgb(from var(--accent) r g b / .08); }
     .pro-toggle[aria-checked=true] .pro-track { background: rgb(from var(--accent) r g b / .25); }
@@ -66,7 +66,7 @@ class ScanModelPicker extends LitElement {
     /* The picker lives low in a long scan form. A fixed menu, positioned from
        the summary at open time, keeps it above the viewport edge and outside
        any panel's clipping context. */
-    .menu { visibility: hidden; position: fixed; z-index: 1000; width: min(46rem, calc(100vw - 1rem)); max-height: calc(100dvh - 1rem); overflow: auto; overscroll-behavior: contain; padding: .65rem; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-active); color: var(--text); box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .55); }
+    .menu { visibility: hidden; position: fixed; z-index: 1000; width: min(46rem, calc(100vw - 1rem)); max-height: calc(100dvh - 1rem); overflow: auto; overscroll-behavior: contain; padding: .65rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 9px); background: var(--surface-active); color: var(--text); box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .55); }
     details[open] .menu[data-positioned] { visibility: visible; }
     /* Each track has an explicit, nonempty list of provider sections. Scroll
        the whole grid vertically when the catalogue exceeds the viewport. */
@@ -80,15 +80,15 @@ class ScanModelPicker extends LitElement {
        optically normalized so their source viewBoxes cannot dominate. */
     legend .icon { width: .88rem; height: 1.25rem; flex-basis: .88rem; }
     legend .icon svg { width: .88rem; height: .88rem; }
-    .choice { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; border-radius: 4px; font-size: .76rem; }
+    .choice { display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; border-radius: var(--ui-radius, 4px); font-size: .76rem; }
     .choice:hover { background: rgb(from var(--text) r g b / .05); }
     .choice:has(:checked) { color: var(--accent); background: rgb(from var(--accent) r g b / .1); }
     .choice input { margin: 0; accent-color: var(--accent); }
     .choice span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .slider { --thumb-size: 1rem; padding: .15rem .6rem 0; }
     input[type=range] { appearance: none; display: block; width: 100%; height: var(--thumb-size); margin: .4rem 0 .5rem; padding: 0; border: 0; background: transparent; }
-    input[type=range]::-webkit-slider-runnable-track { height: .3rem; border-radius: 999px; background: linear-gradient(to right, var(--accent) var(--effort-fill), var(--surface-active) var(--effort-fill)); }
-    input[type=range]::-moz-range-track { height: .3rem; border-radius: 999px; background: linear-gradient(to right, var(--accent) var(--effort-fill), var(--surface-active) var(--effort-fill)); }
+    input[type=range]::-webkit-slider-runnable-track { height: .3rem; border-radius: var(--ui-radius, 999px); background: linear-gradient(to right, var(--accent) var(--effort-fill), var(--surface-active) var(--effort-fill)); }
+    input[type=range]::-moz-range-track { height: .3rem; border-radius: var(--ui-radius, 999px); background: linear-gradient(to right, var(--accent) var(--effort-fill), var(--surface-active) var(--effort-fill)); }
     input[type=range]::-webkit-slider-thumb { appearance: none; width: var(--thumb-size); height: var(--thumb-size); margin-top: calc((.3rem - var(--thumb-size)) / 2); border: 0; border-radius: 50%; background: var(--accent); }
     input[type=range]::-moz-range-thumb { width: var(--thumb-size); height: var(--thumb-size); border: 0; border-radius: 50%; background: var(--accent); }
     input[type=range]:disabled { opacity: .5; }
@@ -102,7 +102,7 @@ class ScanModelPicker extends LitElement {
     :is(summary, input, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .message { margin: 0; color: var(--muted); font-size: .75rem; }
     .error { color: var(--critical, #e5534b); }
-    .retry { margin-left: .5rem; padding: .2rem .4rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); font: inherit; }
+    .retry { margin-left: .5rem; padding: .2rem .4rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); background: var(--bg); color: var(--text); font: inherit; }
     @container scan-controls (max-width: 50rem) { .layout.with-extra { grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr); } .layout.with-extra .extra { grid-column: 1 / -1; align-self: start; min-height: 0; } }
     @container scan-controls (max-width: 33rem) { .layout, .layout.with-extra { grid-template-columns: minmax(0, 1fr); gap: 1rem; } .layout.with-extra .extra { grid-column: auto; } }
   `

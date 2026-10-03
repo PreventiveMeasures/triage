@@ -8,7 +8,7 @@
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   overflow: hidden;
   box-shadow: var(--shadow-glass);
   margin-bottom: 1rem;

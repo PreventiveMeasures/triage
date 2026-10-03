@@ -25,12 +25,12 @@
 .toolbar .btn {
   min-height: 2rem;
   padding: .28rem .5rem;
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
 }
 .history {
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--ui-radius, 9px);
   background: var(--panel);
 }
 .row,

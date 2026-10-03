@@ -16,7 +16,7 @@ select:focus-visible {
   display: grid;
   place-items: center;
   border: 2px dashed var(--accent);
-  border-radius: 10px;
+  border-radius: var(--ui-radius, 10px);
   background: rgb(from var(--bg) r g b / .94);
   color: var(--accent);
   font-size: 1rem;
@@ -66,7 +66,7 @@ select:focus-visible {
   height: 2rem;
   padding: .45rem;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: transparent;
   color: var(--muted);
   text-decoration: none;
@@ -95,7 +95,7 @@ select:focus-visible {
 .bundle-group {
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--ui-radius, 10px);
   background: var(--panel);
   overflow-x: auto;
 }
@@ -154,7 +154,7 @@ select:focus-visible {
   height: 1.6rem;
   flex-shrink: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--ui-radius, 7px);
   background: transparent;
   color: var(--muted);
 }

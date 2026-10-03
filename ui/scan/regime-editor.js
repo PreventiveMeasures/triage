@@ -147,7 +147,7 @@ export class RegimeEditor extends LitElement {
     h2 { margin: 0; color: var(--text); font-size: .85rem; font-weight: 600; }
     .heading > span { color: var(--muted); font-size: .7rem; }
     .row { position: relative; display: grid; grid-template-columns: 7.75rem minmax(0, 1fr) 5.8rem; align-items: start; gap: 1rem; padding: .85rem 0; border-top: 1px solid var(--border); }
-    .mode { display: grid; min-width: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--bg); }
+    .mode { display: grid; min-width: 0; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden; background: var(--bg); }
     .mode-choice { position: relative; user-select: none; }
     .mode-choice + .mode-choice { border-top: 1px solid var(--border); }
     .mode-choice input { position: absolute; width: 1px; height: 1px; opacity: 0; }
@@ -155,7 +155,7 @@ export class RegimeEditor extends LitElement {
     .mode-choice:hover span { background: var(--surface-active); }
     .mode-choice input:checked + span { color: var(--accent); background: rgb(from var(--accent) r g b / .1); box-shadow: inset 2px 0 var(--accent); font-weight: 600; }
     .mode-choice input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
-    button { border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
+    button { border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
     button { padding: .4rem .55rem; user-select: none; }
     button:hover:not(:disabled) { background: var(--surface-active); }
     button:disabled { opacity: .35; }
@@ -170,7 +170,7 @@ export class RegimeEditor extends LitElement {
     .app-model > summary { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .8rem; padding: .65rem 0 .1rem; color: var(--muted); font-size: .74rem; list-style: none; cursor: default; user-select: none; }
     .app-model > summary::-webkit-details-marker { display: none; }
     .app-model > summary:hover { color: var(--text); }
-    .app-model > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+    .app-model > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--ui-radius, 3px); }
     .app-model > summary svg { width: .8rem; height: .8rem; flex: 0 0 .8rem; }
     .app-model[open] > summary svg { transform: rotate(90deg); }
     .app-model strong { color: var(--text); font-weight: 500; }

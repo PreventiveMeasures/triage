@@ -63,7 +63,7 @@
 .bundle-compare-clear {
   flex-shrink: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -85,7 +85,7 @@
   color: var(--muted);
   background: var(--surface-active);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
 }
 .bundle-compare-swap-icon { font-size: .95rem; line-height: 1; }
 
@@ -200,7 +200,7 @@
    columns and the stacked groups blur together. */
 .bundle-compare-group {
   padding: .45rem .6rem;
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
 }
 .bundle-compare-group.bundle-compare-added { background: rgb(from var(--green) r g b / .06); }
 .bundle-compare-group.bundle-compare-removed { background: rgb(from var(--critical) r g b / .06); }
@@ -247,7 +247,7 @@
   color: var(--text);
   background: none;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
 }
 button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-row-path {
@@ -305,7 +305,7 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-ver-changes {
   margin-bottom: .6rem;
   padding: .45rem .6rem;
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: rgb(from var(--muted) r g b / .06);
 }
 .bundle-compare-ver-changes .bundle-compare-group-title { color: var(--text); }

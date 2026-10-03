@@ -7,7 +7,7 @@
 .field { display: flex; flex-direction: column; gap: .4rem; min-width: 0; font-size: .75rem; color: var(--muted); }
 .revision {
   display: flex; align-items: center; min-width: 0; height: 2rem;
-  border: 1px solid var(--border); border-radius: 5px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg);
 }
 .revision:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .revision-name { flex: 1; }
@@ -20,7 +20,7 @@
   display: flex; flex: none; align-self: stretch; padding: 2px; gap: 2px;
 }
 .revision-switch button {
-  display: grid; place-items: center; width: 1.8rem; padding: 0; border: 0; border-radius: 3px;
+  display: grid; place-items: center; width: 1.8rem; padding: 0; border: 0; border-radius: var(--ui-radius, 3px);
   background: transparent; color: var(--muted);
 }
 .revision-switch button:hover:not(:disabled) { color: var(--text); background: var(--surface-active); }
@@ -29,20 +29,20 @@
 .revision-switch svg { width: 1rem; height: 1rem; }
 .revision-expand {
   display: grid; place-items: center; align-self: stretch; flex: none; width: 2rem; padding: 0;
-  border: 0; border-radius: 4px; color: var(--muted); background: transparent;
+  border: 0; border-radius: var(--ui-radius, 4px); color: var(--muted); background: transparent;
 }
 .revision-expand svg { width: .9rem; height: .9rem; }
 .revision-expand:hover:not(:disabled) { color: var(--text); }
 .revision-expand:focus-visible { outline-offset: -2px; }
 .revision-menu {
   visibility: hidden; position: fixed; inset: auto; margin: 0; padding: .45rem; overflow: auto; overscroll-behavior: contain;
-  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-active); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 8px); background: var(--surface-active); color: var(--text);
   box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .45);
 }
 .revision-menu[data-positioned] { visibility: visible; }
 .revision-options { display: grid; grid-template-columns: repeat(var(--revision-columns, 1), minmax(0, 1fr)); gap: .15rem .5rem; }
 .revision-options button {
-  min-width: 0; padding: .4rem .6rem; border: 0; border-radius: 4px; background: transparent; color: var(--text);
+  min-width: 0; padding: .4rem .6rem; border: 0; border-radius: var(--ui-radius, 4px); background: transparent; color: var(--text);
   text-align: left; font-size: .76rem;
 }
 .revision-options button span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -51,7 +51,7 @@
 .revision-options button[data-active] { outline: 1px solid var(--accent); outline-offset: -1px; }
 .revision-empty { margin: 0; padding: .65rem; color: var(--muted); font-size: .75rem; }
 button:disabled, input:disabled { opacity: .5; }
-.browser { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.browser { border: 1px solid var(--border); border-radius: var(--ui-radius, 7px); overflow: hidden; }
 .browser-head {
   display: flex; align-items: center; gap: .75rem; padding: .65rem .8rem; border-bottom: 1px solid var(--border);
   background: var(--bg); font-size: .75rem;
@@ -61,7 +61,7 @@ button:disabled, input:disabled { opacity: .5; }
 }
 .commit-link svg { width: 1rem; height: 1rem; }
 .commit-link:hover { color: var(--accent); }
-.commit-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.commit-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: var(--ui-radius, 2px); }
 .breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; min-width: 0; }
 .breadcrumbs button { border: 0; padding: .1rem; background: transparent; color: var(--muted); overflow-wrap: anywhere; }
 .breadcrumbs button[aria-current] { color: var(--text); }
@@ -71,7 +71,7 @@ button:disabled, input:disabled { opacity: .5; }
 .file-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); gap: .5rem; }
 .file-tile {
   display: flex; align-items: center; gap: .5rem; min-width: 0; height: 2.05rem; padding: .4rem .6rem;
-  border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font-size: .75rem;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); color: var(--text); font-size: .75rem;
 }
 .file-tile > span:not(.arrow) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .file-tile input { width: .85rem; height: .85rem; margin: 0; accent-color: var(--accent); flex: none; }
@@ -108,12 +108,12 @@ h2 span { color: var(--muted); margin-left: .4rem; }
 }
 .entry-points li {
   display: flex; align-items: center; gap: .4rem; min-width: 0; max-width: 100%; padding: .2rem .4rem;
-  border: 1px solid var(--border); border-radius: 4px; background: var(--bg); font-size: .72rem;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); background: var(--bg); font-size: .72rem;
 }
 .entry-points li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry-points li button {
   display: grid; place-items: center; flex: none; width: 1.3rem; height: 1.3rem; padding: 0;
-  border: 0; border-radius: 3px; background: transparent; color: var(--muted); cursor: default;
+  border: 0; border-radius: var(--ui-radius, 3px); background: transparent; color: var(--muted); cursor: default;
 }
 .entry-points li button svg { width: 1rem; height: 1rem; }
 .entry-points li button:hover { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, transparent); }

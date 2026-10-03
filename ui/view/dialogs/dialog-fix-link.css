@@ -32,7 +32,7 @@ header h3 { margin: 0 0 .4rem; }  /* tighter than base */
 input {
   flex: 1; min-width: 0;
   padding: .5rem .65rem;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: var(--bg, var(--surface));
   color: var(--text);
   font: inherit; font-size: .88rem;
@@ -51,7 +51,7 @@ input {
 .open {
   display: inline-flex; align-items: center;
   padding: 0 .7rem;
-  border: 1px solid var(--accent); border-radius: 6px;
+  border: 1px solid var(--accent); border-radius: var(--ui-radius, 6px);
   color: var(--accent);
   text-decoration: none; font-size: .8rem; font-weight: 600;
   white-space: nowrap;

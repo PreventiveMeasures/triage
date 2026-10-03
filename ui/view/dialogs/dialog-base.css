@@ -47,7 +47,7 @@ dialog {
      tall dialogs don't punch through the viewport. */
   margin-top: 5rem;
   margin-inline: auto;
-  border: 1px solid var(--border); border-radius: 10px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 10px);
   background: var(--surface); color: var(--text);
   padding: 1.1rem 1.25rem 1rem;
   max-width: 480px; width: min(94vw, 480px);
@@ -64,7 +64,7 @@ header h3 {
 .nwd-input {
   display: block; width: 100%; box-sizing: border-box;
   padding: .5rem .65rem;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: var(--bg, var(--surface));
   color: var(--text);
   font: inherit; font-size: .88rem;
@@ -95,7 +95,7 @@ header h3 {
 .nwd-spacer { flex: 1; }
 .nwd-actions button {
   background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: 5px;
+  color: var(--text); border-radius: var(--ui-radius, 5px);
   padding: .35rem .9rem;
   font: inherit; font-size: .8rem;
 

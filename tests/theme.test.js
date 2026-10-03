@@ -97,7 +97,7 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
   await setImmediate()
   assert.equal(page.button.getAttribute('aria-disabled'), 'false')
   assert.equal(page.button.render(), '🕶️', 'the active green theme shows the sunglasses glyph')
-  for (const expected of ['pink', 'light', 'paper', 'dark', 'green', 'pink', 'light', 'paper', 'dark', 'green']) {
+  for (const expected of ['pink', 'paper', 'light', 'dark', 'green', 'pink', 'paper', 'light', 'dark', 'green']) {
     click(page.button)
     assert.equal(page.api.getTheme(), expected)
   }
@@ -178,7 +178,7 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
   assert.equal(stored.get('deepview.theme'), 'paper')
   page = await boot()
   assert.equal(page.api.getTheme(), 'paper', 'paper persists across reloads')
-  assert.equal(page.button.render(), '▤')
+  assert.equal(page.button.render(), '📄')
   click(page.button)
   assert.equal(page.api.getTheme(), 'light', 'a reload restores the default switcher even when paper is selected')
   click(page.button)

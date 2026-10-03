@@ -8,9 +8,9 @@
   position: absolute; top: .5rem; right: .5rem;
   z-index: 1000;
   width: 30px; height: 30px;
-  background: var(--theme-toggle-bg, var(--surface-active));
-  color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--theme-toggle-bg, transparent);
+  color: var(--muted);
+  border: var(--theme-toggle-border, 0); border-radius: var(--ui-radius, 6px);
   font-size: 1rem; line-height: 1;
   font-family: inherit;
   display: flex; align-items: center; justify-content: center;
@@ -19,7 +19,8 @@
   user-select: none;
 }
 :host(:hover) {
-  background: var(--theme-toggle-hover-bg, color-mix(in srgb, var(--theme-toggle-bg, var(--surface-active)) 88%, var(--text)));
+  color: var(--text);
+  background: var(--theme-toggle-hover-bg, rgb(from var(--text) r g b / .06));
 }
 :host(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media print { :host { display: none !important; } }

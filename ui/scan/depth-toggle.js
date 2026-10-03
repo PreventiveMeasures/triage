@@ -23,12 +23,12 @@ export class ScanDepthToggle extends LitElement {
     :host { display: block; width: 19rem; max-width: 100%; min-width: 0; }
     * { box-sizing: border-box; }
   .scan-depth { display: grid; gap: .4rem; width: 100%; min-width: 0; user-select: none; }
-  .depth-options { display: flex; position: relative; padding: .2rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-  .depth-options::before { content: ''; position: absolute; inset: .2rem auto .2rem .2rem; width: calc((100% - .4rem) / 2); border-radius: 5px; background: var(--surface-active); box-shadow: 0 1px 3px rgb(0 0 0 / .12), inset 0 0 0 1px rgb(from var(--accent) r g b / .18); transition: transform .16s ease-out; }
+  .depth-options { display: flex; position: relative; padding: .2rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 8px); background: var(--bg); }
+  .depth-options::before { content: ''; position: absolute; inset: .2rem auto .2rem .2rem; width: calc((100% - .4rem) / 2); border-radius: var(--ui-radius, 5px); background: var(--surface-active); box-shadow: 0 1px 3px rgb(0 0 0 / .12), inset 0 0 0 1px rgb(from var(--accent) r g b / .18); transition: transform .16s ease-out; }
   .depth-options:has(input[value=isolate]:checked)::before { transform: translateX(100%); }
   .depth-choice { position: relative; flex: 1; min-width: 0; }
   .depth-choice input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-  .depth-choice span { display: flex; align-items: center; justify-content: center; gap: .4rem; height: 1.9rem; padding: .3rem .65rem; border-radius: 5px; color: var(--muted); font-size: .76rem; font-weight: 500; transition: color .12s; }
+  .depth-choice span { display: flex; align-items: center; justify-content: center; gap: .4rem; height: 1.9rem; padding: .3rem .65rem; border-radius: var(--ui-radius, 5px); color: var(--muted); font-size: .76rem; font-weight: 500; transition: color .12s; }
   .depth-choice svg { width: .95rem; height: .95rem; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
   .depth-choice:hover span { color: var(--text); }
   .depth-choice input:checked + span { color: var(--accent); }

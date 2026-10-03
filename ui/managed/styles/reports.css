@@ -41,7 +41,7 @@
   display: grid;
   place-items: center;
   border: 2px dashed var(--accent);
-  border-radius: 10px;
+  border-radius: var(--ui-radius, 10px);
   background: rgb(from var(--bg) r g b / .94);
   color: var(--accent);
   font-weight: 600;
@@ -50,7 +50,7 @@
 .report-list {
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--ui-radius, 9px);
   background: var(--panel);
 }
 .reports {
@@ -173,7 +173,7 @@
   height: 1.8rem;
   padding: .3rem;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   background: transparent;
   color: var(--muted);
 }
@@ -202,7 +202,7 @@
   margin: 0;
   padding: .85rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: var(--bg);
   color: var(--text);
   font:

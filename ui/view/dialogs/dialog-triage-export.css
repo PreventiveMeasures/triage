@@ -22,7 +22,7 @@ hr {
 }
 .section button {
   background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: 5px;
+  color: var(--text); border-radius: var(--ui-radius, 5px);
   padding: .35rem .9rem;
   font: inherit; font-size: .8rem;
 
@@ -41,7 +41,7 @@ input[type='file'] {
   margin: .5rem 0;
   padding: .4rem .6rem;
   border: 1px solid var(--critical, #f87171);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   background: rgb(from var(--critical, #f87171) r g b / .07);
   color: var(--text);
   font-size: .78rem;
@@ -56,7 +56,7 @@ input[type='file'] {
   }
 }
 .mode {
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   padding: .55rem .7rem;
   margin: .55rem 0 .7rem;
   display: flex; flex-direction: column; gap: .35rem;
@@ -96,7 +96,7 @@ input[type='file'] {
 }
 .actions button {
   background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: 5px;
+  color: var(--text); border-radius: var(--ui-radius, 5px);
   padding: .3rem .8rem;
   font: inherit; font-size: .78rem;
 
