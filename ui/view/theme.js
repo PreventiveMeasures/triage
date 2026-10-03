@@ -32,9 +32,7 @@ const THEME_COLOR = {
   pink:  { base: '#ffe4ee', dim: '#a3727f' },
 }
 
-// Sun glyph reads as "switch to light"; moon reads as "switch to dark".
-// The glyph reflects what clicking would DO, not the current state —
-// matches the affordance pattern used by most editors.
+// The glyph reflects the active theme.
 const ICONS = { light: '☀', dark: '☾', green: '☘', pink: '✿' }
 
 // Fires on every applyTheme call (including the boot-time replay).
@@ -112,13 +110,13 @@ export function setTheme(name) {
 export function getTheme() { return currentTheme }
 
 class ThemeToggle extends LitElement {
-  static properties = { _nextTheme: { state: true } }
+  static properties = { _theme: { state: true } }
 
   static styles = unsafeCSS(themeToggleCSS)
 
   constructor() {
     super()
-    this._nextTheme = nextTheme()
+    this._theme = currentTheme
   }
 
   connectedCallback() {
@@ -128,8 +126,7 @@ class ThemeToggle extends LitElement {
     this.addEventListener('click', this._toggle)
     this.addEventListener('keydown', this._onKeydown)
     // External theme swaps (DeepView.setTheme, or another tab via
-    // storage events someday) need to update the icon so the
-    // affordance the button promises stays accurate.
+    // storage events someday) need to keep the icon in sync with the active theme.
     window.addEventListener(THEME_CHANGED, this._onThemeChanged)
     this._onThemeChanged()
   }
@@ -142,7 +139,7 @@ class ThemeToggle extends LitElement {
   }
 
   _onThemeChanged = () => {
-    this._nextTheme = nextTheme()
+    this._theme = currentTheme
     this.setAttribute('aria-disabled', String(themeUnlocking))
   }
 
@@ -178,7 +175,7 @@ class ThemeToggle extends LitElement {
   }
 
   render() {
-    return html`${ICONS[this._nextTheme]}`
+    return html`${ICONS[this._theme]}`
   }
 }
 

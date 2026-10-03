@@ -59,7 +59,7 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   }
   let page = await boot()
   assert.equal(page.api.getTheme(), 'dark')
-  assert.equal(page.button.render(), '☀')
+  assert.equal(page.button.render(), '☾', 'the icon shows the active dark theme')
   for (const expected of ['light', 'dark', 'light']) { click(page.button); assert.equal(page.api.getTheme(), expected) }
   page.button.disconnectedCallback()
   page.button = new page.Toggle()
@@ -70,6 +70,7 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   assert.equal(page.api.getTheme(), 'dark', 'holding a key does not count repeated keydowns')
   assert.equal(key(page.button, ' ').defaultPrevented, true)
   assert.equal(page.api.getTheme(), 'light')
+  assert.equal(page.button.render(), '☀', 'the icon shows the active white theme')
   assert.equal(plays, 0)
   window.dispatchEvent(new Event('beforeprint'))
   assert.equal(page.meta.getAttribute('content'), '#646464')
@@ -80,6 +81,7 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   assert.equal(plays, 0, 'the sixth activation from light only switches to dark')
   click(page.button)
   assert.equal(page.api.getTheme(), 'dark', 'the animation begins on the dark theme')
+  assert.equal(page.button.render(), '☾', 'the icon stays dark until the green theme is revealed')
   assert.equal(plays, 1, 'starting from dark triggers on the seventh activation')
   assert.equal(page.button.getAttribute('aria-disabled'), 'true')
   click(page.button)
@@ -92,7 +94,7 @@ test('the first activation from dark at or after six presses unlocks a page-loca
   resolveAnimation()
   await setImmediate()
   assert.equal(page.button.getAttribute('aria-disabled'), 'false')
-  assert.equal(page.button.render(), '✿', 'the icon shows the next pink theme')
+  assert.equal(page.button.render(), '☘', 'the icon shows the active green theme')
   for (const expected of ['pink', 'light', 'dark', 'green', 'pink', 'light', 'dark', 'green']) {
     click(page.button)
     assert.equal(page.api.getTheme(), expected)
@@ -105,7 +107,7 @@ test('the first activation from dark at or after six presses unlocks a page-loca
     page.button.disconnectedCallback()
     page = await boot()
     assert.equal(page.api.getTheme(), saved, 'a reload keeps the selected bonus theme')
-    assert.equal(page.button.render(), '☀', 'a reload restores the default switcher')
+    assert.equal(page.button.render(), saved === 'green' ? '☘' : '✿', 'a reload shows the persisted theme')
     for (const expected of ['light', 'dark', 'light', 'dark', 'light']) {
       click(page.button)
       assert.equal(page.api.getTheme(), expected)
