@@ -54,6 +54,7 @@
   font: 12px/1.4 system-ui, sans-serif;
 }
 #styled-tooltip .tooltip-package { color: var(--text); }
+#styled-tooltip:has(.tooltip-package) :is(.tooltip-package, .tooltip-repo) { margin-top: 12px; }
 #styled-tooltip .tooltip-package-details { display: flex; flex-wrap: wrap; column-gap: .75rem; }
 #styled-tooltip .tooltip-repo svg,
 #styled-tooltip .tooltip-bundle :is(svg, img) {
