@@ -1,5 +1,7 @@
 // Display paths may omit a common prefix; leaf values always retain the
 // original bundle key used to open the source and look up findings.
+const vendoredEcosystems = new Set(['cargo', 'composer'])
+
 export function buildBundleSourceTree(paths, originals = paths, modules = null) {
   const root = { path: '', files: new Map(), dirs: new Map() }
   for (let index = 0; index < paths.length; index++) {
@@ -28,7 +30,7 @@ export function bundleSourceTreePrefix(prefix, modules = null) {
   const match = /(?:^|\/)node_modules\//u.exec(prefix)
   let end = match ? match.index + (match[0].startsWith('/') ? 1 : 0) : prefix.length
   for (const [dir, info] of modules ?? []) {
-    if (info.ecosystem !== 'cargo' || !info.name || dir === '.' || !prefix.startsWith(`${dir}/`)) continue
+    if (!vendoredEcosystems.has(info.ecosystem) || !info.name || dir === '.' || !prefix.startsWith(`${dir}/`)) continue
     const vendor = /(?:^|\/)vendor\//u.exec(`${dir}/`)
     const boundary = vendor ? vendor.index + (vendor[0].startsWith('/') ? 1 : 0) : dir.lastIndexOf('/') + 1
     end = Math.min(end, boundary)
@@ -39,13 +41,28 @@ export function bundleSourceTreePrefix(prefix, modules = null) {
 function presentDependencyDirectories(node, packageModules) {
   for (const child of node.dirs.values()) presentDependencyDirectories(child, packageModules)
   const info = packageModules?.get(node.sourcePath)
-  if (info?.ecosystem === 'cargo' && info.name) {
+  if (vendoredEcosystems.has(info?.ecosystem) && info.name) {
     node.boundary = true
-    node.package = { name: info.name, version: info.version, ecosystem: 'cargo' }
+    node.package = { name: info.name, version: info.version, ecosystem: info.ecosystem }
     // Decide before search filtering, so a matching subset cannot hide a
     // directory that has siblings in the complete captured package.
     node.hideSrc = node.dirs.size === 1 && node.dirs.has('src')
     if (node.hideSrc) node.srcNameConflicts = new Set([...node.dirs.get('src').files.keys()].filter(name => node.files.has(name)))
+  }
+  if (/(?:^|\/)vendor$/u.test(node.path)) {
+    const dirs = new Map()
+    for (const [name, child] of node.dirs) {
+      // Composer's vendor/name wrapper is like an npm scope. Only skip a
+      // namespace containing known packages, with no other files or dirs.
+      if (!child.package && child.files.size === 0 && child.dirs.size > 0 && [...child.dirs.values()].every(pkg => pkg.package?.ecosystem === 'composer')) {
+        node.boundary = true
+        for (const [part, pkg] of child.dirs) dirs.set(`${name}/${part}`, pkg)
+      } else {
+        if (vendoredEcosystems.has(child.package?.ecosystem)) node.boundary = true
+        dirs.set(name, child)
+      }
+    }
+    node.dirs = dirs
   }
   if (/(?:^|\/)node_modules$/u.test(node.path)) {
     node.boundary = true
@@ -100,7 +117,7 @@ function presentDependencyDirectories(node, packageModules) {
 
 export function sourceDirectoryLabel(name, node) {
   const pkg = node.package
-  return pkg ? `${pkg.name}${pkg.version ? `${pkg.ecosystem === 'cargo' ? ' - ' : '@'}${pkg.version}` : ''}` : name
+  return pkg ? `${pkg.name}${pkg.version ? `${vendoredEcosystems.has(pkg.ecosystem) ? ' - ' : '@'}${pkg.version}` : ''}` : name
 }
 
 // Filter the presentation built from ALL files: a search must not make an

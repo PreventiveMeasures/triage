@@ -21,7 +21,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourceCargoIcon, sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
+import { sourceCargoIcon, sourceComposerIcon, sourceFileIcon, sourceNpmIcon } from './source-file-icon.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
@@ -956,6 +956,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const childPath = child.path
       const compact = compactSourceDirectory(name, child, depth)
       const pkg = child.package
+      const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer'
+      const packageIcon = pkg?.ecosystem === 'composer' ? sourceComposerIcon : pkg?.ecosystem === 'cargo' ? sourceCargoIcon : sourceNpmIcon
       const tooltip = pkg?.variant ? `Variant ${pkg.variant}\n${compact.node.sourcePath}` : compact.node.sourcePath
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
@@ -966,9 +968,9 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
         <details .open=${live(computeOpen(childPath, child))}>
           <summary @click=${onSummaryClick(childPath)} data-tooltip=${tooltip}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
-            ${pkg ? pkg.ecosystem === 'cargo' ? sourceCargoIcon : sourceNpmIcon : nothing}
-            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-cargo': pkg?.ecosystem === 'cargo' })}>
-              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${pkg.ecosystem === 'cargo' ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
+            ${pkg ? packageIcon : nothing}
+            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored })}>
+              ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${vendored ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
             </span>
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}

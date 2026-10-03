@@ -261,12 +261,124 @@ test('Cargo package metadata follows original paths when a checkout prefix is st
   assert.equal(bundleSourceTreePrefix('/checkout/vendor/renamed/src/'), '/checkout/vendor/renamed/src/', 'ordinary source trees keep their prefix behavior')
 })
 
-test('vendored packages without Cargo ecosystem metadata retain ordinary directory labels', () => {
-  const path = 'vendor/org/package/src/a.php'
+test('vendored packages with an unfamiliar ecosystem retain ordinary directory labels', () => {
+  const path = 'vendor/org/package/src/a.go'
   const tree = buildBundleSourceTree([path], [path], new Map([
-    ['vendor/org/package', { name: 'org/package', version: '1.0.0', ecosystem: 'composer' }],
+    ['vendor/org/package', { name: 'org/package', version: '1.0.0', ecosystem: 'go' }],
   ]))
   const pkg = tree.dirs.get('vendor').dirs.get('org').dirs.get('package')
   assert.equal(pkg.package, undefined)
   assert.equal(sourceDirectoryLabel('package', pkg), 'package')
+})
+
+function composerTree(files) {
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['vendor/org/package', { name: 'org/package', version: 'v1.2.3', ecosystem: 'composer', files }],
+  ]) }).serialize())
+  const paths = [...bundle.sources.keys()]
+  return buildBundleSourceTree(paths, paths, bundle.modules)
+}
+
+test('Composer namespaces present one name-version row per package and retain original source keys', () => {
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', files: { 'index.php': 'own' } }],
+    ['vendor/org/one', { name: 'org/one', version: '1.2.3', ecosystem: 'composer', files: { 'src/a.php': 'one' } }],
+    ['vendor/org/two', { name: 'org/two', version: 'dev-main', ecosystem: 'composer', files: { 'lib/b.php': 'two' } }],
+    ['vendor/other/three', { name: 'other/three', ecosystem: 'composer', files: { 'c.php': 'three' } }],
+  ]) }).serialize())
+  const paths = [...bundle.sources.keys()]
+  const tree = buildBundleSourceTree(paths, paths, bundle.modules)
+  const vendor = tree.dirs.get('vendor')
+  assert.deepEqual([...vendor.dirs.keys()], ['org/one', 'org/two', 'other/three'])
+  const one = vendor.dirs.get('org/one')
+  assert.deepEqual(one.package, { name: 'org/one', version: '1.2.3', ecosystem: 'composer' })
+  assert.equal(sourceDirectoryLabel('org/one', one), 'org/one - 1.2.3')
+  assert.equal(sourceDirectoryLabel('org/two', vendor.dirs.get('org/two')), 'org/two - dev-main')
+  assert.equal(sourceDirectoryLabel('other/three', vendor.dirs.get('other/three')), 'other/three')
+  assert.equal(one.path, 'vendor/org/one')
+  assert.equal(one.sourcePath, one.path)
+  assert.equal(tree.files.get('index.php'), 'index.php')
+  assert.deepEqual(compactSourceDirectory('vendor', vendor, 0).names, ['vendor'])
+  assert.deepEqual(leaves(tree), paths.toSorted())
+})
+
+test('Composer folds a sole src directory without losing root files or duplicate filenames', () => {
+  const tree = composerTree({ 'composer.json': 'manifest', 'bootstrap.php': 'root', 'src/bootstrap.php': 'source', 'src/deep/a.php': 'deep' })
+  const pkg = tree.dirs.get('vendor').dirs.get('org/package')
+  const compact = compactSourceDirectory('org/package', pkg, 1)
+  assert.deepEqual([...compact.node.files.keys()].toSorted(), ['bootstrap.php', 'composer.json', 'src/bootstrap.php'])
+  assert.ok(compact.node.dirs.has('deep'))
+  assert.equal(compact.node.sourcePath, 'vendor/org/package/src')
+  assert.deepEqual(leaves(compact.node), leaves(pkg))
+  assert.ok(pkg.dirs.has('src'), 'presentation does not mutate the package tree')
+  const filtered = filterBundleSourceTree(tree, 'org/package - v1.2.3/src/bootstrap.php').dirs.get('vendor').dirs.get('org/package')
+  assert.deepEqual([...compactSourceDirectory('org/package', filtered, 1).node.files], [['src/bootstrap.php', 'vendor/org/package/src/bootstrap.php']])
+})
+
+test('Composer tooltips append src only when it is actually folded', () => {
+  for (const files of [{ 'main.php': 'root' }, { 'src/main.php': 'source', 'lib/extra.php': 'sibling' }]) {
+    const tree = composerTree(files)
+    const pkg = tree.dirs.get('vendor').dirs.get('org/package')
+    assert.equal(compactSourceDirectory('org/package', pkg, 1).node.sourcePath, 'vendor/org/package')
+    const filtered = filterBundleSourceTree(tree, 'main.php').dirs.get('vendor').dirs.get('org/package')
+    const compact = compactSourceDirectory('org/package', filtered, 1)
+    assert.equal(compact.node.sourcePath, 'vendor/org/package')
+    if ('src/main.php' in files) assert.ok(compact.node.dirs.has('src'), 'filtering cannot hide a directory with captured siblings')
+  }
+  const tree = composerTree({ 'root.php': 'root', 'src/main.php': 'source' })
+  const filtered = filterBundleSourceTree(tree, 'root.php').dirs.get('vendor').dirs.get('org/package')
+  assert.equal(compactSourceDirectory('org/package', filtered, 1).node.sourcePath, 'vendor/org/package', 'a filtered-out src is not folded')
+})
+
+test('Composer searches match displayed name-version paths and physical paths after folding', () => {
+  const tree = composerTree({ 'src/main.php': 'main', 'src/helper.php': 'helper' })
+  for (const query of ['ORG/PACKAGE - V1.2.3', 'vendor/org/package/src/']) {
+    assert.deepEqual(leaves(filterBundleSourceTree(tree, query)), leaves(tree))
+  }
+  assert.deepEqual(leaves(filterBundleSourceTree(tree, 'org/package - v1.2.3/main.php')), ['vendor/org/package/src/main.php'])
+  assert.equal(filterBundleSourceTree(tree, 'org/package - v9.9.9'), null)
+})
+
+test('Composer namespace wrappers with extra files or unknown directories remain intact through filtering', () => {
+  const file = 'vendor/org/package/src/main.php'
+  const modules = new Map([['vendor/org/package', { name: 'org/package', ecosystem: 'composer' }]])
+  for (const sibling of ['vendor/org/helper.php', 'vendor/org/unknown/helper.php']) {
+    const tree = buildBundleSourceTree([file, sibling], [file, sibling], modules)
+    const org = tree.dirs.get('vendor').dirs.get('org')
+    assert.ok(org.dirs.has('package'))
+    assert.deepEqual(leaves(tree), [file, sibling].toSorted())
+    const filtered = filterBundleSourceTree(tree, 'main.php').dirs.get('vendor').dirs.get('org')
+    assert.ok(filtered.dirs.has('package'), 'search cannot turn an unfamiliar wrapper into a package row')
+    assert.equal(filtered.package, undefined)
+  }
+})
+
+test('Composer identities follow custom install paths and preserve package roots under common prefixes', () => {
+  for (const dir of ['/checkout/vendor/renamed/library', '/checkout/plugins/library']) {
+    const original = `${dir}/src/main.php`
+    const modules = new Map([[dir, { name: 'org/package', version: '1.2.3', ecosystem: 'composer' }]])
+    const prefix = bundleSourceTreePrefix(`${dir}/src/`, modules)
+    assert.equal(prefix, dir.includes('/vendor/') ? '/checkout/' : '/checkout/plugins/')
+    const tree = buildBundleSourceTree([original.slice(prefix.length)], [original], modules)
+    const pkg = dir.includes('/vendor/') ? tree.dirs.get('vendor').dirs.get('renamed/library') : tree.dirs.get('library')
+    assert.equal(sourceDirectoryLabel('library', pkg), 'org/package - 1.2.3')
+    assert.equal(compactSourceDirectory('library', pkg, 0).node.sourcePath, `${dir}/src`)
+    assert.deepEqual(leaves(tree), [original])
+  }
+  assert.equal(bundleSourceTreePrefix('src/', new Map([['.', { name: 'org/app', ecosystem: 'composer' }]])), 'src/', 'the root workspace is not a dependency')
+})
+
+test('Cargo, Composer, and npm packages retain their own grouping in a mixed-language bundle', () => {
+  const paths = ['vendor/ahash/src/lib.rs', 'vendor/org/package/src/main.php', 'node_modules/@scope/pkg/index.js']
+  const tree = buildBundleSourceTree(paths, paths, new Map([
+    ['vendor/ahash', { name: 'ahash', version: '0.8.12', ecosystem: 'cargo' }],
+    ['vendor/org/package', { name: 'org/package', version: '1.2.3', ecosystem: 'composer' }],
+  ]))
+  const vendor = tree.dirs.get('vendor')
+  assert.equal(sourceDirectoryLabel('ahash', vendor.dirs.get('ahash')), 'ahash - 0.8.12')
+  assert.equal(sourceDirectoryLabel('org/package', vendor.dirs.get('org/package')), 'org/package - 1.2.3')
+  const npm = tree.dirs.get('node_modules').dirs.get('@scope/pkg')
+  assert.equal(sourceDirectoryLabel('@scope/pkg', npm), '@scope/pkg')
+  assert.equal(npm.package.ecosystem, undefined)
+  assert.deepEqual(leaves(tree), paths.toSorted())
 })

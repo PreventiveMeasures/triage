@@ -78,6 +78,40 @@ test('closing during loading keeps the popup closed after sources arrive', () =>
   assert.equal(renderText(renderBundleSourceModal()), '')
 })
 
+test('Code renders Composer package rows, PHP file icons, and physical tooltips alongside Cargo and npm', () => {
+  const entry = { name: 'mixed.stasis', integrity: 'sha512-composer-code' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', files: { 'index.PHP': 'own', 'views/main.phtml': 'view' } }],
+    ['vendor/org/package', { name: 'org/package', version: '1.2.3', ecosystem: 'composer', files: { 'src/main.php': 'main' } }],
+    ['vendor/org/dirs', { name: 'org/dirs', version: 'dev-main', ecosystem: 'composer', files: { 'src/main.php': 'main', 'lib/helper.php': 'helper' } }],
+    ['vendor/org/root', { name: 'org/root', ecosystem: 'composer', files: { 'main.php': 'main' } }],
+    ['vendor/ahash', { name: 'ahash', version: '0.8.12', ecosystem: 'cargo', files: { 'src/lib.rs': 'lib' } }],
+    ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'dep' } }],
+  ]) }).serialize())
+  state.currentView = 'bundles'
+  state.bundleDetailsTab = 'code'
+  state.bundleSourceFile = 'index.PHP'
+  state.bundleCodeSearchMode = 'files'
+  state.bundleCodeSearchQuery = ''
+  state.selectedBundle = entry.integrity
+  state.bundles = [entry]
+  state.bundleDetails = { kind: 'stasis', integrity: entry.integrity, size: 123, bundle }
+  const markup = renderText(renderBundlesList([entry]))
+  const rail = markup.match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
+  assert.equal(rail.match(/class="bundle-code-tree-composer"/gu).length, 3)
+  assert.equal(rail.match(/class="bundle-code-tree-cargo"/gu).length, 1)
+  assert.equal(rail.match(/class="bundle-code-tree-npm"/gu).length, 1)
+  const composerRows = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).filter(row => row.includes('class="bundle-code-tree-composer"')).join('')
+  assert.match(composerRows, /class="bundle-code-tree-package-name">org\/package<\/span><span class="bundle-code-tree-package-version">- 1\.2\.3<\/span>/u)
+  assert.match(composerRows, /class="bundle-code-tree-package-name">org\/dirs<\/span><span class="bundle-code-tree-package-version">- dev-main<\/span>/u)
+  assert.match(composerRows, /data-tooltip=vendor\/org\/package\/src>/u)
+  assert.match(composerRows, /data-tooltip=vendor\/org\/dirs>/u)
+  assert.match(composerRows, /data-tooltip=vendor\/org\/root>/u)
+  assert.doesNotMatch(composerRows, /data-tooltip=vendor\/org\/(?:dirs|root)\/src>/u)
+  assert.equal(rail.match(/data-file-type=php/gu).length, 6)
+  assert.match(rail, /data-bundle-view-source=vendor\/org\/package\/src\/main\.php/u)
+})
+
 test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
   const commit = '0123456789abcdef'.repeat(3).slice(0, 40)
