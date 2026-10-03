@@ -54,7 +54,6 @@
   font: 12px/1.4 system-ui, sans-serif;
 }
 #styled-tooltip .tooltip-package { color: var(--text); }
-#styled-tooltip .tooltip-package svg { flex: none; align-self: center; }
 #styled-tooltip .tooltip-repo svg,
 #styled-tooltip .tooltip-bundle :is(svg, img) {
   width: 12px;
@@ -62,6 +61,13 @@
   flex-shrink: 0;
   align-self: start;
   margin-top: .2em;
+}
+#styled-tooltip:has(.tooltip-package) :is(.tooltip-package, .tooltip-repo) svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  align-self: start;
+  margin-top: 0;
 }
 
 body.theme-light #styled-tooltip {
