@@ -31,7 +31,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 13 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 14 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -44,6 +44,13 @@ async function migrateBundleBuildLeases(db: PgConnection): Promise<void> {
   if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 13')).rows.length > 0) return
   await db.query(postgresSchema(BUNDLE_BUILD_LEASE_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (13)')
+}
+
+async function migrateGithubMetadata(db: PgConnection): Promise<void> {
+  await db.query(postgresSchema(GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA))
+  await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
+  await db.query('ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS attempted_at BIGINT')
+  await db.query('INSERT INTO managed_schema_version VALUES (14) ON CONFLICT DO NOTHING')
 }
 
 async function initialize(db: PgConnection): Promise<void> {
@@ -80,9 +87,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(WORKSPACE_SHARE_SCHEMA))
       await db.query('INSERT INTO managed_schema_version VALUES (4)')
     }
-    await db.query(postgresSchema(GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA))
-    await db.query(`ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS state_reason ${GITHUB_STATE_REASON_COLUMN}`)
-    await db.query('ALTER TABLE managed_github_metadata ADD COLUMN IF NOT EXISTS attempted_at BIGINT')
+    await migrateGithubMetadata(db)
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 5')).rows.length === 0) {
       await db.query(`ALTER TABLE managed_workspace_share ADD COLUMN IF NOT EXISTS dependencies INTEGER NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS security INTEGER NOT NULL DEFAULT 0`)

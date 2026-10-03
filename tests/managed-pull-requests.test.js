@@ -18,12 +18,13 @@ const payload = (number, extra = {}) => ({ number, title: `Fix ${number}`, body:
 
 const issuePayload = (number, extra = {}) => ({ number, title: `Issue ${number}`, body: `Issue description ${number}`, state: 'open', repository_url: 'https://api.github.com/repos/ExampleOrg/ExampleRepo', ...extra })
 const repositoryRequest = url => /^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+$/u.test(url)
+const privateRepositoriesUrl = 'https://api.github.com/user/repos?visibility=private&per_page=100&page=1'
 const repositoryPayload = url => ({ id: url.endsWith('/OtherOrg/OtherRepo') ? 8 : 7, full_name: url.split('/repos/')[1], private: true, visibility: 'private' })
-const responseFor = url => Response.json(repositoryRequest(url) ? repositoryPayload(url)
+const responseFor = url => Response.json(url === privateRepositoriesUrl ? [] : repositoryRequest(url) ? repositoryPayload(url)
   : (url.includes('/issues/') ? issuePayload : payload)(Number(url.split('/').at(-1))))
 // Metadata refresh tests use a successful, separate repository-access stub.
 // The workspace tests below exercise access checks through the actual router.
-const withRepositoryAccess = fetchMetadata => (url, options) => repositoryRequest(url) ? responseFor(url) : fetchMetadata(url, options)
+const withRepositoryAccess = fetchMetadata => (url, options) => url === privateRepositoriesUrl || repositoryRequest(url) ? responseFor(url) : fetchMetadata(url, options)
 
 async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
@@ -38,8 +39,9 @@ async function fixture(t) {
   await db.setTeamRepo('team', 7, 'src')
   await db.setTeamMember('team', session.userId, { dependencies: false, security: false })
   const stored = await readSession(config, db, session.setCookie.split(';')[0], Date.now())
-  const lookup = async (urls, fetchImpl) => lookupFixes(config, db, await db.getTeamReportAccessSnapshot(stored.session.id, Date.now(), 'team'), urls, withRepositoryAccess(fetchImpl))
-  return { db, session, lookup }
+  const lookupRaw = async (urls, fetchImpl) => lookupFixes(config, db, await db.getTeamReportAccessSnapshot(stored.session.id, Date.now(), 'team'), urls, fetchImpl)
+  const lookup = (urls, fetchImpl) => lookupRaw(urls, withRepositoryAccess(fetchImpl))
+  return { db, session, lookup, lookupRaw }
 }
 
 test('PR links require an exact GitHub URL and a positive safe integer', () => {
@@ -207,8 +209,9 @@ test('workspace GET derives only saved Fix PRs surviving the complete security/d
     { url: link(1), title: 'Fix 1', description: 'Description 1', status: 'open', stateReason: null },
     { url: link(6), title: 'Fix 6', description: 'Description 6', status: 'open', stateReason: null },
   ])
-  assert.equal(calls[0], 'https://api.github.com/repos/ExampleOrg/ExampleRepo', 'the viewer must pass the live repository-access check')
-  assert.deepEqual(calls.slice(1).map(url => Number(url.split('/').at(-1))), [1, 1, 6], 'hidden rows, linked security, dependencies, drafts and arbitrary input never reach GitHub')
+  assert.equal(calls[0], privateRepositoriesUrl, 'the viewer must pass a live access check')
+  assert.equal(calls[1], 'https://api.github.com/repos/ExampleOrg/ExampleRepo', 'repos omitted from the list get direct access checks')
+  assert.deepEqual(calls.slice(2).map(url => Number(url.split('/').at(-1))), [1, 1, 6], 'hidden rows, linked security, dependencies, drafts and arbitrary input never reach GitHub')
   const broad = await f.send({ path: '/api/teams/broad/fixes' })
   assert.equal(broad.body.fixes.length, 8, 'another team gets its own permitted findings')
   for (const role of ['admin', 'manage']) {
@@ -285,7 +288,7 @@ test('a whole workspace keeps all Fix URLs but caps the derived upstream lookup 
   const response = await f.send()
   assert.equal(response.status, 200)
   assert.equal(response.body.fixes.length, 259)
-  assert.equal(requests, 201, 'one repository-access check plus at most 200 metadata reads')
+  assert.equal(requests, 202, 'one list and one direct repository check plus at most 200 metadata reads')
   assert.equal(response.body.fixes.filter(row => row.status === 'open').length, 200)
   assert.equal(response.body.fixes.find(row => row.url === link(355)).error, 'unavailable')
 })
@@ -485,6 +488,7 @@ test('shared metadata requires each team member\'s live GitHub access, including
         calls.push({ url, authorization: options.headers.authorization })
         assert.equal(options.redirect, 'error')
         assert.ok(options.signal instanceof AbortSignal)
+        if (url === privateRepositoriesUrl) return Response.json([])
         if (repositoryRequest(url)) return permitted.has(options.headers.authorization) ? responseFor(url) : new Response(null, { status: 404 })
         assert.ok(permitted.has(options.headers.authorization), 'metadata must use a verified viewer\'s token')
         const number = Number(url.split('/').at(-1))
@@ -506,7 +510,7 @@ test('shared metadata requires each team member\'s live GitHub access, including
       const denied = await f.send({ cookie })
       assert.ok(denied.body.fixes.every(row => row.error === 'unavailable'))
       assert.ok(!JSON.stringify(denied.body).includes('Private'), 'cached titles and descriptions must not leak')
-      assert.deepEqual(calls, [{ url: 'https://api.github.com/repos/ExampleOrg/ExampleRepo', authorization: 'Bearer bob-token' }])
+      assert.deepEqual(calls, [privateRepositoriesUrl, 'https://api.github.com/repos/ExampleOrg/ExampleRepo'].map(url => ({ url, authorization: 'Bearer bob-token' })))
       permitted.add('Bearer bob-token')
       const allowed = await f.send({ cookie })
       assert.equal(allowed.body.fixes.find(row => row.url === link(1)).description, 'Private body')
@@ -527,6 +531,7 @@ test('GitHub access is verified separately for each cached repository', async t 
   t.mock.method(globalThis, 'fetch', (url, options) => {
     calls.push(url)
     assert.equal(options.headers.authorization, 'Bearer alice-token')
+    if (url === privateRepositoriesUrl) return Response.json([])
     assert.ok(repositoryRequest(url), 'unverified repositories cannot trigger metadata reads')
     return url.endsWith('/OtherOrg/OtherRepo') ? responseFor(url) : new Response(null, { status: 403 })
   })
@@ -535,7 +540,7 @@ test('GitHub access is verified separately for each cached repository', async t 
   assert.deepEqual(res.body.fixes.filter(row => row.title), [{ url: 'https://github.com/OtherOrg/OtherRepo/pull/1',
     title: cached.title, description: cached.description, status: 'merged', stateReason: null }])
   assert.ok(res.body.fixes.filter(row => row.url !== 'https://github.com/OtherOrg/OtherRepo/pull/1').every(row => row.error === 'unavailable'))
-  assert.deepEqual(calls.toSorted(), ['https://api.github.com/repos/ExampleOrg/ExampleRepo', 'https://api.github.com/repos/OtherOrg/OtherRepo'])
+  assert.deepEqual(calls.toSorted(), ['https://api.github.com/repos/ExampleOrg/ExampleRepo', 'https://api.github.com/repos/OtherOrg/OtherRepo', privateRepositoriesUrl])
 })
 
 test('failed or untrusted GitHub repository checks cannot fall back to private cached metadata', async t => {
@@ -554,6 +559,7 @@ test('failed or untrusted GitHub repository checks cannot fall back to private c
         title: 'Private title', description: 'Private body', status: key.includes(':issue:') ? 'closed' : 'merged', stateReason: 'completed', fetchedAt: 1 })))
       const cacheRead = child.mock.method(f.db, 'listGithubMetadata')
       child.mock.method(globalThis, 'fetch', (url, options) => {
+        if (url === privateRepositoriesUrl) return Response.json([])
         assert.equal(url, 'https://api.github.com/repos/ExampleOrg/ExampleRepo')
         assert.equal(options.headers.authorization, 'Bearer alice-token')
         assert.equal(options.redirect, 'error')
@@ -576,13 +582,14 @@ test('refreshed credentials still need live GitHub access to cached metadata', a
   t.mock.method(globalThis, 'fetch', (url, options) => {
     signals.push(options.signal)
     if (url === 'https://github.com/login/oauth/access_token') return Response.json({ access_token: 'refreshed-user', expires_in: 3600 })
+    if (url === privateRepositoriesUrl) return Response.json([])
     assert.equal(url, 'https://api.github.com/repos/ExampleOrg/ExampleRepo')
     assert.equal(options.headers.authorization, 'Bearer refreshed-user')
     return new Response(null, { status: 403 })
   })
   assert.ok((await f.send()).body.fixes.every(row => row.error === 'unavailable'))
-  assert.equal(signals.length, 2)
-  assert.equal(signals[0], signals[1], 'token refresh and authorization share the same deadline')
+  assert.equal(signals.length, 3)
+  assert.ok(signals.every(signal => signal === signals[0]), 'token refresh, listing and authorization share the same deadline')
 })
 
 test('a timed-out repository access check cannot release cached metadata or start refreshes', async t => {
@@ -591,41 +598,302 @@ test('a timed-out repository access check cannot release cached metadata or star
   const controller = new AbortController()
   const timeout = t.mock.method(AbortSignal, 'timeout', ms => { assert.equal(ms, 10_000); return controller.signal })
   const upstream = t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url === privateRepositoriesUrl) return Response.json([])
     assert.equal(url, 'https://api.github.com/repos/ExampleOrg/ExampleRepo')
     setImmediate(() => controller.abort(new DOMException('Deadline reached', 'TimeoutError')))
     return new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }) })
   })
   assert.ok((await f.send()).body.fixes.every(row => row.error === 'unavailable'))
   assert.equal(timeout.mock.callCount(), 1)
-  assert.equal(upstream.mock.callCount(), 1)
+  assert.equal(upstream.mock.callCount(), 2)
   const cached = (await f.db.listGithubMetadata(['7:pull:1']))[0]
   assert.equal(cached.fetchedAt, 1)
   assert.equal(cached.attemptedAt, null, 'an authorization failure is not a metadata refresh attempt')
 })
 
-test('repository authorization checks have a request cap and bounded concurrency even with a populated cache', async () => {
-  const repositories = Array.from({ length: 205 }, (_, i) => ({ repoId: i + 1, github: `Org/Repo${i + 1}`, path: null }))
+test('one live list request authorizes 100 private repos, without sharing that grant with another viewer', async t => {
+  const f = await fixture(t)
+  const repositories = Array.from({ length: 100 }, (_, i) => ({ repoId: i + 1, github: `Org/Repo${i + 1}`, path: null }))
   const urls = repositories.map(repo => `https://github.com/${repo.github}/pull/1`)
+  await f.db.setGithubMetadata(repositories.map(repo => ({ key: `${repo.repoId}:pull:1`, title: 'Cached private title', description: 'Private body', status: 'merged', fetchedAt: 1 })))
+  const calls = []
+  const fetchImpl = (url, options) => {
+    calls.push(url)
+    assert.equal(options.redirect, 'error')
+    assert.ok(options.signal instanceof AbortSignal)
+    if (url === privateRepositoriesUrl) {
+      return Response.json(options.headers.authorization === 'Bearer alice-token'
+        ? repositories.map(repo => ({ id: repo.repoId, full_name: repo.github.toUpperCase(), private: true, visibility: 'private', permissions: { pull: true } })) : [])
+    }
+    return new Response(null, { status: 403 })
+  }
+  const results = await lookupFixes(config, f.db, { user: { id: f.session.userId }, repositories }, [...urls, urls[0]], fetchImpl)
+  assert.deepEqual(calls, [privateRepositoriesUrl], 'all 100 repos and duplicate Fix URLs share one access request')
+  assert.ok(results.every(row => row.description === 'Private body'))
+  const bob = await createSession(config, f.db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, Date.now())
+  await f.db.setUserTokens(bob.userId, { accessToken: 'bob-token', refreshToken: null, expiresAt: null })
+  calls.length = 0
+  const denied = await lookupFixes(config, f.db, { user: { id: bob.userId }, repositories }, urls, fetchImpl)
+  assert.equal(calls.length, 101, 'a different viewer needs their own live list and direct checks')
+  assert.ok(denied.every(row => row.error === 'unavailable'))
+})
+
+test('private repos omitted from the first list page get direct checks, without following pagination', async t => {
+  const f = await fixture(t)
+  await f.db.setTeamRepo('team', 8, null)
+  const urls = [link(1), 'https://github.com/OtherOrg/OtherRepo/pull/1']
+  await f.db.setGithubMetadata(['7:pull:1', '8:pull:1'].map(key => ({ key, title: 'Private title', description: null, status: 'merged', fetchedAt: 1 })))
+  const calls = []
+  const results = await f.lookupRaw(urls, (url, options) => {
+    calls.push(url)
+    assert.equal(options.headers.authorization, 'Bearer alice-token')
+    if (url === privateRepositoriesUrl) {
+      return Response.json([
+        { ...repositoryPayload('https://api.github.com/repos/ExampleOrg/ExampleRepo'), permissions: { pull: true } },
+        { id: 999, full_name: 'Foreign/Repo', private: true, permissions: { pull: true } },
+      ], { headers: { link: '<https://api.github.com/user/repos?page=2>; rel="next"' } })
+    }
+    assert.equal(url, 'https://api.github.com/repos/OtherOrg/OtherRepo')
+    return responseFor(url)
+  })
+  assert.ok(results.every(row => row.title === 'Private title'))
+  assert.deepEqual(calls, [privateRepositoriesUrl, 'https://api.github.com/repos/OtherOrg/OtherRepo'])
+})
+
+test('failed, malformed or mismatched private lists grant nothing and fall back to direct verification', async t => {
+  const valid = { id: 7, full_name: 'ExampleOrg/ExampleRepo', private: true, visibility: 'private', permissions: { pull: true } }
+  const failures = [
+    ...[401, 403, 429, 503].map(status => [String(status), () => new Response(null, { status })]),
+    ['redirect', () => new Response(null, { status: 302, headers: { location: 'https://elsewhere.test' } })],
+    ['network', () => { throw new Error('offline') }], ['malformed JSON', () => new Response('not JSON')],
+    ['not an array', () => Response.json(valid)], ['null entry', () => Response.json([null])],
+    ['wrong ID', () => Response.json([{ ...valid, id: 8 }])],
+    ['wrong name', () => Response.json([{ ...valid, full_name: 'OtherOrg/OtherRepo' }])],
+    ['no read permission', () => Response.json([{ ...valid, permissions: { pull: false } }])],
+    ['missing permissions', () => Response.json([{ ...valid, permissions: null }])],
+    ['oversized page', () => Response.json(Array.from({ length: 101 }, () => valid))],
+  ]
+  for (const [label, listResponse] of failures) {
+    await t.test(label, async child => {
+      const f = await fixture(child)
+      await f.db.setGithubMetadata([{ key: '7:pull:1', title: 'Private title', description: 'Private body', status: 'merged', fetchedAt: 1 }])
+      const calls = [], read = child.mock.method(f.db, 'listGithubMetadata')
+      const result = await f.lookupRaw([link(1)], (url, options) => {
+        calls.push(url)
+        assert.equal(options.headers.authorization, 'Bearer alice-token')
+        return url === privateRepositoriesUrl ? listResponse() : new Response(null, { status: 403 })
+      })
+      assert.deepEqual(calls, [privateRepositoriesUrl, 'https://api.github.com/repos/ExampleOrg/ExampleRepo'])
+      assert.deepEqual(result, [{ url: link(1), error: 'unavailable' }])
+      assert.ok(read.mock.calls.every(call => call.arguments[0].length === 0), 'unverified private cache keys are never read')
+    })
+  }
+})
+
+test('recent public visibility skips token and GitHub checks across team members, then expires', async t => {
+  const f = await workspaceFixture(t)
+  let now = Date.now()
+  t.mock.method(Date, 'now', () => now)
+  await f.db.setGithubMetadata(['7:pull:1', '7:pull:6', '7:issue:1'].map(key => ({ key, title: 'Public title', description: 'Public body',
+    status: key.includes(':issue:') ? 'closed' : 'merged', stateReason: 'completed', fetchedAt: now })))
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    calls.push({ url, token: options.headers.authorization })
+    if (url === privateRepositoriesUrl) return Response.json([])
+    assert.equal(url, 'https://api.github.com/repos/ExampleOrg/ExampleRepo')
+    return options.headers.authorization ? Response.json({ ...repositoryPayload(url), private: false, visibility: 'public' })
+      : new Response(null, { status: 404 })
+  })
+  const credentials = t.mock.method(f.db, 'getUserTokens')
+  assert.ok((await f.send()).body.fixes.every(row => row.title === 'Public title'))
+  assert.equal(calls.length, 2, 'the first read establishes public visibility')
+  const bob = await createSession(config, f.db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, now)
+  await f.db.setUserRole(bob.userId, 'view')
+  await f.db.setTeamMember('team', bob.userId, { dependencies: false, security: false })
+  const cookie = bob.setCookie.split(';')[0]
+  calls.length = 0
+  now += 59_999
+  assert.ok((await f.send({ cookie })).body.fixes.every(row => row.title === 'Public title'))
+  assert.equal(credentials.mock.callCount(), 1, 'a public cache hit does not read or refresh user credentials')
+  assert.deepEqual(calls, [], 'a public cache hit starts no upstream permission checks')
+  now++
+  assert.ok((await f.send({ cookie })).body.fixes.every(row => row.error === 'unavailable'))
+  assert.deepEqual(calls, [{ url: 'https://api.github.com/repos/ExampleOrg/ExampleRepo', token: undefined }], 'expired public visibility must be reverified, even without user credentials')
+  assert.equal((await f.db.listGithubMetadata(['7:pull:1']))[0].title, 'Public title', 'failed revalidation retains metadata but prevents its release')
+})
+
+test('public refreshes without credentials stay anonymous and cannot fetch newly private content during the public TTL', async t => {
+  const f = await fixture(t)
+  let now = Date.now(), privateRepo = false
+  t.mock.method(Date, 'now', () => now)
+  const calls = []
+  const fetchImpl = (url, options) => {
+    calls.push({ url, token: options.headers.authorization })
+    if (url === privateRepositoriesUrl) return Response.json([])
+    if (repositoryRequest(url)) return Response.json({ ...repositoryPayload(url), private: privateRepo, visibility: privateRepo ? 'private' : 'public' })
+    const number = Number(url.split('/').at(-1))
+    if (privateRepo && !options.headers.authorization) return new Response(null, { status: 404 })
+    return Response.json(payload(number, { title: privateRepo ? 'New private content' : 'Public content' }))
+  }
+  assert.equal((await f.lookupRaw([link(1)], fetchImpl))[0].title, 'Public content')
+  assert.equal(calls.at(-1).token, 'Bearer alice-token', 'freshly verified public access can use the authenticated rate limit')
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: null, expiresAt: 1 })
+  privateRepo = true
+  now++
+  calls.length = 0
+  const duringTtl = await f.lookupRaw([link(1), link(2)], fetchImpl)
+  assert.equal(duringTtl[0].title, 'Public content', 'already public metadata remains available within its visibility TTL')
+  assert.equal(duringTtl[1].error, 'unavailable')
+  assert.deepEqual(calls, [{ url: 'https://api.github.com/repos/ExampleOrg/ExampleRepo/pulls/2', token: undefined }])
+  assert.deepEqual(await f.db.listGithubMetadata(['7:pull:2']), [], 'new private content never enters the cache through the public path')
+  now += 60_000
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'alice-token', refreshToken: null, expiresAt: null })
+  assert.equal((await f.lookupRaw([link(2)], fetchImpl))[0].title, 'New private content', 'a newly verified private repo uses the authorized viewer token')
+  assert.equal((await f.db.listGithubRepositoryVisibility([7]))[0].public, false)
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'revoked', refreshToken: null, expiresAt: null })
+  assert.ok((await f.lookupRaw([link(1), link(2)], () => new Response(null, { status: 403 }))).every(row => row.error === 'unavailable'))
+})
+
+test('public cache hits skip checks but new content verifies visibility before using the viewer token', async t => {
+  const f = await fixture(t)
+  const calls = []
+  let privateRepo = false
+  const fetchImpl = (url, options) => {
+    calls.push(url)
+    assert.equal(options.headers.authorization, 'Bearer alice-token', 'verified reads use the authenticated rate limit')
+    if (url === privateRepositoriesUrl) return Response.json([])
+    if (repositoryRequest(url)) return Response.json({ ...repositoryPayload(url), private: privateRepo, visibility: privateRepo ? 'private' : 'public' })
+    return Response.json(payload(Number(url.split('/').at(-1)), privateRepo ? { title: 'Private title' } : {}))
+  }
+  assert.equal((await f.lookupRaw([link(1)], fetchImpl))[0].title, 'Fix 1')
+  calls.length = 0
+  assert.equal((await f.lookupRaw([link(1)], fetchImpl))[0].title, 'Fix 1')
+  assert.deepEqual(calls, [], 'fresh public cache hits need no permission or metadata calls')
+  assert.equal((await f.lookupRaw([link(2)], fetchImpl))[0].title, 'Fix 2')
+  assert.deepEqual(calls, ['https://api.github.com/repos/ExampleOrg/ExampleRepo', 'https://api.github.com/repos/ExampleOrg/ExampleRepo/pulls/2'], 'new public content verifies current visibility without a second private-list request')
+  privateRepo = true
+  calls.length = 0
+  assert.equal((await f.lookupRaw([link(3)], fetchImpl))[0].title, 'Private title', 'a direct check of a newly private repo grants only this verified viewer')
+  assert.equal((await f.db.listGithubRepositoryVisibility([7]))[0].public, false)
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'revoked', refreshToken: null, expiresAt: null })
+  assert.ok((await f.lookupRaw([link(1), link(3)], () => new Response(null, { status: 403 }))).every(row => row.error === 'unavailable'), 'private refreshes cannot leave a shared public grant')
+})
+
+test('public refresh verification shares the direct-check budget already used by private repositories', async () => {
+  const repositories = Array.from({ length: 302 }, (_, i) => ({ repoId: i + 1, github: `Org/Repo${i + 1}`, path: null }))
+  const visibility = repositories.slice(300).map(repo => ({ repoId: repo.repoId, github: repo.github, public: true, checkedAt: Date.now() }))
   const db = {
     getUserTokens: () => Promise.resolve({ accessToken: 'viewer-token', refreshToken: null, expiresAt: null }),
-    listGithubMetadata: keys => Promise.resolve(keys.map(key => ({ key, title: 'Cached', description: 'Private body', status: 'merged', stateReason: null, fetchedAt: 1, attemptedAt: null }))),
+    listGithubRepositoryVisibility: () => Promise.resolve(visibility),
+    setGithubRepositoryVisibility: () => Promise.resolve(),
+    recordGithubMetadataAttempts: () => Promise.resolve(),
+    listGithubMetadata: keys => Promise.resolve(keys.map(key => ({ key, title: 'Cached', description: null,
+      status: Number(key.split(':')[0]) > 300 ? 'open' : 'merged', stateReason: null, fetchedAt: 1, attemptedAt: null }))),
   }
-  let active = 0, calls = 0, maximum = 0
-  const results = await lookupFixes(config, db, { user: { id: 'viewer' }, repositories }, urls, async (url, options) => {
-    assert.equal(options.headers.authorization, 'Bearer viewer-token')
-    assert.equal(options.redirect, 'error')
-    calls++
-    maximum = Math.max(maximum, ++active)
-    await new Promise(resolve => { setImmediate(resolve) })
-    active--
-    const fullName = url.split('/repos/')[1]
-    return Response.json({ id: Number(fullName.split('Repo')[1]), full_name: fullName })
+  let anonymous = 0, checks = 0, lists = 0
+  const results = await lookupFixes(config, db, { user: { id: 'viewer' }, repositories }, repositories.map(repo => `https://github.com/${repo.github}/pull/1`), (url, options) => {
+    if (url === privateRepositoriesUrl) {
+      lists++
+      return Response.json(repositories.slice(0, 100).map(repo => ({ id: repo.repoId, full_name: repo.github, permissions: { pull: true } })))
+    }
+    if (repositoryRequest(url)) {
+      checks++
+      const id = Number(url.split('Repo').at(-1))
+      assert.ok(id <= 300, 'public refreshes cannot exceed the shared direct-check cap')
+      return Response.json({ id, full_name: `Org/Repo${id}` })
+    }
+    anonymous++
+    assert.equal(options.headers.authorization, undefined, 'an unverified refresh cannot use a privileged token')
+    return new Response(null, { status: 404 })
   })
-  assert.equal(calls, 200)
-  assert.equal(maximum, 4)
-  assert.equal(results.length, 205)
-  assert.ok(results.slice(0, 200).every(row => row.description === 'Private body'))
-  assert.ok(results.slice(200).every(row => row.error === 'unavailable'), 'cache hits beyond the access-check budget are not authorized')
+  assert.equal(lists, 1)
+  assert.equal(checks, 200)
+  assert.equal(anonymous, 2)
+  assert.ok(results.every(row => row.title === 'Cached'), 'previously public metadata remains available when refresh checks exhaust the budget')
+})
+
+test('internal repos and missing or contradictory visibility never create a public access grant', async t => {
+  for (const visibility of [{ private: false, visibility: 'internal' }, { private: false }, { private: true, visibility: 'public' }]) {
+    await t.test(JSON.stringify(visibility), async child => {
+      const f = await fixture(child)
+      await f.lookupRaw([link(1)], url => repositoryRequest(url) ? Response.json({ id: 7, full_name: 'ExampleOrg/ExampleRepo', ...visibility }) : responseFor(url))
+      assert.equal((await f.db.listGithubRepositoryVisibility([7]))[0].public, false)
+      assert.equal((await f.lookupRaw([link(1)], () => new Response(null, { status: 403 })))[0].error, 'unavailable')
+    })
+  }
+})
+
+test('cached public visibility must match both the stable ID and the current canonical repository name', async t => {
+  const f = await fixture(t)
+  await f.db.setGithubRepositoryVisibility([{ repoId: 7, github: 'OtherOrg/OtherRepo', public: true, checkedAt: Date.now() },
+    { repoId: 8, github: 'ExampleOrg/ExampleRepo', public: true, checkedAt: Date.now() }])
+  await f.db.setGithubMetadata([{ key: '7:pull:1', title: 'Private title', description: 'Private body', status: 'merged', fetchedAt: 1 }])
+  assert.deepEqual(await f.lookupRaw([link(1)], () => new Response(null, { status: 403 })), [{ url: link(1), error: 'unavailable' }])
+})
+
+test('a concurrent private visibility observation invalidates a public cache read before release', async t => {
+  const f = await fixture(t)
+  const now = Date.now()
+  await f.db.setGithubRepositoryVisibility([{ repoId: 7, github: 'ExampleOrg/ExampleRepo', public: true, checkedAt: now }])
+  await f.db.setGithubMetadata([{ key: '7:pull:1', title: 'Cached title', description: 'Cached body', status: 'merged', fetchedAt: now }])
+  const list = f.db.listGithubMetadata
+  t.mock.method(f.db, 'listGithubMetadata', async keys => {
+    const entries = await list(keys)
+    await f.db.setGithubRepositoryVisibility([{ repoId: 7, github: 'ExampleOrg/ExampleRepo', public: false, checkedAt: now + 1 }])
+    return entries
+  })
+  assert.deepEqual(await f.lookupRaw([link(1)], () => assert.fail('a public cache hit needs no upstream calls')), [{ url: link(1), error: 'unavailable' }])
+})
+
+test('a timed-out private list cannot release cached metadata or start fallback checks', async t => {
+  const f = await fixture(t)
+  await f.db.setGithubMetadata([{ key: '7:pull:1', title: 'Private title', description: 'Private body', status: 'merged', fetchedAt: 1 }])
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', () => controller.signal)
+  const calls = []
+  const result = await f.lookupRaw([link(1)], (url, options) => {
+    calls.push(url)
+    setImmediate(() => controller.abort())
+    return new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }) })
+  })
+  assert.deepEqual(calls, [privateRepositoriesUrl])
+  assert.deepEqual(result, [{ url: link(1), error: 'unavailable' }])
+})
+
+test('repository authorization caps direct checks and keeps bounded concurrency after bulk grants', async t => {
+  for (const matched of [0, 100]) {
+    await t.test(`${matched} bulk matches`, async () => {
+      const repositories = Array.from({ length: 305 }, (_, i) => ({ repoId: i + 1, github: `Org/Repo${i + 1}`, path: null }))
+      const urls = repositories.map(repo => `https://github.com/${repo.github}/pull/1`)
+      const db = {
+        getUserTokens: () => Promise.resolve({ accessToken: 'viewer-token', refreshToken: null, expiresAt: null }),
+        listGithubRepositoryVisibility: () => Promise.resolve([]),
+        setGithubRepositoryVisibility: () => Promise.resolve(),
+        listGithubMetadata: keys => Promise.resolve(keys.map(key => ({ key, title: 'Cached', description: 'Private body', status: 'merged', stateReason: null, fetchedAt: 1, attemptedAt: null }))),
+      }
+      let active = 0, calls = 0, maximum = 0
+      const results = await lookupFixes(config, db, { user: { id: 'viewer' }, repositories }, urls, async (url, options) => {
+        assert.equal(options.headers.authorization, 'Bearer viewer-token')
+        assert.equal(options.redirect, 'error')
+        calls++
+        maximum = Math.max(maximum, ++active)
+        await new Promise(resolve => { setImmediate(resolve) })
+        active--
+        if (url === privateRepositoriesUrl) {
+          return Response.json(repositories.slice(0, matched).map(repo => ({ id: repo.repoId, full_name: repo.github, permissions: { pull: true } })))
+        }
+        const fullName = url.split('/repos/')[1]
+        const id = Number(fullName.split('Repo')[1])
+        assert.ok(id > matched, 'bulk-authorized repos consume no direct-check budget')
+        return Response.json({ id, full_name: fullName })
+      })
+      assert.equal(calls, 201, 'one list request plus at most 200 direct checks')
+      assert.equal(maximum, 4)
+      assert.equal(results.length, 305)
+      assert.ok(results.slice(0, 200 + matched).every(row => row.description === 'Private body'))
+      assert.ok(results.slice(200 + matched).every(row => row.error === 'unavailable'), 'unverified cache hits beyond the budget are not authorized')
+    })
+  }
 })
 
 test('issue metadata preserves descriptions, refreshes open issues and rejects wrong identities or PR issue aliases', async t => {

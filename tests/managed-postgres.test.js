@@ -668,13 +668,16 @@ test('Postgres upgrades existing databases and retains GitHub metadata across re
   const { connect, db } = await database(t)
   await db.close()
   const connection = await connect()
-  try { await connection.query('DROP TABLE managed_github_metadata; DELETE FROM managed_schema_version WHERE version = 10;') } finally { await connection.release() }
+  try { await connection.query('DROP TABLE managed_github_metadata, managed_github_repository_visibility; DELETE FROM managed_schema_version WHERE version IN (10, 14);') } finally { await connection.release() }
   const upgraded = await openPostgresManagedDb(connect)
   const { checkGithubMetadataStore } = await import('./_managed-github-metadata.js')
   const merged = await checkGithubMetadataStore(upgraded)
   await upgraded.close()
   const reopened = await openPostgresManagedDb(connect)
-  try { assert.deepEqual(await reopened.listGithubMetadata([merged.key]), [merged]) }
+  try {
+    assert.deepEqual(await reopened.listGithubMetadata([merged.key]), [merged])
+    assert.deepEqual(await reopened.listGithubRepositoryVisibility([8]), [{ repoId: 8, github: 'Org/Public', public: true, checkedAt: 1 }])
+  }
   finally { await reopened.close() }
 })
 
@@ -684,7 +687,7 @@ test('Postgres adds closure reasons and attempts to an existing metadata table w
   await db.setGithubMetadata([cached])
   await db.close()
   const connection = await connect()
-  try { await connection.query('ALTER TABLE managed_github_metadata DROP COLUMN state_reason, DROP COLUMN attempted_at; DELETE FROM managed_schema_version WHERE version = 10;') }
+  try { await connection.query('ALTER TABLE managed_github_metadata DROP COLUMN state_reason, DROP COLUMN attempted_at; DROP TABLE managed_github_repository_visibility; DELETE FROM managed_schema_version WHERE version = 14;') }
   finally { await connection.release() }
   for (let i = 0; i < 2; i++) {
     const upgraded = await openPostgresManagedDb(connect)

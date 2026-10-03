@@ -31,5 +31,16 @@ export async function checkGithubMetadataStore(db) {
   assert.deepEqual(await db.listGithubMetadata(['missing']), [], 'failed attempts do not create successful metadata')
   await db.setGithubMetadata([{ ...attempted, fetchedAt: 101, title: 'Updated' }])
   assert.equal((await db.listGithubMetadata([issue.key]))[0].attemptedAt, 100, 'metadata updates preserve the independent attempt time')
+  const publicRepo = { repoId: 7, github: 'Org/Public', public: true, checkedAt: 1 }
+  await db.setGithubRepositoryVisibility([publicRepo, { ...publicRepo, repoId: 8 }])
+  assert.deepEqual(await db.listGithubRepositoryVisibility([7]), [publicRepo])
+  const privateRepo = { ...publicRepo, github: 'Org/Renamed', public: false, checkedAt: 3 }
+  await db.setGithubRepositoryVisibility([privateRepo])
+  await db.setGithubRepositoryVisibility([{ ...publicRepo, checkedAt: 2 }])
+  await db.setGithubRepositoryVisibility([{ ...publicRepo, checkedAt: 3 }])
+  assert.deepEqual(await db.listGithubRepositoryVisibility([7]), [privateRepo], 'an older concurrent public response cannot overwrite a newer private observation')
+  assert.deepEqual(await db.listGithubRepositoryVisibility([999]), [])
+  assert.deepEqual(await db.listGithubRepositoryVisibility([]), [])
+  await db.setGithubRepositoryVisibility([])
   return merged
 }
