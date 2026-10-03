@@ -15,7 +15,7 @@ import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-sha
 import { ManagedMutationError, type ManagementStore, managementMethods } from './management.ts'
 import { type ManagementCatalogStore, managementCatalogMethods } from './management-catalog.ts'
 import { type StorageKey } from '../server-common/storage-crypto.ts'
-import { type StorageDb, type StoredTokens, decodeStorageTokens, encodeStorageTokens, storageMethods, storageState, validateStorageUpload } from './storage-db.ts'
+import { GITHUB_TOKEN_SLOTS, type GithubTokenSlot, type StorageDb, type StoredTokens, decodeStorageTokens, encodeStorageTokens, selectTokensSql, storageMethods, storageState, tokenColumns, validateStorageUpload } from './storage-db.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
 // to the upsert; `githubUserId` is the provider lookup key, never exposed to
@@ -335,9 +335,10 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   listUsers(): Promise<AdminUser[]>
   // Set a user's role; resolves true iff a matching user row was updated.
   setUserRole(id: string, role: Role): Promise<boolean>
-  // Persist / read a user's GitHub token (for on-demand repo listing).
-  setUserTokens(id: string, tokens: UserTokens): Promise<void>
-  getUserTokens(id: string): Promise<UserTokens | null>
+  // Persist / read one of a user's GitHub tokens: the login App's (default) or
+  // the separately authorized repository App's (see storage-db.ts).
+  setUserTokens(id: string, tokens: UserTokens, slot?: GithubTokenSlot): Promise<void>
+  getUserTokens(id: string, slot?: GithubTokenSlot): Promise<UserTokens | null>
   getUserGithubId(id: string): Promise<number | null>
   // Repo selection ("operate on"). selectRepo upserts by repo id, refreshing the
   // mutable context while keeping the original added_by/added_at; deselectRepo
@@ -521,15 +522,15 @@ function prepareStatements(db: ManagedSql) {
       `UPDATE managed_user SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`,
     ),
     updateRoleStmt: db.prepare(`UPDATE managed_user SET role = ?, updated_at = ? WHERE id = ?`),
-    updateTokensStmt: db.prepare(
-      `UPDATE managed_user
-          SET gh_access_token = ?, gh_refresh_token = ?, gh_token_expires_at = ?, gh_tokens_encrypted = ?, updated_at = ?
-        WHERE id = ?`,
-    ),
-    selectTokensStmt: db.prepare(
-      `SELECT gh_access_token AS access, gh_refresh_token AS refresh, gh_token_expires_at AS exp, gh_tokens_encrypted AS encrypted
-         FROM managed_user WHERE id = ?`,
-    ),
+    // One update/select pair per GitHub token slot (storage-db.ts).
+    tokenStmts: Object.fromEntries(GITHUB_TOKEN_SLOTS.map(slot => {
+      const c = tokenColumns(slot)
+      return [slot, {
+        update: db.prepare(`UPDATE managed_user
+          SET ${c.access} = ?, ${c.refresh} = ?, ${c.expires} = ?, ${c.encrypted} = ?, updated_at = ? WHERE id = ?`),
+        select: db.prepare(selectTokensSql(slot)),
+      }]
+    })) as Record<GithubTokenSlot, { update: ReturnType<ManagedSql['prepare']>; select: ReturnType<ManagedSql['prepare']> }>,
     deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
     deleteExpiredStmt: db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`),
     upsertRepoStmt: db.prepare(
@@ -1424,8 +1425,10 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0, db)
   const {
     upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
-    touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
+    touchUserSeenStmt, updateRoleStmt, tokenStmts, deleteSessionStmt, deleteExpiredStmt,
   } = stmts
+  // tokenColumns rejects an unknown slot before any statement is chosen.
+  const slotStmts = (slot: GithubTokenSlot) => { tokenColumns(slot); return tokenStmts[slot] }
 
   const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
     ...storageMethods(db, key),
@@ -1477,18 +1480,20 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     async setUserRole(id, role) {
       return Number((await updateRoleStmt.run(role, Date.now(), id)).changes) > 0
     },
-    async setUserTokens(id, tokens) {
+    async setUserTokens(id, tokens, slot = 'login') {
+      const stmt = slotStmts(slot).update
       const state = await storageState(db, key)
-      const value = state ? encodeStorageTokens(key!, id, tokens.accessToken, tokens.refreshToken) : { access: tokens.accessToken, refresh: tokens.refreshToken }
-      await updateTokensStmt.run(value.access, value.refresh, tokens.expiresAt, state ? 1 : 0, Date.now(), id)
+      const value = state ? encodeStorageTokens(key!, id, tokens.accessToken, tokens.refreshToken, slot) : { access: tokens.accessToken, refresh: tokens.refreshToken }
+      await stmt.run(value.access, value.refresh, tokens.expiresAt, state ? 1 : 0, Date.now(), id)
     },
-    async getUserTokens(id) {
+    async getUserTokens(id, slot = 'login') {
+      const stmt = slotStmts(slot).select
       const state = await storageState(db, key)
-      const row = (await selectTokensStmt.get(id)) as StoredTokens | undefined
+      const row = (await stmt.get(id)) as StoredTokens | undefined
       if (row == null || row.access == null) return null
       if (row.encrypted && !state) throw new Error('Encrypted tokens without storage encryption state')
       if (!row.encrypted && state?.complete) throw new Error('Unexpected plaintext GitHub tokens')
-      const value = row.encrypted ? decodeStorageTokens(key!, id, row) : row
+      const value = row.encrypted ? decodeStorageTokens(key!, id, row, slot) : row
       return { accessToken: value.access!, refreshToken: value.refresh, expiresAt: row.exp }
     },
     async getUserGithubId(id) {

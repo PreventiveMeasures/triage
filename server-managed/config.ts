@@ -1,6 +1,10 @@
 // Managed-server boot config. GitHub user authorization establishes identity;
-// optional App installation credentials enable repository access. A single
-// GitHub App can provide both flows, with repository grants at installation.
+// optional App installation credentials enable repository access. One GitHub
+// App can provide both flows, but its sign-in consent then says "Act on your
+// behalf": a user token carries the App's repository permissions wherever the
+// App is installed. A login App without repository or organization permissions
+// avoids that; the repository App's own client credentials then authorize
+// issue creation separately, on first use.
 import { env } from 'node:process'
 import { databaseUrls } from '../server-common/database-config.ts'
 import { MAX_UPLOAD_BYTES } from './uploads.ts'
@@ -37,11 +41,17 @@ export interface ManagedConfig {
   cookieSecure: boolean
   sessionCookieName: string
   sessionTtlMs: number
-  // Optional installation credentials for the same GitHub App as login.
-  // Repository permissions are approved when connecting repositories.
+  // Optional installation credentials of the repository App. Repository
+  // permissions are approved when connecting repositories.
   githubAppId: string | null
   githubAppPrivateKey: string | null
   githubAppSlug: string | null
+  // Optional user-authorization credentials of the repository App, for a login
+  // App that has no repository permissions. Users then authorize the repository
+  // App once, when they first create an issue. Null (or the login App's client
+  // id) means login and repository access share one App.
+  githubAppClientId: string | null
+  githubAppClientSecret: string | null
   githubNewIssueLabels?: string
   // Max accepted size (bytes) for an uploaded report on the "Manage reports"
   // page. Reports are findings dumps (JSON / markdown / CSV), small to a few MB.
@@ -134,11 +144,25 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     githubAppId: env['GITHUB_APP_ID'] ?? null,
     githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
+    ...repositoryAppClient(),
     githubNewIssueLabels: env['GITHUB_NEW_ISSUE_LABELS'] ?? '',
     maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
     maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 209_715_200, 1, MAX_UPLOAD_BYTES),
     triageHistoryLimit: intEnv('TRIAGE_HISTORY_LIMIT', 0, 0, 1_000_000_000),
   }
+}
+
+// The repository App's user-authorization credentials: both or neither, and
+// only beside its installation credentials, since issue creation checks the
+// installation's Issues permission. The login App's own client id means one
+// App for both flows, which needs no second authorization.
+function repositoryAppClient(): Pick<ManagedConfig, 'githubAppClientId' | 'githubAppClientSecret'> {
+  const id = env['GITHUB_APP_CLIENT_ID'] || null
+  const secret = env['GITHUB_APP_CLIENT_SECRET'] || null
+  if ((id == null) !== (secret == null)) fail('GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET must be set together.')
+  if (id == null || id === env['GITHUB_CLIENT_ID']) return { githubAppClientId: null, githubAppClientSecret: null }
+  if (!env['GITHUB_APP_ID'] || !env['GITHUB_APP_PRIVATE_KEY']) fail('GITHUB_APP_CLIENT_ID requires GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY.')
+  return { githubAppClientId: id, githubAppClientSecret: secret }
 }
 
 // PEM private keys are awkward in env vars; accept a literal multi-line value or

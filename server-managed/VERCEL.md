@@ -97,7 +97,9 @@ disabled in the deployed environment; see Vercel's
 [Node.js configuration](https://vercel.com/docs/functions/runtimes/node-js/advanced-node-configuration#disabling-helpers-for-nodejs).
 Under `VERCEL=1`, managed configuration defaults proxy trust on and requires an
 HTTPS OAuth callback. Optional repository-access GitHub app credentials and
-application limits are defined in [config.ts](config.ts).
+application limits are defined in [config.ts](config.ts). To keep sign-in free
+of GitHub's "Act on your behalf" notice, use a separate repository App; see
+[Sign-in without "Act on your behalf"](README.md#sign-in-without-act-on-your-behalf).
 
 ## Uploads and resource limits
 

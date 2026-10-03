@@ -301,6 +301,39 @@ test('OAuth tokens migrate and remain transparent to refresh; plaintext writes a
   } finally { sql.close() }
 })
 
+test('repository App tokens keep their own slot, migrate with login tokens, and stay bound to their column', async t => {
+  const f = await fixture(t)
+  const admin = await f.db.upsertUser({ githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+  const other = await f.db.upsertUser({ githubUserId: 2, login: 'other', name: null, avatarUrl: null }, Date.now())
+  const login = { accessToken: 'login-access', refreshToken: 'login-refresh', expiresAt: 1234 }
+  const app = { accessToken: 'app-access', refreshToken: 'app-refresh', expiresAt: 5678 }
+  await f.db.setUserTokens(admin, login)
+  await f.db.setUserTokens(admin, app, 'app')
+  // Only a plaintext repository App token still makes the account pending.
+  await f.db.setUserTokens(other, app, 'app')
+  assert.deepEqual(await f.db.getUserTokens(admin), login)
+  assert.deepEqual(await f.db.getUserTokens(admin, 'app'), app)
+  await assert.rejects(f.db.getUserTokens(admin, 'other'), /Invalid GitHub token slot/u)
+  await f.db.enableStorageEncryption()
+  await finish(f)
+  const sql = new DatabaseSync(f.dbPath)
+  try {
+    for (const id of [admin, other]) {
+      const row = sql.prepare('SELECT gh_app_access_token AS access, gh_app_refresh_token AS refresh, gh_app_tokens_encrypted AS encrypted FROM managed_user WHERE id = ?').get(id)
+      assert.equal(row.encrypted, 1)
+      assert.notEqual(row.access, app.accessToken)
+      assert.notEqual(row.refresh, app.refreshToken)
+      assert.deepEqual(await f.db.getUserTokens(id, 'app'), app)
+    }
+    assert.deepEqual(await f.db.getUserTokens(admin), login)
+    assert.equal(await f.db.getUserTokens(other), null)
+    // A login ciphertext cannot pass as the repository App's token, or back.
+    sql.prepare('UPDATE managed_user SET gh_app_access_token = gh_access_token, gh_refresh_token = gh_app_refresh_token WHERE id = ?').run(admin)
+    await assert.rejects(f.db.getUserTokens(admin, 'app'), /authenticat/u)
+    await assert.rejects(f.db.getUserTokens(admin), /authenticat/u)
+  } finally { sql.close() }
+})
+
 test('legacy cache cleanup survives offset pagination and ignores unrelated namespaces', async t => {
   const f = await fixture(t, true)
   for (let i = 0; i < 7; i++) await f.raw.put(`cache/bundles/11111111-1111-4111-8111-111111111111/${i}`, Buffer.from('private cache'))

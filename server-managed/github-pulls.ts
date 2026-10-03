@@ -2,7 +2,7 @@ import { type GithubFixRef, type GithubFixResult, type GithubFixStatus, githubIs
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { GithubMetadata } from './github-metadata.ts'
-import { ensureUserAccessToken } from './github-oauth.ts'
+import { ensureUserAccessToken, issueClient } from './github-oauth.ts'
 
 type Metadata = Pick<GithubMetadata, 'title' | 'description' | 'status' | 'stateReason'>
 const MAX_GITHUB_LOOKUPS = 200
@@ -77,17 +77,28 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
       signal.throwIfAborted()
       return fetchImpl(input, { ...init, signal })
     }
-    const token = await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline)
+    // Only the viewer's own tokens. A separately authorized repository App token
+    // reaches their private repositories; an identity-only login token still
+    // reads public ones, so it remains the fallback.
+    const issue = issueClient(config)
+    const tokens = [...new Set([
+      issue.slot === 'app' ? await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline, issue) : null,
+      await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline),
+    ].filter((token): token is string => token != null))]
     const fresh: Omit<GithubMetadata, 'attemptedAt'>[] = []
     const attempted: string[] = []
-    if (token) {
+    if (tokens.length > 0) {
       // Token refresh and all waves share one deadline, with at most four
       // upstream calls in flight. Failure retains even stale cached metadata.
       for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
         await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
           if (signal.aborted) return
           if (metadata.has(key)) attempted.push(key)
-          const result = await fetchMetadata(ref, token, fetchWithinDeadline)
+          let result: Metadata | null = null
+          for (const token of tokens) {
+            result = await fetchMetadata(ref, token, fetchWithinDeadline)
+            if (result || signal.aborted) break
+          }
           if (result) fresh.push({ key, ...result, fetchedAt: Date.now() })
         }))
       }

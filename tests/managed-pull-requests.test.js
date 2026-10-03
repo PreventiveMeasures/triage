@@ -32,7 +32,7 @@ async function fixture(t) {
   await db.setTeamRepo('team', 7, 'src')
   await db.setTeamMember('team', session.userId, { dependencies: false, security: false })
   const stored = await readSession(config, db, session.setCookie.split(';')[0], Date.now())
-  const lookup = async (urls, fetchImpl) => lookupFixes(config, db, await db.getTeamReportAccessSnapshot(stored.session.id, Date.now(), 'team'), urls, fetchImpl)
+  const lookup = async (urls, fetchImpl, cfg = config) => lookupFixes(cfg, db, await db.getTeamReportAccessSnapshot(stored.session.id, Date.now(), 'team'), urls, fetchImpl)
   return { db, session, lookup }
 }
 
@@ -117,6 +117,29 @@ test('missing or expired user credentials never fall back to the installed app; 
   })
   assert.equal(results[0].title, 'Fix 123')
   assert.equal(calls.length, 2)
+})
+
+test('a separately authorized repository App token is tried first, with the login token as fallback', async t => {
+  const f = await fixture(t)
+  const cfg = { ...config, githubAppClientId: 'repo-client', githubAppClientSecret: 'repo-secret' }
+  const seen = []
+  const unavailable = await f.lookup([link(123)], (url, options) => { seen.push(options.headers.authorization); return Response.json({}, { status: 404 }) }, cfg)
+  assert.equal(unavailable[0].error, 'unavailable')
+  assert.deepEqual(seen, ['Bearer alice-token'], 'without authorization, only the login token reads')
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'alice-repo-token', refreshToken: null, expiresAt: null }, 'app')
+  const tried = []
+  const results = await f.lookup([link(124), link(125)], (url, options) => {
+    tried.push(`${url.split('/').at(-1)} ${options.headers.authorization}`)
+    // The repository App token reaches #124; only the login token reads #125.
+    if (options.headers.authorization === 'Bearer alice-repo-token' && url.endsWith('/125')) return Response.json({}, { status: 404 })
+    return responseFor(url)
+  }, cfg)
+  assert.deepEqual(results.map(result => result.title), ['Fix 124', 'Fix 125'])
+  assert.deepEqual(tried.toSorted(), ['124 Bearer alice-repo-token', '125 Bearer alice-repo-token', '125 Bearer alice-token'])
+  // With one App for both flows, the separate slot is never read.
+  const single = []
+  await f.lookup([link(126)], (url, options) => { single.push(options.headers.authorization); return responseFor(url) })
+  assert.deepEqual(single, ['Bearer alice-token'])
 })
 
 test('partial failures, redirects, wrong upstream identity, and malformed responses stay unavailable', async t => {

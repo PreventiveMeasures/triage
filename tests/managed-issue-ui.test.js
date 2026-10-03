@@ -264,11 +264,15 @@ test('an authoritative unavailable lookup clears an uncertain outcome without ex
   assert.equal(canCreate(dialog), false)
 })
 
-test('installed repositories keep creation in the managed flow, including during authorization', t => {
+test('installed repositories keep authorized creation managed, with the form as the fallback before authorization', t => {
   const dialog = dialogFixture(t)
-  for (const mode of ['api', 'authorize', 'permissions']) {
+  dialog.prepared = { mode: 'api', authorizationPath: '/api/oauth/github/issues/login' }
+  assert.ok(dialogLinks(dialog).every(url => !url.includes('/issues/new')), 'authorized creation must not offer an untracked form')
+  for (const mode of ['authorize', 'permissions']) {
     dialog.prepared = { mode, authorizationPath: '/api/oauth/github/issues/login' }
-    assert.ok(dialogLinks(dialog).every(url => !url.includes('/issues/new')), `${mode} must not offer untracked creation`)
+    const form = dialogLinks(dialog).find(url => url.includes('/issues/new'))
+    assert.equal(form && new URL(form).pathname, '/o/r/issues/new', `${mode} falls back to GitHub's prefilled form`)
+    assert.equal(new URL(form).searchParams.get('title'), 'Finding')
   }
   dialog.prepared = { mode: 'form' }
   assert.equal(new URL(dialogLinks(dialog)[0]).pathname, '/o/r/issues/new', 'server-approved form fallback remains available')

@@ -75,6 +75,12 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
       ensureColumn(db, table, 'storage_encrypted', 'INTEGER NOT NULL DEFAULT 0')
     }
     ensureColumn(db, 'managed_user', 'gh_tokens_encrypted', 'INTEGER NOT NULL DEFAULT 0')
+    // The repository App's user token, when it authorizes users separately
+    // from login (GITHUB_APP_CLIENT_ID); empty otherwise.
+    ensureColumn(db, 'managed_user', 'gh_app_access_token', 'TEXT')
+    ensureColumn(db, 'managed_user', 'gh_app_refresh_token', 'TEXT')
+    ensureColumn(db, 'managed_user', 'gh_app_token_expires_at', 'INTEGER')
+    ensureColumn(db, 'managed_user', 'gh_app_tokens_encrypted', 'INTEGER NOT NULL DEFAULT 0')
     ensureColumn(db, 'managed_github_metadata', 'state_reason', GITHUB_STATE_REASON_COLUMN)
     ensureColumn(db, 'managed_github_metadata', 'attempted_at', 'INTEGER')
     // Existing public links must opt in too; never preserve an implicit grant.

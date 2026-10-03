@@ -74,6 +74,24 @@ async function database(t, options = {}) {
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
 
+test('Postgres upgrades add the repository App token slot with a millisecond expiry', async t => {
+  const { db, connect } = await database(t)
+  const user = await db.upsertUser(identity(1), 1)
+  const expiresAt = Date.UTC(2030, 0, 1)
+  await db.setUserTokens(user, { accessToken: 'login', refreshToken: null, expiresAt })
+  const legacy = await connect()
+  try {
+    await legacy.query(`ALTER TABLE managed_user DROP COLUMN gh_app_access_token, DROP COLUMN gh_app_refresh_token,
+      DROP COLUMN gh_app_token_expires_at, DROP COLUMN gh_app_tokens_encrypted; DELETE FROM managed_schema_version WHERE version = 14;`)
+  } finally { await legacy.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.equal(await upgraded.getUserTokens(user, 'app'), null)
+  await upgraded.setUserTokens(user, { accessToken: 'app', refreshToken: 'refresh', expiresAt }, 'app')
+  assert.deepEqual(await upgraded.getUserTokens(user, 'app'), { accessToken: 'app', refreshToken: 'refresh', expiresAt })
+  assert.equal((await upgraded.getUserTokens(user)).accessToken, 'login')
+})
+
 test('Postgres upgrades and persists nullable repository default caches without changing selection metadata', async t => {
   const { db, connect } = await database(t)
   await db.selectRepo({ repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, 1)
