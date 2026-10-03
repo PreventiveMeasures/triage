@@ -9,6 +9,34 @@ const MAX_GITHUB_LOOKUPS = 200
 const GITHUB_LOOKUP_TIMEOUT_MS = 10_000
 const GITHUB_METADATA_TTL_MS = 60_000
 
+// Cache contents are shared, but GitHub access is checked for this viewer on
+// every request, including completed items. Use only their user token and
+// validate the stable repo ID so a renamed/replaced repository cannot grant
+// access to another repository's cached metadata.
+async function readableRepositories(repositories: TeamReportAccessSnapshot['repositories'], token: string, signal: AbortSignal, fetchImpl: typeof fetch): Promise<Set<string>> {
+  const readable = new Set<string>()
+  const pending = [...new Map(repositories.map(repo => [repo.repoId, repo])).values()].slice(0, MAX_GITHUB_LOOKUPS)
+  for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
+    await Promise.all(pending.slice(i, i + 4).map(async repo => {
+      if (signal.aborted) return
+      try {
+        const response = await fetchImpl(`https://api.github.com/repos/${repo.github}`, {
+          headers: {
+            authorization: `Bearer ${token}`, accept: 'application/vnd.github+json',
+            'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28',
+          },
+          redirect: 'error',
+        })
+        if (!response.ok) return
+        const body = await response.json() as { id?: unknown; full_name?: unknown } | null
+        if (!signal.aborted && body?.id === repo.repoId && typeof body.full_name === 'string'
+          && body.full_name.toLowerCase() === repo.github.toLowerCase()) readable.add(repo.github)
+      } catch { /* Unverified access must never expose cached metadata. */ }
+    }))
+  }
+  return readable
+}
+
 // ref.repo is always the canonical name from managed_selected_repo, never an
 // owner/repo/path taken from a Fix URL. Redirects cannot move the user token.
 async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof fetch): Promise<Metadata | null> {
@@ -43,8 +71,8 @@ async function fetchMetadata(ref: GithubFixRef, token: string, fetchImpl: typeof
 }
 
 // The workspace handler checks user -> team membership and finding visibility.
-// Every shared cache read is additionally restricted to that team’s repositories,
-// including for admins; cached metadata is never itself an access grant.
+// Every shared cache read also requires this viewer's live GitHub access to the
+// team's repository, including for admins; a cache hit is never an access grant.
 export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot, urls: string[], fetchImpl: typeof fetch = globalThis.fetch): Promise<GithubFixResult[]> {
   const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
   const parsed = urls.map(parseGithubFixUrl)
@@ -56,13 +84,23 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
     jobs.set(key, { ...ref, repo: repo.github })
     return key
   })
-  const metadata = new Map((await db.listGithubMetadata([...jobs.keys()])).map(entry => [entry.key, entry]))
+  if (jobs.size === 0) return []
   const now = Date.now()
+  const signal = AbortSignal.timeout(GITHUB_LOOKUP_TIMEOUT_MS)
+  const fetchWithinDeadline: typeof fetch = (input, init) => {
+    signal.throwIfAborted()
+    return fetchImpl(input, { ...init, signal })
+  }
+  const token = await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline)
+  const repositories = [...jobs.values()].map(ref => allowed.get(ref.repo.toLowerCase())!)
+  const readable = token ? await readableRepositories(repositories, token, signal, fetchWithinDeadline) : new Set<string>()
+  const authorized = [...jobs.entries()].filter(([, ref]) => readable.has(ref.repo))
+  const metadata = new Map((await db.listGithubMetadata(authorized.map(([key]) => key))).map(entry => [entry.key, entry]))
   const lastCheckedAt = (key: string) => {
     const cached = metadata.get(key)
     return Math.max(cached?.fetchedAt ?? 0, cached?.attemptedAt ?? 0)
   }
-  const pending = [...jobs.entries()].filter(([key, ref]) => {
+  const pending = authorized.filter(([key, ref]) => {
     const cached = metadata.get(key)
     // Backfill closed issues cached before closure reasons existed, within the
     // same authorized/capped queue. Even an unknown reason completes backfill.
@@ -72,17 +110,11 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   // Only stale/missing, distinct, authorized entries consume the request budget.
   // Prioritize missing/oldest entries so a large workspace makes progress.
   if (pending.length > 0) {
-    const signal = AbortSignal.timeout(GITHUB_LOOKUP_TIMEOUT_MS)
-    const fetchWithinDeadline: typeof fetch = (input, init) => {
-      signal.throwIfAborted()
-      return fetchImpl(input, { ...init, signal })
-    }
-    const token = await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline)
     const fresh: Omit<GithubMetadata, 'attemptedAt'>[] = []
     const attempted: string[] = []
     if (token) {
-      // Token refresh and all waves share one deadline, with at most four
-      // upstream calls in flight. Failure retains even stale cached metadata.
+      // Access checks, token refresh and all waves share one deadline, with at
+      // most four calls in flight. Only verified viewers get stale metadata.
       for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
         await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
           if (signal.aborted) return
