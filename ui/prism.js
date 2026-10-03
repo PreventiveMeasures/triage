@@ -51,7 +51,7 @@ Prism.manual = true
 // the language isn't loaded. Caller falls back to plain text on
 // null. Prism.highlight does its own escaping of the source, so
 // the returned string is safe to inject via unsafeHTML. Bundle viewers may
-// supply a resolver to turn recognized string tokens into source links.
+// supply a resolver to link strings, PHP names, and Rust paths to bundle sources.
 export function highlight(code, lang, resolveString = null) {
   const grammar = Prism.languages[lang]
   if (!grammar) return null

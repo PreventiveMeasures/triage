@@ -98,7 +98,7 @@ export async function highlight(code, lang, resolveString = null) {
 // stack on the next line, so each line stands alone.
 //
 // String surgery rather than a DOM walk because the input is Prism's
-// own output and nothing else: spans only, no self-closing tags, no
+// own output and our source-link buttons: no self-closing tags, no
 // comments, and every `<`, `>` and `&` in the source text already
 // escaped — so the only `<` that begins a tag is one Prism wrote.
 // Returns the same number of entries `code.split('\n')` would, which
