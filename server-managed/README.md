@@ -295,8 +295,13 @@ known reasons. An eligible item with no metadata has
 without eviction. Records are shared by stable repository ID, item type and
 number. Every read
 requires the current user’s membership in the selected team, that team’s repo
-grant, and a visible finding carrying the Fix link. Cached data never grants
-access to another team, repository, or hidden finding.
+grant, a visible finding carrying the Fix link, and a successful live GitHub
+repository lookup using the viewer’s own token. The returned repository ID and
+name must match the managed connection. This check applies to admins and to
+cached closed or merged items on every request. Missing or expired credentials,
+denied access, redirects, malformed responses, and failed access checks return
+`unavailable` without exposing cached titles or bodies. Cached data never grants
+access to another team, repository, hidden finding, or unauthorized GitHub user.
 Both SQLite and PostgreSQL create the table for existing installations. Cached
 merged PRs are never requested again. Closed items also stay cached; only open
 items (including draft PRs) older than one minute are queued for refresh.
@@ -305,18 +310,22 @@ are backfilled once successfully, keeping their old metadata on failure. A null
 reason marks these legacy entries; `unknown` completes backfill even if GitHub
 does not provide a reason. Database upgrades preserve all existing cache rows.
 
-Every workspace read returns all available cached metadata, including stale open
-items. Its upstream queue takes missing entries first, then fills any remaining
+Every workspace read returns available cached metadata for verified repositories,
+including stale open items. Its upstream queue takes missing entries first, then fills any remaining
 slots with stale open entries and legacy closed issues, oldest first, up to 200 distinct items total. A
 larger workspace is still a successful response. Successful refreshes replace
-cached values; GitHub failures, missing credentials, or an exhausted request
-budget retain the old data. Cached entries are ordered by their latest successful
-fetch or refresh attempt. Failed attempts rotate behind entries not checked as
+cached values; failed metadata refreshes or an exhausted refresh budget retain
+the old data for viewers whose current GitHub access was verified. Authorization
+failures preserve stored data but prevent its release. Cached entries are ordered
+by their latest successful fetch or refresh attempt. Failed attempts rotate behind entries not checked as
 recently, without updating their successful fetch time, so repeated failures
 cannot monopolize the backfill queue. Only started reads record attempts;
 entries skipped by the cap, deadline, or absent credentials keep their place.
-There are at most four upstream calls in flight,
-with one shared 10-second deadline for token refresh and GitHub reads.
+Live access checks cover only eligible Fix repositories, deduplicate repository
+IDs, and are capped at 200 repositories per request in addition to the 200-item
+metadata queue. Repositories beyond the access-check budget return `unavailable`.
+There are at most four upstream calls in flight, with one shared 10-second
+deadline for token refresh, repository authorization, and metadata reads.
 
 Requests use the selected repository's stored full name and the validated item
 number, with the signed-in user's GitHub token only. Installation credentials

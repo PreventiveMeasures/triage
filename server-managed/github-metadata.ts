@@ -20,7 +20,8 @@ export interface GithubMetadataStore {
 
 // Successful GitHub reads are shared and retained without eviction. The stable
 // repository ID in the key survives renames, but is never an access grant.
-// Callers must authorize the current user -> team -> repo before every read.
+// Callers must verify both current user -> team -> repo grants and the viewer's
+// live GitHub repository access with their own token before every read.
 export const GITHUB_STATE_REASON_COLUMN = "TEXT CHECK (state_reason IN ('completed', 'not_planned', 'duplicate', 'unknown'))"
 export const GITHUB_METADATA_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_github_metadata (

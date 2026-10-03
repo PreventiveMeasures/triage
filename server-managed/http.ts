@@ -91,7 +91,7 @@ import { sendJson, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
-import { hashToken, randomToken } from './crypto.ts'
+import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
@@ -320,16 +320,15 @@ async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES
   return JSON.parse(buf.toString('utf8') || 'null')
 }
 
-// Validate a mutation: same-origin gate + an authenticated session whose
-// double-submit CSRF token matches the X-CSRF-Token header. Returns the session,
-// or null after having already sent the 401/403.
+// The router enforces same-origin for every request. A mutation also needs an
+// authenticated session whose CSRF token matches the X-CSRF-Token header.
+// Returns the session, or null after having already sent the 401/403.
 async function checkMutation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
-  if (!deps.originGate.isOriginAllowed(req)) { sendJson(res, 403, { error: 'origin-denied' }); return null }
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
   const csrf = firstHeader(req.headers['x-csrf-token'])
   if (csrf == null) { sendJson(res, 403, { error: 'csrf-missing' }); return null }
-  if (csrf !== s.session.csrfToken) { sendJson(res, 403, { error: 'csrf-mismatch' }); return null }
+  if (!safeEqual(csrf, s.session.csrfToken)) { sendJson(res, 403, { error: 'csrf-mismatch' }); return null }
   return s
 }
 
@@ -2324,6 +2323,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
 
   return (req, res) => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
+    if (!deps.originGate.isOriginAllowed(req)) { sendJson(res, 403, { error: 'origin-denied' }); return }
     // Feeds lease a connection per poll, never across streaming sleeps. This
     // also covers capability-authenticated feeds handled by public-workspace.
     const feed = /^\/api\/teams(?:\/[^/?]+)?\/feed(?:\?|$)/u.test(req.url ?? '')
