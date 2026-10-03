@@ -1063,8 +1063,8 @@ class ManagedAdminBundles extends ManagedPage {
         <h1 class="sr-only">Bundles</h1>
         <div class="page-intro"><p class="intro">Source bundles for your repositories.</p><div class="bundle-actions">${this._localImport.renderAction()}<button type="button" class="local-import-toggle create-bundle-action" ?disabled=${!this._data} @click=${() => this._showCreate(true)}>Create</button></div></div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        <section class="upload-panel" aria-label="Upload bundles">
-          <div class="upload-copy"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span><strong>Upload source bundles</strong><span class="upload-description">Drop source archives anywhere on this page.</span></span></div>
+        <section class="drop-card" aria-label="Upload bundles">
+          <span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span class="drop-copy"><strong>Upload source bundles</strong><span>Drop source archives anywhere on this page.</span></span>
           <button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button>
         </section>
         ${this._body()}

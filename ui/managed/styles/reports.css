@@ -47,47 +47,6 @@
   font-weight: 600;
   pointer-events: none;
 }
-.drop-card {
-  display: flex;
-  align-items: center;
-  gap: .75rem;
-  margin-bottom: 1rem;
-  padding: .7rem .85rem;
-  border: 1px dashed color-mix(in srgb, var(--muted) 35%, var(--border));
-  border-radius: 8px;
-  background: var(--panel);
-}
-.drop-icon {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 1.8rem;
-  height: 1.8rem;
-  color: var(--muted);
-}
-.drop-icon svg {
-  width: 1.1rem;
-  height: 1.1rem;
-}
-.drop-copy {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: .2rem .6rem;
-}
-.drop-copy strong {
-  font-size: .8rem;
-  font-weight: 500;
-}
-.drop-copy > span {
-  color: var(--muted);
-  font-size: .75rem;
-}
-.drop-browse {
-  margin-left: auto;
-  flex-shrink: 0;
-}
 .report-list {
   overflow-x: auto;
   border: 1px solid var(--border);
@@ -173,6 +132,7 @@
 }
 .report-size,
 .size-heading {
+  padding-right: .65rem;
   text-align: right;
 }
 .status {
@@ -257,9 +217,4 @@
 .preview-loading {
   color: var(--muted);
   font-size: .8rem;
-}
-@container (max-width: 35rem) {
-  .drop-copy > span {
-    display: none;
-  }
 }

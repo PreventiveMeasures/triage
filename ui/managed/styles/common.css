@@ -36,7 +36,6 @@ h3,
 .report-list-head,
 .history-head,
 .drop-copy,
-.upload-copy,
 .local-import-copy,
 .location-field > span,
 .empty:not(.error, [role='alert']),
@@ -282,6 +281,9 @@ input[type=checkbox] {
   white-space: nowrap;
 }
 @container (max-width: 35rem) {
+  .drop-copy > span {
+    display: none;
+  }
   .manage-nav {
     gap: 1.2rem;
     margin-bottom: 1.75rem;
@@ -391,6 +393,45 @@ a { cursor: default; }
   width: 65%;
   height: .5rem;
 }
+.drop-card {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-bottom: 1rem;
+  padding: .7rem .85rem;
+  border: 1px dashed color-mix(in srgb, var(--muted) 35%, var(--border));
+  border-radius: 8px;
+  background: var(--panel);
+}
+.drop-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.8rem;
+  height: 1.8rem;
+  color: var(--muted);
+}
+.drop-icon svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.drop-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .2rem .6rem;
+}
+.drop-copy strong {
+  font-size: .8rem;
+  font-weight: 500;
+}
+.drop-copy > span {
+  color: var(--muted);
+  font-size: .75rem;
+}
 .drop-browse {
   min-width: 7rem;
+  margin-left: auto;
+  flex-shrink: 0;
 }
