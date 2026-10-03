@@ -722,7 +722,7 @@ test('recent public visibility skips token and GitHub checks across team members
   assert.equal((await f.db.listGithubMetadata(['7:pull:1']))[0].title, 'Public title', 'failed revalidation retains metadata but prevents its release')
 })
 
-test('public metadata refreshes are anonymous, and a visibility change cannot fetch new private content during the public TTL', async t => {
+test('public refreshes without credentials stay anonymous and cannot fetch newly private content during the public TTL', async t => {
   const f = await fixture(t)
   let now = Date.now(), privateRepo = false
   t.mock.method(Date, 'now', () => now)
@@ -736,7 +736,8 @@ test('public metadata refreshes are anonymous, and a visibility change cannot fe
     return Response.json(payload(number, { title: privateRepo ? 'New private content' : 'Public content' }))
   }
   assert.equal((await f.lookupRaw([link(1)], fetchImpl))[0].title, 'Public content')
-  assert.equal(calls.at(-1).token, undefined, 'public metadata is fetched without the privileged viewer token')
+  assert.equal(calls.at(-1).token, 'Bearer alice-token', 'freshly verified public access can use the authenticated rate limit')
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'expired', refreshToken: null, expiresAt: 1 })
   privateRepo = true
   now++
   calls.length = 0
@@ -746,10 +747,69 @@ test('public metadata refreshes are anonymous, and a visibility change cannot fe
   assert.deepEqual(calls, [{ url: 'https://api.github.com/repos/ExampleOrg/ExampleRepo/pulls/2', token: undefined }])
   assert.deepEqual(await f.db.listGithubMetadata(['7:pull:2']), [], 'new private content never enters the cache through the public path')
   now += 60_000
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'alice-token', refreshToken: null, expiresAt: null })
   assert.equal((await f.lookupRaw([link(2)], fetchImpl))[0].title, 'New private content', 'a newly verified private repo uses the authorized viewer token')
   assert.equal((await f.db.listGithubRepositoryVisibility([7]))[0].public, false)
   await f.db.setUserTokens(f.session.userId, { accessToken: 'revoked', refreshToken: null, expiresAt: null })
   assert.ok((await f.lookupRaw([link(1), link(2)], () => new Response(null, { status: 403 }))).every(row => row.error === 'unavailable'))
+})
+
+test('public cache hits skip checks but new content verifies visibility before using the viewer token', async t => {
+  const f = await fixture(t)
+  const calls = []
+  let privateRepo = false
+  const fetchImpl = (url, options) => {
+    calls.push(url)
+    assert.equal(options.headers.authorization, 'Bearer alice-token', 'verified reads use the authenticated rate limit')
+    if (url === privateRepositoriesUrl) return Response.json([])
+    if (repositoryRequest(url)) return Response.json({ ...repositoryPayload(url), private: privateRepo, visibility: privateRepo ? 'private' : 'public' })
+    return Response.json(payload(Number(url.split('/').at(-1)), privateRepo ? { title: 'Private title' } : {}))
+  }
+  assert.equal((await f.lookupRaw([link(1)], fetchImpl))[0].title, 'Fix 1')
+  calls.length = 0
+  assert.equal((await f.lookupRaw([link(1)], fetchImpl))[0].title, 'Fix 1')
+  assert.deepEqual(calls, [], 'fresh public cache hits need no permission or metadata calls')
+  assert.equal((await f.lookupRaw([link(2)], fetchImpl))[0].title, 'Fix 2')
+  assert.deepEqual(calls, ['https://api.github.com/repos/ExampleOrg/ExampleRepo', 'https://api.github.com/repos/ExampleOrg/ExampleRepo/pulls/2'], 'new public content verifies current visibility without a second private-list request')
+  privateRepo = true
+  calls.length = 0
+  assert.equal((await f.lookupRaw([link(3)], fetchImpl))[0].title, 'Private title', 'a direct check of a newly private repo grants only this verified viewer')
+  assert.equal((await f.db.listGithubRepositoryVisibility([7]))[0].public, false)
+  await f.db.setUserTokens(f.session.userId, { accessToken: 'revoked', refreshToken: null, expiresAt: null })
+  assert.ok((await f.lookupRaw([link(1), link(3)], () => new Response(null, { status: 403 }))).every(row => row.error === 'unavailable'), 'private refreshes cannot leave a shared public grant')
+})
+
+test('public refresh verification shares the direct-check budget already used by private repositories', async () => {
+  const repositories = Array.from({ length: 302 }, (_, i) => ({ repoId: i + 1, github: `Org/Repo${i + 1}`, path: null }))
+  const visibility = repositories.slice(300).map(repo => ({ repoId: repo.repoId, github: repo.github, public: true, checkedAt: Date.now() }))
+  const db = {
+    getUserTokens: () => Promise.resolve({ accessToken: 'viewer-token', refreshToken: null, expiresAt: null }),
+    listGithubRepositoryVisibility: () => Promise.resolve(visibility),
+    setGithubRepositoryVisibility: () => Promise.resolve(),
+    recordGithubMetadataAttempts: () => Promise.resolve(),
+    listGithubMetadata: keys => Promise.resolve(keys.map(key => ({ key, title: 'Cached', description: null,
+      status: Number(key.split(':')[0]) > 300 ? 'open' : 'merged', stateReason: null, fetchedAt: 1, attemptedAt: null }))),
+  }
+  let anonymous = 0, checks = 0, lists = 0
+  const results = await lookupFixes(config, db, { user: { id: 'viewer' }, repositories }, repositories.map(repo => `https://github.com/${repo.github}/pull/1`), (url, options) => {
+    if (url === privateRepositoriesUrl) {
+      lists++
+      return Response.json(repositories.slice(0, 100).map(repo => ({ id: repo.repoId, full_name: repo.github, permissions: { pull: true } })))
+    }
+    if (repositoryRequest(url)) {
+      checks++
+      const id = Number(url.split('Repo').at(-1))
+      assert.ok(id <= 300, 'public refreshes cannot exceed the shared direct-check cap')
+      return Response.json({ id, full_name: `Org/Repo${id}` })
+    }
+    anonymous++
+    assert.equal(options.headers.authorization, undefined, 'an unverified refresh cannot use a privileged token')
+    return new Response(null, { status: 404 })
+  })
+  assert.equal(lists, 1)
+  assert.equal(checks, 200)
+  assert.equal(anonymous, 2)
+  assert.ok(results.every(row => row.title === 'Cached'), 'previously public metadata remains available when refresh checks exhaust the budget')
 })
 
 test('internal repos and missing or contradictory visibility never create a public access grant', async t => {

@@ -13,6 +13,17 @@ const GITHUB_PRIVATE_REPOSITORIES_URL = 'https://api.github.com/user/repos?visib
 
 type Repository = TeamReportAccessSnapshot['repositories'][number]
 type RepositoryPayload = { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; permissions?: { pull?: unknown } }
+type RepositoryChecks = { remaining: number; verified: Set<string> }
+type RepositoryAccessContext = {
+  db: ManagedDb
+  visibility: GithubRepositoryVisibility[]
+  publicRepos: Set<string>
+  token: string | null
+  signal: AbortSignal
+  fetchImpl: typeof fetch
+  checks: RepositoryChecks
+  includePrivateList?: boolean
+}
 
 function githubRequest(token: string | null): RequestInit {
   return {
@@ -40,7 +51,7 @@ async function listPrivateRepositories(token: string, signal: AbortSignal, fetch
 // Public visibility can be reused briefly across users. Private access stays
 // request-local: one page of the viewer's own repo list grants matching repos,
 // then direct checks cover omissions, pagination and failed list requests.
-async function readableRepositories(db: ManagedDb, repositories: Repository[], visibility: GithubRepositoryVisibility[], publicRepos: Set<string>, token: string | null, signal: AbortSignal, fetchImpl: typeof fetch): Promise<Set<string>> {
+async function readableRepositories(repositories: Repository[], { db, visibility, publicRepos, token, signal, fetchImpl, checks, includePrivateList = true }: RepositoryAccessContext): Promise<Set<string>> {
   const readable = new Set(publicRepos)
   const byId = new Map(repositories.map(repo => [repo.repoId, repo]))
   const unverified = repositories.filter(repo => !readable.has(repo.github))
@@ -48,10 +59,11 @@ async function readableRepositories(db: ManagedDb, repositories: Repository[], v
   const grant = (repo: Repository, body: RepositoryPayload, checkedAt: number) => {
     const isPublic = body.private === false && body.visibility === 'public'
     readable.add(repo.github)
+    checks.verified.add(repo.github)
     if (isPublic) publicRepos.add(repo.github)
     updates.set(repo.repoId, { repoId: repo.repoId, github: repo.github, public: isPublic, checkedAt })
   }
-  if (token && unverified.length > 0 && !signal.aborted) {
+  if (includePrivateList && token && unverified.length > 0 && !signal.aborted) {
     const checkedAt = Date.now()
     for (const entry of await listPrivateRepositories(token, signal, fetchImpl)) {
       const repo = typeof entry?.id === 'number' ? byId.get(entry.id) : undefined
@@ -60,7 +72,8 @@ async function readableRepositories(db: ManagedDb, repositories: Repository[], v
   }
   const formerlyPublic = new Set(visibility.filter(entry => entry.public
     && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => entry.repoId))
-  const pending = unverified.filter(repo => !readable.has(repo.github) && (token || formerlyPublic.has(repo.repoId))).slice(0, MAX_GITHUB_LOOKUPS)
+  const pending = unverified.filter(repo => !readable.has(repo.github) && (token || formerlyPublic.has(repo.repoId))).slice(0, checks.remaining)
+  checks.remaining -= pending.length
   for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
     await Promise.all(pending.slice(i, i + 4).map(async repo => {
       if (signal.aborted) return
@@ -76,6 +89,20 @@ async function readableRepositories(db: ManagedDb, repositories: Repository[], v
   }
   if (updates.size > 0) await db.setGithubRepositoryVisibility([...updates.values()])
   return readable
+}
+
+async function verifyPublicRefreshes(config: ManagedConfig, userId: string, repositories: Repository[], context: RepositoryAccessContext): Promise<string | null> {
+  // Cached public metadata needs no credentials. New content uses a viewer
+  // token only after a live check, so privatization cannot publish private data
+  // under an old public grant. Anonymous reads remain available without a token.
+  const { db, publicRepos } = context
+  const token = context.token ?? await ensureUserAccessToken(config, db, userId, Date.now(), context.fetchImpl)
+  if (token) {
+    const currentPublic = new Set<string>()
+    const readable = await readableRepositories(repositories, { ...context, publicRepos: currentPublic, token, includePrivateList: false })
+    for (const repo of repositories) if (readable.has(repo.github) && !currentPublic.has(repo.github)) publicRepos.delete(repo.github)
+  }
+  return token
 }
 
 // ref.repo is always the canonical name from managed_selected_repo, never an
@@ -135,9 +162,11 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   const publicRepos = new Set(visibility.filter(entry => entry.public && entry.checkedAt <= now
     && entry.checkedAt + GITHUB_PUBLIC_VISIBILITY_TTL_MS > now
     && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => byId.get(entry.repoId)!.github))
-  const token = repositories.some(repo => !publicRepos.has(repo.github))
+  let token = repositories.some(repo => !publicRepos.has(repo.github))
     ? await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline) : null
-  const readable = await readableRepositories(db, repositories, visibility, publicRepos, token, signal, fetchWithinDeadline)
+  const checks: RepositoryChecks = { remaining: MAX_GITHUB_LOOKUPS, verified: new Set() }
+  const context = { db, visibility, publicRepos, token, signal, fetchImpl: fetchWithinDeadline, checks }
+  const readable = await readableRepositories(repositories, context)
   const authorized = [...jobs.entries()].filter(([, ref]) => readable.has(ref.repo))
   const metadata = new Map((await db.listGithubMetadata(authorized.map(([key]) => key))).map(entry => [entry.key, entry]))
   const lastCheckedAt = (key: string) => {
@@ -154,16 +183,16 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   // Only stale/missing, distinct, authorized entries consume the request budget.
   // Prioritize missing/oldest entries so a large workspace makes progress.
   if (pending.length > 0) {
+    const publicRefreshes = new Set(pending.filter(([, ref]) => publicRepos.has(ref.repo) && !checks.verified.has(ref.repo)).map(([, ref]) => ref.repo))
+    if (publicRefreshes.size > 0) token = await verifyPublicRefreshes(config, snapshot.user.id, repositories.filter(repo => publicRefreshes.has(repo.github)), context)
     const fresh: Omit<GithubMetadata, 'attemptedAt'>[] = []
     const attempted: string[] = []
-    // Public reads stay anonymous: if a repo turns private during its public
-    // TTL, refreshes cannot add newly private content to the shared cache.
-    // All waves and access checks still share one deadline and four-call limit.
+    // All waves and access checks share one deadline and four-call limit.
     for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
       await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
         if (signal.aborted) return
         if (metadata.has(key)) attempted.push(key)
-        const result = await fetchMetadata(ref, publicRepos.has(ref.repo) ? null : token, fetchWithinDeadline)
+        const result = await fetchMetadata(ref, publicRepos.has(ref.repo) && !checks.verified.has(ref.repo) ? null : token, fetchWithinDeadline)
         if (result) fresh.push({ key, ...result, fetchedAt: Date.now() })
       }))
     }

@@ -312,9 +312,11 @@ and failed access checks return `unavailable` without exposing cached titles or
 bodies. Cached data never grants
 access to another team, repository, hidden finding, or unauthorized GitHub user.
 Recently public cached metadata can remain visible until the next visibility
-check after a repository becomes private. Public metadata refreshes are anonymous
-so newly private titles and bodies cannot enter the cache through that path;
-failed refreshes keep the previously public data. A newer private observation
+check after a repository becomes private. New content uses the viewer's token
+only after a live repository check, reusing checks already made in that request.
+This preserves GitHub's authenticated rate limit and prevents fresh private data
+from using a stale public grant. Without verified credentials, public refreshes
+stay anonymous; failed refreshes keep the previously public data. A newer private observation
 from another request also invalidates an in-flight public cache read. Both SQLite
 and PostgreSQL create these tables for existing installations. Cached
 merged PRs are never requested again. Closed items also stay cached; only open
@@ -336,16 +338,17 @@ recently, without updating their successful fetch time, so repeated failures
 cannot monopolize the backfill queue. Only started reads record attempts;
 entries skipped by the cap, deadline, or absent credentials keep their place.
 Live access checks cover only eligible Fix repositories and deduplicate repository
-IDs. Recently public repositories need no upstream permission checks or user
-credentials. Other repositories share one private-list request followed by at
-most 200 direct repository checks, in addition to the 200-item metadata queue.
+IDs. Cached metadata for recently public repositories needs no upstream
+permission checks or user credentials. Other repositories share one private-list
+request. That request's fallback checks and checks for public metadata refreshes
+share a budget of 200 direct repository checks, in addition to the 200-item queue.
 Unverified repositories beyond the direct-check budget return `unavailable`.
 There are at most four upstream calls in flight, with one shared 10-second
 deadline for token refresh, repository authorization, and metadata reads.
 
 Requests use the selected repository's stored full name and the validated item
-number, using anonymous public metadata reads or the signed-in user's own GitHub
-token for private access. Installation credentials are never substituted,
+number, using the signed-in user's own GitHub token after live verification or
+anonymous reads for public content. Installation credentials are never substituted,
 redirects are rejected, and returned repository/item identity is validated.
 Workspace access and persisted Fix links are rechecked
 after upstream work before any metadata is released.
