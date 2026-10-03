@@ -91,7 +91,7 @@
     & .page-title h1 {
       margin: 0 0 .25rem;
       font-size: 1.125rem; font-weight: 600; letter-spacing: -.01em;
-      display: flex; align-items: center; gap: .625rem; flex-wrap: wrap;
+      display: flex; align-items: center; gap: .625rem var(--header-column-gap, .625rem); flex-wrap: wrap;
     }
 
     /* Pill chip naming the active report file. Pairs the type-
@@ -180,7 +180,7 @@
 
     & .meta-row .tag {
       display: inline-flex; align-items: center;
-      padding: 1px .375rem;
+      padding: 1px var(--header-tag-padding, .375rem);
       background: var(--surface);
       border: var(--header-tag-border, 1px solid var(--border));
       border-radius: 4px;
