@@ -82,7 +82,7 @@ test('Code renders Composer package rows, PHP file icons, and physical tooltips 
   const entry = { name: 'mixed.stasis', integrity: 'sha512-composer-code' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([
     ['.', { name: 'app', files: { 'index.PHP': 'own', 'views/main.phtml': 'view' } }],
-    ['vendor/org/package', { name: 'org/package', version: '1.2.3', ecosystem: 'composer', files: { 'src/main.php': 'main' } }],
+    ['vendor/org/package', { name: 'org/package', version: '1.2.3', files: { 'src/main.php': 'main' } }],
     ['vendor/org/dirs', { name: 'org/dirs', version: 'dev-main', ecosystem: 'composer', files: { 'src/main.php': 'main', 'lib/helper.php': 'helper' } }],
     ['vendor/org/root', { name: 'org/root', ecosystem: 'composer', files: { 'main.php': 'main' } }],
     ['vendor/ahash', { name: 'ahash', version: '0.8.12', ecosystem: 'cargo', files: { 'src/lib.rs': 'lib' } }],

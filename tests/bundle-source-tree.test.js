@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, sourceDirectoryLabel } from '../ui/view/bundle-source-tree.js'
 
 test('display paths retain original source keys, including special directory names', () => {
@@ -381,4 +382,70 @@ test('Cargo, Composer, and npm packages retain their own grouping in a mixed-lan
   assert.equal(sourceDirectoryLabel('@scope/pkg', npm), '@scope/pkg')
   assert.equal(npm.package.ecosystem, undefined)
   assert.deepEqual(leaves(tree), paths.toSorted())
+})
+
+test('untagged PHP-only vendor modules use Composer rows and preserve package roots under common prefixes', () => {
+  const dir = 'vendor/symfony/deprecation-contracts'
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    [dir, { name: 'symfony/deprecation-contracts', version: 'v3.6.0', files: { 'function.php': '<?php' } }],
+  ]) }).serialize())
+  const paths = [...bundle.sources.keys()]
+  const prefix = bundleSourceTreePrefix(`${dir}/`, bundle.modules, paths)
+  assert.equal(prefix, '')
+  const tree = buildBundleSourceTree(paths.map(path => path.slice(prefix.length)), paths, bundle.modules)
+  const pkg = tree.dirs.get('vendor').dirs.get('symfony/deprecation-contracts')
+  assert.deepEqual(pkg.package, { name: 'symfony/deprecation-contracts', version: 'v3.6.0', ecosystem: 'composer' })
+  assert.equal(sourceDirectoryLabel('symfony/deprecation-contracts', pkg), 'symfony/deprecation-contracts - v3.6.0')
+  assert.equal(compactSourceDirectory('symfony/deprecation-contracts', pkg, 1).node.sourcePath, dir)
+  assert.deepEqual(leaves(tree), paths)
+  assert.deepEqual(leaves(filterBundleSourceTree(tree, 'symfony/deprecation-contracts - v3.6.0/function.php')), paths)
+  assert.equal(bundle.modules.get(dir).ecosystem, undefined, 'inference does not change the original metadata')
+  const absoluteDir = `/checkout/${dir}`
+  const absoluteModules = new Map([[absoluteDir, bundle.modules.get(dir)]])
+  const absolutePaths = paths.map(path => `/checkout/${path}`)
+  assert.equal(bundleSourceTreePrefix(`${absoluteDir}/`, absoluteModules, absolutePaths), '/checkout/')
+  const absoluteTree = buildBundleSourceTree(paths, absolutePaths, absoluteModules)
+  assert.equal(absoluteTree.dirs.get('vendor').dirs.get('symfony/deprecation-contracts').package.ecosystem, 'composer')
+  assert.deepEqual(leaves(absoluteTree), absolutePaths)
+})
+
+test('inferred Composer packages fold src and ignore captured resources when classifying source files', () => {
+  const dir = 'vendor/org/package'
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    [dir, { name: 'org/package', version: '1.2.3', files: {
+      'src/main.PHP': '<?php', 'src/view.phtml': '<?php',
+      'image.png': 'AA==', 'LICENSE': 'license', 'src': '["main.PHP","view.phtml"]',
+    } }],
+  ]), formats: new Map([
+    [`${dir}/image.png`, 'resource:base64'], [`${dir}/LICENSE`, 'resource'], [`${dir}/src`, 'directory'],
+  ]) }).serialize())
+  const paths = [...bundleSourcesAsMap({ kind: 'stasis', bundle }).keys()]
+  assert.equal(bundleSourceTreePrefix(`${dir}/src/`, bundle.modules, paths), '')
+  const tree = buildBundleSourceTree(paths, paths, bundle.modules)
+  const pkg = tree.dirs.get('vendor').dirs.get('org/package')
+  assert.equal(pkg.package.ecosystem, 'composer')
+  assert.equal(compactSourceDirectory('org/package', pkg, 1).node.sourcePath, `${dir}/src`)
+  assert.deepEqual(leaves(tree), paths.toSorted())
+})
+
+test('PHP inference requires a matching vendor identity, only PHP source files, and an unrecorded ecosystem', () => {
+  const cases = [
+    { dir: 'vendor/org/package', info: { name: 'org/package', files: { 'main.php': 'php', 'helper.js': 'js' } } },
+    { dir: 'vendor/org/package', info: { name: 'org/package', ecosystem: 'go', files: { 'main.php': 'php' } } },
+    { dir: 'vendor/org/package', info: { name: 'other/package', files: { 'main.php': 'php' } } },
+    { dir: 'vendor/org/package', info: { files: { 'main.php': 'php' } } },
+    { dir: 'vendor/org/package', info: { name: 'org/package', files: {} } },
+    { dir: 'vendor/org/package', info: { name: 'org/package', files: { 'image.png': 'AA==' } } },
+    { dir: 'packages/org/package', info: { name: 'org/package', files: { 'main.php': 'php' } } },
+  ]
+  for (const { dir, info } of cases) {
+    const paths = Object.keys(info.files).map(path => `${dir}/${path}`)
+    const modules = new Map([[dir, info]])
+    assert.equal(bundleSourceTreePrefix(`${dir}/`, modules, paths), `${dir}/`)
+    const tree = buildBundleSourceTree(paths, paths, modules)
+    let node = tree
+    for (const part of dir.split('/')) node = node?.dirs.get(part)
+    assert.equal(node?.package, undefined, `${dir}: ${info.name}, ${info.ecosystem}`)
+    assert.deepEqual(leaves(tree), paths.toSorted())
+  }
 })

@@ -1,7 +1,30 @@
 import { html, svg } from 'lit'
 
 const rustMark = svg`<path d="m7 0 2 0 .4 1.6 1.3.5 1.4-.9 1.4 1.4-.9 1.4.5 1.3 1.6.4v2l-1.6.4-.5 1.3.9 1.4-1.4 1.4-1.4-.9-1.3.5-.4 1.6H7l-.4-1.6-1.3-.5-1.4.9-1.4-1.4.9-1.4-.5-1.3L1.3 9V7l1.6-.4.5-1.3-.9-1.4 1.4-1.4 1.4.9 1.3-.5Z" fill="#c97d5d"/><circle cx="8" cy="8" r="4.4" fill="var(--surface, #fff)"/><text x="8" y="10.8" text-anchor="middle" fill="currentColor" font-family="serif" font-size="8" font-weight="700">R</text>`
-const phpMark = svg`<ellipse cx="8" cy="8" rx="7.5" ry="4.5" fill="#777bb4"/><text x="8" y="10.3" text-anchor="middle" fill="#202020" stroke="#fff" stroke-width=".35" paint-order="stroke" font-family="sans-serif" font-size="8" font-style="italic" font-weight="700">php</text>`
+/*!
+ * PHP elephant adapted from Material Icon Theme:
+ * https://github.com/material-extensions/vscode-material-icon-theme/blob/main/icons/php_elephant.svg
+ * Copyright (c) 2025 Material Extensions
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+ * of the Software, and to permit persons to whom the Software is furnished to do
+ * so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+const phpMark = svg`<g fill="#8892bf" transform="translate(0 .5) scale(.5)"><path d="M28 10a4 4 0 0 0-4-4h-6v6a6 6 0 0 1-6 6h-2v2h2v6h4v-6h8v6h4V16h2v-4a2 2 0 0 0-2-2"/><path d="M12 4H8v2a6 6 0 0 0-6 6v6a2 2 0 0 0 2 2v2H2.5a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5H6a2 2 0 0 0 2-2v-8h4a4 4 0 0 0 4-4V8a4 4 0 0 0-4-4M6 14H4v-2h2Z"/></g>`
 
 // Source-file icons shared by the repository picker and bundle Code view.
 export function sourceFileType(path) {

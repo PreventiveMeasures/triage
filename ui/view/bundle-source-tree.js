@@ -2,6 +2,15 @@
 // original bundle key used to open the source and look up findings.
 const vendoredEcosystems = new Set(['cargo', 'composer'])
 
+function moduleEcosystem(dir, info, sourcePaths) {
+  if (info?.ecosystem !== undefined) return info.ecosystem
+  // Older PHP bundles omit the ecosystem. Infer Composer only for a matching
+  // vendor/name/package identity containing at least one source, all PHP.
+  if (!info?.name || /(?:^|\/)vendor\/([^/]+\/[^/]+)$/u.exec(dir)?.[1] !== info.name) return undefined
+  const sources = Object.entries(info.files ?? {}).filter(([path, content]) => typeof content === 'string' && (!sourcePaths || sourcePaths.has(`${dir}/${path}`)))
+  return sources.length > 0 && sources.every(([path]) => /\.(?:php|phtml)$/iu.test(path)) ? 'composer' : undefined
+}
+
 export function buildBundleSourceTree(paths, originals = paths, modules = null) {
   const root = { path: '', files: new Map(), dirs: new Map() }
   for (let index = 0; index < paths.length; index++) {
@@ -21,16 +30,17 @@ export function buildBundleSourceTree(paths, originals = paths, modules = null) 
     }
     node.files.set(parts.at(-1), originals[index])
   }
-  return presentDependencyDirectories(root, modules)
+  return presentDependencyDirectories(root, modules, modules ? new Set(originals) : null)
 }
 
 // Keep dependency/package boundaries in the tree, even when every captured
 // file shares them. Only the checkout prefix belongs above the rail.
-export function bundleSourceTreePrefix(prefix, modules = null) {
+export function bundleSourceTreePrefix(prefix, modules = null, sources = null) {
   const match = /(?:^|\/)node_modules\//u.exec(prefix)
   let end = match ? match.index + (match[0].startsWith('/') ? 1 : 0) : prefix.length
+  const sourcePaths = sources ? new Set(sources) : null
   for (const [dir, info] of modules ?? []) {
-    if (!vendoredEcosystems.has(info.ecosystem) || !info.name || dir === '.' || !prefix.startsWith(`${dir}/`)) continue
+    if (!vendoredEcosystems.has(moduleEcosystem(dir, info, sourcePaths)) || !info.name || dir === '.' || !prefix.startsWith(`${dir}/`)) continue
     const vendor = /(?:^|\/)vendor\//u.exec(`${dir}/`)
     const boundary = vendor ? vendor.index + (vendor[0].startsWith('/') ? 1 : 0) : dir.lastIndexOf('/') + 1
     end = Math.min(end, boundary)
@@ -38,12 +48,13 @@ export function bundleSourceTreePrefix(prefix, modules = null) {
   return prefix.slice(0, end)
 }
 
-function presentDependencyDirectories(node, packageModules) {
-  for (const child of node.dirs.values()) presentDependencyDirectories(child, packageModules)
+function presentDependencyDirectories(node, packageModules, sourcePaths) {
+  for (const child of node.dirs.values()) presentDependencyDirectories(child, packageModules, sourcePaths)
   const info = packageModules?.get(node.sourcePath)
-  if (vendoredEcosystems.has(info?.ecosystem) && info.name) {
+  const ecosystem = moduleEcosystem(node.sourcePath, info, sourcePaths)
+  if (vendoredEcosystems.has(ecosystem) && info.name) {
     node.boundary = true
-    node.package = { name: info.name, version: info.version, ecosystem: info.ecosystem }
+    node.package = { name: info.name, version: info.version, ecosystem }
     // Decide before search filtering, so a matching subset cannot hide a
     // directory that has siblings in the complete captured package.
     node.hideSrc = node.dirs.size === 1 && node.dirs.has('src')

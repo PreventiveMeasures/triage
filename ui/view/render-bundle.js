@@ -1251,7 +1251,7 @@ function renderBundleCodeView(details) {
   }
   const allPaths = [...sources.keys()].toSorted()
   const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
-  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules)
+  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules, allPaths)
   const stripped = allPaths.map(p => stripPathPrefix(p, prefix))
   // Tree built from STRIPPED paths so the visual hierarchy
   // doesn't waste horizontal space on a shared root prefix.
