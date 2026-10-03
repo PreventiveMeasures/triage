@@ -1,5 +1,5 @@
 :host {
-  display: inline-block;
+  display: inline-flex;
   vertical-align: middle;
   /* Stacking context so the absolute edit input sits over the ghost
      chip without affecting flow. */
