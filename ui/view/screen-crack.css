@@ -1,0 +1,34 @@
+/* Temporary decoration: never changes the application's layout or input. */
+.screen-crack {
+  position: fixed; inset: 0;
+  z-index: 2147483646;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+.screen-crack-svg {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;
+}
+.screen-crack-glass {
+  position: absolute; inset: 0;
+  backdrop-filter: blur(9px) brightness(1.06) saturate(.85);
+  background: linear-gradient(135deg, rgb(220 235 255 / .06), rgb(220 235 255 / 0) 55%);
+  mask-mode: luminance;
+  opacity: 0;
+}
+.screen-crack-shard {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.screen-crack-outline { opacity: 0; }
+.screen-crack-flash {
+  position: absolute;
+  width: 18vmin; height: 18vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(255 255 255 / .85), rgb(200 230 255 / .15) 55%, transparent 75%);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+}
+@media print { .screen-crack { display: none; } }
