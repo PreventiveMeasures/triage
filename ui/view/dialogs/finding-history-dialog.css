@@ -6,7 +6,7 @@ dialog {
 dialog[open] { display: flex; flex-direction: column; }
 header {
   display: flex; align-items: start; justify-content: space-between; gap: 1rem;
-  padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--border); flex: none;
+  padding: .75rem 1rem; border-bottom: 1px solid var(--border); flex: none;
 }
 .history-heading { min-width: 0; }
 header h3 { display: flex; align-items: center; gap: .55rem; margin: 0; line-height: 1.5; }
@@ -18,14 +18,14 @@ header .detail-action { flex: none; width: 1.75rem; height: 1.75rem; }
 }
 .history-summary {
   display: flex; justify-content: space-between; gap: .5rem; flex: none;
-  padding: .75rem 1.25rem .25rem; color: var(--muted); font-size: .72rem;
+  padding: .5rem 1rem .25rem; color: var(--muted); font-size: .72rem;
 }
 .history-body {
   min-height: 0; overflow: auto; overscroll-behavior: contain;
-  padding: 1rem 1.25rem 1.25rem; font-size: .82rem; line-height: 1.5;
+  padding: .75rem 1rem 1rem; font-size: .82rem; line-height: 1.5;
 }
 .timeline { list-style: none; }
-.event { position: relative; display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .75rem; padding-bottom: 1.5rem; }
+.event { position: relative; display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .75rem; padding-bottom: 1rem; }
 .event:last-child { padding-bottom: 0; }
 .event:not(:last-child)::before {
   content: ''; position: absolute; top: 2.4rem; bottom: .4rem; left: calc(1rem - .5px);
@@ -40,7 +40,7 @@ header .detail-action { flex: none; width: 1.75rem; height: 1.75rem; }
 time { color: var(--muted); font-size: .7rem; white-space: nowrap; }
 .event-action { margin-top: .1rem; color: var(--muted); font-size: .75rem; }
 .changes { margin-top: .65rem; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
-.change { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: baseline; gap: .65rem; padding: .55rem .7rem; }
+.change { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: baseline; gap: .65rem; padding: .4rem .6rem; }
 .change + .change { border-top: 1px solid var(--border); }
 dt { color: var(--muted); font-size: .75rem; }
 dd { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: baseline; gap: .65rem; }
@@ -48,16 +48,16 @@ dd.snapshot { grid-template-columns: minmax(0, 1fr); }
 .before, .after { white-space: pre-wrap; overflow-wrap: anywhere; }
 .before, .change-arrow { color: var(--muted); }
 .after { font-weight: 500; }
-.history-state { padding: 2rem .75rem; text-align: center; color: var(--muted); }
+.history-state { padding: 1.5rem .5rem; text-align: center; color: var(--muted); }
 .history-state strong { display: block; margin-bottom: .35rem; color: var(--text); font-weight: 500; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (width <= 540px) {
   dialog { margin-block: 1rem; max-height: calc(100dvh - 2rem); }
-  header { padding: .85rem; }
-  .history-summary { padding-inline: .85rem; }
-  .history-body { padding: .85rem; }
+  header { padding: .65rem; }
+  .history-summary { padding-inline: .65rem; }
+  .history-body { padding: .65rem; }
   .event { gap: .6rem; }
   .event-meta { flex-direction: column; }
-  .change { grid-template-columns: minmax(0, 1fr); gap: .3rem; padding: .5rem .6rem; }
+  .change { grid-template-columns: minmax(0, 1fr); gap: .3rem; padding: .35rem .5rem; }
   dd { gap: .45rem; }
 }
