@@ -31,7 +31,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 13 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 14 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -44,6 +44,16 @@ async function migrateBundleBuildLeases(db: PgConnection): Promise<void> {
   if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 13')).rows.length > 0) return
   await db.query(postgresSchema(BUNDLE_BUILD_LEASE_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (13)')
+}
+
+// The repository App's user token (GITHUB_APP_CLIENT_ID); see db.ts. BIGINT
+// expiry: millisecond timestamps overflow INTEGER.
+async function migrateRepositoryAppTokens(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 14')).rows.length > 0) return
+  await db.query(`ALTER TABLE managed_user ADD COLUMN IF NOT EXISTS gh_app_access_token TEXT,
+    ADD COLUMN IF NOT EXISTS gh_app_refresh_token TEXT, ADD COLUMN IF NOT EXISTS gh_app_token_expires_at BIGINT,
+    ADD COLUMN IF NOT EXISTS gh_app_tokens_encrypted INTEGER NOT NULL DEFAULT 0`)
+  await db.query('INSERT INTO managed_schema_version VALUES (14)')
 }
 
 async function initialize(db: PgConnection): Promise<void> {
@@ -120,7 +130,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateRepositoryAppTokens]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

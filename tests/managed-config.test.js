@@ -68,6 +68,26 @@ test('legacy encryption migration requires its environment switch and a key; pre
   assert.equal(loadManagedConfig().storageEncryptionMigrateMaxMs, 240_000)
 })
 
+test('a separate repository App needs both client credentials beside its installation credentials', t => {
+  useEnv(t, {})
+  const none = { githubAppClientId: null, githubAppClientSecret: null }
+  const pick = config => ({ githubAppClientId: config.githubAppClientId, githubAppClientSecret: config.githubAppClientSecret })
+  assert.deepEqual(pick(loadManagedConfig()), none)
+  process.env.GITHUB_APP_CLIENT_ID = 'repo-client'
+  assert.throws(loadManagedConfig, /GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET must be set together/u)
+  process.env.GITHUB_APP_CLIENT_SECRET = 'repo-secret'
+  assert.throws(loadManagedConfig, /GITHUB_APP_CLIENT_ID requires GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY/u)
+  Object.assign(process.env, { GITHUB_APP_ID: '123', GITHUB_APP_PRIVATE_KEY: 'pem' })
+  for (const combined of [false, true]) {
+    assert.deepEqual(pick(loadManagedConfig({ combined })), { githubAppClientId: 'repo-client', githubAppClientSecret: 'repo-secret' })
+  }
+  // The login App's own client id means one App for both flows.
+  process.env.GITHUB_APP_CLIENT_ID = auth.GITHUB_CLIENT_ID
+  assert.deepEqual(pick(loadManagedConfig()), none)
+  delete process.env.GITHUB_APP_CLIENT_ID
+  assert.throws(loadManagedConfig, /must be set together/u)
+})
+
 test('initial admin configuration accepts only one positive numeric GitHub ID, and defaults off', t => {
   useEnv(t, {})
   assert.equal(loadManagedConfig().initialAdminGithubId, null)

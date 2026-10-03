@@ -25,7 +25,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { managedCsv, managedCsvIds } from './_managed-csv.js'
 import { defaultScanModels } from '../ui/scan/default-models.js'
 import { createGithubIssue, parseIssueContext, prepareGithubIssue } from '../server-managed/github-issues.ts'
-import { isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from '../server-managed/github-issue-oauth.ts'
+import { isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback, issueUserToken } from '../server-managed/github-issue-oauth.ts'
 
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false, trustProxyEnv: undefined,
@@ -3240,6 +3240,58 @@ test('issue reauthorization uses the same app with no scopes and cannot change t
   assert.match(result.setCookie, /Max-Age=0/u)
   assert.equal((await db.getUserTokens(session.userId)).accessToken, 'new-user-token')
   assert.deepEqual((await db.sessionWithUser(session.id, now)).session, session, 'same session and CSRF token')
+})
+
+test('a separate repository App authorizes issue creation on first use, in its own token slot', async t => {
+  const fixture = await issueFixture(t)
+  const { db, store, team, session, context } = fixture
+  const cfg = { ...fixture.cfg, githubAppClientId: 'repo-client', githubAppClientSecret: 'repo-secret' }
+  const installed = () => jsonResponse({ permissions: { issues: 'write' } })
+  // The identity-only login token never creates issues: first use asks for authorization.
+  assert.equal((await prepareGithubIssue(cfg, db, store, session, team.id, context, installed)).mode, 'authorize')
+  assert.equal(new URL(buildLoginRedirect(cfg).location).searchParams.get('client_id'), cfg.githubClientId, 'sign-in keeps the login App')
+  const now = Date.now(), redirect = issueLoginRedirect(cfg, session, now)
+  const cookie = cookiePair(redirect.setCookie), url = new URL(redirect.location)
+  assert.equal(url.searchParams.get('client_id'), 'repo-client')
+  const state = url.searchParams.get('state')
+  // Cancelling on GitHub stores nothing; other errors and foreign states still fail.
+  const unexpected = () => { throw new Error('must not fetch') }
+  const declined = await issueOAuthCallback(cfg, db, session, new URLSearchParams({ state, error: 'access_denied' }), cookie, unexpected, now)
+  assert.equal(declined.location, '/github-issue-declined.html')
+  assert.match(declined.setCookie, /Max-Age=0/u)
+  await assert.rejects(issueOAuthCallback(cfg, db, session, new URLSearchParams({ state, error: 'server_error' }), cookie, unexpected, now), /invalid-oauth-state/u)
+  await assert.rejects(issueOAuthCallback(cfg, db, session, new URLSearchParams({ state: 'forged', error: 'access_denied' }), cookie, unexpected, now), /invalid-oauth-state/u)
+  assert.equal(await db.getUserTokens(session.userId, 'app'), null)
+  const exchanges = []
+  const github = (target, init) => {
+    if (String(target).includes('login/oauth/access_token')) {
+      exchanges.push(JSON.parse(init.body))
+      return jsonResponse({ access_token: `repo-token-${exchanges.length}`, refresh_token: 'repo-refresh', expires_in: 3600 })
+    }
+    return jsonResponse({ id: 2, login: 'bob' })
+  }
+  const authorized = await issueOAuthCallback(cfg, db, session, new URLSearchParams({ state, code: 'code' }), cookie, github, now)
+  assert.equal(authorized.location, '/github-issue-authorized.html')
+  assert.deepEqual([exchanges[0].client_id, exchanges[0].client_secret], ['repo-client', 'repo-secret'])
+  assert.equal((await db.getUserTokens(session.userId, 'app')).accessToken, 'repo-token-1')
+  assert.equal((await db.getUserTokens(session.userId)).accessToken, 'acting-user-token', 'the login token is untouched')
+  const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, context, (target, init) => {
+    if (String(target).endsWith('/installation')) return installed()
+    assert.equal(init.headers.authorization, 'Bearer repo-token-1')
+    return jsonResponse({}, 404)
+  })
+  assert.equal(prepared.mode, 'api')
+  // The repository App token refreshes with its own client, in its own slot.
+  await db.setUserTokens(session.userId, { accessToken: 'stale', refreshToken: 'repo-refresh', expiresAt: now - 1 }, 'app')
+  assert.equal(await issueUserToken(cfg, db, session.userId, github), 'repo-token-2')
+  assert.deepEqual([exchanges[1].client_id, exchanges[1].client_secret, exchanges[1].grant_type], ['repo-client', 'repo-secret', 'refresh_token'])
+  assert.equal((await db.getUserTokens(session.userId)).accessToken, 'acting-user-token')
+  // Signing in again replaces only the login token.
+  const login = buildLoginRedirect(cfg)
+  await handleCallback(new URLSearchParams({ state: new URL(login.location).searchParams.get('state'), code: 'login-code' }), cookiePair(login.setCookie),
+    { config: cfg, db, fetchImpl: makeFetch({ token: { access_token: 'login-token' }, user: { id: 2, login: 'bob' } }) })
+  assert.equal((await db.getUserTokens(session.userId)).accessToken, 'login-token')
+  assert.equal((await db.getUserTokens(session.userId, 'app')).accessToken, 'repo-token-2')
 })
 
 test('issue HTTP route requires session and CSRF, filters inputs, and returns no tokens', async t => {

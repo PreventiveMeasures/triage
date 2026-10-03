@@ -699,16 +699,48 @@ author, status, number and labels. It uses their server-held user access token, 
 an installation token. Reauthorization, when needed, must return the same GitHub
 account and preserves the existing DeepView session.
 
-Use one GitHub App for sign-in and repository access: `GITHUB_CLIENT_ID` and
-`GITHUB_CLIENT_SECRET` are its user-authorization credentials; `GITHUB_APP_ID`,
-`GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_SLUG` are its installation credentials.
-Keep **Account permissions** unset/minimal so login requests no elevated account
-access. Repository **Contents: read** and **Issues: read and write** are approved
-when connecting repositories, not added as login OAuth scopes. Existing
-installations must have their owner approve the Issues permission update; the
-issue dialog offers the installation flow when approval is missing. GitHub App
-permissions are configured on the app, rather than requested as incremental
-OAuth scopes. See [GitHub's permission model](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
+### Sign-in without "Act on your behalf"
+
+A GitHub App user token can use the App's repository permissions wherever the
+App is installed, so GitHub's sign-in consent says **Act on your behalf**
+whenever the login App has any repository or organization permission
+([GitHub changelog](https://github.blog/changelog/2026-01-12-selectively-showing-act-on-your-behalf-warning-for-github-apps-is-in-public-preview/)).
+To keep sign-in identity-only, use two GitHub Apps:
+
+- **Login App**: `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Give it no
+  repository or organization permissions, and read-only account permissions at
+  most. Its token still reads public repositories.
+- **Repository App**: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and
+  `GITHUB_APP_SLUG` (installation), plus `GITHUB_APP_CLIENT_ID` and
+  `GITHUB_APP_CLIENT_SECRET` (user authorization). Repository **Contents: read**
+  and **Issues: read and write** are approved when connecting repositories.
+  Register `OAUTH_CALLBACK_URL` as one of its callback URLs as well.
+
+Users authorize the repository App only when they first create an issue. The
+issue dialog links to GitHub's consent for it, which does say **Act on your
+behalf**, and offers GitHub's prefilled form until authorization completes.
+Cancelling stores nothing. The repository App's token is stored apart from the
+login token, encrypted alike when storage encryption is on, refreshed with the
+repository App's credentials, and never replaced by signing in. Fix-link PR and
+issue metadata uses it when present, so private repositories show details for
+users who authorized; the login token reads public repositories only.
+Installed repositories are discovered through the repository App either way;
+public discovery shows what GitHub's `/user/repos` returns for the login token,
+which can be fewer repositories than an installed App's token sees.
+
+Without `GITHUB_APP_CLIENT_ID`, or with the login App's client ID, one App
+serves both flows: `GITHUB_CLIENT_*` are its user-authorization credentials and
+`GITHUB_APP_*` its installation credentials, and sign-in says **Act on your
+behalf**. To move such a deployment, keep that App as the repository App so its
+installations stay, set its client credentials as `GITHUB_APP_CLIENT_*`, and
+register a new login App without permissions for `GITHUB_CLIENT_*`. Accounts are
+matched by GitHub user ID, so roles and teams carry over. Users sign in again
+once: stored tokens refresh only with the App that issued them.
+
+Existing installations must have their owner approve the Issues permission
+update; meanwhile the issue dialog offers the installation flow alongside
+GitHub's form. GitHub App permissions are configured on the app, rather than
+requested as incremental OAuth scopes. See [GitHub's permission model](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
 
 API creation is limited to a visible finding in the current team and a repository
 assigned to that team where the app is installed. The target must match the
@@ -716,8 +748,9 @@ finding's declared repository, or the report's managed assignment when the
 finding has no repository; a different repository in the same team is rejected.
 Other repositories, public
 workspace views, and E2E/local mode use GitHub's prefilled issue form. The dialog
-offers that form only when the server selects the repository fallback. No issue
-is posted by signing in, checking authorization, or connecting a repository.
+also offers that form while authorization or the Issues permission is missing;
+an issue created there is not linked to the finding. No issue is posted by
+signing in, checking authorization, or connecting a repository.
 
 Both forms and API creation request `deepview`, plus `security` for `isSecurity`
 findings, then comma-separated `GITHUB_NEW_ISSUE_LABELS` (optional). Labels are

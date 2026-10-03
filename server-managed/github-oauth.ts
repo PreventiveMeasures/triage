@@ -1,10 +1,13 @@
-// GitHub App user authorization for managed sign-in. Configure no additional
-// account permissions on the App. Repository permissions are granted separately
-// at installation; login does not install the App or request OAuth scopes.
+// GitHub App user authorization for managed sign-in. Login sends no OAuth
+// scopes and never installs an App. A user token carries the App's repository
+// permissions wherever it is installed, so GitHub's consent says "Act on your
+// behalf" unless the login App has none; a separate repository App then holds
+// them, and users authorize it only to create issues (see config.ts).
 import { Buffer } from 'node:buffer'
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedUser, UserTokens } from './db.ts'
+import type { GithubTokenSlot } from './storage-db.ts'
 import { randomToken, safeEqual } from './crypto.ts'
 import { STATE_COOKIE, buildCookie, clearCookie, cookieName, createSession, parseCookies } from './session.ts'
 
@@ -26,13 +29,29 @@ export class OAuthError extends Error {
   }
 }
 
+// The App behind a user token: its OAuth client credentials (refresh tokens
+// only refresh with the client that issued them) and its token slot.
+export interface OAuthClient { id: string; secret: string; slot: GithubTokenSlot }
+
+export function loginClient(config: ManagedConfig): OAuthClient {
+  return { id: config.githubClientId, secret: config.githubClientSecret, slot: 'login' }
+}
+
+// Issue creation acts as the user through the repository App: its own client
+// when configured, else the login App, which is then the same App.
+export function issueClient(config: ManagedConfig): OAuthClient {
+  return config.githubAppClientId && config.githubAppClientSecret
+    ? { id: config.githubAppClientId, secret: config.githubAppClientSecret, slot: 'app' }
+    : loginClient(config)
+}
+
 export interface CallbackResult { location: string; setCookies: string[] }
 export interface CallbackDeps { config: ManagedConfig; db: ManagedDb; avatarStore?: AvatarStore; now?: number; fetchImpl?: typeof fetch }
 
 // GET /api/oauth/github/login — redirect to GitHub, stashing the CSRF state. No
 // `scope` is sent: as the GitHub App user-authorization flow, the App's own
-// permission set governs access. Keep account permissions minimal; repository
-// grants are approved separately when installing the App.
+// permission set governs access. Keep account permissions read-only and leave
+// repository/organization permissions to the repository App.
 export function buildLoginRedirect(config: ManagedConfig): { location: string; setCookie: string } {
   const state = randomToken()
   const u = new URL(GITHUB_AUTHORIZE_URL)
@@ -81,18 +100,20 @@ export async function handleCallback(
 }
 
 // Exchange the authorization code for a user-to-server token set.
-export function exchangeCode(config: ManagedConfig, code: string, now: number, fetchImpl: typeof fetch): Promise<UserTokens> {
+export function exchangeCode(config: ManagedConfig, code: string, now: number, fetchImpl: typeof fetch,
+  client: OAuthClient = loginClient(config)): Promise<UserTokens> {
   return postToken({
-    client_id: config.githubClientId, client_secret: config.githubClientSecret,
+    client_id: client.id, client_secret: client.secret,
     code, redirect_uri: config.oauthCallbackUrl,
   }, now, fetchImpl)
 }
 
 // Refresh an expiring user-to-server token (GitHub Apps with expiring tokens
 // enabled). Returns the fresh token set; OAuthError(502) on any failure.
-export function refreshUserToken(config: ManagedConfig, refreshToken: string, now: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<UserTokens> {
+export function refreshUserToken(config: ManagedConfig, refreshToken: string, now: number, fetchImpl: typeof fetch = globalThis.fetch,
+  client: OAuthClient = loginClient(config)): Promise<UserTokens> {
   return postToken({
-    client_id: config.githubClientId, client_secret: config.githubClientSecret,
+    client_id: client.id, client_secret: client.secret,
     grant_type: 'refresh_token', refresh_token: refreshToken,
   }, now, fetchImpl)
 }
@@ -124,18 +145,20 @@ async function postToken(payload: Record<string, string>, now: number, fetchImpl
 
 // Resolve a usable access token for a user: the stored one if still valid, else
 // refreshed (when a refresh token is on file) and re-persisted. Null when there
-// is no token or it's expired and unrefreshable — the caller prompts re-login.
+// is no token or it's expired and unrefreshable — the caller prompts re-login,
+// or re-authorization for the repository App's token.
 // A 60s skew margin avoids handing back a token about to expire mid-request.
 export async function ensureUserAccessToken(
   config: ManagedConfig, db: ManagedDb, userId: string, now: number, fetchImpl: typeof fetch = globalThis.fetch,
+  client: OAuthClient = loginClient(config),
 ): Promise<string | null> {
-  const tokens = await db.getUserTokens(userId)
+  const tokens = await db.getUserTokens(userId, client.slot)
   if (tokens == null) return null
   if (tokens.expiresAt == null || tokens.expiresAt > now + 60_000) return tokens.accessToken
   if (tokens.refreshToken == null) return null
   try {
-    const fresh = await refreshUserToken(config, tokens.refreshToken, now, fetchImpl)
-    await db.setUserTokens(userId, fresh)
+    const fresh = await refreshUserToken(config, tokens.refreshToken, now, fetchImpl, client)
+    await db.setUserTokens(userId, fresh, client.slot)
     return fresh.accessToken
   } catch (err) {
     console.warn('managed: token refresh failed:', err)

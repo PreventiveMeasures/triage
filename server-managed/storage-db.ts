@@ -70,19 +70,43 @@ export async function validateStorageUpload(db: ManagedSql, key: StorageKey | nu
 }
 
 export interface StoredTokens { access: string | null; refresh: string | null; exp: number | null; encrypted: number }
-const tokenIdentity = (id: string, field: string) => `managed_user.gh_${field}_token:${id}`
-export function encodeStorageTokens(key: StorageKey, id: string, access: string | null, refresh: string | null) {
-  const encode = (field: string, value: string | null) => value === null ? null : wrapStorageValue(key, tokenIdentity(id, field), Buffer.from(value))
-  return { access: encode('access', access), refresh: encode('refresh', refresh) }
+// A user holds up to two GitHub tokens: the login App's ('login') and, when the
+// repository App authorizes users separately, the repository App's ('app').
+// Each slot has its own columns, so each ciphertext is bound to its column.
+export type GithubTokenSlot = 'login' | 'app'
+const TOKEN_COLUMNS = {
+  login: { access: 'gh_access_token', refresh: 'gh_refresh_token', expires: 'gh_token_expires_at', encrypted: 'gh_tokens_encrypted' },
+  app: { access: 'gh_app_access_token', refresh: 'gh_app_refresh_token', expires: 'gh_app_token_expires_at', encrypted: 'gh_app_tokens_encrypted' },
+} as const
+export const GITHUB_TOKEN_SLOTS = Object.keys(TOKEN_COLUMNS) as GithubTokenSlot[]
+// Column names reach SQL, so an unknown slot is an error, never a default.
+export function tokenColumns(slot: GithubTokenSlot) {
+  if (!Object.hasOwn(TOKEN_COLUMNS, slot)) throw new Error('Invalid GitHub token slot')
+  return TOKEN_COLUMNS[slot]
 }
-export function decodeStorageTokens(key: StorageKey, id: string, row: StoredTokens) {
-  const decode = (field: string, value: string | null) => {
+export const selectTokensSql = (slot: GithubTokenSlot) => {
+  const c = tokenColumns(slot)
+  return `SELECT ${c.access} AS access, ${c.refresh} AS refresh, ${c.expires} AS exp, ${c.encrypted} AS encrypted FROM managed_user WHERE id = ?`
+}
+const tokenIdentity = (id: string, column: string) => `managed_user.${column}:${id}`
+export function encodeStorageTokens(key: StorageKey, id: string, access: string | null, refresh: string | null, slot: GithubTokenSlot = 'login') {
+  const c = tokenColumns(slot)
+  const encode = (column: string, value: string | null) => value === null ? null : wrapStorageValue(key, tokenIdentity(id, column), Buffer.from(value))
+  return { access: encode(c.access, access), refresh: encode(c.refresh, refresh) }
+}
+export function decodeStorageTokens(key: StorageKey, id: string, row: StoredTokens, slot: GithubTokenSlot = 'login') {
+  const c = tokenColumns(slot)
+  const decode = (column: string, value: string | null) => {
     if (value === null) return null
-    const plain = unwrapStorageValue(key, tokenIdentity(id, field), value)
+    const plain = unwrapStorageValue(key, tokenIdentity(id, column), value)
     try { return plain.toString('utf8') } finally { plain.fill(0) }
   }
-  return { access: decode('access', row.access), refresh: decode('refresh', row.refresh) }
+  return { access: decode(c.access, row.access), refresh: decode(c.refresh, row.refresh) }
 }
+const PLAINTEXT_TOKENS = GITHUB_TOKEN_SLOTS.map(slot => {
+  const c = tokenColumns(slot)
+  return `(${c.encrypted} = 0 AND (${c.access} IS NOT NULL OR ${c.refresh} IS NOT NULL))`
+}).join(' OR ')
 
 // Fixed-width sizes make the saved position sort by type, then numeric byte
 // size, then ID in both SQLite and Postgres. Sixteen digits cover JS safe sizes.
@@ -90,7 +114,7 @@ const PADDED_SIZE = "substr('0000000000000000', 1, 16 - length(CAST(byte_size AS
 const PENDING = `SELECT '0:' || ${PADDED_SIZE} || ':' || id AS position, id, 'report' AS type FROM managed_report WHERE storage_encrypted = 0
   UNION ALL SELECT '1:' || ${PADDED_SIZE} || ':' || id AS position, id, 'bundle' AS type FROM managed_bundle WHERE storage_encrypted = 0
   UNION ALL SELECT '2:0000000000000000:' || id AS position, id, 'user' AS type FROM managed_user
-    WHERE gh_tokens_encrypted = 0 AND (gh_access_token IS NOT NULL OR gh_refresh_token IS NOT NULL)`
+    WHERE ${PLAINTEXT_TOKENS}`
 
 // Restart the pending pass for a cursor saved under the previous ID ordering.
 // Completed rows are excluded by PENDING; the original cursor still fences CAS.
@@ -161,15 +185,19 @@ export function storageMethods(db: ManagedSql, key: StorageKey | null): StorageD
     },
     async migrateStorageUserTokens(id) {
       await requireEnabled()
-      const row = await db.prepare(`SELECT gh_access_token AS access, gh_refresh_token AS refresh, gh_token_expires_at AS exp,
-        gh_tokens_encrypted AS encrypted FROM managed_user WHERE id = ?`).get(id) as StoredTokens | undefined
-      if (!row || row.encrypted || (row.access === null && row.refresh === null)) return
-      const value = encodeStorageTokens(key!, id, row.access, row.refresh)
-      // This operation holds the writer transaction; token refresh cannot be
-      // overwritten by a migration that read an earlier token value.
-      await db.prepare('UPDATE managed_user SET gh_access_token = ?, gh_refresh_token = ?, gh_tokens_encrypted = 1 WHERE id = ?')
-        .run(value.access, value.refresh, id)
-      await db.prepare('UPDATE managed_storage_encryption SET migrated = migrated + 1 WHERE id = 1').run()
+      let migrated = false
+      for (const slot of GITHUB_TOKEN_SLOTS) {
+        const row = await db.prepare(selectTokensSql(slot)).get(id) as StoredTokens | undefined
+        if (!row || row.encrypted || (row.access === null && row.refresh === null)) continue
+        const value = encodeStorageTokens(key!, id, row.access, row.refresh, slot)
+        const c = tokenColumns(slot)
+        // This operation holds the writer transaction; token refresh cannot be
+        // overwritten by a migration that read an earlier token value.
+        await db.prepare(`UPDATE managed_user SET ${c.access} = ?, ${c.refresh} = ?, ${c.encrypted} = 1 WHERE id = ?`)
+          .run(value.access, value.refresh, id)
+        migrated = true
+      }
+      if (migrated) await db.prepare('UPDATE managed_storage_encryption SET migrated = migrated + 1 WHERE id = 1').run()
     },
   }
 }

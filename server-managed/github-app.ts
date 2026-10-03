@@ -1,7 +1,7 @@
-// Repository discovery uses the signed-in user token and App installation
-// tokens. Login and repository installation can use one GitHub App: user
-// authorization requests account permissions, installation grants repository
-// permissions. Discovery itself is read-only and skips archived repositories.
+// Repository discovery uses the signed-in user's login token and the repository
+// App's installation tokens. The login App is either that App or a separate one
+// without repository permissions (config.ts), so a login token's private-repo
+// access is never assumed. Discovery is read-only and skips archived repositories.
 import { Buffer } from 'node:buffer'
 import { createHash, createSign } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
@@ -296,9 +296,9 @@ async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>
   return results
 }
 
-// The login App and repository App are separate: /user/repos with the login
-// token is not evidence of private-repo access. Ask the repository App for the
-// user's effective GitHub permission (including teams/org/enterprise grants).
+// The login App may be separate from the repository App, so /user/repos with
+// the login token is not evidence of private-repo access. Ask the repository App
+// for the user's effective GitHub permission (including teams/org/enterprise grants).
 // This endpoint accepts installation tokens with Metadata: read; it does NOT
 // require Administration permission (unlike collaborator mutation endpoints).
 // https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user

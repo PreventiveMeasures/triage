@@ -83,7 +83,9 @@ class ManagedIssueDialog extends AppDialog {
     const created = this.createdUrl || savedWithoutAccess
     const pending = this.uncertain || prepared?.mode === 'pending'
     const editingDisabled = this.creating || pending
-    const canUseForm = !this.busy && !pending && prepared?.mode === 'form'
+    // GitHub's prefilled form stays available until the API can create as the
+    // user: missing authorization or Issues permission never blocks an issue.
+    const canUseForm = !this.busy && !pending && ['form', 'authorize', 'permissions'].includes(prepared?.mode)
     return html`<dialog aria-labelledby="issue-dialog-title" @close=${this._onClose} @cancel=${event => { if (this.creating) event.preventDefault() }}>
       <header><h3 id="issue-dialog-title">${created ? 'Issue created' : 'Create a GitHub issue'}</h3></header>
       <div class="dialog-content">
@@ -112,7 +114,7 @@ class ManagedIssueDialog extends AppDialog {
         ${prepared?.labels?.length ? html`<p class="nwd-note">Labels: ${prepared.labels.join(', ')}</p>` : nothing}
         ${prepared?.mode === 'permissions' ? html`<p>Ask a repository owner to approve the app’s Issues read and write permission.
           ${prepared.authorizationPath ? html`<a href=${prepared.authorizationPath} target="_blank" rel="noopener">Review repository permissions</a>` : nothing}</p>` : nothing}
-        ${prepared?.mode === 'authorize' ? html`<p><a href=${prepared.authorizationPath} target="_blank" rel="noopener">Authorize GitHub</a>, then check authorization here.</p>` : nothing}
+        ${prepared?.mode === 'authorize' ? html`<p><a href=${prepared.authorizationPath} target="_blank" rel="noopener">Authorize GitHub</a> to create issues as you, then check authorization here. Or use GitHub’s form instead.</p>` : nothing}
         ${prepared?.mode === 'pending' ? html`<p role="status">An issue is being created, or its creation could not be confirmed. Check its status before continuing; another issue will not be created.</p>` : nothing}
         ${prepared?.mode === 'unavailable' ? html`<p role="status">This finding already has a managed issue in a repository outside this workspace.</p>` : nothing}
       `}
