@@ -1,7 +1,27 @@
 import { type Advisory, type Package, advisories } from '@preventive/upstream/advisories.js'
-import { createClient } from '@preventive/upstream/github.js'
+import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
 
 export const ADVISORIES_TIMEOUT_MS = 30_000
+
+function advisoryGithubClient(token: string | null, signal: AbortSignal): Client {
+  const authenticated = createClient({ token, userAgent: 'deepview-triage' })
+  if (token === null) return authenticated
+  let client = authenticated
+  return {
+    ...authenticated,
+    async listRepoAdvisories(options) {
+      const current = client
+      try { return await current.listRepoAdvisories(options) } catch (error) {
+        if (current !== authenticated || !(error instanceof HttpError) || error.status !== 401) throw error
+        signal.throwIfAborted()
+        // Published advisories remain readable after a token is revoked. Reuse
+        // anonymous access for subsequent repositories in this audit as well.
+        if (client === authenticated) client = createClient({ token: null, userAgent: 'deepview-triage' })
+        return client.listRepoAdvisories(options)
+      }
+    },
+  }
+}
 
 // The managed caller supplies its user's token when available; public shares
 // remain anonymous. Upstream sends this credential only to GitHub and returns
@@ -21,7 +41,7 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
       signal.addEventListener('abort', onAbort, { once: true })
     })
     const result = await Promise.race([
-      advisories(packages, { github: createClient({ token: githubToken, userAgent: 'deepview-triage' }), repoAdvisories }), deadline,
+      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories }), deadline,
     ])
     return { status: 200, body: result }
   } catch (error) {

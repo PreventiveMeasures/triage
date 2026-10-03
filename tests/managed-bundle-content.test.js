@@ -977,14 +977,16 @@ test('managed repository rechecks enrich advisories and recheck security before 
   assert.deepEqual(denied.json(), { error: 'security-access-required' })
 })
 
-for (const mode of ['refresh', 'expired', 'revoked']) {
+for (const mode of ['refresh', 'expired', 'revoked', 'rejected']) {
   test(`GitHub dependency audits use the viewer credential lifecycle (${mode})`, async t => {
     const h = await setup(t)
     const bundle = new Bundle({ modules: new Map([
       ['lib/dep', { ecosystem: 'github', name: 'org/dep', version: '1.0.0', files: { 'code.sol': 'source' } }],
     ]) }).serialize()
     const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(bundle)) })
-    await h.db.setUserTokens(h.users.viewer.userId, { accessToken: 'expired-token', refreshToken: mode === 'expired' ? null : 'refresh-token', expiresAt: 1 })
+    await h.db.setUserTokens(h.users.viewer.userId, mode === 'rejected'
+      ? { accessToken: 'rejected-token', refreshToken: null, expiresAt: null }
+      : { accessToken: 'expired-token', refreshToken: mode === 'expired' ? null : 'refresh-token', expiresAt: 1 })
     const calls = []
     t.mock.method(globalThis, 'fetch', async (url, init) => {
       calls.push(url)
@@ -995,12 +997,14 @@ for (const mode of ['refresh', 'expired', 'revoked']) {
         return Response.json({ access_token: 'refreshed-token', expires_in: 3600 })
       }
       assert.match(url, /^https:\/\/api\.github\.com\/repos\/org\/dep\/security-advisories/u)
-      assert.equal(new Headers(init.headers).get('authorization'), mode === 'expired' ? null : 'Bearer refreshed-token')
+      const authorization = new Headers(init.headers).get('authorization')
+      if (mode === 'rejected' && authorization === 'Bearer rejected-token') return Response.json({ message: 'Bad credentials' }, { status: 401 })
+      assert.equal(authorization, mode === 'expired' || mode === 'rejected' ? null : 'Bearer refreshed-token')
       return Response.json([])
     })
     const response = await h.send(`/api/bundles/${record.id}/advisories`, 'viewer')
     assert.equal(response.status, mode === 'revoked' ? 403 : 200)
-    assert.equal(calls.length, mode === 'refresh' ? 2 : 1)
+    assert.equal(calls.length, mode === 'refresh' || mode === 'rejected' ? 2 : 1)
     if (mode === 'revoked') assert.deepEqual(response.json(), { error: 'security-access-required' })
     else assert.deepEqual(response.json().advisories, [])
     if (mode === 'refresh') assert.equal((await h.db.getUserTokens(h.users.viewer.userId)).accessToken, 'refreshed-token')

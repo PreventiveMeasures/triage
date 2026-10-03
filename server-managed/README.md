@@ -595,8 +595,11 @@ the previous results; a denied or missing bundle discards them.
 For both initial audits and repository rechecks, GitHub requests use the current
 viewer's stored access token, refreshing it within the audit deadline when needed.
 Public shares and viewers without a usable token use an anonymous client. Credentials
-are sent only to GitHub, never to npm, OSV or the other registries. Ordinary npm-only
-audits contact only npm; GitHub requests are added by the repository recheck.
+are sent only to GitHub, never to npm, OSV or the other registries. If GitHub rejects
+the token with 401, that repository lookup is retried anonymously and the rest of
+the audit uses anonymous GitHub access. Other failures do not trigger this fallback.
+Ordinary npm-only audits contact only npm; GitHub requests are added by the
+repository recheck.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.

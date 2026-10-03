@@ -204,6 +204,70 @@ test('repository rechecks enrich npm, Cargo and Composer with matching maintaine
   assert.equal(rechecked.body.filter(row => row.id === ghsa).length, 1, 'the registry GHSA is not repeated from the repository')
 })
 
+test('repository rechecks retry a rejected GitHub token anonymously without repeating npm requests', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    const authorization = new Headers(options.headers).get('authorization')
+    calls.push({ url, authorization })
+    if (new URL(url).hostname !== 'api.github.com') {
+      assert.equal(authorization, null)
+      return Promise.resolve(Response.json(url.endsWith('/advisories/bulk') ? {} : { name: 'dep', repository: 'https://github.com/org/dep' }))
+    }
+    if (authorization) return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
+    return Promise.resolve(Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Public advisory',
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '*' }] }]))
+  })
+  const result = await fetchBundleAdvisories([{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0'] }], signal(), { repoAdvisories: true, githubToken: 'revoked' })
+  assert.equal(result.status, 200)
+  assert.equal(result.body[0].title, 'Public advisory')
+  assert.deepEqual(calls.map(call => call.authorization), [null, null, 'Bearer revoked', null])
+  assert.equal(calls[2].url, calls[3].url, 'retry only the rejected repository lookup')
+})
+
+test('a rejected token is not reused for later repositories in the same audit', async t => {
+  const packages = Array.from({ length: 8 }, (_, i) => ({ ecosystem: 'github', name: `org/dep${i}`, versions: ['1.0.0'] }))
+  const anonymous = new Set()
+  let rejected = 0
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (new Headers(options.headers).has('authorization')) {
+      assert.equal(anonymous.size, 0, 'stop using the token once anonymous fallback has started')
+      rejected++
+      return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
+    }
+    anonymous.add(new URL(url).pathname)
+    return Promise.resolve(Response.json([]))
+  })
+  assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { githubToken: 'revoked' }), { status: 200, body: [] })
+  assert.equal(anonymous.size, packages.length)
+  assert.ok(rejected > 0 && rejected < packages.length, 'queued repositories use the anonymous client directly')
+})
+
+for (const status of [401, 403, 429, 500]) {
+  test(`GitHub advisory failure ${status} retries only an authenticated 401, once`, async t => {
+    const credentials = []
+    t.mock.method(globalThis, 'fetch', (_url, options) => {
+      credentials.push(new Headers(options.headers).get('authorization'))
+      return Promise.resolve(Response.json({ message: 'Rejected' }, { status }))
+    })
+    const result = await fetchBundleAdvisories([{ ecosystem: 'github', name: 'org/dep', versions: ['1.0.0'] }], signal(), { githubToken: 'viewer-token' })
+    assert.deepEqual(result, { status: 502, body: { error: 'upstream-unavailable' } })
+    assert.deepEqual(credentials, status === 401 ? ['Bearer viewer-token', null] : ['Bearer viewer-token'])
+  })
+}
+
+test('an aborted audit does not retry a rejected GitHub token', async t => {
+  const controller = new AbortController()
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', () => {
+    calls++
+    controller.abort()
+    return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
+  })
+  const result = await fetchBundleAdvisories([{ ecosystem: 'github', name: 'org/dep', versions: ['1.0.0'] }], controller.signal, { githubToken: 'revoked' })
+  assert.deepEqual(result, { status: 502, body: { error: 'upstream-unavailable' } })
+  assert.equal(calls, 1)
+})
+
 test('an aborted caller stops waiting for an audit and late transport failures are handled', async t => {
   const controller = new AbortController(), started = Promise.withResolvers(), transport = Promise.withResolvers()
   t.mock.method(globalThis, 'fetch', () => { started.resolve(); return transport.promise })
