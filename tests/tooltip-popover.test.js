@@ -115,17 +115,18 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.textContent, 'dependencies/pkg-1.0.0/src', 'the original directory stays first')
       assert.equal(node.children[0].className, 'tooltip-package')
       assert.equal(node.children[0].children[0], icon, 'reuse the row ecosystem icon')
-      assert.equal(node.children[0].children[1].textContent, '<img onerror=alert(1)> - 1.0.0 · 1 file')
-      assert.equal(node.children[0].children[1].innerHTML, undefined, 'package fields never become HTML')
+      const packageFields = () => node.children[0].children[1].children
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '1.0.0', '1 file'])
+      assert.ok(packageFields().every(field => field.innerHTML === undefined), 'package fields never become HTML')
       assert.equal(node.children[1].children[0].textContent, 'org/pkg')
       packageTarget.dataset.tooltipVersion = '2.0.0'
       packageTarget.dataset.tooltipFiles = '12'
       showTooltip(packageTarget)
-      assert.equal(node.children[0].children[1].textContent, '<img onerror=alert(1)> - 2.0.0 · 12 files')
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files'])
       delete packageTarget.dataset.tooltipVersion
       delete packageTarget.dataset.tooltipRepo
       showTooltip(packageTarget)
-      assert.equal(node.children[0].children[1].textContent, '<img onerror=alert(1)> · 12 files')
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '12 files'])
       assert.equal(node.children.length, 1)
       showTooltip({ dataset: { tooltip: 'ordinary/file.sol' } })
       assert.equal(node.children.length, 0, 'ordinary tooltips do not inherit dependency details')

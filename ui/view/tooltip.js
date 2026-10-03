@@ -99,7 +99,12 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     const icon = el.querySelector('svg')?.cloneNode(true)
     if (icon) row.append(icon)
     const label = document.createElement('span')
-    label.textContent = [packageName + (version ? ` - ${version}` : ''), /^\d+$/u.test(files) ? `${files} ${files === '1' ? 'file' : 'files'}` : ''].filter(Boolean).join(' · ')
+    label.className = 'tooltip-package-details'
+    for (const value of [packageName, version, /^\d+$/u.test(files) ? `${files} ${files === '1' ? 'file' : 'files'}` : ''].filter(Boolean)) {
+      const field = document.createElement('span')
+      field.textContent = value
+      label.append(field)
+    }
     row.append(label)
     node.append(row)
   }
