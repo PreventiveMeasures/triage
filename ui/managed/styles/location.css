@@ -20,14 +20,19 @@
 .location-field input {
   width: 100%;
 }
+.location-field input[type=text],
+.location-actions .action {
+  height: 2rem;
+  min-height: 2rem;
+  padding-block: .28rem;
+}
 .location-actions {
   display: flex;
   gap: .4rem;
 }
 .location-actions .action {
   width: auto;
-  padding: .4rem .65rem;
-  min-height: 2.25rem;
+  padding-inline: .65rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
