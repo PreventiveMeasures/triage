@@ -20,7 +20,7 @@
   font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--ui-radius, 6px 6px 0 0);
   display: flex; justify-content: space-between; align-items: center;
 
   & a { color: var(--text); }
@@ -31,7 +31,7 @@
 .file-body {
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-top: none;
-  border-radius: 0 0 6px 6px;
+  border-radius: var(--ui-radius, 0 0 6px 6px);
   box-shadow: var(--shadow-glass);
 }
 
@@ -42,7 +42,7 @@
    result reads as a complete unit. The in-body line-row is
    suppressed so that same info doesn't appear twice. */
 .flat-group {
-  margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  margin-bottom: 1rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-glass);
 
@@ -183,7 +183,7 @@
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   /* Clip the scrollbar to the rounded corners and keep the scrollable
      body bounded by the panel's height. */
@@ -202,7 +202,7 @@
   place-items: center;
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
   color: var(--muted);
   font: 500 16px/1 ui-monospace, monospace;
 
@@ -266,8 +266,8 @@
 .kanban-column {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
-  background: rgb(from var(--text) r g b / .025);
-  border: var(--kanban-col-border, 1px) solid var(--border); border-radius: 10px;
+  background: var(--kanban-column-bg, rgb(from var(--text) r g b / .025));
+  border: var(--kanban-col-border, 1px) solid var(--border); border-radius: var(--ui-radius, 10px);
   overflow: hidden;
   transition: border-color .12s, background .12s;
 }
@@ -315,7 +315,7 @@
   display: inline-flex;
   align-items: center; justify-content: center;
   padding: 0;
-  border: 0; border-radius: 3px;
+  border: 0; border-radius: var(--ui-radius, 3px);
   background: none;
   line-height: 0;
   color: var(--muted);
@@ -670,7 +670,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   width: min(1100px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   background: var(--kanban-detail-bg);
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 8px);
   /* Tighter shadow — the previous 12px/40px stack visibly flickered
      during view-transition snapshots as the modal morphed sizes,
      because the shadow extent scaled with the snapshot bitmap. */
@@ -1211,7 +1211,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 html.kanban-closing::view-transition-new(kanban-detail-modal) {
   object-fit: none;
   background: var(--kanban-return-card-bg);
-  border-radius: 4px;
+  border-radius: var(--ui-radius, 4px);
 }
 
 /* Opening keeps the original card snapshot hidden. */
@@ -1351,7 +1351,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   width: 1.4rem; height: 1.4rem;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
   color: var(--text);
 
   &:hover:not(:disabled) {
@@ -1394,7 +1394,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   /* Clip the inner card's content to the wrapper's rounded outline. */
   overflow: hidden;
@@ -1422,7 +1422,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 .focus-pane-code {
   display: flex; flex-direction: column;
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
   overflow: hidden;
 }
@@ -1460,7 +1460,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   width: 1.1rem; height: 1.1rem;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--ui-radius, 3px);
   color: var(--text);
 
   &:hover:not(:disabled) {
@@ -1537,7 +1537,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
   background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   overflow: hidden;
 }
 

@@ -72,7 +72,7 @@ header h3 { margin: 0; }
   position: absolute; top: 6px; right: 6px; z-index: 1;
   width: 22px; height: 22px;
   display: grid; place-items: center;
-  background: transparent; border: 0; border-radius: 4px;
+  background: transparent; border: 0; border-radius: var(--ui-radius, 4px);
   color: var(--muted);
   font: 500 16px/1 ui-monospace, monospace;
   cursor: default;
@@ -93,7 +93,7 @@ header h3 { margin: 0; }
   flex: 1 1 auto; min-height: 0;
   margin: 0;
   overflow: auto;
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   background: var(--bg, var(--surface));
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -210,7 +210,7 @@ header h3 { margin: 0; }
   height: 1.75rem; padding: 0 .55rem; gap: .35rem;
   display: inline-flex; align-items: center;
   background: transparent; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 3px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   font: inherit; font-size: .72rem; font-weight: 500; letter-spacing: .02em;
   cursor: default;
 

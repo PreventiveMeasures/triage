@@ -16,7 +16,7 @@ dialog {
    (deepaudit.dev, chalker.github.io/deepview/) that the view moved
    to triage.space. Light DOM, so these rules apply directly. */
 .origin-migration-dialog {
-  border: 1px solid var(--border); border-radius: 10px;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 10px);
   background: var(--surface); color: var(--text);
   padding: 1.1rem 1.25rem 1rem;
   max-width: 560px; width: min(94vw, 560px);
@@ -39,7 +39,7 @@ dialog {
     font-size: .82em;
     padding: 1px .3rem;
     background: rgb(from var(--text) r g b / .06);
-    border-radius: 3px;
+    border-radius: var(--ui-radius, 3px);
     word-break: break-all;
   }
   /* Link to triage.space — same monospace chip framing as <code>,
@@ -50,7 +50,7 @@ dialog {
     font-size: .82em;
     padding: 1px .3rem;
     background: rgb(from var(--accent) r g b / .1);
-    border-radius: 3px;
+    border-radius: var(--ui-radius, 3px);
     word-break: break-all;
     color: var(--accent);
     text-decoration: underline;
@@ -66,7 +66,7 @@ dialog {
   }
   & .om-actions button {
     background: transparent; border: 1px solid var(--border);
-    color: var(--text); border-radius: 5px;
+    color: var(--text); border-radius: var(--ui-radius, 5px);
     padding: .35rem .9rem;
     font: inherit; font-size: .8rem;
 
@@ -95,7 +95,7 @@ dialog {
     text-align: center;
     background: var(--surface, #1a1a1a);
     border: 1px solid var(--border, #333);
-    border-radius: 12px;
+    border-radius: var(--ui-radius, 12px);
     box-shadow: 0 12px 48px rgb(0 0 0 / .4);
   }
 
@@ -124,7 +124,7 @@ dialog {
     font-weight: 500;
     background: var(--accent, #58a6ff);
     color: var(--bg, #121212);
-    border: 0; border-radius: 6px;
+    border: 0; border-radius: var(--ui-radius, 6px);
 
     &:hover { filter: brightness(1.1); }
     &:focus-visible { outline: 2px solid currentcolor; outline-offset: 3px; }

@@ -4,7 +4,7 @@
   margin-left: auto;
   padding: .25rem .6rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -21,7 +21,7 @@
   padding: 1rem;
   margin-bottom: 1.25rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--ui-radius, 8px);
   background: rgb(from var(--accent) r g b / .025);
 }
 .local-import-copy strong { font-size: .82rem; font-weight: 600; }
@@ -31,7 +31,7 @@ managed-local-item-selector { flex: 1 1 16rem; min-width: 0; }
 .local-import-controls button, .local-import-message button {
   padding: .35rem .7rem;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   background: transparent;
   color: var(--text);
   font: inherit;

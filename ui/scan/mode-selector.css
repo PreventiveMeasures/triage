@@ -10,7 +10,7 @@
 section {
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--ui-radius, 9px);
   background: var(--surface);
 }
 header {
@@ -47,7 +47,7 @@ fieldset {
   gap: .55rem;
   padding: .7rem .65rem;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--ui-radius, 7px);
   background: var(--bg);
   cursor: default;
   text-align: left;
@@ -137,7 +137,7 @@ input {
   gap: .12rem;
   padding: .42rem .55rem;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   color: var(--muted);
   background: var(--bg);
   text-align: left;

@@ -2,14 +2,15 @@
 
 /* Default = dark. Other themes are opt-in via `body.theme-${name}`,
    set by view/theme.js from a localStorage flag. The `<theme-toggle>`
-   button cycles between dark and light only; `green` and `pink` are
-   reachable from the console via `DeepView.setTheme(name)` (see
-   view/api.js). We deliberately do NOT honor `prefers-color-scheme`:
+   button initially cycles between dark and light; the first press from dark
+   on or after the eighth press unlocks green, pink, and paper until reload. All themes
+   remain available through `DeepView.setTheme(name)` (see view/api.js). We deliberately do NOT honor
+   `prefers-color-scheme`:
    dark-by-default is part of the product's identity (the report
    viewer is meant to feel like an IDE panel, not a document). The
    graph-tab canvas has its own per-theme palette baked into
    view/graph/canvas.js (a CSS-var round-trip per draw frame would
-   cost too much); pink + light land on the light canvas palette,
+   cost too much); pink + light + paper land on light canvas palettes,
    dark + green on the dark one.
 
    Matte-glass aesthetic: the body holds a soft multi-color radial
@@ -160,7 +161,8 @@
   scrollbar-width: thin;
 }
 
-body.theme-light {
+body.theme-light,
+body.theme-paper {
   color-scheme: light;
   --bg: #fff;
   --theme-bar: #f6f6fa;
@@ -187,6 +189,7 @@ body.theme-light {
   /* Same darkening for the yellow, and kept greener than the amber
      above so `partial` and `unknown` still read apart here. */
   --yellow: #7d6a00;
+  --search-limit-text: var(--yellow);
   --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #6b5e52;
@@ -226,14 +229,143 @@ body.theme-light {
   --mark-green-bg: #aceebb; --mark-green-tab-border: #4ac26b;
   --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
   --badge-low-text: #fff;
+}
 
-  /* Per-file count chip in the Files tab — flips to white text on
-     the saturated slate `--low` fill. The in-shadow-DOM badge gets
-     the same flip via `--badge-low-text` (defined above), so the
-     per-file chip and the row badge both read consistently. The
-     in-graph tree-count-chip / tt-chip variants stay on the dark
-     palette (graph view doesn't follow the theme). */
-  & .tree-view .tree-count-chip.low { color: #fff; }
+/* Paper shares the light palette, with white surfaces and black chrome. */
+body.theme-paper {
+  --bg: #fff;
+  --theme-bar: #fff;
+  --surface: #fff;
+  --surface-active: #fff;
+  --surface-raised: #fff;
+  --text: #000;
+  --muted: #000;
+  --search-limit-text: #000;
+  --accent: #000;
+  --border: #000;
+  --action-bg: #fff;
+  --action-text: #000;
+  --gradient-stop-a: #fff;
+  --gradient-stop-b: #fff;
+  --gradient-stop-c: #fff;
+  --graph-canvas-bg: #fff;
+  --graph-hover-bg: #fff;
+  --graph-divider: #000;
+  --graph-topbar-left-padding: 0;
+  --graph-mini-tabs-bg: #fff;
+  --graph-mini-tab-active-decoration: underline;
+  --graph-layout-active-shadow: none;
+  --selected-icon-ring-content: '';
+  --kanban-column-bg: #fff;
+  --mark-red-bg: #fff; --mark-red-tab-border: #000;
+  --mark-blue-bg: #fff; --mark-blue-tab-border: #000;
+  --mark-green-bg: #fff; --mark-green-tab-border: #000;
+  --mark-gray-bg: #fff; --mark-gray-tab-border: #000;
+  --shadow-glass: none;
+  /* Inherits into shadow roots; each control and panel keeps its own
+     fallback corner shape in the other themes. */
+  --ui-radius: 0;
+  /* Show native checkbox controls across shadow roots in Paper. */
+  --switch-button-display: none;
+  --switch-checkbox-display: inline-flex;
+  --switch-input-position: static;
+  --switch-input-size: .85rem;
+  --switch-input-opacity: 1;
+  --switch-track-display: none;
+  --terminal-output-padding: 0 0 6px;
+  --terminal-form-padding: 8px 0 0;
+  accent-color: #000;
+  scrollbar-color: #000 #fff;
+
+  & .drop-import-icon,
+  & .drop-prompt-action {
+    background: #fff;
+    border-color: #000;
+    box-shadow: none;
+  }
+
+  & .toolbar,
+  & .bundles-slide-body,
+  & .drop-import-icon {
+    border: 0;
+    padding: 0;
+  }
+
+  & .bundles-overview-summary,
+  & .bundles-overview-columns,
+  & .bundle-issues { padding: 0; }
+
+  & .bundle-issues-finding-link,
+  & .bundle-issues-file-header {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  & .bundle-code-rail-head,
+  & .bundle-code-rail-body { padding-left: 0; }
+  & .bundle-code-main-bar { padding-right: 0; }
+  & bundle-code-search { margin-left: 0; }
+  & bundle-code-search,
+  & bundle-search {
+    background: transparent;
+    &:has(input:focus) { background: transparent; }
+  }
+  & .bundle-code-search-mode {
+    position: relative;
+    background: transparent;
+    &.active::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px solid currentcolor;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+  }
+
+  & :is(.tree-table-row.selected, .bundle-code-tree-link.current) {
+    position: relative;
+    background: transparent;
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px dashed var(--border);
+      pointer-events: none;
+    }
+  }
+  & .tree-table-row.selected {
+    outline: 0;
+    border-bottom-color: transparent;
+  }
+
+  & .bundle-search-bar-row { padding: 0 0 .6rem; }
+  & .bundle-search-main,
+  & .bundle-search-results {
+    padding-right: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+  }
+  & .bundle-search-file .bundle-search-file-head { background: transparent; }
+
+  & .page-head {
+    --header-tag-border: 0;
+    --header-column-gap: 1.25rem;
+    --header-tag-padding: .625rem;
+  }
+  & .kanban-card .kanban-analyzer { border: 0; }
+  & .kanban-column-header .count { background: none; }
+  & .annotation-chip:is(.sel-with, .sel-without)::before {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 22px; height: 22px;
+    box-sizing: border-box;
+    border: 1px solid currentcolor;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
 }
 
 /* Green — easter-egg theme reachable only via
@@ -265,6 +397,11 @@ body.theme-green {
   --bug: #6a7a6a;
   --info: #56c3ff;
   --surface-active: #15301a;
+  --theme-toggle-bg: var(--surface);
+  --theme-toggle-hover-bg: var(--surface-active);
+  --theme-toggle-border: 1px solid var(--border);
+  --action-bg: #0f6;
+  --action-text: #050a05;
   --gradient-stop-a: rgb(0 255 65 / .08);
   --gradient-stop-b: rgb(0 255 100 / .05);
   --gradient-stop-c: rgb(0 200 60 / .04);
@@ -282,6 +419,8 @@ body.theme-green {
      glyph edges and hurts readability. Inherits everywhere, so
      headings + body text + chrome labels all pick it up. */
   text-shadow: 0 0 6px rgb(0 255 65 / .25);
+
+  & .drop-prompt-intro { font-size: .9rem; }
 }
 
 /* Pink — easter-egg theme reachable only via
@@ -309,11 +448,14 @@ body.theme-pink {
   --warning: #9a6700;
   /* And the yellow, darkened for the same reason. */
   --yellow: #7d6a00;
+  --search-limit-text: var(--yellow);
   --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #8c5e6c;
   --info: #218bff;
   --surface-active: #ffd1e8;
+  --action-bg: #bd0d66;
+  --action-text: #fff;
   /* Same reason as `body.theme-light`: the :root syntax pastels are
      unreadable on a pale page, so the darkened set is used here too. */
   --code-comment: #6e7781;
@@ -538,7 +680,7 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
   max-width: min(36rem, calc(100vw - 2rem));
   padding: .55rem .75rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius, 6px);
   background: var(--surface);
   backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-glass);

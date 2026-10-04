@@ -49,7 +49,7 @@ header { padding-right: 1.5rem; }
 
   & button {
     background: transparent; border: 1px solid var(--border);
-    color: var(--text); border-radius: 4px;
+    color: var(--text); border-radius: var(--ui-radius, 4px);
     padding: .1rem .45rem;
     font: inherit; font-size: .72rem;
     cursor: default;

@@ -828,7 +828,7 @@ async function onSidebarClick(e) {
     await switchClientMode()
     return
   }
-  // DeepView brand → drop back to the empty welcome screen so the
+  // Triage brand → drop back to the empty welcome screen so the
   // user can re-read the supported-formats list (or just start
   // over). Non-destructive — `goHome` only clears in-memory
   // selection + secure-storage's last-file pointer; OPFS files
@@ -2391,8 +2391,7 @@ class AppSidebar extends LitElement {
       <div class="sidebar-header">
         <h2 class="brand">
           <button class="brand-button" type="button" data-action="go-home">
-            <img class="brand-icon" src="./icon.svg" width="18" height="18" alt="">
-            <span class="brand-name">DeepView</span>
+            <span class="brand-name">Triage</span>
           </button>
           <span class="brand-tag" data-action="toggle-client-mode">${clientModeLabel()}</span>
         </h2>

@@ -8,9 +8,9 @@
   position: absolute; top: .5rem; right: .5rem;
   z-index: 1000;
   width: 30px; height: 30px;
-  background: transparent;
+  background: var(--theme-toggle-bg, transparent);
   color: var(--muted);
-  border: 0; border-radius: 6px;
+  border: var(--theme-toggle-border, 0); border-radius: var(--ui-radius, 6px);
   font-size: 1rem; line-height: 1;
   font-family: inherit;
   display: flex; align-items: center; justify-content: center;
@@ -18,7 +18,10 @@
   cursor: default;
   user-select: none;
 }
-:host(:hover) { color: var(--text); background: rgb(from var(--text) r g b / .06); }
+:host(:hover) {
+  color: var(--text);
+  background: var(--theme-toggle-hover-bg, rgb(from var(--text) r g b / .06));
+}
 :host(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media print { :host { display: none !important; } }
 

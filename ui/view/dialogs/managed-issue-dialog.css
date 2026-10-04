@@ -13,7 +13,7 @@ textarea { min-height: clamp(240px, 45dvh, 540px); resize: vertical; line-height
 .description-sections { display: flex; flex: 1; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .description-sections label {
   flex-direction: row; align-items: center; font-size: .8rem; line-height: 1.3; cursor: default;
-  padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   color: var(--muted); background: var(--surface);
 }
 .description-sections label:has(input:checked) {
@@ -31,7 +31,7 @@ textarea { min-height: clamp(240px, 45dvh, 540px); resize: vertical; line-height
   .description-sections { flex-basis: 100%; justify-content: flex-start; }
 }
 a { color: var(--accent); }
-.created-issue { padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
+.created-issue { padding: 16px; border: 1px solid var(--border); border-radius: var(--ui-radius, 8px); }
 .issue-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .issue-status { padding: 3px 10px; border-radius: 20px; background: #238636; color: #fff; font-size: .8rem; }
 .issue-status.closed { background: #8250df; }

@@ -11,7 +11,7 @@ header p, .muted, .note, .empty { color: var(--muted); font-size: .78rem; line-h
 button, select, input { font: inherit; font-size: .8rem; }
 button, select, .file-button, .search {
   color: var(--text); background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px; padding: .45rem .65rem;
+  border-radius: var(--ui-radius, 6px); padding: .45rem .65rem;
 }
 button:not(:disabled):hover, .file-button:hover { background: var(--surface-active); }
 button:disabled { opacity: .45; }
@@ -33,7 +33,7 @@ button:focus-visible, select:focus-visible, .search:focus-visible, .file-button:
 .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; }
 .summary > div {
   display: flex; flex-direction: column; gap: .35rem; padding: .8rem 1rem; background: var(--bg); border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--ui-radius, 7px);
 }
 .summary span { font-size: .72rem; color: var(--muted); }
 .summary strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
@@ -48,7 +48,7 @@ button:focus-visible, select:focus-visible, .search:focus-visible, .file-button:
 .section-title { margin: 1.2rem 0 .5rem; font-size: .87rem; }
 .note { margin: -.15rem 0 .6rem; }
 .columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
-.change-section { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-bottom: .6rem; }
+.change-section { border: 1px solid var(--border); border-radius: var(--ui-radius, 7px); overflow: hidden; margin-bottom: .6rem; }
 .change-section h4 {
   display: flex; justify-content: space-between; align-items: center; gap: .5rem; font-size: .78rem; font-weight: 600;
   padding: .65rem .8rem; background: var(--bg);

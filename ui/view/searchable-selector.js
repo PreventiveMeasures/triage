@@ -15,18 +15,18 @@ export class SearchableSelector extends LitElement {
     * { box-sizing: border-box; }
     button, input { font: inherit; color: var(--text); }
     button { cursor: default; user-select: none; }
-    .trigger { display: flex; align-items: center; gap: .6rem; width: 100%; height: 2rem; padding: .28rem .5rem; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); text-align: left; font-size: .76rem; }
+    .trigger { display: flex; align-items: center; gap: .6rem; width: 100%; height: 2rem; padding: .28rem .5rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); text-align: left; font-size: .76rem; }
     .trigger:hover:not(:disabled) { border-color: var(--muted); }
     .trigger:disabled { opacity: .5; }
     :host([variant=filter]) { display: inline-block; max-width: min(20rem, 100%); }
-    :host([variant=filter]) .trigger { height: 30px; min-width: 8.5rem; background: transparent; font-size: .8rem; font-weight: 500; border-radius: 4px; }
+    :host([variant=filter]) .trigger { height: 30px; min-width: 8.5rem; background: transparent; font-size: .8rem; font-weight: 500; border-radius: var(--ui-radius, 4px); }
     .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .option-copy { flex: 1; min-width: 0; display: grid; gap: .08rem; }
     .secondary { color: var(--muted); font-size: .64rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .avatar { display: grid; place-items: center; flex: 0 0 1.5rem; width: 1.5rem; height: 1.5rem; border-radius: 50%; color: var(--accent); background: rgb(from var(--accent) r g b / .13); font-family: sans-serif; font-size: .62rem; font-weight: 600; }
     .detail, .count { flex: 0 0 auto; color: var(--muted); font-size: .66rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
     svg { flex: 0 0 auto; width: .9rem; height: .9rem; color: var(--muted); }
-    .menu { visibility: hidden; position: fixed; inset: auto; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); box-shadow: 0 .6rem 1.6rem rgb(0 0 0 / .4); user-select: none; }
+    .menu { visibility: hidden; position: fixed; inset: auto; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--ui-radius, 8px); background: var(--bg); color: var(--text); box-shadow: 0 .6rem 1.6rem rgb(0 0 0 / .4); user-select: none; }
     .menu:popover-open { display: flex; flex-direction: column; }
     .menu[data-positioned] { visibility: visible; }
     .search { display: flex; align-items: center; gap: .5rem; flex: 0 0 auto; padding: .55rem .65rem; border-bottom: 1px solid var(--border); }
@@ -35,13 +35,13 @@ export class SearchableSelector extends LitElement {
     .search:focus-within { box-shadow: inset 0 -2px var(--accent); }
     .body { display: flex; min-height: 0; flex: 1; }
     .facets { width: 10.5rem; flex: 0 0 auto; padding: .35rem; overflow: auto; overscroll-behavior: none; border-right: 1px solid var(--border); background: rgb(from var(--bg) r g b / .25); }
-    .org { display: flex; align-items: center; gap: .4rem; width: 100%; padding: .4rem .45rem; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: .7rem; }
+    .org { display: flex; align-items: center; gap: .4rem; width: 100%; padding: .4rem .45rem; border: 0; border-radius: var(--ui-radius, 4px); background: transparent; text-align: left; font-size: .7rem; }
     .org[aria-pressed=true] { color: var(--accent); background: rgb(from var(--accent) r g b / .1); }
     .results { flex: 1; min-width: 0; overflow: auto; overscroll-behavior: none; padding: .3rem; }
     .group + .group { margin-top: .35rem; padding-top: .35rem; border-top: 1px solid var(--border); }
     .heading { position: sticky; top: -.3rem; z-index: 1; display: flex; align-items: center; gap: .4rem; margin: 0; padding: .4rem .5rem; color: var(--muted); background: var(--bg); font-size: .68rem; font-weight: 600; }
     .heading svg { width: .8rem; height: .8rem; }
-    .option { display: flex; align-items: center; gap: .65rem; width: 100%; padding: .35rem .5rem; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: .76rem; }
+    .option { display: flex; align-items: center; gap: .65rem; width: 100%; padding: .35rem .5rem; border: 0; border-radius: var(--ui-radius, 4px); background: transparent; text-align: left; font-size: .76rem; }
     .option svg { width: .8rem; height: .8rem; opacity: 0; color: var(--accent); }
     .option[aria-selected=true] { color: var(--accent); background: rgb(from var(--accent) r g b / .1); }
     .option[aria-selected=true] svg { opacity: 1; }

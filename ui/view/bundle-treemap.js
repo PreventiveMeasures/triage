@@ -57,6 +57,7 @@ import { bundleGraphReasons } from './bundle-graph-inputs.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
+import './bundle-scope-selector.js'
 
 // After single-child collapse, six nested levels is plenty to drill;
 // beyond it (or once a box is too small) a node aggregates so large
@@ -546,7 +547,7 @@ class BundleTreemap extends LitElement {
   }
 
   _changeReason(e) {
-    this._reason = e.target.value
+    this._reason = e.detail.value.replace(/^reason:/u, '')
     const integrity = this.details?.integrity
     if (integrity) {
       if (this._reason) _reasonByBundle.set(integrity, this._reason)
@@ -767,10 +768,11 @@ class BundleTreemap extends LitElement {
         ${this._renderCrumbs()}
         <span class="bundle-treemap-head-right">
           <span class="bundle-treemap-sub">${curFiles} ${curFiles === 1 ? 'file' : 'files'} · ${formatBytes(curBytes)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
-          ${this._reasons.size > 0 ? html`<select class="bundle-treemap-reason" aria-label="Filter files" @change=${this._changeReason}>
-            <option value="" ?selected=${!this._reason}>All</option>
-            ${[...this._reasons.keys()].map((reason) => html`<option value=${reason} ?selected=${this._reason === reason}>${reason}</option>`)}
-          </select>` : nothing}
+          ${this._reasons.size > 0 ? html`<bundle-scope-selector compact
+            .reasons=${[...this._reasons.keys()].map(reason => ({ id: `reason:${reason}`, label: reason }))}
+            .value=${this._reason ? `reason:${this._reason}` : ''} label="Filter files"
+            @scope-change=${this._changeReason}
+          ></bundle-scope-selector>` : nothing}
           <mode-switch compact
             label="Sunburst" .checked=${sunburst}
             accessible-label="Toggle sunburst view"

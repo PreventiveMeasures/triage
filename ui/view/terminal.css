@@ -24,7 +24,7 @@
   overscroll-behavior: none;
   -webkit-app-region: no-drag; app-region: no-drag;
   scrollbar-gutter: stable;
-  padding: 12px 14px 6px;
+  padding: var(--terminal-output-padding, 12px 14px 6px);
   cursor: text;
 }
 
@@ -85,7 +85,7 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding: 8px 14px 10px;
+  padding: var(--terminal-form-padding, 8px 14px 10px);
   border-top: 1px solid var(--border, #2c2c2c);
 }
 
@@ -209,7 +209,7 @@
   box-sizing: border-box;
   padding: 5px 9px;
   border: 1px solid var(--border, #2c2c2c);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   /* Opaque: these overlap live output, which would otherwise show
      through and make both unreadable. */
   background: var(--bg, #0c0c0c);

@@ -289,19 +289,18 @@ function renderAdvisoriesSummary(details) {
   if (entry?.state !== 'ok') return nothing
   const totalPackagesQueried = entry.query.size
   const packagesWithAdvisories = entry.byPackage.size
-  if (totalPackagesQueried === 0 && entry.skipped.length > 0) {
-    return html`<div class="bundle-advisories-summary">No packages could be audited.</div>`
-  }
-  if (packagesWithAdvisories === 0) {
-    return html`<div class="bundle-advisories-summary">
-      No advisories for the ${totalPackagesQueried} ${entry.skipped.length > 0 ? 'audited ' : ''}${totalPackagesQueried === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.
-    </div>`
-  }
+  if (packagesWithAdvisories === 0) return nothing
   const totalAdvisories = [...entry.byPackage.values()].reduce((n, list) => n + list.length, 0)
   return html`<div class="bundle-advisories-summary">
     ${totalAdvisories} ${totalAdvisories === 1 ? 'advisory' : 'advisories'}
     across ${packagesWithAdvisories} of ${totalPackagesQueried} ${totalPackagesQueried === 1 ? 'package' : 'packages'}
   </div>`
+}
+
+function renderNoAdvisories(details, entry) {
+  const count = entry.query.size
+  if (count === 0 && entry.skipped.length > 0) return html`No packages could be audited.`
+  return html`No advisories for the ${count} ${entry.skipped.length > 0 ? 'audited ' : ''}${count === 1 ? 'package' : 'packages'} in ${advisoryScope(details).selected ? 'this scope' : 'this bundle'}.`
 }
 
 function renderAdvisoriesBody(details) {
@@ -320,7 +319,9 @@ function renderAdvisoriesBody(details) {
       <button type="button" class="bundle-advisories-retry" data-advisories-retry>Retry</button>
     </div>`
   }
-  if (entry.byPackage.size === 0 && entry.skipped.length === 0 && !entry.repositoryError) return nothing
+  const empty = entry.byPackage.size === 0
+    ? html`<div class="bundle-advisories-empty"><span>${renderNoAdvisories(details, entry)}</span></div>` : nothing
+  if (entry.byPackage.size === 0 && entry.skipped.length === 0 && !entry.repositoryError) return empty
   // Sort sections by the worst severity inside the section, then
   // by name — surfaces the most urgent stuff at the top while
   // keeping the rest deterministic across re-renders.
@@ -330,7 +331,7 @@ function renderAdvisoriesBody(details) {
     if (wa !== wb) return wa - wb
     return na.localeCompare(nb)
   })
-  return html`<div class="bundle-advisories">
+  return html`${empty}<div class="bundle-advisories">
     ${entry.repositoryError ? html`<div class="bundle-advisories-empty is-error" role="alert">
       Repository recheck failed: ${entry.repositoryError}. Previous results are shown.
     </div>` : nothing}

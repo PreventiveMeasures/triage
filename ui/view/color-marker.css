@@ -13,7 +13,7 @@ button {
   padding: 0;
   background: transparent;
   border: 1.5px solid currentcolor;
-  border-radius: 50%;
+  border-radius: var(--ui-radius, 50%);
   opacity: .55;
   transition: opacity .12s, transform .12s;
 }

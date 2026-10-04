@@ -157,12 +157,12 @@ export class ReportInputs extends LitElement {
     :host { display: block; min-width: 0; }
     * { box-sizing: border-box; }
     button, .field > span, .list-head, .empty:not([role='alert']) { cursor: default; user-select: none; -webkit-user-select: none; }
-    .panel { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); overflow: hidden; }
+    .panel { border: 1px solid var(--border); border-radius: var(--ui-radius, 9px); background: var(--surface); overflow: hidden; }
     .source { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; padding: .85rem .9rem; border-bottom: 1px solid var(--border); }
     .field { display: grid; flex: 1 1 14rem; gap: .3rem; max-width: 32rem; min-width: 0; }
     .field > span { color: var(--muted); font-size: .72rem; }
-    button { padding: .3rem .55rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
-    .kinds { display: flex; width: fit-content; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+    button { padding: .3rem .55rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
+    .kinds { display: flex; width: fit-content; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); overflow: hidden; }
     .kinds button { padding-block: .5rem; border: 0; border-radius: 0; color: var(--muted); }
     .kinds button + button { border-left: 1px solid var(--border); }
     .kinds button[aria-checked=true] { color: var(--text); background: var(--surface-active); }

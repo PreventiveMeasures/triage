@@ -15,7 +15,7 @@
   background: rgb(28 28 28 / .95);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--ui-radius, 5px);
   padding: 3px 8px;
   font-size: .75rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -75,6 +75,10 @@
 
 body.theme-light #styled-tooltip {
   background: rgb(246 248 250 / .96);
+}
+
+body.theme-paper #styled-tooltip {
+  background: var(--surface);
 }
 
 /* Pink theme — mirrors the light override but fills from the pink
