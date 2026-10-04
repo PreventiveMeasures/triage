@@ -1175,16 +1175,16 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, ses
   await backfillBundleSummaries(catalog.bundles, deps.bundleCache)
 }
 
-type UploadedBundle = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'byteSize' | 'repoId' | 'repoDirectory'>
+type UploadedBundle = Pick<ManagedBundle, 'id' | 'slug' | 'integrity' | 'filename' | 'byteSize' | 'repoId' | 'repoDirectory'>
 async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, bundle: UploadedBundle, deduped: boolean): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie)
   if (!s) return
   if (deduped && !(await canAccessBundle(deps, s.user, bundle.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
-  const { id, integrity, filename, byteSize, repoId, repoDirectory } = bundle
+  const { id, slug, integrity, filename, byteSize, repoId, repoDirectory } = bundle
   // Re-uploading also repairs reports uploaded while the bundle was inaccessible.
   await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
   prebuildBundle(deps, id)
-  sendJson(res, deduped ? 200 : 201, { id, integrity, filename, repoId, repoDirectory, ...(deduped ? { deduped: true } : { byteSize }) })
+  sendJson(res, deduped ? 200 : 201, { id, slug, integrity, filename, repoId, repoDirectory, ...(deduped ? { deduped: true } : { byteSize }) })
 }
 
 async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
@@ -1327,7 +1327,9 @@ async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, de
     if (raced.id !== id) { await sendUploadedBundle(req, res, deps, cookie, raced, true); return }
     // Our insert committed: continue with the ordinary creation response.
   }
-  await sendUploadedBundle(req, res, deps, cookie, { id, integrity, filename, byteSize: bytes.length, repoId, repoDirectory: directory }, false)
+  const stored = await deps.db.getBundle(id)
+  if (!stored) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  await sendUploadedBundle(req, res, deps, cookie, stored, false)
 }
 
 // GET /api/admin/bundles/<id> — download a stored bundle (admin|manage). Bytes
