@@ -195,6 +195,11 @@ diagnostics too. These contain only the row type, opaque row ID and a short
 reason, without payloads, filenames, paths, hashes, ETags or key material.
 The rows remain pending and retry on the next pass without bypassing the
 version check.
+After a rejected conditional write, a bounded metadata lookup reports whether
+the download and metadata versions match, differ only in formatting, or differ
+in value. It also reports weak/quoted/unquoted formats, or missing/unavailable
+metadata. These are diagnostic labels only; no ETag values are logged or
+substituted into writes, and the row stays pending.
 Diagnostics are emitted as each failure occurs, before advancing the cursor;
 a later error cannot suppress earlier row warnings. `managed-storage-migration-start:`
 records batch start and `managed-storage-migration-row-start:` records each
