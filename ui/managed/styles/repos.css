@@ -66,6 +66,8 @@
   align-items: center;
   gap: .65rem;
   margin-left: auto;
+  /* Let button padding and borders use the space around the intro text. */
+  margin-block: calc(-.45rem - 1px);
 }
 .breadcrumb {
   flex-wrap: wrap;
