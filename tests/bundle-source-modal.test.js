@@ -36,6 +36,38 @@ beforeEach(() => {
   state.bundleDetails = null
 })
 
+test('unattached managed bundle headers return to Manage Bundles before the bundle identity', t => {
+  const previous = { serverMode: state.serverMode, localMode: state.localMode }
+  const previousDocument = globalThis.document
+  const document = new EventTarget()
+  globalThis.document = document
+  t.after(() => {
+    Object.assign(state, previous)
+    if (previousDocument === undefined) delete globalThis.document
+    else globalThis.document = previousDocument
+  })
+  const events = []
+  document.addEventListener('managed-admin-navigate', event => events.push(event.detail))
+  for (const [serverMode, localMode, managedId, repoId, shown] of [
+    ['managed', false, 'bundle-id', null, true],
+    ['managed', false, 'bundle-id', 7, false],
+    ['managed', true, 'bundle-id', null, false],
+    ['standalone', true, undefined, null, false],
+  ]) {
+    const entry = { name: 'unattached.map', integrity: 'breadcrumb-hash', managedId, repoId }
+    Object.assign(state, { serverMode, localMode, selectedBundle: entry.integrity, bundles: [entry] })
+    const view = renderBundlesList([entry])
+    const header = renderText(view).match(/<header class="bundles-slide-bar">(.*?)<\/header>/su)[1]
+    assert.equal(header.includes('bundles-slide-breadcrumb'), shown)
+    if (!shown) continue
+    assert.ok(header.indexOf('>Bundles</button>') < header.indexOf('bundles-slide-icon'))
+    assert.match(header, /<span aria-hidden="true">&gt;<\/span>/u)
+    const breadcrumb = view.values.find(value => value?.strings?.some(string => string.includes('bundles-slide-breadcrumb')))
+    breadcrumb.values.find(value => typeof value === 'function')()
+  }
+  assert.deepEqual(events, [{ view: 'manage-bundles' }])
+})
+
 test('extensionless Stasis sources use recorded formats in tree, filtered tree, header, and modal', () => {
   const path = 'node_modules/example/bin/example'
   const content = 'const example = require("example")'
