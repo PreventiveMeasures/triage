@@ -138,6 +138,44 @@ for (const conflict of ['read version', 'conditional replacement']) {
   })
 }
 
+test('row diagnostics precede saved progress and survive a later failed operation', async t => {
+  const { blobs, config, ids } = await legacyFixture(t)
+  blobs.objects.delete(`.managed/reports/${ids[0]}`)
+  const blocked = Promise.withResolvers(), started = Promise.withResolvers()
+  const get = blobs.sdk.get
+  t.mock.method(blobs.sdk, 'get', (path, options) => {
+    if (path !== `.managed/reports/${ids[1]}`) return get(path, options)
+    started.resolve()
+    return blocked.promise
+  })
+  const logs = [], warnings = []
+  t.mock.method(console, 'info', (...args) => logs.push(args))
+  t.mock.method(console, 'warn', (...args) => warnings.push(args))
+  const app = await createManagedApp(config), observer = await openManagedStorage(config)
+  const running = app.reap()
+  // Attach a rejection handler immediately; the simulated provider fails later.
+  const failed = assert.rejects(running, /Cleanup failed/u)
+  try {
+    await started.promise
+    assert.ok((await observer.db.getStorageEncryption()).cursor.endsWith(ids[0]), 'cursor can advance before the batch finishes')
+    assert.equal(logs.some(([label]) => label === 'managed-storage-migration:'), false)
+    assert.equal(logs.some(([label]) => label === 'managed-storage-migration-start:'), true)
+    assert.deepEqual(logs.filter(([label]) => label === 'managed-storage-migration-row-start:').map(([, json]) => JSON.parse(json)),
+      ids.map(id => ({ type: 'report', id })))
+    assert.deepEqual(warnings, [['managed-storage-migration-row:', JSON.stringify({ type: 'report', id: ids[0], message: 'Migration payload unavailable' })]])
+    blocked.reject(new Error('private-provider-details'))
+    await failed
+    assert.deepEqual(JSON.parse(warnings[1][1]), { type: 'report', id: ids[1], message: 'Migration operation failed' })
+    assert.doesNotMatch(JSON.stringify(warnings), /private-provider-details|\.managed\/|dataKey|test_value/u)
+    assert.equal(logs.some(([label]) => label === 'managed-storage-migration:'), false, 'a thrown batch still has its earlier row diagnostics')
+  } finally {
+    blocked.reject(new Error('test cleanup'))
+    await failed
+    await app.close()
+    await observer.db.close()
+  }
+})
+
 for (const operation of ['get', 'put', 'list']) {
   test(`shutdown cancels migration ${operation} and a new instance resumes with the same data key`, { timeout: 5000 }, async t => {
     const { blobs, config, ids } = await legacyFixture(t)

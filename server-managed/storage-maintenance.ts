@@ -134,6 +134,13 @@ interface StorageMigrationResult extends StorageEncryptionState {
   retryAt: number | null
   failures: { type: StorageMigrationRow['type']; id: string; message: string }[]
 }
+function rowFailure(row: StorageMigrationRow, message: string) {
+  const failure = { type: row.type, id: row.id, message }
+  // Emit before continuing: a later failure or terminated invocation must not
+  // hide earlier diagnostics. Never include provider errors or storage values.
+  console.warn('managed-storage-migration-row:', JSON.stringify(failure))
+  return failure
+}
 interface MigrationOptions { maxObjects?: number; maxMs?: number | undefined; signal?: AbortSignal | undefined }
 export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
   { maxObjects = 64, maxMs = 150_000, signal: stopping }: MigrationOptions = {}): Promise<StorageMigrationResult> {
@@ -152,9 +159,10 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
     if (rows.length === 0) { await db.advanceStorageMigration(state.cursor, null); break }
     for (const row of rows) {
       if (Date.now() >= deadline || signal.aborted) break
+      console.info('managed-storage-migration-row-start:', JSON.stringify({ type: row.type, id: row.id }))
       try {
         const pending = await migrateRow(raw, db, key, row, signal)
-        if (pending) failures.push({ type: row.type, id: row.id, message: pending })
+        if (pending) failures.push(rowFailure(row, pending))
       }
       catch (err) {
         // A row started late gets a full budget next time. Skip an oversized
@@ -163,8 +171,10 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
         const failure = signal.aborted
           ? `Could not migrate ${row.type} ${row.id} within MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS=${maxMs}; increase the budget`
           : err instanceof StoragePayloadError ? err.message : null
-        if (failure === null) errors.push(new Error(`Could not migrate ${row.type} ${row.id}`, { cause: err }))
-        else failures.push({ type: row.type, id: row.id, message: failure })
+        if (failure === null) {
+          rowFailure(row, 'Migration operation failed')
+          errors.push(new Error(`Could not migrate ${row.type} ${row.id}`, { cause: err }))
+        } else failures.push(rowFailure(row, failure))
       }
       if (stopping?.aborted) break
       await db.advanceStorageMigration(state.cursor, row.position)

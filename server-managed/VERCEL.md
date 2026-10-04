@@ -19,7 +19,7 @@ For all backend combinations and sharing rules, see
 | Reports, bundles, avatars | Private Blob objects under `.managed/`; clients receive authorized responses, not Blob credentials or public URLs |
 | Bundle storage | Sourcemaps are stored as Brotli; Stasis archives retain their uploaded bytes; original sizes and hashes remain in Postgres |
 | Derived data | Brotli bundle metadata and gzip report sources are cached in Blob; source caches include the viewer's permissions |
-| Cleanup | Ordinary requests trigger cleanup on the first request per instance, then hourly while traffic continues; `GET /api/reap` and the daily 00:00 UTC cron also remain available |
+| Cleanup | Ordinary requests trigger due cleanup, coordinated across instances by a database lease; `GET /api/reap` and the daily 00:00 UTC cron also remain available |
 
 The app shares initialization within a function instance and retries failed
 initialization. Requests await their work; the serverless app installs no
@@ -33,9 +33,13 @@ Feeds reuse a connection within each polling iteration and release it before
 waiting for the next poll.
 
 Ordinary managed requests start a due session/upload sweep alongside the normal
-response and await it before the invocation returns. Sweeps are coalesced and
-throttled per instance: the first request runs one, successful sweeps defer the
-next for an hour, and failures retry on traffic after a minute. Results appear
+response. The entrypoint registers the complete handler promise with
+[`waitUntil`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil),
+so maintenance can finish after the response ends. Awaiting a Node HTTP handler
+promise alone does not extend the invocation beyond `res.end()`.
+Sweeps are coalesced per instance and coordinated by a shared database lease:
+successful sweeps defer the next for an hour, and failures retry on traffic
+after a minute. A cold start does not bypass that shared cooldown. Results appear
 as `managed-reaper:` logs under the triggering request, including expired-session
 and stale-upload-part counts. Failures are logged without failing the request.
 This automatic path needs neither `/api/reap` nor `CRON_SECRET`; the authenticated

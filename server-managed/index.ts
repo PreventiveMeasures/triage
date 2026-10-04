@@ -88,8 +88,9 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
   }
   async function handleRequest(req: Parameters<typeof routeRequest>[0], res: Parameters<typeof routeRequest>[1]): Promise<void> {
     const pendingMaintenance = automaticReap()
-    // Send the normal response without waiting for storage housekeeping, but
-    // keep the invocation alive until both finish. No detached serverless work.
+    // Send the normal response without waiting for storage housekeeping. The
+    // Vercel entrypoint registers this whole promise with waitUntil; awaiting
+    // work after res.end() alone cannot extend a serverless invocation.
     try { await routeRequest(req, res) }
     finally { await pendingMaintenance }
   }
