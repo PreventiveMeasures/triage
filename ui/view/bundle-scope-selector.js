@@ -35,7 +35,7 @@ export class BundleScopeSelector extends LitElement {
     :host([compact]) .scope-toggle { min-height: 0; gap: .3rem .5rem; }
     :host([compact]) .scope-option span { height: auto; padding: 2px 8px; font-size: .68rem; line-height: 1.2; }
     :host([compact]) .scope-field { font-size: .68rem; }
-    :host([compact]) .scope-description { font-size: .68rem; line-height: 1.2; }
+    :host([compact]) .scope-description { display: none; }
     :host([compact]) select { width: auto; max-width: 22ch; padding: 2px 6px; font-size: .68rem; line-height: 1.2; }
   `
 }
