@@ -32,6 +32,7 @@
     "./reap": "./api/reap.ts",
     "./server": "./server.ts",
     "./server-e2e": "./server-e2e/index.ts",
+    "./bundle-build-worker": "./server-managed/bundle-build-worker.js",
     "./strip-types-loader": "./strip-types-loader.js",
     "./package.json": "./package.json"
   },
