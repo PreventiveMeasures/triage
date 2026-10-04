@@ -1156,10 +1156,19 @@ class ManagedAdminBundles extends ManagedPage {
 
   _locationEditor(bundle) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label><input id=${`bundle-dir-${bundle.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}></div><div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(bundle)}>Save</button></div>
-      ${this._locationOrigin ? html`<p class="location-origin"><span class="ui-hint">Bundle self-reported:</span> <span>${this._locationOrigin.github}</span> · <span>${this._locationOrigin.directory ?? 'Directory not specified'}</span></p>`
-        : this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(bundle)}>Retry</button></p>`
-          : this._locationOrigin === undefined ? html`<p class="location-origin ui-hint" role="status">Loading bundle metadata…</p>` : nothing}
+    const metadataHint = value => html`<span class="location-metadata" data-tooltip-truncated data-tooltip=${`metadata: ${value}`}>metadata: ${value}</span>`
+    return html`<div class="location-editor">
+      <div class="location-field">
+        <div class="location-field-header"><span class="ui-hint">Repository</span>${this._locationOrigin ? metadataHint(this._locationOrigin.github) : nothing}</div>
+        <repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector>
+      </div>
+      <div class="location-field">
+        <div class="location-field-header"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label>${this._locationOrigin ? metadataHint(this._locationOrigin.directory ?? 'Directory not specified') : nothing}</div>
+        <input id=${`bundle-dir-${bundle.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}>
+      </div>
+      <div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(bundle)}>Save</button></div>
+      ${this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(bundle)}>Retry</button></p>`
+        : this._locationOrigin === undefined ? html`<p class="location-origin ui-hint" role="status">Loading bundle metadata…</p>` : nothing}
     </div>`
   }
 
