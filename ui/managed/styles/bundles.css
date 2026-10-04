@@ -202,22 +202,22 @@ select:focus-visible {
   align-items: baseline;
   gap: .25rem;
   min-width: 0;
-}
-.location-metadata > .ui-hint { flex-shrink: 0; }
-.location-metadata-value {
-  min-width: 0;
   padding: 0;
   border: 0;
   color: inherit;
   background: none;
   font: inherit;
+}
+.location-metadata > .ui-hint { flex-shrink: 0; }
+.location-metadata-value {
+  min-width: 0;
   user-select: text;
   -webkit-user-select: text;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-button.location-metadata-value:hover:not(:disabled) { color: var(--text); }
+button.location-metadata:hover:not(:disabled) { color: var(--text); }
 .location-origin {
   grid-column: 1 / -1;
   margin: 0;
