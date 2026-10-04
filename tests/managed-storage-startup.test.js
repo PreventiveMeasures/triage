@@ -118,7 +118,7 @@ for (const conflict of ['read version', 'conditional replacement']) {
           return JSON.parse(value)
         })
         const message = conflict === 'read version' ? 'Payload disappeared or changed version before encryption'
-          : 'Conditional replacement rejected (object version precondition failed)'
+          : 'Conditional replacement rejected (object version precondition failed); download=unquoted; metadata=unquoted; comparison=same'
         assert.deepEqual(diagnostics, [...ids.map(id => ({ type: 'report', id, message })), { type: 'bundle', id: bundleId, message }])
         // Exact field checks above and absence of provider/payload data below
         // guard against adding ETags, paths, secrets or raw errors to warnings.
@@ -134,6 +134,58 @@ for (const conflict of ['read version', 'conditional replacement']) {
       assert.equal((await observer.db.getStorageEncryption()).complete, 1)
       assert.equal((await observer.db.getStorageEncryption()).migrated, 7)
       assert.deepEqual(await observer.bundleStore.get(bundleId, null), body)
+    } finally { await app.close(); await observer.db.close() }
+  })
+}
+
+for (const { label, download, metadata, detail } of [
+  { label: 'unchanged version', download: '"private-etag"', metadata: '"private-etag"', detail: 'download=quoted; metadata=quoted; comparison=same' },
+  { label: 'weak download ETag', download: 'W/"private-etag"', metadata: '"private-etag"', detail: 'download=weak; metadata=quoted; comparison=format-only' },
+  { label: 'different quoting', download: '"private-etag"', metadata: 'private-etag', detail: 'download=quoted; metadata=unquoted; comparison=format-only' },
+  { label: 'changed version', download: '"private-etag"', metadata: '"private-other-etag"', detail: 'download=quoted; metadata=quoted; comparison=different' },
+  { label: 'missing object', download: '"private-etag"', metadata: null, detail: 'download=quoted; metadata=missing' },
+  { label: 'metadata failure', download: '"private-etag"', metadata: 'error', detail: 'download=quoted; metadata=unavailable' },
+]) {
+  test(`rejected migration diagnoses ${label} without leaking versions or changing bytes`, async t => {
+    const { blobs, config, ids } = await legacyFixture(t)
+    const path = `.managed/reports/${ids[0]}`
+    const originalBytes = Buffer.from(blobs.objects.get(path).bytes)
+    const { get, head, put } = blobs.sdk
+    const reads = t.mock.method(blobs.sdk, 'get', async (...args) => {
+      const result = await get(...args)
+      if (args[0] === path && result) result.blob.etag = download
+      return result
+    })
+    const writes = t.mock.method(blobs.sdk, 'put', (...args) => {
+      if (args[0] !== path) return put(...args)
+      assert.equal(args[2].ifMatch, download, 'never substitute metadata or normalized ETags')
+      throw new blobs.sdk.BlobPreconditionFailedError('private-provider-error')
+    })
+    const checks = t.mock.method(blobs.sdk, 'head', async (...args) => {
+      if (args[0] !== path) return head(...args)
+      assert.ok(args[1].abortSignal, 'diagnostics use the same migration deadline')
+      if (metadata === 'error') throw new Error('private-provider-error')
+      if (metadata === null) throw new blobs.sdk.BlobNotFoundError()
+      return { ...await head(...args), etag: metadata }
+    })
+    const warnings = []
+    t.mock.method(console, 'info', () => {})
+    t.mock.method(console, 'warn', (...args) => warnings.push(args))
+    const app = await createManagedApp(config), observer = await openManagedStorage(config)
+    try {
+      await app.reap()
+      assert.deepEqual(warnings, [['managed-storage-migration-row:', JSON.stringify({ type: 'report', id: ids[0],
+        message: `Conditional replacement rejected (object version precondition failed); ${detail}` })]])
+      assert.doesNotMatch(JSON.stringify(warnings), /private-|\.managed\/|dataKey|test_value/u)
+      assert.deepEqual(blobs.objects.get(path).bytes, originalBytes)
+      assert.equal((await observer.db.getStorageRow('report', ids[0])).encrypted, 0)
+      assert.equal((await observer.db.getStorageRow('report', ids[1])).encrypted, 1)
+      assert.equal(checks.mock.calls.filter(call => call.arguments[0] === path).length, 1)
+      assert.equal(writes.mock.calls.filter(call => call.arguments[0] === path).length, 1, 'do not retry a rejected write without verification')
+      reads.mock.restore(); writes.mock.restore(); checks.mock.restore()
+      await app.reap()
+      assert.equal((await observer.db.getStorageEncryption()).complete, 1, 'pending row can migrate on the next pass')
+      assert.equal((await observer.reportStore.get(ids[0])).toString(), ids[0])
     } finally { await app.close(); await observer.db.close() }
   })
 }

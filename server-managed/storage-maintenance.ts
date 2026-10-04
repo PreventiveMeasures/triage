@@ -4,6 +4,22 @@ import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, 
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
 import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
 
+async function replacementFailure(raw: RawObjectStorage, identity: string, version: string, signal: AbortSignal): Promise<string> {
+  const format = (value: string) => value.startsWith('W/') ? 'weak' : value.startsWith('"') && value.endsWith('"') ? 'quoted' : 'unquoted'
+  const reason = `Conditional replacement rejected (object version precondition failed); download=${format(version)}`
+  // Diagnose only failed writes. A metadata read cannot authorize a retry with
+  // a different version: the downloaded bytes must remain bound to their own.
+  let current
+  try { current = await raw.head(identity, signal) }
+  catch { return `${reason}; metadata=unavailable` }
+  if (!current) return `${reason}; metadata=missing`
+  // Normalization is diagnostic only. Never use it for conditional writes or
+  // log the actual ETags, which can contain hashes of private payloads.
+  const value = (tag: string) => tag.replace(/^W\//u, '').replace(/^"(.*)"$/u, '$1')
+  const comparison = current.version === version ? 'same' : value(current.version) === value(version) ? 'format-only' : 'different'
+  return `${reason}; metadata=${format(current.version)}; comparison=${comparison}`
+}
+
 async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal): Promise<string | void> {
   if (item.type === 'user') { await db.migrateStorageUserTokens(item.id); return }
   const row = await db.ensureStorageDataKey(item.type, item.id)
@@ -39,7 +55,7 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
       let replaced: boolean
       try { replaced = await raw.put(identity, encrypted, signal, source.version, current.size ?? undefined) }
       finally { encrypted.destroy(); current.stream.destroy() }
-      if (!replaced) return 'Conditional replacement rejected (object version precondition failed)'
+      if (!replaced) return await replacementFailure(raw, identity, source.version, signal)
       // Do not mark the row encrypted until the stored bytes authenticate and
       // match the original upload (including decompression for sourcemaps).
       const replacement = await raw.open(identity, signal)
