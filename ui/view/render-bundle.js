@@ -1822,6 +1822,10 @@ function renderBundleSlide(entry) {
   // hidden, leaving the user with no visible escape hatch.
   return html`<div class="bundles-view bundles-slide-view">
     <header class="bundles-slide-bar">
+      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
       <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
         <div class="bundles-slide-name">${entry.name}</div>

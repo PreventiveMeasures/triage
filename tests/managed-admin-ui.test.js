@@ -237,6 +237,29 @@ test('refreshing reports preserves the open preview until that report is removed
   assert.equal(page._preview, null)
 })
 
+test('successful creation opens the new bundle from the collection and repository entry points', t => {
+  const bundle = { id: 'created-bundle', slug: 'created', integrity: 'created-hash', filename: 'created.stasis.code.br', repoId: 7 }
+  for (const createRepoId of [null, 7]) {
+    const page = createPage(customElements.get('managed-admin-bundles'))
+    page.createRepoId = createRepoId
+    page._creating = true
+    t.mock.method(page, '_load', async () => {})
+    t.mock.method(page, '_showCreate', () => {})
+    const events = []
+    page.dispatchEvent = event => { events.push(event); return true }
+    const view = page.render()
+    const created = view.values[view.strings.findIndex(string => string.includes('@bundle-created='))]
+    created({ detail: bundle })
+    assert.equal(events.length, 1)
+    assert.equal(events[0].type, 'managed-bundle-open')
+    assert.equal(events[0].detail, bundle)
+    assert.equal(events[0].bubbles, true)
+    assert.equal(events[0].composed, true)
+    assert.equal(page._load.mock.callCount(), 0, 'opening the bundle does not reload the collection')
+    assert.equal(page._showCreate.mock.callCount(), 0, 'repository creation must not navigate back to the collection')
+  }
+})
+
 test('bundle location editing retains the collection and directory on failure, then saves with the current token', async (t) => {
   const Bundles = customElements.get('managed-admin-bundles')
   const page = createPage(Bundles)

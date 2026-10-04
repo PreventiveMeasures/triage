@@ -4,6 +4,8 @@ import { mock, test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, endSession } from '../server-managed/session.ts'
 import * as builder from '../server-managed/bundle-build.ts'
+import { managedBundleEntry, managedBundleRoute } from '../ui/view/managed-bundle-navigation.js'
+import { managedRoutePath } from '../common/managed/routes.js'
 
 let build
 mock.module('../server-managed/bundle-build.ts', { namedExports: { ...builder, buildRepositoryBundle: (...args) => build(...args) } })
@@ -50,7 +52,7 @@ async function fixture(t, { role = 'admin', member = true, scope = null } = {}) 
   return { db, session, blobs, builds, send, metadata, reads: () => reads, bundleStore }
 }
 
-test('creation stores a Stasis bundle with server-derived repository/name and deduplicates retries', async t => {
+test('creation stores a Stasis bundle with a routable slug and deduplicates retries', async t => {
   const f = await fixture(t, { role: 'manage' })
   const response = await f.send()
   assert.equal(response.status, 201)
@@ -68,6 +70,27 @@ test('creation stores a Stasis bundle with server-derived repository/name and de
   assert.equal(duplicate.body.id, response.body.id)
   assert.equal(duplicate.body.deduped, true)
   assert.equal(f.blobs.size, 1)
+  for (const created of [response.body, duplicate.body]) {
+    assert.equal(created.slug, stored.slug)
+    const route = managedBundleRoute([], managedBundleEntry(created), null)
+    assert.equal(managedRoutePath(route), `/manage/bundle/${stored.slug}`)
+  }
+})
+
+test('creation returns the persisted slug when the shortened UUID collides', async t => {
+  const f = await fixture(t)
+  const insert = f.db.insertBundle.bind(f.db)
+  t.mock.method(f.db, 'insertBundle', async (bundle, ...args) => {
+    await insert({ ...bundle, id: bundle.id.split('-').at(-1), integrity: 'existing-bundle', dataKey: null }, ...args)
+    await insert(bundle, ...args)
+  })
+  const response = await f.send()
+  assert.equal(response.status, 201)
+  const stored = await f.db.getBundle(response.body.id)
+  assert.equal(stored.slug, response.body.id, 'a collision uses the full UUID as its slug')
+  assert.equal(response.body.slug, stored.slug)
+  const route = managedBundleRoute([], managedBundleEntry(response.body), null)
+  assert.equal(managedRoutePath(route), `/manage/bundle/${stored.slug}`)
 })
 
 test('creation rejects role, team, directory, CSRF, origin, and validation failures before building', async t => {

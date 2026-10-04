@@ -1064,7 +1064,7 @@ class ManagedAdminBundles extends ManagedPage {
       </div>
       <managed-create-bundle .initialRepoId=${this.createRepoId ?? null} .installTooltips=${this.installTooltips}
         .createBundle=${this._csrf ? (input, signal) => this.appState.mutate(() => createBundle(input, this._csrf, signal), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources']) : undefined}
-        @bundle-created=${() => { void this._load(); this._showCreate(false) }}></managed-create-bundle>
+        @bundle-created=${event => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: event.detail, bubbles: true, composed: true }))}></managed-create-bundle>
     </div>`
     }
     return html`
