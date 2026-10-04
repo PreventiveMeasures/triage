@@ -19,7 +19,7 @@ const MAX_DECODED_BYTES = 512 * 1024 * 1024
 export const MAX_PACKAGE_INVENTORY_BYTES = 1024 * 1024
 export type BundleCachePart = 'metadata' | 'contents'
 export type BundleCacheRecord = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'kind' | 'byteSize'>
-export interface BundleSummary { files: number; codeFiles: number; lines: number }
+export interface BundleSummary { files: number; codeFiles: number; lines: number; commit?: string }
 
 export async function readBundleDetails(record: BundleCacheRecord, store: BundleStore) {
   const bytes = await store.get(record.id, record.kind)

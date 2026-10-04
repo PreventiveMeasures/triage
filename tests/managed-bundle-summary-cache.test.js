@@ -18,6 +18,22 @@ function fixture() {
   return { storage, records, files }
 }
 
+test('legacy count-only summaries are backfilled with commit metadata outside catalog reads', async () => {
+  const { storage, records } = fixture()
+  const record = { ...records[0], kind: 'stasis' }
+  const counts = { files: 1, codeFiles: 1, lines: 2 }
+  const summary = { ...counts, commit: 'a'.repeat(40) }
+  await storage.put(record.id, 'v2-summary.json', Buffer.from(JSON.stringify(counts)))
+  let builds = 0
+  const cache = createBundleSummaryCache(storage, () => { builds++; return Promise.resolve(summary) }, () => Promise.resolve(true))
+  assert.equal(await cache.summary(record), null)
+  assert.equal(builds, 0, 'a catalog read must not parse the bundle')
+  await cache.backfill([record])
+  assert.equal(builds, 1)
+  const cold = createBundleSummaryCache(storage, () => assert.fail('read the small persisted summary'), () => Promise.resolve(true))
+  assert.deepEqual(await cold.summary(record), summary)
+})
+
 test('catalog reads never build; backfill has one bounded batch and resumes remaining hashes later', async () => {
   const { storage, records } = fixture()
   let builds = 0

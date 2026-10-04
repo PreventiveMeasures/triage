@@ -1,4 +1,5 @@
 import { bundleCodeStats } from './bundle-stats.js'
+import { bundleCommitHash } from './bundle-commit.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
 import { utf8ByteLength } from './utf8.js'
@@ -104,8 +105,10 @@ export function createBundleSummary(details, metadata) {
   const files = (metadata?.files ?? [...bundleFileSizes(details)]).filter(([, size]) => size !== null)
   const formats = details.kind === 'stasis' ? details.bundle.formats : null
   const lines = metadata?.codeStats.lines ?? [...bundleSourcesAsMap(details).values()].reduce((sum, source) => sum + bundleSourceLineCount(source), 0)
+  const commit = details.kind === 'stasis' ? bundleCommitHash(details.bundle.repo?.commit) : null
   return { files: files.length, lines,
-    codeFiles: files.filter(([path]) => !['resource:base64', 'directory'].includes(formats?.get(path))).length }
+    codeFiles: files.filter(([path]) => !['resource:base64', 'directory'].includes(formats?.get(path))).length,
+    ...(commit ? { commit } : {}) }
 }
 
 // `stale` marks an index this version did not write: its hashes still

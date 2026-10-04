@@ -172,6 +172,8 @@
     "server-common/storage-crypto.ts",
     "server-common/vercel-blob.ts",
     "server-common/scan-config.ts",
+    "common/bundle-commit.d.ts",
+    "common/bundle-commit.js",
     "common/bundle-metadata.d.ts",
     "common/bundle-metadata.js",
     "common/bundle-reasons.d.ts",

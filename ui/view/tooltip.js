@@ -25,7 +25,8 @@
 // 'right-start' aligns to the row's top instead. A target can override
 // its listener's placement with `data-tooltip-placement`.
 
-import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG } from './icons.js'
+import { bundleCommitHash } from '../../common/bundle-commit.js'
 
 let tipEl
 function ensureEl() {
@@ -79,13 +80,14 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const node = ensureEl()
   const text = el.dataset.tooltip ?? ''
   const repo = el.dataset.tooltipRepo ?? ''
+  const commit = bundleCommitHash(el.dataset.tooltipCommit)
   const bundle = ['stasis', 'sourcemap'].includes(el.dataset.tooltipBundle) ? el.dataset.tooltipBundle : ''
   const stats = el.dataset.tooltipStats ?? ''
   const packageName = el.dataset.tooltipPackage ?? ''
   const ecosystem = el.dataset.tooltipEcosystem ?? ''
   const version = el.dataset.tooltipVersion ?? ''
   const files = el.dataset.tooltipFiles ?? ''
-  const content = JSON.stringify([text, repo, bundle, stats, packageName, ecosystem, version, files])
+  const content = JSON.stringify([text, repo, commit, bundle, stats, packageName, ecosystem, version, files])
   if (!text) return
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
@@ -108,14 +110,25 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     row.append(label)
     node.append(row)
   }
-  if (repo) {
+  if (repo || commit) {
     const row = document.createElement('div')
     row.className = 'tooltip-repo'
     // Only the built-in icon is markup; repository/path stays literal text.
-    row.innerHTML = GITHUB_ICON_SVG
-    const label = document.createElement('span')
-    label.textContent = repo
-    row.append(label)
+    if (repo) {
+      row.innerHTML = GITHUB_ICON_SVG
+      const label = document.createElement('span')
+      label.textContent = repo
+      row.append(label)
+    }
+    if (commit) {
+      const reference = document.createElement('span')
+      reference.className = 'tooltip-commit'
+      reference.innerHTML = COMMIT_ICON_SVG
+      const label = document.createElement('span')
+      label.textContent = commit.slice(0, 7)
+      reference.append(label)
+      row.append(reference)
+    }
     node.append(row)
   }
   if (bundle || stats) {

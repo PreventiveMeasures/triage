@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG } from '../ui/view/icons.js'
+import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG } from '../ui/view/icons.js'
 
 // The shared tooltip is a manual popover (so it shows above modal
 // dialogs). Hiding it must close the popover too: an open-but-invisible
@@ -57,6 +57,27 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     delete target.dataset.tooltipStats
     showTooltip(target)
     assert.equal(node.children[1].children[1].textContent, 'Stasis', 'missing counts do not appear as zero')
+    for (const length of [40, 64]) {
+      target.dataset.tooltipCommit = '0123456789abcdef'.repeat(4).slice(0, length)
+      showTooltip(target)
+      const commit = node.children[0].children[1]
+      assert.equal(commit.className, 'tooltip-commit')
+      assert.equal(commit.innerHTML, COMMIT_ICON_SVG, 'reuse the overview commit icon')
+      assert.equal(commit.children[0].textContent, '0123456', 'match the overview seven-character hash')
+    }
+    target.dataset.tooltipCommit = 'b'.repeat(40)
+    showTooltip(target)
+    assert.equal(node.children[0].children[1].children[0].textContent, 'bbbbbbb', 'a visible tooltip follows commit changes')
+    for (const invalid of ['', 'abcdef0', '<img onerror=alert(1)>', 'z'.repeat(40)]) {
+      target.dataset.tooltipCommit = invalid
+      showTooltip(target)
+      assert.equal(node.children[0].children.length, 1, 'missing or malformed commits have no placeholder')
+    }
+    delete target.dataset.tooltipRepo
+    target.dataset.tooltipCommit = 'a'.repeat(40)
+    showTooltip(target)
+    assert.equal(node.children[0].children[0].children[0].textContent, 'aaaaaaa', 'unattached bundles can still show their source commit')
+    delete target.dataset.tooltipCommit
     hideTooltip()
     assert.equal(classes.has('visible'), false)
     assert.equal(open, false, 'no longer :popover-open once hidden')
