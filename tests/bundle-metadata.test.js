@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
+import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, createBundleSummary, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
 import { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
 import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
 import { computeFileHash } from '@preventive/report'
@@ -20,6 +20,15 @@ function details() {
     package: { npm: { name: '@org/app', version: '1.0.0' } },
   }) }
 }
+
+it('bundle summaries retain the source commit without the inventory or file hashes', async () => {
+  const full = details()
+  const summary = createBundleSummary(full)
+  assert.equal(summary.commit, full.bundle.repo.commit)
+  assert.equal(full.fileHashes, undefined)
+  assert.deepEqual(createBundleSummary(full, await createBundleMetadata(full)), summary)
+  assert.deepEqual(Object.keys(summary).toSorted(), ['codeFiles', 'commit', 'files', 'lines'])
+})
 
 it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, and entries without source bodies', async () => {
   const full = details()

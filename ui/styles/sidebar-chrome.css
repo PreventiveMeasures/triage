@@ -54,6 +54,14 @@
   font: 12px/1.4 system-ui, sans-serif;
 }
 #styled-tooltip .tooltip-package { color: var(--text); }
+#styled-tooltip .tooltip-commit {
+  display: inline-flex;
+  align-items: baseline;
+  flex-shrink: 0;
+  gap: .3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
 #styled-tooltip:has(.tooltip-package) :is(.tooltip-package, .tooltip-repo) { margin-top: 12px; }
 #styled-tooltip .tooltip-package-details { display: flex; flex-wrap: wrap; column-gap: .75rem; }
 #styled-tooltip .tooltip-repo svg,

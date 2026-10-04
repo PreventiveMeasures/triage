@@ -9,13 +9,14 @@ import { ScanPage } from '../ui/scan/page.js'
 import { bundleOptions } from '../ui/view/bundle-selector.js'
 
 const bundle = { id: 'bundle', integrity: 'hash', filename: 'app.stasis.code.br', kind: 'stasis', repoId: 1,
-  byteSize: 2048, summary: { files: 3, codeFiles: 2, lines: 1234 } }
+  byteSize: 2048, summary: { files: 3, codeFiles: 2, lines: 1234, commit: 'a'.repeat(40) } }
 
 test('managed catalog counts reach sidebar tooltips and comparison entries without loading inventory', async t => {
   const fetches = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [
     { id: 'team', name: 'Team', reports: [], bundles: [bundle] },
   ] })))
   const teams = await probeTeams()
+  assert.equal(teams[0].bundles[0].summary.commit, bundle.summary.commit, 'the sidebar receives the source commit without a metadata request')
   assert.equal(fetches.mock.callCount(), 1)
   assert.equal(managedBundleStats(teams[0].bundles[0]), '2.0 KiB · 3 files · 1,234 LoC')
   const [entry] = managedTeamBundleEntries(teams)

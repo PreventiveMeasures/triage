@@ -2,10 +2,11 @@ import { Buffer } from 'node:buffer'
 import { setImmediate } from 'node:timers/promises'
 import { CacheMissError } from './cache-storage.ts'
 import { decodeUtf8 } from '../common/utf8.js'
+import { bundleCommitHash } from '../common/bundle-commit.js'
 import type { BundleCacheRecord, BundleCacheStorage, BundleSummary } from './bundle-cache.ts'
 
-// Origin metadata does not change these counts; retain the byte-sized v2 cache.
-export const SUMMARY_FILENAME = 'v2-summary.json'
+// Version 3 adds the optional source commit; older bundles use bounded backfill.
+export const SUMMARY_FILENAME = 'v3-summary.json'
 const RETRY_MS = 5 * 60_000
 const BACKFILL_LIMIT = 4
 type CachedSummary = BundleSummary | { retryAt: number }
@@ -24,7 +25,7 @@ async function readSummary(storage: BundleCacheStorage, id: string): Promise<Cac
     if (summary && 'retryAt' in summary && Number.isSafeInteger(summary.retryAt) && summary.retryAt > 0) return summary
     const counts = summary as BundleSummary
     if (!counts || ![counts.files, counts.codeFiles, counts.lines].every(value => Number.isSafeInteger(value) && value >= 0)
-        || counts.codeFiles > counts.files) throw new Error('Invalid bundle summary')
+        || counts.codeFiles > counts.files || (counts.commit !== undefined && !bundleCommitHash(counts.commit))) throw new Error('Invalid bundle summary')
     return counts
   } finally { cached.stream.destroy() }
 }

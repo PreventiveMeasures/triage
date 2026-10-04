@@ -1,14 +1,14 @@
 import { repoDirectory, reportRepoGithub } from '@preventive/report'
+import { bundleCommitHash } from '../../common/bundle-commit.js'
 
 const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu
-const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u
 
 export function bundleOriginLinks(bundle, prefix = '') {
   const links = []
   const github = reportRepoGithub(bundle)
   if (github) {
     const directory = [repoDirectory(bundle.repo), repoDirectory({ directory: prefix })].filter(Boolean).join('/')
-    const commit = COMMIT_RE.test(bundle.repo?.commit ?? '') ? bundle.repo.commit : null
+    const commit = bundleCommitHash(bundle.repo?.commit)
     const path = directory.split('/').map(encodeURIComponent).join('/')
     const base = `https://github.com/${github}`
     links.push({ label: 'GitHub', text: github + (directory ? `/${directory}` : ''),
