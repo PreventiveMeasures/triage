@@ -27,6 +27,8 @@ export const SCAN_PAGE_STYLES = css`
   button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .intro-row { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; margin-bottom: 1.15rem; }
   .intro { margin: 0; max-width: 52rem; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+  :host([hide-heading]) .intro-row { gap: .5rem 1rem; margin-bottom: 1.25rem; }
+  :host([hide-heading]) .intro { max-width: 46rem; font-size: .875rem; line-height: 1.65; }
   .intro span { display: block; }
   .notice { margin: 0 0 1rem; padding: .55rem .7rem; border: 1px solid rgb(from var(--accent) r g b / .35); border-radius: 7px; color: var(--text); background: rgb(from var(--accent) r g b / .08); font-size: .78rem; }
   .setup { display: grid; gap: .85rem; }

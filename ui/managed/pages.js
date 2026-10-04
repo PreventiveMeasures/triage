@@ -841,7 +841,7 @@ class ManagedAdminReports extends ManagedPage {
         <h1 class="sr-only">Reports</h1>
         <div class="page-intro"><p class="intro">Upload reports. New reports stay hidden until you make them visible.</p>${this._localImport.renderAction()}</div>
         ${this._localImport.renderPanel(this._busy || !this._csrf)}
-        <div class="drop-card"><span class="drop-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m0 0L5 5m3-3 3 3M3 9v3.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V9"/></svg></span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
+        <div class="drop-card"><span class="drop-icon" aria-hidden="true">${adminIcon('upload')}</span><span class="drop-copy"><strong>Upload reports</strong><span>Drop files anywhere on this page.</span></span><button type="button" class="drop-browse" ?disabled=${this._busy} @click=${() => pickFiles((files) => void this._upload(files))}>${this._busy ? 'Uploading…' : 'Browse files'}</button></div>
         ${this._data?.repoScopes?.length ? html`<p class="intro">Team paths: ${this._data.repoScopes.map(scope => `${this._data.repos.find(repo => repo.repoId === scope.repoId)?.fullName ?? scope.repoId}/${scope.path ?? ''}`).join(', ')}</p>` : nothing}
         ${this._body()}
       </div>`
@@ -1156,19 +1156,22 @@ class ManagedAdminBundles extends ManagedPage {
 
   _locationEditor(bundle) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    const metadataHint = value => html`<span class="location-metadata" data-tooltip-truncated data-tooltip=${`metadata: ${value}`}>metadata: ${value}</span>`
+    const origin = this._locationOrigin
+    const originRepo = origin && repos.find(repo => repo.fullName.toLowerCase() === origin.github.toLowerCase())
+    const metadataHint = (value, field, apply) => html`<span class="location-metadata"><span class="ui-hint">metadata: </span>${apply
+      ? html`<button type="button" class="location-metadata-value" data-tooltip-truncated data-tooltip=${value} aria-label=${`Use ${field} from metadata: ${value}`} ?disabled=${this._locationBusy} @click=${apply}>${value}</button>`
+      : html`<span class="location-metadata-value" data-tooltip-truncated data-tooltip=${value}>${value}</span>`}</span>`
     return html`<div class="location-editor">
       <div class="location-field">
-        <div class="location-field-header"><span class="ui-hint">Repository</span>${this._locationOrigin ? metadataHint(this._locationOrigin.github) : nothing}</div>
+        <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? metadataHint(origin.github, 'repository', originRepo ? () => { this._locationRepo = originRepo.repoId } : null) : nothing}</div>
         <repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector>
       </div>
       <div class="location-field">
-        <div class="location-field-header"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label>${this._locationOrigin ? metadataHint(this._locationOrigin.directory ?? 'Directory not specified') : nothing}</div>
+        <div class="location-field-header"><label for=${`bundle-dir-${bundle.id}`}>Directory (optional)</label>${origin ? metadataHint(origin.directory ?? 'Directory not specified', 'directory', origin.directory == null ? null : () => { this._locationDirectory = origin.directory }) : nothing}</div>
         <input id=${`bundle-dir-${bundle.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}>
       </div>
       <div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(bundle)}>Save</button></div>
-      ${this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(bundle)}>Retry</button></p>`
-        : this._locationOrigin === undefined ? html`<p class="location-origin ui-hint" role="status">Loading bundle metadata…</p>` : nothing}
+      ${this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(bundle)}>Retry</button></p>` : nothing}
     </div>`
   }
 
