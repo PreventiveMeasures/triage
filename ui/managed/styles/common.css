@@ -314,7 +314,6 @@ input[type=checkbox] {
   min-width: 10rem;
 }
 .result-count {
-  min-width: 8rem;
   text-align: right;
   white-space: nowrap;
   margin-left: auto;

@@ -301,10 +301,9 @@ test('bundle origins load only for open Stasis editors and never replace the ass
   assert.equal(page._locationBundle, null)
 })
 
-test('bundle metadata shortcuts match supported GitHub origins and preserve their original text', () => {
+test('bundle metadata shortcuts match supported GitHub origins and apply their declared location', () => {
   const page = createPage(customElements.get('managed-admin-bundles'))
   page._data = { repos: [{ repoId: 7, fullName: 'Owner/Repo' }] }
-  page._locationDirectory = 'user edit'
   function templates(value) {
     if (Array.isArray(value)) return value.flatMap(templates)
     return value?.strings ? [value, ...value.values.flatMap(templates)] : []
@@ -319,6 +318,7 @@ test('bundle metadata shortcuts match supported GitHub origins and preserve thei
     ['not a repository', false],
   ]) {
     page._locationRepo = null
+    page._locationDirectory = 'user edit'
     page._locationOrigin = { github, directory: 'original' }
     const view = templates(page._locationEditor({ id: 'origin' }))
     const button = view.find(template => template.values.includes(`Use repository from metadata: ${github}`))
@@ -326,7 +326,15 @@ test('bundle metadata shortcuts match supported GitHub origins and preserve thei
     assert.ok(view.some(template => template.values.includes(github)), 'display the original metadata value')
     if (button) button.values.find(value => typeof value === 'function')()
     assert.equal(page._locationRepo, available ? 7 : null, github)
-    assert.equal(page._locationDirectory, 'user edit', 'the repository shortcut leaves the directory alone')
+    assert.equal(page._locationDirectory, available ? 'original' : 'user edit', 'the repository shortcut also assigns its declared directory')
+  }
+  for (const directory of ['/', '', null]) {
+    page._locationDirectory = 'user edit'
+    page._locationOrigin = { github: 'owner/repo', directory }
+    const button = templates(page._locationEditor({ id: 'origin' }))
+      .find(template => template.values.includes('Use repository from metadata: owner/repo'))
+    button.values.find(value => typeof value === 'function')()
+    assert.equal(page._locationDirectory, directory ?? 'user edit', 'explicit roots clear the old path; unspecified metadata preserves it')
   }
 })
 

@@ -1160,12 +1160,18 @@ class ManagedAdminBundles extends ManagedPage {
     const origin = this._locationOrigin
     const originGithub = reportRepoGithub({ repo: origin })?.toLowerCase()
     const originRepo = originGithub && repos.find(repo => repo.fullName.toLowerCase() === originGithub)
-    const metadataHint = (value, field, apply) => html`<span class="location-metadata"><span class="ui-hint">metadata: </span>${apply
-      ? html`<button type="button" class="location-metadata-value" data-tooltip-truncated data-tooltip=${value} aria-label=${`Use ${field} from metadata: ${value}`} ?disabled=${this._locationBusy} @click=${apply}>${value}</button>`
-      : html`<span class="location-metadata-value" data-tooltip-truncated data-tooltip=${value}>${value}</span>`}</span>`
+    const metadataHint = (value, field, apply) => {
+      const content = html`<span class="ui-hint">metadata: </span><span class="location-metadata-value" data-tooltip-truncated data-tooltip=${value}>${value}</span>`
+      return apply
+        ? html`<button type="button" class="location-metadata" aria-label=${`Use ${field} from metadata: ${value}`} ?disabled=${this._locationBusy} @click=${apply}>${content}</button>`
+        : html`<span class="location-metadata">${content}</span>`
+    }
     return html`<div class="location-editor">
       <div class="location-field">
-        <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? metadataHint(origin.github, 'repository', originRepo ? () => { this._locationRepo = originRepo.repoId } : null) : nothing}</div>
+        <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? metadataHint(origin.github, 'repository', originRepo ? () => {
+          this._locationRepo = originRepo.repoId
+          if (origin.directory != null) this._locationDirectory = origin.directory
+        } : null) : nothing}</div>
         <repository-selector label="Repository for bundle" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector>
       </div>
       <div class="location-field">
