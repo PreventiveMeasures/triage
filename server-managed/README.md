@@ -541,6 +541,14 @@ only the claiming request can release its slot. Each worker has a 512 MiB heap
 limit, and no persistent Stasis cache is enabled. Output is bounded by 200 MiB
 decoded and the configured bundle upload size limit.
 
+Builds write `managed-bundle-build:` JSON records from the HTTP thread, including
+a build ID, repository/commit, worker URL, elapsed time, and stage (`worker-start`,
+`build`, `scope`, `serialize`, or `compress`). Failures include the underlying
+error name, code, message, stack and cause, or an unexpected worker exit code.
+Credentials and upstream HTTP response bodies are removed from diagnostics;
+the API continues to return only its public error code. A `completed` record
+means the worker returned bundle bytes; authorization and storage follow it.
+
 `GET /api/admin/repositories/browsable` provides the creation page's repository
 picker. A repository must be active, and both access gates must pass: the caller
 is an admin or a manager with a team grant for the repository, and the caller has

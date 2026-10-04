@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { BUNDLE_BUILD_TIMEOUT_MS, type BundleBuildLeaseStore } from './bundle-build-leases.ts'
+import { type BundleBuildDiagnostic, type BundleBuildStage, bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
 
 export class BundleBuildError extends Error {
   status: number
@@ -113,28 +114,54 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
   signal.throwIfAborted()
   active.add(userId)
   let worker: Worker | undefined
+  let workerUrl: URL | undefined
+  let stage: BundleBuildStage = 'worker-start'
+  const buildId = randomUUID(), started = performance.now()
+  const context = { buildId, repoId: request.input.repoId, github: request.github, commit: request.input.commit,
+    directory: request.input.directory, entryCount: request.input.entries.length, node: process.version }
+  const log = (event: string, details: Record<string, unknown> = {}) => {
+    const write = event === 'failed' ? console.error : console.info
+    write('managed-bundle-build:', JSON.stringify({ ...context, workerUrl: workerUrl?.href, event, stage, elapsedMs: Math.round(performance.now() - started), ...details }))
+  }
   try {
-    worker = new Worker(new URL('./bundle-build-worker.js', import.meta.url), {
+    workerUrl = new URL('./bundle-build-worker.js', import.meta.url)
+    log('started')
+    worker = new Worker(workerUrl, {
       workerData: { ...request, type: 'managed-bundle-build' }, env: {}, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 512 },
     })
     const running = worker
     return await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new BundleBuildError(504, 'build-timeout')), BUNDLE_BUILD_TIMEOUT_MS)
-      const abort = () => reject(new BundleBuildError(499, 'build-cancelled'))
+      let settled = false
+      const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', abort) }
+      const fail = (status: number, code: string, details: Record<string, unknown> = {}) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        log(code === 'build-cancelled' ? 'cancelled' : 'failed', { code, ...details })
+        reject(new BundleBuildError(status, code))
+      }
+      const timer = setTimeout(() => fail(504, 'build-timeout'), BUNDLE_BUILD_TIMEOUT_MS)
+      const abort = () => fail(signal.reason instanceof BundleBuildError ? signal.reason.status : 499,
+        signal.reason instanceof BundleBuildError ? signal.reason.code : 'build-cancelled')
       signal.addEventListener('abort', abort, { once: true })
-      running.once('message', (message: BuiltBundle & { error?: string; status?: number }) => {
-        clearTimeout(timer)
-        signal.removeEventListener('abort', abort)
-        if (message.error) reject(new BundleBuildError(message.status ?? 422, message.error))
-        else resolve({ ...message, bytes: Buffer.from(message.bytes) })
+      running.on('message', (message: BuiltBundle & { type?: string; stage?: BundleBuildStage; error?: string; status?: number; diagnostic?: BundleBuildDiagnostic }) => {
+        if (settled) return
+        if (message.type === 'progress' && message.stage) { stage = message.stage; log('progress'); return }
+        if (message.error) { fail(message.status ?? 422, message.error, { diagnostic: message.diagnostic }); return }
+        settled = true
+        cleanup()
+        log('completed', { byteSize: message.bytes.length })
+        resolve({ bytes: Buffer.from(message.bytes), directory: message.directory, filename: message.filename })
       })
-      running.once('error', () => reject(new BundleBuildError(422, 'build-failed')))
-      running.once('exit', () => {
-        clearTimeout(timer)
-        signal.removeEventListener('abort', abort)
-        reject(new BundleBuildError(422, 'build-failed'))
-      })
+      running.once('error', error => fail(422, 'build-failed', { diagnostic: bundleBuildDiagnostic(error, request.token) }))
+      running.once('exit', exitCode => fail(422, 'build-failed', { exitCode }))
+      if (signal.aborted) abort()
     })
+  } catch (error) {
+    if (!(error instanceof BundleBuildError)) {
+      log('failed', { code: 'build-failed', diagnostic: bundleBuildDiagnostic(error, request.token) })
+    }
+    throw error
   } finally {
     try { await worker?.terminate() } finally { active.delete(userId) }
   }

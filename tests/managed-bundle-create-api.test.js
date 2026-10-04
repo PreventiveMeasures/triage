@@ -93,6 +93,15 @@ test('private GitHub access is required even for a managed administrator', async
   assert.equal(f.builds.length, 0)
 })
 
+test('creation returns only the public build error code, without internal diagnostics', async t => {
+  const f = await fixture(t)
+  build = () => Promise.reject(Object.assign(new builder.BundleBuildError(422, 'build-failed'), {
+    diagnostic: { message: 'internal worker path and credentials', stack: 'private stack' },
+  }))
+  assert.deepEqual(await f.send(), { status: 422, body: { error: 'build-failed' } })
+  assert.equal(f.blobs.size, 0)
+})
+
 test('shared capacity rejects creation before GitHub work, and released slots can be reused', async t => {
   const f = await fixture(t, { role: 'manage' })
   assert.equal(await f.db.claimBundleBuildLease(f.session.userId, 'another-instance'), true)

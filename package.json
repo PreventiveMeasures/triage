@@ -97,6 +97,8 @@
     "server-managed/bundle-build.ts",
     "server-managed/bundle-build-leases.ts",
     "server-managed/bundle-build-worker.js",
+    "server-managed/bundle-build-diagnostics.js",
+    "server-managed/bundle-build-diagnostics.d.ts",
     "server-managed/bundle-catalog.ts",
     "server-managed/bundle-store.ts",
     "server-managed/bundle-summary-cache.ts",
