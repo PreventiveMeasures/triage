@@ -301,6 +301,35 @@ test('bundle origins load only for open Stasis editors and never replace the ass
   assert.equal(page._locationBundle, null)
 })
 
+test('bundle metadata shortcuts match supported GitHub origins and preserve their original text', () => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  page._data = { repos: [{ repoId: 7, fullName: 'Owner/Repo' }] }
+  page._locationDirectory = 'user edit'
+  function templates(value) {
+    if (Array.isArray(value)) return value.flatMap(templates)
+    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
+  }
+  for (const [github, available] of [
+    ['owner/repo', true],
+    ['https://github.com/owner/repo.git', true],
+    ['github.com/OWNER/REPO/tree/main', true],
+    [' owner/repo.git/ ', true],
+    ['https://github.com/owner/other.git', false],
+    ['https://gitlab.com/owner/repo.git', false],
+    ['not a repository', false],
+  ]) {
+    page._locationRepo = null
+    page._locationOrigin = { github, directory: 'original' }
+    const view = templates(page._locationEditor({ id: 'origin' }))
+    const button = view.find(template => template.values.includes(`Use repository from metadata: ${github}`))
+    assert.equal(Boolean(button), available, github)
+    assert.ok(view.some(template => template.values.includes(github)), 'display the original metadata value')
+    if (button) button.values.find(value => typeof value === 'function')()
+    assert.equal(page._locationRepo, available ? 7 : null, github)
+    assert.equal(page._locationDirectory, 'user edit', 'the repository shortcut leaves the directory alone')
+  }
+})
+
 test('bundle origin errors are retryable and cancelled editors ignore late metadata', async t => {
   const page = createPage(customElements.get('managed-admin-bundles'))
   const requests = []

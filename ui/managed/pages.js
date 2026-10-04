@@ -3,6 +3,7 @@ import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage data stays in the lazy bundle; the host supplies session updates and
 // renders composed navigation and notification events.
 import { html, nothing, unsafeCSS } from 'lit'
+import { reportRepoGithub } from '@preventive/report'
 import { ManagedPage, loadingRows } from './page.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ROLES, roleAtLeast } from '../../common/managed/roles.ts'
@@ -1157,7 +1158,8 @@ class ManagedAdminBundles extends ManagedPage {
   _locationEditor(bundle) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
     const origin = this._locationOrigin
-    const originRepo = origin && repos.find(repo => repo.fullName.toLowerCase() === origin.github.toLowerCase())
+    const originGithub = reportRepoGithub({ repo: origin })?.toLowerCase()
+    const originRepo = originGithub && repos.find(repo => repo.fullName.toLowerCase() === originGithub)
     const metadataHint = (value, field, apply) => html`<span class="location-metadata"><span class="ui-hint">metadata: </span>${apply
       ? html`<button type="button" class="location-metadata-value" data-tooltip-truncated data-tooltip=${value} aria-label=${`Use ${field} from metadata: ${value}`} ?disabled=${this._locationBusy} @click=${apply}>${value}</button>`
       : html`<span class="location-metadata-value" data-tooltip-truncated data-tooltip=${value}>${value}</span>`}</span>`
