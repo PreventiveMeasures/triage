@@ -28,10 +28,16 @@ const UNLOCKED_CYCLE = Object.freeze(['dark', 'green', 'pink', 'paper', 'light']
 const THEME_COLOR = {
   dark:  { base: '#1a1a1b', dim: '#0a0a0a' },
   light: { base: '#f6f6fa', dim: '#646464' },
-  green: { base: '#0a140a', dim: '#050a05' },
-  pink:  { base: '#ffe4ee', dim: '#a3727f' },
+  // Native title bars use the opaque RGB of each sidebar's --surface;
+  // the overlay strip keeps its existing --theme-bar color.
+  green: { base: '#0a140a', dim: '#050a05', sidebar: '#0f1e0f' },
+  pink:  { base: '#ffe4ee', dim: '#a3727f', sidebar: '#ffe0f0' },
   paper: { base: '#ffffff', dim: '#666666' },
 }
+
+const overlayMode = window.matchMedia?.('(display-mode: window-controls-overlay)')
+const standaloneMode = window.matchMedia?.('(display-mode: standalone)')
+const windowControlsOverlay = window.navigator?.windowControlsOverlay
 
 // The glyph reflects the active theme.
 const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', paper: '📄' }
@@ -64,6 +70,15 @@ function readStored() {
   } catch { return 'dark' }
 }
 
+function updateThemeColor() {
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (!meta) return
+  const { base, dim, sidebar } = THEME_COLOR[currentTheme]
+  const collapsed = windowControlsOverlay?.visible ?? overlayMode?.matches ?? false
+  const normalTitlebar = (standaloneMode?.matches || overlayMode?.matches) && !collapsed
+  meta.setAttribute('content', printDialogOpen ? dim : normalTitlebar && sidebar ? sidebar : base)
+}
+
 function applyTheme(name) {
   if (!THEMES.includes(name)) name = 'dark'
   currentTheme = name
@@ -77,11 +92,7 @@ function applyTheme(name) {
     if (name === 'dark') localStorage.removeItem(THEME_KEY)
     else localStorage.setItem(THEME_KEY, name)
   } catch {}
-  const meta = document.querySelector('meta[name="theme-color"]')
-  if (meta) {
-    const { base, dim } = THEME_COLOR[name]
-    meta.setAttribute('content', printDialogOpen ? dim : base)
-  }
+  updateThemeColor()
   announceTheme()
 }
 
@@ -90,6 +101,11 @@ function applyTheme(name) {
 // a stored non-dark theme briefly paints over default-dark before
 // this runs.
 applyTheme(readStored())
+
+// The user can collapse or restore the native title bar without reloading.
+overlayMode?.addEventListener('change', updateThemeColor)
+standaloneMode?.addEventListener('change', updateThemeColor)
+windowControlsOverlay?.addEventListener('geometrychange', updateThemeColor)
 
 window.addEventListener('beforeprint', () => {
   printDialogOpen = true

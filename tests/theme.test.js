@@ -34,9 +34,14 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
       else delete globalThis[name]
     }
   })
-  const boot = async () => {
+  const boot = async (options = {}) => {
     const classes = new Set(), elements = new Map(), meta = new ToggleHost()
     globalThis.window = new EventTarget()
+    const standaloneMode = Object.assign(new EventTarget(), { matches: options.standalone ?? false })
+    const overlayMode = Object.assign(new EventTarget(), { matches: options.collapsed ?? false })
+    const overlay = options.overlayApi === false ? undefined : Object.assign(new EventTarget(), { visible: options.collapsed ?? false })
+    window.matchMedia = query => query === '(display-mode: standalone)' ? standaloneMode : overlayMode
+    window.navigator = { windowControlsOverlay: overlay }
     globalThis.document = { body: { classList: {
       add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name),
     } }, querySelector: () => meta }
@@ -48,7 +53,7 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
     const Toggle = elements.get('theme-toggle')
     const button = new Toggle()
     button.connectedCallback()
-    return { api, button, classes, meta, Toggle }
+    return { api, button, classes, meta, Toggle, standaloneMode, overlayMode, overlay }
   }
   const click = button => button.dispatchEvent(new Event('click'))
   const key = (button, value, repeat = false) => {
@@ -185,5 +190,56 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
   assert.equal(page.api.getTheme(), 'dark')
   assert.deepEqual([...page.classes], [], 'leaving paper removes its body class')
   assert.equal(plays, 5, 'reloading paper resets the unlock counter')
+  page.button.disconnectedCallback()
+
+  stored.set('deepview.theme', 'green')
+  page = await boot({ standalone: true })
+  assert.equal(page.meta.getAttribute('content'), '#0f1e0f', 'Green native title bar uses the sidebar surface RGB')
+  page.overlay.visible = true
+  page.overlay.dispatchEvent(new Event('geometrychange'))
+  assert.equal(page.meta.getAttribute('content'), '#0a140a', 'collapsing the title bar restores the overlay color')
+  page.overlay.visible = false
+  page.overlay.dispatchEvent(new Event('geometrychange'))
+  assert.equal(page.meta.getAttribute('content'), '#0f1e0f', 'expanding restores the sidebar color without reloading')
+  assert.equal(page.api.getTheme(), 'green')
+  assert.equal(page.button.render(), '🕶️')
+  assert.equal(stored.get('deepview.theme'), 'green')
+  page.standaloneMode.matches = false
+  page.overlayMode.matches = true
+  page.overlayMode.dispatchEvent(new Event('change'))
+  assert.equal(page.meta.getAttribute('content'), '#0f1e0f', 'the overlay API visibility takes precedence over the display mode')
+  page.standaloneMode.matches = true
+  page.overlayMode.matches = false
+  page.api.setTheme('pink')
+  assert.equal(page.meta.getAttribute('content'), '#ffe0f0', 'Pink native title bar uses the sidebar surface RGB')
+  window.dispatchEvent(new Event('beforeprint'))
+  assert.equal(page.meta.getAttribute('content'), '#a3727f', 'print-preview dimming still takes precedence')
+  page.overlay.visible = true
+  page.overlay.dispatchEvent(new Event('geometrychange'))
+  assert.equal(page.meta.getAttribute('content'), '#a3727f')
+  window.dispatchEvent(new Event('afterprint'))
+  assert.equal(page.meta.getAttribute('content'), '#ffe4ee', 'closing print preview follows the current overlay state')
+  page.overlay.visible = false
+  page.overlay.dispatchEvent(new Event('geometrychange'))
+  assert.equal(page.meta.getAttribute('content'), '#ffe0f0')
+  for (const [theme, color] of [['dark', '#1a1a1b'], ['light', '#f6f6fa'], ['paper', '#ffffff']]) {
+    page.api.setTheme(theme)
+    assert.equal(page.meta.getAttribute('content'), color, 'other themes retain their native title-bar colors')
+  }
+  page.api.setTheme('green')
+  page.standaloneMode.matches = false
+  page.standaloneMode.dispatchEvent(new Event('change'))
+  assert.equal(page.meta.getAttribute('content'), '#0a140a', 'browser tabs retain the existing chrome color')
+  page.button.disconnectedCallback()
+
+  page = await boot({ standalone: true, overlayApi: false })
+  assert.equal(page.meta.getAttribute('content'), '#0f1e0f', 'display-mode detection works without the overlay API')
+  page.overlayMode.matches = true
+  page.overlayMode.dispatchEvent(new Event('change'))
+  assert.equal(page.meta.getAttribute('content'), '#0a140a')
+  page.overlayMode.matches = false
+  page.overlayMode.dispatchEvent(new Event('change'))
+  assert.equal(page.meta.getAttribute('content'), '#0f1e0f')
+  assert.deepEqual([...stored.keys()], ['deepview.theme'], 'title-bar state is not persisted')
   page.button.disconnectedCallback()
 })
