@@ -432,6 +432,7 @@ report.addEventListener('click', (e) => {
     const lineAttr = findingCode.dataset.findingCodeLine
     const line = lineAttr ? parseInt(lineAttr, 10) : null
     state.bundleSourceFile = file || null
+    state.bundleCodeHistory = null
     state.bundleSourceFindingIdx = null
     // The modal suppresses itself in the Code + Search tabs (those
     // slides render the source inline); flip back to default so it

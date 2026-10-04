@@ -801,9 +801,10 @@ function bundleViewerFindings(details, path, content) {
 
 // Title bar shared by the source-viewer modal and the Search tab's
 // docked sidebar — path + the shared bundle-source-close action.
-function renderBundleSourceBar(path) {
+function renderBundleSourceBar(path, history = null) {
   return html`<header class="bundle-source-bar">
       <div class="bundle-source-title mono" title=${path}>${path}</div>
+      ${history?.files.length > 1 ? renderBundleCodeFileNav(history) : nothing}
       <button
         type="button"
         class="bundle-source-close"
@@ -853,7 +854,7 @@ export function renderBundleSourceModal() {
   const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
-      ${renderBundleSourceBar(path)}
+      ${renderBundleSourceBar(path, bundleFileHistory(state.bundleCodeHistory, details?.integrity ?? null, path))}
       <div class="bundle-source-body" aria-busy=${String(loading)}>
         ${error ? html`<div class="bundles-slide-placeholder is-error" role="status">Failed to load source: ${error}</div>`
           : loading ? html`<div class="bundles-slide-placeholder" role="status">Loading source…</div>`
@@ -1374,6 +1375,19 @@ function renderBundleCodeView(details) {
   </div>`
 }
 
+function renderBundleCodeFileNav(history) {
+  return html`<span class="bundle-code-file-nav">
+    <button type="button" class="focus-code-nav-btn" data-bundle-code-history="back"
+      aria-label="Back to the previously shown file" ?disabled=${history.at === 0}>
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg>
+    </button>
+    <button type="button" class="focus-code-nav-btn" data-bundle-code-history="forward"
+      aria-label="Forward to the next shown file" ?disabled=${history.at >= history.files.length - 1}>
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+    </button>
+  </span>`
+}
+
 // Main pane of the Code slide — header bar (path + copy button +
 // file stats + issue stepper) over the shared source-viewer body.
 // The stepper cycles the side panel through the open file's
@@ -1388,16 +1402,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
   return html`<header class="bundle-code-main-bar">
-      <span class="bundle-code-file-nav">
-        <button type="button" class="focus-code-nav-btn" data-bundle-code-history="back"
-          aria-label="Back to the previously shown file" ?disabled=${history.at === 0}>
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg>
-        </button>
-        <button type="button" class="focus-code-nav-btn" data-bundle-code-history="forward"
-          aria-label="Forward to the next shown file" ?disabled=${history.at >= history.files.length - 1}>
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
-        </button>
-      </span>
+      ${renderBundleCodeFileNav(history)}
       ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
       <span class="bundle-code-main-path mono" title=${path}>${path}</span>
       <button
