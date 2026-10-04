@@ -189,6 +189,7 @@ body.theme-paper {
   /* Same darkening for the yellow, and kept greener than the amber
      above so `partial` and `unknown` still read apart here. */
   --yellow: #7d6a00;
+  --search-limit-text: var(--yellow);
   --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #6b5e52;
@@ -239,6 +240,7 @@ body.theme-paper {
   --surface-raised: #fff;
   --text: #000;
   --muted: #000;
+  --search-limit-text: #000;
   --accent: #000;
   --border: #000;
   --action-bg: #fff;
@@ -252,6 +254,8 @@ body.theme-paper {
   --graph-topbar-left-padding: 0;
   --graph-mini-tabs-bg: #fff;
   --graph-mini-tab-active-decoration: underline;
+  --graph-layout-active-shadow: none;
+  --selected-icon-ring-content: '';
   --kanban-column-bg: #fff;
   --mark-red-bg: #fff; --mark-red-tab-border: #000;
   --mark-blue-bg: #fff; --mark-blue-tab-border: #000;
@@ -300,10 +304,11 @@ body.theme-paper {
   & .bundle-code-rail-head,
   & .bundle-code-rail-body { padding-left: 0; }
   & .bundle-code-main-bar { padding-right: 0; }
-  & bundle-code-search {
-    margin-left: 0;
-    background: #fff;
-    &:has(input:focus) { background: #fff; }
+  & bundle-code-search { margin-left: 0; }
+  & bundle-code-search,
+  & bundle-search {
+    background: transparent;
+    &:has(input:focus) { background: transparent; }
   }
   & .bundle-code-search-mode {
     position: relative;
@@ -317,6 +322,31 @@ body.theme-paper {
       pointer-events: none;
     }
   }
+
+  & :is(.tree-table-row.selected, .bundle-code-tree-link.current) {
+    position: relative;
+    background: transparent;
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px dashed var(--border);
+      pointer-events: none;
+    }
+  }
+  & .tree-table-row.selected {
+    outline: 0;
+    border-bottom-color: transparent;
+  }
+
+  & .bundle-search-bar-row { padding: 0 0 .6rem; }
+  & .bundle-search-main,
+  & .bundle-search-results {
+    padding-right: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+  }
+  & .bundle-search-file .bundle-search-file-head { background: transparent; }
 
   & .page-head {
     --header-tag-border: 0;
@@ -418,6 +448,7 @@ body.theme-pink {
   --warning: #9a6700;
   /* And the yellow, darkened for the same reason. */
   --yellow: #7d6a00;
+  --search-limit-text: var(--yellow);
   --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #8c5e6c;

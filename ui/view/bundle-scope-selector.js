@@ -2,7 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { scanScopeOptions } from '../scan/scopes.js'
 
-// Full scope control shared by Scan, Compare, and Advisories. Keep IDs intact: presentation
+// Full scope control shared by Scan, Compare, Advisories, and Treemap. Keep IDs intact: presentation
 // recognizes standard scopes, while custom bundle scopes remain selectable.
 export class BundleScopeSelector extends LitElement {
   static properties = { reasons: { attribute: false }, value: { attribute: false }, label: { type: String } }
@@ -32,6 +32,11 @@ export class BundleScopeSelector extends LitElement {
     .scope-description { order: -1; min-width: 0; color: var(--muted); font-size: .66rem; line-height: 1rem; text-align: right; }
     .scope-field { display: flex; align-items: center; justify-content: end; gap: .5rem; min-width: 0; max-width: 100%; margin-left: auto; color: var(--muted); font-size: .7rem; }
     select { width: 13rem; min-width: 0; max-width: 100%; padding: .35rem .5rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); background: var(--bg); color: var(--text); font: inherit; font-size: .76rem; }
+    :host([compact]) .scope-toggle { min-height: 0; gap: .3rem .5rem; }
+    :host([compact]) .scope-option span { height: auto; padding: 2px 8px; font-size: .68rem; line-height: 1.2; }
+    :host([compact]) .scope-field { font-size: .68rem; }
+    :host([compact]) .scope-description { font-size: .68rem; line-height: 1.2; }
+    :host([compact]) select { width: auto; max-width: 22ch; padding: 2px 6px; font-size: .68rem; line-height: 1.2; }
   `
 }
 if (!customElements.get('bundle-scope-selector')) customElements.define('bundle-scope-selector', BundleScopeSelector)
