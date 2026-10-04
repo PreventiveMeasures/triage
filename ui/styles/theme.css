@@ -249,6 +249,9 @@ body.theme-paper {
   --graph-canvas-bg: #fff;
   --graph-hover-bg: #fff;
   --graph-divider: #000;
+  --graph-topbar-left-padding: 0;
+  --graph-mini-tabs-bg: #fff;
+  --graph-mini-tab-active-decoration: underline;
   --kanban-column-bg: #fff;
   --mark-red-bg: #fff; --mark-red-tab-border: #000;
   --mark-blue-bg: #fff; --mark-blue-tab-border: #000;
@@ -287,6 +290,12 @@ body.theme-paper {
   & .bundles-overview-summary,
   & .bundles-overview-columns,
   & .bundle-issues { padding: 0; }
+
+  & .bundle-issues-finding-link,
+  & .bundle-issues-file-header {
+    padding-left: 0;
+    padding-right: 0;
+  }
 
   & .bundle-code-rail-head,
   & .bundle-code-rail-body { padding-left: 0; }
@@ -380,6 +389,8 @@ body.theme-green {
      glyph edges and hurts readability. Inherits everywhere, so
      headings + body text + chrome labels all pick it up. */
   text-shadow: 0 0 6px rgb(0 255 65 / .25);
+
+  & .drop-prompt-intro { font-size: .9rem; }
 }
 
 /* Pink — easter-egg theme reachable only via
