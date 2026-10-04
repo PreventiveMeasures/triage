@@ -1,7 +1,7 @@
-// Vercel Node function: no listener, signal handlers or detached work. Feed
-// timers live only inside their awaited, bounded streaming request. Ordinary
-// requests also await any due managed maintenance before the invocation ends.
+// Vercel Node function: no listener or signal handlers. Register the complete
+// request lifetime, including maintenance after the HTTP response has ended.
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { waitUntil } from '@vercel/functions'
 import { createManagedApp } from '../server-managed/index.ts'
 import { loadManagedConfig } from '../server-managed/config.ts'
 import { withReap } from '../server-common/reap.ts'
@@ -27,4 +27,10 @@ async function handleManaged(req: IncomingMessage, res: ServerResponse): Promise
 }
 
 const handler = withReap(handleManaged, { managed: async () => { await (await app()).reap() } })
-export default handler
+export default function managed(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // Node HTTP listeners do not await returned promises. Vercel needs waitUntil
+  // to keep maintenance alive after res.end(), even though we also await it.
+  const request = Promise.resolve().then(() => handler(req, res))
+  waitUntil(request)
+  return request
+}

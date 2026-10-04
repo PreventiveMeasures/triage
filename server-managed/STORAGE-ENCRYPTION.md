@@ -83,12 +83,14 @@ preview first. They validate the existing marker with the same key.
 On Vercel, configure the key and redeploy. The first function invocation that
 opens managed storage enables encryption in Neon; subsequent cold starts
 validate the same key. No activation command or shell inside Vercel is needed.
-With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, the first ordinary managed request,
+With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, eligible ordinary managed requests,
 subsequent automatic maintenance and authenticated `/api/reap` run migration
 batches. Startup itself does not scan or rewrite existing payloads. The normal
-response proceeds alongside maintenance, and the triggering invocation awaits
-both; no background job has to survive a Vercel response. Each cold instance can
-start a batch, so migration increases invocation duration and storage/SQL load
+response proceeds alongside maintenance. The Vercel entrypoint registers the
+whole handler with `waitUntil` so the invocation stays alive after the HTTP
+response ends; awaiting the handler alone is insufficient. A shared database
+lease coordinates automatic batches across cold instances. Migration still
+increases invocation duration and storage/SQL load
 while enabled. The environment switch intentionally uses deployment configuration
 rather than a separate CLI runner; changing it on Vercel requires a redeploy.
 
@@ -158,8 +160,9 @@ the staging sweep runs only on Vercel.
 
 Migration requires `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1` and the configured
 key. It runs through managed `reap()`, including authenticated `GET /api/reap`.
-Ordinary traffic triggers maintenance on the first request per instance, then
-hourly (one-minute retry backoff after database/provider failures). Persistent
+Ordinary traffic triggers due maintenance hourly (one-minute retry backoff
+after database/provider failures). Vercel's database lease preserves that
+cooldown across cold starts; authenticated `/api/reap` bypasses it. Persistent
 servers also run an hourly timer; Vercel's supplied optional cron runs daily
 when traffic is idle.
 Each migration call processes at most 64 entries with a default 150-second work
@@ -192,6 +195,11 @@ diagnostics too. These contain only the row type, opaque row ID and a short
 reason, without payloads, filenames, paths, hashes, ETags or key material.
 The rows remain pending and retry on the next pass without bypassing the
 version check.
+Diagnostics are emitted as each failure occurs, before advancing the cursor;
+a later error cannot suppress earlier row warnings. `managed-storage-migration-start:`
+records batch start and `managed-storage-migration-row-start:` records each
+attempt's type and opaque ID. A hard invocation timeout can prevent the final
+summary, but does not undo already saved checkpoints or emitted diagnostics.
 Temporary files left by later crashes are not swept after migration cleanup
 has completed; like encrypted orphan payloads, they can consume storage.
 

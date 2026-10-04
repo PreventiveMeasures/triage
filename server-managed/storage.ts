@@ -41,8 +41,8 @@ export async function openManagedStorage(config: ManagedConfig) {
         if (!config.storageEncryptionMigrate || signal?.aborted) return
         const state = await db.getStorageEncryption()
         if (state?.complete && state.cleanupComplete) return
+        console.info('managed-storage-migration-start:', JSON.stringify({ migrated: state?.migrated, cursor: state?.cursor }))
         const result = await migrateStorage(raw, db, key!, { maxMs: config.storageEncryptionMigrateMaxMs, signal })
-        for (const failure of result.failures) console.warn('managed-storage-migration-row:', JSON.stringify(failure))
         console.info('managed-storage-migration:', JSON.stringify({
           complete: result.complete === 1, cleanupComplete: result.cleanupComplete === 1,
           migrated: result.migrated, cursor: result.cursor, retryAt: result.retryAt,
