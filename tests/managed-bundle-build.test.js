@@ -78,7 +78,9 @@ const files = {
 }
 
 test('real Stasis builds a commit-pinned TypeScript import graph and produces readable Brotli bytes', async () => {
-  const result = await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, projectClient(files))
+  const stages = []
+  const result = await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, projectClient(files), stage => stages.push(stage))
+  assert.deepEqual(stages, ['build', 'scope', 'serialize', 'compress'])
   const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
   assert.equal(result.filename, 'org-repo.aaaaaaa.stasis.code.br')
   assert.equal(result.directory, '')
@@ -103,12 +105,21 @@ test('worker cancellation releases the per-user build slot and prevents duplicat
   await assert.rejects(retry, { code: 'build-cancelled' })
 })
 
-test('worker loads Stasis, reports rejected builds, and releases its build slot', async () => {
+test('worker loads Stasis, reports rejected builds, and releases its build slot', async t => {
   // Stasis rejects this repo name before any network request. Exercise the
   // actual worker module with its empty environment and no inherited hooks.
   const request = { input: input(), github: 'invalid-repo', token: null, maxBytes: 1_000_000, scopes: [null] }
+  const logs = []
+  for (const method of ['info', 'error']) t.mock.method(console, method, (_prefix, json) => logs.push(JSON.parse(json)))
   for (let i = 0; i < 2; i++) {
     await assert.rejects(buildRepositoryBundle('worker-error-user', request, new AbortController().signal), { code: 'build-failed' })
+  }
+  const failures = logs.filter(log => log.event === 'failed')
+  assert.equal(failures.length, 2)
+  for (const failure of failures) {
+    assert.equal(failure.stage, 'build')
+    assert.match(failure.diagnostic.message, /invalid github/u)
+    assert.match(failure.diagnostic.stack, /buildGitHubBundle/u)
   }
 })
 
