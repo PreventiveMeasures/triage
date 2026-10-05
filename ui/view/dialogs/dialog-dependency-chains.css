@@ -1,15 +1,13 @@
 dialog {
-  width: min(94vw, 80rem); max-width: none; max-height: 90dvh;
+  width: min(94vw, var(--graph-dialog-width)); max-width: 80rem; max-height: 90dvh;
   margin: auto; padding: 0; overflow: hidden;
 }
 dialog[open] { display: flex; flex-direction: column; }
 header {
   display: flex; align-items: start; justify-content: space-between; gap: 1rem;
-  flex-shrink: 0; padding: 1rem 1.2rem; border-bottom: 1px solid var(--border);
+  flex-shrink: 0; padding: .7rem .9rem; border-bottom: 1px solid var(--border);
 }
-header > div { min-width: 0; }
-.eyebrow { font-size: .72rem; color: var(--muted); margin-bottom: .35rem; user-select: none; }
-header h3 { display: flex; flex-wrap: wrap; gap: .35rem .7rem; margin: 0; overflow-wrap: anywhere; }
+header h3 { display: flex; flex-wrap: wrap; gap: .35rem .7rem; min-width: 0; margin: 0; font-size: .92rem; overflow-wrap: anywhere; }
 .heading-version { color: var(--accent); font-family: var(--font-mono, monospace); }
 header button {
   flex-shrink: 0; border: 0; background: transparent; color: var(--muted);
@@ -18,7 +16,7 @@ header button {
 header button:hover { color: var(--text); }
 .graph-caption {
   display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem;
-  padding: .7rem 1.2rem; font-size: .72rem; color: var(--muted); flex-shrink: 0; user-select: none;
+  padding: .45rem .9rem; font-size: .68rem; color: var(--muted); flex-shrink: 0; user-select: none;
 }
 .graph-scroll {
   min-height: 0; overflow: auto; overscroll-behavior: contain;
@@ -29,20 +27,25 @@ header button:hover { color: var(--text); }
 .connections > path { fill: none; stroke: var(--muted); stroke-width: 1.5; opacity: .65; }
 .package-group { position: absolute; }
 .package {
-  display: flex; flex-direction: column; gap: 5px; height: 86px; padding: 11px 13px;
+  position: absolute; width: var(--package-width); height: var(--package-height);
+  display: flex; flex-direction: column; gap: 4px; padding: 8px 10px;
   background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--package-color);
-  border-radius: var(--ui-radius, 7px); font-size: .8rem; overflow: hidden;
+  border-radius: var(--ui-radius, 6px); font-size: .75rem; overflow: hidden;
 }
 .package.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
 .name, .location, .version { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.name { font-weight: 600; line-height: 17px; }
-.package-meta { display: flex; align-items: center; gap: .35rem; min-height: 17px; font-size: .68rem; }
-.version { margin-right: auto; font-family: var(--font-mono, monospace); }
+.package-main, .package-meta { display: flex; align-items: baseline; gap: .4rem; min-width: 0; }
+.name { flex: 1; font-weight: 600; line-height: 17px; }
+.version { max-width: 45%; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: .65rem; }
 .badge { flex-shrink: 0; font-size: .6rem; color: var(--muted); user-select: none; }
 .selected-badge { color: var(--accent); }
-.location { color: var(--muted); font-family: var(--font-mono, monospace); font-size: .61rem; line-height: 14px; }
-.cycle { border-radius: var(--ui-radius, 7px); outline: 1px dashed var(--muted); outline-offset: 3px; }
-.cycle-label { height: 26px; padding: 4px 10px; color: var(--muted); font-size: .68rem; user-select: none; }
+.location { flex: 1; color: var(--muted); font-family: var(--font-mono, monospace); font-size: .61rem; line-height: 14px; }
+.cycle {
+  border-radius: var(--ui-radius, 8px); outline: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 4%, transparent);
+}
+.cycle-label { position: absolute; top: 7px; left: 14px; color: var(--muted); font-size: .63rem; user-select: none; }
+.cycle-connections > path { stroke: var(--connection-color); stroke-width: 1.25; opacity: .8; }
 .dimmed, .connections > path.dimmed { opacity: .18; }
 .note, .empty { padding: 1rem; color: var(--muted); font-size: .78rem; line-height: 1.5; }
 .note { position: sticky; left: 0; max-width: 65rem; margin: auto; }

@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 import { bundleDependencyChains, layoutDependencyChains, traceDependencyChains } from '../ui/view/bundle-dependency-chains.js'
+import { DEPENDENCY_CARD_HEIGHT, DEPENDENCY_CARD_WIDTH, layoutDependencyGroup } from '../ui/view/dependency-chain-layout.js'
 
 const file = dir => dir === '.' ? 'index.js' : `${dir}/index.js`
 function fixture({ modules, links = [], entries = [], reason = {} }) {
@@ -41,7 +42,11 @@ test('retains every diamond branch, direct import and exact installed copy witho
   const layout = layoutDependencyChains(graph)
   assert.equal(layout.boxes.length, 6)
   assert.equal(layout.edges.length, 7)
-  assert.ok(layout.edges.some(edge => edge.path.includes(' L')), 'shortcut routes around the middle row')
+  const from = layout.boxes.find(box => box.members.includes('.')).id
+  const to = layout.boxes.find(box => box.members.includes('node_modules/dep')).id
+  const shortcut = layout.edges.find(edge => edge.from === from && edge.to === to)
+  const right = Math.max(...layout.boxes.map(box => box.x + box.width))
+  assert.ok([...shortcut.path.matchAll(/(-?\d+(?:\.\d+)?),/gu)].some(([, x]) => Number(x) > right), 'shortcut routes outside intervening cards')
 })
 
 test('metadata-only bundles retain the same chains and entry points without source bodies', async () => {
@@ -107,9 +112,43 @@ test('cycles remain visible in finite groups with their incoming and outgoing ch
   assert.equal(graph.imports.get('node_modules/b').has('node_modules/a'), true)
   assert.equal(layout.boxes.length, 3)
   assert.deepEqual(layout.boxes.find(box => box.members.length === 2).members, ['node_modules/a', 'node_modules/b'])
+  const cycle = layout.boxes.find(box => box.members.length === 2)
+  assert.equal(new Set(cycle.packages.map(node => node.x)).size, 2, 'two-package cycles sit side by side')
+  assert.equal(cycle.internalEdges.length, 2, 'both import directions are visible')
+  assert.notEqual(cycle.internalEdges[0].path, cycle.internalEdges[1].path)
   for (const edge of layout.edges) {
     const from = layout.boxes.find(box => box.id === edge.from), to = layout.boxes.find(box => box.id === edge.to)
     assert.ok(from.y + from.height < to.y)
+  }
+})
+
+test('compact cycle grids preserve every internal edge without overlapping cards or escaping their group', () => {
+  for (const count of [3, 4, 9, 40]) {
+    const ids = Array.from({ length: count }, (_, i) => `package-${i}`)
+    const imports = new Map(ids.map((id, i) => [id, new Set([ids[(i + 1) % count], ids[(i + count - 1) % count]])]))
+    const group = layoutDependencyGroup(0, ids, imports)
+    assert.ok(new Set(group.packages.map(node => node.x)).size > 1)
+    assert.ok(new Set(group.packages.map(node => node.y)).size > 1)
+    assert.ok(group.height < count * 86, 'shorter than the former stack')
+    assert.equal(group.internalEdges.length, count * 2)
+    assert.deepEqual(group, layoutDependencyGroup(0, ids, imports), 'deterministic layout')
+    for (const node of group.packages) {
+      assert.ok(node.x >= 0 && node.x + DEPENDENCY_CARD_WIDTH <= group.width)
+      assert.ok(node.y >= 20 && node.y + DEPENDENCY_CARD_HEIGHT <= group.height)
+      for (const peer of group.packages) {
+        if (node === peer) continue
+        assert.ok(node.x + DEPENDENCY_CARD_WIDTH <= peer.x || peer.x + DEPENDENCY_CARD_WIDTH <= node.x
+          || node.y + DEPENDENCY_CARD_HEIGHT <= peer.y || peer.y + DEPENDENCY_CARD_HEIGHT <= node.y)
+      }
+    }
+    for (const edge of group.internalEdges) {
+      const points = [...edge.path.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/gu)].map(([, x, y]) => [Number(x), Number(y)])
+      for (const [x, y] of points) {
+        assert.ok(x >= 0 && x <= group.width && y >= 0 && y <= group.height)
+        assert.ok(group.packages.every(node => x <= node.x || x >= node.x + DEPENDENCY_CARD_WIDTH
+          || y <= node.y || y >= node.y + DEPENDENCY_CARD_HEIGHT), 'edge bends stay in the gutters')
+      }
+    }
   }
 })
 

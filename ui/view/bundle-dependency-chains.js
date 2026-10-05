@@ -3,6 +3,7 @@ import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
 import { countsTowardsCycles } from './graph/cycle-imports.js'
+import { layoutDependencyGroup } from './dependency-chain-layout.js'
 
 function packageNode(id, info = {}) {
   const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(id) ? 'npm' : '')
@@ -87,27 +88,32 @@ export function layoutDependencyChains(graph) {
       if (--incoming[to] === 0) queue.push(to)
     }
   }
-  const rows = Map.groupBy(groups.map((members, id) => ({ id, members, height: members.length * 86 + (members.length > 1 ? 26 : 0) })), group => depth[group.id])
-  const width = [...rows.values()].reduce((w, row) => Math.max(w, row.length * 264 - 24 + 32), 272)
+  const rows = Map.groupBy(groups.map((members, id) => layoutDependencyGroup(id, members, graph.imports)), group => depth[group.id])
+  const rowWidth = row => row.reduce((w, group) => w + group.width, 0) + Math.max(0, row.length - 1) * 20
+  const width = [...rows.values()].reduce((w, row) => Math.max(w, rowWidth(row) + 24), 240)
   const boxes = new Map()
-  let y = 16
+  let y = 12
   for (const [, row] of [...rows].toSorted(([a], [b]) => a - b)) {
     const height = row.reduce((h, group) => Math.max(h, group.height), 0)
-    for (const [i, group] of row.entries()) boxes.set(group.id, { ...group, x: (width - row.length * 264 + 24) / 2 + i * 264, y, width: 240 })
-    y += height + 56
+    let x = (width - rowWidth(row)) / 2
+    for (const group of row) { boxes.set(group.id, { ...group, x, y, rowBottom: y + height }); x += group.width + 20 }
+    y += height + 36
   }
   let bypasses = 0
   const edges = links.flatMap((targets, from) => [...targets].map(to => {
-    const a = boxes.get(from), b = boxes.get(to), x1 = a.x + 120, x2 = b.x + 120, y1 = a.y + a.height, y2 = b.y
+    const a = boxes.get(from), b = boxes.get(to), x1 = a.x + a.width / 2, x2 = b.x + b.width / 2, y1 = a.y + a.height, y2 = b.y
+    // Leave a mixed-height row vertically before turning, so a short card's
+    // connections cannot cut through a taller cycle group beside it.
+    const turn = a.rowBottom + 12
     if (depth[to] !== depth[from] + 1) {
       // A direct import that skips a row must go around intervening cards.
       // Manifest reads excluded from cycles can also point to an earlier row.
       const lane = width + 8 + (bypasses++ % 4) * 10
-      return { from, to, path: `M${x1},${y1} C${x1},${y1 + 24} ${lane},${y1} ${lane},${y1 + 28} L${lane},${y2 - 28} C${lane},${y2} ${x2},${y2 - 28} ${x2},${y2 - 5}` }
+      return { from, to, path: `M${x1},${y1} L${x1},${turn} C${x1},${turn + 6} ${lane},${turn} ${lane},${turn + 6} L${lane},${y2 - 18} C${lane},${y2} ${x2},${y2 - 18} ${x2},${y2 - 5}` }
     }
-    return { from, to, path: `M${x1},${y1} C${x1},${y1 + 28} ${x2},${y2 - 28} ${x2},${y2 - 5}` }
+    return { from, to, path: `M${x1},${y1} L${x1},${turn} C${x1},${turn + 6} ${x2},${y2 - 18} ${x2},${y2 - 5}` }
   }))
-  return { boxes: [...boxes.values()], edges, width: width + (bypasses ? 56 : 0), height: Math.max(0, y - 40) }
+  return { boxes: [...boxes.values()], edges, width: width + (bypasses ? 56 : 0), height: Math.max(0, y - 24) }
 }
 
 export function traceDependencyChains(layout, active) {
