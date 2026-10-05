@@ -11,6 +11,7 @@ import { sdkFixture } from './_managed-vercel.js'
 import { diskStores, vercelStores } from './_managed-storage.js'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createReportSourcesCache } from '../server-managed/report-sources.ts'
+import { sourceLinkResolver } from '../common/bundle-source-links.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
@@ -32,7 +33,7 @@ const findings = [
   { id: 'f2', file: 'node_modules/dep/index.js', description: 'Dependency' },
   { id: 'f3', file: 'secret.js', security: true, description: 'Secret', evidence: [{ file: 'secret-evidence.js' }] },
 ]
-async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
+async function setupBackend(t, kind = 'sourcemap', backend = 'disk', stasisModules = null) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-report-sources-'))
   const db = openSqliteManagedDb(':memory:')
   const fixture = backend === 'vercel' ? sdkFixture() : null
@@ -66,7 +67,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk') {
   await db.createTeam(team, 'Team', Date.now()); await db.setTeamRepo(team, 1, null)
   for (const role of ['manage', 'view', 'none']) await db.setTeamMember(team, users[role].userId, { dependencies: true, security: true })
   const bytes = kind === 'stasis' ? brotliCompressSync(Buffer.from(new Bundle({
-    modules: new Map([['.', { name: 'app', version: '1', files: { ...files, 'image.png': 'AP8=' } }]]),
+    modules: stasisModules ?? new Map([['.', { name: 'app', version: '1', files: { ...files, 'image.png': 'AP8=' } }]]),
     formats: new Map([...Object.keys(files).map(file => [file, 'commonjs']), ['image.png', 'resource:base64']]), entries: new Set(), executable: new Set(),
     imports: new Map([
       ['node', new Map([
@@ -108,7 +109,7 @@ async function cachedFiles(h) {
 function deleteReport(h, id) { return h.send(id, 'admin', 'DELETE', { path: `/api/admin/reports/${id}` }) }
 
 function sourcesTests(backend) {
-  const setup = (t, kind) => setupBackend(t, kind, backend)
+  const setup = (t, kind, modules) => setupBackend(t, kind, backend, modules)
 
   test('Stasis import metadata is scoped to visible files and blocks ambiguous or hidden targets', async t => {
     const h = await setup(t, 'stasis')
@@ -118,9 +119,11 @@ function sourcesTests(backend) {
     ]))
     assert.equal(new Map(admin.imports).has('unrelated.js'), false)
     assert.deepEqual(new Map(admin.formats), new Map(admin.files.map(([file]) => [file, 'commonjs'])))
+    assert.deepEqual(new Map(admin.packageDirs), new Map(admin.files.map(([file]) => [file, '.'])))
     await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
     const restricted = (await h.send(h.report.id, 'view')).json()
     assert.deepEqual(new Map(restricted.formats), new Map(restricted.files.map(([file]) => [file, 'commonjs'])))
+    assert.deepEqual(new Map(restricted.packageDirs), new Map(restricted.files.map(([file]) => [file, '.'])))
     assert.equal(new Map(restricted.formats).has('secret.js'), false)
     assert.equal(new Map(restricted.formats).has('unrelated.js'), false)
     const imports = new Map(restricted.imports)
@@ -129,6 +132,19 @@ function sourcesTests(backend) {
     assert.equal(JSON.stringify(restricted.imports).includes('secret.js'), false)
     assert.equal(JSON.stringify(restricted.imports).includes('unrelated.js'), false)
     assert.equal(new Map(imports.get('src/main.js')).get('./evidence.js'), null, 'do not restore relative fallback after omitting a hidden condition')
+  })
+
+  test('Stasis source responses retain workspace boundaries without exposing uncited paths', async t => {
+    const parent = 'packages/app/src/main.js'
+    const h = await setup(t, 'stasis', new Map([
+      ['.', { name: 'root', version: '1', files: { ...files, 'package.json': JSON.stringify({ imports: { '#local': './src/evidence.js' } }) } }],
+      ['packages/app', { name: 'app', version: '1', files: { 'src/main.js': "import x from '#local';", 'hidden.js': '' } }],
+    ]))
+    const report = await h.seed(JSON.stringify({ findings: [{ file: parent, evidence: [{ file: 'package.json' }, { file: 'src/evidence.js' }] }] }))
+    const data = (await h.send(report.id)).json()
+    assert.deepEqual(new Map(data.packageDirs), new Map([[parent, 'packages/app'], ['package.json', '.'], ['src/evidence.js', '.']]))
+    const imports = new Map(data.imports.map(([file, edges]) => [file, new Map(edges)])), sources = new Map(data.files)
+    assert.equal(sourceLinkResolver(sources, parent, imports, sources, new Map(data.packageDirs))('#local'), null, 'the transmitted workspace boundary blocks the root manifest')
   })
 
   for (const kind of ['stasis', 'sourcemap']) {
@@ -140,7 +156,7 @@ function sourcesTests(backend) {
       assert.equal(Number(res.headers['content-length']), res.bytes.length)
       assert.match(res.headers['cache-control'], /no-store/u)
       const data = res.json()
-      if (kind === 'sourcemap') assert.deepEqual(data.formats, [])
+      if (kind === 'sourcemap') { assert.deepEqual(data.formats, []); assert.deepEqual(data.packageDirs, []) }
       assert.equal(data.integrity, h.bundle.integrity)
       assert.deepEqual(Object.fromEntries(data.files), Object.fromEntries(Object.entries(files).filter(([key]) => !['a/shared.js', 'b/shared.js', 'unrelated.js'].includes(key))))
       assert.equal(new Map(data.paths).get('evidence.js'), 'src/evidence.js')

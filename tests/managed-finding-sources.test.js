@@ -8,12 +8,12 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { highlight } from '../ui/prism.js'
 import { langForPath } from '../common/code-language.js'
 
-let fullBundleLoads = 0, localDetails, localIntegrity = 'bundle', managed = true
+let fullBundleLoads = 0, localDetails, localFile = 'src/main.js', localIntegrity = 'bundle', managed = true
 const state = { focusCodeTick: 0, focusCodeStack: [], focusCodeAt: 0, bundles: [] }
 mock.module('../client/index.js', { namedExports: {
   state, isManagedUiMode: () => managed,
   bundleFilePath: (_integrity, path) => path,
-  bundlesForFileHash: () => [{ integrity: localIntegrity, file: 'src/main.js' }],
+  bundlesForFileHash: () => [{ integrity: localIntegrity, file: localFile }],
 } })
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchReportSources, readReportSources } })
 mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails: () => {
@@ -32,6 +32,7 @@ let calls, gate
 beforeEach(t => {
   managed = true; fullBundleLoads = 0; calls = []; gate = null
   localIntegrity = 'bundle'
+  localFile = 'src/main.js'
   localDetails = { kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent: ['local source'] } }
   state.focusCodeStack = []; state.focusCodeAt = 0
   managedAppState.reset(); managedAppState.setSession({ id: 'alice', role: 'view' })
@@ -247,6 +248,48 @@ test('local focus and fullscreen previews link package imports using a manifest 
   })
   assert.equal(fullBundleLoads, 1)
 })
+
+async function checkWorkspacePreviews(t, mode, ownManifest) {
+  const file = 'packages/app/src/main.js', target = 'packages/app/local.js'
+  const rootFiles = { 'package.json': JSON.stringify({ imports: { '#local': './shared.js' } }), 'shared.js': '' }
+  const workspaceFiles = { 'src/main.js': "import x from '#local'; import y from '#direct';", 'local.js': '' }
+  if (ownManifest) workspaceFiles['package.json'] = JSON.stringify({ imports: { '#local': './local.js' } })
+  const imports = [[file, [['./shared.js', 'shared.js'], ['./local.js', target], ['#direct', 'shared.js']]]]
+  const integrity = `workspace-${mode}-${ownManifest}`, reportId = `workspace-report-${ownManifest}`
+  const scopedFinding = { file, fileHash: 'hash', line: 1, evidence: [], _bundleHashes: [integrity] }
+  if (mode === 'managed') {
+    scopedFinding._managedReportId = reportId
+    const files = [...Object.entries(rootFiles), ...Object.entries(workspaceFiles).map(([path, content]) => [`packages/app/${path}`, content])]
+    t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({
+      integrity, files, paths: [[file, file]], imports,
+      packageDirs: files.map(([path]) => [path, path.startsWith('packages/app/') ? 'packages/app' : '.']),
+    })))
+    await fetchReportSources(reportId)
+  } else {
+    managed = false; localIntegrity = integrity; localFile = file
+    state.bundles = [{ integrity, name: 'workspace.stasis' }]
+    localDetails = { kind: 'stasis', bundle: new Bundle({
+      modules: new Map([['.', { files: rootFiles }], ['packages/app', { files: workspaceFiles }]]),
+      formats: new Map([['package.json', 'resource'], ...(ownManifest ? [['packages/app/package.json', 'resource']] : [])]),
+      imports: new Map([['node', new Map(imports.map(([parent, edges]) => [parent, new Map(edges)]))]]),
+    }) }
+  }
+  getFocusCode([scopedFinding]); await setImmediate()
+  getFocusCode([scopedFinding]); await setImmediate()
+  const code = getFocusCode([scopedFinding])
+  assert.match(code.highlighted, /data-bundle-source-link="shared\.js"/u)
+  assert.equal(code.highlighted.includes(`data-bundle-source-link="${target}"`), ownManifest)
+  assert.equal((code.highlighted.match(/data-bundle-source-link=/gu) ?? []).length, ownManifest ? 2 : 1)
+  const fullscreen = bundleSource(integrity, file, { reportId: mode === 'managed' ? reportId : null })
+  assert.equal(fullscreen.highlighted, code.highlighted)
+  assert.equal(fullBundleLoads, mode === 'local' ? 1 : 0)
+}
+
+for (const mode of ['local', 'managed']) {
+  for (const ownManifest of [false, true]) {
+    test(`${mode} focus and fullscreen previews respect workspace boundaries (own manifest: ${ownManifest})`, t => checkWorkspacePreviews(t, mode, ownManifest))
+  }
+}
 
 test('local and managed finding previews retain the format for an extensionless source', async t => {
   const content = 'const example = require("pkg")', path = 'bin/example'

@@ -1,4 +1,4 @@
-import { bundleFilesAsMap, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 
 const indexes = new WeakMap()
 const manifests = new WeakMap()
@@ -31,9 +31,10 @@ function buildIndex(sources) {
   return paths
 }
 
-function packageScope(sources, index, parent) {
+function packageScope(sources, index, parent, packageDir) {
   const normalized = normalizePath(parent)
   if (normalized === null) return null
+  const boundary = typeof packageDir === 'string' ? normalizePath(`${packageDir}/package.json`) : null
   let directory = normalized.slice(0, normalized.lastIndexOf('/') + 1)
   let cache = manifests.get(sources)
   if (!cache) { cache = new Map(); manifests.set(sources, cache) }
@@ -50,6 +51,8 @@ function packageScope(sources, index, parent) {
       // The nearest package defines the scope, including absent/invalid imports.
       return { directory, imports: cache.get(path) }
     }
+    // Recorded module roots are package boundaries even without a manifest.
+    if (path === boundary) return null
     if (!directory || directory === '/' || directory.endsWith('../') || /^[a-z][a-z\d+.-]*:\/\/[^/]*\/?$/iu.test(directory)) return null
     const trimmed = directory.slice(0, -1)
     directory = trimmed.slice(0, trimmed.lastIndexOf('/') + 1)
@@ -146,14 +149,14 @@ export function bundleSourceImports(details, sources = bundleSourcesAsMap(detail
   return imports
 }
 
-export function sourceLinkResolver(sources, parent, imports = null, packageFiles = sources) {
+export function sourceLinkResolver(sources, parent, imports = null, packageFiles = sources, packageDirs = null) {
   let index = indexes.get(sources)
   if (!index) { index = buildIndex(sources); indexes.set(sources, index) }
   let packageIndex = indexes.get(packageFiles)
   if (!packageIndex) { packageIndex = buildIndex(packageFiles); indexes.set(packageFiles, packageIndex) }
   const recorded = imports?.get(parent)
   const directory = parent.slice(0, parent.lastIndexOf('/') + 1)
-  const scope = imports ? packageScope(packageFiles, packageIndex, parent) : null
+  const scope = imports ? packageScope(packageFiles, packageIndex, parent, packageDirs?.get(parent)) : null
   return (specifier) => {
     if (typeof specifier !== 'string' || /\p{Cc}/u.test(specifier)) return null
     if (recorded?.has(specifier)) {
@@ -169,11 +172,14 @@ export function sourceLinkResolver(sources, parent, imports = null, packageFiles
   }
 }
 
-const bundleImports = new WeakMap()
+const bundleLinks = new WeakMap()
 
 export function bundleSourceLinkResolver(details, parent) {
   const sources = bundleSourcesAsMap(details)
-  let imports = bundleImports.get(sources)
-  if (!imports) { imports = bundleSourceImports(details, sources); bundleImports.set(sources, imports) }
-  return sourceLinkResolver(sources, parent, imports, bundleFilesAsMap(details))
+  let links = bundleLinks.get(sources)
+  if (!links) {
+    links = { imports: bundleSourceImports(details, sources), packageDirs: bundlePackageDirs(details) }
+    bundleLinks.set(sources, links)
+  }
+  return sourceLinkResolver(sources, parent, links.imports, bundleFilesAsMap(details), links.packageDirs)
 }

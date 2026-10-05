@@ -5,7 +5,7 @@ import { bundleFilePath, bundlesForFileHash, isManagedUiMode, state } from '#cli
 import { fetchReportSources, readReportSources } from './client-managed.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
-import { bundleFilesAsMap, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleSourceImports, sourceLinkResolver } from '../../common/bundle-source-links.js'
 import { historyFor } from './focus-code-history.js'
 import { lineRange } from './format.js'
@@ -14,7 +14,7 @@ import { render } from './render.js'
 import { report } from './dom.js'
 import { revealCitedLines } from './reveal-cited.js'
 
-// integrity → { sources, packageFiles, imports, formats, loading, error }
+// integrity → { sources, packageFiles, packageDirs, imports, formats, loading, error }
 const sourcesCache = new Map()
 
 // integrity\0file → highlighted HTML string, or null when prism
@@ -58,7 +58,7 @@ async function loadSources(integrity) {
   try {
     const details = await buildBundleDetails(integrity, entry)
     const sources = bundleSourcesAsMap(details)
-    sourcesCache.set(integrity, { sources, packageFiles: bundleFilesAsMap(details), imports: bundleSourceImports(details, sources), formats: details.kind === 'stasis' ? details.bundle?.formats : null, loading: false, error: details.error ?? null })
+    sourcesCache.set(integrity, { sources, packageFiles: bundleFilesAsMap(details), packageDirs: bundlePackageDirs(details), imports: bundleSourceImports(details, sources), formats: details.kind === 'stasis' ? details.bundle?.formats : null, loading: false, error: details.error ?? null })
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
@@ -152,7 +152,7 @@ function managedSource(reportId, file, kick) {
   if (typeof content !== 'string') return null
   let highlights = managedHighlights.get(data)
   if (!highlights) { highlights = { cache: new Map(), pending: new Set() }; managedHighlights.set(data, highlights) }
-  kickHighlight(data.integrity, file, content, data.formats?.get(file), sourceLinkResolver(data.sources, file, data.imports), highlights.cache, highlights.pending)
+  kickHighlight(data.integrity, file, content, data.formats?.get(file), sourceLinkResolver(data.sources, file, data.imports, data.sources, data.packageDirs), highlights.cache, highlights.pending)
   return { content, highlighted: highlights.cache.get(`${data.integrity}\0${file}`) ?? null, loading: false }
 }
 
@@ -193,7 +193,7 @@ export function bundleSource(integrity, file, { kick = true, reportId = null } =
   if (typeof content !== 'string') return null
   // Kick Prism highlight if we haven't yet — render() runs again when
   // the highlighted HTML lands and the second pass picks it up.
-  kickHighlight(integrity, file, content, cached.formats?.get(file), sourceLinkResolver(cached.sources, file, cached.imports, cached.packageFiles))
+  kickHighlight(integrity, file, content, cached.formats?.get(file), sourceLinkResolver(cached.sources, file, cached.imports, cached.packageFiles, cached.packageDirs))
   const key = `${integrity}\0${file}`
   return {
     content,

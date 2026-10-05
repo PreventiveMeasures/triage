@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleSourceImports, sourceLinkResolver } from '../common/bundle-source-links.js'
-import { bundleFilesAsMap, bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleSourceLinkResolver } from '../ui/view/bundle-source-links.js'
 import { highlight } from '../ui/prism.js'
 import { splitHighlightedLines } from '../ui/view/prism-highlight.js'
@@ -11,9 +11,10 @@ function sourcemap(paths) {
   return { kind: 'sourcemap', json: { sources: paths, sourcesContent: paths.map(() => '') } }
 }
 
-function stasis(imports, paths = ['src/main.js', 'src/other.js', 'src/foo.js', 'src/foo.android.js', 'lib/utils.ts', 'node_modules/pkg/index.js', 'script'], contents = {}) {
+function stasis(imports, paths = ['src/main.js', 'src/other.js', 'src/foo.js', 'src/foo.android.js', 'lib/utils.ts', 'node_modules/pkg/index.js', 'script'], contents = {}, modules = null) {
   const bundle = Bundle.parse(new Bundle({
-    modules: new Map([['.', { files: Object.fromEntries(paths.map(path => [path, contents[path] ?? ''])), name: 'app', version: '1' }]]),
+    modules: modules ? new Map([...modules].map(([dir, info]) => [dir, { name: dir, version: '1', ...info }]))
+      : new Map([['.', { files: Object.fromEntries(paths.map(path => [path, contents[path] ?? ''])), name: 'app', version: '1' }]]),
     imports: new Map(Object.entries(imports).map(([condition, parents]) => [condition,
       new Map(Object.entries(parents).map(([parent, specifiers]) => [parent, new Map(Object.entries(specifiers))]))])),
   }).serialize())
@@ -70,6 +71,39 @@ test('dependencies cannot inherit the application imports map when their manifes
     'shared.js': '', 'node_modules/dep/index.js': '',
   })
   assert.equal(bundleSourceLinkResolver(details, 'node_modules/dep/index.js')('#local'), null)
+})
+
+test('recorded workspace boundaries block inherited imports while literal edges remain authoritative', () => {
+  const parent = 'packages/app/src/main.js'
+  const details = stasis({ node: {
+    'index.js': { './shared.js': 'shared.js' },
+    [parent]: { './shared.js': 'shared.js', '#direct': 'shared.js' },
+  } }, [], {}, new Map([
+    ['.', { files: { 'package.json': JSON.stringify({ imports: { '#local': './shared.js' } }), 'index.js': '', 'shared.js': '' } }],
+    ['packages/app', { files: { 'src/main.js': '' } }],
+  ]))
+  assert.equal(bundleSourceLinkResolver(details, 'index.js')('#local'), 'shared.js')
+  assert.equal(bundleSourceLinkResolver(details, parent)('#local'), null, 'the workspace cannot use the root manifest')
+  assert.equal(bundleSourceLinkResolver(details, parent)('#direct'), 'shared.js', 'literal edges still resolve before package lookup')
+  const sources = bundleSourcesAsMap(details)
+  const resolve = sourceLinkResolver(sources, parent, bundleSourceImports(details, sources), bundleFilesAsMap(details), bundlePackageDirs(details))
+  assert.equal(resolve('#local'), null, 'the shared resolver also observes the workspace boundary')
+  assert.equal(resolve('#direct'), 'shared.js')
+})
+
+test('workspace manifests apply inside their package without leaking into a nested workspace', () => {
+  const nested = 'packages/app/plugin/src/main.js', parent = 'packages/app/src/main.js'
+  const details = stasis({ node: {
+    [parent]: { '../local.js': 'packages/app/local.js' },
+    [nested]: { './local.js': 'packages/app/local.js' },
+  } }, [], {}, new Map([
+    ['.', { files: { 'package.json': JSON.stringify({ imports: { '#local': './root.js' } }), 'root.js': '' } }],
+    ['packages/app', { files: { 'package.json': JSON.stringify({ imports: { '#local': './local.js' } }), 'src/main.js': '', 'local.js': '' } }],
+    ['packages/app/plugin', { files: { 'src/main.js': '' } }],
+  ]))
+  details.bundle.formats.set('packages/app/package.json', 'resource')
+  assert.equal(bundleSourceLinkResolver(details, parent)('#local'), 'packages/app/local.js', 'the module root manifest is checked before stopping')
+  assert.equal(bundleSourceLinkResolver(details, nested)('#local'), null, 'an uncaptured nested manifest cannot inherit the enclosing workspace map')
 })
 
 test('package imports prefer exact keys and the most specific wildcard including pattern trailers', () => {
