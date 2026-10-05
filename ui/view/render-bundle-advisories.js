@@ -67,7 +67,7 @@ function bundleHasAdvisoryCandidates(details) {
   return false
 }
 
-// Tab-visibility predicate. Tri-state:
+// Managed Stasis bundles require security access. Local visibility is tri-state:
 //   * non-stasis filename → hide immediately (no parse needed; we
 //     already know there'll be no version metadata).
 //   * stasis filename, no matching parsed details yet → keep visible
@@ -84,7 +84,15 @@ function bundleHasAdvisoryCandidates(details) {
 //     `bundleHasAdvisoryCandidates` (so v0 stasis correctly hides).
 export function showAdvisoriesTab(entry, details) {
   if (!entry || bundleKind(entry.name) !== 'stasis') return false
-  if (entry.managedId || !details || details.integrity !== entry.integrity) return true
+  if (entry.managedId) {
+    const role = state.managedSession?.role
+    if (['admin', 'manage'].includes(role)) return true
+    if (!['view', 'triage'].includes(role)) return false
+    // Match the API's team scope, including a public link's own grant.
+    return state.managedTeams.some(team => (state.currentManagedTeam == null || team.id === state.currentManagedTeam)
+      && team.permissions?.security === true && team.bundles?.some(bundle => bundle.id === entry.managedId))
+  }
+  if (!details || details.integrity !== entry.integrity) return true
   return bundleHasAdvisoryCandidates(details)
 }
 

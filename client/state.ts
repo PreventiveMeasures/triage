@@ -226,7 +226,7 @@ export interface State {
   // The managed user's teams (each with reports and bundles attached to the
   // team's repos), shown in the sidebar above Workspaces. Populated alongside the
   // session probe; empty when logged out / e2e.
-  managedTeams: { id: string; name: string; reports: { id: string; filename: string; analyzer?: string | null }[]; bundles: { id: string; filename: string; repoFullName: string }[] }[]
+  managedTeams: { id: string; name: string; permissions?: { dependencies: boolean; security: boolean }; reports: { id: string; filename: string; analyzer?: string | null }[]; bundles: { id: string; filename: string; repoFullName: string }[] }[]
   // The open managed team report (server id + filename) when the active view
   // came from the sidebar's Teams section; null otherwise. Keys the
   // server-side triage hydrate/push for that report (ui/view/managed-triage.js).

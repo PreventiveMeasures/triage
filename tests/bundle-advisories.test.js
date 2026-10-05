@@ -21,7 +21,9 @@ function renderText(value) {
 }
 beforeEach(t => {
   managedCalls = []; managedReasons = []; repositoryChecks = []; allowed = false; pending = null
-  state.managedTeams = []
+  state.managedSession = { id: 'alice', role: 'view', csrfToken: 'session' }
+  state.currentManagedTeam = 'team'
+  state.managedTeams = [{ id: 'team', permissions: { security: true, dependencies: false }, bundles: [{ id: 'bundle-id' }] }]
   result = { packages: { dep: ['1.0.0'] }, advisories: { dep: [{ title: 'Public vulnerability', severity: 'high', url: 'https://example.com/advisory' }] } }
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => allowed ? '1' : null, setItem: () => { allowed = true } } })
@@ -63,6 +65,52 @@ test('managed advisory view needs neither consent nor bundle contents or module 
   assert.match(text, /1\.0\.0/u)
   await ensureBundleAdvisories({ ...details, managedId: 'other-id' }, () => {})
   assert.deepEqual(managedCalls, ['bundle-id', 'other-id'], 'equal hashes do not mix managed identities')
+})
+
+test('managed advisory tabs follow the current team security grant and bundle membership', () => {
+  const entry = { managedId: 'bundle-id', integrity: 'hash', name: 'bundle.br' }
+  const team = state.managedTeams[0]
+  state.managedTeams.push({ id: 'other', permissions: { security: true }, bundles: [{ id: entry.managedId }] })
+  for (const role of ['view', 'triage']) {
+    state.managedSession.role = role
+    for (const dependencies of [false, true]) {
+      team.permissions = { dependencies, security: false }
+      assert.equal(showAdvisoriesTab(entry, null), false, 'another team cannot override the selected team')
+      team.permissions.security = true
+      assert.equal(showAdvisoriesTab(entry, null), true, 'security access does not require dependency access')
+    }
+  }
+  state.currentManagedTeam = null
+  team.permissions.security = false
+  assert.equal(showAdvisoriesTab(entry, null), true, 'unscoped reads accept a grant from a team containing the bundle')
+  state.managedTeams[1].bundles = [{ id: 'unrelated' }]
+  assert.equal(showAdvisoriesTab(entry, null), false)
+  state.currentManagedTeam = 'missing'
+  team.permissions.security = true
+  assert.equal(showAdvisoriesTab(entry, null), false)
+  state.currentManagedTeam = 'team'
+  delete team.permissions
+  assert.equal(showAdvisoriesTab(entry, null), false, 'missing permissions do not expose the tab')
+})
+
+test('public advisory tabs use share permissions; managers retain access outside teams', () => {
+  const entry = { managedId: 'bundle-id', integrity: 'hash', name: 'bundle.br' }
+  state.managedSession.publicShare = true
+  for (const security of [false, true]) {
+    state.managedTeams[0].permissions.security = security
+    assert.equal(showAdvisoriesTab(entry, null), security)
+  }
+  state.managedTeams = []
+  state.currentManagedTeam = null
+  for (const role of ['admin', 'manage', 'view', 'triage', 'none', 'unknown']) {
+    state.managedSession = { role }
+    assert.equal(showAdvisoriesTab(entry, null), ['admin', 'manage'].includes(role))
+  }
+  state.managedSession = null
+  assert.equal(showAdvisoriesTab(entry, null), false)
+  assert.equal(showAdvisoriesTab({ ...entry, managedId: undefined }, null), true, 'local bundles keep their existing visibility')
+  state.managedSession = { role: 'admin' }
+  assert.equal(showAdvisoriesTab({ ...entry, name: 'bundle.map' }, null), false)
 })
 
 test('skipped dependencies remain visible when none of the bundle could be audited', async () => {

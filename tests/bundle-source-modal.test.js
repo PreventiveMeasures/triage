@@ -11,7 +11,7 @@ import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-met
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
-mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: () => null } })
+mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
 const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
@@ -34,6 +34,21 @@ beforeEach(() => {
   state.bundleOverviewFilesSort = 'name'
   state.bundleOverviewPackagesSort = 'size'
   state.bundleDetails = null
+})
+
+test('losing security access removes the advisory tab and restores Overview', t => {
+  const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams, currentManagedTeam: state.currentManagedTeam }
+  t.after(() => Object.assign(state, previous))
+  const entry = { managedId: 'bundle-id', name: 'bundle.br', integrity: 'advisory-access' }
+  const team = { id: 'team', permissions: { security: true }, bundles: [{ id: entry.managedId }] }
+  Object.assign(state, { managedSession: { role: 'view' }, managedTeams: [team], currentManagedTeam: team.id,
+    selectedBundle: entry.integrity, bundles: [entry], bundleDetailsTab: 'advisories' })
+  assert.match(renderText(renderBundlesList([entry])), /data-bundle-tab="advisories"/u)
+  assert.equal(state.bundleDetailsTab, 'advisories')
+  team.permissions.security = false
+  const text = renderText(renderBundlesList([entry]))
+  assert.doesNotMatch(text, /data-bundle-tab="advisories"|Failed to fetch advisories/u)
+  assert.equal(state.bundleDetailsTab, 'overview')
 })
 
 test('unattached managed bundle headers return to Manage Bundles before the bundle identity', t => {

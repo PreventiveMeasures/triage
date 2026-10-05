@@ -766,11 +766,13 @@ test('bundle advisories require security, independently of dependency findings',
   assert.equal((await h.send(path, 'viewer', 'POST')).status, 405)
   for (const dependencies of [false, true]) {
     await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies, security: false })
+    assert.deepEqual((await h.send('/api/teams', 'viewer')).json().teams[0].permissions, { dependencies, security: false })
     assert.equal((await h.send(path, 'viewer')).status, 403)
     assert.equal(calls.length, 0)
   }
   for (const dependencies of [false, true]) {
     await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies, security: true })
+    assert.deepEqual((await h.send('/api/teams', 'viewer')).json().teams[0].permissions, { dependencies, security: true })
     const response = await h.send(`${path}?team=${h.team}`, 'viewer')
     assert.equal(response.status, 200)
     assert.equal(response.headers['cache-control'], 'no-store')

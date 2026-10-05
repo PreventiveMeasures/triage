@@ -1766,7 +1766,7 @@ function renderBundleSlide(entry) {
   // landing in their middle — no in-flight click theft.
   const showAdvisories = showAdvisoriesTab(entry, state.bundleDetails)
   // Coerce a `state.bundleDetailsTab === 'advisories'` value back to
-  // 'overview' when the tab button is hidden (sourcemap bundle,
+  // 'overview' when the tab button is hidden (no security access, sourcemap bundle,
   // post-parse v0 stasis, or a persisted state carried over from
   // another bundle). `showAdvisoriesTab` returns true through the
   // parse window for stasis-by-filename bundles, so this coercion

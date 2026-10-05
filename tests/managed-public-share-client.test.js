@@ -46,7 +46,7 @@ test('public startup uses only scoped bootstrap and clears revoked access withou
     assert.equal(options.headers.get('x-deepview-share'), token)
     return Promise.resolve(revoked ? Response.json({ error: 'invalid-share' }, { status: 401 }) : Response.json({
       user: { id: 'share:hash', login: 'public', name: 'Public workspace', role: 'view' },
-      team: { id: 'team', slug: 'team', name: 'Shared workspace', reports: [], bundles: [] },
+      team: { id: 'team', slug: 'team', name: 'Shared workspace', permissions: { dependencies: false, security: true }, reports: [], bundles: [] },
     }))
   })
   const session = await probeSession()
@@ -55,6 +55,7 @@ test('public startup uses only scoped bootstrap and clears revoked access withou
   assert.equal(session.csrfToken, null)
   const teams = await probeTeams()
   assert.deepEqual(teams.map(team => team.id), ['team'])
+  assert.deepEqual(teams[0].permissions, { dependencies: false, security: true })
   revoked = true
   assert.equal(await probeSession({ fallback: session }), null)
   assert.deepEqual(await probeTeams({ fallback: teams }), [])
