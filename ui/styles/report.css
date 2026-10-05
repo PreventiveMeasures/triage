@@ -3246,6 +3246,46 @@ body.report-fullscreen {
   display: flex; flex-direction: column;
   gap: .125rem;
 }
+advisory-details {
+  display: block;
+  margin-top: .25rem;
+  font-size: .75rem;
+}
+advisory-details summary {
+  width: fit-content;
+  color: var(--muted);
+  cursor: default;
+  user-select: none;
+}
+advisory-details summary:hover { color: var(--text); }
+advisory-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.advisory-markdown {
+  margin-top: .5rem;
+  color: var(--text);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+
+  & * { user-select: text; }
+  & > :first-child { margin-top: 0; }
+  & > :last-child { margin-bottom: 0; }
+  & p, & ul, & ol, & blockquote, & pre, & table { margin: .75em 0; }
+  & h1, & h2, & h3, & h4, & h5, & h6 { margin: 1em 0 .5em; line-height: 1.3; }
+  & h1 { font-size: 1.3em; }
+  & h2 { font-size: 1.2em; }
+  & h3, & h4, & h5, & h6 { font-size: 1.1em; }
+  & ul, & ol { padding-left: 1.5em; }
+  & blockquote { margin-left: 0; padding-left: .75em; border-left: 2px solid var(--border); color: var(--muted); }
+  & a { color: var(--accent); }
+  & code {
+    font-family: var(--font-mono, ui-monospace, monospace); font-size: .95em;
+    background: var(--surface); padding: .1em .3em; border-radius: 3px;
+  }
+  & pre { padding: .75em; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; overflow-x: auto; }
+  & pre code { background: none; padding: 0; }
+  & table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+  & th, & td { padding: .3em .6em; border: 1px solid var(--border); }
+  & hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+}
 /* Title row — title flexes to fill, GHSA chip pinned to the right
    via margin-left:auto so the chip stays aligned to the row's
    right edge regardless of title length. align-items:baseline keeps

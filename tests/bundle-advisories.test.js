@@ -4,13 +4,15 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
-let allowed = false, managedCalls = [], managedReasons = [], pending = null, repositoryChecks = [], result
+let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], pending = null, repositoryChecks = [], result
+mock.module('lit/directives/keyed.js', { namedExports: { keyed: (_key, value) => value } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories) => {
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories, details) => {
   managedCalls.push(id)
   managedReasons.push(reason)
   repositoryChecks.push(repoAdvisories)
+  detailRequests.push(details)
   return pending ?? Promise.resolve(result)
 } } })
 const { ensureBundleAdvisories, grantAdvisoriesProxyConsent, recheckBundleAdvisories, renderBundleAdvisoriesTab, retryBundleAdvisories, showAdvisoriesTab } = await import('../ui/view/render-bundle-advisories.js')
@@ -20,7 +22,7 @@ function renderText(value) {
   return value == null || typeof value === 'symbol' ? '' : String(value)
 }
 beforeEach(t => {
-  managedCalls = []; managedReasons = []; repositoryChecks = []; allowed = false; pending = null
+  managedCalls = []; managedReasons = []; repositoryChecks = []; detailRequests = []; allowed = false; pending = null
   state.managedSession = { id: 'alice', role: 'view', csrfToken: 'session' }
   state.currentManagedTeam = 'team'
   state.managedTeams = [{ id: 'team', permissions: { security: true, dependencies: false }, bundles: [{ id: 'bundle-id' }] }]
@@ -184,16 +186,27 @@ test('repository recheck button shows a busy state, prevents duplicate requests 
   assert.match(busy, /Public vulnerability/u, 'existing results remain readable during the recheck')
   await recheckBundleAdvisories(details, () => {})
   assert.deepEqual(repositoryChecks, [false, true])
+  assert.deepEqual(detailRequests, [false, true], 'only the explicit recheck requests full text')
   gate.resolve({ packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0'] }], skipped: [], advisories: [
-    { ecosystem: 'npm', name: 'dep', source: 'repository', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh', versions: ['1.0.0'], title: 'Maintainer vulnerability' },
+    { ecosystem: 'npm', name: 'dep', source: 'repository', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh', versions: ['1.0.0'], title: 'Maintainer vulnerability', details: '# Impact\n\nFull advisory text.' },
   ] })
   await checking
   const done = renderText(renderBundleAdvisoriesTab(details))
   assert.match(done, /Maintainer vulnerability/u)
+  assert.match(done, /<advisory-details \.markdown=# Impact\n\nFull advisory text\./u)
   assert.doesNotMatch(done, /Public vulnerability|Rechecking…/u)
   assert.match(done, /aria-busy=false/u)
   assert.match(done, /\?disabled=false/u)
   assert.equal(renders, 2)
+})
+
+test('empty or missing advisory details do not add a disclosure', async () => {
+  const details = { managedId: 'empty-details', integrity: 'empty-details', kind: 'stasis' }
+  result = { packages: [], advisories: [undefined, null, '', ' \n', 42].map((text, i) => ({
+    ecosystem: 'npm', name: `dep-${i}`, title: 'No description', details: text,
+  })) }
+  await ensureBundleAdvisories(details, () => {})
+  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /<advisory-details/u)
 })
 
 test('failed repository rechecks preserve results and can be retried with the same button', async () => {

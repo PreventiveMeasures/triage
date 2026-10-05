@@ -1023,16 +1023,17 @@ test('managed repository rechecks enrich advisories and recheck security before 
     if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
     if (revoke) await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
-    return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability',
+    return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability', description: '# Impact\n\nFull advisory text.',
       vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<3.0.0' }] }])
   })
   assert.deepEqual((await h.send(path, 'viewer')).json().advisories, [])
   assert.equal(calls.length, 1)
-  const recheck = `${path}?repoAdvisories=true`
+  const recheck = `${path}?repoAdvisories=true&details=true`
   const result = await h.send(recheck, 'viewer')
   assert.equal(result.status, 200)
   assert.equal(result.json().advisories[0].title, 'Maintainer vulnerability')
   assert.equal(result.json().advisories[0].source, 'repository')
+  assert.equal(result.json().advisories[0].details, '# Impact\n\nFull advisory text.')
   assert.equal(calls.length, 4)
   revoke = true
   const denied = await h.send(recheck, 'viewer')

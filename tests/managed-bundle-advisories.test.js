@@ -131,7 +131,7 @@ test('managed audits use the real upstream API and authenticate only GitHub acro
     }
     if (parsed.pathname.startsWith('/v1/vulns/')) {
       const id = parsed.pathname.split('/').at(-1)
-      return Promise.resolve(Response.json({ id, aliases: [], affected: [{
+      return Promise.resolve(Response.json({ id, aliases: [], details: '# OSV details', affected: [{
         package: { ecosystem: 'crates.io', name: 'log' }, database_specific: { informational: 'unmaintained' },
       }] }))
     }
@@ -142,7 +142,7 @@ test('managed audits use the real upstream API and authenticate only GitHub acro
     assert.equal(parsed.pathname, '/repos/org/dep/security-advisories')
     assert.equal(parsed.searchParams.get('state'), 'published')
     assert.equal(options.redirect, 'manual')
-    return Promise.resolve(Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Repository vulnerability',
+    return Promise.resolve(Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Repository vulnerability', description: '# Repository details',
       severity: 'medium', vulnerabilities: [{ vulnerable_version_range: '<2.0.0' }] }]))
   })
   const result = await fetchBundleAdvisories(bundleAdvisoryInventory(mixedBundle()).packages, signal(), { githubToken: 'viewer-token' })
@@ -156,6 +156,13 @@ test('managed audits use the real upstream API and authenticate only GitHub acro
   assert.equal(result.body.find(row => row.ecosystem === 'cargo').url, 'https://osv.dev/vulnerability/RUSTSEC-2026-0001')
   assert.ok(requests.some(request => request.url.startsWith('https://api.osv.dev/')))
   assert.ok(requests.every(request => !request.options.body?.includes('private source')))
+  assert.ok(result.body.every(row => row.details === undefined), 'initial lookups omit full text')
+  const detailed = await fetchBundleAdvisories(bundleAdvisoryInventory(mixedBundle()).packages, signal(), { githubToken: 'viewer-token', details: true })
+  assert.equal(detailed.status, 200)
+  assert.deepEqual(detailed.body.map(row => [row.ecosystem, row.details]), [
+    ['cargo', '# OSV details'], ['composer', '# OSV details'], ['github', '# Repository details'],
+    ['npm', '# OSV details'], ['soldeer', '# Repository details'],
+  ])
 })
 
 test('empty, canceled and invalid inventories never send requests', async t => {

@@ -27,7 +27,7 @@ function advisoryGithubClient(token: string | null, signal: AbortSignal): Client
 // remain anonymous. Upstream sends this credential only to GitHub and returns
 // published advisories, matching versions across npm, OSV and repository rows.
 export async function fetchBundleAdvisories(packages: Package[], signal: AbortSignal,
-  { debug = false, repoAdvisories = false, githubToken = null }: { debug?: boolean; repoAdvisories?: boolean; githubToken?: string | null } = {}): Promise<
+  { debug = false, repoAdvisories = false, details = false, githubToken = null }: { debug?: boolean; repoAdvisories?: boolean; details?: boolean; githubToken?: string | null } = {}): Promise<
   { status: 200; body: Advisory[] } | { status: 502; body: { error: string } }
 > {
   let onAbort: (() => void) | undefined
@@ -41,7 +41,7 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
       signal.addEventListener('abort', onAbort, { once: true })
     })
     const result = await Promise.race([
-      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories }), deadline,
+      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories, details }), deadline,
     ])
     return { status: 200, body: result }
   } catch (error) {

@@ -382,7 +382,7 @@ test('public repository rechecks retain skipped dependencies and enforce securit
     if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
     if (revoke) await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
-    return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability',
+    return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability', description: '# Impact\n\nFull advisory text.',
       vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<2.0.0' }] }])
   })
   const path = '/api/bundles/stasis/advisories'
@@ -391,13 +391,14 @@ test('public repository rechecks retain skipped dependencies and enforce securit
   assert.deepEqual(base.body.skipped, skipped)
   assert.deepEqual(base.body.advisories, [])
   assert.equal(calls, 1)
-  const recheck = await h.request(`${path}?repoAdvisories=true`, { token })
+  const recheck = await h.request(`${path}?repoAdvisories=true&details=true`, { token })
   assert.equal(recheck.status, 200)
   assert.equal(recheck.body.advisories[0].source, 'repository')
+  assert.equal(recheck.body.advisories[0].details, '# Impact\n\nFull advisory text.')
   assert.deepEqual(recheck.body.skipped, skipped)
   assert.equal(calls, 4)
   revoke = true
-  const denied = await h.request(`${path}?repoAdvisories=true`, { token })
+  const denied = await h.request(`${path}?repoAdvisories=true&details=true`, { token })
   assert.equal(denied.status, 404)
   assert.equal(denied.body.advisories, undefined)
   assert.equal(denied.body.skipped, undefined)

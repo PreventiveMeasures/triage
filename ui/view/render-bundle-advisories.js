@@ -4,6 +4,7 @@
 
 import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
+import { keyed } from 'lit/directives/keyed.js'
 import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
@@ -13,6 +14,7 @@ import { GITHUB_ICON_SVG } from './icons.js'
 import { sourceNpmIcon } from './source-file-icon.js'
 import osvIcon from './osv-icon.svg'
 import './bundle-scope-selector.js'
+import './advisory-details.js'
 
 const ADVISORY_SOURCES = new Map([
   ['registry', { label: 'Source: npm registry', icon: sourceNpmIcon }],
@@ -176,7 +178,8 @@ async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
   try {
     let json, skipped = []
     if (details.managedId) {
-      const result = await fetchBundleAdvisories(details.managedId, undefined, selected, repoAdvisories)
+      // Fetch full descriptions only on an explicit repository recheck.
+      const result = await fetchBundleAdvisories(details.managedId, undefined, selected, repoAdvisories, repoAdvisories)
       // Accept the former npm-only shape during a client/server upgrade.
       query = Array.isArray(result.packages)
         ? new Map(result.packages.map(pkg => [packageKey(pkg), new Set(pkg.versions)]))
@@ -451,6 +454,7 @@ function renderAdvisoryRow(a) {
         </div>
         ${cvssVector ? html`<div class="bundle-advisory-cvss-vector mono">${cvssVector}</div>` : nothing}
       </div>
+      ${typeof a.details === 'string' && a.details.trim() ? keyed(a, html`<advisory-details .markdown=${a.details} .url=${url}></advisory-details>`) : nothing}
     </div>
   </li>`
 }
