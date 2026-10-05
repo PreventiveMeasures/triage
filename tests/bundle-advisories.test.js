@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { store } from '@rray/frontend/state-management'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
-let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], pending = null, repositoryChecks = [], result
-mock.module('lit/directives/keyed.js', { namedExports: { keyed: (_key, value) => value } })
+let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], openedDetails = [], pending = null, repositoryChecks = [], result
+mock.module('../ui/view/dialogs/advisory-details-dialog.js', { namedExports: { openAdvisoryDetailsDialog: props => { openedDetails.push(props) } } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories, details) => {
@@ -21,8 +22,12 @@ function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
   return value == null || typeof value === 'symbol' ? '' : String(value)
 }
+function templates(value) {
+  if (Array.isArray(value)) return value.flatMap(templates)
+  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
+}
 beforeEach(t => {
-  managedCalls = []; managedReasons = []; repositoryChecks = []; detailRequests = []; allowed = false; pending = null
+  managedCalls = []; managedReasons = []; repositoryChecks = []; detailRequests = []; openedDetails = []; allowed = false; pending = null
   state.managedSession = { id: 'alice', role: 'view', csrfToken: 'session' }
   state.currentManagedTeam = 'team'
   state.managedTeams = [{ id: 'team', permissions: { security: true, dependencies: false }, bundles: [{ id: 'bundle-id' }] }]
@@ -193,20 +198,33 @@ test('repository recheck button shows a busy state, prevents duplicate requests 
   await checking
   const done = renderText(renderBundleAdvisoriesTab(details))
   assert.match(done, /Maintainer vulnerability/u)
-  assert.match(done, /<advisory-details \.markdown=# Impact\n\nFull advisory text\./u)
+  assert.match(done, /class="bundle-advisory-title" aria-haspopup="dialog"/u)
+  assert.doesNotMatch(done, /<advisory-details|<summary>Details/u)
+  const title = templates(renderBundleAdvisoriesTab(details)).find(part => part.strings[0].includes('aria-haspopup="dialog"'))
+  title.values.find(value => typeof value === 'function')()
+  assert.equal(openedDetails.length, 1)
+  assert.equal(openedDetails[0].heading, 'Maintainer vulnerability')
+  assert.equal(openedDetails[0].markdown, '# Impact\n\nFull advisory text.')
+  assert.equal(openedDetails[0].isCurrent(), true)
+  state.managedTeams = store(state.managedTeams)
+  assert.equal(openedDetails[0].isCurrent(), true, 'reactive wrapping is not a team change')
   assert.doesNotMatch(done, /Public vulnerability|Rechecking…/u)
   assert.match(done, /aria-busy=false/u)
   assert.match(done, /\?disabled=false/u)
   assert.equal(renders, 2)
+  state.currentManagedTeam = 'different-team'
+  assert.equal(openedDetails[0].isCurrent(), false, 'open details lose validity when their scope changes')
 })
 
-test('empty or missing advisory details do not add a disclosure', async () => {
+test('empty or missing advisory details keep the title as plain text', async () => {
   const details = { managedId: 'empty-details', integrity: 'empty-details', kind: 'stasis' }
   result = { packages: [], advisories: [undefined, null, '', ' \n', 42].map((text, i) => ({
     ecosystem: 'npm', name: `dep-${i}`, title: 'No description', details: text,
   })) }
   await ensureBundleAdvisories(details, () => {})
-  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /<advisory-details/u)
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  assert.match(text, /<span class="bundle-advisory-title">No description/u)
+  assert.doesNotMatch(text, /aria-haspopup="dialog"|<advisory-details/u)
 })
 
 test('failed repository rechecks preserve results and can be retried with the same button', async () => {

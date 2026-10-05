@@ -1,0 +1,99 @@
+/* Inline highlights inside bundle-side finding descriptions
+   (Issues tab rows, source-viewer side panel, code-rail issue
+   results) — light-DOM copy of the .inline-* rules finding-card.css
+   keeps in the card's shadow root, so `` `code` `` / "quoted" spans
+   read the same on both surfaces. */
+.inline-quote {
+  background: rgb(from var(--accent) r g b / .1);
+  padding: 1px; border-radius: 3px;
+  color: var(--text);
+}
+.inline-code {
+  background: var(--surface-active);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  /* The padding stands in for the backticks, which render-finding.js
+     strips: without it the text sits flush against the chip's border. */
+  padding: 0 .25em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+  color: var(--text);
+}
+/* Paragraph gap — the light-DOM copy of finding-card.css's `.para`
+   rule, so a prose block out here that takes renderHighlighted's
+   paragraphs (the bundle-side descriptions pass `paragraphs: false`
+   and stay one blob) measures its gap the same as the card does. */
+.para + .para { margin-top: .5lh; }
+/* Light-DOM copy of finding-card.css's `.md-list` rules, for the
+   bundle views' finding descriptions (see the `.para` note above).
+
+   A markdown list, drawn as one (render-finding.js listTemplate). The
+   prose boxes are `pre-wrap`, so a list used to arrive as its own
+   source text: `1.` and `-` sitting in the run, every item flat
+   against the left margin, a wrapped step reading as the next one.
+   The element brings the hanging indent that separates them.
+
+   The indent is set in `em` so it tracks the type rather than the
+   root. Items get a smaller gap than paragraphs do (`.para` above): a
+   list is one thought broken into steps, and the paragraph measure
+   between them would read as separate blocks. */
+.md-list {
+  margin: 0;
+  padding-inline-start: 1.2em;
+}
+.md-list li + li { margin-top: .25lh; }
+/* And the paragraph measure where a list meets the prose around it —
+   the lead-in line above it, the sentence that picks up after it. The
+   markdown had a blank line there; listSegments drops it with the rest
+   of the block's chrome, so the space comes back as a margin. */
+.para + .md-list,
+.md-list + .para,
+.md-list + .md-list { margin-top: .5lh; }
+/* The markers are structure, not text: muted, so the eye reads the
+   steps and not their numbering. Off `currentColor` rather than
+   `--text` so they follow whatever colour the block around them
+   carries — under `.recommendation` that is green, and a grey marker
+   beside green text would break the one thing that rule is for. */
+.md-list li::marker { color: rgb(from currentcolor r g b / .45); }
+/* Same story for the fenced code blocks a description carries — a
+   light-DOM copy of finding-card.css's `.code-block` rules, so a
+   snippet in a bundle-side description reads as the same box the card
+   draws (see render-finding.js codeBlockTemplate). `pre` + horizontal
+   scroll rather than wrapping: a folded line reads as different code. */
+.code-block {
+  white-space: normal;
+  margin: .4rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 4px);
+  /* A neutral tint of the text colour rather than `--surface-active`
+     (which `.inline-code` wears): that token is the theme's ACTIVE
+     fill — a saturated blue in the light themes — and a whole block
+     of it reads as a selection, not as code. */
+  background: rgb(from var(--text) r g b / .05);
+  overflow: hidden;
+  /* Sized to the code, not to the column: a two-word snippet in a
+     box ruled to the full width reads as an empty panel someone
+     forgot to fill. `fit-content` takes the widest line (or the
+     language header, when that is wider) and the cap hands anything
+     longer back to the `<pre>`'s own horizontal scroll. */
+  width: fit-content;
+  max-width: 100%;
+
+  & .code-block-lang {
+    padding: .15rem .5rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: .62rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  & pre {
+    margin: 0;
+    padding: .4rem .55rem;
+    overflow-x: auto;
+    white-space: pre;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .95em; line-height: 1.5;
+    color: var(--text);
+  }
+  & code { font: inherit; }
+}

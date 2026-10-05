@@ -4,7 +4,7 @@
 
 import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { keyed } from 'lit/directives/keyed.js'
+import { store } from '@rray/frontend/state-management'
 import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
@@ -14,7 +14,7 @@ import { GITHUB_ICON_SVG } from './icons.js'
 import { sourceNpmIcon } from './source-file-icon.js'
 import osvIcon from './osv-icon.svg'
 import './bundle-scope-selector.js'
-import './advisory-details.js'
+import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
 
 const ADVISORY_SOURCES = new Map([
   ['registry', { label: 'Source: npm registry', icon: sourceNpmIcon }],
@@ -27,7 +27,10 @@ let managedCache = new Map(), managedScope = []
 function advisoryCache(details) {
   if (!details?.managedId) return localCache
   const session = state.managedSession
-  const scope = [session?.id, session?.role, session?.csrfToken, state.currentManagedTeam, state.managedTeams]
+  // Observers lazily wrap arrays. Normalize identity so opening a reactive
+  // details popup does not mistake that wrapper for a team change.
+  const teams = state.managedTeams && store(state.managedTeams)
+  const scope = [session?.id, session?.role, session?.csrfToken, state.currentManagedTeam, teams]
   if (scope.some((value, index) => value !== managedScope[index])) {
     managedScope = scope
     managedCache = new Map()
@@ -360,12 +363,12 @@ function renderAdvisoriesBody(details) {
       <ul>${entry.skipped.map(pkg => html`<li><span class="mono">${packageKey(pkg)}@${pkg.version}</span>: ${pkg.because}</li>`)}</ul>
     </section>` : nothing}
     <ul class="bundle-advisories-list">
-      ${sections.map(([pkg, list]) => renderAdvisorySection(pkg, list, entry.query.get(pkg)))}
+      ${sections.map(([pkg, list]) => renderAdvisorySection(pkg, list, entry.query.get(pkg), () => advisoryCache(details).get(cacheKey(details))?.byPackage === entry.byPackage))}
     </ul>
   </div>`
 }
 
-function renderAdvisorySection(pkg, advisories, queriedVersions) {
+function renderAdvisorySection(pkg, advisories, queriedVersions, isCurrent) {
   const sorted = [...advisories].toSorted((a, b) => {
     const r = severityRank(a.severity) - severityRank(b.severity)
     if (r !== 0) return r
@@ -380,7 +383,7 @@ function renderAdvisorySection(pkg, advisories, queriedVersions) {
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">
-      ${sorted.map((a) => renderAdvisoryRow(a))}
+      ${sorted.map((a) => renderAdvisoryRow(a, isCurrent))}
     </ul>
   </li>`
 }
@@ -417,7 +420,7 @@ function cweTemplate(c) {
   return html`<a class="bundle-advisory-cwe" href=${url} target="_blank" rel="noopener noreferrer">${c}</a>`
 }
 
-function renderAdvisoryRow(a) {
+function renderAdvisoryRow(a, isCurrent) {
   const sev = a.severity
   const title = a.title
   const cvssScore = typeof a.cvss?.score === 'number' ? a.cvss.score.toFixed(1) : ''
@@ -439,7 +442,9 @@ function renderAdvisoryRow(a) {
     </div>
     <div class="bundle-advisory-body">
       <div class="bundle-advisory-header">
-        <span class="bundle-advisory-title">${title}</span>
+        ${typeof a.details === 'string' && a.details.trim()
+          ? html`<button type="button" class="bundle-advisory-title" aria-haspopup="dialog" @click=${() => openAdvisoryDetailsDialog({ heading: title, markdown: a.details, isCurrent })}>${title}</button>`
+          : html`<span class="bundle-advisory-title">${title}</span>`}
         ${source || idEl !== nothing ? html`<span class="bundle-advisory-reference">
           ${source ? html`<span class="bundle-advisory-source" role="img" aria-label=${source.label}>${source.icon}</span>` : nothing}
           ${idEl}
@@ -454,7 +459,6 @@ function renderAdvisoryRow(a) {
         </div>
         ${cvssVector ? html`<div class="bundle-advisory-cvss-vector mono">${cvssVector}</div>` : nothing}
       </div>
-      ${typeof a.details === 'string' && a.details.trim() ? keyed(a, html`<advisory-details .markdown=${a.details} .url=${url}></advisory-details>`) : nothing}
     </div>
   </li>`
 }
