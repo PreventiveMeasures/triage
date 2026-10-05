@@ -3,18 +3,20 @@
 // but do not reserve slots or bands. A spatial grid bounds local repulsion work.
 import { stronglyConnected } from './matrix-model.js'
 
-export function layoutPackageDependencies(ids, importsOf, roots = [], { width = 1200, height = 800 } = {}) {
+export function layoutPackageDependencies(ids, importsOf, roots = [], { width = 1200, height = 800, cycleImportsOf = importsOf } = {}) {
   ids = [...new Set(ids)].toSorted()
   const known = new Set(ids)
   const links = new Map(ids.map((id) => [id, [...new Set(importsOf.get(id) ?? [])].filter((to) => to !== id && known.has(to)).toSorted()]))
+  const cycleLinks = new Map(ids.map(id => [id, new Set(cycleImportsOf.get(id) ?? [])]))
   const incoming = new Map(ids.map((id) => [id, []]))
   for (const [from, targets] of links) for (const to of targets) incoming.get(to).push(from)
-  const { groups, componentOf } = stronglyConnected(ids, links)
+  const { groups, componentOf } = stronglyConnected(ids, cycleLinks)
   const cycles = groups.filter((g) => g.length > 1)
   const cycleIds = new Set(cycles.flat())
   const targets = groups.map(() => new Set())
   const indegree = groups.map(() => 0)
   for (const [from, deps] of links) {for (const to of deps) {
+    if (!cycleLinks.get(from).has(to)) continue
     const a = componentOf.get(from), b = componentOf.get(to)
     if (a !== b && !targets[a].has(b)) { targets[a].add(b); indegree[b]++ }
   }}
@@ -69,7 +71,7 @@ export function layoutPackageDependencies(ids, importsOf, roots = [], { width = 
   })}
   const edges = []
   for (const [from, deps] of links) {for (const to of deps) {
-    edges.push({ from, to, cycle: cycleIds.has(from) && componentOf.get(from) === componentOf.get(to) })
+    edges.push({ from, to, cycle: cycleLinks.get(from).has(to) && cycleIds.has(from) && componentOf.get(from) === componentOf.get(to) })
   }}
   const springs = edges.map((e) => {
     const a = nodes.get(e.from), b = nodes.get(e.to)

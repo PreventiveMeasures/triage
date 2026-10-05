@@ -1,4 +1,5 @@
 import { buildPackageGraph } from './data.js'
+import { cycleImportsOf } from './cycle-imports.js'
 
 const cache = new WeakMap()
 const fileCache = new WeakMap()
@@ -15,7 +16,7 @@ export function dependencyNetwork(graph, packagesView) {
   for (const [from, targets] of importsOf) {
     for (const to of targets) directedEdges.push({ from, to })
   }
-  const network = { ...graph, importsOf, directedEdges, fileLevel: true }
+  const network = { ...graph, importsOf, cycleImportsOf: cycleImportsOf(graph), directedEdges, fileLevel: true }
   fileCache.set(graph, network)
   return network
 }
@@ -25,12 +26,15 @@ export function dependencyNetwork(graph, packagesView) {
 export function packageNetwork(graph) {
   if (cache.has(graph)) return cache.get(graph)
   const pg = buildPackageGraph(graph)
+  pg.cycleImportsOf = cycleImportsOf(graph, node => node.pkg)
   if (graph.layerRoots?.appImports?.length > 0) {
     if (!pg.byPkg.has('__own__')) {
       const node = { file: '__own__', pkg: '__own__', label: 'own source', fileCount: 0, size: null, totalIssues: 0, deg: 0, x: 0, y: 0 }
       pg.nodes.push(node); pg.byPkg.set(node.pkg, node)
     }
     pg.importsOf.set('__own__', [...new Set([...(pg.importsOf.get('__own__') ?? []), ...graph.layerRoots.appImports])].filter((id) => id !== '__own__' && pg.byPkg.has(id)))
+    pg.cycleImportsOf.set('__own__', new Set([...(pg.cycleImportsOf.get('__own__') ?? []), ...graph.layerRoots.appImports]
+      .filter(id => id !== '__own__' && pg.byPkg.has(id))))
   }
   pg.importedBy = new Map(pg.nodes.map((n) => [n.pkg, []]))
   pg.directedEdges = []

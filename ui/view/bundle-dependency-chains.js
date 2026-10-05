@@ -2,6 +2,7 @@ import { bundlePackageDirs } from './bundle-sources.js'
 import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
+import { countsTowardsCycles } from './graph/cycle-imports.js'
 
 function packageNode(id, info = {}) {
   const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(id) ? 'npm' : '')
@@ -12,7 +13,7 @@ function packageNode(id, info = {}) {
 // The full graph groups npm packages by name. Here the installation directory
 // is the identity: merging copies would invent routes between their importers.
 export function bundleDependencyChains(details, { packageKey, version, reason = '' }) {
-  const importedBy = new Map(), imports = new Map(), nodes = new Map()
+  const cycleImports = new Map(), importedBy = new Map(), imports = new Map(), nodes = new Map()
   const dirs = bundlePackageDirs(details) ?? new Map()
   const allPaths = new Map([...dirs.keys()].map(path => [path, path]))
   const selected = bundleReasons(details).get(reason)
@@ -20,16 +21,20 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   for (const dir of new Set([...paths.keys()].map(path => dirs.get(path)))) {
     nodes.set(dir, packageNode(dir, details.bundle.modules.get(dir)))
   }
-  const link = (from, to) => {
+  const link = (from, to, cycle = true) => {
     if (from === to) return
     if (!imports.has(from)) imports.set(from, new Set())
     if (!importedBy.has(to)) importedBy.set(to, new Set())
     imports.get(from).add(to)
     importedBy.get(to).add(from)
+    if (cycle) {
+      if (!cycleImports.has(from)) cycleImports.set(from, new Set())
+      cycleImports.get(from).add(to)
+    }
   }
   for (const [parent, targets] of bundleImportsAsMap(details)) {
     if (!paths.has(parent)) continue
-    for (const target of targets) if (paths.has(target)) link(dirs.get(parent), dirs.get(target))
+    for (const target of targets) if (paths.has(target)) link(dirs.get(parent), dirs.get(target), countsTowardsCycles(parent, target))
   }
   const { roots, appImports } = bundleLayerRoots(details, paths, path => dirs.get(path), dirs, allPaths)
   if (appImports.length > 0 && !nodes.has('.')) nodes.set('.', packageNode('.'))
@@ -54,26 +59,30 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
     }
   }
   const keptLinks = links => new Map([...keep].map(id => [id, new Set([...(links.get(id) ?? [])].filter(to => keep.has(to)))]))
-  return { nodes: new Map([...nodes].filter(([id]) => keep.has(id))), imports: keptLinks(imports), importedBy: keptLinks(importedBy), targets }
+  return { nodes: new Map([...nodes].filter(([id]) => keep.has(id))), imports: keptLinks(imports), cycleImports: keptLinks(cycleImports), importedBy: keptLinks(importedBy), targets }
 }
 
 // Collapse strongly connected packages before assigning rows. Cards stay at a
 // readable size; larger graphs scroll instead of shrinking names into dots.
 export function layoutDependencyChains(graph) {
   const ids = [...graph.nodes.keys()].toSorted()
-  const { groups, componentOf } = stronglyConnected(ids, graph.imports)
+  const cycleImports = graph.cycleImports ?? graph.imports
+  const { groups, componentOf } = stronglyConnected(ids, cycleImports)
   const depth = groups.map(() => 0), incoming = groups.map(() => 0), links = groups.map(() => new Set())
+  const cycleLinks = groups.map(() => new Set())
   for (const [from, targets] of graph.imports) {
     const a = componentOf.get(from)
     for (const to of targets) {
       const b = componentOf.get(to)
-      if (a !== b && !links[a].has(b)) { links[a].add(b); incoming[b]++ }
+      if (a === b) continue
+      links[a].add(b)
+      if (cycleImports.get(from)?.has(to) && !cycleLinks[a].has(b)) { cycleLinks[a].add(b); incoming[b]++ }
     }
   }
   const queue = groups.flatMap((_, i) => incoming[i] === 0 ? [i] : [])
   for (let i = 0; i < queue.length; i++) {
     const from = queue[i]
-    for (const to of links[from]) {
+    for (const to of cycleLinks[from]) {
       depth[to] = Math.max(depth[to], depth[from] + 1)
       if (--incoming[to] === 0) queue.push(to)
     }
@@ -90,8 +99,9 @@ export function layoutDependencyChains(graph) {
   let bypasses = 0
   const edges = links.flatMap((targets, from) => [...targets].map(to => {
     const a = boxes.get(from), b = boxes.get(to), x1 = a.x + 120, x2 = b.x + 120, y1 = a.y + a.height, y2 = b.y
-    if (depth[to] > depth[from] + 1) {
+    if (depth[to] !== depth[from] + 1) {
       // A direct import that skips a row must go around intervening cards.
+      // Manifest reads excluded from cycles can also point to an earlier row.
       const lane = width + 8 + (bypasses++ % 4) * 10
       return { from, to, path: `M${x1},${y1} C${x1},${y1 + 24} ${lane},${y1} ${lane},${y1 + 28} L${lane},${y2 - 28} C${lane},${y2} ${x2},${y2 - 28} ${x2},${y2 - 5}` }
     }

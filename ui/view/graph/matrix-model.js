@@ -2,6 +2,7 @@
 // Rows import columns. Expanded packages retain their external connections.
 import { orderCyclicGroup } from './matrix-order.js'
 import { pkgLabel } from '../bundle-pkg-of.js'
+import { countsTowardsCycles } from './cycle-imports.js'
 
 export function stronglyConnected(ids, links) {
   const known = new Set(ids), reverse = new Map(ids.map((id) => [id, []]))
@@ -40,7 +41,7 @@ export function stronglyConnected(ids, links) {
 }
 
 export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'structure', query = '', neighborhood = null, cyclesOnly = false } = {}) {
-  const byId = new Map(), fileRow = new Map()
+  const byId = new Map(), fileRow = new Map(), originalPaths = new Map()
   for (const file of graph.nodes) {
     const isFile = expanded.has(file.pkg)
     const id = `${isFile ? 'f' : 'p'}:${isFile ? file.file : file.pkg}`
@@ -54,8 +55,10 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     row.size += file.size ?? 0
     row.issues += file.totalIssues ?? 0
     fileRow.set(file.file, id)
+    originalPaths.set(file.file, file.origFile ?? file.file)
   }
   const cells = new Map(), incoming = new Set(), links = new Map([...byId.keys()].map((id) => [id, new Set()])), outgoing = new Set()
+  const cycleLinks = new Map([...byId.keys()].map(id => [id, new Set()]))
   let importCount = 0
   for (const [file, imports] of graph.importsOf) {
     const from = fileRow.get(file)
@@ -64,7 +67,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
       const to = fileRow.get(target)
       if (!to) continue
       if (!cells.has(from)) cells.set(from, new Map())
-      if (!cells.get(from).has(to)) cells.get(from).set(to, { from, to, count: 0, examples: [] })
+      if (!cells.get(from).has(to)) cells.get(from).set(to, { from, to, count: 0, cycleCount: 0, examples: [] })
       const cell = cells.get(from).get(to)
       cell.count++
       if (cell.examples.length < 80) cell.examples.push([file, target])
@@ -73,11 +76,15 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
       if (from !== to) { outgoing.add(from); incoming.add(to) }
       // A collapsed package's internal imports do not imply a cycle.
       if (from !== to || byId.get(from).file) links.get(from).add(to)
+      if (countsTowardsCycles(originalPaths.get(file), originalPaths.get(target))) {
+        cell.cycleCount++
+        if (from !== to || byId.get(from).file) cycleLinks.get(from).add(to)
+      }
     }
   }
   const ids = [...byId.keys()].toSorted()
-  const { groups, componentOf } = stronglyConnected(ids, links)
-  const cyclic = new Set(groups.flatMap((group) => group.length > 1 || links.get(group[0]).has(group[0]) ? group : []))
+  const { groups, componentOf } = stronglyConnected(ids, cycleLinks)
+  const cyclic = new Set(groups.flatMap((group) => group.length > 1 || cycleLinks.get(group[0]).has(group[0]) ? group : []))
   for (const row of byId.values()) { row.cyclic = cyclic.has(row.id); row.component = componentOf.get(row.id) }
   const appPackages = graph.ownSourcePackages ?? new Set(graph.layerRoots?.roots ?? [])
   const appRank = (row) => row.pkg === '__own__' ? 0 : appPackages.has(row.pkg) ? 1 : 2
@@ -99,7 +106,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
   }
   for (const [from, targets] of cells) {
     for (const cell of targets.values()) {
-      cell.cyclic = cyclic.has(from) && componentOf.get(from) === componentOf.get(cell.to)
+      cell.cyclic = cell.cycleCount > 0 && cyclic.has(from) && componentOf.get(from) === componentOf.get(cell.to)
         && (from !== cell.to || byId.get(from).file !== null)
     }
   }
