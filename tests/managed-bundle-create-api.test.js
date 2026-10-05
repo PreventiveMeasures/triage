@@ -6,6 +6,8 @@ import { createSession, endSession } from '../server-managed/session.ts'
 import * as builder from '../server-managed/bundle-build.ts'
 import { managedBundleEntry, managedBundleRoute } from '../ui/view/managed-bundle-navigation.js'
 import { managedRoutePath } from '../common/managed/routes.js'
+import { managedBundleViewChanged } from '../ui/view/managed-report-catalog.js'
+import { ManagedAppState } from '../ui/managed/state.js'
 
 let build
 mock.module('../server-managed/bundle-build.ts', { namedExports: { ...builder, buildRepositoryBundle: (...args) => build(...args) } })
@@ -91,6 +93,21 @@ test('creation returns the persisted slug when the shortened UUID collides', asy
   assert.equal(response.body.slug, stored.slug)
   const route = managedBundleRoute([], managedBundleEntry(response.body), null)
   assert.equal(managedRoutePath(route), `/manage/bundle/${stored.slug}`)
+})
+
+test('the real creation and catalogue responses keep the newly opened Manage bundle visible', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  const cache = new ManagedAppState()
+  const previous = await f.db.listTeamsForUser(f.session.userId)
+  cache.setReportCatalog(previous)
+  const response = await f.send()
+  assert.equal(response.status, 201)
+  const view = { currentView: 'bundles', currentManagedTeam: null, bundleDetails: { managedId: response.body.id },
+    bundles: (await f.db.listBundles(f.session.userId)).map(managedBundleEntry) }
+  const refreshed = await f.db.listTeamsForUser(f.session.userId)
+  const changed = cache.setReportCatalog(refreshed)
+  assert.ok(changed.has(`bundle:${response.body.id}`))
+  assert.equal(managedBundleViewChanged(view, previous, refreshed, changed), false)
 })
 
 test('creation rejects role, team, directory, CSRF, origin, and validation failures before building', async t => {
