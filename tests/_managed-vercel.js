@@ -23,6 +23,7 @@ export function sdkFixture({ compressDownloads = false } = {}) {
         for await (const part of bytes) parts.push(Buffer.from(part))
         bytes = Buffer.concat(parts)
       }
+      if (options?.allowOverwrite === false && objects.has(path)) throw new Error('Vercel Blob: This blob already exists')
       if (options?.ifMatch && (!objects.has(path) || etag(objects.get(path).bytes) !== options.ifMatch)) throw new BlobPreconditionFailedError()
       objects.set(path, { bytes, uploadedAt: new Date() })
       return { pathname: path, url: `https://private.invalid/${path}` }

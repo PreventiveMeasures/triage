@@ -19,6 +19,7 @@ mock.module('../server-common/vercel-blob.ts', { namedExports: { ...blobSdk, loa
 mock.module('../server-managed/static.ts', { namedExports: { loadManagedStatic: () => () => false } })
 const { openManagedStorage } = await import('../server-managed/storage.ts')
 const { createManagedApp } = await import('../server-managed/index.ts')
+const { openVercelObjectStorage } = await import('../server-managed/object-storage-vercel.ts')
 
 async function legacyFixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-maintenance-'))
@@ -29,10 +30,11 @@ async function legacyFixture(t) {
   const config = { dbPath: databasePath, neonUrl: 'postgres://fixture', blobToken: 'fixture', serverless: true, host: 'localhost' }
   const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']
   const legacy = await openManagedStorage(config)
+  const raw = await openVercelObjectStorage('fixture', sdk)
   try {
     for (const id of ids) {
       const body = Buffer.from(id)
-      await legacy.reportStore.put(id, body)
+      await raw.put(`reports/${id}`, body)
       await legacy.db.insertReport({ id, filename: 'report', contentType: 'text/plain', byteSize: body.length,
         sha256: createHash('sha256').update(body).digest('base64url'), uploadedBy: null, repoId: null }, Date.now())
     }

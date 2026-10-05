@@ -1,19 +1,26 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { diskStores } from './_managed-storage.js'
 import { managedCsv } from './_managed-csv.js'
 
 async function legacyDatabase(t) {
   const dir = await mkdtemp(join(tmpdir(), 'managed-report-migration-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   const path = join(dir, 'managed.sqlite')
-  const { reportStore: store } = await diskStores(t, dir)
+  // Seed the original disk format that existed alongside this legacy schema.
+  // Current production stores compress new reports, after schema upgrades finish.
+  const reportDir = join(dir, 'reports')
+  await mkdir(reportDir)
+  const store = {
+    put: (id, bytes) => writeFile(join(reportDir, id), bytes),
+    get: id => readFile(join(reportDir, id)),
+    delete: id => rm(join(reportDir, id)),
+  }
   const db = openSqliteManagedDb(path)
   const userId = await db.upsertUser({ githubUserId: 1, login: 'member', name: null, avatarUrl: null }, 100)
   await db.setUserRole(userId, 'triage')

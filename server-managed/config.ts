@@ -44,7 +44,7 @@ export interface ManagedConfig {
   githubAppSlug: string | null
   githubNewIssueLabels?: string
   // Max accepted size (bytes) for an uploaded report on the "Manage reports"
-  // page. Reports are findings dumps (JSON / markdown / CSV), small to a few MB.
+  // page, before storage compression (default 25 MiB).
   maxReportBytes: number
   // Max accepted size (bytes) for an uploaded bundle (sourcemap / stasis
   // archive). Bundles run larger than reports, so a higher cap (default 200 MiB).
@@ -135,7 +135,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,
     githubNewIssueLabels: env['GITHUB_NEW_ISSUE_LABELS'] ?? '',
-    maxReportBytes: intEnv('MAX_REPORT_BYTES', 10_485_760, 1, 104_857_600),
+    maxReportBytes: intEnv('MAX_REPORT_BYTES', 26_214_400, 1, 104_857_600),
     maxBundleBytes: intEnv('MAX_BUNDLE_BYTES', 209_715_200, 1, MAX_UPLOAD_BYTES),
     triageHistoryLimit: intEnv('TRIAGE_HISTORY_LIMIT', 0, 0, 1_000_000_000),
   }

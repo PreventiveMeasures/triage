@@ -469,6 +469,22 @@ rows actually removed.
 If report references change during an annotation-overlap scan, removal returns
 409 `repository-changed` without deleting data. Refresh and retry the removal.
 
+# Report storage and upload limits
+
+Report uploads accept up to 25 MiB by default. `MAX_REPORT_BYTES` changes this
+limit, up to 100 MiB. The limit and displayed byte size describe the original
+file, before storage compression.
+
+New report bodies are compressed with Brotli quality 9, then encrypted when
+managed storage encryption is enabled. Both disk and private Blob storage use
+`reports/:id.br`. Reads decrypt and decompress in memory; downloads preserve
+the original filename and bytes, and deduplication hashes the original upload.
+Existing reports at `reports/:id` convert on their first read: the server
+compresses their original bytes, reuses their existing encryption key when
+enabled, saves `reports/:id.br`, and removes the old copy. There is no separate
+compression migration job. Encryption maintenance also understands the stored
+Brotli representation and verifies its original upload hash after decompression.
+
 # Repeated imports
 
 Uploading identical report or bundle content reuses its stored ID, even when
