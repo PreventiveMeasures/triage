@@ -3262,6 +3262,22 @@ body.report-fullscreen {
   font-weight: 500;
   overflow-wrap: anywhere;
 }
+.bundle-advisory-reference {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  flex-shrink: 0;
+}
+.bundle-advisory-source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  user-select: none;
+}
+.bundle-advisory-source > svg { width: 14px; height: 14px; }
 /* Two-row body — meta chips on the left, CVSS vector mirroring
    the GHSA chip's right alignment on the second row so the right
    column reads as a tidy stack ([GHSA ↗] / [CVSS:3.1/AV:N/…]).
