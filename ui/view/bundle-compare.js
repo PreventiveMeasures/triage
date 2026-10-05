@@ -231,10 +231,10 @@ class BundleCompare extends LitElement {
   }
 
   _fileRow(path, label, kind, sizeTpl) {
-    const inner = html`<span class="bundle-compare-row-path mono">${label}</span>${sizeTpl}`
+    const inner = html`<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${path}>${label}</span>${sizeTpl}`
     return kind === 'removed' && bundleFileKinds(this.details).get(path) !== 'resource'
-      ? html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" data-bundle-view-source=${path} data-tooltip=${path}>${inner}</button></li>`
-      : html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" data-tooltip=${path} @click=${() => this._openFile(path, kind)}>${inner}</button></li>`
+      ? html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" data-bundle-view-source=${path}>${inner}</button></li>`
+      : html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path, kind)}>${inner}</button></li>`
   }
 
   // Card shell shared by every file / package / dependency group: the
