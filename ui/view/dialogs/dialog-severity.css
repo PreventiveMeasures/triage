@@ -14,9 +14,10 @@
 
   &.sev-critical      { background: var(--critical); }
   &.sev-high          { background: var(--high); }
-  &.sev-medium        { background: var(--medium); }
+  &.sev-medium, &.sev-moderate { background: var(--medium); }
   &.sev-low           { background: var(--low); }
   &.sev-high_bug      { background: var(--high-bug); }
   &.sev-bug           { background: var(--bug); }
-  &.sev-informational { background: var(--info); }
+  &.sev-informational, &.sev-info { background: var(--info); }
+  &.sev-unrated { background: var(--low); color: var(--badge-low-text); }
 }

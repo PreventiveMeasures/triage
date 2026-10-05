@@ -1,0 +1,22 @@
+dialog {
+  width: min(94vw, 80rem); max-width: none; max-height: 90dvh;
+  margin: auto; padding: 0; overflow: hidden;
+}
+dialog[open] { display: flex; flex-direction: column; }
+header {
+  display: flex; align-items: start; gap: 1rem; flex-shrink: 0;
+  padding: .8rem 1rem; border-bottom: 1px solid var(--border);
+}
+header h3 { display: flex; align-items: baseline; gap: .6rem; flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+header h3 > span:last-child { min-width: 0; }
+header button {
+  flex-shrink: 0; border: 0; background: transparent; color: var(--muted);
+  font-family: inherit; font-size: 1.4rem; line-height: 1; padding: 0 .25rem;
+}
+header button:hover { color: var(--text); }
+.advisory-description {
+  min-height: 0; padding: 1rem; overflow: auto; overscroll-behavior: contain;
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; line-height: 1.6;
+}
+a { color: var(--accent); }
+button:focus-visible, .advisory-description:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

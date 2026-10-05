@@ -1115,7 +1115,7 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
 
 // Published dependency advisories require security access, independently of access to
 // unpublished dependency findings. Managers retain their normal bundle access.
-async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, reason: string, repoAdvisories: boolean) {
+async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, reason: string, repoAdvisories: boolean, details: boolean) {
   const authorize = async () => {
     const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id, teamId)
     if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
@@ -1147,7 +1147,7 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
       ...init, signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
     })) : null
     if (res.destroyed || (needsGithub && !(await authorize()))) return
-    const result = await fetchBundleAdvisories(inventory.packages, controller.signal, { debug: deps.config.debug, repoAdvisories, githubToken })
+    const result = await fetchBundleAdvisories(inventory.packages, controller.signal, { debug: deps.config.debug, repoAdvisories, details, githubToken })
     if (res.destroyed || !(await authorize())) return
     // Return just inventory and public advisories, never source or report data.
     sendJson(res, result.status, result.status === 200 ? { ...inventory, advisories: result.body } : result.body)
@@ -2214,7 +2214,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const bundleAdvisories = /^\/api\/bundles\/([a-f\d-]{36})\/advisories$/iu.exec(path)
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true')
+      await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
       return
     }
     const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download)$/iu.exec(path)
