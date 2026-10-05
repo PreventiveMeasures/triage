@@ -15,6 +15,7 @@ import { sourceNpmIcon } from './source-file-icon.js'
 import osvIcon from './osv-icon.svg'
 import './bundle-scope-selector.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
+import { openDependencyChainsDialog } from './dialogs/dependency-chains-dialog.js'
 
 const ADVISORY_SOURCES = new Map([
   ['registry', { label: 'Source: npm registry', icon: sourceNpmIcon }],
@@ -363,12 +364,12 @@ function renderAdvisoriesBody(details) {
       <ul>${entry.skipped.map(pkg => html`<li><span class="mono">${packageKey(pkg)}@${pkg.version}</span>: ${pkg.because}</li>`)}</ul>
     </section>` : nothing}
     <ul class="bundle-advisories-list">
-      ${sections.map(([pkg, list]) => renderAdvisorySection(pkg, list, entry.query.get(pkg), () => advisoryCache(details).get(cacheKey(details))?.byPackage === entry.byPackage))}
+      ${sections.map(([pkg, list]) => renderAdvisorySection(details, pkg, list, entry.query.get(pkg), () => advisoryCache(details).get(cacheKey(details))?.byPackage === entry.byPackage))}
     </ul>
   </div>`
 }
 
-function renderAdvisorySection(pkg, advisories, queriedVersions, isCurrent) {
+function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurrent) {
   const sorted = [...advisories].toSorted((a, b) => {
     const r = severityRank(a.severity) - severityRank(b.severity)
     if (r !== 0) return r
@@ -379,7 +380,9 @@ function renderAdvisorySection(pkg, advisories, queriedVersions, isCurrent) {
     <div class="bundle-advisories-package">
       <span class="bundle-advisories-section-name">${pkg}</span>
       ${versions.length > 0 ? html`<span class="bundle-advisories-section-versions">
-        ${versions.join(', ')}
+        ${versions.map(version => html`<button type="button" class="bundle-advisories-version" aria-haspopup="dialog"
+          aria-label=${`Why is ${pkg}@${version} here?`}
+          @click=${() => openDependencyChainsDialog({ details, packageKey: pkg, version, reason: advisoryScope(details).selected, isCurrent })}>${version}</button>`)}
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">
