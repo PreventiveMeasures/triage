@@ -15,3 +15,5 @@ minimumReleaseAgeExclude:
   - "@chalker/*"
   - "@preventive/*"
   - "@rray/*"
+
+modulesCacheMaxAge: 0
