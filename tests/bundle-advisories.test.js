@@ -34,8 +34,10 @@ test('managed advisories render separate ecosystems, unrated RustSec records, CV
     packages: [{ ecosystem: 'cargo', name: 'log', versions: ['0.4.22'] }, { ecosystem: 'npm', name: 'log', versions: ['1.0.0'] }],
     advisories: [
       { ecosystem: 'cargo', name: 'log', source: 'osv', id: 'RUSTSEC-2026-0001', aliases: [], cwe: [],
+        url: 'https://osv.dev/vulnerability/RUSTSEC-2026-0001',
         informational: 'unmaintained', versions: ['0.4.22'] },
       { ecosystem: 'npm', name: 'log', source: 'registry', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh',
+        url: 'https://github.com/advisories/GHSA-2345-6789-cfgh',
         title: 'npm vulnerability', severity: 'high', cvss: 8.1, cvssVector: 'CVSS:3.1/AV:N/AC:L',
         range: '<2.0.0', aliases: [], cwe: ['CWE-79'], versions: ['1.0.0'] },
     ],
@@ -49,6 +51,40 @@ test('managed advisories render separate ecosystems, unrated RustSec records, CV
   assert.match(text, /https:\/\/github.com\/advisories\/GHSA-2345-6789-cfgh/u)
   assert.match(text, /Matches <span class="mono">0\.4\.22<\/span>/u)
   assert.match(text, /2 advisories\s+across 2 of 2 packages/u)
+})
+
+test('advisory links preserve upstream URLs and logos identify the source independently of the destination', async () => {
+  const details = { managedId: 'advisory-origins', integrity: 'advisory-origins', kind: 'stasis' }
+  const ghsa = 'GHSA-2345-6789-cfgh'
+  const rows = [
+    { source: 'registry', url: `https://github.com/advisories/${ghsa}`, label: 'Source: npm registry' },
+    { source: 'repository', url: `https://github.com/org/dep/security/advisories/${ghsa}`, label: 'Source: GitHub repository' },
+    { source: 'osv', url: `https://github.com/advisories/${ghsa}`, label: 'Source: OSV' },
+    { source: 'osv', url: 'https://osv.dev/vulnerability/RUSTSEC-2026-0001', label: 'Source: OSV' },
+  ]
+  result = { packages: [], advisories: rows.map((row, i) => ({ ecosystem: 'npm', name: `dep-${i}`, id: ghsa, ghsa,
+    title: `Advisory ${i}`, severity: 'high', source: row.source, url: row.url })) }
+  await ensureBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details))
+  const rendered = text.match(/<li class="bundle-advisory-row">.*?<\/li>/gsu)
+  assert.equal(rendered.length, rows.length)
+  for (const [i, row] of rows.entries()) {
+    assert.ok(rendered[i].includes(`href=${row.url}`), 'use the supplied URL unchanged')
+    assert.ok(rendered[i].includes(`role="img" aria-label=${row.label} data-tooltip=${row.label}`))
+  }
+  assert.doesNotMatch(text, /\btitle=/u)
+})
+
+test('missing or unsafe upstream URLs never produce synthesized advisory links', async () => {
+  for (const [i, url] of [undefined, 'javascript:alert(1)'].entries()) {
+    const details = { managedId: `missing-url-${i}`, integrity: `missing-url-${i}`, kind: 'stasis' }
+    result = { packages: [], advisories: [{ ecosystem: 'npm', name: 'dep', source: 'registry', id: 'GHSA-2345-6789-cfgh',
+      ghsa: 'GHSA-2345-6789-cfgh', title: 'Advisory without a safe link', severity: 'high', url }] }
+    await ensureBundleAdvisories(details, () => {})
+    const text = renderText(renderBundleAdvisoriesTab(details))
+    assert.match(text, /Source: npm registry/u)
+    assert.doesNotMatch(text, /<a class="bundle-advisory-ghsa"/u)
+  }
 })
 
 test('managed advisory view needs neither consent nor bundle contents or module metadata', async () => {
@@ -195,6 +231,7 @@ test('local npm rows retain the GHSA link instead of displaying the numeric regi
   await ensureBundleAdvisories(details, () => {})
   const text = renderText(renderBundleAdvisoriesTab(details))
   assert.match(text, />GHSA-2345-6789-cfgh<svg/u)
+  assert.match(text, /Source: npm registry/u)
   assert.doesNotMatch(text, />123<svg/u)
 })
 

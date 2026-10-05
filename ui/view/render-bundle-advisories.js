@@ -3,12 +3,22 @@
 // Keep results in memory, scoped to the current managed identity and teams.
 
 import { html, nothing } from 'lit'
+import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
+import { GITHUB_ICON_SVG } from './icons.js'
+import { sourceNpmIcon } from './source-file-icon.js'
+import osvIcon from './osv-icon.svg'
 import './bundle-scope-selector.js'
+
+const ADVISORY_SOURCES = new Map([
+  ['registry', { label: 'Source: npm registry', icon: sourceNpmIcon }],
+  ['repository', { label: 'Source: GitHub repository', icon: unsafeHTML(GITHUB_ICON_SVG) }],
+  ['osv', { label: 'Source: OSV', icon: osvIcon }],
+])
 
 const localCache = new Map()
 let managedCache = new Map(), managedScope = []
@@ -98,18 +108,17 @@ const packageKey = pkg => pkg.ecosystem === 'npm' ? pkg.name : `${pkg.ecosystem}
 function managedAdvisory(row) {
   return {
     ...row, title: row.title || row.id, severity: row.severity ?? 'unknown',
-    url: row.ghsa ? `https://github.com/advisories/${row.ghsa}`
-      : row.source === 'osv' ? `https://osv.dev/vulnerability/${encodeURIComponent(row.id)}` : null,
     cvss: { score: row.cvss, vectorString: row.cvssVector }, vulnerable_versions: row.range,
   }
 }
 
 // Managed responses are flat rows; local and older managed responses are keyed by package.
 function groupAdvisories(data) {
-  const groups = Array.isArray(data) ? Map.groupBy(data.map(managedAdvisory), packageKey) : new Map(Object.entries(data ?? {}))
+  const managed = Array.isArray(data)
+  const groups = managed ? Map.groupBy(data.map(managedAdvisory), packageKey) : new Map(Object.entries(data ?? {}))
   for (const [name, rows] of groups) {
     const valid = Array.isArray(rows) ? rows.filter(row => row && typeof row.title === 'string' && typeof row.severity === 'string') : []
-    if (valid.length > 0) groups.set(name, valid)
+    if (valid.length > 0) groups.set(name, managed ? valid : valid.map(row => ({ ...row, source: 'registry' })))
     else groups.delete(name)
   }
   return groups
@@ -406,6 +415,7 @@ function renderAdvisoryRow(a) {
   const matched = Array.isArray(a.versions) ? a.versions.filter(version => typeof version === 'string') : []
   const url = typeof a.url === 'string' && /^https?:\/\//iu.test(a.url) ? a.url : null
   const advisoryId = a.ghsa ?? ghsaIdFrom(url) ?? (typeof a.id === 'string' ? a.id : null)
+  const source = ADVISORY_SOURCES.get(a.source)
   const cwes = Array.isArray(a.cwe) ? a.cwe.filter((c) => typeof c === 'string') : []
   // The ID is the canonical link to the advisory record.
   const idEl = advisoryId && url
@@ -419,7 +429,10 @@ function renderAdvisoryRow(a) {
     <div class="bundle-advisory-body">
       <div class="bundle-advisory-header">
         <span class="bundle-advisory-title">${title}</span>
-        ${idEl}
+        ${source || idEl !== nothing ? html`<span class="bundle-advisory-reference">
+          ${source ? html`<span class="bundle-advisory-source" role="img" aria-label=${source.label} data-tooltip=${source.label}>${source.icon}</span>` : nothing}
+          ${idEl}
+        </span>` : nothing}
       </div>
       <div class="bundle-advisory-subrow">
         <div class="bundle-advisory-meta">
