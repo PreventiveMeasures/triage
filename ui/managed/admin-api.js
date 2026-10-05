@@ -154,11 +154,12 @@ export async function uploadReport(file, csrfToken, repoId = null, directory = '
   if (!res.ok) {
     if (res.status === 413) throw new Error('too large')
     if (res.status === 403) throw new Error('choose a repository and directory within your team access')
-    let detail = ''
-    try {
-      const body = await res.json()
-      if (body?.error === 'repo-not-connected' && typeof body.repo === 'string') detail = `: ${body.repo} is not connected`
-    } catch {}
+    const body = await res.json().catch(() => null)
+    if (body?.error === 'invalid-report') {
+      throw new Error(typeof body.reason === 'string' && body.reason
+        ? `This file is not a report: ${body.reason}` : 'This file is not a recognized report.')
+    }
+    const detail = body?.error === 'repo-not-connected' && typeof body.repo === 'string' ? `: ${body.repo} is not connected` : ''
     throw new Error(`HTTP ${res.status}${detail}`)
   }
   return res.json()

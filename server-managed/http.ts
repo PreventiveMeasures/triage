@@ -870,7 +870,11 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.json')
   const parsed = readManagedReport(bytes.toString('utf8'), filename)
-  const repoGithub = parsed.data == null ? null : reportRepoGithub(parsed.data)
+  if (parsed.data == null) {
+    sendJson(res, 400, { error: 'invalid-report', reason: parsed.reason ?? 'Unrecognized report format' })
+    return
+  }
+  const repoGithub = reportRepoGithub(parsed.data)
   const repoEmbedded = repoGithub != null
   const rawHeaderDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
   let headerDirectory = rawHeaderDirectory
@@ -881,7 +885,7 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const normalizedDirectory = normalizeTeamPath(requestedDirectory)
   if (!normalizedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
   const directory = normalizedDirectory.path ?? ''
-  const analyzer = parsed.data != null && typeof parsed.data.source === 'string' ? parsed.data.source : null
+  const analyzer = typeof parsed.data.source === 'string' ? parsed.data.source : null
   const selected = await deps.db.listSelectedRepos()
   let matchedRepo = repoGithub == null ? null : selected.find((repo) => repo.fullName.toLocaleLowerCase() === repoGithub.toLocaleLowerCase())
   if (repoGithub != null && matchedRepo == null) { sendJson(res, 400, { error: 'repo-not-connected', repo: repoGithub }); return }
