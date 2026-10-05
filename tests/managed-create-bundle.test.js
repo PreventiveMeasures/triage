@@ -108,7 +108,7 @@ test('bundle conditions default to Node.js and changes preserve selected files a
   assert.equal(page._commit, commit)
 })
 
-test('creation submits pinned entries and conditions once, and reports successful storage', async () => {
+test('creation submits pinned entries and conditions once, and stays busy while opening the stored bundle', async () => {
   const page = new ManagedCreateBundle()
   page._repoId = 1
   page._commit = commit
@@ -128,6 +128,18 @@ test('creation submits pinned entries and conditions once, and reports successfu
   assert.equal(page._building, false)
   assert.equal(events[0].type, 'bundle-created')
   assert.deepEqual(events[0].detail, result)
+  await setImmediate()
+  const view = page.render()
+  assert.equal(view.values[view.strings.findIndex(string => string.includes('?inert='))], true, 'the form stays inert after creation succeeds')
+  assert.equal(view.values[view.strings.findIndex(string => string.includes('slot="actions"'))], true, 'the create button stays disabled while the bundle loads')
+  assert.ok(view.values.includes('Opening…'))
+  const status = templates(view).find(template => template.strings.some(string => string.includes('class="message" role="status">')))
+  assert.ok(status.values.includes('Opening bundle…'))
+  await page.buildBundle()
+  assert.equal(calls.length, 1, 'a second activation during navigation cannot recreate the bundle')
+  page.disconnectedCallback()
+  const detached = page.render()
+  assert.equal(detached.values[detached.strings.findIndex(string => string.includes('?inert='))], false)
 })
 
 test('creation preserves selections after failures and cancels when the page detaches', async () => {
@@ -139,6 +151,9 @@ test('creation preserves selections after failures and cancels when the page det
   await page.buildBundle()
   assert.equal(page._buildError, 'Build failed')
   assert.deepEqual([...page._selected], ['entry.js'])
+  const view = page.render()
+  assert.equal(view.values[view.strings.findIndex(string => string.includes('?inert='))], false)
+  assert.equal(view.values[view.strings.findIndex(string => string.includes('slot="actions"'))], false, 'failed creation remains retryable')
   let finish, signal
   page.createBundle = (_input, value) => { signal = value; return new Promise(resolve => { finish = resolve }) }
   page.dispatchEvent = () => assert.fail('detached creation must not navigate')
