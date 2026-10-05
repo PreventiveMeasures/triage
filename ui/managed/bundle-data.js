@@ -25,7 +25,7 @@ async function requestBundle(id, part, signal) {
   return data
 }
 export function fetchBundleMetadata(id, { signal } = {}) {
-  return managedAppState.load(`bundle-metadata:${id}`, 'bundle metadata', requestSignal => requestBundle(id, 'metadata', requestSignal), { signal })
+  return managedAppState.load(`bundle-metadata:${id}`, 'bundle metadata', requestSignal => requestBundle(id, 'metadata', requestSignal), { signal, retryInvalidated: true })
 }
 
 // The location editor handles failures inline. Its reference read must stop

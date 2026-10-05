@@ -1,0 +1,219 @@
+import assert from 'node:assert/strict'
+import { setImmediate } from 'node:timers/promises'
+import { beforeEach, mock, test } from 'node:test'
+import { Bundle } from '@exodus/stasis-core/bundle'
+import { createBundleMetadata } from '../common/bundle-metadata.js'
+import { managedRouteForIds, resolveManagedRoute } from '../common/managed/routes.js'
+import { managedAppState } from '../ui/managed/state.js'
+import { fetchBundleContents, fetchBundleMetadata } from '../ui/managed/bundle-data.js'
+import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
+import { createManagedHistory } from '../ui/view/managed-history.js'
+import { beginViewNavigation } from '../ui/view/view-navigation.js'
+import { browserAt } from './_managed-browser.js'
+
+const notices = [], state = {}
+let managed = true
+mock.module('../client/index.js', { namedExports: {
+  state, isManagedUiMode: () => managed, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
+  readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
+} })
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleContents, fetchBundleMetadata } })
+mock.module('../ui/view/render.js', { namedExports: { render() {} } })
+mock.module('../ui/view/toast.js', { namedExports: { showToast() {} } })
+const { openManagedBundle } = await import('../ui/view/managed-bundle-open.js')
+const { ManagedCreateBundle } = await import('../ui/managed/create-bundle.js')
+
+const bundle = { id: 'created', slug: 'created', integrity: 'sha512-created', filename: 'repo.aaaaaaa.stasis.code.br', byteSize: 100, repoId: 1 }
+const team = key => ({ id: 'team', slug: 'team', cacheKey: key, reports: [], bundles: [bundle] })
+const metadata = await createBundleMetadata({ integrity: bundle.integrity, kind: 'stasis', size: bundle.byteSize,
+  bundle: new Bundle({ entries: new Set(['index.js']),
+    modules: new Map([['.', { name: 'app', version: '1', files: { 'index.js': 'export default 1' } }]]),
+    formats: new Map([['index.js', 'module']]),
+  }) })
+
+beforeEach(t => {
+  managed = true
+  beginViewNavigation()
+  managedAppState.reset()
+  managedAppState.setSession({ id: 'user', role: 'manage' })
+  Object.assign(state, { currentView: 'manage-bundles', bundleDetails: null, bundles: [], currentManagedTeam: null })
+  notices.length = 0
+  t.mock.method(managedAppState, 'notify', message => notices.push(message))
+  globalThis.document = {
+    body: { classList: { remove() {} } }, querySelector: () => null,
+  }
+  t.after(() => managedAppState.reset())
+})
+
+async function fixture(t) {
+  const requests = []
+  t.mock.method(globalThis, 'fetch', (url, { signal }) => {
+    assert.equal(url, `/api/bundles/${bundle.id}/metadata`)
+    const request = { ...Promise.withResolvers(), signal }
+    requests.push(request)
+    const abort = () => request.reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    return request.promise.finally(() => signal.removeEventListener('abort', abort))
+  })
+  let teams = []
+  managedAppState.setReportCatalog(teams)
+  const { browser } = browserAt('/manage/bundle?createRepo=1')
+  const history = createManagedHistory(browser)
+  const landings = []
+  await history.start(async (route, isCurrent) => {
+    beginViewNavigation()
+    if (route.view === 'home') {
+      landings.push(route)
+      state.currentView = 'home'; state.bundleDetails = null
+      return true
+    }
+    if (route.view !== 'bundles') { state.currentView = route.view; return true }
+    const resolved = resolveManagedRoute(route, teams, [bundle])
+    if (!resolved) return false
+    const entries = resolved.teamId == null ? [managedBundleEntry(bundle)] : managedTeamBundleEntries(teams)
+    if (!await openManagedBundle(resolved, entries, isCurrent, () => {})) return false
+    return managedRouteForIds({ ...resolved, bundleTab: state.bundleDetailsTab }, teams, [bundle])
+  })
+  let opening
+  const page = new ManagedCreateBundle()
+  page._repoId = 1; page._commit = 'a'.repeat(40); page._selected = new Set(['index.js'])
+  page.createBundle = () => managedAppState.mutate(() => Promise.resolve(bundle), ['bundles', 'bundle-metadata'])
+  page.dispatchEvent = event => {
+    assert.equal(event.type, 'bundle-created')
+    const entry = managedBundleEntry(event.detail)
+    const owner = teams.find(candidate => candidate.bundles.some(candidateBundle => candidateBundle.id === entry.managedId))
+    opening = history.navigate(managedBundleRoute(teams, entry, owner?.id))
+    return true
+  }
+  const refresh = key => {
+    teams = [team(key)]
+    return managedAppState.setReportCatalog(teams)
+  }
+  await page.buildBundle()
+  await setImmediate()
+  assert.equal(page._opening, true)
+  assert.equal(requests.length, 1)
+  return { browser, history, landings, opening, page, refresh, requests }
+}
+
+test('creation opens the bundle when its first team refresh cancels the metadata request during Opening', async t => {
+  const f = await fixture(t)
+  assert.ok(f.refresh('first').has('bundle:created'))
+  assert.equal(f.requests[0].signal.aborted, true)
+  await setImmediate()
+  assert.deepEqual(f.landings, [])
+  assert.equal(f.requests.length, 2, 'Opening must restart the invalidated read rather than navigate to landing')
+  assert.equal(f.page._opening, true)
+  f.requests[1].resolve(Response.json(metadata))
+  assert.equal(await f.opening, true)
+  assert.equal(state.currentView, 'bundles')
+  assert.equal(state.bundleDetails.managedId, bundle.id)
+  assert.equal(state.bundleDetailsTab, 'overview')
+  assert.equal(f.browser.location.pathname, '/manage/bundle/created')
+  assert.deepEqual(f.landings, [])
+  assert.deepEqual(notices, [])
+})
+
+test('repeated grant refreshes during Opening restart authorization until metadata is ready', async t => {
+  const f = await fixture(t)
+  for (const key of ['first', 'second', 'third']) {
+    f.refresh(key)
+    await setImmediate()
+    assert.deepEqual(f.landings, [])
+    assert.equal(f.page._opening, true)
+  }
+  assert.equal(f.requests.length, 4)
+  f.requests[3].resolve(Response.json(metadata))
+  assert.equal(await f.opening, true)
+  assert.equal(f.browser.location.pathname, '/manage/bundle/created')
+  assert.deepEqual(notices, [])
+})
+
+test('Opening shares a fresh metadata read already started by another consumer after invalidation', async t => {
+  const f = await fixture(t)
+  f.refresh('first')
+  const shared = fetchBundleMetadata(bundle.id)
+  await setImmediate()
+  assert.equal(f.requests.length, 2, 'the restarted read must join the current cache entry')
+  f.requests[1].resolve(Response.json(metadata))
+  assert.equal(await shared, managedAppState.read(`bundle-metadata:${bundle.id}`))
+  assert.equal(await f.opening, true)
+  assert.deepEqual(f.landings, [])
+})
+
+test('a late response body from an invalidated request cannot supply the opened bundle', async t => {
+  const f = await fixture(t)
+  const body = Promise.withResolvers(), reading = Promise.withResolvers()
+  f.requests[0].resolve({ ok: true, json: () => { reading.resolve(); return body.promise } })
+  await reading.promise
+  f.refresh('first')
+  body.resolve({ ...metadata, integrity: 'outdated' })
+  await setImmediate()
+  assert.equal(f.requests.length, 2)
+  assert.deepEqual(f.landings, [])
+  f.requests[1].resolve(Response.json(metadata))
+  assert.equal(await f.opening, true)
+  assert.equal(state.bundleDetails.integrity, bundle.integrity)
+})
+
+test('leaving during invalidation or a restarted metadata read wins over the old Opening navigation', async t => {
+  for (const afterRetry of [false, true]) {
+    await t.test(String(afterRetry), async st => {
+      const f = await fixture(st)
+      f.refresh('first')
+      if (afterRetry) await setImmediate()
+      assert.equal(await f.history.navigate({ view: 'manage' }), true)
+      if (afterRetry) f.requests[1].resolve(Response.json(metadata))
+      assert.equal(await f.opening, false)
+      assert.equal(f.requests.length, afterRetry ? 2 : 1)
+      assert.equal(state.currentView, 'manage')
+      assert.equal(state.bundleDetails, null)
+      assert.equal(f.browser.location.pathname, '/manage')
+      assert.deepEqual(f.landings, [])
+      assert.deepEqual(notices, [])
+    })
+  }
+})
+
+test('account and role changes during Opening never retry with a different managed identity', async t => {
+  for (const session of [null, { id: 'other', role: 'manage' }, { id: 'user', role: 'view' }]) {
+    await t.test(JSON.stringify(session), async st => {
+      const f = await fixture(st)
+      f.refresh('first')
+      managedAppState.setSession(session)
+      f.history.reset()
+      assert.equal(await f.opening, false)
+      assert.equal(f.requests.length, 1)
+      assert.equal(state.bundleDetails, null)
+      assert.deepEqual(f.landings, [])
+      assert.deepEqual(notices, [])
+    })
+  }
+})
+
+test('confirmed metadata failures after catalogue invalidation fail once without an endless retry', async t => {
+  for (const status of [401, 403, 404, 422, 503]) {
+    await t.test(String(status), async st => {
+      const f = await fixture(st)
+      f.refresh('first')
+      await setImmediate()
+      assert.equal(f.requests.length, 2)
+      f.requests[1].resolve(new Response('', { status }))
+      assert.equal(await f.opening, false)
+      assert.equal(f.requests.length, 2)
+      assert.equal(state.bundleDetails, null)
+      assert.equal(f.browser.location.pathname, '/')
+      assert.equal(f.landings.length, 1)
+      assert.deepEqual(notices, [`Couldn't refresh bundle metadata: Bundle metadata request failed (${status})`])
+    })
+  }
+})
+
+test('an unrelated transport cancellation does not restart the same metadata resource', async t => {
+  const f = await fixture(t)
+  f.requests[0].reject(new DOMException('Transport aborted', 'AbortError'))
+  assert.equal(await f.opening, false)
+  assert.equal(f.requests.length, 1)
+  assert.equal(f.landings.length, 1)
+  assert.equal(state.bundleDetails, null)
+})
