@@ -598,7 +598,7 @@ class BundleTreemap extends LitElement {
       ${current ? html`<span class="bundle-treemap-crumb-sep" aria-hidden="true">›</span><span
         class="bundle-treemap-crumb-current"
         aria-current="location"
-        title=${current.path}
+        data-tooltip=${current.path}
       >${current.name}</span>` : ''}
     </nav>`
   }

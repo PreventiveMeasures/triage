@@ -70,6 +70,9 @@ export class SearchableSelector extends LitElement {
 
   connectedCallback() {
     super.connectedCallback()
+    // This component also ships in the lazy managed bundle. Ask the host
+    // to wire its shared tooltip instance instead of bundling another one.
+    this.dispatchEvent(new CustomEvent('tooltip-root-connected', { bubbles: true, composed: true }))
     window.addEventListener('resize', this._onViewport)
     window.addEventListener('scroll', this._onViewport, true)
   }
@@ -96,7 +99,7 @@ export class SearchableSelector extends LitElement {
       </div><div class="body">
         ${choices.showFacets ? html`<div class="facets" role="group" aria-label=${this.facetLabel}>
           <button type="button" class="org" aria-pressed=${choices.activeFacet == null} @click=${() => this._filterFacet(null)}><span class="name">${this.allFacetsLabel}</span><span class="count">${choices.total}</span></button>
-          ${choices.facets.map(org => html`<button type="button" class="org" title=${org.name} aria-pressed=${choices.activeFacet === org.value} @click=${() => this._filterFacet(org.value)}><span class="name">${org.name}</span><span class="count">${org.count}</span></button>`)}
+          ${choices.facets.map(org => html`<button type="button" class="org" data-tooltip=${org.name} aria-pressed=${choices.activeFacet === org.value} @click=${() => this._filterFacet(org.value)}><span class="name">${org.name}</span><span class="count">${org.count}</span></button>`)}
         </div>` : nothing}
         <div class="results" id="selector-options" role="listbox" aria-label=${this.optionsLabel}>
           ${choices.pinned.length > 0 ? html`<div class="pinned">${choices.pinned.map(option => this._option(option, false, tabValue))}</div>` : nothing}
@@ -111,10 +114,10 @@ export class SearchableSelector extends LitElement {
   }
 
   optionIcon(option) { return option.initials ? html`<span class="avatar" aria-hidden="true">${option.initials}</span>` : nothing }
-  optionTitle(option) { return option.label }
+  optionTooltip(option) { return option.label }
 
   _option(option, grouped, tabValue) {
-    return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} title=${this.optionTitle(option)} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
+    return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} data-tooltip=${this.optionTooltip(option)} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name">${option.displayLabel ?? (grouped ? option.name : option.label)}</span>${option.secondary ? html`<span class="secondary">${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
     </button>`
   }

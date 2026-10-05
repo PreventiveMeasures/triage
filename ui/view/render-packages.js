@@ -402,7 +402,7 @@ function renderPackageRow(row, selectedPkg, selectedVer) {
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
     </div>
     ${chips.length > 0 ? html`<div class="packages-row-chips">
-      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replaceAll('_', ' ')}>${sevCounts[s]}</span>`)}
+      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} data-tooltip=${s.replaceAll('_', ' ')}>${sevCounts[s]}</span>`)}
     </div>` : nothing}
     <button
       type="button"
@@ -593,7 +593,7 @@ function renderPackageOverview(pkg, bucket, version) {
     ${sortedFiles.map(([file, findings]) => {
       const stripped = pkgRelativePath(pkg, file)
       return html`<li class="packages-detail-file">
-        <span class="packages-detail-file-path mono" title=${file}>${stripped}</span>
+        <span class="packages-detail-file-path mono" data-tooltip=${file}>${stripped}</span>
         <span class="packages-detail-file-count">${findings.length}</span>
       </li>`
     })}

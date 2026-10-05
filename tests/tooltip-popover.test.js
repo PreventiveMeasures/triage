@@ -29,10 +29,10 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
   globalThis.document = { addEventListener(type, listener) { listeners[type] = listener }, createElement: () => {
     if (!created) { created = true; return node }
     return { children: [], append(child) { this.children.push(child) } }
-  }, body: { append() {} } }
+  }, body: { append() {}, addEventListener() {} } }
   globalThis.window = { innerWidth: 1000, innerHeight: 800 }
   try {
-    const { showTooltip, hideTooltip, installShadowTooltipListener } = await import('../ui/view/tooltip.js')
+    const { showTooltip, hideTooltip, installGlobalTooltipListener, installShadowTooltipListener } = await import('../ui/view/tooltip.js')
     const target = { dataset: { tooltip: 'hello' } }
     showTooltip(target)
     assert.equal(open, true, 'shown as a popover')
@@ -153,7 +153,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.children.length, 0, 'ordinary tooltips do not inherit dependency details')
       hideTooltip()
     })
-    await t.test('picker tooltips update when internal transitions never reach the outer root', nested => {
+    await t.test('pickers register with the host tooltip and handle transitions within their own root', nested => {
       nested.mock.timers.enable({ apis: ['setTimeout'] })
       const outerListeners = {}
       const pageRoot = { nodeType: 11, addEventListener(type, listener) { outerListeners[type] = listener } }
@@ -164,7 +164,14 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       const label = { nodeType: 1, dataset: {}, closest: () => file }
       const event = { target: pickerHost, composedPath: () => [label, file, pickerRoot, pickerHost, pageRoot] }
       installShadowTooltipListener(pageRoot)
-      installShadowTooltipListener(pickerRoot)
+      installGlobalTooltipListener()
+      pickerHost.shadowRoot = pickerRoot
+      const connected = { composedPath: () => [pickerHost, pageRoot] }
+      listeners['tooltip-root-connected'](connected)
+      const firstListener = innerListeners.mouseover
+      assert.equal(typeof firstListener, 'function', 'the host installs the nested picker listener')
+      listeners['tooltip-root-connected'](connected)
+      assert.equal(innerListeners.mouseover, firstListener, 'reconnects do not add duplicate listeners')
       outerListeners.mouseover(event)
       nested.mock.timers.tick(100)
       assert.equal(open, true)

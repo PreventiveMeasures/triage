@@ -53,7 +53,7 @@ export function badgeLabel(severity) {
 // a "varies" chip when a deduped finding's correction differs across the
 // reports it appeared in (workspace view). The ▲/▼ glyph + strikethrough
 // are shape cues so the corrected/original distinction is never conveyed
-// by color alone; the full detail rides the `title` + `aria-label`.
+// by color alone; the full detail rides the tooltip + `aria-label`.
 //   variant 'full'    — finding-left / focus (companion stacks below)
 //   variant 'compact' — table row (companion stacks below; tighter)
 //   variant 'tab'     — tab strip (primary + a small ▲/▼ marker only)
@@ -71,7 +71,7 @@ function severityBadge(f, { variant = 'full' } = {}) {
     ? `Corrected severity varies across reports — ${Object.entries(variants).map(([r, v]) => `${r || '(this report)'}: ${badgeLabel(v.severity)}`).join('; ')}`
     : null
   const variesChip = variants
-    ? html`<span class="badge-varies" title=${variesTip} aria-label=${variesTip}>varies</span>`
+    ? html`<span class="badge-varies" data-tooltip=${variesTip} aria-label=${variesTip}>varies</span>`
     : nothing
 
   if (!hasCorr) {
@@ -96,14 +96,14 @@ function severityBadge(f, { variant = 'full' } = {}) {
     : `original, corrected to ${badgeLabel(corrected)}`}${reason ? `; reason: ${reason}` : ''}`
 
   if (variant === 'tab') {
-    return html`<span class="badge-pair badge-pair-tab" title=${tip} aria-label=${aria}>${primary}<span class=${`badge-corr-mark ${dirWord}`} aria-hidden="true">${arrow}</span></span>`
+    return html`<span class="badge-pair badge-pair-tab" data-tooltip=${tip} aria-label=${aria}>${primary}<span class=${`badge-corr-mark ${dirWord}`} aria-hidden="true">${arrow}</span></span>`
   }
 
   // The companion: the value NOT currently primary. In corrected mode
   // that's the (struck) original; in original mode it's the corrected
   // target (outlined, not struck — it isn't superseded in this view).
   const other = showingCorrected ? original : corrected
-  return html`<span class=${`badge-pair badge-pair-${variant}`} title=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
+  return html`<span class=${`badge-pair badge-pair-${variant}`} data-tooltip=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
 }
 
 // Render ONE run of prose with inline highlights for `[markdown](links)`,
@@ -559,13 +559,13 @@ function rowLocationTemplate(f, url) {
 }
 
 // Commit-hash link for the codex `commit_hash` reference. Short SHA
-// (first 7 chars) on display, full hash in the title. Falls back to a
+// (first 7 chars) on display, full hash in the tooltip. Falls back to a
 // `<span>` (no link) when we don't have a repo to link against.
 function commitLinkTemplate(githubRepo, hash) {
   if (!hash) return nothing
   const short = hash.slice(0, 7)
   const url = commitUrl(githubRepo, hash)
-  if (!url) return html`<span title=${hash}>${short}</span>`
+  if (!url) return html`<span data-tooltip=${hash}>${short}</span>`
   return html`<a href=${url} target="_blank" rel="noopener" data-tooltip=${hash}>${short}</a>`
 }
 
@@ -1124,11 +1124,11 @@ function tabMarksTemplate(entry) {
   const flagged = entry?.flagged === true
   if (!hasComment && !hasFix && !flagged) return nothing
   return html`<span class="tab-marks">${
-    hasComment ? html`<span class="has-comment" title="Has a comment">${COMMENT_ICON}</span>` : nothing
+    hasComment ? html`<span class="has-comment" data-tooltip="Has a comment">${COMMENT_ICON}</span>` : nothing
   }${
-    hasFix ? html`<span class="has-fix" title="Has a fix link">${FIX_ICON}</span>` : nothing
+    hasFix ? html`<span class="has-fix" data-tooltip="Has a fix link">${FIX_ICON}</span>` : nothing
   }${
-    flagged ? html`<span class="flagged" title="Flagged">${FLAG_ICON}</span>` : nothing
+    flagged ? html`<span class="flagged" data-tooltip="Flagged">${FLAG_ICON}</span>` : nothing
   }</span>`
 }
 

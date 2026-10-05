@@ -254,6 +254,11 @@ let globalInstalled = false
 export function installGlobalTooltipListener() {
   if (globalInstalled) return
   globalInstalled = true
+  // Components shared with lazy bundles register their roots through the
+  // DOM so every surface uses this module's tooltip node and hover state.
+  document.addEventListener('tooltip-root-connected', (e) => {
+    installShadowTooltipListener(e.composedPath()[0]?.shadowRoot)
+  })
   document.body.addEventListener('mouseover', (e) => {
     if (e.target.closest('[data-tooltip-managed]')) return
     const el = e.target.closest('[data-tooltip]')

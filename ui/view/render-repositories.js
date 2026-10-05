@@ -210,7 +210,7 @@ function renderRepositoryRow(repo, bucket, isSel) {
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
     </div>
     ${chips.length > 0 ? html`<div class="packages-row-chips">
-      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} title=${s.replaceAll('_', ' ')}>${sevCounts[s]}</span>`)}
+      ${chips.map((s) => html`<span class=${`tree-count-chip ${s}`} data-tooltip=${s.replaceAll('_', ' ')}>${sevCounts[s]}</span>`)}
     </div>` : nothing}
     <button
       type="button"
@@ -293,7 +293,7 @@ function renderRepositoryOverview(repo, bucket) {
   <h3 class="packages-detail-section">Files</h3>
   <ul class="packages-detail-files">
     ${sortedFiles.map(([file, findings]) => html`<li class="packages-detail-file">
-      <span class="packages-detail-file-path mono" title=${file}>${file}</span>
+      <span class="packages-detail-file-path mono" data-tooltip=${file}>${file}</span>
       <span class="packages-detail-file-count">${findings.length}</span>
     </li>`)}
   </ul>`

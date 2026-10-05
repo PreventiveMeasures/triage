@@ -255,9 +255,9 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const multiSticker = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
   let fileChip = nothing
   if (fileNames.length === 1) {
-    fileChip = html`<span class="file-chip" data-copy-report=${fileNames[0]} title="Copy report name">${singleSticker}<span>${fileNames[0]}</span></span>`
+    fileChip = html`<span class="file-chip" data-copy-report=${fileNames[0]} data-tooltip="Copy report name">${singleSticker}<span>${fileNames[0]}</span></span>`
   } else if (fileNames.length > 1) {
-    fileChip = html`<span class="file-chip" data-copy-report=${fileNames.join('\n')} title="Copy report names">${multiSticker}<span>${fileNames.length} reports</span></span>`
+    fileChip = html`<span class="file-chip" data-copy-report=${fileNames.join('\n')} data-tooltip="Copy report names">${multiSticker}<span>${fileNames.length} reports</span></span>`
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flat())
@@ -336,7 +336,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     if (presentSevs.length > 0) {
       statusBarTpl = html`<span class="status-bar" aria-hidden="true">${presentSevs.map((s) => {
         const tip = `${sevCounts[s]} ${s.replaceAll('_', ' ')}`
-        return html`<span class=${`status-seg sev-${s}`} style=${styleMap({ flexGrow: sevCounts[s] })} title=${tip}></span>`
+        return html`<span class=${`status-seg sev-${s}`} style=${styleMap({ flexGrow: sevCounts[s] })} data-tooltip=${tip}></span>`
       })}</span>`
     }
   }
@@ -582,7 +582,7 @@ function badgeChipButton({ status, label, title, onClick }) {
     return html`<span
       class="report-sync-badge"
       data-status=${status}
-      title=${title}
+      data-tooltip=${title}
       aria-label=${`report sync status: ${label}`}
     >${icon}${labelTpl}</span>`
   }
@@ -1016,10 +1016,10 @@ function kanbanCardTemplate(g, opts = {}) {
   const inner = html`<div class="kanban-badge-col">
       <span
         class=${`kanban-badge sev-${kanbanSev}`}
-        title=${sevCorrected ? `${badgeLabel(kanbanSev)} — corrected from ${badgeLabel(activeTab.severity)}` : badgeLabel(kanbanSev)}
+        data-tooltip=${sevCorrected ? `${badgeLabel(kanbanSev)} — corrected from ${badgeLabel(activeTab.severity)}` : badgeLabel(kanbanSev)}
         aria-label=${sevCorrected ? `Severity ${badgeLabel(kanbanSev)}, corrected from ${badgeLabel(activeTab.severity)}` : `Severity ${badgeLabel(kanbanSev)}`}
       >${letter}${sevCorrected ? '*' : ''}</span>
-      ${flagged ? html`<span class="kanban-flag" title="Flagged" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
+      ${flagged ? html`<span class="kanban-flag" data-tooltip="Flagged" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
       ${action}
     </div>
     <span class="kanban-title">${title}</span>
@@ -1027,9 +1027,9 @@ function kanbanCardTemplate(g, opts = {}) {
       <span class="kanban-loc">${activeTab.file}${lineSuffix}</span>
       ${activeTab.confidence === undefined || activeTab.confidence === null
         ? nothing
-        : html`<span class="kanban-conf" title=${`Confidence ${activeTab.confidence}/10`}>${activeTab.confidence}</span>`}
+        : html`<span class="kanban-conf" data-tooltip=${`Confidence ${activeTab.confidence}/10`}>${activeTab.confidence}</span>`}
       ${brand
-        ? html`<span class="kanban-analyzer" role="img" title=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${unsafeHTML(REPORT_LOGOS[brand])}</span>`
+        ? html`<span class="kanban-analyzer" role="img" data-tooltip=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${unsafeHTML(REPORT_LOGOS[brand])}</span>`
         : nothing}
     </div>`
   if (isKanban) {
@@ -1182,8 +1182,8 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
       <div class="focus-pane focus-pane-code" data-focus-code-file=${code.file ?? nothing} data-focus-code-integrity=${code.integrity ?? nothing}>
         ${code.loading
           ? html`<div class="focus-code-empty">Loading source…</div>`
-          : html`<header class="focus-code-bar" title=${code.file}>
-              <span class="focus-code-file">${code.file}</span>
+          : html`<header class="focus-code-bar">
+              <span class="focus-code-file" data-tooltip=${code.file}>${code.file}</span>
               ${code.range ? html`<span class="focus-code-line">:${lineRangeLabel(code.range)}</span>` : nothing}
               <!-- Back / forward through the files the panel has
                    shown. Both appear together or not at all, and the

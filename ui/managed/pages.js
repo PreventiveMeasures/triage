@@ -557,7 +557,7 @@ class ManagedAdminRepos extends ManagedPage {
       <div class="repository-browser">
         ${choices.showFacets ? html`<nav class="organization-list" aria-label="Filter by organization">
           <button type="button" class="organization" aria-pressed=${choices.activeFacet == null} @click=${() => { this._organization = null }}><span class="organization-name">All organizations</span><span class="organization-count">${choices.total}</span></button>
-          ${choices.facets.map(org => html`<button type="button" class="organization" title=${org.name} aria-pressed=${choices.activeFacet === org.value} @click=${() => { this._organization = org.value }}><span class="organization-name">${org.name}</span><span class="organization-count">${org.count}</span></button>`)}
+          ${choices.facets.map(org => html`<button type="button" class="organization" data-tooltip=${org.name} aria-pressed=${choices.activeFacet === org.value} @click=${() => { this._organization = org.value }}><span class="organization-name">${org.name}</span><span class="organization-count">${org.count}</span></button>`)}
         </nav>` : nothing}
         <div class="repo-results">
           ${choices.sections.map(section => html`<section class="repo-group" aria-label=${section.label ?? 'Repositories'}>
