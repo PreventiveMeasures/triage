@@ -56,7 +56,7 @@ class ManagedAdminLinks extends ManagedPage {
       <h1 class="sr-only">Public links</h1>
       <div class="page-intro"><p class="intro">Manage public links and the findings each link can show.</p><span class="result-count">${this._data?.shares.length ?? '…'} links</span></div>
       ${this._loading && this._data ? html`<span class="sr-only" role="status">Refreshing public links…</span>` : nothing}
-      <div aria-busy=${this._loading}>${this._body()}</div>
+      <div class="manage-list" aria-busy=${this._loading}>${this._body()}</div>
     </div>`
   }
 }

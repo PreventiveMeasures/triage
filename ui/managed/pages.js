@@ -217,7 +217,7 @@ class ManagedAdminHistory extends ManagedPage {
         <button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button>
       </div>
       ${this._error ? html`<p class="msg error" role="alert">Couldn’t load history: ${this._error} <button type="button" class="btn" @click=${() => this._load()}>Retry</button></p>` : nothing}
-      <div aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' || this._repo || this._actor ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
+      <div class="manage-list" aria-busy=${this._loading}>${this._history == null ? (this._error ? nothing : loadingRows('Loading history…')) : history.length === 0 ? html`<div class="history"><p class="empty">${this._query.trim() || this._filter !== 'all' || this._repo || this._actor ? 'No activity matches your filters.' : 'No history available yet.'}</p></div>` : html`<div class="history" aria-label="Workspace history"><div class="history-head" aria-hidden="true"><span>Type</span><span>Activity</span><span>Repository / report / finding</span><span>Time</span></div>${history.map((entry) => this._row(entry))}</div>`}</div>
       ${this._total > 100 ? html`<nav class="pagination" aria-label="History pages"><span role="status">${start + 1}–${Math.min(start + 100, this._total)} of ${this._total} entries</span><button type="button" class="btn" ?disabled=${this._loading || page === 1} @click=${() => this._changePage(page - 1)}>Previous</button><span>Page ${page} of ${Math.ceil(this._total / 100)}</span><button type="button" class="btn" ?disabled=${this._loading || start + 100 >= this._total} @click=${() => this._changePage(page + 1)}>Next</button></nav>` : nothing}
     </div>`
   }
@@ -225,7 +225,7 @@ class ManagedAdminHistory extends ManagedPage {
   async _changePage(page) {
     await this._load(page)
     await this.updateComplete
-    this.renderRoot.querySelector('.history')?.scrollIntoView({ block: 'start' })
+    this.renderRoot.querySelector('.manage-list')?.scrollTo({ top: 0 })
   }
 
   _row(entry) {
@@ -299,7 +299,7 @@ class ManagedAdminUsers extends ManagedPage {
       <div class="page-intro"><p class="intro">Manage workspace access and roles.</p></div>
       <div class="collection-toolbar" role="search"><input type="search" aria-label="Search users" placeholder="Search by name, username, or team…" .value=${this._query} @input=${e => { this._query = e.target.value }}><span class="result-count" role="status">${this._users && this._query.trim() ? `${users.length} matching out of ` : ''}${this._users?.length ?? '…'} users</span></div>
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load users: ${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._users == null ? (this._error ? nothing : loadingRows('Loading users…')) : this._list(users)}</div>
+      <div class="manage-list" aria-busy=${this._loading}>${this._users == null ? (this._error ? nothing : loadingRows('Loading users…')) : this._list(users)}</div>
     </div>`
   }
 
@@ -856,7 +856,7 @@ class ManagedAdminReports extends ManagedPage {
     const count = `${query || this._visibility !== 'all' ? `${filtered.length} of ` : ''}${reports.length} ${reports.length === 1 ? 'report' : 'reports'}`
     return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : count}</span></div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
+      <div class="manage-list" aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading reports…')) : filtered.length > 0 ? html`<div class="report-list"><div class="report-list-head" aria-hidden="true"><span class="report-heading">Report</span><span>Repository</span><span>Uploaded by</span><span>Date</span><span class="size-heading">Size</span><span>Visibility</span><span class="actions-heading">Actions</span></div><ul class="reports">${filtered.map(report => this._row(report))}</ul></div>` : html`<div class="empty"><strong>${reports.length === 0 ? 'No reports uploaded yet' : 'No matching reports'}</strong><p>${reports.length === 0 ? 'Drop a report here or browse files above.' : 'Try a different search or visibility filter.'}</p></div>`}</div>`
   }
 
   _row(report) {
@@ -1096,7 +1096,7 @@ class ManagedAdminBundles extends ManagedPage {
       </span>
     </div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading bundles…')) : filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${query ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${query ? 'Try another filename or repository.' : 'Drop source archives here or browse files above.'}</p></div>`}</div>`
+      <div class="manage-list" aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading bundles…')) : filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${query ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${query ? 'Try another filename or repository.' : 'Drop source archives here or browse files above.'}</p></div>`}</div>`
   }
 
   _row(b) {
@@ -1320,7 +1320,7 @@ class ManagedAdminTeams extends ManagedPage {
         <button class="btn primary" ?disabled=${this._busy} @click=${() => this._create()}>${ADMIN_PLUS_ICON} Create team</button>
         <p class="access-note">All members can view standard findings. Set dependencies and security access per member.</p>
       </div>
-      <div aria-busy=${this._loading}>${this._body()}</div>
+      <div class="manage-list" aria-busy=${this._loading}>${this._body()}</div>
     </div>`
   }
 

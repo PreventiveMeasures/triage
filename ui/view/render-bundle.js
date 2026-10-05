@@ -1817,7 +1817,7 @@ function renderBundleSlide(entry) {
   // selection paints the issues body but the matching tab button is
   // hidden, leaving the user with no visible escape hatch.
   return html`<div class="bundles-view bundles-slide-view">
-    <div class="bundles-slide-header"><header class="bundles-slide-bar">
+    <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
       ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
         <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
         <span aria-hidden="true">&gt;</span>
@@ -1892,7 +1892,7 @@ function renderBundleSlide(entry) {
           role="tab"
         >Overview</button>
       </div>
-    </header></div>
+    </header></bundle-slide-header>
     <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overviewActive })}>
       ${overviewActive
         ? renderBundleDetails(entry, details)
