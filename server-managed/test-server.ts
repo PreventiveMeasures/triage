@@ -221,6 +221,7 @@ const teams = teamFixtures.map((team) => ({
   id: team.id,
   slug: team.slug,
   name: team.name,
+  permissions: { dependencies: true, security: true },
   reports: teamReportRefs(team),
   bundles: bundles.filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId && (!link.path || bundle.repoDirectory === link.path || bundle.repoDirectory.startsWith(link.path + '/')))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
 }))

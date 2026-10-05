@@ -312,6 +312,7 @@ export interface UserTeam {
   id: string
   slug: string
   name: string
+  permissions: TeamUserPermissions
   cacheKey?: string
   reports: UserTeamReport[]
   bundles: UserTeamBundle[]
@@ -1337,6 +1338,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       }
       return teams.map((t) => ({
         id: t.id, slug: t.slug, name: t.name,
+        permissions: { dependencies: t.dependencies === 1, security: t.security === 1 },
         cacheKey: createHash('sha256').update(JSON.stringify([
           t.dependencies, t.security, scopes.filter(scope => scope.teamId === t.id),
         ])).digest('base64url'),

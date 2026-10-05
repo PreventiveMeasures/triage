@@ -291,6 +291,7 @@ test('link permissions are independent opt-ins and edits filter cached findings,
   ]) {
     assert.equal((await h.request(`/api/teams/team/share/${id}`, { role: 'manage', method: 'PATCH', body: { security, dependencies } })).status, 200)
     const bootstrap = await h.request('/api/teams/team/shared', { token })
+    assert.deepEqual(bootstrap.body.team.permissions, { security, dependencies })
     cacheKeys.add(bootstrap.body.team.reports.find(report => report.id === 'mixed').cacheKey)
     const reports = await h.request('/api/teams/team/reports', { token })
     assert.deepEqual(reports.body.reports.find(report => report.id === 'mixed').data.findings.map(finding => finding.id), expected)

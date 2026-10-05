@@ -167,6 +167,15 @@ test('feed probes preserve team grant keys and report transient failures for ret
   assert.deepEqual(await probeTeams({ fallback: null, signal }), [])
 })
 
+test('team probes preserve explicit visibility grants without accepting truthy non-booleans', async t => {
+  const team = { id: 'team', name: 'Team', permissions: {} }
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [team] })))
+  for (const security of [true, false, undefined, 'true']) {
+    team.permissions = { dependencies: true, security }
+    assert.deepEqual((await probeTeams())[0].permissions, { dependencies: true, security: security === true })
+  }
+})
+
 test('catalog probes expose the server revision without deriving it from normalized client fields', async t => {
   const revisions = [], teams = [{ id: 'team', name: 'Team', reports: [], bundles: [] }]
   let response = Response.json({ teams, revision: 'server-revision' })

@@ -68,6 +68,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
       id: t.id,
       slug: t.slug,
       name: t.name,
+      ...(t.permissions ? { permissions: { dependencies: t.permissions.dependencies === true, security: t.permissions.security === true } } : {}),
       ...(typeof t.cacheKey === 'string' ? { cacheKey: t.cacheKey } : {}),
       reports: Array.isArray(t.reports)
         ? t.reports
