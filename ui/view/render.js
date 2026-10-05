@@ -255,9 +255,9 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const multiSticker = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
   let fileChip = nothing
   if (fileNames.length === 1) {
-    fileChip = html`<span class="file-chip" data-copy-report=${fileNames[0]} data-tooltip="Copy report name">${singleSticker}<span>${fileNames[0]}</span></span>`
+    fileChip = html`<span class="file-chip" data-copy-report=${fileNames[0]}>${singleSticker}<span>${fileNames[0]}</span></span>`
   } else if (fileNames.length > 1) {
-    fileChip = html`<span class="file-chip" data-copy-report=${fileNames.join('\n')} data-tooltip="Copy report names">${multiSticker}<span>${fileNames.length} reports</span></span>`
+    fileChip = html`<span class="file-chip" data-copy-report=${fileNames.join('\n')}>${multiSticker}<span>${fileNames.length} reports</span></span>`
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flat())
@@ -1016,10 +1016,10 @@ function kanbanCardTemplate(g, opts = {}) {
   const inner = html`<div class="kanban-badge-col">
       <span
         class=${`kanban-badge sev-${kanbanSev}`}
-        data-tooltip=${sevCorrected ? `${badgeLabel(kanbanSev)} — corrected from ${badgeLabel(activeTab.severity)}` : badgeLabel(kanbanSev)}
+        data-tooltip=${sevCorrected ? `${badgeLabel(kanbanSev)} — corrected from ${badgeLabel(activeTab.severity)}` : nothing}
         aria-label=${sevCorrected ? `Severity ${badgeLabel(kanbanSev)}, corrected from ${badgeLabel(activeTab.severity)}` : `Severity ${badgeLabel(kanbanSev)}`}
       >${letter}${sevCorrected ? '*' : ''}</span>
-      ${flagged ? html`<span class="kanban-flag" data-tooltip="Flagged" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
+      ${flagged ? html`<span class="kanban-flag" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
       ${action}
     </div>
     <span class="kanban-title">${title}</span>
@@ -1103,7 +1103,7 @@ function focusCodeLinesTemplate(code) {
 function findingHistoryButton(group) {
   if (!group || !canViewFindingHistory(activeTabFor(group))) return nothing
   return html`<button type="button" class="finding-history detail-action" data-finding-history
-    data-gid=${groupKey(group)} aria-label="View issue history" data-tooltip="Issue history">
+    data-gid=${groupKey(group)} aria-label="View issue history">
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
       stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M2 5a6.25 6.25 0 1 1-.25 5M1.5 1.5V5H5M8 4.5V8l3 1.5"/>
@@ -1183,7 +1183,7 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
         ${code.loading
           ? html`<div class="focus-code-empty">Loading source…</div>`
           : html`<header class="focus-code-bar">
-              <span class="focus-code-file" data-tooltip=${code.file}>${code.file}</span>
+              <span class="focus-code-file" data-tooltip-truncated data-tooltip=${code.file}>${code.file}</span>
               ${code.range ? html`<span class="focus-code-line">:${lineRangeLabel(code.range)}</span>` : nothing}
               <!-- Back / forward through the files the panel has
                    shown. Both appear together or not at all, and the

@@ -21,7 +21,7 @@ export function renderCommentText(text) {
   return parseCommentRefs(text, { managed: isManagedUiMode() }).map((seg) => {
     if (typeof seg === 'string') return seg
     if (seg.self) {
-      return html`<a class="comment-self-ref" href=${seg.url} data-tooltip="Show this finding">${seg.label}</a>`
+      return html`<a class="comment-self-ref" href=${seg.url}>${seg.label}</a>`
     }
     return html`<a href=${seg.url} target="_blank" rel="noopener noreferrer" data-tooltip=${seg.url}>${seg.label}</a>`
   })

@@ -756,7 +756,7 @@ function renderBundleSourceFindingPanel(findings) {
     <div class="bundle-source-panel-body">
       ${(lineLabel || meta) ? html`<div class="bundle-source-panel-line-row">
         ${lineLabel ? html`<span class="bundle-source-panel-line">${lineLabel}</span>` : nothing}
-        ${meta ? html`<span class="bundle-source-panel-meta" data-tooltip=${meta}>${meta}</span>` : nothing}
+        ${meta ? html`<span class="bundle-source-panel-meta" data-tooltip-truncated data-tooltip=${meta}>${meta}</span>` : nothing}
       </div>` : nothing}
       <div class="bundle-source-panel-desc">${renderHighlighted(titledDescription(f), { paragraphs: false })}</div>
       ${reports.length > 0 ? html`<div class="bundle-source-panel-reports">
@@ -803,7 +803,7 @@ function bundleViewerFindings(details, path, content) {
 // docked sidebar — path + the shared bundle-source-close action.
 function renderBundleSourceBar(path, history = null) {
   return html`<header class="bundle-source-bar">
-      <div class="bundle-source-title mono" data-tooltip=${path}>${path}</div>
+      <div class="bundle-source-title mono" data-tooltip-truncated data-tooltip=${path}>${path}</div>
       ${history?.files.length > 1 ? renderBundleCodeFileNav(history) : nothing}
       <button
         type="button"
@@ -1354,7 +1354,7 @@ function renderBundleCodeView(details) {
           </button>
         </span>
       </div>
-      ${prefix ? html`<div class="bundle-code-rail-prefix mono" data-tooltip=${prefix}>${prefix}</div>` : nothing}
+      ${prefix ? html`<div class="bundle-code-rail-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</div>` : nothing}
       <bundle-code-search .modes=${searchModes}></bundle-code-search>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
@@ -1404,7 +1404,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
   return html`<header class="bundle-code-main-bar">
       ${renderBundleCodeFileNav(history)}
       ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
-      <span class="bundle-code-main-path mono" data-tooltip=${path}>${path}</span>
+      <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${path}>${path}</span>
       <button
         type="button"
         class="bundle-code-copy-path"
@@ -1643,7 +1643,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
     <div class="bundle-search-summary">
       <span>${totalHits}${truncated ? '+' : ''} ${totalHits === 1 ? 'match' : 'matches'}
         in ${fileCount}${truncated ? '+' : ''} ${fileCount === 1 ? 'file' : 'files'}</span>
-      ${prefix ? html`<span class="bundle-search-summary-prefix mono" data-tooltip=${prefix}>${prefix}</span>` : nothing}
+      ${prefix ? html`<span class="bundle-search-summary-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
       ${truncated ? html`<span class="bundle-search-summary-more">results capped — refine to narrow</span>` : nothing}
     </div>
     ${repeat(fileResults, (f) => f.path, (f) => renderSearchFile(f, prefix, radius))}

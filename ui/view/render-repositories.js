@@ -293,7 +293,7 @@ function renderRepositoryOverview(repo, bucket) {
   <h3 class="packages-detail-section">Files</h3>
   <ul class="packages-detail-files">
     ${sortedFiles.map(([file, findings]) => html`<li class="packages-detail-file">
-      <span class="packages-detail-file-path mono" data-tooltip=${file}>${file}</span>
+      <span class="packages-detail-file-path mono" data-tooltip-truncated data-tooltip=${file}>${file}</span>
       <span class="packages-detail-file-count">${findings.length}</span>
     </li>`)}
   </ul>`

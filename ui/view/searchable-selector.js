@@ -99,7 +99,7 @@ export class SearchableSelector extends LitElement {
       </div><div class="body">
         ${choices.showFacets ? html`<div class="facets" role="group" aria-label=${this.facetLabel}>
           <button type="button" class="org" aria-pressed=${choices.activeFacet == null} @click=${() => this._filterFacet(null)}><span class="name">${this.allFacetsLabel}</span><span class="count">${choices.total}</span></button>
-          ${choices.facets.map(org => html`<button type="button" class="org" data-tooltip=${org.name} aria-pressed=${choices.activeFacet === org.value} @click=${() => this._filterFacet(org.value)}><span class="name">${org.name}</span><span class="count">${org.count}</span></button>`)}
+          ${choices.facets.map(org => html`<button type="button" class="org" aria-pressed=${choices.activeFacet === org.value} @click=${() => this._filterFacet(org.value)}><span class="name" data-tooltip-truncated data-tooltip=${org.name}>${org.name}</span><span class="count">${org.count}</span></button>`)}
         </div>` : nothing}
         <div class="results" id="selector-options" role="listbox" aria-label=${this.optionsLabel}>
           ${choices.pinned.length > 0 ? html`<div class="pinned">${choices.pinned.map(option => this._option(option, false, tabValue))}</div>` : nothing}
@@ -117,8 +117,10 @@ export class SearchableSelector extends LitElement {
   optionTooltip(option) { return option.label }
 
   _option(option, grouped, tabValue) {
-    return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} data-tooltip=${this.optionTooltip(option)} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name">${option.displayLabel ?? (grouped ? option.name : option.label)}</span>${option.secondary ? html`<span class="secondary">${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
+    const label = option.displayLabel ?? (grouped ? option.name : option.label)
+    const tooltip = this.optionTooltip(option)
+    return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name" ?data-tooltip-truncated=${label === tooltip} data-tooltip=${tooltip}>${label}</span>${option.secondary ? html`<span class="secondary">${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
     </button>`
   }
 

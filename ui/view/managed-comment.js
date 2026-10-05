@@ -32,7 +32,7 @@ export function managedCommentTemplate(comment, body, actions = nothing) {
   return html`<div class="managed-comment"><div class="managed-comment-row">
     ${comment.authorId || comment.authorLogin ? html`<span class="managed-comment-author">
       ${managedCommentAvatar(comment.authorId, comment.authorLogin)}
-      ${comment.authorLogin ? html`<strong data-tooltip=${comment.authorLogin}>${comment.authorLogin}</strong>` : nothing}
+      ${comment.authorLogin ? html`<strong>${comment.authorLogin}</strong>` : nothing}
     </span>` : nothing}
     <div class="managed-comment-body">${body}</div>
     ${time === nothing && actions === nothing ? nothing : html`<div class="managed-comment-meta">

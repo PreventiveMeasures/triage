@@ -32,7 +32,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
   }, body: { append() {}, addEventListener() {} } }
   globalThis.window = { innerWidth: 1000, innerHeight: 800 }
   try {
-    const { showTooltip, hideTooltip, installGlobalTooltipListener, installShadowTooltipListener } = await import('../ui/view/tooltip.js')
+    const { showTooltip, hideTooltip, scheduleTooltip, installGlobalTooltipListener, installShadowTooltipListener } = await import('../ui/view/tooltip.js')
     const target = { dataset: { tooltip: 'hello' } }
     showTooltip(target)
     assert.equal(open, true, 'shown as a popover')
@@ -151,6 +151,24 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.children.length, 1)
       showTooltip({ dataset: { tooltip: 'ordinary/file.sol' } })
       assert.equal(node.children.length, 0, 'ordinary tooltips do not inherit dependency details')
+      hideTooltip()
+    })
+    await t.test('repeated text only shows a tooltip when clipped horizontally or vertically', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const label = { dataset: { tooltip: 'Complete text', tooltipTruncated: '' }, clientWidth: 100, clientHeight: 32 }
+      for (const [width, height, visible] of [[100, 32, false], [150, 32, true], [100, 64, true]]) {
+        Object.assign(label, { scrollWidth: width, scrollHeight: height })
+        scheduleTooltip(label)
+        nested.mock.timers.tick(100)
+        assert.equal(open, visible)
+        if (visible) assert.equal(node.textContent, 'Complete text')
+        hideTooltip()
+      }
+      delete label.dataset.tooltipTruncated
+      Object.assign(label, { scrollWidth: 100, scrollHeight: 32 })
+      scheduleTooltip(label)
+      nested.mock.timers.tick(100)
+      assert.equal(open, true, 'full hashes and explanatory hints remain available without clipping')
       hideTooltip()
     })
     await t.test('pickers register with the host tooltip and handle transitions within their own root', nested => {

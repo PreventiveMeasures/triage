@@ -88,11 +88,11 @@ function findingHeaderTemplate(meta, id) {
   return html`
     <div class="card-head">
       ${severityBadge(meta?.severity)}
-      ${loc ? html`<span class="loc" data-tooltip=${loc}>${loc}</span>` : nothing}
+      ${loc ? html`<span class="loc" data-tooltip-truncated data-tooltip=${loc}>${loc}</span>` : nothing}
       <code class="id" data-tooltip=${id}>${id.slice(0, 8)}…</code>
     </div>
     ${meta?.description
-      ? html`<div class="desc" data-tooltip=${meta.description}>${meta.description}</div>`
+      ? html`<div class="desc" data-tooltip-truncated data-tooltip=${meta.description}>${meta.description}</div>`
       : nothing}
   `
 }

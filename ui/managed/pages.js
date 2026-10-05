@@ -557,7 +557,7 @@ class ManagedAdminRepos extends ManagedPage {
       <div class="repository-browser">
         ${choices.showFacets ? html`<nav class="organization-list" aria-label="Filter by organization">
           <button type="button" class="organization" aria-pressed=${choices.activeFacet == null} @click=${() => { this._organization = null }}><span class="organization-name">All organizations</span><span class="organization-count">${choices.total}</span></button>
-          ${choices.facets.map(org => html`<button type="button" class="organization" data-tooltip=${org.name} aria-pressed=${choices.activeFacet === org.value} @click=${() => { this._organization = org.value }}><span class="organization-name">${org.name}</span><span class="organization-count">${org.count}</span></button>`)}
+          ${choices.facets.map(org => html`<button type="button" class="organization" aria-pressed=${choices.activeFacet === org.value} @click=${() => { this._organization = org.value }}><span class="organization-name" data-tooltip-truncated data-tooltip=${org.name}>${org.name}</span><span class="organization-count">${org.count}</span></button>`)}
         </nav>` : nothing}
         <div class="repo-results">
           ${choices.sections.map(section => html`<section class="repo-group" aria-label=${section.label ?? 'Repositories'}>
@@ -877,7 +877,7 @@ class ManagedAdminReports extends ManagedPage {
         <span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span>
         <span class="report-actions">
           ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${report.filename}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
-          <button type="button" class="action" data-tooltip=${this._preview === report.id ? 'Close preview' : 'Preview report'} aria-label=${`Preview ${report.filename}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
+          <button type="button" class="action" aria-label=${`Preview ${report.filename}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
           <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${report.filename}`} ?disabled=${report.canChangeRepo === false || (!canMakeVisible && !report.visible)} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
           <a class="action" aria-label=${`Download ${report.filename}`} href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>${adminIcon('download')}</a>
           <button type="button" class="action danger" aria-label=${`Delete ${report.filename}`} ?disabled=${report.canChangeRepo === false} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
@@ -1113,7 +1113,7 @@ class ManagedAdminBundles extends ManagedPage {
       <span class="actions">
         ${b.canChangeRepo === false ? nothing : html`<button type="button" class="action" aria-label=${`Set location for ${b.filename}`} data-tooltip="Set repository location" ?disabled=${this._locationBusy} @click=${() => this._openLocation(b)}>${adminIcon('repo')}</button>`}
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
-        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : 'Delete bundle'} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
+        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : nothing} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
       ${this._locationBundle === b.id ? this._locationEditor(b) : nothing}
     </li>`

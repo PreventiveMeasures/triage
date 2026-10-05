@@ -938,14 +938,14 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const showActionLabels = context === 'focus' && reportChip === nothing
   const commentLabel = isManagedUiMode() ? 'Comments' : activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
-  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${showActionLabels && !activeComment ? nothing : commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
-  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${showActionLabels && !activeFix ? nothing : fixTitle} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
+  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${activeComment && !isManagedUiMode() ? commentTitle : nothing} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
+  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${activeFix ? fixTitle : nothing} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
   const flagBtn = flagButtonTemplate(activeTab, showActionLabels)
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
-  const copyBtn = html`<button type="button" class="mark-copy" data-tooltip=${showActionLabels ? nothing : 'Copy file, line, description, confidence to clipboard'} aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  const copyBtn = html`<button type="button" class="mark-copy" aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   // Link button — copies a `#finding=<id>` URL that reopens the app on
   // THIS finding (handler in events.js; resolution in
   // view/finding-link.js). Suppressed for a session-local numeric id:
@@ -953,7 +953,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // next load. Managed reports also wait for a server-aware link resolver.
   // Sits next to Copy, the other "take this with you" action.
   const linkBtn = findingLinkFor(activeTab)
-    ? html`<button type="button" class="mark-link" data-tooltip=${showActionLabels ? nothing : 'Copy a link to this finding'} aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
+    ? html`<button type="button" class="mark-link" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
   // GitHub-issue action — managed users must check for an existing
   // issue or reservation before reaching creation. Use a button so
@@ -1092,7 +1092,7 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   // valid CSS-selectable id.
   const popId = `triage-menu-${gid.replaceAll(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" data-tooltip=${title} aria-label=${title} ?disabled=${disabled}>
+    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" aria-label=${title} ?disabled=${disabled}>
       ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1124,11 +1124,11 @@ function tabMarksTemplate(entry) {
   const flagged = entry?.flagged === true
   if (!hasComment && !hasFix && !flagged) return nothing
   return html`<span class="tab-marks">${
-    hasComment ? html`<span class="has-comment" data-tooltip="Has a comment">${COMMENT_ICON}</span>` : nothing
+    hasComment ? html`<span class="has-comment" role="img" aria-label="Has a comment">${COMMENT_ICON}</span>` : nothing
   }${
-    hasFix ? html`<span class="has-fix" data-tooltip="Has a fix link">${FIX_ICON}</span>` : nothing
+    hasFix ? html`<span class="has-fix" role="img" aria-label="Has a fix link">${FIX_ICON}</span>` : nothing
   }${
-    flagged ? html`<span class="flagged" data-tooltip="Flagged">${FLAG_ICON}</span>` : nothing
+    flagged ? html`<span class="flagged" role="img" aria-label="Flagged">${FLAG_ICON}</span>` : nothing
   }</span>`
 }
 
