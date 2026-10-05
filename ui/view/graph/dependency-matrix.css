@@ -132,3 +132,4 @@ h4 {
 .matrix-import-sources { margin: 0 0 0 10px; padding: 0; list-style: none; }
 .matrix-import-sources button { color: var(--muted); }
 .matrix-import-sources span:last-child { min-width: 0; }
+.matrix-import-excluded { display: block; margin-left: 12px; color: var(--muted); font-size: 10px; }

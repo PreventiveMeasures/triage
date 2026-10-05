@@ -1,6 +1,7 @@
 import { html } from '../frontend-global.js'
 import { formatBytes } from '../format.js'
 import { pkgColor } from './utils.js'
+import { countsTowardsCycles } from './cycle-imports.js'
 
 const number = (n) => n.toLocaleString('en-US')
 
@@ -20,13 +21,16 @@ export function renderMatrixPanel(model, graph, selection, { select, expand, exp
       ${model.cycleCount ? html`<h4>Cyclic groups <b>${model.cycleCount}</b></h4>${model.rows.filter((n) => n.cyclic).slice(0, 12).map((n) => rowButton(n, n.outgoing, select))}` : null}`
   }
   const cell = target ? model.cells.get(row.id)?.get(target.id) : null
+  const originalPath = file => graph.nodeByFile.get(file)?.origFile ?? file
+  const cycleLabel = cell?.cycleCount < cell?.count
+    ? `${number(cell.cycleCount)} of ${number(cell.count)} file imports participate in a cycle` : 'Import participates in a cycle'
   const importGroups = Map.groupBy(cell?.examples ?? [], ([, to]) => to)
   const cycleSize = row.cyclic ? [...model.byId.values()].filter((n) => n.component === row.component).length : 0
   const outgoing = [...(model.cells.get(row.id)?.values() ?? [])].filter((c) => c.to !== row.id).toSorted((a, b) => b.count - a.count)
   const incoming = [...model.cells.values()].map((targets) => targets.get(row.id)).filter((c) => c && c.from !== row.id).toSorted((a, b) => b.count - a.count)
   return html`<div class="matrix-panel-head"><button class="matrix-selected-name" @click=${() => select(row.id)}>${row.label}</button><button type="button" class="detail-action" @click=${clear} aria-label="Clear matrix selection">×</button></div>
     ${target ? html`<div class="matrix-direction">imports →</div><button class="matrix-selected-name" @click=${() => select(target.id)}>${target.label}</button>` : null}
-    ${(target ? cell?.cyclic : row.cyclic) ? html`<span class="matrix-cycle-label">${target ? 'Import participates in a cycle' : `Cyclic group · ${cycleSize} members`}</span>` : null}
+    ${(target ? cell?.cyclic : row.cyclic) ? html`<span class="matrix-cycle-label">${target ? cycleLabel : `Cyclic group · ${cycleSize} members`}</span>` : null}
     <div class="matrix-metrics"><span><b>${target ? number(cell?.count ?? 0) : number(row.files.length)}</b>${target ? 'file imports' : 'files'}</span><span><b>${formatBytes(row.size)}</b>source size</span></div>
     <div class="matrix-actions">
       ${row.file ? html`<button @click=${() => expand(row.pkg)}>Collapse package</button><button data-bundle-view-source=${graph.nodeByFile.get(row.file)?.origFile ?? row.file}>View source</button>` : html`<button @click=${() => expand(row.pkg)}>${expanded.has(row.pkg) ? 'Collapse files' : 'Expand files'}</button>`}
@@ -36,6 +40,7 @@ export function renderMatrixPanel(model, graph, selection, { select, expand, exp
       <button class="matrix-import-target" data-bundle-view-source=${graph.nodeByFile.get(to)?.origFile ?? to} data-tooltip-truncated data-tooltip=${to}>${to}</button>
       <ul class="matrix-import-sources" aria-label="Imported by">${imports.map(([from]) => html`<li>
         <button data-bundle-view-source=${graph.nodeByFile.get(from)?.origFile ?? from}><span aria-hidden="true">←</span><span data-tooltip-truncated data-tooltip=${from}>${from}</span></button>
+        ${countsTowardsCycles(originalPath(from), originalPath(to)) ? null : html`<span class="matrix-import-excluded">Excluded from cycles</span>`}
       </li>`)}</ul>
     </div>`) : html`<p class="matrix-empty">No direct imports in this direction.</p>`}
     ${cell && cell.count > cell.examples.length ? html`<p class="matrix-empty">Showing ${cell.examples.length} of ${number(cell.count)} imports.</p>` : null}
