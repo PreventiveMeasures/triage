@@ -16,8 +16,32 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# SessionStart stdout is added to Claude's context, so the nvm, corepack
+# and pnpm logs (a full install lists every package) go to stderr. Only
+# the closing summary line is written to the original stdout, kept on fd 3.
+exec 3>&1 1>&2
+
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+
+# CLAUDE_PROJECT_DIR stays at the checkout the session started in, while
+# the hook input's cwd follows Claude into a worktree. Set that worktree
+# up instead when it belongs to the same repository, so it doesn't come
+# up without node_modules. Another repo, a non-git cwd or no input keep
+# the project dir.
+if [ ! -t 0 ]; then
+  HOOK_CWD="$(node -e 'try { process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8")).cwd ?? "") } catch {}' || true)"
+  git_common_dir() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }
+  if [ -n "$HOOK_CWD" ] && WORKTREE="$(git -C "$HOOK_CWD" rev-parse --show-toplevel 2>/dev/null)" &&
+    [ "$(git_common_dir "$WORKTREE")" = "$(git_common_dir "$PROJECT_DIR")" ]; then
+    PROJECT_DIR="$WORKTREE"
+  fi
+fi
+
+cd "$PROJECT_DIR" || abort "cannot cd to $PROJECT_DIR"
+
 # Load nvm into this non-login shell.
 export NVM_DIR="${NVM_DIR:-/opt/nvm}"
+have_nvm=1
 # shellcheck disable=SC1091
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   . "$NVM_DIR/nvm.sh"
@@ -27,29 +51,42 @@ elif [ -s "$HOME/.nvm/nvm.sh" ]; then
 elif [ -s /etc/profile.d/nvm.sh ]; then
   . /etc/profile.d/nvm.sh
 else
-  abort "nvm not found (checked \$NVM_DIR=$NVM_DIR, \$HOME/.nvm, /etc/profile.d/nvm.sh)"
+  have_nvm=0
 fi
 
-cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
-
-# `nvm install` (no args) reads .nvmrc from the project root. The
-# download hits nodejs.org and is the most likely failure point at
-# session start, so retry transient blips before giving up. Three
-# attempts cover the common case without dragging the session out.
-install_ok=0
-for attempt in 1 2 3; do
-  if nvm install; then
-    install_ok=1
-    break
+if [ "$have_nvm" -eq 1 ]; then
+  # `nvm install` (no args) reads .nvmrc from the project root. The
+  # download hits nodejs.org and is the most likely failure point at
+  # session start, so retry transient blips before giving up. Three
+  # attempts cover the common case without dragging the session out.
+  install_ok=0
+  for attempt in 1 2 3; do
+    if nvm install; then
+      install_ok=1
+      break
+    fi
+    warn "nvm install attempt $attempt failed; retrying"
+    sleep $((attempt * 2))
+  done
+  if [ "$install_ok" -ne 1 ]; then
+    abort "nvm install failed after 3 attempts; .nvmrc=$(cat .nvmrc 2>/dev/null || echo '<missing>'). Tools will run on whatever node is on PATH ($(node --version 2>/dev/null || echo 'none'))."
   fi
-  warn "nvm install attempt $attempt failed; retrying"
-  sleep $((attempt * 2))
-done
-if [ "$install_ok" -ne 1 ]; then
-  abort "nvm install failed after 3 attempts; .nvmrc=$(cat .nvmrc 2>/dev/null || echo '<missing>'). Tools will run on whatever node is on PATH ($(node --version 2>/dev/null || echo 'none'))."
-fi
 
-nvm use || abort "nvm use failed after install (.nvmrc=$(cat .nvmrc 2>/dev/null || echo '<missing>'))"
+  nvm use || abort "nvm use failed after install (.nvmrc=$(cat .nvmrc 2>/dev/null || echo '<missing>'))"
+  NODE_BIN="$(dirname "$(nvm which current)")" || abort "nvm which current failed"
+else
+  # Without nvm, carry on with the Node on PATH when it is new enough,
+  # so the session still gets its dependencies installed. .nvmrc pins
+  # the engines floor, which pnpm only warns about, so refuse anything
+  # older here.
+  warn "nvm not found (checked \$NVM_DIR=$NVM_DIR, \$HOME/.nvm, /etc/profile.d/nvm.sh); trying node $(node --version 2>/dev/null || echo 'none') from PATH"
+  node -e '
+    const [have, want] = [process.version, process.argv[1]].map((v) => v.replace(/^v/, "").split(".").map(Number))
+    process.exitCode = have.reduce((d, n, i) => d || n - want[i], 0) < 0 ? 1 : 0
+  ' "$(cat .nvmrc)" ||
+    abort "node $(node --version 2>/dev/null || echo 'none') on PATH is older than $(cat .nvmrc 2>/dev/null || echo '<missing>') from .nvmrc"
+  NODE_BIN="$(dirname "$(command -v node)")"
+fi
 
 # Persist Node on PATH for the rest of the session so subsequent
 # tool calls (npm test, tsc, etc.) don't fall back to system Node.
@@ -57,7 +94,6 @@ nvm use || abort "nvm use failed after install (.nvmrc=$(cat .nvmrc 2>/dev/null 
 # call; without it set, the export below only lives inside this
 # script's own shell and the next Bash tool call resets to system
 # Node — log loudly so the regression is visible rather than silent.
-NODE_BIN="$(dirname "$(nvm which current)")" || abort "nvm which current failed"
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   echo "export PATH=\"$NODE_BIN:\$PATH\"" >> "$CLAUDE_ENV_FILE"
 else
@@ -66,12 +102,19 @@ fi
 export PATH="$NODE_BIN:$PATH"
 
 # Enable corepack so the pnpm version pinned in package.json's
-# `packageManager` field is the one that actually runs. Non-fatal —
-# a stale system pnpm still mostly works.
-corepack enable || warn "corepack enable failed; pnpm pinning may not apply"
+# `packageManager` field is the one that actually runs. Node builds
+# without corepack (Node 25+ no longer bundles it) get that same version
+# from npm instead. Non-fatal — a stale system pnpm still mostly works.
+if command -v corepack >/dev/null 2>&1; then
+  corepack enable --install-directory "$NODE_BIN" || warn "corepack enable failed; pnpm pinning may not apply"
+else
+  pnpm_spec="$(node -p 'require("./package.json").packageManager.split("+")[0]')" &&
+    npm install -g "$pnpm_spec" ||
+    warn "corepack not found and npm install -g ${pnpm_spec:-pnpm} failed; pnpm pinning may not apply"
+fi
 
 # `pnpm ci` semantics: install exactly what's in pnpm-lock.yaml, fail
 # if it would need to be updated.
 pnpm install --frozen-lockfile || abort "pnpm install --frozen-lockfile failed"
 
-log "ready: node $(node --version), pnpm $(pnpm --version)"
+echo "session-start: ready in $PROJECT_DIR: node $(node --version), pnpm $(pnpm --version)" >&3
