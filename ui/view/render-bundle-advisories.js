@@ -438,7 +438,7 @@ function renderAdvisoryRow(a) {
       <div class="bundle-advisory-header">
         <span class="bundle-advisory-title">${title}</span>
         ${source || idEl !== nothing ? html`<span class="bundle-advisory-reference">
-          ${source ? html`<span class="bundle-advisory-source" role="img" aria-label=${source.label} data-tooltip=${source.label}>${source.icon}</span>` : nothing}
+          ${source ? html`<span class="bundle-advisory-source" role="img" aria-label=${source.label}>${source.icon}</span>` : nothing}
           ${idEl}
         </span>` : nothing}
       </div>

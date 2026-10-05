@@ -72,7 +72,7 @@ test('advisory links preserve upstream URLs and logos identify the source indepe
   assert.equal(rendered.length, rows.length)
   for (const [i, row] of rows.entries()) {
     assert.ok(rendered[i].includes(`href=${row.url}`), 'use the supplied URL unchanged')
-    assert.ok(rendered[i].includes(`role="img" aria-label=${row.label} data-tooltip=${row.label}`))
+    assert.ok(rendered[i].includes(`role="img" aria-label=${row.label}`))
   }
   assert.doesNotMatch(text, /\btitle=/u)
 })
