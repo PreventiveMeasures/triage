@@ -15,7 +15,7 @@ mock.module('../server-managed/static.ts', { namedExports: { loadManagedStatic: 
 mock.module('../server-managed/config.ts', { namedExports: { loadManagedConfig: () => ({ host: 'localhost', serverless: true }) } })
 
 for (const fail of [false, true]) {
-  test(`Vercel ordinary responses retain maintenance with waitUntil (failure: ${fail})`, async t => {
+  test(`Vercel ordinary responses retain maintenance with waitUntil (failure: ${fail})`, { timeout: 5000 }, async t => {
     state.maintenance = Promise.withResolvers()
     state.released = false
     const contextKey = Symbol.for('@vercel/request-context')
@@ -39,6 +39,11 @@ for (const fail of [false, true]) {
       assert.equal(res.status, 200)
       assert.equal(settled, false, 'the HTTP response can finish while Vercel still holds pending maintenance')
       assert.equal(state.released, false)
+      const offset = retained.length
+      await handler({ url: '/api/config', method: 'GET', headers: {} }, { writeHead() {}, end() {} })
+      await Promise.all(retained.slice(offset))
+      assert.equal(settled, false, 'a concurrent request finishes without joining the running maintenance')
+      assert.equal(state.released, false)
       if (fail) state.maintenance.reject(new Error('maintenance test failure'))
       else state.maintenance.resolve()
       await Promise.all(retained)
@@ -50,7 +55,7 @@ for (const fail of [false, true]) {
 }
 
 for (const fail of [false, true]) {
-  test(`an extracted managed request listener retains maintenance when the host discards its promise (failure: ${fail})`, async t => {
+  test(`an extracted managed request listener retains maintenance when the host discards its promise (failure: ${fail})`, { timeout: 5000 }, async t => {
     state.maintenance = Promise.withResolvers()
     state.released = false
     const contextKey = Symbol.for('@vercel/request-context')
@@ -72,6 +77,10 @@ for (const fail of [false, true]) {
       await ended.promise
       assert.equal(res.status, 200)
       assert.equal(state.released, false)
+      const offset = retained.length
+      await listener({ url: '/api/config', method: 'GET', headers: {} }, { writeHead() {}, end() {} })
+      await Promise.all(retained.slice(offset))
+      assert.equal(state.released, false, 'the second invocation and its retained work finish while maintenance is pending')
       if (fail) state.maintenance.reject(new Error('maintenance test failure'))
       else state.maintenance.resolve()
       await Promise.all(retained)
