@@ -3,7 +3,7 @@ import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
 import { countsTowardsCycles } from './graph/cycle-imports.js'
-import { layoutDependencyGroup } from './dependency-chain-layout.js'
+import { DEPENDENCY_DIALOG_GUTTER, layoutDependencyGroup } from './dependency-chain-layout.js'
 
 function packageNode(id, info = {}) {
   const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(id) ? 'npm' : '')
@@ -65,7 +65,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
 
 // Collapse strongly connected packages before assigning rows. Cards stay at a
 // readable size; larger graphs scroll instead of shrinking names into dots.
-export function layoutDependencyChains(graph) {
+export function layoutDependencyChains(graph, { maxWidth = 1280 } = {}) {
   const ids = [...graph.nodes.keys()].toSorted()
   const cycleImports = graph.cycleImports ?? graph.imports
   const { groups, componentOf } = stronglyConnected(ids, cycleImports)
@@ -88,7 +88,11 @@ export function layoutDependencyChains(graph) {
       if (--incoming[to] === 0) queue.push(to)
     }
   }
-  const rows = Map.groupBy(groups.map((members, id) => layoutDependencyGroup(id, members, graph.imports)), group => depth[group.id])
+  // Reserve the dialog padding, graph margins and shortcut lanes before
+  // choosing cycle columns. A large SCC must not overflow its viewport.
+  const hasBypasses = links.some((targets, from) => [...targets].some(to => depth[to] !== depth[from] + 1))
+  const cycleWidth = maxWidth - DEPENDENCY_DIALOG_GUTTER - 24 - (hasBypasses ? 56 : 0)
+  const rows = Map.groupBy(groups.map((members, id) => layoutDependencyGroup(id, members, graph.imports, cycleWidth)), group => depth[group.id])
   const rowWidth = row => row.reduce((w, group) => w + group.width, 0) + Math.max(0, row.length - 1) * 20
   const width = [...rows.values()].reduce((w, row) => Math.max(w, rowWidth(row) + 24), 240)
   const boxes = new Map()
@@ -113,7 +117,7 @@ export function layoutDependencyChains(graph) {
     }
     return { from, to, path: `M${x1},${y1} L${x1},${turn} C${x1},${turn + 6} ${x2},${y2 - 18} ${x2},${y2 - 5}` }
   }))
-  return { boxes: [...boxes.values()], edges, width: width + (bypasses ? 56 : 0), height: Math.max(0, y - 24) }
+  return { boxes: [...boxes.values()], componentOf, edges, width: width + (bypasses ? 56 : 0), height: Math.max(0, y - 24) }
 }
 
 export function traceDependencyChains(layout, active) {

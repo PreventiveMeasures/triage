@@ -3103,10 +3103,10 @@ body.report-fullscreen {
   color: var(--muted);
 }
 .bundle-advisories-version {
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-  background: transparent; color: inherit; font: inherit; padding: .1rem .3rem;
+  border: 0; padding: 0;
+  background: transparent; color: inherit; font: inherit;
 }
-.bundle-advisories-version:hover { color: var(--accent); border-color: var(--accent); }
+.bundle-advisories-version:hover { color: var(--accent); }
 .bundle-advisories-version:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bundle-advisories-rows {
   list-style: none; margin: 0; padding: 0;

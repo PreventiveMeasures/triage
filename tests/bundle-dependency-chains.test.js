@@ -3,7 +3,8 @@ import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 import { bundleDependencyChains, layoutDependencyChains, traceDependencyChains } from '../ui/view/bundle-dependency-chains.js'
-import { DEPENDENCY_CARD_HEIGHT, DEPENDENCY_CARD_WIDTH, layoutDependencyGroup } from '../ui/view/dependency-chain-layout.js'
+import { DEPENDENCY_CARD_HEIGHT, DEPENDENCY_CARD_WIDTH, DEPENDENCY_DIALOG_GUTTER, layoutDependencyGroup } from '../ui/view/dependency-chain-layout.js'
+import { placeDependencyCycle } from '../ui/view/dependency-chain-order.js'
 
 const file = dir => dir === '.' ? 'index.js' : `${dir}/index.js`
 function fixture({ modules, links = [], entries = [], reason = {} }) {
@@ -149,6 +150,73 @@ test('compact cycle grids preserve every internal edge without overlapping cards
           || y <= node.y || y >= node.y + DEPENDENCY_CARD_HEIGHT), 'edge bends stay in the gutters')
       }
     }
+  }
+})
+
+function clusteredCycle(count) {
+  // Alphabetical order interleaves groups, although most imports stay inside
+  // each group. The group entry packages also form a cycle with each other.
+  const ids = Array.from({ length: count }, (_, i) => `part-${String(i % 10).padStart(2, '0')}-team-${String(Math.floor(i / 10)).padStart(2, '0')}`)
+  const imports = new Map(ids.map(id => [id, new Set()]))
+  for (let i = 0; i < count; i++) {
+    const start = Math.floor(i / 10) * 10
+    imports.get(ids[i]).add(ids[start + (i + 1) % 10])
+    imports.get(ids[i]).add(ids[i % 10 === 0 ? (i + 10) % count : start])
+    if (i % 3 === 0) imports.get(ids[i]).add(ids[start + (i + 9) % 10])
+  }
+  return { ids, imports }
+}
+
+test('40- and 190-package cycles place connected packages closer than alphabetical rows', () => {
+  for (const count of [40, 190]) {
+    const { ids, imports } = clusteredCycle(count)
+    const distance = placement => {
+      const positions = new Map(placement.map(node => [node.id, node]))
+      let total = 0
+      for (const [from, targets] of imports) {for (const to of targets) {
+        const a = positions.get(from), b = positions.get(to)
+        total += Math.abs(a.col - b.col) + Math.abs(a.row - b.row)
+      }}
+      return total
+    }
+    const baseline = ids.toSorted().map((id, i) => ({ id, col: i % 5, row: Math.floor(i / 5) }))
+    const placement = placeDependencyCycle(ids, imports, 5)
+    assert.ok(distance(placement) < distance(baseline) / 2, 'connected clusters shorten imports')
+    assert.equal(new Set(placement.map(node => `${node.col},${node.row}`)).size, count)
+    assert.deepEqual(placeDependencyCycle(ids.toReversed(), imports, 5), placement)
+  }
+})
+
+test('a 190-package cycle at the top regroups to fit desktop, tablet and phone widths', () => {
+  const { ids, imports } = clusteredCycle(190)
+  const graph = { nodes: new Map(ids.map(id => [id, { id }])), imports }
+  const edgeCount = [...imports.values()].reduce((count, targets) => count + targets.size, 0)
+  for (const [maxWidth, columns] of [[1280, 5], [900, 3], [600, 2], [375, 1]]) {
+    const layout = layoutDependencyChains(graph, { maxWidth })
+    assert.equal(layout.boxes.length, 1)
+    const box = layout.boxes[0]
+    assert.equal(box.packages.length, 190)
+    assert.equal(new Set(box.packages.map(node => node.x)).size, columns)
+    assert.equal(box.internalEdges.length, edgeCount, 'resizing preserves all connections')
+    assert.ok(layout.width + DEPENDENCY_DIALOG_GUTTER <= maxWidth, 'all columns fit inside the dialog')
+    assert.ok(box.packages.every(node => node.x + DEPENDENCY_CARD_WIDTH <= box.width && node.y + DEPENDENCY_CARD_HEIGHT <= box.height))
+  }
+})
+
+test('large cycles reserve space for excluded manifest reads pointing to earlier rows', () => {
+  const { ids, imports } = clusteredCycle(190)
+  imports.get(ids[0]).add('codegen')
+  const cycleImports = new Map([...imports].map(([id, targets]) => [id, new Set(targets)]))
+  imports.set('codegen', new Set([ids[0]]))
+  const graph = { nodes: new Map([...ids, 'codegen'].map(id => [id, { id }])), imports, cycleImports }
+  for (const maxWidth of [1280, 900, 600, 375]) {
+    const layout = layoutDependencyChains(graph, { maxWidth })
+    const cycle = layout.boxes.find(box => box.members.length === 190)
+    const codegen = layout.boxes.find(box => box.members.includes('codegen'))
+    assert.equal(layout.boxes.length, 2, 'the excluded read does not enlarge the cycle')
+    assert.ok(codegen.y > cycle.y, 'ordinary imports determine the row order')
+    assert.ok(layout.edges.some(edge => edge.from === codegen.id && edge.to === cycle.id), 'retain the backward read')
+    assert.ok(layout.width + DEPENDENCY_DIALOG_GUTTER <= maxWidth, 'the cycle and backward route fit together')
   }
 })
 

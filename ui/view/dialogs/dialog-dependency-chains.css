@@ -46,6 +46,10 @@ header button:hover { color: var(--text); }
 }
 .cycle-label { position: absolute; top: 7px; left: 14px; color: var(--muted); font-size: .63rem; user-select: none; }
 .cycle-connections > path { stroke: var(--connection-color); stroke-width: 1.25; opacity: .8; }
+.large-cycle .cycle-connections > path { stroke: var(--muted); opacity: .18; }
+.cycle-connections > path.subdued { opacity: .04; }
+.cycle-connections > path.traced { stroke: var(--connection-color); stroke-width: 1.75; opacity: 1; }
+.package-subdued { opacity: .35; }
 .dimmed, .connections > path.dimmed { opacity: .18; }
 .note, .empty { padding: 1rem; color: var(--muted); font-size: .78rem; line-height: 1.5; }
 .note { position: sticky; left: 0; max-width: 65rem; margin: auto; }

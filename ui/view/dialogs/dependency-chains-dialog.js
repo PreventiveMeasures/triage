@@ -1,23 +1,43 @@
 import { html, nothing, svg, unsafeCSS } from 'lit'
 import { styleMap } from 'lit/directives/style-map.js'
+import { repeat } from 'lit/directives/repeat.js'
 import { autorun } from '@rray/frontend/state-management'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { bundleDependencyChains, layoutDependencyChains, traceDependencyChains } from '../bundle-dependency-chains.js'
-import { DEPENDENCY_CARD_HEIGHT, DEPENDENCY_CARD_WIDTH } from '../dependency-chain-layout.js'
+import { DEPENDENCY_CARD_HEIGHT, DEPENDENCY_CARD_WIDTH, DEPENDENCY_DIALOG_GUTTER } from '../dependency-chain-layout.js'
 import { pkgColor } from '../graph/utils.js'
 import styles from './dialog-dependency-chains.css'
 
 const packageColor = node => pkgColor(node.own ? '__own__' : node.name)
+const graphViewportWidth = () => Math.floor(Math.min(document.documentElement.clientWidth * .94, 80 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize)))
 
 class DependencyChainsDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(styles)]
-  static properties = { _active: { state: true }, _current: { state: true } }
-  constructor() { super(); this._active = null }
+  static properties = { _active: { state: true }, _current: { state: true }, _hovered: { state: true }, _focused: { state: true }, layout: { state: true } }
+  constructor() { super(); this._active = null; this._hovered = null; this._focused = null }
+
+  layoutForViewport() {
+    const focused = this.renderRoot?.activeElement
+    this._hovered = null
+    this._maxWidth = graphViewportWidth()
+    this.layout = layoutDependencyChains(this.graph, { maxWidth: this._maxWidth })
+    // Keyed cards survive regrouping, but moving a focused DOM node can blur
+    // it. Keep the same package focused and visible after the new placement.
+    if (focused?.matches('.package')) {
+      this.updateComplete.then(() => {
+        if (this._current && focused.isConnected) {
+          focused.focus({ preventScroll: true })
+          focused.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        }
+        return undefined
+      })
+    }
+  }
 
   connectedCallback() {
     super.connectedCallback()
     this.graph = bundleDependencyChains(this.details, this)
-    this.layout = layoutDependencyChains(this.graph)
+    this.layoutForViewport()
     this._dispose = autorun(() => {
       this._current = this.isCurrent()
       if (!this._current) queueMicrotask(this._onClose)
@@ -29,18 +49,25 @@ class DependencyChainsDialog extends AppDialog {
     if (!scroller) return
     // Keep the app and selected version in view when the viewport is narrow;
     // side branches remain reachable by scrolling, with readable labels.
-    this._resize = new ResizeObserver(() => { scroller.scrollLeft = (this.layout.width - scroller.clientWidth) / 2 })
+    this._resize = new ResizeObserver(() => {
+      const maxWidth = graphViewportWidth()
+      if (maxWidth !== this._maxWidth) { this.layoutForViewport(); return }
+      if (this._focused === null) scroller.scrollLeft = (this.layout.width - scroller.clientWidth) / 2
+    })
     this._resize.observe(scroller)
+    this._resize.observe(document.documentElement)
   }
   disconnectedCallback() { this._dispose?.(); this._resize?.disconnect(); super.disconnectedCallback() }
 
-  renderNode({ id, x, y }) {
+  renderNode({ id, x, y }, neighbors) {
     const node = this.graph.nodes.get(id)
     const parents = [...this.graph.importedBy.get(id)].map(parent => this.graph.nodes.get(parent))
     const version = `${node.version || 'Source'}${node.ecosystem && node.ecosystem !== 'npm' ? ` · ${node.ecosystem}` : ''}`
     const description = parents.length > 0 ? `Imported by ${parents.map(parent => `${parent.name}${parent.version ? `@${parent.version}` : ''}`).join(', ')}.`
       : node.root ? 'Bundle entry point or app source.' : 'No importer is recorded in this scope.'
-    return html`<div class=${`package${node.target ? ' selected' : ''}`} tabindex="0" role="group"
+    return html`<div class=${`package${node.target ? ' selected' : ''}${neighbors && !neighbors.has(id) ? ' package-subdued' : ''}`} tabindex="0" role="group"
+      @pointerenter=${() => { this._hovered = id }} @pointerleave=${() => { this._hovered = null }}
+      @focus=${() => { this._focused = id }} @blur=${() => { this._focused = null }}
       aria-label=${`${node.ecosystem ? `${node.ecosystem}:` : ''}${node.name}${node.version ? `@${node.version}` : ''}. ${description} Location: ${id}.`}
       style=${styleMap({ left: `${x}px`, top: `${y}px`, '--package-color': packageColor(node) })}>
       <div class="package-main"><span class="name" data-tooltip=${node.name} data-tooltip-truncated>${node.name}</span>
@@ -53,7 +80,10 @@ class DependencyChainsDialog extends AppDialog {
   }
 
   renderGraph() {
-    const { boxes, edges, width, height } = this.layout, highlighted = traceDependencyChains(this.layout, this._active)
+    const { boxes, edges, width, height } = this.layout
+    const activePackage = this._hovered ?? this._focused
+    const activeGroup = activePackage === null ? this._active : this.layout.componentOf.get(activePackage)
+    const highlighted = traceDependencyChains(this.layout, activeGroup)
     const hasImporter = new Set(edges.map(edge => edge.to))
     const unrecorded = boxes.filter(box => !hasImporter.has(box.id) && !box.members.some(id => this.graph.nodes.get(id).root))
     return html`<div class="graph-scroll" tabindex="0" aria-label="Package dependency chains. Arrows point from importer to dependency.">
@@ -62,26 +92,34 @@ class DependencyChainsDialog extends AppDialog {
           <defs><marker id="dependency-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10z" fill="context-stroke"/></marker></defs>
           ${edges.map(edge => svg`<path d=${edge.path} class=${highlighted && !highlighted.edges.has(edge) ? 'dimmed' : ''} marker-end="url(#dependency-arrow)"/>`)}
         </svg>
-        ${boxes.map(box => html`<div class=${`package-group${box.members.length > 1 ? ' cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
-          style=${styleMap({ left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px` })}
-          @pointerenter=${() => { this._active = box.id }} @pointerleave=${() => { this._active = null }}
-          @focusin=${() => { this._active = box.id }} @focusout=${() => { this._active = null }}>
-          ${box.members.length > 1 ? html`<div class="cycle-label">Circular imports</div>` : nothing}
-          ${box.internalEdges.length > 0 ? html`<svg class="connections cycle-connections" width=${box.width} height=${box.height} aria-hidden="true">
-            ${box.internalEdges.map(edge => svg`<path d=${edge.path}
-              style=${styleMap({ '--connection-color': packageColor(this.graph.nodes.get(edge.from)) })} marker-end="url(#dependency-arrow)"/>`)}
-          </svg>` : nothing}
-          ${box.packages.map(node => this.renderNode(node))}
-        </div>`)}
+        ${boxes.map(box => this.renderGroup(box, highlighted, box.id === activeGroup ? activePackage : null))}
       </div>
       ${unrecorded.length > 0 ? html`<p class="note">Some chains have no recorded app or entry point. These packages are bundled, but their origin is not captured in this scope.</p>` : nothing}
+    </div>`
+  }
+
+  renderGroup(box, highlighted, activePackage) {
+    const neighbors = activePackage === null ? null : new Set([activePackage])
+    if (neighbors) {for (const edge of box.internalEdges) {
+      if (edge.from === activePackage || edge.to === activePackage) { neighbors.add(edge.from); neighbors.add(edge.to) }
+    }}
+    return html`<div class=${`package-group${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
+      style=${styleMap({ left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px` })}
+      @pointerenter=${() => { this._active = box.id }} @pointerleave=${() => { this._active = null }}>
+      ${box.members.length > 1 ? html`<div class="cycle-label">Circular imports${box.members.length > 8 ? ` · ${box.members.length} packages` : ''}</div>` : nothing}
+      ${box.internalEdges.length > 0 ? html`<svg class="connections cycle-connections" width=${box.width} height=${box.height} aria-hidden="true">
+        ${box.internalEdges.map(edge => svg`<path d=${edge.path}
+          class=${activePackage === null ? '' : edge.from === activePackage || edge.to === activePackage ? 'traced' : 'subdued'}
+          style=${styleMap({ '--connection-color': packageColor(this.graph.nodes.get(edge.from)) })} marker-end="url(#dependency-arrow)"/>`)}
+      </svg>` : nothing}
+      ${repeat(box.packages, node => node.id, node => this.renderNode(node, neighbors))}
     </div>`
   }
 
   render() {
     if (!this._current) return nothing
     const { nodes, targets } = this.graph
-    return html`<dialog aria-labelledby="dependency-title" style=${styleMap({ '--graph-dialog-width': `${Math.max(480, this.layout.width + 16)}px` })} @close=${this._onClose}>
+    return html`<dialog aria-labelledby="dependency-title" style=${styleMap({ '--graph-dialog-width': `${Math.max(480, this.layout.width + DEPENDENCY_DIALOG_GUTTER)}px` })} @close=${this._onClose}>
       <header><h3 id="dependency-title">${this.packageKey}<span class="heading-version">${this.version}</span></h3>
         <button type="button" aria-label="Close dependency chains" @click=${this._onClose}>×</button>
       </header>
