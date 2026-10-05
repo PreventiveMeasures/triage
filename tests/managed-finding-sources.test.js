@@ -7,6 +7,8 @@ import { pushed, stepped } from '../ui/view/focus-code-history.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { highlight } from '../ui/prism.js'
 import { langForPath } from '../common/code-language.js'
+import { bundleSourceLinkImports } from '../common/bundle-source-links.js'
+import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 
 let fullBundleLoads = 0, localDetails, localFile = 'src/main.js', localIntegrity = 'bundle', managed = true
 const state = { focusCodeTick: 0, focusCodeStack: [], focusCodeAt: 0, bundles: [] }
@@ -247,6 +249,33 @@ test('local focus and fullscreen previews link package imports using a manifest 
     integrity: localIntegrity, file: '_local/linking/index.js', range: null,
   })
   assert.equal(fullBundleLoads, 1)
+})
+
+test('managed focus and fullscreen previews link aliases without receiving the owning manifest', async t => {
+  const file = 'packages/app/src/main.js', target = 'packages/app/_local/linking/index.js'
+  const details = { kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['packages/app', { files: {
+      'package.json': '\uFEFF' + JSON.stringify({ imports: { '#local/*': './_local/*' } }),
+      'src/main.js': "import { linking } from '#local/linking';", '_local/linking/index.js': 'export const linking = true;',
+    } }]]),
+    formats: new Map([['packages/app/package.json', 'resource']]),
+    imports: new Map([['node', new Map([[file, new Map([['./_local/linking', target]])]])]]),
+  }) }
+  const sources = bundleSourcesAsMap(details)
+  assert.equal(sources.has('packages/app/package.json'), false)
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({
+    integrity: 'managed-alias-bundle', files: [...sources], paths: [[file, file]],
+    imports: [...bundleSourceLinkImports(details, sources)].map(([parent, targets]) => [parent, [...targets]]),
+    packageDirs: [...bundlePackageDirs(details)].filter(([path]) => sources.has(path)),
+  })))
+  const scopedFinding = { ...finding, file, evidence: [], _managedReportId: 'managed-alias-report', _bundleHashes: ['managed-alias-bundle'] }
+  await fetchReportSources(scopedFinding._managedReportId)
+  getFocusCode([scopedFinding]); await setImmediate()
+  const code = getFocusCode([scopedFinding])
+  assert.match(code.highlighted, /data-bundle-source-link="packages\/app\/_local\/linking\/index.js"/u)
+  assert.equal(bundleSource('managed-alias-bundle', file, { reportId: scopedFinding._managedReportId }).highlighted, code.highlighted)
+  assert.deepEqual(focusCodeLinkPosition([scopedFinding], 'managed-alias-bundle', file, target), { integrity: 'managed-alias-bundle', file: target, range: null })
+  assert.equal(fullBundleLoads, 0)
 })
 
 async function checkWorkspacePreviews(t, mode, ownManifest) {
