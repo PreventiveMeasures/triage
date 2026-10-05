@@ -74,7 +74,6 @@ code,
   top: 0;
   z-index: 2;
 }
-.wrap:not(:has(> .manage-list)) .manage-header { background: var(--bg); }
 /* One bounded pane owns each complete collection, including group titles.
    Headers, upload controls, filters, and history pagination stay in place. */
 .wrap:has(> .manage-list) {
