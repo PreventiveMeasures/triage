@@ -103,6 +103,7 @@ class BundleCompare extends LitElement {
     _otherDetails: { state: true },
     _status: { state: true },
     _scope: { state: true },
+    _fileSort: { state: true },
   }
 
   // Light DOM so report.css applies + file-row clicks bubble to the
@@ -117,6 +118,7 @@ class BundleCompare extends LitElement {
     this._otherDetails = null
     this._status = 'idle'
     this._scope = ''
+    this._fileSort = { removed: 'name', added: 'name', changed: 'name' }
     // Diff memo — recomputed only when the (base, other) integrity
     // pair changes, so unrelated re-renders don't re-walk every file.
     this._diff = null
@@ -242,15 +244,16 @@ class BundleCompare extends LitElement {
   // capped at MAX_ROWS, and the "and N more" footer. Returns `nothing`
   // for an empty group so a section only shows what actually moved.
   // `keyOf` / `rowOf` are the `repeat` key + row template.
-  _group(title, rows, kind, keyOf, rowOf) {
+  _group(title, rows, kind, keyOf, rowOf, actions = nothing) {
     if (rows.length === 0) return nothing
     const shown = rows.slice(0, MAX_ROWS)
     const hidden = rows.length - shown.length
     return html`<section class=${`bundle-compare-group bundle-compare-${kind}`}>
       <header class="bundle-compare-group-head">
         <span class="bundle-compare-dot" aria-hidden="true"></span>
-        <span class="bundle-compare-group-title">${title}</span>
+        <span class="bundle-compare-group-title" data-tooltip-truncated data-tooltip=${title}>${title}</span>
         <span class="bundle-compare-group-count">${rows.length}</span>
+        ${actions}
       </header>
       <ul class="bundle-compare-rows">
         ${repeat(shown, keyOf, rowOf)}
@@ -271,8 +274,14 @@ class BundleCompare extends LitElement {
 
   // One file group; the kind selects both its accent and its file action.
   _fileGroup(title, rows, kind, displayOf) {
-    return this._group(title, rows, kind, (r) => r.path,
-      (r) => this._fileRow(r.path, displayOf(r.path), kind, this._sizeCells(r)))
+    const sort = this._fileSort[kind]
+    const sorted = rows.toSorted((a, b) => (sort === 'size' ? (b.bytes ?? b.otherBytes) - (a.bytes ?? a.otherBytes) : 0)
+      || a.path.localeCompare(b.path))
+    const actions = html`<span class="bundles-overview-sort" role="group" aria-label=${`${kind} file order`}>
+      ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(sort === value)} @click=${() => { this._fileSort = { ...this._fileSort, [kind]: value } }}>${label}</button>`)}
+    </span>`
+    return this._group(title, sorted, kind, (r) => r.path,
+      (r) => this._fileRow(r.path, displayOf(r.path), kind, this._sizeCells(r)), actions)
   }
 
   // One package group. Same accent scheme as the file groups; rows
@@ -345,14 +354,22 @@ class BundleCompare extends LitElement {
   }
 
   _resolutionGroup(rows) {
-    return this._group('Repointed', rows, 'changed', r => r.key, r => html`<li class="bundle-compare-resolution">
-      <div class="bundle-compare-resolution-source"><code>${r.parent}</code> → <code>${r.specifier}</code></div>
-      <div class="bundle-compare-resolution-context">${r.conditions}${r.platform === null ? nothing : html` · Platform: ${r.platform}`}</div>
-      <div class="bundle-compare-resolution-targets">
-        <div class="bundle-compare-resolution-before"><span>Before</span><code>${r.baseTarget || '(empty target)'}</code></div>
-        <div class="bundle-compare-resolution-after"><span>After</span><code>${r.otherTarget || '(empty target)'}</code></div>
-      </div>
-    </li>`)
+    return this._group('Repointed', rows, 'changed', r => r.key, r => {
+      const context = `${r.conditions}${r.platform === null ? '' : ` · Platform: ${r.platform}`}`
+      return html`<li class="bundle-compare-resolution">
+        <div class="bundle-compare-resolution-source">
+          <code data-tooltip-truncated data-tooltip=${r.parent}>${r.parent}</code>
+          <span aria-hidden="true">→</span>
+          <code data-tooltip-truncated data-tooltip=${r.specifier}>${r.specifier}</code>
+          <span class="bundle-compare-resolution-context" data-tooltip-truncated data-tooltip=${context}>${context}</span>
+        </div>
+        <div class="bundle-compare-resolution-targets">
+          <div class="bundle-compare-resolution-before"><span>Before</span><code data-tooltip-truncated data-tooltip=${r.baseTarget || '(empty target)'}>${r.baseTarget || '(empty target)'}</code></div>
+          <span aria-hidden="true">→</span>
+          <div class="bundle-compare-resolution-after"><span>After</span><code data-tooltip-truncated data-tooltip=${r.otherTarget || '(empty target)'}>${r.otherTarget || '(empty target)'}</code></div>
+        </div>
+      </li>`
+    })
   }
 
   _renderResolutions(resolutions) {
@@ -565,7 +582,6 @@ class BundleCompare extends LitElement {
         ${prefix ? html` · <span class="mono">${prefix}</span>` : nothing}
       </div>
       ${this._renderVersionUpdates(diff.versionUpdates, baseName, otherName)}
-      ${this._renderResolutions(diff.resolutions)}
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
@@ -588,6 +604,7 @@ class BundleCompare extends LitElement {
             </div>
           </section>
         `}
+      ${this._renderResolutions(diff.resolutions)}
     `
   }
 }

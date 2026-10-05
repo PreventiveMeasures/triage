@@ -213,6 +213,8 @@
   font-size: .72rem;
   font-weight: 600;
 }
+.bundle-compare-group-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bundle-compare-group-head .bundles-overview-sort { margin-left: auto; flex-shrink: 0; }
 .bundle-compare-dot {
   width: 8px;
   height: 8px;
@@ -283,17 +285,30 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-row-delta.down { color: var(--critical); }
 
 .bundle-compare-resolution {
-  padding: .35rem;
+  padding: .25rem .35rem;
   font-size: .72rem;
-  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 .bundle-compare-resolution + .bundle-compare-resolution { border-top: 1px solid var(--border); }
-.bundle-compare-resolution code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.bundle-compare-resolution-context { margin-top: .15rem; color: var(--muted); font-size: .68rem; }
-.bundle-compare-resolution-targets { margin-top: .3rem; }
-.bundle-compare-resolution-targets > div { display: flex; align-items: baseline; gap: .5rem; }
-.bundle-compare-resolution-targets span { flex: 0 0 3rem; font-size: .66rem; white-space: nowrap; }
-.bundle-compare-resolution-targets code { min-width: 0; }
+.bundle-compare-resolution-source,
+.bundle-compare-resolution-targets,
+.bundle-compare-resolution-targets > div { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
+.bundle-compare-resolution code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.bundle-compare-resolution-context {
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted);
+  font-size: .68rem;
+}
+.bundle-compare-resolution-targets { margin-top: .1rem; }
+.bundle-compare-resolution-targets > div { flex: 1; }
+.bundle-compare-resolution-targets > div > span { flex-shrink: 0; font-size: .66rem; }
 .bundle-compare-resolution-before { color: var(--critical); }
 .bundle-compare-resolution-after { color: var(--green); }
 
