@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
-import { bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleSourceImports } from '../common/bundle-source-links.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
 import { loadManagedFindings, managedFindingSourcePaths } from '../common/managed/report-content.ts'
@@ -29,7 +29,7 @@ function formatDirectory(bundleId: string, sha256: string, name: string) {
 }
 function sourceCacheFilename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>) {
   const key = createHash('sha256').update(JSON.stringify([
-    'finding-access-v6', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
+    'finding-access-v7', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
   ])).digest('hex')
   return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
 }
@@ -66,7 +66,8 @@ function encodeSources(integrity: string, details: BundleDetails, selection: Ret
   const imports = [...bundleSourceImports(details, sources)].map(([parent, targets]) => [parent, [...targets]])
   const bundle = details.kind === 'stasis' ? details.bundle as { formats: Map<string, string> } : null
   const formats = [...(bundle?.formats ?? [])].filter(([file]) => sources.has(file))
-  return compress(Buffer.from(JSON.stringify({ integrity, ...selection, imports, formats })), { level: 6 })
+  const packageDirs = [...(bundlePackageDirs(details) ?? [])].filter(([file]) => sources.has(file))
+  return compress(Buffer.from(JSON.stringify({ integrity, ...selection, imports, formats, packageDirs })), { level: 6 })
 }
 
 // Immutable report hashes share a derivative across duplicate uploads. Bundle

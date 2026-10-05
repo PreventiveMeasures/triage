@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { bundleSourceImports, sourceLinkResolver } from '../common/bundle-source-links.js'
+import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleSourceLinkResolver } from '../ui/view/bundle-source-links.js'
 import { highlight } from '../ui/prism.js'
 import { splitHighlightedLines } from '../ui/view/prism-highlight.js'
@@ -9,14 +11,174 @@ function sourcemap(paths) {
   return { kind: 'sourcemap', json: { sources: paths, sourcesContent: paths.map(() => '') } }
 }
 
-function stasis(imports, paths = ['src/main.js', 'src/other.js', 'src/foo.js', 'src/foo.android.js', 'lib/utils.ts', 'node_modules/pkg/index.js', 'script']) {
+function stasis(imports, paths = ['src/main.js', 'src/other.js', 'src/foo.js', 'src/foo.android.js', 'lib/utils.ts', 'node_modules/pkg/index.js', 'script'], contents = {}, modules = null) {
   const bundle = Bundle.parse(new Bundle({
-    modules: new Map([['.', { files: Object.fromEntries(paths.map(path => [path, ''])), name: 'app', version: '1' }]]),
+    modules: modules ? new Map([...modules].map(([dir, info]) => [dir, { name: dir, version: '1', ...info }]))
+      : new Map([['.', { files: Object.fromEntries(paths.map(path => [path, contents[path] ?? ''])), name: 'app', version: '1' }]]),
     imports: new Map(Object.entries(imports).map(([condition, parents]) => [condition,
       new Map(Object.entries(parents).map(([parent, specifiers]) => [parent, new Map(Object.entries(specifiers))]))])),
   }).serialize())
   return { kind: 'stasis', bundle }
 }
+
+function packageImports(mapping, edges, files = {}, parent = 'index.js') {
+  const contents = { 'package.json': JSON.stringify({ imports: mapping }), [parent]: '', ...files }
+  return stasis(edges, Object.keys(contents), contents)
+}
+
+test('package imports connect original aliases to preprocessed directory edges and preserve highlighted text', () => {
+  const details = packageImports({ '#local/*': './_local/*' }, {
+    'node,import': { 'index.js': { './_local/linking': '_local/linking/index.js', './_local/linking/tools': '_local/linking/tools/index.js' } },
+  }, { '_local/linking/index.js': '', '_local/linking/tools/index.js': '' })
+  const resolve = bundleSourceLinkResolver(details, 'index.js')
+  assert.equal(resolve('#local/linking'), '_local/linking/index.js')
+  assert.equal(resolve('#local/linking/tools'), '_local/linking/tools/index.js')
+  assert.deepEqual(sourceLinks("import { link } from '#local/linking';", 'javascript', resolve), [
+    ["'#local/linking'", '_local/linking/index.js'],
+  ])
+  const sources = bundleSourcesAsMap(details)
+  assert.equal(sourceLinkResolver(sources, 'index.js', bundleSourceImports(details, sources))('#local/linking'), '_local/linking/index.js', 'focus/fullscreen uses the shared resolver')
+})
+
+test('captured package manifests also assist links when stored as textual resources', () => {
+  const details = packageImports({ '#local/*': './_local/*' }, { node: { 'index.js': { './_local/linking': '_local/linking/index.js' } } }, { '_local/linking/index.js': '' })
+  details.bundle.formats.set('package.json', 'resource')
+  assert.equal(bundleSourceLinkResolver(details, 'index.js')('#local/linking'), '_local/linking/index.js')
+  const sources = bundleSourcesAsMap(details)
+  assert.equal(sources.has('package.json'), false)
+  assert.equal(sourceLinkResolver(sources, 'index.js', bundleSourceImports(details, sources), bundleFilesAsMap(details))('#local/linking'), '_local/linking/index.js')
+})
+
+test('package imports use the nearest manifest and resolve rewritten edges relative to nested importers', () => {
+  const details = packageImports({ '#local/*': './root/*' }, {
+    node: {
+      'packages/app/src/main.js': { '../_local/linking': 'packages/app/_local/linking/index.js' },
+      'packages/app/sub/main.js': { '../_local/linking': 'packages/app/_local/linking/index.js' },
+    },
+  }, {
+    'packages/app/package.json': JSON.stringify({ imports: { '#local/*': './_local/*' } }),
+    'packages/app/_local/linking/index.js': '',
+    'packages/app/sub/package.json': '{}',
+    'packages/app/src/main.js': '', 'packages/app/sub/main.js': '',
+    'root/linking.js': '',
+  })
+  assert.equal(bundleSourceLinkResolver(details, 'packages/app/src/main.js')('#local/linking'), 'packages/app/_local/linking/index.js')
+  assert.equal(bundleSourceLinkResolver(details, 'packages/app/sub/main.js')('#local/linking'), null, 'a nested package without imports does not inherit its parent mapping')
+})
+
+test('dependencies cannot inherit the application imports map when their manifest is absent', () => {
+  const details = packageImports({ '#local': './shared.js' }, { node: { 'node_modules/dep/index.js': { './shared.js': 'shared.js' } } }, {
+    'shared.js': '', 'node_modules/dep/index.js': '',
+  })
+  assert.equal(bundleSourceLinkResolver(details, 'node_modules/dep/index.js')('#local'), null)
+})
+
+test('recorded workspace boundaries block inherited imports while literal edges remain authoritative', () => {
+  const parent = 'packages/app/src/main.js'
+  const details = stasis({ node: {
+    'index.js': { './shared.js': 'shared.js' },
+    [parent]: { './shared.js': 'shared.js', '#direct': 'shared.js' },
+  } }, [], {}, new Map([
+    ['.', { files: { 'package.json': JSON.stringify({ imports: { '#local': './shared.js' } }), 'index.js': '', 'shared.js': '' } }],
+    ['packages/app', { files: { 'src/main.js': '' } }],
+  ]))
+  assert.equal(bundleSourceLinkResolver(details, 'index.js')('#local'), 'shared.js')
+  assert.equal(bundleSourceLinkResolver(details, parent)('#local'), null, 'the workspace cannot use the root manifest')
+  assert.equal(bundleSourceLinkResolver(details, parent)('#direct'), 'shared.js', 'literal edges still resolve before package lookup')
+  const sources = bundleSourcesAsMap(details)
+  const resolve = sourceLinkResolver(sources, parent, bundleSourceImports(details, sources), bundleFilesAsMap(details), bundlePackageDirs(details))
+  assert.equal(resolve('#local'), null, 'the shared resolver also observes the workspace boundary')
+  assert.equal(resolve('#direct'), 'shared.js')
+})
+
+test('workspace manifests apply inside their package without leaking into a nested workspace', () => {
+  const nested = 'packages/app/plugin/src/main.js', parent = 'packages/app/src/main.js'
+  const details = stasis({ node: {
+    [parent]: { '../local.js': 'packages/app/local.js' },
+    [nested]: { './local.js': 'packages/app/local.js' },
+  } }, [], {}, new Map([
+    ['.', { files: { 'package.json': JSON.stringify({ imports: { '#local': './root.js' } }), 'root.js': '' } }],
+    ['packages/app', { files: { 'package.json': JSON.stringify({ imports: { '#local': './local.js' } }), 'src/main.js': '', 'local.js': '' } }],
+    ['packages/app/plugin', { files: { 'src/main.js': '' } }],
+  ]))
+  details.bundle.formats.set('packages/app/package.json', 'resource')
+  assert.equal(bundleSourceLinkResolver(details, parent)('#local'), 'packages/app/local.js', 'the module root manifest is checked before stopping')
+  assert.equal(bundleSourceLinkResolver(details, nested)('#local'), null, 'an uncaptured nested manifest cannot inherit the enclosing workspace map')
+})
+
+test('package imports prefer exact keys and the most specific wildcard including pattern trailers', () => {
+  const details = packageImports({
+    '#local/*': './generic/*', '#local/special/*': './specific/*',
+    '#local/*.js': './javascript/*', '#local/exact': './exact.js', '#local/blocked': null,
+  }, { node: { 'index.js': {
+    './generic/exact': 'generic/exact.js', './generic/blocked': 'generic/blocked.js',
+    './generic/special/a': 'generic/special/a.js', './specific/a': 'specific/a.js',
+    './generic/test.js': 'generic/test.js', './javascript/test': 'javascript/test.js',
+  } } }, {
+    'exact.js': '', 'generic/exact.js': '', 'generic/blocked.js': '', 'generic/special/a.js': '',
+    'specific/a.js': '', 'generic/test.js': '', 'javascript/test.js': '',
+  })
+  const resolve = bundleSourceLinkResolver(details, 'index.js')
+  assert.equal(resolve('#local/exact'), 'exact.js')
+  assert.equal(resolve('#local/blocked'), null)
+  assert.equal(resolve('#local/special/a'), 'specific/a.js')
+  assert.equal(resolve('#local/test.js'), 'javascript/test.js')
+})
+
+test('package imports follow captured exact files and external package edges without guessing index files or extensions', () => {
+  const details = packageImports({ '#file': './file.js', '#script': './script', '#dir': './folder', '#missing': './missing', '#pkg': 'pkg' }, {
+    node: { 'index.js': { pkg: 'node_modules/pkg/index.js' } },
+  }, { 'file.js': '', script: '', 'folder/index.js': '', 'missing.js': '', 'node_modules/pkg/index.js': '' })
+  const resolve = bundleSourceLinkResolver(details, 'index.js')
+  assert.equal(resolve('#file'), 'file.js')
+  assert.equal(resolve('#script'), 'script')
+  assert.equal(resolve('#pkg'), 'node_modules/pkg/index.js')
+  assert.equal(resolve('#dir'), null)
+  assert.equal(resolve('#missing'), null)
+})
+
+test('direct recorded aliases override package mappings including explicit unresolved edges', () => {
+  const details = packageImports({ '#direct': './mapped.js', '#blocked': './mapped.js' }, {
+    node: { 'index.js': { '#direct': 'actual.js', '#blocked': 'unavailable.js', './mapped.js': 'mapped.js' } },
+  }, { 'actual.js': '', 'mapped.js': '' })
+  const resolve = bundleSourceLinkResolver(details, 'index.js')
+  assert.equal(resolve('#direct'), 'actual.js')
+  assert.equal(resolve('#blocked'), null)
+})
+
+test('package alias links preserve conflicts, platform maps, missing bodies, and restricted source visibility', () => {
+  const details = packageImports({ '#local/*': './_local/*' }, {
+    node: { 'index.js': { './_local/a.js': '_local/a.js', './_local/platform': new Map([['ios', '_local/a.js']]), './_local/missing': 'absent.js' } },
+    browser: { 'index.js': { './_local/a.js': '_local/b.js' } },
+  }, { '_local/a.js': '', '_local/b.js': '' })
+  const resolve = bundleSourceLinkResolver(details, 'index.js')
+  for (const specifier of ['#local/a.js', '#local/platform', '#local/missing']) assert.equal(resolve(specifier), null)
+  const sources = new Map([['package.json', JSON.stringify({ imports: { '#hidden': './_local/a.js' } })], ['index.js', '']])
+  const restricted = sourceLinkResolver(sources, 'index.js', bundleSourceImports(details, sources))
+  assert.equal(restricted('#hidden'), null)
+})
+
+test('conditional and array package imports only link targets that agree across branches', () => {
+  const details = packageImports({
+    '#same': { node: './a.js', default: './same.js' }, '#array': ['./a.js', './same.js'],
+    '#different': { node: './a.js', browser: './b.js' }, '#blocked': { node: './a.js', default: null },
+  }, { node: { 'index.js': { './a.js': 'a.js', './same.js': 'a.js', './b.js': 'b.js' } } }, { 'a.js': '', 'b.js': '' })
+  const resolve = bundleSourceLinkResolver(details, 'index.js')
+  assert.equal(resolve('#same'), 'a.js')
+  assert.equal(resolve('#array'), 'a.js')
+  assert.equal(resolve('#different'), null)
+  assert.equal(resolve('#blocked'), null)
+})
+
+test('malformed manifests and unsafe package import targets do not throw or link', () => {
+  for (const manifest of ['{broken', 'null', '[]', '{"imports":5}', '{"imports":[]}']) {
+    const details = packageImports({}, {}, { 'package.json': manifest, 'file.js': '' })
+    assert.equal(bundleSourceLinkResolver(details, 'index.js')('#file'), null)
+  }
+  const details = packageImports({ '#local/*': './_local/*', '#escape': '../outside.js', '#absolute': '/outside.js', '#url': 'https://example.test/outside.js' }, {}, { 'outside.js': '', '_local/file.js': '' })
+  const resolve = bundleSourceLinkResolver(details, 'index.js')
+  for (const specifier of ['#local/../outside.js', '#local/%2e%2e/outside.js', '#local/node_modules/pkg', '#local/file\\.js', '#local/%2ffile.js', '#escape', '#absolute', '#url']) assert.equal(resolve(specifier), null)
+})
 
 test('relative strings resolve exact files with extensions from the current directory', () => {
   const resolve = bundleSourceLinkResolver(sourcemap(['src/main.js', 'src/foo.js', 'utils.ts', 'src/noext', 'src/.env', 'other/foo.js']), 'src/main.js')
