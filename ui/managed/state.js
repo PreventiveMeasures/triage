@@ -126,35 +126,45 @@ export class ManagedAppState {
 
   // An element's cancellation only stops its own updates. Shared requests can
   // finish after navigation and populate the cache for the next visit.
-  async load(key, label, fetchData, { signal, apply = () => {} } = {}) {
-    signal?.throwIfAborted()
-    let entry = this.resources.get(key)
-    if (!entry) {
-      entry = {}
-      this.resources.set(key, entry)
-    }
-    if (entry.data !== undefined) apply(entry.data)
-    if (!entry.pending) {
-      const controller = entry.controller = new AbortController()
-      entry.pending = (async () => {
-        try {
-          const data = await fetchData(controller.signal)
-          controller.signal.throwIfAborted()
-          entry.data = data
-          return data
-        } catch (err) {
-          if (!controller.signal.aborted && err?.name !== 'AbortError') {
-            this.notify(`Couldn't refresh ${label}: ${err?.message ?? err}`)
+  async load(key, label, fetchData, { signal, apply = () => {}, retryInvalidated = false } = {}) {
+    const generation = this.generation
+    while (true) {
+      signal?.throwIfAborted()
+      let entry = this.resources.get(key)
+      if (!entry) {
+        entry = {}
+        this.resources.set(key, entry)
+      }
+      if (entry.data !== undefined) apply(entry.data)
+      if (!entry.pending) {
+        const controller = entry.controller = new AbortController()
+        entry.pending = (async () => {
+          try {
+            const data = await fetchData(controller.signal)
+            controller.signal.throwIfAborted()
+            entry.data = data
+            return data
+          } catch (err) {
+            if (!controller.signal.aborted && err?.name !== 'AbortError') {
+              this.notify(`Couldn't refresh ${label}: ${err?.message ?? err}`)
+            }
+            throw err
           }
-          throw err
-        }
-      })().finally(() => { entry.pending = null })
+        })().finally(() => { entry.pending = null })
+      }
+      try {
+        const data = await entry.pending
+        signal?.throwIfAborted()
+        if (this.resources.get(key) !== entry) throw new DOMException('Managed data changed', 'AbortError')
+        apply(data)
+        return data
+      } catch (err) {
+        // Immutable bundle metadata can restart against current authorization
+        // when a catalogue update cancels its cache entry during navigation.
+        if (!retryInvalidated || err?.name !== 'AbortError' || signal?.aborted
+          || generation !== this.generation || this.resources.get(key) === entry) throw err
+      }
     }
-    const data = await entry.pending
-    signal?.throwIfAborted()
-    if (this.resources.get(key) !== entry) throw new DOMException('Managed data changed', 'AbortError')
-    apply(data)
-    return data
   }
 }
 
