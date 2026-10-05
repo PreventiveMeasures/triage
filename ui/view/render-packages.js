@@ -582,8 +582,8 @@ function renderPackageOverview(pkg, bucket, version) {
     ${sortedReports.map((r) => {
       const iconHtml = FILE_ICONS[groupOf(r)] ?? FILE_ICONS.default
       return html`<li>
-        <button type="button" class="packages-detail-report" data-tooltip=${r} data-package-report=${r}>
-          ${unsafeHTML(iconHtml)}<span class="packages-detail-report-label">${displayName(r)}</span>
+        <button type="button" class="packages-detail-report" data-package-report=${r}>
+          ${unsafeHTML(iconHtml)}<span class="packages-detail-report-label" data-tooltip-truncated data-tooltip=${r}>${displayName(r)}</span>
         </button>
       </li>`
     })}
@@ -593,7 +593,7 @@ function renderPackageOverview(pkg, bucket, version) {
     ${sortedFiles.map(([file, findings]) => {
       const stripped = pkgRelativePath(pkg, file)
       return html`<li class="packages-detail-file">
-        <span class="packages-detail-file-path mono" data-tooltip=${file}>${stripped}</span>
+        <span class="packages-detail-file-path mono" data-tooltip-truncated data-tooltip=${file}>${stripped}</span>
         <span class="packages-detail-file-count">${findings.length}</span>
       </li>`
     })}

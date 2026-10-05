@@ -5,8 +5,8 @@ import { pkgColor } from './utils.js'
 const number = (n) => n.toLocaleString('en-US')
 
 function rowButton(row, count, select) {
-  return html`<button class="g2-dist-item matrix-row-link" @click=${() => select(row.id)} data-tooltip=${row.label}>
-    <span class="g2-dist-dot" style=${`background:${pkgColor(row.pkg)}`}></span><span class="g2-dist-name">${row.label}</span><span class="g2-dist-count">${number(count)}</span>
+  return html`<button class="g2-dist-item matrix-row-link" @click=${() => select(row.id)}>
+    <span class="g2-dist-dot" style=${`background:${pkgColor(row.pkg)}`}></span><span class="g2-dist-name" data-tooltip-truncated data-tooltip=${row.label}>${row.label}</span><span class="g2-dist-count">${number(count)}</span>
   </button>`
 }
 
@@ -33,9 +33,9 @@ export function renderMatrixPanel(model, graph, selection, { select, expand, exp
       <button aria-pressed=${String(neighborhood === row.id)} @click=${() => focus(row.id)}>Neighborhood</button>
     </div>
     ${target ? html`<h4>File imports</h4>${importGroups.size > 0 ? [...importGroups].map(([to, imports]) => html`<div class="matrix-import-group">
-      <button class="matrix-import-target" data-bundle-view-source=${graph.nodeByFile.get(to)?.origFile ?? to} data-tooltip=${to}>${to}</button>
+      <button class="matrix-import-target" data-bundle-view-source=${graph.nodeByFile.get(to)?.origFile ?? to} data-tooltip-truncated data-tooltip=${to}>${to}</button>
       <ul class="matrix-import-sources" aria-label="Imported by">${imports.map(([from]) => html`<li>
-        <button data-bundle-view-source=${graph.nodeByFile.get(from)?.origFile ?? from} data-tooltip=${from}><span aria-hidden="true">←</span><span>${from}</span></button>
+        <button data-bundle-view-source=${graph.nodeByFile.get(from)?.origFile ?? from}><span aria-hidden="true">←</span><span data-tooltip-truncated data-tooltip=${from}>${from}</span></button>
       </li>`)}</ul>
     </div>`) : html`<p class="matrix-empty">No direct imports in this direction.</p>`}
     ${cell && cell.count > cell.examples.length ? html`<p class="matrix-empty">Showing ${cell.examples.length} of ${number(cell.count)} imports.</p>` : null}

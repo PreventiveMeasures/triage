@@ -390,13 +390,12 @@ function renderBundleSizeDistribution(items, sort) {
     <ul class="bundles-dist-list">
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => {
         const pct = (size / total * 100).toFixed(1)
-        // Shown by name; the tooltip keeps the full key, which tells two
-        // packages of one name (npm `log`, Cargo `vendor/log`) apart.
+        // When the name is clipped, show the full package key.
         const label = pkgLabel(pkg)
         const c = pkgColor(pkg)
         return html`<li>
           <span class="bundles-dist-dot" style=${styleMap({ background: c })}></span>
-          <span class="bundles-dist-pkg" data-tooltip=${pkg === '__own__' ? nothing : pkg}>${label}</span>
+          <span class="bundles-dist-pkg" data-tooltip-truncated data-tooltip=${pkg === '__own__' ? nothing : pkg}>${label}</span>
           <span class="bundles-dist-bar-row" aria-hidden="true">
             <span class="bundles-dist-bar-fill" style=${styleMap({ width: `${pct}%`, background: c })}></span>
           </span>
@@ -511,11 +510,11 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
     ${order.map((i) => {
       const src = sources[i]
       const size = sizes[i]
-      const row = html`<span class="bundles-source-path">${stripped[i]}</span>
+      const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${src}>${stripped[i]}</span>
         ${size == null ? nothing : html`<span class="bundles-source-size">${formatBytes(size)}</span>`}`
       return html`<li>${resources?.has(src)
-        ? html`<div class="bundles-source-row is-resource" data-tooltip=${src}>${row}</div>`
-        : html`<button type="button" class="bundles-source-row" data-bundle-view-source=${src} data-tooltip=${src}>${row}</button>`}</li>`
+        ? html`<div class="bundles-source-row is-resource">${row}</div>`
+        : html`<button type="button" class="bundles-source-row" data-bundle-view-source=${src}>${row}</button>`}</li>`
     })}
   </ul>` : html`<p class="bundles-overview-col-empty">No source files in this bundle.</p>`
   // Reports list — same brand-sticker chip the Issues tab uses on
@@ -527,8 +526,8 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       const iconHtml = FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default
       const count = reportCounts.get(name) ?? 0
       return html`<li>
-        <button type="button" class="report-chip bundles-report-chip" data-tooltip=${name} data-bundle-issue-report=${name}>
-          ${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span>
+        <button type="button" class="report-chip bundles-report-chip" data-bundle-issue-report=${name}>
+          ${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span>
           <span class="bundles-report-count">${count} ${count === 1 ? 'issue' : 'issues'}</span>
         </button>
       </li>`
@@ -766,9 +765,8 @@ function renderBundleSourceFindingPanel(findings) {
           return html`<button
             type="button"
             class="report-chip bundle-source-panel-report"
-            data-tooltip=${name}
             data-bundle-issue-report=${name}
-          >${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
+          >${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
         })}
       </div>` : nothing}
     </div>
@@ -961,6 +959,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const packageIcon = pkg?.ecosystem === 'composer' ? sourceComposerIcon : pkg?.ecosystem === 'cargo' ? sourceCargoIcon : pkg?.ecosystem === 'soldeer' ? sourceSoldeerIcon : sourceNpmIcon
       const tooltip = pkg?.variant ? `${compact.node.sourcePath}\nVariant ${pkg.variant}` : compact.node.sourcePath
       const info = child.packageInfo
+      const hasDetails = !!info || !!pkg?.variant
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
       // where the issues live (the per-file chips only help once
@@ -974,10 +973,11 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
             data-tooltip-version=${info?.version ?? nothing}
             data-tooltip-files=${info?.fileCount ?? nothing}
             data-tooltip-repo=${info?.github ?? nothing}
-            data-tooltip=${tooltip}>
+            data-tooltip=${hasDetails ? tooltip : nothing}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
             ${pkg ? packageIcon : nothing}
-            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored })}>
+            <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored })}
+              data-tooltip-truncated data-tooltip=${hasDetails ? nothing : tooltip}>
               ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${vendored ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
             </span>
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
@@ -1000,9 +1000,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
           class=${classMap({ 'bundle-code-tree-link': true, current: full === currentPath })}
           data-bundle-view-source=${full}
           aria-current=${full === currentPath ? 'true' : nothing}
-          data-tooltip=${full}
         >
-          ${sourceFileIcon(full, formats?.get(full))}<span class="bundle-code-tree-name">${name}</span>
+          ${sourceFileIcon(full, formats?.get(full))}<span class="bundle-code-tree-name" data-tooltip-truncated data-tooltip=${full}>${name}</span>
           ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} data-tooltip=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
         </button>
       </li>`
@@ -1077,7 +1076,7 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
         type="button"
         class="bundle-code-search-file-name"
         data-bundle-view-source=${p}
-        data-tooltip=${p}
+        data-tooltip-truncated data-tooltip=${p}
       >${bare}</button>
       <ul class="bundle-code-search-hits">
         ${hits.map((h) => html`<li class="bundle-code-search-hit">
@@ -1087,7 +1086,6 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
             data-bundle-view-source=${p}
             data-bundle-view-line=${h.ln}
             data-bundle-view-scroll-block="start"
-            data-tooltip=${`${p}:${h.ln}`}
           >
             <span class="bundle-code-search-hit-ln">${h.ln}</span>
             <span class="bundle-code-search-hit-text mono">${h.text.slice(0, 200)}</span>
@@ -1158,11 +1156,10 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
             data-bundle-view-source=${file}
             data-bundle-view-finding-idx=${fileIdx}
             data-bundle-view-line=${finding.line ?? ''}
-            data-tooltip=${file}
           >
             <div class="bundle-code-search-issue-row">
               <span class=${`bundle-code-search-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
-              <span class="bundle-code-search-issue-path mono">${bare}${finding.line ? `:${finding.line}` : ''}</span>
+              <span class="bundle-code-search-issue-path mono" data-tooltip-truncated data-tooltip=${file}>${bare}${finding.line ? `:${finding.line}` : ''}</span>
             </div>
             <div class="bundle-code-search-issue-desc">${renderHighlighted(titledDescription(finding), { paragraphs: false })}</div>
           </button>
@@ -1566,7 +1563,6 @@ function renderSearchSnippet(path, lines, win, hitRanges, showGap) {
       data-bundle-view-source=${path}
       data-bundle-view-line=${anchor}
       data-bundle-view-scroll-block="center"
-      data-tooltip=${`${path}:${anchor}`}
     >${rows}</button>`
 }
 
@@ -1589,7 +1585,7 @@ function renderSearchFile(fileResult, prefix, radius) {
         data-bundle-view-source=${path}
         data-bundle-view-line=${firstHit}
         data-bundle-view-scroll-block="center"
-        data-tooltip=${path}
+        data-tooltip-truncated data-tooltip=${path}
       >${bare}</button>
       <span class="bundle-search-file-count">${hits.length} ${hits.length === 1 ? 'match' : 'matches'}</span>
     </header>
@@ -1952,7 +1948,7 @@ function bundleIssueReportsTemplate(finding, ctx = {}) {
   return html`<div class="bundle-issue-reports">
     ${visible.map((name) => {
       const iconHtml = REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default
-      return html`<button type="button" class="report-chip" data-tooltip=${name} data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label">${displayName(name)}</span></button>`
+      return html`<button type="button" class="report-chip" data-bundle-issue-report=${name}>${unsafeHTML(iconHtml)}<span class="report-chip-label" data-tooltip-truncated data-tooltip=${name}>${displayName(name)}</span></button>`
     })}
     ${extra > 0 ? html`<span class="bundle-issue-reports-more">, and ${extra} more…</span>` : nothing}
   </div>`
@@ -2119,10 +2115,10 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
         return html`<li class="bundle-issues-file-group">
           <header class="bundle-issues-file-header">
             ${kind === 'bundle'
-              ? html`<button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} data-tooltip=${file}>${bare}</button>`
+              ? html`<button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} data-tooltip-truncated data-tooltip=${file}>${bare}</button>`
               : repoFileUrl
-                ? html`<a class="bundle-issues-file-name bundle-issues-file-name-link mono" href=${repoFileUrl} target="_blank" rel="noopener" data-tooltip=${file}>${bare}</a>`
-                : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" data-tooltip=${file}>${bare}</span>`}
+                ? html`<a class="bundle-issues-file-name bundle-issues-file-name-link mono" href=${repoFileUrl} target="_blank" rel="noopener" data-tooltip-truncated data-tooltip=${file}>${bare}</a>`
+                : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" data-tooltip-truncated data-tooltip=${file}>${bare}</span>`}
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
           <ul class="bundle-issues-findings">
@@ -2164,9 +2160,8 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
                       data-bundle-view-source=${file}
                       data-bundle-view-finding-idx=${findingIdx}
                       data-bundle-view-line=${finding.line ?? ''}
-                      data-tooltip=${file}
                     >${inner}</button>`
-                  : html`<div class="bundle-issues-finding-link bundle-issues-finding-static" data-tooltip=${file}>${inner}</div>`}
+                  : html`<div class="bundle-issues-finding-link bundle-issues-finding-static">${inner}</div>`}
               </li>`
             })}
           </ul>

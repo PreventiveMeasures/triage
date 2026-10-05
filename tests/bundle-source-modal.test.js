@@ -316,7 +316,7 @@ test('the Overview Files header offers Name and Size ordering for local and cach
       assert.match(header, new RegExp(`aria-pressed=${sort === 'name'}[^>]*>Name<`, 'u'))
       assert.match(header, new RegExp(`aria-pressed=${sort === 'size'}[^>]*>Size<`, 'u'))
       const files = markup.match(/<ul class="bundles-sources-list">(.*?)<\/ul>/su)[1]
-      assert.deepEqual([...files.matchAll(/class="bundles-source-path">(.*?)<\/span>/gu)].map(match => match[1]), expected)
+      assert.deepEqual([...files.matchAll(/class="bundles-source-path"[^>]*>(.*?)<\/span>/gu)].map(match => match[1]), expected)
       assert.match(files, /data-bundle-view-source=src\/a\.js/u)
     }
   }
@@ -331,7 +331,7 @@ test('Overview Size ordering puts known zero-byte sourcemap files before unknown
   state.bundleOverviewFilesSort = 'size'
   const markup = renderText(renderBundlesList([entry]))
   const files = markup.match(/<ul class="bundles-sources-list">(.*?)<\/ul>/su)[1]
-  assert.deepEqual([...files.matchAll(/class="bundles-source-path">(.*?)<\/span>/gu)].map(match => match[1]), ['full.js', 'empty.js', 'missing.js'])
+  assert.deepEqual([...files.matchAll(/class="bundles-source-path"[^>]*>(.*?)<\/span>/gu)].map(match => match[1]), ['full.js', 'empty.js', 'missing.js'])
 })
 
 test('the Overview Packages header sorts by total bytes or displayed name independently of Files', async () => {

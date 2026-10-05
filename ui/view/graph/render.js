@@ -255,9 +255,9 @@ function renderFileList(graph, label, files, referenceDir) {
       ${items.map(({ file: f, display }) => {
         const node = graph.nodeByFile.get(f)
         const c = node ? pkgColor(node.pkg) : '#666'
-        return html`<li><button type="button" class="g2-sel-file-link" data-g2-select=${f} data-tooltip=${f}>
+        return html`<li><button type="button" class="g2-sel-file-link" data-g2-select=${f}>
           <span class="g2-sel-file-dot" style=${styleMap({ background: c })}></span>
-          <span class="g2-sel-file-path">${display}</span>
+          <span class="g2-sel-file-path" data-tooltip-truncated data-tooltip=${f}>${display}</span>
         </button></li>`
       })}
     </ul>
@@ -459,8 +459,8 @@ function renderFileCard(graph, n, file, ctx) {
     <!-- Three-line header, matching the hover tooltip: package-
          relative path (primary id), dot + package name, then the
          full path below the head's border. The full-path line is
-         ellipsis-clipped in a narrow column; its title attr keeps
-         the untruncated path discoverable on hover. -->
+         ellipsis-clipped in a narrow column; its tooltip keeps
+         the full path discoverable when clipped. -->
     <div class="g2-sel-file-head">
       <div class="g2-sel-path">${relPath}</div>
       <div class="g2-sel-pkg-row">
@@ -468,7 +468,7 @@ function renderFileCard(graph, n, file, ctx) {
         <span class="g2-sel-pkg">${pkgLabel}</span>
       </div>
     </div>
-    <div class="g2-sel-fullpath" data-tooltip=${file}>${file}</div>
+    <div class="g2-sel-fullpath" data-tooltip-truncated data-tooltip=${file}>${file}</div>
     ${formatBytes(n.size) ? html`<div class="g2-sel-size">${formatBytes(n.size)}</div>` : null}
     <!-- Own + subtree finding chips — same chrome as graph v1's
          sidebar (.tree-info-section / .tree-count-chip) so it reads
@@ -688,8 +688,7 @@ function renderDistribution(graph, activeTab) {
         type="button"
         class=${classMap({ 'g2-dist-item': true, on: isSelected })}
         data-g2-pkg=${pkg}
-        data-tooltip=${label}
-      ><span class="g2-dist-dot" style=${styleMap({ background: c })}></span><span class="g2-dist-name">${label}</span><span class="g2-dist-count">${cnt}</span><span class="g2-dist-pct">${pct}%</span></button>`
+      ><span class="g2-dist-dot" style=${styleMap({ background: c })}></span><span class="g2-dist-name" data-tooltip-truncated data-tooltip=${label}>${label}</span><span class="g2-dist-count">${cnt}</span><span class="g2-dist-pct">${pct}%</span></button>`
     })}
   </div>`
 }

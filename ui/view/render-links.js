@@ -47,9 +47,9 @@ function memberTemplate({ id, title }, reports = [], linked = true, chips = noth
 
 function reportChipsTemplate(reports) {
   return html`<div class="links-finding-reports">${reports.map(({ name, findingId, managedReportId }) => html`<button
-    type="button" class="links-finding-report report-button" data-tooltip=${displayName(name)}
+    type="button" class="links-finding-report report-button"
     data-links-report=${name} data-links-finding=${findingId} data-managed-report=${managedReportId ?? nothing}
-  >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label report-button-label">${displayName(name)}</span></button>`)}</div>`
+  >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label report-button-label" data-tooltip-truncated data-tooltip=${displayName(name)}>${displayName(name)}</span></button>`)}</div>`
 }
 
 function reportRowTemplate(row, linked) {
@@ -109,7 +109,7 @@ export function renderLinksView(badge = nothing) {
       <div class="page-title">
         <h1>Links${badge}</h1>
         <div class="meta-row">
-          <span class="links-file-name" data-tooltip=${name}>${unsafeHTML(FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default)}${displayName(name)}</span>
+          <span class="links-file-name" data-tooltip-truncated data-tooltip=${name}>${unsafeHTML(FILE_ICONS[groupOf(name)] ?? FILE_ICONS.default)}${displayName(name)}</span>
           <span>${count(groups.length, 'link', 'links')}</span>
           <span>${count(linkedIds.size, 'finding', 'findings')}</span>
           ${holders.size > 0 ? html`<span>found in ${count(holders.size, 'report', 'reports')}</span>` : nothing}
