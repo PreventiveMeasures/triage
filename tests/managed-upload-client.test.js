@@ -3,8 +3,25 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { managedFetch, setPreviewRole } from '../client/managed/request.js'
+import { uploadReport } from '../ui/managed/admin-api.js'
 
 const CHUNK = 3 * 1024 * 1024
+
+test('report upload errors explain invalid content and preserve other failures', async t => {
+  const cases = [
+    [400, { error: 'invalid-report', reason: 'JSON, but not a report: no findings array' },
+      'This file is not a report: JSON, but not a report: no findings array'],
+    [400, { error: 'invalid-report' }, 'This file is not a recognized report.'],
+    [400, { error: 'repo-not-connected', repo: 'owner/repo' }, 'HTTP 400: owner/repo is not connected'],
+    [413, { error: 'too-large' }, 'too large'],
+    [500, null, 'HTTP 500'],
+  ]
+  for (const [status, body, message] of cases) {
+    const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json(body, { status }))
+    await assert.rejects(uploadReport(new File(['{}'], 'file.json'), 'csrf'), { message })
+    fetch.mock.restore()
+  }
+})
 
 test('large managed uploads negotiate chunks, preserve metadata and finalize only after all parts', async t => {
   const calls = []

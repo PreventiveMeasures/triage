@@ -1155,9 +1155,9 @@ test('report uploads reuse identical content, preserving stored metadata and tri
     assert.deepEqual(await f.db.listTriage(['imported-finding']), triage)
   }
   assert.equal((await upload(bytes.replace('a.js', 'b.js'))).statusCode, 201, 'changed report content gets a new identity')
-  assert.equal((await upload(managedCsv, { 'x-report-filename': 'raw.txt' })).statusCode, 201)
+  assert.equal((await upload(managedCsv, { 'x-report-filename': 'raw.txt' })).statusCode, 400)
   const csv = await upload(managedCsv, { 'x-report-filename': 'scan.csv' })
-  assert.equal(csv.statusCode, 201, 'CSV recognition must not be lost to an earlier unrecognized upload')
+  assert.equal(csv.statusCode, 201, 'a rejected upload must not prevent a valid CSV retry')
   assert.equal(JSON.parse(csv.body).analyzer, 'codex-security')
   assert.equal((await upload(managedCsv, { 'x-report-filename': 'renamed.csv' })).statusCode, 200)
 })
@@ -1361,7 +1361,7 @@ test('report↔bundle auto-link (both upload orders) + optional repo link', asyn
   const integA = bundleIntegrity(Buffer.from(bundleA))
   const upB = await upload('/api/admin/bundles', aCk, csrf, bundleA, { 'x-bundle-filename': encodeURIComponent('a.map') })
   const bundleAId = JSON.parse(upB.body).id
-  const upR = await upload('/api/admin/reports', aCk, csrf, JSON.stringify({ bundleHashes: [integA] }), { 'x-repo-id': '42' })
+  const upR = await upload('/api/admin/reports', aCk, csrf, JSON.stringify({ findings: [], bundleHashes: [integA] }), { 'x-repo-id': '42' })
   assert.equal(upR.statusCode, 201)
   assert.deepEqual([JSON.parse(upR.body).bundleId, JSON.parse(upR.body).repoId], [bundleAId, 42])
   let reports = JSON.parse((await send('GET', '/api/admin/reports', aCk)).body).reports
@@ -1371,7 +1371,7 @@ test('report↔bundle auto-link (both upload orders) + optional repo link', asyn
   // ── Order B: report first (bundle absent → unlinked), then the bundle ──
   const bundleB = '{"b":2}'
   const integB = bundleIntegrity(Buffer.from(bundleB))
-  const upR2 = await upload('/api/admin/reports', aCk, csrf, JSON.stringify({ bundleHashes: [integB] }))
+  const upR2 = await upload('/api/admin/reports', aCk, csrf, JSON.stringify({ findings: [], bundleHashes: [integB] }))
   const r2Id = JSON.parse(upR2.body).id
   assert.equal(JSON.parse(upR2.body).bundleId, null) // not stored yet
   await upload('/api/admin/bundles', aCk, csrf, bundleB, { 'x-bundle-filename': encodeURIComponent('b.map') })
@@ -1381,7 +1381,7 @@ test('report↔bundle auto-link (both upload orders) + optional repo link', asyn
   assert.equal(r2.bundleIntegrity, integB)
 
   // Unknown repo id on upload → 400 (validated against the selected set).
-  assert.equal((await upload('/api/admin/reports', aCk, csrf, '{}', { 'x-repo-id': '999999' })).statusCode, 400)
+  assert.equal((await upload('/api/admin/reports', aCk, csrf, '{"findings":[]}', { 'x-repo-id': '999999' })).statusCode, 400)
   await db.close()
 })
 
@@ -2651,15 +2651,15 @@ test('manager uploads enforce embedded and explicit repository paths before stor
   const upload = (body, headers = {}) => f.upload('/api/admin/reports', f.cookie, f.frankSess.csrfToken, body, headers)
   const before = (await f.db.listReports()).length
   for (const headers of [{ 'x-repo-id': '8', 'x-repo-directory': 'src' }, { 'x-repo-id': '7' }, { 'x-repo-id': '7', 'x-repo-directory': 'src2' }]) {
-    assert.equal((await upload('{}', headers)).statusCode, 403)
+    assert.equal((await upload('{"findings":[]}', headers)).statusCode, 403)
   }
   assert.equal((await upload(JSON.stringify({ repo: { github: 'o/other', directory: 'src' }, findings: [] }), { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 403, 'headers cannot override embedded private metadata')
   assert.equal((await upload(JSON.stringify({ repo: { github: 'o/r', directory: 'src/app' }, findings: [] }))).statusCode, 201)
-  assert.equal((await upload('{}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 201)
+  assert.equal((await upload('{"source":"explicit","findings":[]}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 201)
   assert.equal((await upload('{"findings":[]}')).statusCode, 201, 'managers can own unattached uploads')
   assert.equal((await f.db.listReports()).length, before + 3)
   await f.db.removeTeamMember(f.team.id, f.frankSess.userId)
-  assert.equal((await upload('{}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 403)
+  assert.equal((await upload('{"findings":[]}', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).statusCode, 403)
 })
 
 test('manager bundle access, deduplication and report auto-linking respect team scopes', async (t) => {
@@ -2676,11 +2676,11 @@ test('manager bundle access, deduplication and report auto-linking respect team 
   assert.equal((await f.send('GET', `/api/admin/bundles/${privateBundle.id}`, f.cookie)).statusCode, 404)
   assert.equal((await f.send('DELETE', `/api/admin/bundles/${privateBundle.id}`, f.cookie, f.frankSess.csrfToken)).statusCode, 404)
   assert.equal((await f.post('bundles/set-repo', { bundleId: privateBundle.id, repoId: 7 })).statusCode, 404)
-  const legacy = JSON.parse((await f.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, JSON.stringify({ bundleHashes: [privateBundle.integrity] }), { 'x-repo-id': '7', 'x-repo-directory': 'src' })).body)
+  const legacy = JSON.parse((await f.upload('/api/admin/reports', f.adminCookie, f.adminSess.csrfToken, JSON.stringify({ findings: [], bundleHashes: [privateBundle.integrity] }), { 'x-repo-id': '7', 'x-repo-directory': 'src' })).body)
   const safeList = (await f.get('/api/admin/reports')).reports.find(r => r.id === legacy.id)
   assert.equal(safeList.bundleId, null, 'legacy cross-scope links do not expose private bundle IDs or names')
   assert.equal(safeList.bundleFilename, null)
-  const newReport = JSON.parse((await f.upload('/api/admin/reports', f.cookie, f.frankSess.csrfToken, JSON.stringify({ bundleHashes: [privateBundle.integrity] }), { 'x-repo-id': '7', 'x-repo-directory': 'src' })).body)
+  const newReport = JSON.parse((await f.upload('/api/admin/reports', f.cookie, f.frankSess.csrfToken, JSON.stringify({ findings: [], bundleHashes: [privateBundle.integrity] }), { 'x-repo-id': '7', 'x-repo-directory': 'src' })).body)
   assert.equal(newReport.bundleId, null, 'new reports never resolve inaccessible bundle hashes')
   const futureHash = bundleIntegrity(Buffer.from('future bytes'))
   const template = (await f.db.listReports())[0]
@@ -2808,7 +2808,9 @@ test('Users Last Activity reflects successful authenticated changes, not reads, 
   assert.equal((await post('teams', { name: 'New team' })).statusCode, 201)
   assert.equal(await activityAt(), now)
   now += 1000
-  assert.equal((await upload('/api/admin/reports', cookie, csrf, '{}')).statusCode, 201)
+  assert.equal((await upload('/api/admin/reports', cookie, csrf, '{}')).statusCode, 400)
+  assert.equal(await activityAt(), now - 1000, 'rejected report content adds no activity')
+  assert.equal((await upload('/api/admin/reports', cookie, csrf, '{"findings":[]}')).statusCode, 201)
   assert.equal(await activityAt(), now)
   now += 1000
   assert.equal((await upload('/api/admin/bundles', cookie, csrf, 'archive')).statusCode, 201)
@@ -2888,7 +2890,7 @@ test('report mutations cannot bypass scoped access or remove an inaccessible rep
   assert.equal((await del(scoped)).statusCode, 200)
   const unattached = await h.seed({ owner: 'manager', repoId: null })
   assert.equal((await del(unattached)).statusCode, 200)
-  const upload = directory => h.harness.upload('/api/admin/reports', cookiePair(h.sessions.manager.setCookie), h.sessions.manager.csrfToken, '{}', { 'x-repo-id': '1', 'x-repo-directory': directory })
+  const upload = directory => h.harness.upload('/api/admin/reports', cookiePair(h.sessions.manager.setCookie), h.sessions.manager.csrfToken, '{"findings":[]}', { 'x-repo-id': '1', 'x-repo-directory': directory })
   assert.equal((await upload('packages/app')).statusCode, 201)
   assert.equal((await upload('packages/application')).statusCode, 403)
 })
