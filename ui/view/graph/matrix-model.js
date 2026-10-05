@@ -57,7 +57,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     fileRow.set(file.file, id)
     originalPaths.set(file.file, file.origFile ?? file.file)
   }
-  const cells = new Map(), incoming = new Set(), links = new Map([...byId.keys()].map((id) => [id, new Set()])), outgoing = new Set()
+  const cells = new Map(), incoming = new Set(), outgoing = new Set()
   const cycleLinks = new Map([...byId.keys()].map(id => [id, new Set()]))
   let importCount = 0
   for (const [file, imports] of graph.importsOf) {
@@ -70,14 +70,14 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
       if (!cells.get(from).has(to)) cells.get(from).set(to, { from, to, count: 0, cycleCount: 0, examples: [] })
       const cell = cells.get(from).get(to)
       cell.count++
-      if (cell.examples.length < 80) cell.examples.push([file, target])
+      const cycleImport = countsTowardsCycles(originalPaths.get(file), originalPaths.get(target))
+      if (cell.examples.length < 80 && (!cyclesOnly || cycleImport)) cell.examples.push([file, target])
       importCount++
       byId.get(from).outgoing++; byId.get(to).incoming++
       if (from !== to) { outgoing.add(from); incoming.add(to) }
-      // A collapsed package's internal imports do not imply a cycle.
-      if (from !== to || byId.get(from).file) links.get(from).add(to)
-      if (countsTowardsCycles(originalPaths.get(file), originalPaths.get(target))) {
+      if (cycleImport) {
         cell.cycleCount++
+        // A collapsed package's internal imports do not imply a cycle.
         if (from !== to || byId.get(from).file) cycleLinks.get(from).add(to)
       }
     }
@@ -104,19 +104,33 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
       }
     }
   }
+  if (cyclesOnly) {
+    importCount = 0
+    incoming.clear(); outgoing.clear()
+    for (const row of byId.values()) { row.incoming = 0; row.outgoing = 0 }
+  }
   for (const [from, targets] of cells) {
     for (const cell of targets.values()) {
       cell.cyclic = cell.cycleCount > 0 && cyclic.has(from) && componentOf.get(from) === componentOf.get(cell.to)
         && (from !== cell.to || byId.get(from).file !== null)
+      // All consumers (canvas, hover, panel and neighborhood) must use the
+      // same filtered imports, not every edge between two cyclic packages.
+      if (!cyclesOnly) continue
+      if (!cell.cyclic) { targets.delete(cell.to); continue }
+      cell.count = cell.cycleCount
+      importCount += cell.count
+      byId.get(from).outgoing += cell.count; byId.get(cell.to).incoming += cell.count
+      if (from !== cell.to) { outgoing.add(from); incoming.add(cell.to) }
     }
+    if (targets.size === 0) cells.delete(from)
   }
   const q = query.trim().toLowerCase()
   const matches = new Set(ids.filter((id) => !q || byId.get(id).files.some((f) => f.toLowerCase().includes(q)) || byId.get(id).label.toLowerCase().includes(q)))
   const keep = new Set(neighborhood ? [neighborhood] : matches)
   // A search result retains immediate neighbors, so its dependencies stay legible.
   if (q || neighborhood) {
-    for (const [from, targets] of links) {
-      for (const to of targets) {
+    for (const [from, targets] of cells) {
+      for (const to of targets.keys()) {
         if (neighborhood ? from === neighborhood : matches.has(from)) keep.add(to)
         if (neighborhood ? to === neighborhood : matches.has(to)) keep.add(from)
       }

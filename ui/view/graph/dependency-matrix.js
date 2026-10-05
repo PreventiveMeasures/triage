@@ -36,7 +36,9 @@ class DependencyMatrix extends LitElement {
         this.neighborhood = null
         this.model = buildDependencyMatrix(this.graph, { expanded: this.expanded, order: this.order, query: this.query, cyclesOnly: this.cyclesOnly })
       }
-      if (this.selection && !this.model.byId.has(this.selection.from)) this.selection = null
+      if (this.selection && (!this.model.index.has(this.selection.from)
+        || (this.selection.to && (!this.model.index.has(this.selection.to)
+          || (this.cyclesOnly && !this.model.cells.get(this.selection.from)?.has(this.selection.to)))))) this.selection = null
       this.hover = null
       this.dirty = false; this.needsFit = true
     }
