@@ -15,11 +15,11 @@ importers:
         specifier: 1.0.0-beta.5
         version: 1.0.0-beta.5
       '@preventive/report':
-        specifier: 1.0.0-alpha.4
-        version: 1.0.0-alpha.4
+        specifier: 1.0.0-alpha.5
+        version: 1.0.0-alpha.5
       '@preventive/upstream':
-        specifier: 1.0.0-alpha.4
-        version: 1.0.0-alpha.4
+        specifier: 1.0.0-alpha.7
+        version: 1.0.0-alpha.7
       ws:
         specifier: ^8.20.1
         version: 8.21.0
@@ -53,7 +53,7 @@ importers:
         version: 8.18.1
       '@vercel/functions':
         specifier: ^3.9.11
-        version: 3.9.11
+        version: 3.9.11(ws@8.21.0)
       brotli:
         specifier: ^1.3.3
         version: 1.3.3
@@ -613,8 +613,8 @@ packages:
     resolution: {integrity: sha512-yMeHF6Wy6U2L+jcu+YWEtDmxQcDE0ptJmYMG5f8+N1ObzBOgl97I643MZOhH6YDSFG7DQyW9YmQxto+FJvHgmQ==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.5.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/report@1.0.0-alpha.4':
-    resolution: {integrity: sha512-1cGfq3vdC3fcs4DqarP0moc2WCZPpcoKiYIwPELYMw5il3UKDVMWybJnhvvQ8OEspJ2zmNT4/obdpWh8fdk7xg==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.4.tgz}
+  '@preventive/report@1.0.0-alpha.5':
+    resolution: {integrity: sha512-uGIWb7nBJvHPXT7TrOsqNnpXKDSMm+KdLIxdj3IK5BFp/hh0+JqJQl5oBtRgvcxCETeGws3MPCRMgWTudTuxTA==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.5.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/terminal@2.0.0-beta.1':
@@ -623,6 +623,15 @@ packages:
   '@preventive/upstream@1.0.0-alpha.4':
     resolution: {integrity: sha512-Dr5fB7NHri6YWAoA8O5owm0+ZslqIXqNZmrvFTh4JKW8trKjeGsgoBMYcqEHha5NdEKa9D3HNpWGx6mMKKO3wQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.4.tgz}
     engines: {node: '>=24.14.0'}
+
+  '@preventive/upstream@1.0.0-alpha.7':
+    resolution: {integrity: sha512-bAmN5SEIaD5SqCfJovjdnmWty3coVyRHoyDwRHvO8WmCHAM7C/2sjLiGcbkVV2j/U3nHLKaT4eI7cdb/QnP/0A==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.7.tgz}
+    engines: {node: '>=24.14.0'}
+    peerDependencies:
+      semver: ^7.5.2
+    peerDependenciesMeta:
+      semver:
+        optional: true
 
   '@preventive/vfs@1.0.0-beta.3':
     resolution: {integrity: sha512-tuDr8A5IMZCXIwG1VPy1BCmFSnLGBX+WXeLUYc0EWUvVsGxARphajjkA+lzRokXQglPHgE7HqepX0g49zjcFGw==, tarball: https://registry.npmjs.org/@preventive/vfs/-/vfs-1.0.0-beta.3.tgz}
@@ -1722,7 +1731,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/report@1.0.0-alpha.4': {}
+  '@preventive/report@1.0.0-alpha.5': {}
 
   '@preventive/terminal@2.0.0-beta.1':
     dependencies:
@@ -1732,6 +1741,8 @@ snapshots:
       - '@noble/hashes'
 
   '@preventive/upstream@1.0.0-alpha.4': {}
+
+  '@preventive/upstream@1.0.0-alpha.7': {}
 
   '@preventive/vfs@1.0.0-beta.3': {}
 
@@ -1854,9 +1865,11 @@ snapshots:
     dependencies:
       execa: 5.1.1
 
-  '@vercel/functions@3.9.11':
+  '@vercel/functions@3.9.11(ws@8.21.0)':
     dependencies:
       '@vercel/oidc': 4.0.0
+    optionalDependencies:
+      ws: 8.21.0
 
   '@vercel/oidc@4.0.0':
     dependencies:
