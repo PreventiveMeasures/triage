@@ -11,6 +11,7 @@ import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-meta
 
 const executor = 'node_modules/react-native/scripts/codegen/generate-artifacts-executor.js'
 const manifest = 'node_modules/dep/package.json'
+const config = 'node_modules/dep/react-native.config.js'
 
 function graphFrom(imports, originals = new Map()) {
   const tree = Object.fromEntries([...imports].map(([file, targets]) => [file, { imports: targets }]))
@@ -28,9 +29,9 @@ function layout(graph, packagesView) {
   })
 }
 
-test('codegen manifest reads remain visible without producing file or package cycles', () => {
+test('codegen manifest and config reads remain visible without producing file or package cycles', () => {
   for (const prefix of ['', 'project/', 'node_modules/.pnpm/react-native@1.0.0/', 'node_modules/outer/']) {
-    for (const target of [manifest, 'package.json', '/project/package.json']) {
+    for (const target of [manifest, 'package.json', '/project/package.json', config, 'react-native.config.js', '/project/react-native.config.js']) {
       const source = prefix + executor
       const graph = graphFrom(new Map([[source, [target]], [target, [source]]]))
       const before = structuredClone(graph)
@@ -42,7 +43,7 @@ test('codegen manifest reads remain visible without producing file or package cy
         assert.ok(model.visibleCells.every(cell => !cell.cyclic))
         assert.equal(buildDependencyMatrix(graph, { expanded, cyclesOnly: true }).rows.length, 0)
         assert.equal(buildDependencyMatrix(graph, { expanded, query: 'generate-artifacts' }).rows.length, 2,
-          'search retains manifest neighbors')
+          'search retains codegen neighbors')
         for (const row of model.rows) {
           assert.equal(buildDependencyMatrix(graph, { expanded, neighborhood: row.id }).rows.length, 2,
             'selection retains imports and importers')
@@ -62,14 +63,16 @@ test('codegen manifest reads remain visible without producing file or package cy
 })
 
 test('cycle exclusions use original paths when bundle display paths are shortened', () => {
-  const source = 'scripts/codegen/generate-artifacts-executor.js', target = 'package.json'
-  const originals = new Map([[source, executor], [target, manifest]])
-  const graph = graphFrom(new Map([[source, [target]], [target, [source]]]), originals)
-  assert.equal(buildDependencyMatrix(graph).cycleCount, 0)
-  for (const packagesView of [false, true]) assert.deepEqual(layout(graph, packagesView).cycles, [])
-  const ownScript = graphFrom(graph.importsOf)
-  assert.equal(buildDependencyMatrix(ownScript, { expanded: new Set(['dep']) }).cycleCount, 1,
-    'a similarly named own-source script is not the installed React Native executor')
+  for (const filename of ['package.json', 'react-native.config.js']) {
+    const source = 'scripts/codegen/generate-artifacts-executor.js', target = filename
+    const originals = new Map([[source, executor], [target, `node_modules/dep/${filename}`]])
+    const graph = graphFrom(new Map([[source, [target]], [target, [source]]]), originals)
+    assert.equal(buildDependencyMatrix(graph).cycleCount, 0)
+    for (const packagesView of [false, true]) assert.deepEqual(layout(graph, packagesView).cycles, [])
+    const ownScript = graphFrom(graph.importsOf)
+    assert.equal(buildDependencyMatrix(ownScript, { expanded: new Set(['dep']) }).cycleCount, 1,
+      'a similarly named own-source script is not the installed React Native executor')
+  }
 })
 
 test('ordinary imports from the executor and other scripts still count towards cycles', () => {
@@ -79,10 +82,14 @@ test('ordinary imports from the executor and other scripts still count towards c
     [executor, 'node_modules/dep/not-package.json'],
     [executor, `${manifest}.bak`],
     [executor, `${manifest}/index.js`],
+    [executor, 'node_modules/dep/not-react-native.config.js'],
+    [executor, `${config}.bak`],
+    [executor, `${config}/index.js`],
     [executor.replace('react-native/', 'react-native-other/'), manifest],
     [executor.replace('node_modules/', 'my_node_modules/'), manifest],
     [executor.replace('generate-artifacts-executor.js', 'other.js'), manifest],
     [`${executor}.bak`, manifest],
+    [executor.replace('generate-artifacts-executor.js', 'other.js'), config],
   ]) {
     const graph = graphFrom(new Map([[source, [target]], [target, [source]]]))
     assert.equal(buildDependencyMatrix(graph, { expanded: new Set(['react-native', 'dep']) }).cycleCount, 1, `${source} -> ${target}`)
@@ -110,35 +117,37 @@ test('ordinary imports between the same packages still form cycles, while manife
   assert.equal(files.edges.find(edge => edge.from === executor && edge.to === entry).cycle, true)
 })
 
-test('advisory chains retain codegen manifest reads without collapsing their packages into a cycle', async () => {
-  for (const ordinaryImport of [false, true]) {
-    const details = { kind: 'stasis', integrity: 'codegen', size: 1, bundle: new Bundle({
-      modules: new Map([
-        ['.', { name: 'app', files: { 'index.js': 'app' } }],
-        ['node_modules/react-native', { name: 'react-native', version: '1.0.0', files: { 'scripts/codegen/generate-artifacts-executor.js': 'codegen' } }],
-        ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'dep', 'package.json': '{}' } }],
-      ]),
-      imports: new Map([['node,import', new Map([
-        ['index.js', new Map([['dep', 'node_modules/dep/index.js']])],
-        ['node_modules/dep/index.js', new Map([['codegen', executor]])],
-        [executor, new Map([['dep/package.json', manifest], ...(ordinaryImport ? [['dep', 'node_modules/dep/index.js']] : [])])],
-      ])]]),
-    }) }
-    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
-    for (const input of [details, metadata]) {
-      const graph = bundleDependencyChains(input, { packageKey: 'dep', version: '1.0.0' })
-      assert.ok(graph.imports.get('node_modules/react-native').has('node_modules/dep'))
-      const result = layoutDependencyChains(graph)
-      assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinaryImport ? 1 : 0)
-      if (!ordinaryImport) {
-        assert.equal(result.boxes.length, 3)
-        assert.equal(result.edges.length, 3, 'retain the codegen read in the displayed chains')
-        const depBox = result.boxes.find(box => box.members.includes('node_modules/dep'))
-        const codegenBox = result.boxes.find(box => box.members.includes('node_modules/react-native'))
-        assert.ok(codegenBox.y > depBox.y, 'rank packages by ordinary imports')
-        assert.match(result.edges.find(edge => edge.from === codegenBox.id && edge.to === depBox.id).path, / L/u,
-          'route the backward manifest read around the cards')
+for (const filename of ['package.json', 'react-native.config.js']) {
+  test(`advisory chains retain codegen ${filename} reads without collapsing their packages into a cycle`, async () => {
+    for (const ordinaryImport of [false, true]) {
+      const details = { kind: 'stasis', integrity: 'codegen', size: 1, bundle: new Bundle({
+        modules: new Map([
+          ['.', { name: 'app', files: { 'index.js': 'app' } }],
+          ['node_modules/react-native', { name: 'react-native', version: '1.0.0', files: { 'scripts/codegen/generate-artifacts-executor.js': 'codegen' } }],
+          ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'dep', [filename]: '{}' } }],
+        ]),
+        imports: new Map([['node,import', new Map([
+          ['index.js', new Map([['dep', 'node_modules/dep/index.js']])],
+          ['node_modules/dep/index.js', new Map([['codegen', executor]])],
+          [executor, new Map([[`dep/${filename}`, `node_modules/dep/${filename}`], ...(ordinaryImport ? [['dep', 'node_modules/dep/index.js']] : [])])],
+        ])]]),
+      }) }
+      const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+      for (const input of [details, metadata]) {
+        const graph = bundleDependencyChains(input, { packageKey: 'dep', version: '1.0.0' })
+        assert.ok(graph.imports.get('node_modules/react-native').has('node_modules/dep'))
+        const result = layoutDependencyChains(graph)
+        assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinaryImport ? 1 : 0)
+        if (!ordinaryImport) {
+          assert.equal(result.boxes.length, 3)
+          assert.equal(result.edges.length, 3, 'retain the codegen read in the displayed chains')
+          const depBox = result.boxes.find(box => box.members.includes('node_modules/dep'))
+          const codegenBox = result.boxes.find(box => box.members.includes('node_modules/react-native'))
+          assert.ok(codegenBox.y > depBox.y, 'rank packages by ordinary imports')
+          assert.match(result.edges.find(edge => edge.from === codegenBox.id && edge.to === depBox.id).path, / L/u,
+            'route the backward codegen read around the cards')
+        }
       }
     }
-  }
-})
+  })
+}
