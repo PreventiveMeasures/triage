@@ -118,7 +118,7 @@ for (const conflict of ['read version', 'conditional replacement']) {
           return JSON.parse(value)
         })
         const message = conflict === 'read version' ? 'Payload disappeared or changed version before encryption'
-          : 'Conditional replacement rejected (object version precondition failed); download=unquoted; metadata=unquoted; comparison=same'
+          : 'Conditional replacement rejected (object version precondition failed); download=quoted; metadata=quoted; comparison=same'
         assert.deepEqual(diagnostics, [...ids.map(id => ({ type: 'report', id, message })), { type: 'bundle', id: bundleId, message }])
         // Exact field checks above and absence of provider/payload data below
         // guard against adding ETags, paths, secrets or raw errors to warnings.

@@ -24,11 +24,11 @@ import { verifyStoragePayload } from '../server-managed/storage-payload.ts'
 import { sdkFixture } from './_managed-vercel.js'
 import { checkStorageDb, checkStorageMigrationOrder, storageTestKey as key } from './_managed-storage-db.js'
 
-async function fixture(t, remote = false) {
+async function fixture(t, remote = false, blobOptions) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-storage-encryption-'))
   const dbPath = join(dir, 'managed.db')
   const db = openSqliteManagedDb(dbPath, { storageEncryptionKey: key })
-  const sdk = sdkFixture()
+  const sdk = sdkFixture(blobOptions)
   t.after(async () => { await db.close(); await rm(dir, { recursive: true, force: true }) })
   const raw = remote ? await openVercelObjectStorage('token', sdk.sdk) : createDiskObjectStorage(dir)
   const objects = await createEncryptedObjectStorage(raw, db, key), stores = createManagedStores(objects, !remote)
@@ -697,6 +697,53 @@ test('disk cache prefix deletion prunes empty folders without deleting other bun
   await f.stores.cacheStorage.delete(a)
   await assert.rejects(stat(join(f.dir, 'cache', 'bundles', a)), { code: 'ENOENT' })
   assert.equal(await f.stores.cacheStorage.exists(b, 'metadata.json'), true)
+})
+
+test('Vercel migration requests stored representations when compressed downloads have weak ETags', async t => {
+  const f = await fixture(t, true, { compressDownloads: true })
+  const bundleBody = Buffer.alloc(6 * 1024 * 1024, 42), reportBody = Buffer.from('{"private":"report"}')
+  const b = await bundle(f, bundleBody), r = await report(f, reportBody), s = await bundle(f, reportBody, 'sourcemap')
+  const paths = [`reports/${r}`, `bundles/${b}`, `bundles/${s}.map.br`]
+  const versions = new Map(await Promise.all(paths.map(async path => [`.managed/${path}`, (await f.raw.head(path)).version])))
+  const original = await f.sdk.get(`.managed/reports/${r}`, { access: 'private' })
+  assert.equal(original.blob.etag, `W/${versions.get(`.managed/reports/${r}`)}`, 'reproduce the weak download/strong metadata mismatch')
+  await original.stream.cancel()
+  await assert.rejects(f.sdk.put(`.managed/reports/${r}`, reportBody, { ifMatch: original.blob.etag }), f.sdk.BlobPreconditionFailedError)
+  f.calls.length = 0
+  await f.db.enableStorageEncryption()
+  const result = await migrateStorage(f.raw, f.db, key)
+  assert.equal(result.complete, 1)
+  assert.equal(result.migrated, 3)
+  assert.deepEqual(await f.stores.reportStore.get(r), reportBody)
+  assert.deepEqual(await f.stores.bundleStore.get(b, null), bundleBody)
+  assert.deepEqual(brotliDecompressSync(await f.stores.bundleStore.get(s, 'sourcemap')), reportBody)
+  const writes = f.calls.filter(call => call.op === 'put' && call.options.ifMatch)
+  assert.equal(writes.length, 3)
+  for (const { path, options } of writes) assert.equal(options.ifMatch, versions.get(path), 'use the exact stored version')
+  assert.equal(writes.find(call => call.path === `.managed/reports/${r}`).options.multipart, false)
+  assert.equal(writes.find(call => call.path === `.managed/bundles/${b}`).options.multipart, true)
+  for (const path of paths) assert.equal((await bytes(f.raw, path)).subarray(0, 16).toString(), 'DeepView.storage')
+})
+
+test('Vercel migration still preserves a concurrent replacement when requesting strong ETags', async t => {
+  const f = await fixture(t, true, { compressDownloads: true }), id = await report(f)
+  const path = `.managed/reports/${id}`, replacement = Buffer.from('concurrent replacement')
+  const originalVersion = (await f.raw.head(`reports/${id}`)).version
+  const put = f.sdk.put
+  t.mock.method(f.sdk, 'put', (name, body, options) => {
+    if (name === path && options.ifMatch) {
+      assert.equal(options.ifMatch, originalVersion)
+      f.objects.set(path, { bytes: replacement, uploadedAt: new Date() })
+    }
+    return put(name, body, options)
+  })
+  await f.db.enableStorageEncryption()
+  const result = await migrateStorage(f.raw, f.db, key)
+  assert.equal(result.complete, 0)
+  assert.equal((await f.db.getStorageRow('report', id)).encrypted, 0)
+  assert.deepEqual(f.objects.get(path).bytes, replacement)
+  assert.equal(result.failures.length, 1)
+  assert.match(result.failures[0].message, /comparison=different/u)
 })
 
 test('Vercel uses single PUTs for small encrypted writes and multipart for large writes', async t => {

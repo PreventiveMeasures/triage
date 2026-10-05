@@ -10,8 +10,8 @@ export class BlobStoreNotFoundError extends Error {
   constructor() { super('Vercel Blob: This store does not exist.') }
 }
 export class BlobPreconditionFailedError extends Error {}
-const etag = bytes => createHash('sha256').update(bytes).digest('hex')
-export function sdkFixture() {
+const etag = bytes => `"${createHash('sha256').update(bytes).digest('hex')}"`
+export function sdkFixture({ compressDownloads = false } = {}) {
   const calls = [], objects = new Map()
   const sdk = {
     BlobNotFoundError,
@@ -31,7 +31,11 @@ export function sdkFixture() {
       calls.push({ op: 'get', path, options })
       const object = objects.get(path)
       if (!object) return null
-      return { statusCode: 200, blob: { size: object.bytes.length, etag: etag(object.bytes), uploadedAt: object.uploadedAt },
+      // The SDK decodes transport compression but retains the response's weak
+      // ETag. HEAD and conditional writes still use the stored, strong ETag.
+      const compressed = compressDownloads && options.headers?.['accept-encoding'] !== 'identity'
+      return { statusCode: 200, blob: { size: compressed ? 0 : object.bytes.length,
+        etag: `${compressed ? 'W/' : ''}${etag(object.bytes)}`, uploadedAt: object.uploadedAt },
         stream: new ReadableStream({ start(controller) { controller.enqueue(object.bytes); controller.close() } }) }
     },
     async head(path, options) {

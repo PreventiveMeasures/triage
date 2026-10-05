@@ -44,6 +44,7 @@ export type VercelBlobSdk = {
       access: 'private' | 'public'
       token?: string
       useCache?: boolean
+      headers?: Record<string, string>
       abortSignal?: AbortSignal
     },
   ) => Promise<{

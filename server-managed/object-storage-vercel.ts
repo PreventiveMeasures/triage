@@ -16,7 +16,10 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
     },
     async open(key, signal) {
       try {
-        const result = await blobs.get(path(key), { token, access: 'private', useCache: false, ...(signal ? { abortSignal: signal } : {}) })
+        // Read the stored representation: transport compression can weaken its
+        // ETag, which cannot satisfy ifMatch, and changes the advertised size.
+        const result = await blobs.get(path(key), { token, access: 'private', useCache: false,
+          headers: { 'accept-encoding': 'identity' }, ...(signal ? { abortSignal: signal } : {}) })
         if (!result) return null
         if (result.statusCode !== 200 || !result.stream || !result.blob.etag) {
           await result.stream?.cancel()

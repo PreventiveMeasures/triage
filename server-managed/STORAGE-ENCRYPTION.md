@@ -195,6 +195,9 @@ diagnostics too. These contain only the row type, opaque row ID and a short
 reason, without payloads, filenames, paths, hashes, ETags or key material.
 The rows remain pending and retry on the next pass without bypassing the
 version check.
+Vercel downloads request `Accept-Encoding: identity` so transport compression
+does not weaken the stored ETag used for conditional writes or change the
+advertised byte size. Stored Brotli bundles retain their existing encoding.
 After a rejected conditional write, a bounded metadata lookup reports whether
 the download and metadata versions match, differ only in formatting, or differ
 in value. It also reports weak/quoted/unquoted formats, or missing/unavailable
