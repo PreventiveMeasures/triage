@@ -16,12 +16,12 @@ const PAGES = [
 ]
 
 export function adminNavigation(current, role, allowShare = false) {
-  return html`<nav class="manage-nav" aria-label="Management pages">
+  return html`<header class="manage-header"><nav class="manage-nav" aria-label="Management pages">
     ${PAGES.filter(([view, , required]) => (required == null || required === role) && (view !== 'manage-links' || allowShare)).map(([view, label]) => html`
       <button type="button" aria-current=${current === view ? 'page' : nothing} @click=${() => {
         document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view }, bubbles: true, composed: true }))
       }}>${label}</button>`)}
-  </nav>`
+  </nav></header>`
 }
 
 export function adminIcon(kind) {

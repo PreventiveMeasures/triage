@@ -12,6 +12,9 @@ export class SearchableSelector extends LitElement {
 
   static styles = css`
     :host { display: block; min-width: 0; }
+    /* Both the trigger and the top-layer menu must exclude the PWA drag area;
+       document-level button rules cannot reach this shadow root. */
+    :host, .menu { -webkit-app-region: no-drag; app-region: no-drag; }
     * { box-sizing: border-box; }
     button, input { font: inherit; color: var(--text); }
     button { cursor: default; user-select: none; }
