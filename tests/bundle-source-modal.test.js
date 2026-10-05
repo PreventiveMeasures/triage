@@ -13,6 +13,9 @@ mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
+// Advisory popups have separate tests; keep their browser-only dependencies out of source rendering.
+mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
+mock.module('../ui/view/dialogs/dependency-chains-dialog.js', { exports: { openDependencyChainsDialog() {} } })
 const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
