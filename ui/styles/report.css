@@ -365,7 +365,7 @@
   .bundles-slide-bar { margin-right: var(--wco-right-toolbar); }
   /* As with management navigation, an intrinsic-width flex bar clears the
      window-control float when it cannot fit beside it. Its controls stay
-     vertically centered in the native titlebar instead of using a pixel nudge. */
+     vertically centered in the native titlebar. */
   .bundles-slide-header {
     display: flow-root;
     flex-shrink: 0;
@@ -390,6 +390,8 @@
     border: 0;
     box-shadow: none;
   }
+  .bundles-slide-header:not(.boxed) .bundles-slide-bar { transform: translateY(1px); }
+  .bundles-slide-header:not(.boxed) .bundles-scan-button { margin-right: 10px; }
   .bundles-slide-header .bundles-slide-title { max-width: 20rem; margin-right: auto; }
   .bundles-slide-header .bundles-slide-tabs {
     max-width: 100%;
