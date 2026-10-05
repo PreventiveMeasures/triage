@@ -2014,7 +2014,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
   const previousTeamName = state.managedTeams.find(team => team.id === state.currentManagedTeam)?.name
   const changedReports = setManagedReportCatalog(teams)
   state.managedTeams = teams
-  const update = ++managedTeamsUpdate
+  const update = fresh === null ? managedTeamsUpdate : ++managedTeamsUpdate
   managedTeamsPending = false
   const bundleId = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
   // Route restoration validates its destination itself. A background refresh
