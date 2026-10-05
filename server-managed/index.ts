@@ -21,10 +21,13 @@ const REAP_RETRY_MS = 60_000
 type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>>
 
 export async function createManagedApp(config: ManagedConfig, options: ManagedAppOptions = {}) {
-  return await initializeApp(rollback => assembleManagedApp(config, options, rollback))
+  // Load the optional peer only for serverless managed deployments. Embedding
+  // hosts can discard listener promises, so retain maintenance inside the app.
+  const waitUntil = config.serverless ? (await import('@vercel/functions')).waitUntil : undefined
+  return await initializeApp(rollback => assembleManagedApp(config, options, rollback, waitUntil))
 }
 
-async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOptions, rollback: AsyncDisposableStack) {
+async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOptions, rollback: AsyncDisposableStack, waitUntil?: (promise: Promise<unknown>) => void) {
   const storage = await openManagedStorage(config)
   const { db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache } = storage
   rollback.defer(() => db.close())
@@ -87,10 +90,9 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
     return reap(true).catch(err => console.warn('managed-reaper: cleanup failed:', err))
   }
   async function handleRequest(req: Parameters<typeof routeRequest>[0], res: Parameters<typeof routeRequest>[1]): Promise<void> {
-    const pendingMaintenance = automaticReap()
-    // Send the normal response without waiting for storage housekeeping. The
-    // Vercel entrypoint registers this whole promise with waitUntil; awaiting
-    // work after res.end() alone cannot extend a serverless invocation.
+    // Register before routing can end the response, including when init()'s
+    // listener is mounted in Fastify rather than using api/managed.ts.
+    const pendingMaintenance = automaticReap(); waitUntil?.(pendingMaintenance)
     try { await routeRequest(req, res) }
     finally { await pendingMaintenance }
   }

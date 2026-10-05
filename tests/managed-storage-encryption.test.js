@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, open as openFile, readFile, rm, stat, symlink, utimes, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { brotliDecompressSync } from 'node:zlib'
+import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -20,7 +20,7 @@ import { migrateStorage, reapStorageUploads } from '../server-managed/storage-ma
 import { createManagedStores } from '../server-managed/storage-stores.ts'
 import { openManagedStorage } from '../server-managed/storage.ts'
 import { unwrapDataKey } from '../server-managed/storage-db.ts'
-import { verifyStoragePayload } from '../server-managed/storage-payload.ts'
+import { verifiedStoragePayload, verifyStoragePayload } from '../server-managed/storage-payload.ts'
 import { sdkFixture } from './_managed-vercel.js'
 import { checkStorageDb, checkStorageMigrationOrder, storageTestKey as key } from './_managed-storage-db.js'
 
@@ -128,6 +128,79 @@ test('startup with a key encrypts new writes before legacy migration and require
 
 for (const remote of [false, true]) {
   const backend = remote ? 'Vercel' : 'disk'
+  test(`${backend}: migration downloads plaintext once and verifies the stored ciphertext`, async t => {
+    const body = Buffer.alloc(9 * 1024 * 1024, 42), f = await fixture(t, remote)
+    const sourcemap = body.subarray(0, 128 * 1024)
+    const b = await bundle(f, body), r = await report(f, Buffer.alloc(0)), s = await bundle(f, sourcemap, 'sourcemap')
+    await f.db.enableStorageEncryption()
+    const opened = t.mock.method(f.raw, 'open')
+    const result = await migrateStorage(f.raw, f.db, key)
+    assert.equal(result.complete, 1)
+    for (const path of [`reports/${r}`, `bundles/${b}`, `bundles/${s}.map.br`]) {
+      assert.equal(opened.mock.calls.filter(call => call.arguments[0] === path).length, 2, path)
+    }
+    assert.deepEqual(await f.stores.reportStore.get(r), Buffer.alloc(0))
+    assert.deepEqual(await f.stores.bundleStore.get(b, null), body)
+    assert.deepEqual(brotliDecompressSync(await f.stores.bundleStore.get(s, 'sourcemap')), sourcemap)
+  })
+
+  test(`${backend}: a streaming hash failure preserves the original object and leaves the row pending`, async t => {
+    const f = await fixture(t, remote), original = Buffer.alloc(9 * 1024 * 1024, 42)
+    const changed = Buffer.from(original)
+    changed[changed.length - 1] ^= 1
+    const b = await bundle(f, original), r = await report(f), s = await bundle(f, Buffer.from('original'), 'sourcemap')
+    const corrupt = new Map([
+      [`reports/${r}`, Buffer.from('wrong report')],
+      [`bundles/${b}`, changed],
+      [`bundles/${s}.map.br`, brotliCompressSync(Buffer.from('wrong sourcemap'))],
+    ])
+    for (const [path, data] of corrupt) await f.raw.put(path, data)
+    await f.db.enableStorageEncryption()
+    const result = await migrateStorage(f.raw, f.db, key)
+    assert.equal(result.complete, 0)
+    assert.equal(result.failures.length, 3)
+    assert.ok(result.failures.every(failure => failure.message === 'Stored payload does not match its upload hash'))
+    for (const [path, data] of corrupt) assert.deepEqual(await bytes(f.raw, path), data)
+    for (const [type, id] of [['report', r], ['bundle', b], ['bundle', s]]) {
+      assert.equal((await f.db.getStorageRow(type, id)).encrypted, 0)
+    }
+  })
+
+  test(`${backend}: aborting a streaming replacement preserves the original object`, async t => {
+    const body = Buffer.alloc(256 * 1024, 42), f = await fixture(t, remote), id = await bundle(f, body)
+    await f.db.enableStorageEncryption()
+    const controller = new AbortController(), open = f.raw.open.bind(f.raw)
+    let input, streamed = 0
+    t.mock.method(f.raw, 'open', async (...args) => {
+      const stored = await open(...args)
+      if (args[0] !== `bundles/${id}`) return stored
+      stored.stream.destroy()
+      let started = false
+      input = new Readable({ read() { if (!started) { started = true; this.push(body.subarray(0, 128 * 1024)) } } })
+      return { ...stored, stream: input }
+    })
+    const put = f.raw.put.bind(f.raw)
+    t.mock.method(f.raw, 'put', async (path, data, ...args) => {
+      const observed = Readable.from((async function* () {
+        for await (const chunk of data) {
+          streamed += chunk.length
+          yield chunk
+          controller.abort()
+        }
+      })(), { objectMode: false })
+      try { return await put(path, observed, ...args) }
+      finally { observed.destroy(); data.destroy() }
+    })
+    const result = await migrateStorage(f.raw, f.db, key, { signal: controller.signal })
+    assert.equal(result.complete, 0)
+    assert.equal((await f.db.getStorageRow('bundle', id)).encrypted, 0)
+    assert.equal(input.destroyed, true)
+    assert.ok(streamed > 0, 'cancellation happens after upload streaming starts')
+    t.mock.restoreAll()
+    assert.deepEqual(await bytes(f.raw, `bundles/${id}`), body)
+    assert.equal((await finish(f)).complete, 1)
+  })
+
   test(`${backend}: migrates reports and compressed bundles in place, invalidates caches, and resumes across instances`, async t => {
     const f = await fixture(t, remote)
     const body = randomBytes(90_000)
@@ -561,6 +634,38 @@ test('payload verification cancels decompression and its input when aborted', as
   controller.abort()
   await assert.rejects(job, { name: 'AbortError' })
   assert.equal(source.destroyed, true)
+})
+
+test('streaming verification cancels a stalled input when decompression fails', { timeout: 2000 }, async () => {
+  let started = false
+  const source = new Readable({ read() { if (!started) { started = true; this.push(Buffer.alloc(64 * 1024, 255)) } } })
+  const checked = verifiedStoragePayload('bundle', { kind: 'sourcemap', hash: 'unused' }, source)
+  await assert.rejects(consume(checked), /cannot be decompressed/u)
+  assert.equal(source.destroyed, true)
+})
+
+test('migration logs its phase at the deadline even while a provider is still unwinding', async t => {
+  const f = await fixture(t), id = await report(f)
+  await f.db.enableStorageEncryption()
+  const aborted = Promise.withResolvers(), blocked = Promise.withResolvers(), logs = []
+  t.mock.method(console, 'info', (...args) => logs.push(args))
+  t.mock.method(f.raw, 'open', (_path, signal) => {
+    signal.addEventListener('abort', () => aborted.resolve(), { once: true })
+    return blocked.promise
+  })
+  const running = migrateStorage(f.raw, f.db, key, { maxMs: 25 })
+  try {
+    await aborted.promise
+    const phases = logs.filter(([label]) => label === 'managed-storage-migration-row-phase:').map(([, value]) => JSON.parse(value))
+    const last = phases.at(-1)
+    assert.deepEqual(last, { type: 'report', id, phase: 'open-payload', elapsedMs: last.elapsedMs, aborted: true })
+    assert.ok(last.elapsedMs >= 0)
+    assert.equal((await f.db.getStorageEncryption()).cursor, null, 'diagnostic does not require a finished operation or checkpoint')
+    assert.doesNotMatch(JSON.stringify(logs), /private-|reports\/|dataKey|sha512-|test_value/u)
+  } finally {
+    blocked.reject(new Error('private-provider-details'))
+    await running
+  }
 })
 
 test('corrupt sourcemaps remain pending without turning format errors into cleanup failures', async t => {

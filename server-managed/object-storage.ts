@@ -16,6 +16,8 @@ export interface RawObjectStorage {
   // Persist an observed disk replacement before its SQL migration checkpoint.
   sync?(key: string, signal?: AbortSignal): Promise<void>
   // A plaintext size hint selects multipart uploads without buffering streams.
+  // Publish atomically only after consuming the body through clean EOF; a body
+  // error must preserve the existing object (migration verifies while streaming).
   put(key: string, bytes: Buffer | Readable, signal?: AbortSignal, expected?: string, sizeHint?: number): Promise<boolean>
   // Return false if the original version changed; do not delete its replacement.
   delete(key: string, version?: string, signal?: AbortSignal): Promise<boolean>

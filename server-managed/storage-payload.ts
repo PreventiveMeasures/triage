@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { Readable, Writable } from 'node:stream'
+import { PassThrough, Readable, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createBrotliDecompress } from 'node:zlib'
 import { STORAGE_MAGIC } from '../server-common/storage-crypto.ts'
@@ -69,4 +69,30 @@ export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow
   }
   const actual = type === 'report' ? hash.digest('base64url') : `sha512-${hash.digest('base64')}`
   if (actual !== row.hash) throw new StoragePayloadError('Stored payload does not match its upload hash')
+}
+
+// Forward the stored representation with backpressure, but withhold EOF until
+// its upload hash passes. Encryption cannot emit its final frame, and an atomic
+// PUT cannot commit, until verification (including sourcemap decompression) ends.
+export function verifiedStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable, signal?: AbortSignal): Readable {
+  const input = new PassThrough(), output = new PassThrough()
+  const verification = verifyStoragePayload(type, row, input, signal)
+  // Propagate asynchronous decompression errors even if the source is stalled.
+  void verification.catch(err => { source.destroy(err); output.destroy(err) })
+  const forwarding = pipeline(source, async function* (chunks) {
+    try {
+      for await (const chunk of chunks) {
+        await new Promise<void>((resolve, reject) => { input.write(chunk, err => err ? reject(err) : resolve()) })
+        yield chunk
+      }
+      input.end()
+      await verification
+    } finally {
+      input.destroy()
+      await verification.catch(() => {})
+    }
+  }, output, signal ? { signal } : {})
+  // pipeline forwards errors to output and tears down input on early cancellation.
+  void forwarding.catch(() => {})
+  return output
 }

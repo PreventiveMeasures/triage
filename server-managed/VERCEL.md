@@ -33,10 +33,13 @@ Feeds reuse a connection within each polling iteration and release it before
 waiting for the next poll.
 
 Ordinary managed requests start a due session/upload sweep alongside the normal
-response. The entrypoint registers the complete handler promise with
+response. The managed app registers maintenance with
 [`waitUntil`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil),
-so maintenance can finish after the response ends. Awaiting a Node HTTP handler
-promise alone does not extend the invocation beyond `res.end()`.
+so it can finish after the response ends, including when an embedding host such
+as Fastify mounts the request listener returned by `init()`. Install the optional
+`@vercel/functions` peer dependency in Vercel deployments. The supplied entrypoint
+also retains the complete handler promise. Awaiting a Node HTTP handler promise
+alone does not extend the invocation beyond `res.end()`.
 Sweeps are coalesced per instance and coordinated by a shared database lease:
 successful sweeps defer the next for an hour, and failures retry on traffic
 after a minute. A cold start does not bypass that shared cooldown. Results appear
