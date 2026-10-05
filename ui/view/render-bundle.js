@@ -1824,7 +1824,7 @@ function renderBundleSlide(entry) {
       </span>` : nothing}
       <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
-        <div class="bundles-slide-name">${entry.name}</div>
+        <div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
       <div class="bundles-slide-tabs" role="tablist">

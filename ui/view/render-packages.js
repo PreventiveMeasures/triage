@@ -330,7 +330,7 @@ function renderPackageSlide(pkg, bucket, version) {
         aria-label="Back to packages"
       >← Back</button>
       <div class="bundles-slide-title">
-        <div class="bundles-slide-name">${pkg}${titleSuffix}</div>
+        <div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${`${pkg}${titleSuffix}`}>${pkg}${titleSuffix}</div>
         <div class="bundles-slide-integrity">${total} ${noun} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
       </div>
       <slide-triage-tabs kind="package" .counts=${counts}></slide-triage-tabs>
@@ -394,7 +394,7 @@ function renderPackageRow(row, selectedPkg, selectedVer) {
     <span class="packages-dot" style=${styleMap({ background: dotColor })}></span>
     <div class="packages-row-text">
       <div class="packages-name-line">
-        <span class="packages-name">
+        <span class="packages-name" data-tooltip-truncated data-tooltip=${version === null ? pkg : `${pkg}@${version}`}>
           ${pkg}${version === null ? nothing : html`<span class="packages-version">@${version}</span>`}
         </span>
         ${kind === 'latest' ? renderExpandButton(pkg, row.expanded, row.totalVersions - 1) : nothing}

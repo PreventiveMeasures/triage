@@ -122,7 +122,7 @@ export function renderTreeView(treeData, findingCounts) {
               class=${`tree-table-row${isSel ? ' selected' : ''}${issues === 0 ? ' clean' : ''}`}
               data-tree-select=${file}
             >
-              <span class="tree-table-name">${file}</span>
+              <span class="tree-table-name" data-tooltip-truncated data-tooltip=${file}>${file}</span>
               ${sevChips(file) ?? html`<span class="tree-table-clean-marker">—</span>`}
               ${sizeLabel ? html`<span class="tree-table-size">${sizeLabel}</span>` : nothing}
             </div>`
