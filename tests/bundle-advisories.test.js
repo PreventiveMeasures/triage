@@ -5,8 +5,9 @@ import { store } from '@rray/frontend/state-management'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
-let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], openedDetails = [], pending = null, repositoryChecks = [], result
+let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], openedChains = [], openedDetails = [], pending = null, repositoryChecks = [], result
 mock.module('../ui/view/dialogs/advisory-details-dialog.js', { namedExports: { openAdvisoryDetailsDialog: props => { openedDetails.push(props) } } })
+mock.module('../ui/view/dialogs/dependency-chains-dialog.js', { namedExports: { openDependencyChainsDialog: props => { openedChains.push(props) } } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories, details) => {
@@ -27,7 +28,7 @@ function templates(value) {
   return value?.strings ? [value, ...value.values.flatMap(templates)] : []
 }
 beforeEach(t => {
-  managedCalls = []; managedReasons = []; repositoryChecks = []; detailRequests = []; openedDetails = []; allowed = false; pending = null
+  managedCalls = []; managedReasons = []; repositoryChecks = []; detailRequests = []; openedDetails = []; openedChains = []; allowed = false; pending = null
   state.managedSession = { id: 'alice', role: 'view', csrfToken: 'session' }
   state.currentManagedTeam = 'team'
   state.managedTeams = [{ id: 'team', permissions: { security: true, dependencies: false }, bundles: [{ id: 'bundle-id' }] }]
@@ -200,7 +201,7 @@ test('repository recheck button shows a busy state, prevents duplicate requests 
   assert.match(done, /Maintainer vulnerability/u)
   assert.match(done, /class="bundle-advisory-title" aria-haspopup="dialog"/u)
   assert.doesNotMatch(done, /<advisory-details|<summary>Details/u)
-  const title = templates(renderBundleAdvisoriesTab(details)).find(part => part.strings[0].includes('aria-haspopup="dialog"'))
+  const title = templates(renderBundleAdvisoriesTab(details)).find(part => part.strings[0].includes('class="bundle-advisory-title"'))
   title.values.find(value => typeof value === 'function')()
   assert.equal(openedDetails.length, 1)
   assert.equal(openedDetails[0].heading, 'Maintainer vulnerability')
@@ -373,6 +374,28 @@ function reasonBundle(integrity) {
     await selectReason(details, 'reason:add')
     assert.match(renderText(renderBundleAdvisoriesTab(details)), /No advisories for the 0 packages in this scope/u)
   })
+})
+
+test('each advisory version opens its exact dependency chains in the current scope', async () => {
+  const details = { ...reasonBundle('version-chains'), managedId: 'version-chains' }
+  result = { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0', '2.0.0'] }],
+    advisories: [{ ecosystem: 'npm', name: 'dep', title: 'Issue', severity: 'high' }] }
+  await ensureBundleAdvisories(details, () => {})
+  const versions = () => templates(renderBundleAdvisoriesTab(details)).filter(template => template.strings.join('').includes('class="bundle-advisories-version"'))
+  for (const template of versions()) template.values.find(value => typeof value === 'function')()
+  assert.deepEqual(openedChains.map(props => props.version), ['1.0.0', '2.0.0'])
+  assert.equal(openedChains[0].details, details)
+  assert.equal(openedChains[0].packageKey, 'dep')
+  assert.equal(openedChains[0].reason, '')
+  assert.equal(openedChains[0].isCurrent(), true)
+  await selectReason(details, 'reason:run')
+  assert.equal(openedChains[0].isCurrent(), false)
+  versions()[0].values.find(value => typeof value === 'function')()
+  assert.equal(openedChains.at(-1).reason, 'run')
+  assert.equal(openedChains.at(-1).isCurrent(), true)
+  state.currentManagedTeam = 'another-team'
+  assert.equal(openedChains.at(-1).isCurrent(), false)
+  assert.equal(managedCalls.length, 2, 'opening versions does not fetch bundle source or advisories')
 })
 
 test('advisory scope control is hidden if every named reason equals all files', () => {
