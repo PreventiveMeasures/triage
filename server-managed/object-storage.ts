@@ -18,7 +18,8 @@ export interface RawObjectStorage {
   // A plaintext size hint selects multipart uploads without buffering streams.
   // Publish atomically only after consuming the body through clean EOF; a body
   // error must preserve the existing object (migration verifies while streaming).
-  put(key: string, bytes: Buffer | Readable, signal?: AbortSignal, expected?: string, sizeHint?: number): Promise<boolean>
+  // A null expected version creates only if absent, without replacing a winner.
+  put(key: string, bytes: Buffer | Readable, signal?: AbortSignal, expected?: string | null, sizeHint?: number): Promise<boolean>
   // Return false if the original version changed; do not delete its replacement.
   delete(key: string, version?: string, signal?: AbortSignal): Promise<boolean>
   list(prefix: string, cursor: string | null, limit: number, signal?: AbortSignal): Promise<ObjectPage>
@@ -27,7 +28,7 @@ export interface ObjectStorage {
   open(key: string): Promise<OpenedBlob | null>
   get(key: string): Promise<Buffer | null>
   exists(key: string): Promise<boolean>
-  put(key: string, bytes: Buffer): Promise<string | null>
+  put(key: string, bytes: Buffer, options?: { replaceReport?: boolean }): Promise<string | null>
   delete(key: string): Promise<void>
   deletePrefix(prefix: string): Promise<void>
 }

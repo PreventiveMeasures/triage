@@ -4,7 +4,7 @@ import type { Buffer } from 'node:buffer'
 
 const compress = promisify(brotliCompress)
 
-// Quality 4 avoids Brotli's expensive default (11) for uploads and cold caches.
-export function encodeBrotli(bytes: Uint8Array): Promise<Buffer> {
-  return compress(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: 4 } })
+// Bundles and cold caches use quality 4; stored reports use quality 9.
+export function encodeBrotli(bytes: Uint8Array, quality = 4): Promise<Buffer> {
+  return compress(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: quality } })
 }

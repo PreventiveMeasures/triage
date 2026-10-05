@@ -20,7 +20,7 @@ one supported master key; rotation and old-key lists are not implemented.
 
 | Data | Encryption key |
 | --- | --- |
-| Reports | Random per-report key, wrapped in `managed_report.data_key` |
+| Reports, including Brotli-compressed reports | Random per-report key, wrapped in `managed_report.data_key` |
 | Bundles, including Brotli sourcemaps | Random per-bundle key, wrapped in `managed_bundle.data_key` |
 | Bundle metadata/package inventory and report-source caches | Their bundle's data key |
 | Temporary Vercel upload parts | Master key, with fresh per-write derivation |
@@ -35,6 +35,14 @@ same. A Blob token or copy of the byte store alone cannot decrypt encrypted
 payloads. Access to both the SQL keys and master key permits decryption;
 control of the running managed server or its deployment environment does too.
 Provider encryption at rest remains a separate outer layer.
+
+New report uploads are compressed with Brotli quality 9 before encryption and
+stored at `reports/:id.br`. Reads decrypt before decompressing, preserving the
+original report bytes. Legacy reports at `reports/:id` convert during their first
+read, using the existing per-report key and removing the old copy only after
+the compressed representation is saved. No separate compression migration is
+required. The upload cap and SQL byte sizes and hashes describe
+the original file, before compression or encryption.
 
 Processes cache a validated enabled policy. Keyless instances cache disabled
 state for five seconds to avoid per-read database round trips. A plaintext write
@@ -121,8 +129,9 @@ For each report/bundle, the worker:
 1. Allocates a data key if absent, using the persisted winner if another worker
    allocated it first.
 2. Downloads the original bytes once, checking the SQL upload hash while streaming
-   encryption. Sourcemaps are decompressed for hashing while their stored Brotli
-   bytes are encrypted. The stream ends successfully only after the hash passes.
+   encryption. Compressed reports and sourcemaps are decompressed for hashing
+   while their stored Brotli bytes are encrypted. The stream ends successfully
+   only after the hash passes.
 3. Replaces the same path only after that successful end. Vercel uses conditional
    `put` with `ifMatch`; multipart uploads complete only after consuming the stream.
    Disk writes use a synced temporary file and atomic rename. Verification errors

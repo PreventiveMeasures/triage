@@ -1,8 +1,9 @@
+import type { Buffer } from 'node:buffer'
 import { type StorageKey, decryptStorageStream, encryptStorageStream } from '../server-common/storage-crypto.ts'
 import { ENCRYPTED_CACHE_PREFIX, type RawObjectStorage, deleteObjects, isBlobId, openObjectVersion } from './object-storage.ts'
-import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, unwrapDataKey } from './storage-db.ts'
+import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, type StorageRow, type StorageRowKind, unwrapDataKey } from './storage-db.ts'
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
-import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPath, verifiedStoragePayload, verifyStoragePayload } from './storage-payload.ts'
+import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPaths, verifiedStoragePayload, verifyStoragePayload } from './storage-payload.ts'
 
 async function replacementFailure(raw: RawObjectStorage, identity: string, version: string, signal: AbortSignal): Promise<string> {
   const format = (value: string) => value.startsWith('W/') ? 'weak' : value.startsWith('"') && value.endsWith('"') ? 'quoted' : 'unquoted'
@@ -21,63 +22,77 @@ async function replacementFailure(raw: RawObjectStorage, identity: string, versi
 }
 
 type MigrationPhase = 'prepare-key' | 'open-payload' | 'verify-existing' | 'encrypt-upload' | 'verify-replacement' | 'checkpoint'
+async function migratePayload(raw: RawObjectStorage, db: StorageDb, type: StorageRowKind, row: StorageRow,
+  dataKey: Buffer, identity: string, signal: AbortSignal, progress: (phase: MigrationPhase) => void): Promise<boolean | string | null> {
+  progress('open-payload')
+  const source = await raw.open(identity, signal)
+  if (!source) return false
+  let inspected = await inspectStorageObject(source)
+  if (inspected.encrypted) {
+    progress('verify-existing')
+    // A previous PUT may have completed before a timeout or lost SQL ack.
+    try {
+      const decoded = await decryptStorageStream(inspected.stream, dataKey, identity)
+      await verifyStoragePayload(type, row, decoded.stream, signal, identity)
+    } catch {
+      signal.throwIfAborted()
+      // Legacy arbitrary bytes can share the magic prefix. A matching
+      // original upload hash is required before encrypting them as plaintext.
+      const legacy = await openObjectVersion(raw, identity, source.version, signal)
+      if (!legacy) return 'Payload disappeared or changed version before plaintext verification'
+      inspected = { ...legacy, encrypted: false }
+    }
+  }
+  if (!inspected.encrypted) {
+    progress('encrypt-upload')
+    signal.throwIfAborted()
+    const verified = verifiedStoragePayload(type, row, inspected.stream, signal, identity)
+    const encrypted = encryptStorageStream(verified, dataKey, identity, inspected.size)
+    let replaced: boolean
+    try { replaced = await raw.put(identity, encrypted, signal, source.version, inspected.size ?? undefined) }
+    // A provider may wrap a request-body error; keep safe payload diagnostics.
+    catch (err) { throw verified.errored ?? err }
+    finally { encrypted.destroy(); verified.destroy(); inspected.stream.destroy(); source.stream.destroy() }
+    if (!replaced) return await replacementFailure(raw, identity, source.version, signal)
+    // Do not mark the row encrypted until the stored bytes authenticate and
+    // match the original upload (including Brotli decompression).
+    progress('verify-replacement')
+    const replacement = await raw.open(identity, signal)
+    if (!replacement) {
+      if (!await db.getStorageRow(type, row.id)) return null
+      throw new StoragePayloadError('Migrated payload unavailable')
+    }
+    const decoded = await decryptStorageStream(replacement.stream, dataKey, identity)
+    await verifyStoragePayload(type, row, decoded.stream, signal, identity)
+  }
+  signal.throwIfAborted()
+  // Persist observed replacements, including both report representations
+  // if they coexist, before marking the whole row encrypted.
+  progress('checkpoint')
+  await raw.sync?.(identity, signal)
+  return true
+}
+
 async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal,
   progress: (phase: MigrationPhase) => void): Promise<string | void> {
   if (item.type === 'user') { await db.migrateStorageUserTokens(item.id); return }
   progress('prepare-key')
   const row = await db.ensureStorageDataKey(item.type, item.id)
   if (!row || row.encrypted) return
-  const dataKey = unwrapDataKey(key, item.type, row), identity = storageRowPath(item.type, row)
+  const dataKey = unwrapDataKey(key, item.type, row)
   try {
-    progress('open-payload')
-    const source = await raw.open(identity, signal)
-    if (!source) {
+    let found = false
+    for (const identity of storageRowPaths(item.type, row)) {
+      const result = await migratePayload(raw, db, item.type, row, dataKey, identity, signal, progress)
+      if (result === null) return
+      if (typeof result === 'string') return result
+      found ||= result
+    }
+    if (!found) {
       if (!await db.getStorageRow(item.type, item.id)) return
       throw new StoragePayloadError('Migration payload unavailable')
     }
-    let inspected = await inspectStorageObject(source)
-    if (inspected.encrypted) {
-      progress('verify-existing')
-      // A previous PUT may have completed before a timeout or lost SQL ack.
-      try {
-        const decoded = await decryptStorageStream(inspected.stream, dataKey, identity)
-        await verifyStoragePayload(item.type, row, decoded.stream, signal)
-      } catch {
-        signal.throwIfAborted()
-        // Legacy arbitrary bytes can share the magic prefix. A matching
-        // original upload hash is required before encrypting them as plaintext.
-        const legacy = await openObjectVersion(raw, identity, source.version, signal)
-        if (!legacy) return 'Payload disappeared or changed version before plaintext verification'
-        inspected = { ...legacy, encrypted: false }
-      }
-    }
-    if (!inspected.encrypted) {
-      progress('encrypt-upload')
-      signal.throwIfAborted()
-      const verified = verifiedStoragePayload(item.type, row, inspected.stream, signal)
-      const encrypted = encryptStorageStream(verified, dataKey, identity, inspected.size)
-      let replaced: boolean
-      try { replaced = await raw.put(identity, encrypted, signal, source.version, inspected.size ?? undefined) }
-      // A provider may wrap a request-body error; keep safe payload diagnostics.
-      catch (err) { throw verified.errored ?? err }
-      finally { encrypted.destroy(); verified.destroy(); inspected.stream.destroy(); source.stream.destroy() }
-      if (!replaced) return await replacementFailure(raw, identity, source.version, signal)
-      // Do not mark the row encrypted until the stored bytes authenticate and
-      // match the original upload (including decompression for sourcemaps).
-      progress('verify-replacement')
-      const replacement = await raw.open(identity, signal)
-      if (!replacement) {
-        if (!await db.getStorageRow(item.type, item.id)) return
-        throw new StoragePayloadError('Migrated payload unavailable')
-      }
-      const decoded = await decryptStorageStream(replacement.stream, dataKey, identity)
-      await verifyStoragePayload(item.type, row, decoded.stream, signal)
-    }
     signal.throwIfAborted()
-    // Another process may have renamed ciphertext but stopped before syncing
-    // the directory. Persist the observed rename even on the resume path.
-    progress('checkpoint')
-    await raw.sync?.(identity, signal)
     await db.markStorageEncrypted(item.type, item.id, row.dataKey!)
   } finally { dataKey.fill(0) }
 }
@@ -116,7 +131,7 @@ async function cleanupLegacy(raw: RawObjectStorage, db: StorageDb, state: Storag
     const { owner, temporary } = target
     if (!temporary && !owner.cache) {
       const row = await db.getStorageRow(owner.type, owner.id)
-      if (row && storageRowPath(owner.type, row) === object.key) continue
+      if (row && storageRowPaths(owner.type, row).includes(object.key)) continue
     }
     const stored = await raw.head(object.key, signal)
     if (!stored) continue

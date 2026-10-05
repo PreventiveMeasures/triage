@@ -11,13 +11,14 @@ import type { StorageRow, StorageRowKind } from './storage-db.ts'
 // not fix it. Keep this distinct from database, storage and cancellation errors.
 export class StoragePayloadError extends Error {}
 
-export function storageRowPath(type: StorageRowKind, row: Pick<StorageRow, 'id' | 'kind'>): string {
-  return `${type === 'report' ? 'reports' : 'bundles'}/${row.id}${type === 'bundle' && row.kind === 'sourcemap' ? '.map.br' : ''}`
+export function storageRowPaths(type: StorageRowKind, row: Pick<StorageRow, 'id' | 'kind'>): string[] {
+  return type === 'report' ? [`reports/${row.id}.br`, `reports/${row.id}`]
+    : [`bundles/${row.id}${row.kind === 'sourcemap' ? '.map.br' : ''}`]
 }
 export function storageOwner(identity: string): { type: StorageRowKind; id: string; cache: boolean } | null {
   const match = /^(reports|bundles)\/([^/]+)$/u.exec(identity)
   if (match) {
-    const id = match[1] === 'bundles' ? match[2]!.replace(/\.map\.br$/u, '') : match[2]!
+    const id = match[2]!.replace(match[1] === 'bundles' ? /\.map\.br$/u : /\.br$/u, '')
     if (isBlobId(id)) return { type: match[1] === 'reports' ? 'report' : 'bundle', id, cache: false }
   }
   const cache = /^cache\/(?:bundles|report-sources)\/([a-f\d-]{36})\//u.exec(identity)
@@ -50,20 +51,20 @@ export async function inspectStorageObject(stored: RawObject): Promise<RawObject
   return { ...stored, stream, encrypted: length === prefix.length && prefix.equals(STORAGE_MAGIC) }
 }
 
-// Sourcemap integrity describes the original upload, before Brotli storage.
+// Report hashes and sourcemap integrity describe the original upload, before Brotli storage.
 // Hash incrementally, including decompression, so migration stays streaming.
-export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable, signal?: AbortSignal): Promise<void> {
+export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable, signal?: AbortSignal, identity?: string): Promise<void> {
   const hash = createHash(type === 'report' ? 'sha256' : 'sha512')
   const sink = new Writable({ write(chunk, _encoding, next) { hash.update(chunk); next() } })
   const options = signal ? { signal } : {}
   try {
-    if (type === 'bundle' && row.kind === 'sourcemap') {
+    if (type === 'bundle' && row.kind === 'sourcemap' || type === 'report' && identity?.endsWith('.br')) {
       await pipeline(source, createBrotliDecompress(), sink, options)
     } else await pipeline(source, sink, options)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code ?? ''
     if (['Z_DATA_ERROR', 'Z_BUF_ERROR'].includes(code) || code.startsWith('ERR__ERROR_FORMAT_')) {
-      throw new StoragePayloadError('Stored sourcemap cannot be decompressed', { cause: err })
+      throw new StoragePayloadError(`Stored ${type === 'report' ? 'report' : 'sourcemap'} cannot be decompressed`, { cause: err })
     }
     throw err
   }
@@ -73,10 +74,10 @@ export async function verifyStoragePayload(type: StorageRowKind, row: StorageRow
 
 // Forward the stored representation with backpressure, but withhold EOF until
 // its upload hash passes. Encryption cannot emit its final frame, and an atomic
-// PUT cannot commit, until verification (including sourcemap decompression) ends.
-export function verifiedStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable, signal?: AbortSignal): Readable {
+// PUT cannot commit, until verification (including Brotli decompression) ends.
+export function verifiedStoragePayload(type: StorageRowKind, row: StorageRow, source: Readable, signal?: AbortSignal, identity?: string): Readable {
   const input = new PassThrough(), output = new PassThrough()
-  const verification = verifyStoragePayload(type, row, input, signal)
+  const verification = verifyStoragePayload(type, row, input, signal, identity)
   // Propagate asynchronous decompression errors even if the source is stalled.
   void verification.catch(err => { source.destroy(err); output.destroy(err) })
   const forwarding = pipeline(source, async function* (chunks) {

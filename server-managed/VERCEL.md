@@ -132,7 +132,7 @@ deletions become eligible for automatic maintenance or explicit cleanup after
 
 | Bound | Configured value |
 | --- | --- |
-| Report upload | 10 MiB by default (`MAX_REPORT_BYTES`) |
+| Report upload | 25 MiB by default, before compression (`MAX_REPORT_BYTES`) |
 | Bundle upload | 200 MiB by default (`MAX_BUNDLE_BYTES`) |
 | Upload part | 3 MiB |
 | Decoded bundle | 512 MiB |

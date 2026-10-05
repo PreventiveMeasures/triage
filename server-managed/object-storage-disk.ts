@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readdir, rename, rm, rmdir, stat } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, rename, rm, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { type ObjectPage, type RawObjectStorage, objectPath } from './object-storage.ts'
 
@@ -100,11 +100,15 @@ export function createDiskObjectStorage(dir: string): RawObjectStorage {
         await file.writeFile(bytes, signal ? { signal } : {})
         await file.sync(); await file.close()
         signal?.throwIfAborted()
-        if (expected !== undefined) {
+        if (expected === null) {
+          try { await link(temp, target) }
+          catch (err) { if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false; throw err }
+        } else if (expected === undefined) await rename(temp, target)
+        else {
           try { if (version(await stat(target)) !== expected) return false }
           catch (err) { if (missing(err)) return false; throw err }
+          await rename(temp, target)
         }
-        await rename(temp, target)
         await syncDirectory(dirname(target))
         return true
       } finally { await file.close(); await rm(temp, { force: true }) }

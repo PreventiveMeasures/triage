@@ -4,7 +4,7 @@ import { Readable } from 'node:stream'
 import { type StorageKey, decryptStorageStream, encryptStorageStream, wrapStorageValue } from '../server-common/storage-crypto.ts'
 import { ENCRYPTED_CACHE_PREFIX, type ObjectStorage, type RawObject, type RawObjectStorage, deleteObjects, objectPath, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageRow, type StorageRowKind, dataKeyIdentity, unwrapDataKey } from './storage-db.ts'
-import { inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
+import { inspectStorageObject, storageOwner, storageRowPaths, verifyStoragePayload } from './storage-payload.ts'
 
 const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
@@ -78,7 +78,7 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
   for (let attempt = 0; attempt < 3; attempt++) {
     const row = await db.getStorageRow(owner.type, owner.id)
     if (!row) return null
-    if (!owner.cache && storageRowPath(owner.type, row) !== identity) return null
+    if (!owner.cache && !storageRowPaths(owner.type, row).includes(identity)) return null
     if (owner.cache && !row.dataKey) return null
     if (!owner.cache && !row.encrypted) state = (await db.getStorageEncryption())!
     const stored = await raw.open(owner.cache ? encryptedCachePath(identity) : identity)
@@ -104,11 +104,76 @@ async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageK
     }
     // Only a pending row may read plaintext, and only the original upload.
     // Verify first, then reopen that exact version before exposing bytes.
-    await verifyStoragePayload(owner.type, row, inspected.stream)
+    await verifyStoragePayload(owner.type, row, inspected.stream, undefined, identity)
     const current = await openObjectVersion(raw, identity, stored.version)
     if (current) return current
   }
   throw new Error('Storage changed repeatedly during read')
+}
+
+async function verifyReportConversion(db: StorageDb, identity: string, bytes: Buffer): Promise<string> {
+  const owner = storageOwner(identity)
+  if (owner?.type !== 'report' || owner.cache || identity !== `reports/${owner.id}.br`) throw new Error('Invalid report conversion')
+  const row = await db.getStorageRow('report', owner.id)
+  if (!row) throw new Error('Report deleted during compression')
+  // Representation changes must preserve the immutable upload hash.
+  await verifyStoragePayload('report', row, Readable.from([bytes]), undefined, identity)
+  return owner.id
+}
+
+async function finishReportConversion(raw: RawObjectStorage, db: StorageDb, id: string, encrypted: boolean): Promise<void> {
+  const row = await db.getStorageRow('report', id)
+  if (!row) { await raw.delete(`reports/${id}.br`); throw new Error('Report deleted during compression') }
+  // Conversion preserves the original row/key. Keep the original until the
+  // compressed PUT has succeeded, and mark encrypted only after removing it.
+  await raw.delete(`reports/${id}`)
+  if (encrypted) await db.markStorageEncrypted('report', id, row.dataKey!)
+}
+
+async function existingReportConversion(raw: RawObjectStorage, identity: string, row: StorageRow, key: StorageKey | null,
+  encryptedMode: boolean): Promise<{ version: string; encrypted: boolean } | null> {
+  const stored = await raw.open(identity)
+  if (!stored) return null
+  const inspected = await inspectStorageObject(stored)
+  // Activation or a concurrent key allocation can win after the SQL read.
+  // Retry with fresh policy/row state before interpreting any ciphertext.
+  if (inspected.encrypted && (!encryptedMode || !row.dataKey)) {
+    inspected.stream.destroy()
+    return { version: stored.version, encrypted: true }
+  }
+  const source = inspected.encrypted ? await decryptOwned(inspected, key!, 'report', row, identity) : inspected
+  await verifyStoragePayload('report', row, source.stream, undefined, identity)
+  return { version: stored.version, encrypted: inspected.encrypted }
+}
+
+async function publishReportConversion(raw: RawObjectStorage, identity: string, bytes: Buffer, row: StorageRow,
+  key: StorageKey | null, expected: string | null, encrypted: boolean): Promise<boolean> {
+  if (!encrypted) return raw.put(identity, bytes, AbortSignal.timeout(STORAGE_WRITE_MS), expected)
+  const dataKey = unwrapDataKey(key!, 'report', row)
+  const source = encryptStorageStream(Readable.from([bytes]), dataKey, identity, bytes.length)
+  try { return await raw.put(identity, source, AbortSignal.timeout(STORAGE_WRITE_MS), expected, bytes.length) }
+  finally { source.destroy(); dataKey.fill(0) }
+}
+
+async function convertStoredReport(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null, identity: string, bytes: Buffer,
+  mode: (fresh?: boolean) => Promise<StorageEncryptionState | null>): Promise<null> {
+  const id = await verifyReportConversion(db, identity, bytes)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const state = await mode(true)
+    const row = state ? await db.ensureStorageDataKey('report', id) : await db.getStorageRow('report', id)
+    if (!row) throw new Error('Report deleted during compression')
+    const current = await existingReportConversion(raw, identity, row, key, Boolean(state))
+    if (current?.encrypted && (!state || !row.dataKey)) continue
+    // A stale plaintext writer must never replace a concurrent encrypted
+    // winner. Retain the original on uncertain writes; the next open resumes.
+    if ((!current || state && !current.encrypted) &&
+      !await publishReportConversion(raw, identity, bytes, row, key, current?.version ?? null, Boolean(state))) continue
+    if (!state && await mode(true)) continue
+    await raw.sync?.(identity)
+    await finishReportConversion(raw, db, id, Boolean(state))
+    return null
+  }
+  throw new Error('Report changed repeatedly during compression')
 }
 
 // Startup enables encryption before constructing stores; validate the persisted
@@ -156,17 +221,18 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
       const owner = storageOwner(identity), state = await mode()
       if (state && owner) {
         const row = await db.getStorageRow(owner.type, owner.id)
-        if (!row || (owner.cache ? !row.dataKey : storageRowPath(owner.type, row) !== identity)) return false
+        if (!row || (owner.cache ? !row.dataKey : !storageRowPaths(owner.type, row).includes(identity))) return false
       }
       // Existence is metadata only; open() authenticates the actual bytes.
       return await raw.head(state && owner?.cache ? encryptedCachePath(identity) : identity) !== null
     },
-    async put(identity, bytes) {
+    async put(identity, bytes, { replaceReport = false } = {}) {
       logicalKey(identity)
+      if (replaceReport) return convertStoredReport(raw, db, key, identity, bytes, mode)
       const state = await mode()
+      const owner = storageOwner(identity)
       if (identity.startsWith('avatars/')) { await raw.put(identity, bytes); return null }
       if (!state) return putPlaintext(raw, identity, bytes, () => mode(true))
-      const owner = storageOwner(identity)
       let dataKey: Buffer, wrapped: string | null = null
       if (owner?.cache) {
         const row = await db.ensureStorageDataKey(owner.type, owner.id)

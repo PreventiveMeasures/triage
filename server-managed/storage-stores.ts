@@ -5,6 +5,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { BundleCacheStorage } from './bundle-cache.ts'
 import { createBundleStore } from './bundle-store.ts'
+import { createReportStore } from './report-store.ts'
 import { CacheMissError, type CacheStorage, validateCacheKey } from './cache-storage.ts'
 import { type ObjectStorage, isBlobId } from './object-storage.ts'
 
@@ -71,7 +72,8 @@ export function createManagedStores(objects: ObjectStorage, avatarSidecar: boole
     delete: value => bundles.delete(id(value)),
   }
   return {
-    reportStore: blobStore(objects, 'reports'),
+    reportStore: createReportStore(blobStore(objects, 'reports'), blobStore(objects, 'reports', '.br'),
+      (value, bytes) => objects.put(`reports/${id(value)}.br`, bytes, { replaceReport: true })),
     bundleStore: createBundleStore(blobStore(objects, 'bundles'), blobStore(objects, 'bundles', '.map.br')),
     uploadStore: blobStore(objects, 'uploads'),
     avatarStore: avatarStore(objects, avatarSidecar),

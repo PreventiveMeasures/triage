@@ -139,6 +139,7 @@
     "server-managed/report-migration.ts",
     "server-managed/report-query.ts",
     "server-managed/report-response.ts",
+    "server-managed/report-store.ts",
     "server-managed/report-sources.ts",
     "server-managed/revisions.ts",
     "server-managed/repository-browser.ts",

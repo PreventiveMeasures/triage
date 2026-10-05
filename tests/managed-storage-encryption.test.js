@@ -32,6 +32,14 @@ async function fixture(t, remote = false, blobOptions) {
   t.after(async () => { await db.close(); await rm(dir, { recursive: true, force: true }) })
   const raw = remote ? await openVercelObjectStorage('token', sdk.sdk) : createDiskObjectStorage(dir)
   const objects = await createEncryptedObjectStorage(raw, db, key), stores = createManagedStores(objects, !remote)
+  // These tests isolate encryption, streaming and legacy migration. Report
+  // compression and conversion on open use the production stores in their own tests.
+  stores.reportStore = {
+    put: (id, body) => objects.put(`reports/${id}`, body),
+    get: id => objects.get(`reports/${id}`),
+    open: id => objects.open(`reports/${id}`),
+    delete: id => objects.delete(`reports/${id}`),
+  }
   return { dir, dbPath, db, raw, stores, storage: objects, ...sdk }
 }
 async function consume(stream) { const parts = []; for await (const part of stream) parts.push(part); return Buffer.concat(parts) }
@@ -44,7 +52,9 @@ async function finish(f, options) {
   throw new Error('Migration did not finish')
 }
 async function report(f, body = Buffer.from('private report'), id = randomUUID()) {
-  const dataKey = await f.stores.reportStore.put(id, body)
+  // Seed the legacy representation for encryption/migration tests. Production
+  // startup cases without a raw storage adapter use the compressed report store.
+  const dataKey = f.storage ? await f.storage.put(`reports/${id}`, body) : await f.stores.reportStore.put(id, body)
   await f.db.insertReport({ id, filename: 'report.json', contentType: 'application/json', byteSize: body.length,
     sha256: createHash('sha256').update(body).digest('base64url'), dataKey, uploadedBy: null, repoId: null }, Date.now())
   return id
@@ -79,7 +89,7 @@ test('startup with a key encrypts new writes before legacy migration and require
     const state = await enabled.db.getStorageEncryption()
     assert.equal(state.complete, 0)
     assert.equal(state.migrated, 0)
-    assert.equal((await bytes(f.raw, `reports/${legacy}`)).toString(), 'private report', 'startup does not migrate legacy bytes')
+    assert.equal(brotliDecompressSync(await bytes(f.raw, `reports/${legacy}.br`)).toString(), 'private report', 'startup does not migrate legacy bytes')
 
     const current = { db: enabled.db, stores: enabled }
     const b = await bundle(current), r = await report(current, Buffer.from('new report'))
@@ -87,7 +97,7 @@ test('startup with a key encrypts new writes before legacy migration and require
       const row = await enabled.db.getStorageRow(type, id)
       assert.equal(row.encrypted, 1)
       assert.ok(row.dataKey)
-      assert.equal((await bytes(f.raw, `${type}s/${id}`)).subarray(0, 16).toString(), 'DeepView.storage')
+      assert.equal((await bytes(f.raw, `${type}s/${id}${type === 'report' ? '.br' : ''}`)).subarray(0, 16).toString(), 'DeepView.storage')
     }
     const user = await enabled.db.upsertUser({ githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
     const tokens = { accessToken: 'access-secret', refreshToken: 'refresh-secret', expiresAt: null }
@@ -121,7 +131,7 @@ test('startup with a key encrypts new writes before legacy migration and require
     await reopened.reapStorage()
     assert.equal((await enabled.db.getStorageEncryption()).complete, 1)
     assert.equal((await enabled.db.getStorageEncryption()).migrated, 1, 'maintenance only migrates the legacy upload')
-    assert.equal((await bytes(f.raw, `reports/${legacy}`)).subarray(0, 16).toString(), 'DeepView.storage')
+    assert.equal((await bytes(f.raw, `reports/${legacy}.br`)).subarray(0, 16).toString(), 'DeepView.storage')
     assert.equal((await enabled.reportStore.get(legacy)).toString(), 'private report')
   } finally { await reopened?.db.close(); await enabled?.db.close(); await stale.db.close() }
 })
@@ -506,7 +516,7 @@ test('pre-activation writes finishing after enable cannot leave new plaintext be
   const f = await fixture(t, true), id = randomUUID()
   const put = f.raw.put.bind(f.raw)
   t.mock.method(f.raw, 'put', async (...args) => { const result = await put(...args); await f.db.enableStorageEncryption(); return result })
-  await assert.rejects(f.stores.reportStore.put(id, Buffer.from('racing plaintext')), /enabled during upload/u)
+  await assert.rejects(f.storage.put(`reports/${id}`, Buffer.from('racing plaintext')), /enabled during upload/u)
   assert.equal(await f.raw.head(`reports/${id}`) !== null, false)
 })
 
@@ -567,7 +577,7 @@ for (const remote of [false, true]) {
       await f.db.enableStorageEncryption()
       throw new Error('lost plaintext PUT acknowledgement')
     })
-    await assert.rejects(f.stores.reportStore.put(id, body), /lost plaintext PUT acknowledgement/u)
+    await assert.rejects(f.storage.put(`reports/${id}`, body), /lost plaintext PUT acknowledgement/u)
     assert.equal(await f.raw.head(`reports/${id}`) !== null, false)
   })
 
@@ -595,7 +605,7 @@ test('failed plaintext cleanup preserves a concurrent encrypted replacement', as
     await finish(f)
     throw new Error('lost acknowledgement after migration')
   })
-  await assert.rejects(f.stores.reportStore.put(id, body), /lost acknowledgement/u)
+  await assert.rejects(f.storage.put(`reports/${id}`, body), /lost acknowledgement/u)
   assert.deepEqual(await f.stores.reportStore.get(id), body)
 })
 

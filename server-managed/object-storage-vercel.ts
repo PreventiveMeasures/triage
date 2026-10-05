@@ -6,7 +6,7 @@ import { type RawObjectStorage, objectPath } from './object-storage.ts'
 export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk): Promise<RawObjectStorage> {
   const blobs = sdk ?? await loadVercelBlobSdk()
   const path = (key: string) => `.managed/${objectPath(key)}`
-  return {
+  const storage: RawObjectStorage = {
     async head(key, signal) {
       try {
         const meta = await blobs.head(path(key), { token, ...(signal ? { abortSignal: signal } : {}) })
@@ -32,11 +32,14 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
     },
     async put(key, bytes, signal, expected, sizeHint) {
       const multipart = (sizeHint ?? (Buffer.isBuffer(bytes) ? bytes.length : Infinity)) >= 5 * 1024 * 1024
-      try { await blobs.put(path(key), bytes, { token, access: 'private', addRandomSuffix: false, allowOverwrite: true,
+      try { await blobs.put(path(key), bytes, { token, access: 'private', addRandomSuffix: false, allowOverwrite: expected !== null,
         ...(expected ? { ifMatch: expected } : {}), multipart, contentType: 'application/octet-stream', cacheControlMaxAge: 60, ...(signal ? { abortSignal: signal } : {}) })
         return true
       } catch (err) {
         if (blobs.BlobPreconditionFailedError && err instanceof blobs.BlobPreconditionFailedError) return false
+        // The SDK uses a generic error for an occupied pathname. Reconcile a
+        // create-only failure against storage; the caller verifies the winner.
+        if (expected === null && await storage.head(key, signal)) return false
         throw err
       }
     },
@@ -60,4 +63,5 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
       cursor: page.hasMore ? page.cursor! : null }
     },
   }
+  return storage
 }
