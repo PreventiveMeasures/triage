@@ -7,7 +7,7 @@ class LocalItemSelector extends SearchableSelector {
   get optionsLabel() { return 'Local files' }
   get noMatchesLabel() { return 'No matching files.' }
   get emptyLabel() { return 'No local files available.' }
-  optionTitle() { return nothing }
+  optionTooltip() { return nothing }
   choices() {
     const query = this._query.trim().toLocaleLowerCase()
     const options = this.options.filter(option => `${option.label} ${option.secondary ?? ''}`.toLocaleLowerCase().includes(query))

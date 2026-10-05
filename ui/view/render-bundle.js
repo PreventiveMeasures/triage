@@ -756,7 +756,7 @@ function renderBundleSourceFindingPanel(findings) {
     <div class="bundle-source-panel-body">
       ${(lineLabel || meta) ? html`<div class="bundle-source-panel-line-row">
         ${lineLabel ? html`<span class="bundle-source-panel-line">${lineLabel}</span>` : nothing}
-        ${meta ? html`<span class="bundle-source-panel-meta" title=${meta}>${meta}</span>` : nothing}
+        ${meta ? html`<span class="bundle-source-panel-meta" data-tooltip-truncated data-tooltip=${meta}>${meta}</span>` : nothing}
       </div>` : nothing}
       <div class="bundle-source-panel-desc">${renderHighlighted(titledDescription(f), { paragraphs: false })}</div>
       ${reports.length > 0 ? html`<div class="bundle-source-panel-reports">
@@ -803,7 +803,7 @@ function bundleViewerFindings(details, path, content) {
 // docked sidebar — path + the shared bundle-source-close action.
 function renderBundleSourceBar(path, history = null) {
   return html`<header class="bundle-source-bar">
-      <div class="bundle-source-title mono" title=${path}>${path}</div>
+      <div class="bundle-source-title mono" data-tooltip-truncated data-tooltip=${path}>${path}</div>
       ${history?.files.length > 1 ? renderBundleCodeFileNav(history) : nothing}
       <button
         type="button"
@@ -981,7 +981,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
               ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${vendored ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
             </span>
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
-            ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} title=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
+            ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} data-tooltip=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
           </summary>
           ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll, formats)}
         </details>
@@ -1003,7 +1003,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
           data-tooltip=${full}
         >
           ${sourceFileIcon(full, formats?.get(full))}<span class="bundle-code-tree-name">${name}</span>
-          ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} title=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
+          ${count > 0 ? html`<span class=${`bundle-code-tree-count sev-${sev}`} data-tooltip=${`${count} ${count === 1 ? 'issue' : 'issues'}`}>${count}</span>` : nothing}
         </button>
       </li>`
     })}
@@ -1354,7 +1354,7 @@ function renderBundleCodeView(details) {
           </button>
         </span>
       </div>
-      ${prefix ? html`<div class="bundle-code-rail-prefix mono" title=${prefix}>${prefix}</div>` : nothing}
+      ${prefix ? html`<div class="bundle-code-rail-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</div>` : nothing}
       <bundle-code-search .modes=${searchModes}></bundle-code-search>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
@@ -1404,7 +1404,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
   return html`<header class="bundle-code-main-bar">
       ${renderBundleCodeFileNav(history)}
       ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
-      <span class="bundle-code-main-path mono" title=${path}>${path}</span>
+      <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${path}>${path}</span>
       <button
         type="button"
         class="bundle-code-copy-path"
@@ -1421,7 +1421,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
       >
         <span
           class=${`bundle-code-tree-count sev-${_topSeverityOf(fileFindings)}`}
-          title=${`${fileFindings.length} ${fileFindings.length === 1 ? 'issue' : 'issues'} in this file`}
+          data-tooltip=${`${fileFindings.length} ${fileFindings.length === 1 ? 'issue' : 'issues'} in this file`}
         >${fileFindings.length}</span>
         <button
           type="button"
@@ -1643,7 +1643,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
     <div class="bundle-search-summary">
       <span>${totalHits}${truncated ? '+' : ''} ${totalHits === 1 ? 'match' : 'matches'}
         in ${fileCount}${truncated ? '+' : ''} ${fileCount === 1 ? 'file' : 'files'}</span>
-      ${prefix ? html`<span class="bundle-search-summary-prefix mono" title=${prefix}>${prefix}</span>` : nothing}
+      ${prefix ? html`<span class="bundle-search-summary-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
       ${truncated ? html`<span class="bundle-search-summary-more">results capped — refine to narrow</span>` : nothing}
     </div>
     ${repeat(fileResults, (f) => f.path, (f) => renderSearchFile(f, prefix, radius))}
@@ -2122,7 +2122,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               ? html`<button type="button" class="bundle-issues-file-name mono" data-bundle-view-source=${file} data-tooltip=${file}>${bare}</button>`
               : repoFileUrl
                 ? html`<a class="bundle-issues-file-name bundle-issues-file-name-link mono" href=${repoFileUrl} target="_blank" rel="noopener" data-tooltip=${file}>${bare}</a>`
-                : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" title=${file}>${bare}</span>`}
+                : html`<span class="bundle-issues-file-name bundle-issues-file-name-static mono" data-tooltip=${file}>${bare}</span>`}
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
           <ul class="bundle-issues-findings">
@@ -2166,7 +2166,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
                       data-bundle-view-line=${finding.line ?? ''}
                       data-tooltip=${file}
                     >${inner}</button>`
-                  : html`<div class="bundle-issues-finding-link bundle-issues-finding-static" title=${file}>${inner}</div>`}
+                  : html`<div class="bundle-issues-finding-link bundle-issues-finding-static" data-tooltip=${file}>${inner}</div>`}
               </li>`
             })}
           </ul>
@@ -2355,7 +2355,7 @@ function renderBundleDetails(entry, details) {
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
     ${bundleOriginLinks(origin, prefix).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
       <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
-      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} title=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
+      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
     </dd>`)}
     <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}

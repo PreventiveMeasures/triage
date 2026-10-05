@@ -17,7 +17,6 @@
 // findings, groups, or active tabs — it just reports which dot was clicked.
 import { LitElement, html, unsafeCSS } from 'lit'
 import markerCSS from './color-marker.css'
-import { installShadowTooltipListener } from './tooltip.js'
 
 const COLORS = ['red', 'blue', 'green', 'gray']
 
@@ -35,19 +34,11 @@ class ColorMarker extends LitElement {
     this.disabled = false
   }
 
-  connectedCallback() {
-    super.connectedCallback()
-    // Swatches are icon-only; `data-tooltip` names the colour and the
-    // shared tooltip draws it, which needs a listener inside the root.
-    installShadowTooltipListener(this.renderRoot)
-  }
-
   render() {
     return html`${COLORS.map((color) => html`<button type="button"
       class=${`color-${color}${this.selected === color ? ' active' : ''}`}
       data-color=${color}
       aria-label=${`mark ${color}`}
-      data-tooltip=${`mark ${color}`}
       ?disabled=${this.disabled}
       @click=${this._onClick}
     ></button>`)}`

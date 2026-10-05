@@ -47,7 +47,7 @@ class BundleSelector extends SearchableSelector {
   optionIcon(option) {
     return html`<span class="bundle-icon" aria-hidden="true">${option.format === 'sourcemap' ? unsafeHTML(BUNDLE_ICON_SVG) : html`<img src="./stasis.svg" alt="">`}</span>`
   }
-  optionTitle(_option) { return nothing }
+  optionTooltip(_option) { return nothing }
 
   choices() {
     const words = this._query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean)

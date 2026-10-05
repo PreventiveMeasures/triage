@@ -194,6 +194,7 @@ export function hideTooltip() {
 // suppress (e.g., sidebar's truncation gate). Default: always show.
 // `placement` is forwarded to `showTooltip` when the timer fires.
 export function scheduleTooltip(el, { gate, placement } = {}) {
+  if (Object.hasOwn(el.dataset, 'tooltipTruncated') && el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight) return
   if (gate && !gate(el)) return
   clearTimeout(showTimer)
   showTimer = setTimeout(() => { showTooltip(el, { placement }) }, SHOW_DELAY_MS)
@@ -212,14 +213,11 @@ const shadowInstalled = new WeakSet()
 // The tooltip owner for an event, walking the composed path up to (and
 // not past) the listening root.
 //
-// Why not `closest` on `e.target`: these roots NEST — a `<color-marker>`
-// has its own root and sits inside `<finding-card>`, which has one too.
-// An event from a swatch reaches the card's listener retargeted to the
-// `<color-marker>` HOST, which carries no `data-tooltip`, so `closest`
-// found nothing and the ancestor listener hid the tooltip the swatch's
-// own listener had just scheduled — the inner tooltip never appeared.
-// The composed path still holds the swatch itself, so both listeners
-// resolve the same owner and agree.
+// Why not `closest` on `e.target`: these roots NEST — a repository picker
+// can sit inside a managed page. An option's event reaches the page's
+// listener retargeted to the picker host, which has no `data-tooltip`.
+// The composed path still holds the option label, so both listeners
+// resolve the same owner instead of the outer listener hiding its tooltip.
 function tooltipOwner(e, root) {
   for (const node of e.composedPath()) {
     if (node === root) break
@@ -254,6 +252,11 @@ let globalInstalled = false
 export function installGlobalTooltipListener() {
   if (globalInstalled) return
   globalInstalled = true
+  // Components shared with lazy bundles register their roots through the
+  // DOM so every surface uses this module's tooltip node and hover state.
+  document.addEventListener('tooltip-root-connected', (e) => {
+    installShadowTooltipListener(e.composedPath()[0]?.shadowRoot)
+  })
   document.body.addEventListener('mouseover', (e) => {
     if (e.target.closest('[data-tooltip-managed]')) return
     const el = e.target.closest('[data-tooltip]')

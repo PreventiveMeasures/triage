@@ -99,10 +99,10 @@ class FixLinkDialog extends AppDialog {
         <h3>${hasInitial ? 'Edit fix link' : 'Add fix link'}</h3>
         <div class="finding">
           ${severityBadge(displayedSeverity(f, state.severityMode))}
-          ${loc ? html`<span class="loc" title=${loc}>${loc}</span>` : nothing}
+          ${loc ? html`<span class="loc" data-tooltip-truncated data-tooltip=${loc}>${loc}</span>` : nothing}
         </div>
         ${f.description
-          ? html`<div class="desc" title=${f.description}>${f.description}</div>`
+          ? html`<div class="desc" data-tooltip-truncated data-tooltip=${f.description}>${f.description}</div>`
           : nothing}
       </header>
       <div class="input-row">

@@ -99,10 +99,9 @@ class ConfFilter extends StateElement {
     const title = disabled
       ? 'No confidence range: some findings on screen carry no confidence score'
       : nothing
-    return html`<span class=${classMap({ 'conf-range-label': true, replaced, disabled })}>Confidence</span>
+    return html`<span class=${classMap({ 'conf-range-label': true, replaced, disabled })} data-tooltip=${title}>Confidence</span>
       <span
         class=${classMap({ 'conf-range': true, replaced, disabled })}
-        title=${title}
         ?inert=${disabled || replaced}
       >
         <range-slider

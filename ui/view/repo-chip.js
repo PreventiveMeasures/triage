@@ -129,7 +129,6 @@ class RepoChip extends LitElement {
   _slugLabel(text) {
     return html`<span
       class="label"
-      title="Copy repo name"
       @click=${this._onCopyLabel}
     >${text}</span>`
   }

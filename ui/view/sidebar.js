@@ -266,7 +266,7 @@ function teamsSectionTemplate() {
     ${repeat(teams, ({ team }) => team.id, ({ team: t, reports, bundles }) => html`
       <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && state.currentView === 'findings' ? ' current' : ''}`}>
         <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
-        ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} data-tooltip="Share public link" @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
+        ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
       </li>
       ${repeat(reports, (r) => r.id, (r) => teamReportTemplate(t, r))}
       ${repeat(bundles, (b) => b.id, (b) => teamBundleTemplate(t, b))}`)}`
@@ -451,9 +451,9 @@ function workspaceItemTemplate(w, { app, compact, reports, bundles, showReports,
   return html`<li class=${cls} data-workspace-id=${w.id}>
     <div class="workspace-heading">
       <button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button>
-      <button type="button" class="workspace-share" data-action="share-workspace" data-tooltip="Share by link" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button>
-      <button type="button" class="workspace-export" data-action="export-workspace" data-tooltip="Export workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>
-      <button type="button" class="workspace-leave" data-action="leave-workspace" data-tooltip="Leave workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>
+      <button type="button" class="workspace-share" data-action="share-workspace" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button>
+      <button type="button" class="workspace-export" data-action="export-workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>
+      <button type="button" class="workspace-leave" data-action="leave-workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>
     </div>
     ${compact ? html`<div class="workspace-meta">
       ${app?.appMode ? html`<span class="workspace-findings">${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'}</span>` : nothing}

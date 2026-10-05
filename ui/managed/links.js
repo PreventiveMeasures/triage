@@ -43,7 +43,7 @@ class ManagedAdminLinks extends ManagedPage {
       <div class="link-table"><table>
         <thead><tr><th>Link</th><th>Created by</th><th>Created</th><th>Security</th><th>Dependencies</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>${group.links.map(link => html`<tr>
-          <td><span title=${link.id}>${link.id.slice(0, 8)}</span></td>
+          <td><span data-tooltip=${link.id}>${link.id.slice(0, 8)}</span></td>
           <td>${link.createdBy}</td><td>${new Date(link.createdAt).toLocaleString()}</td>
           <td>${link.permissions.security ? 'On' : 'Off'}</td><td>${link.permissions.dependencies ? 'On' : 'Off'}</td>
           <td><button class="btn" aria-label=${`Edit public link ${link.id.slice(0, 8)} for ${group.name}`} @click=${() => this._edit(link)}>Edit</button></td>

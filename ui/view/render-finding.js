@@ -53,7 +53,7 @@ export function badgeLabel(severity) {
 // a "varies" chip when a deduped finding's correction differs across the
 // reports it appeared in (workspace view). The ▲/▼ glyph + strikethrough
 // are shape cues so the corrected/original distinction is never conveyed
-// by color alone; the full detail rides the `title` + `aria-label`.
+// by color alone; the full detail rides the tooltip + `aria-label`.
 //   variant 'full'    — finding-left / focus (companion stacks below)
 //   variant 'compact' — table row (companion stacks below; tighter)
 //   variant 'tab'     — tab strip (primary + a small ▲/▼ marker only)
@@ -71,7 +71,7 @@ function severityBadge(f, { variant = 'full' } = {}) {
     ? `Corrected severity varies across reports — ${Object.entries(variants).map(([r, v]) => `${r || '(this report)'}: ${badgeLabel(v.severity)}`).join('; ')}`
     : null
   const variesChip = variants
-    ? html`<span class="badge-varies" title=${variesTip} aria-label=${variesTip}>varies</span>`
+    ? html`<span class="badge-varies" data-tooltip=${variesTip} aria-label=${variesTip}>varies</span>`
     : nothing
 
   if (!hasCorr) {
@@ -96,14 +96,14 @@ function severityBadge(f, { variant = 'full' } = {}) {
     : `original, corrected to ${badgeLabel(corrected)}`}${reason ? `; reason: ${reason}` : ''}`
 
   if (variant === 'tab') {
-    return html`<span class="badge-pair badge-pair-tab" title=${tip} aria-label=${aria}>${primary}<span class=${`badge-corr-mark ${dirWord}`} aria-hidden="true">${arrow}</span></span>`
+    return html`<span class="badge-pair badge-pair-tab" data-tooltip=${tip} aria-label=${aria}>${primary}<span class=${`badge-corr-mark ${dirWord}`} aria-hidden="true">${arrow}</span></span>`
   }
 
   // The companion: the value NOT currently primary. In corrected mode
   // that's the (struck) original; in original mode it's the corrected
   // target (outlined, not struck — it isn't superseded in this view).
   const other = showingCorrected ? original : corrected
-  return html`<span class=${`badge-pair badge-pair-${variant}`} title=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
+  return html`<span class=${`badge-pair badge-pair-${variant}`} data-tooltip=${tip} aria-label=${aria}>${primary}<span class="badge-orig-wrap"><span class=${`badge-arrow ${dirWord}`} aria-hidden="true">${arrow}</span>${showingCorrected ? html`<span class="badge-pre" aria-hidden="true">was</span>` : nothing}<span class=${`badge-orig ${other}${showingCorrected ? ' struck' : ''}`}>${badgeLabel(other)}</span></span>${variesChip}</span>`
 }
 
 // Render ONE run of prose with inline highlights for `[markdown](links)`,
@@ -559,13 +559,13 @@ function rowLocationTemplate(f, url) {
 }
 
 // Commit-hash link for the codex `commit_hash` reference. Short SHA
-// (first 7 chars) on display, full hash in the title. Falls back to a
+// (first 7 chars) on display, full hash in the tooltip. Falls back to a
 // `<span>` (no link) when we don't have a repo to link against.
 function commitLinkTemplate(githubRepo, hash) {
   if (!hash) return nothing
   const short = hash.slice(0, 7)
   const url = commitUrl(githubRepo, hash)
-  if (!url) return html`<span title=${hash}>${short}</span>`
+  if (!url) return html`<span data-tooltip=${hash}>${short}</span>`
   return html`<a href=${url} target="_blank" rel="noopener" data-tooltip=${hash}>${short}</a>`
 }
 
@@ -938,14 +938,14 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const showActionLabels = context === 'focus' && reportChip === nothing
   const commentLabel = isManagedUiMode() ? 'Comments' : activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
-  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${showActionLabels && !activeComment ? nothing : commentTitle} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
-  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${showActionLabels && !activeFix ? nothing : fixTitle} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
+  const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${activeComment && !isManagedUiMode() ? commentTitle : nothing} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
+  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${activeFix ? fixTitle : nothing} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
   const flagBtn = flagButtonTemplate(activeTab, showActionLabels)
   // Copy button — writes a labeled `File / Line / Description /
   // Confidence` block for the active tab to the clipboard (handler
   // in events.js, active tab resolved via the same gid lookup).
-  const copyBtn = html`<button type="button" class="mark-copy" data-tooltip=${showActionLabels ? nothing : 'Copy file, line, description, confidence to clipboard'} aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
+  const copyBtn = html`<button type="button" class="mark-copy" aria-label="Copy finding details to clipboard">${COPY_ICON}${showActionLabels ? html`<span class="mark-btn-label">Copy</span>` : nothing}</button>`
   // Link button — copies a `#finding=<id>` URL that reopens the app on
   // THIS finding (handler in events.js; resolution in
   // view/finding-link.js). Suppressed for a session-local numeric id:
@@ -953,7 +953,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // next load. Managed reports also wait for a server-aware link resolver.
   // Sits next to Copy, the other "take this with you" action.
   const linkBtn = findingLinkFor(activeTab)
-    ? html`<button type="button" class="mark-link" data-tooltip=${showActionLabels ? nothing : 'Copy a link to this finding'} aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
+    ? html`<button type="button" class="mark-link" aria-label="Copy a link to this finding">${LINK_ICON}${showActionLabels ? html`<span class="mark-btn-label">Link</span>` : nothing}</button>`
     : nothing
   // GitHub-issue action — managed users must check for an existing
   // issue or reservation before reaching creation. Use a button so
@@ -1092,7 +1092,7 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   // valid CSS-selectable id.
   const popId = `triage-menu-${gid.replaceAll(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" data-tooltip=${title} aria-label=${title} ?disabled=${disabled}>
+    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" aria-label=${title} ?disabled=${disabled}>
       ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1124,11 +1124,11 @@ function tabMarksTemplate(entry) {
   const flagged = entry?.flagged === true
   if (!hasComment && !hasFix && !flagged) return nothing
   return html`<span class="tab-marks">${
-    hasComment ? html`<span class="has-comment" title="Has a comment">${COMMENT_ICON}</span>` : nothing
+    hasComment ? html`<span class="has-comment" role="img" aria-label="Has a comment">${COMMENT_ICON}</span>` : nothing
   }${
-    hasFix ? html`<span class="has-fix" title="Has a fix link">${FIX_ICON}</span>` : nothing
+    hasFix ? html`<span class="has-fix" role="img" aria-label="Has a fix link">${FIX_ICON}</span>` : nothing
   }${
-    flagged ? html`<span class="flagged" title="Flagged">${FLAG_ICON}</span>` : nothing
+    flagged ? html`<span class="flagged" role="img" aria-label="Flagged">${FLAG_ICON}</span>` : nothing
   }</span>`
 }
 

@@ -279,9 +279,9 @@ class BundleCompare extends LitElement {
   // carry the package color dot for continuity with the size
   // distribution + treemap.
   _pkgGroup(title, rows, kind) {
-    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row" title=${pkgLabel(r.pkg)}>
+    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row">
       <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
-      <span class="bundle-compare-row-path">${pkgLabel(r.pkg)}</span>
+      <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${pkgLabel(r.pkg)}>${pkgLabel(r.pkg)}</span>
       ${this._sizeCells(r)}
     </div></li>`)
   }
@@ -289,13 +289,13 @@ class BundleCompare extends LitElement {
   // One "Version changes" row: package dot + name, then `old → new`
   // with the new side colored by direction (↑ green / ↓ red / changed
   // amber) and a matching glyph. The direction is also spelled out in
-  // the title for screen readers.
+  // accessible label for screen readers.
   _versionRow(r) {
     const glyph = r.direction === 'up' ? '↑' : r.direction === 'down' ? '↓' : '±'
     const word = r.direction === 'up' ? 'Upgraded' : r.direction === 'down' ? 'Downgraded' : 'Changed'
-    return html`<li><div class="bundle-compare-row" title=${`${r.pkg} · ${word}`}>
+    return html`<li><div class="bundle-compare-row" aria-label=${`${r.pkg} · ${word}`}>
       <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
-      <span class="bundle-compare-row-path">${r.pkg}</span>
+      <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.pkg}>${r.pkg}</span>
       <span class="bundle-compare-ver">
         <span class="bundle-compare-ver-from">${versionList(r.baseVersions)}</span>
         <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
@@ -309,9 +309,9 @@ class BundleCompare extends LitElement {
   // version(s) it carried on the side it appears on. Same tinted card
   // and accent scheme as the file / package groups.
   _depGroup(title, rows, kind) {
-    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row" title=${r.pkg}>
+    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row">
       <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
-      <span class="bundle-compare-row-path">${r.pkg}</span>
+      <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.pkg}>${r.pkg}</span>
       <span class="bundle-compare-dep-ver">${versionList(r.versions)}</span>
     </div></li>`)
   }
@@ -459,7 +459,7 @@ class BundleCompare extends LitElement {
   _renderPicker(others, hasTarget) {
     const baseName = this._nameFor(this.integrity)
     return html`<div class="bundle-compare-picker">
-      <span class="bundle-compare-base" title=${baseName}>${baseName}</span>
+      <span class="bundle-compare-base" data-tooltip-truncated data-tooltip=${baseName}>${baseName}</span>
       <span class="bundle-compare-arrow" aria-hidden="true">→</span>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare with</span>
