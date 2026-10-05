@@ -280,7 +280,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     if (dependenciesOn()) {
       const pg = getDependencyGraph()
       dependencyLayout = layoutPackageDependencies(pg.nodes.map((n) => n.file), pg.importsOf, pg.fileLevel ? [] : graph.layerRoots?.roots ?? [], {
-        width: layoutW, height: layoutH,
+        width: layoutW, height: layoutH, cycleImportsOf: pg.cycleImportsOf,
       })
       needsLayout = false
       return

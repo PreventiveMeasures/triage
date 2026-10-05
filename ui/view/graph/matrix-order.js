@@ -62,7 +62,7 @@ function improveAdjacent(order, cells) {
     for (let step = 0; step < order.length - 1; step++) {
       const i = pass % 2 ? order.length - 2 - step : step
       const a = order[i], b = order[i + 1]
-      if ((cells.get(b)?.get(a)?.count ?? 0) <= (cells.get(a)?.get(b)?.count ?? 0)) continue
+      if ((cells.get(b)?.get(a)?.cycleCount ?? 0) <= (cells.get(a)?.get(b)?.cycleCount ?? 0)) continue
       order[i] = b; order[i + 1] = a; changed = true
     }
     if (!changed) break
@@ -114,9 +114,9 @@ export function orderCyclicGroup(ids, cells) {
   for (const node of nodes.values()) {
     for (const cell of cells.get(node.id)?.values() ?? []) {
       const target = nodes.get(cell.to)
-      if (!target || target === node) continue // External imports and self-imports cannot affect this order.
-      node.outgoing.push([target, cell.count]); target.incoming.push([node, cell.count])
-      node.balance += cell.count; target.balance -= cell.count
+      if (!target || target === node || !cell.cycleCount) continue // External imports and self-imports cannot affect this order.
+      node.outgoing.push([target, cell.cycleCount]); target.incoming.push([node, cell.cycleCount])
+      node.balance += cell.cycleCount; target.balance -= cell.cycleCount
     }
   }
   for (const node of nodes.values()) node.originalBalance = node.balance
