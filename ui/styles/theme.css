@@ -756,6 +756,7 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
          inset, no fade pad needed. */
   :root {
     --wco-right-toolbar: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+    --wco-titlebar-height: max(env(titlebar-area-height, 33px), 33px);
   }
 
   /* Keep the page-wide drag rectangle on a childless background,

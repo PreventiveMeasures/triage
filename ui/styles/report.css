@@ -24,7 +24,8 @@
 }
 
 #report {
-  display: none; padding: 1rem 1.5rem; width: 100%; box-sizing: border-box;
+  --report-padding-block: 1rem;
+  display: none; padding: var(--report-padding-block) 1.5rem; width: 100%; box-sizing: border-box;
 
   /* Active state runs flex-column so the graph view-mode can hang a
      `flex: 1` chain off of it (.findings-content.with-graph →
@@ -335,6 +336,8 @@
   min-height: 0;
 }
 
+.bundles-slide-header { display: contents; }
+
 .bundles-slide-bar {
   display: flex; align-items: center;
   gap: .5rem;
@@ -352,10 +355,50 @@
    runs full width and tucks under them.
    Shared --wco-right-toolbar var (theme.css) keeps the inset in
    sync with the seam-cover blob — single source of truth. */
-/* stylelint-disable-next-line media-feature-name-value-no-unknown */
+/* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
   .bundles-slide-bar { margin-right: var(--wco-right-toolbar); }
+  /* As with management navigation, an intrinsic-width flex bar clears the
+     window-control float when it cannot fit beside it. Its controls stay
+     vertically centered in the native titlebar instead of using a pixel nudge. */
+  .bundles-slide-header {
+    display: flow-root;
+    flex-shrink: 0;
+    margin-top: calc(-1 * var(--report-padding-block));
+  }
+  .bundles-slide-header::before {
+    content: '';
+    float: right;
+    width: var(--wco-right-toolbar, 0px);
+    height: var(--wco-titlebar-height);
+  }
+  .bundles-slide-header .bundles-slide-bar {
+    width: max-content;
+    min-width: calc(100% - var(--wco-right-toolbar, 0px));
+    max-width: 100%;
+    min-height: var(--wco-titlebar-height);
+    flex-wrap: wrap;
+    padding: 0;
+    margin-right: 0;
+    background: none;
+    backdrop-filter: none;
+    border: 0;
+    box-shadow: none;
+  }
+  .bundles-slide-header .bundles-slide-title { max-width: 20rem; margin-right: auto; }
+  .bundles-slide-header .bundles-slide-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .bundles-slide-header .bundles-tab { margin-bottom: 0; }
+  .bundles-slide-header .bundles-slide-title,
+  .bundles-slide-header .bundles-slide-tabs {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
+/* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
 .bundles-slide-breadcrumb {
   display: inline-flex; align-items: center;
@@ -364,7 +407,7 @@
   & > button {
     border: 0; background: none; padding: 0;
     color: inherit; font: inherit; cursor: default;
-    &:hover { color: var(--accent); text-decoration: underline; }
+    &:hover { color: var(--accent); }
     &:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--ui-radius, 4px); }
   }
 }
