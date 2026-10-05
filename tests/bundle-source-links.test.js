@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundleSourceImports, sourceLinkResolver } from '../common/bundle-source-links.js'
+import { bundleSourceImports, bundleSourceLinkImports, sourceLinkResolver } from '../common/bundle-source-links.js'
 import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleSourceLinkResolver } from '../ui/view/bundle-source-links.js'
 import { highlight } from '../ui/prism.js'
@@ -47,6 +47,55 @@ test('captured package manifests also assist links when stored as textual resour
   const sources = bundleSourcesAsMap(details)
   assert.equal(sources.has('package.json'), false)
   assert.equal(sourceLinkResolver(sources, 'index.js', bundleSourceImports(details, sources), bundleFilesAsMap(details))('#local/linking'), '_local/linking/index.js')
+})
+
+test('a leading UTF-8 BOM in a captured manifest preserves package imports', () => {
+  for (const format of ['commonjs', 'resource']) {
+    const details = packageImports({}, { node: { 'index.js': { './_local/linking': '_local/linking/index.js' } } }, {
+      'package.json': '\uFEFF' + JSON.stringify({ imports: { '#local/*': './_local/*' } }),
+      '_local/linking/index.js': '',
+    })
+    details.bundle.formats.set('package.json', format)
+    assert.equal(bundleSourceLinkResolver(details, 'index.js')('#local/linking'), '_local/linking/index.js', format)
+  }
+})
+
+test('managed link metadata resolves visible quoted aliases without exporting manifests or private targets', () => {
+  const code = `import x from '#local/linking'; const a = "#exact"; const b = \`#exact\`;
+const nested = \`#dynamic\${"#exact"}\`; const blocked = '#blocked'; const hidden = '#hidden';
+// '#exact'
+const regex = /'#exact'/; const escaped = '#ex\\x61ct';`
+  const details = packageImports({
+    '#local/*': './_local/*', '#exact': './exact.js', '#blocked': './exact.js', '#hidden': './private.js', '#unused': './unused.js',
+  }, { node: { 'index.js': { './_local/linking': '_local/linking/index.js', '#blocked': 'missing.js' } } }, {
+    'index.js': code, '_local/linking/index.js': '', 'exact.js': '', 'private.js': 'private body', 'unused.js': '',
+  })
+  details.bundle.formats.set('package.json', 'resource')
+  const sources = new Map([...bundleSourcesAsMap(details)].filter(([file]) => !['private.js', 'unused.js'].includes(file)))
+  const imports = bundleSourceLinkImports(details, sources)
+  const resolve = sourceLinkResolver(sources, 'index.js', imports)
+  assert.equal(resolve('#local/linking'), '_local/linking/index.js')
+  assert.equal(resolve('#exact'), 'exact.js')
+  assert.equal(resolve('#blocked'), null)
+  assert.equal(resolve('#hidden'), null)
+  assert.equal(imports.get('index.js').has('#unused'), false, 'uncited aliases in manifest metadata are not exported')
+  assert.equal(JSON.stringify([...imports.get('index.js')]).includes('private.js'), false)
+  assert.deepEqual(sourceLinks(code, 'javascript', resolve), [
+    ["'#local/linking'", '_local/linking/index.js'], ['"#exact"', 'exact.js'], ['`#exact`', 'exact.js'], ['"#exact"', 'exact.js'],
+  ])
+})
+
+test('managed alias metadata keeps conditional disagreement and platform edges blocked', () => {
+  const details = packageImports({
+    '#conditional': { node: './a.js', default: './b.js' }, '#platform': './platform', '#same': ['./a.js', './same.js'],
+  }, { node: { 'index.js': { './a.js': 'a.js', './b.js': 'b.js', './same.js': 'a.js', './platform': new Map([['ios', 'a.js']]) } } }, {
+    'index.js': "const a = '#conditional'; const b = '#platform'; const c = '#same';", 'a.js': '', 'b.js': '',
+  })
+  const sources = new Map([...bundleSourcesAsMap(details)].filter(([file]) => file !== 'package.json'))
+  const resolve = sourceLinkResolver(sources, 'index.js', bundleSourceLinkImports(details, sources))
+  assert.equal(resolve('#conditional'), null)
+  assert.equal(resolve('#platform'), null)
+  assert.equal(resolve('#same'), 'a.js')
 })
 
 test('package imports use the nearest manifest and resolve rewritten edges relative to nested importers', () => {

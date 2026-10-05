@@ -44,8 +44,9 @@ function packageScope(sources, index, parent, packageDir) {
     const path = `${directory}package.json`
     if (index.has(path)) {
       if (!cache.has(path)) {
+        const content = sources.get(index.get(path))
         let imports = null
-        try { imports = JSON.parse(sources.get(index.get(path)))?.imports ?? null } catch {}
+        try { imports = typeof content === 'string' ? JSON.parse(content.replace(/^\uFEFF/u, ''))?.imports ?? null : null } catch {}
         cache.set(path, imports && typeof imports === 'object' && !Array.isArray(imports) ? imports : null)
       }
       // The nearest package defines the scope, including absent/invalid imports.
@@ -144,6 +145,29 @@ export function bundleSourceImports(details, sources = bundleSourcesAsMap(detail
           merged.set(specifier, merged.has(specifier) && merged.get(specifier) !== resolved ? null : resolved)
         }
       }
+    }
+  }
+  return imports
+}
+
+// Managed previews receive only report-selected bodies, often without the
+// owning manifest. Resolve their quoted # aliases using the full manifest
+// inventory, but export only visible targets (or null), never manifest data.
+// These are candidate strings; Prism still decides which tokens become links.
+export function bundleSourceLinkImports(details, sources = bundleSourcesAsMap(details)) {
+  const imports = bundleSourceImports(details, sources)
+  if (details?.kind !== 'stasis') return imports
+  const packageDirs = bundlePackageDirs(details), packageFiles = bundleFilesAsMap(details)
+  for (const [parent, content] of sources) {
+    const resolve = sourceLinkResolver(sources, parent, imports, packageFiles, packageDirs)
+    let targets = imports.get(parent)
+    // Look ahead so a template containing a quoted alias cannot hide that
+    // inner candidate. Escaped/multiline strings are not portable paths.
+    for (const [, , specifier] of content.matchAll(/(?=(["'`])(#[^\\\r\n]*?)\1)/gu)) {
+      if (targets?.has(specifier)) continue
+      const target = resolve(specifier)
+      if (!targets) { targets = new Map(); imports.set(parent, targets) }
+      targets.set(specifier, target)
     }
   }
   return imports

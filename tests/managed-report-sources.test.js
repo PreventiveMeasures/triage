@@ -33,7 +33,7 @@ const findings = [
   { id: 'f2', file: 'node_modules/dep/index.js', description: 'Dependency' },
   { id: 'f3', file: 'secret.js', security: true, description: 'Secret', evidence: [{ file: 'secret-evidence.js' }] },
 ]
-async function setupBackend(t, kind = 'sourcemap', backend = 'disk', stasisModules = null) {
+async function setupBackend(t, kind = 'sourcemap', backend = 'disk', stasisModules = null, stasisOptions = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-report-sources-'))
   const db = openSqliteManagedDb(':memory:')
   const fixture = backend === 'vercel' ? sdkFixture() : null
@@ -77,6 +77,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk', stasisModul
       ])],
       ['browser', new Map([['src/main.js', new Map([['proof', 'src/evidence.js'], ['conditional', 'secret.js'], ['./evidence.js', 'unrelated.js']])]])],
     ]),
+    ...stasisOptions,
   }).serialize())) : Buffer.from(JSON.stringify({ version: 3, sources: [...Object.keys(files), 'missing.js'], sourcesContent: [...Object.values(files), null] }))
   const bundle = { id: randomUUID(), integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'app.stasis.code.br' : 'app.map', kind, byteSize: bytes.length, uploadedBy: users.admin.userId, uploadedByLogin: 'admin', repoId: 1 }
   await bundles.put(bundle.id, bytes, kind); await db.insertBundle(bundle, Date.now())
@@ -109,7 +110,7 @@ async function cachedFiles(h) {
 function deleteReport(h, id) { return h.send(id, 'admin', 'DELETE', { path: `/api/admin/reports/${id}` }) }
 
 function sourcesTests(backend) {
-  const setup = (t, kind, modules) => setupBackend(t, kind, backend, modules)
+  const setup = (t, kind, modules, options) => setupBackend(t, kind, backend, modules, options)
 
   test('Stasis import metadata is scoped to visible files and blocks ambiguous or hidden targets', async t => {
     const h = await setup(t, 'stasis')
@@ -146,6 +147,54 @@ function sourcesTests(backend) {
     const imports = new Map(data.imports.map(([file, edges]) => [file, new Map(edges)])), sources = new Map(data.files)
     assert.equal(sourceLinkResolver(sources, parent, imports, sources, new Map(data.packageDirs))('#local'), null, 'the transmitted workspace boundary blocks the root manifest')
   })
+
+  for (const format of ['commonjs', 'resource']) {
+    test(`managed package aliases resolve without exposing an uncited ${format} manifest`, async t => {
+      const parent = 'packages/app/src/main.js', target = 'packages/app/_local/linking/index.js'
+      const main = "import x from '#local/linking'; const exact = '#exact'; const direct = '#direct'; const blocked = '#blocked'; const conflict = '#conflict'; const hidden = '#hidden'; const security = '#security';"
+      const h = await setup(t, 'stasis', new Map([
+        ['.', { name: 'root', version: '1', files }],
+        ['packages/app', { name: 'app', version: '1', files: {
+          'package.json': '\uFEFF' + JSON.stringify({ privateField: 'uncited manifest metadata', imports: {
+            '#local/*': './_local/*', '#exact': './exact.js', '#direct': './other.js',
+            '#blocked': './_local/linking', '#conflict': './conditional', '#hidden': './uncited.js', '#security': './protected.js',
+          } }),
+          'src/main.js': main, '_local/linking/index.js': 'linking source', 'exact.js': 'exact source',
+          'other.js': 'other source', 'conditional.js': 'conditional source', 'conditional.browser.js': 'browser source',
+          'uncited.js': 'uncited body', 'protected.js': 'protected body',
+        } }],
+      ]), {
+        formats: new Map([['packages/app/package.json', format]]),
+        imports: new Map([
+          ['node', new Map([[parent, new Map([['./_local/linking', target], ['#direct', target], ['#blocked', 'missing.js'], ['./conditional', 'packages/app/conditional.js']])]])],
+          ['browser', new Map([[parent, new Map([['./conditional', 'packages/app/conditional.browser.js']])]])],
+        ]),
+      })
+      const visible = [target, 'packages/app/exact.js', 'packages/app/other.js', 'packages/app/conditional.js', 'packages/app/conditional.browser.js']
+      const report = await h.seed(JSON.stringify({ findings: [
+        { file: parent, evidence: visible.map(file => ({ file })) },
+        { file: 'packages/app/protected.js', security: true },
+      ] }))
+      const data = (await h.send(report.id)).json()
+      const imports = new Map(data.imports.map(([file, edges]) => [file, new Map(edges)])), sources = new Map(data.files)
+      assert.equal(sources.has('packages/app/package.json'), false, 'the uncited manifest is not a source response file')
+      const resolve = sourceLinkResolver(sources, parent, imports, sources, new Map(data.packageDirs))
+      assert.equal(resolve('#local/linking'), target)
+      assert.equal(resolve('#exact'), 'packages/app/exact.js', 'exact-file mapping also works without a rewritten edge')
+      assert.equal(resolve('#direct'), target, 'the literal edge wins over the manifest mapping')
+      assert.equal(resolve('#security'), 'packages/app/protected.js')
+      for (const specifier of ['#blocked', '#conflict', '#hidden']) assert.equal(resolve(specifier), null, specifier)
+      assert.equal(JSON.stringify(data).includes('uncited.js'), false)
+      assert.equal(JSON.stringify(data).includes('uncited manifest metadata'), false)
+      await h.db.setTeamMember(h.team, h.users.view.userId, { dependencies: false, security: false })
+      const restricted = (await h.send(report.id, 'view')).json()
+      const edges = new Map(new Map(restricted.imports).get(parent))
+      assert.equal(edges.get('#local/linking'), target)
+      assert.equal(edges.get('#security'), null, 'hidden target blocks the alias')
+      assert.equal(JSON.stringify(restricted).includes('protected.js'), false)
+      assert.equal(JSON.stringify(restricted).includes('protected body'), false)
+    })
+  }
 
   for (const kind of ['stasis', 'sourcemap']) {
     test(`${kind}: gzip includes location and evidence files only, with safe suffix matching`, async t => {
