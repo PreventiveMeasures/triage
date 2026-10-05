@@ -43,7 +43,7 @@ export class ManagedCreateBundle extends LitElement {
   static styles = [unsafeCSS(commonStyles), unsafeCSS(styles)]
   static properties = {
     installTooltips: { attribute: false },
-    createBundle: { attribute: false }, _building: { state: true }, _buildError: { state: true },
+    createBundle: { attribute: false }, _building: { state: true }, _opening: { state: true }, _buildError: { state: true },
     initialRepoId: { attribute: false }, _repos: { state: true }, _loadingRepos: { state: true }, _reposError: { state: true },
     _repoId: { state: true }, _refs: { state: true }, _refKind: { state: true }, _refName: { state: true },
     _path: { state: true }, _entries: { state: true }, _selected: { state: true }, _commit: { state: true },
@@ -60,6 +60,7 @@ export class ManagedCreateBundle extends LitElement {
     this._reposError = ''
     this.initialRepoId = null
     this._building = false
+    this._opening = false
     this._buildError = ''
     this._repoId = null
     this._refs = { branches: [], tags: [] }
@@ -123,6 +124,7 @@ export class ManagedCreateBundle extends LitElement {
 
   disconnectedCallback() {
     this._buildRequest?.abort()
+    this._opening = false
     globalThis.removeEventListener('resize', this._onViewport)
     globalThis.removeEventListener('scroll', this._onViewport, true)
     clearTimeout(this._browseTimer)
@@ -370,7 +372,7 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   async buildBundle() {
-    if (this._building || !this.createBundle || !this._commit || this._selected.size === 0) return
+    if (this._building || this._opening || !this.createBundle || !this._commit || this._selected.size === 0) return
     const request = new AbortController()
     this._buildRequest = request
     this._building = true
@@ -378,20 +380,25 @@ export class ManagedCreateBundle extends LitElement {
     try {
       const bundle = await this.createBundle({ repoId: this._repoId, commit: this._commit,
         entries: [...this._selected], conditions: this._bundleConditions }, request.signal)
-      if (!request.signal.aborted) this.dispatchEvent(new CustomEvent('bundle-created', { detail: bundle, bubbles: true, composed: true }))
+      if (!request.signal.aborted) {
+        // Navigation loads bundle metadata before replacing this form.
+        this._opening = true
+        this.dispatchEvent(new CustomEvent('bundle-created', { detail: bundle, bubbles: true, composed: true }))
+      }
     } catch (error) {
       if (!request.signal.aborted) this._buildError = error.message
     } finally { this._building = false }
   }
 
   render() {
+    const busy = this._building || this._opening
     const repo = this._repos.find(item => item.repoId === this._repoId)
     const parts = this._path.split('/').filter(Boolean)
     const treeUrl = repo && this._commit ? `https://github.com/${[...repo.fullName.split('/'), 'tree', this._commit, ...parts].map(encodeURIComponent).join('/')}` : null
     const choices = this.revisionSuggestions()
     const revisionLabel = this._refKind === 'commit' ? 'Commit SHA' : this._refKind === 'tag' ? 'Tag' : 'Branch'
     return html`<p class="intro ui-hint">Choose a repository and revision, then select files to use as entry points.</p>
-      <div ?inert=${this._building}>
+      <div ?inert=${busy}>
       <div class="source-fields">
         <div class="field"><span>Repository</span><repository-selector label="Repository" ?disabled=${this._loadingRepos} .options=${this._repos.map(item => ({ value: item.repoId, label: item.fullName }))} .value=${this._repoId} @repository-change=${event => this.selectRepository(event.detail.value)}></repository-selector></div>
         <form class="revision" @focusout=${event => { if (!event.currentTarget.contains(event.relatedTarget)) this.closeRevisionSuggestions() }} @submit=${event => { event.preventDefault(); void this.loadDirectory('', true) }}>
@@ -425,9 +432,9 @@ export class ManagedCreateBundle extends LitElement {
         ${this._selected.size > 0 ? html`<ul>${[...this._selected].map(path => html`<li>${sourceFileIcon(path)}<span data-tooltip-truncated data-tooltip=${path}>${path}</span><button type="button" aria-label=${`Remove ${path}`} @click=${() => this.toggleFile(path)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>` : html`<p class="note">Select files above. You can choose entry points from multiple directories.</p>`}
         </div>
       </section>
-      <bundle-conditions .showConditions=${this.hasScriptEntryPoints()} @conditions-change=${event => { this._bundleConditions = event.detail }}><button type="button" slot="actions" class="btn primary" ?disabled=${this._building || !this.createBundle || !this._commit || this._selected.size === 0 || this._loading || this._loadingRefs} @click=${this.buildBundle}>${this._building ? 'Creating…' : 'Create a bundle'}</button></bundle-conditions>
+      <bundle-conditions .showConditions=${this.hasScriptEntryPoints()} @conditions-change=${event => { this._bundleConditions = event.detail }}><button type="button" slot="actions" class="btn primary" ?disabled=${busy || !this.createBundle || !this._commit || this._selected.size === 0 || this._loading || this._loadingRefs} @click=${this.buildBundle}>${this._opening ? 'Opening…' : this._building ? 'Creating…' : 'Create a bundle'}</button></bundle-conditions>
       </div>
-      ${this._building ? html`<p class="message" role="status">Building the selected entry points with Stasis…</p>` : nothing}
+      ${busy ? html`<p class="message" role="status">${this._opening ? 'Opening bundle…' : 'Building the selected entry points with Stasis…'}</p>` : nothing}
       ${this._buildError ? html`<p class="message error" role="alert">${this._buildError}</p>` : nothing}
     `
   }
