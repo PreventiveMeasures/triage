@@ -14,14 +14,14 @@ const shimmer = 'node_modules/react-native-shimmer/index.js'
 const from = 'p:react-native', to = 'p:react-native-shimmer'
 const controls = { select() {}, expand() {}, expanded: new Set(), focus() {}, clear() {} }
 
-function fixture({ mixed = true, shortened = false } = {}) {
-  const paths = new Map([executor, manifest, native, shimmer].map(path => [path, shortened ? path.slice('node_modules/'.length) : path]))
+function fixture({ mixed = true, shortened = false, target = manifest } = {}) {
+  const paths = new Map([executor, target, native, shimmer].map(path => [path, shortened ? path.slice('node_modules/'.length) : path]))
   const tree = Object.fromEntries([
-    [executor, [manifest]], [manifest, []], [native, mixed ? [shimmer] : [executor]], [shimmer, [native, manifest]],
-  ].map(([file, imports]) => [paths.get(file), { imports: imports.map(target => paths.get(target)) }]))
+    [executor, [target]], [target, []], [native, mixed ? [shimmer] : [executor]], [shimmer, [native, target]],
+  ].map(([file, imports]) => [paths.get(file), { imports: imports.map(imported => paths.get(imported)) }]))
   if (!mixed) {
     tree[paths.get(executor)].imports.push(paths.get(native))
-    tree[paths.get(manifest)].imports.push(paths.get(shimmer))
+    tree[paths.get(target)].imports.push(paths.get(shimmer))
   }
   const original = new Map([...paths].map(([orig, path]) => [path, orig]))
   const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: path => bundlePkgOf(original.get(path)) })
@@ -85,6 +85,22 @@ test('the unfiltered inspector distinguishes excluded manifest reads from genuin
     assert.ok(panel.includes(manifest))
     assert.match(panel, /1 of 2 file imports participate in a cycle/u)
     assert.match(panel, /Excluded from cycles/u)
+  }
+})
+
+test('config reads are marked excluded in the inspector and hidden by Cycles even within a cyclic package pair', () => {
+  const target = 'node_modules/react-native-shimmer/react-native.config.js'
+  for (const shortened of [false, true]) {
+    const graph = fixture({ shortened, target })
+    const full = buildDependencyMatrix(graph)
+    const panel = text(renderMatrixPanel(full, graph, { from, to }, controls))
+    assert.ok(panel.includes(target))
+    assert.match(panel, /1 of 2 file imports participate in a cycle/u)
+    assert.match(panel, /Excluded from cycles/u)
+    const filtered = buildDependencyMatrix(graph, { cyclesOnly: true })
+    assert.equal(filtered.cells.get(from).get(to).count, 1)
+    assert.equal(filtered.importCount, 2)
+    assert.doesNotMatch(text(renderMatrixPanel(filtered, graph, { from, to }, controls)), /react-native\.config\.js|generate-artifacts-executor\.js/u)
   }
 })
 
