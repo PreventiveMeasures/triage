@@ -10,7 +10,8 @@ import { resetManagedFixes } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
-import { managedBundleViewChanged, managedReportViewChanged } from './managed-report-catalog.js'
+import { managedReportViewChanged } from './managed-report-catalog.js'
+import { refreshManagedBundleView } from './managed-bundle-refresh.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
 import { filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
@@ -2003,27 +2004,59 @@ async function revalidateManagedSession() {
 setManagedTeamFeedRefresh((isCurrent, signal, revision) => refreshManagedTeams(isCurrent, { strict: true, signal, revision }))
 
 const probeManagedTeams = createManagedTeamsProbe(managedProbeTeams)
+let managedTeamsUpdate = 0
 async function refreshManagedTeams(isCurrent, { strict = false, signal = currentViewSignal(), reuse = false, revision = null } = {}) {
   const generation = clientModeGeneration
   const session = state.managedSession
   const fresh = await probeManagedTeams({ generation, session, signal, reuse, revision })
   const teams = fresh ?? (strict ? null : state.managedTeams)
   if (signal.aborted || teams === null || !isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
-  const previousTeams = state.managedTeams
-  const previousTeamName = previousTeams.find(team => team.id === state.currentManagedTeam)?.name
+  const previousTeamName = state.managedTeams.find(team => team.id === state.currentManagedTeam)?.name
   const changedReports = setManagedReportCatalog(teams)
   state.managedTeams = teams
+  const update = fresh === null ? managedTeamsUpdate : ++managedTeamsUpdate
   managedTeamsPending = false
+  const bundleId = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
+  // Route restoration validates its destination itself. A background refresh
+  // must never replace that destination with the previously displayed bundle.
+  if (fresh !== null && bundleId && !managedNavigationPending) {
+    const navigation = currentViewGeneration()
+    const bundleIsCurrent = () => isCurrent() && !signal.aborted && !managedNavigationPending
+      && update === managedTeamsUpdate && navigation === currentViewGeneration() && generation === clientModeGeneration
+      && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role && isManagedUiMode()
+      && state.currentView === 'bundles' && state.bundleDetails?.managedId === bundleId
+    let accessible
+    try {
+      accessible = await refreshManagedBundleView(state, teams, {
+        fetchCatalog: () => fetchManagedBundleCatalog({ signal: AbortSignal.any([signal, currentViewSignal()]) }),
+        isCurrent: bundleIsCurrent,
+        render: () => render({ animate: false }),
+        replaceRoute: route => managedHistory.replaceRoute(route),
+      })
+    } catch (err) {
+      if (!bundleIsCurrent()) return isCurrent()
+      if (err.name !== 'AbortError') showToast(`Couldn't refresh bundle access: ${err.message}`, { kind: 'error' })
+      renderSidebar()
+      return false // Keep the open bundle and retry transient catalogue failures.
+    }
+    if (!bundleIsCurrent()) return isCurrent()
+    if (!accessible) {
+      readyManagedView = null
+      const cleared = goHome({ history: false })
+      const clearing = currentViewGeneration()
+      await cleared
+      if (clearing === currentViewGeneration() && generation === clientModeGeneration && isCurrent()
+        && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role) managedHistory.replaceRoute({ view: 'home' })
+      return isCurrent()
+    }
+  }
   // Discard an already-rendered view as well as its cached envelopes. In
   // particular, Findings/Files navigation must not reuse revoked findings.
-  const bundleId = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
-  if (managedReportViewChanged(state, teams, changedReports) || managedBundleViewChanged(state, previousTeams, teams, changedReports)) {
+  if (managedReportViewChanged(state, teams, changedReports)) {
     const team = teams.find(candidate => candidate.id === state.currentManagedTeam)
     const canReopenReport = team && (state.currentManagedReport === null || team.reports.some(report => report.id === state.currentManagedReport))
-    const route = bundleId
-      ? managedBundleRoute(teams, state.bundles?.find(entry => entry.managedId === bundleId), state.currentManagedTeam, state.bundleDetailsTab)
-      : canReopenReport ? managedRouteForIds({ view: state.currentView === 'links' ? 'findings' : state.currentView,
-        teamId: team.id, reportId: state.currentManagedReport }, teams) : null
+    const route = canReopenReport ? managedRouteForIds({ view: state.currentView === 'links' ? 'findings' : state.currentView,
+      teamId: team.id, reportId: state.currentManagedReport }, teams) : null
     readyManagedView = null
     const cleared = goHome({ history: false })
     const navigation = currentViewGeneration()

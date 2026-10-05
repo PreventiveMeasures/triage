@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mock, test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { createSession, endSession } from '../server-managed/session.ts'
+import { createSession, endSession, readSession } from '../server-managed/session.ts'
 import * as builder from '../server-managed/bundle-build.ts'
 import { managedBundleEntry, managedBundleRoute } from '../ui/view/managed-bundle-navigation.js'
 import { managedRoutePath } from '../common/managed/routes.js'
-import { managedBundleViewChanged } from '../ui/view/managed-report-catalog.js'
+import { refreshManagedBundleView } from '../ui/view/managed-bundle-refresh.js'
 import { ManagedAppState } from '../ui/managed/state.js'
 
 let build
@@ -102,12 +102,42 @@ test('the real creation and catalogue responses keep the newly opened Manage bun
   cache.setReportCatalog(previous)
   const response = await f.send()
   assert.equal(response.status, 201)
-  const view = { currentView: 'bundles', currentManagedTeam: null, bundleDetails: { managedId: response.body.id },
+  const view = { currentView: 'bundles', currentManagedTeam: null, managedSession: { role: 'manage' }, bundleDetails: { managedId: response.body.id },
     bundles: (await f.db.listBundles(f.session.userId)).map(managedBundleEntry) }
   const refreshed = await f.db.listTeamsForUser(f.session.userId)
   const changed = cache.setReportCatalog(refreshed)
   assert.ok(changed.has(`bundle:${response.body.id}`))
-  assert.equal(managedBundleViewChanged(view, previous, refreshed, changed), false)
+  const details = view.bundleDetails
+  assert.equal(await refreshManagedBundleView(view, refreshed, {
+    fetchCatalog: () => f.db.listBundles(f.session.userId), isCurrent: () => true, render() {},
+    replaceRoute: route => assert.equal(managedRoutePath(route), `/manage/bundle/${response.body.slug}`),
+  }), true)
+  assert.equal(view.bundleDetails, details)
+})
+
+test('later grant updates and team removal retain the creator bundle only while access remains', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  const response = await f.send()
+  const details = { managedId: response.body.id }
+  const view = { currentView: 'bundles', currentManagedTeam: 'team', managedSession: { role: 'manage' },
+    bundleDetails: details, bundles: (await f.db.listBundles(f.session.userId)).map(managedBundleEntry) }
+  const refresh = async () => refreshManagedBundleView(view, await f.db.listTeamsForUser(f.session.userId), {
+    fetchCatalog: () => f.db.listBundles(f.session.userId), isCurrent: () => true, render() {}, replaceRoute() {},
+  })
+  await f.db.setTeamMember('team', f.session.userId, { dependencies: true, security: false })
+  assert.equal(await refresh(), true)
+  assert.equal(view.currentManagedTeam, 'team')
+  await f.db.removeTeamMember('team', f.session.userId)
+  assert.deepEqual(await f.db.listTeamsForUser(f.session.userId), [])
+  assert.equal(await refresh(), true, 'the manager still owns this upload without a team grant')
+  assert.equal(view.currentManagedTeam, null)
+  assert.equal(view.bundleDetails, details)
+  await f.db.setUserRole(f.session.userId, 'view')
+  view.managedSession.role = 'view'
+  const session = await readSession(config, f.db, f.session.setCookie, Date.now())
+  const access = await f.db.getBundleAccessSnapshot(session.session.id, Date.now(), response.body.id)
+  assert.equal(access.bundle, null, 'a viewer without a team grant cannot read the former upload')
+  assert.equal(await refresh(), false)
 })
 
 test('creation rejects role, team, directory, CSRF, origin, and validation failures before building', async t => {

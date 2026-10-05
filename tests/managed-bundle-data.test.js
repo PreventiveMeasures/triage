@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { constants, createGzip } from 'node:zlib'
 import { beforeEach, test } from 'node:test'
-import { fetchBundleContents, fetchBundleMetadata, fetchBundleOrigin } from '../ui/managed/bundle-data.js'
+import { fetchBundleContents, fetchBundleMetadata, fetchBundleOrigin, fetchManagedBundleCatalog } from '../ui/managed/bundle-data.js'
 import { managedAppState } from '../ui/managed/state.js'
 import { beginViewNavigation, currentViewSignal } from '../ui/view/view-navigation.js'
 
@@ -119,6 +119,33 @@ test('session changes abort origin reads and discard late response bodies', asyn
   body.resolve({ bundle: { repo: { github: 'previous/session' } } })
   await rejected
   assert.deepEqual(notices, [])
+})
+
+test('bundle catalogue errors distinguish denied access from temporary failures', async t => {
+  for (const status of [401, 403, 503]) {
+    t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response('', { status })))
+    await assert.rejects(fetchManagedBundleCatalog(), { status })
+  }
+})
+
+test('navigation and session changes abort catalogue reads and discard late bodies', async t => {
+  for (const cancel of [() => beginViewNavigation(), () => managedAppState.reset()]) {
+    const body = Promise.withResolvers(), reading = Promise.withResolvers()
+    let signal
+    t.mock.method(globalThis, 'fetch', (url, options) => {
+      assert.equal(url, '/api/admin/bundles')
+      assert.equal(options.cache, 'no-store')
+      signal = options.signal
+      return Promise.resolve({ ok: true, json: () => { reading.resolve(); return body.promise } })
+    })
+    const loading = fetchManagedBundleCatalog({ signal: currentViewSignal() })
+    const rejected = assert.rejects(loading, { name: 'AbortError' })
+    await reading.promise
+    cancel()
+    assert.equal(signal.aborted, true)
+    body.resolve({ bundles: [{ id: 'old' }] })
+    await rejected
+  }
 })
 
 test('advisories send only an encoded bundle ID and team, using managed session cancellation', async t => {

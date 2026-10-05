@@ -47,8 +47,8 @@ export async function probeTeams(options) {
   return (await loadManagedBundle()).probeTeams(options)
 }
 
-export async function fetchManagedBundleCatalog() {
-  return (await loadManagedBundle()).fetchManagedBundleCatalog()
+export async function fetchManagedBundleCatalog(options) {
+  return (await loadManagedBundle()).fetchManagedBundleCatalog(options)
 }
 
 export async function openManagedShareDialog(team) {
