@@ -55,8 +55,8 @@ test('Differences renders resolution-only changes with before/after targets and 
   assert.match(markup, /app\.js/u)
   assert.match(markup, /dep/u)
   assert.match(markup, /node, import/u)
-  assert.match(markup, /Before<\/span><code>a\.js/u)
-  assert.match(markup, /After<\/span><code>b\.js/u)
+  assert.match(markup, /Before<\/span><code[^>]*>a\.js/u)
+  assert.match(markup, /After<\/span><code[^>]*>b\.js/u)
   assert.match(markup, /File contents are unchanged; import resolutions differ/u)
   assert.doesNotMatch(markup, /These two bundles carry identical files/u)
   assert.match(renderText(view._renderSummary(view._diffFor())), /1 repointed resolution/u)
@@ -98,4 +98,38 @@ test('added and removed resolutions never appear or contribute to the summary', 
   view._diffKey = null
   assert.doesNotMatch(renderText(view._renderDiff()), /Import resolutions|Repointed/u)
   assert.doesNotMatch(renderText(view._renderSummary(view._diffFor())), /repointed resolution/u)
+})
+
+test('file groups default to name order and sort independently by displayed size', () => {
+  const view = compare()
+  const rows = [
+    { path: 'z.js', bytes: 20, baseBytes: 100, otherBytes: 20, delta: -80 },
+    { path: 'a.js', bytes: 0, baseBytes: 200, otherBytes: 0, delta: -200 },
+    { path: 'b.js', bytes: 20, baseBytes: 20, otherBytes: 20, delta: 0 },
+  ]
+  const order = (kind) => {
+    const files = kind === 'changed' ? rows.map(({ bytes: _bytes, ...row }) => row) : rows
+    const markup = renderText(view._fileGroup(kind, files, kind, path => path))
+    return [...markup.matchAll(/class="bundle-compare-row-path mono"[^>]*>(.*?)<\/span>/gu)].map(match => match[1])
+  }
+  for (const kind of ['removed', 'added', 'changed']) assert.deepEqual(order(kind), ['a.js', 'b.js', 'z.js'])
+  for (const kind of ['removed', 'added', 'changed']) {
+    view._fileSort = { removed: 'name', added: 'name', changed: 'name', [kind]: 'size' }
+    assert.deepEqual(order(kind), ['b.js', 'z.js', 'a.js'])
+    for (const other of ['removed', 'added', 'changed'].filter(value => value !== kind)) assert.deepEqual(order(other), ['a.js', 'b.js', 'z.js'])
+  }
+  assert.deepEqual(rows.map(row => row.path), ['z.js', 'a.js', 'b.js'], 'sorting must not mutate the cached diff')
+})
+
+test('file size sorting happens before the visible row limit', () => {
+  const view = compare()
+  view._fileSort = { ...view._fileSort, added: 'size' }
+  const rows = Array.from({ length: 405 }, (_, i) => ({ path: `file-${String(i).padStart(3, '0')}.js`, bytes: i }))
+  const markup = renderText(view._fileGroup('Added', rows, 'added', path => path))
+  const paths = [...markup.matchAll(/class="bundle-compare-row-path mono"[^>]*>(.*?)<\/span>/gu)].map(match => match[1])
+  assert.equal(paths.length, 400)
+  assert.equal(paths[0], 'file-404.js')
+  assert.equal(paths.at(-1), 'file-005.js')
+  assert.match(markup, /bundle-compare-group-count">405/u)
+  assert.match(markup, /and 5 more/u)
 })
