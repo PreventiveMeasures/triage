@@ -47,6 +47,33 @@ test('all bundle tabs round-trip exact slugs and the clicked team, including Man
   }
 })
 
+test('Manage bundle refreshes retain their route and tab after a team discovers the bundle, and recheck access', async () => {
+  const { browser } = browserAt()
+  const entry = managedBundleEntry(a)
+  let catalog = [a], refreshed = [], shown
+  const nav = createManagedHistory(browser)
+  await nav.start(route => {
+    if (route.view === 'home') { shown = null; return true }
+    const resolved = resolveManagedRoute(route, refreshed, catalog)
+    if (!resolved) return false
+    shown = resolved
+    return managedRouteForIds(resolved, refreshed, catalog)
+  })
+  assert.equal(await nav.navigate(managedBundleRoute(refreshed, entry, null)), true)
+  assert.equal(browser.location.pathname, '/manage/bundle/a')
+  refreshed = teams
+  for (const tab of BUNDLE_TABS) {
+    assert.equal(await nav.navigate(managedBundleRoute(refreshed, entry, null, tab), { replace: true }), true)
+    assert.deepEqual(shown, { view: 'bundles', bundleTab: tab, teamId: null, bundleId: a.id })
+    assert.equal(browser.location.pathname, `/manage/bundle/a${tab === 'overview' ? '' : `/${tab}`}`)
+  }
+  assert.equal(managedBundleRoute([], entry, 'uuid-first'), null, 'lost team access must not fall back to Manage')
+  catalog = []
+  assert.equal(await nav.navigate(managedBundleRoute(refreshed, entry, null), { replace: true }), false)
+  assert.equal(browser.location.pathname, '/', 'the current Manage catalogue must still authorize the bundle')
+  assert.equal(shown, null)
+})
+
 test('tab links survive reload, bundle switches, Compare swaps and Back/Forward without losing the clicked team', async () => {
   const hash = `#public=link0001.${'A'.repeat(43)}`
   const { browser } = browserAt(`/team/second/bundle/a/code${hash}`)

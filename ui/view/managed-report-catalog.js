@@ -13,3 +13,16 @@ export function managedReportViewChanged(state, teams, changedReports) {
   const loaded = new Set(state.managedReports.map(report => report.id))
   return available.size !== loaded.size || [...available].some(id => !loaded.has(id))
 }
+
+export function managedBundleViewChanged(state, previousTeams, teams, changedReports) {
+  const id = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
+  if (!id || !changedReports.has(`bundle:${id}`)) return false
+  if (state.currentManagedTeam != null || previousTeams.some(team => team.bundles?.some(bundle => bundle.id === id))) return true
+  // Creation can open a Manage bundle before the team catalogue includes it.
+  // Discovering the same bundle adds access without changing the loaded view.
+  const bundle = teams.flatMap(team => team.bundles ?? []).find(entry => entry.id === id)
+  const entry = state.bundles?.find(candidate => candidate.managedId === id)
+  return !bundle || !entry || bundle.integrity !== entry.integrity || bundle.filename !== entry.name
+    || bundle.repoId !== entry.repoId || bundle.repoFullName !== entry.repoFullName
+    || (bundle.repoDirectory ?? '') !== (entry.repoDirectory ?? '')
+}

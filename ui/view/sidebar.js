@@ -10,7 +10,7 @@ import { resetManagedFixes } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
-import { managedReportViewChanged } from './managed-report-catalog.js'
+import { managedBundleViewChanged, managedReportViewChanged } from './managed-report-catalog.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
 import { filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
@@ -2009,18 +2009,19 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
   const fresh = await probeManagedTeams({ generation, session, signal, reuse, revision })
   const teams = fresh ?? (strict ? null : state.managedTeams)
   if (signal.aborted || teams === null || !isCurrent() || generation !== clientModeGeneration || !isManagedUiMode()) return false
-  const previousTeamName = state.managedTeams.find(team => team.id === state.currentManagedTeam)?.name
+  const previousTeams = state.managedTeams
+  const previousTeamName = previousTeams.find(team => team.id === state.currentManagedTeam)?.name
   const changedReports = setManagedReportCatalog(teams)
   state.managedTeams = teams
   managedTeamsPending = false
   // Discard an already-rendered view as well as its cached envelopes. In
   // particular, Findings/Files navigation must not reuse revoked findings.
   const bundleId = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
-  if (managedReportViewChanged(state, teams, changedReports) || bundleId && changedReports.has(`bundle:${bundleId}`)) {
+  if (managedReportViewChanged(state, teams, changedReports) || managedBundleViewChanged(state, previousTeams, teams, changedReports)) {
     const team = teams.find(candidate => candidate.id === state.currentManagedTeam)
     const canReopenReport = team && (state.currentManagedReport === null || team.reports.some(report => report.id === state.currentManagedReport))
     const route = bundleId
-      ? managedRouteForIds({ view: 'bundles', teamId: state.currentManagedTeam, bundleId, bundleTab: state.bundleDetailsTab }, teams)
+      ? managedBundleRoute(teams, state.bundles?.find(entry => entry.managedId === bundleId), state.currentManagedTeam, state.bundleDetailsTab)
       : canReopenReport ? managedRouteForIds({ view: state.currentView === 'links' ? 'findings' : state.currentView,
         teamId: team.id, reportId: state.currentManagedReport }, teams) : null
     readyManagedView = null
