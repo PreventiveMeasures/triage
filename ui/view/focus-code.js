@@ -5,7 +5,7 @@ import { bundleFilePath, bundlesForFileHash, isManagedUiMode, state } from '#cli
 import { fetchReportSources, readReportSources } from './client-managed.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
-import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleSourceImports, sourceLinkResolver } from '../../common/bundle-source-links.js'
 import { historyFor } from './focus-code-history.js'
 import { lineRange } from './format.js'
@@ -14,7 +14,7 @@ import { render } from './render.js'
 import { report } from './dom.js'
 import { revealCitedLines } from './reveal-cited.js'
 
-// integrity → { sources, imports, formats, loading, error }
+// integrity → { sources, packageFiles, imports, formats, loading, error }
 const sourcesCache = new Map()
 
 // integrity\0file → highlighted HTML string, or null when prism
@@ -58,7 +58,7 @@ async function loadSources(integrity) {
   try {
     const details = await buildBundleDetails(integrity, entry)
     const sources = bundleSourcesAsMap(details)
-    sourcesCache.set(integrity, { sources, imports: bundleSourceImports(details, sources), formats: details.kind === 'stasis' ? details.bundle?.formats : null, loading: false, error: details.error ?? null })
+    sourcesCache.set(integrity, { sources, packageFiles: bundleFilesAsMap(details), imports: bundleSourceImports(details, sources), formats: details.kind === 'stasis' ? details.bundle?.formats : null, loading: false, error: details.error ?? null })
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
@@ -193,7 +193,7 @@ export function bundleSource(integrity, file, { kick = true, reportId = null } =
   if (typeof content !== 'string') return null
   // Kick Prism highlight if we haven't yet — render() runs again when
   // the highlighted HTML lands and the second pass picks it up.
-  kickHighlight(integrity, file, content, cached.formats?.get(file), sourceLinkResolver(cached.sources, file, cached.imports))
+  kickHighlight(integrity, file, content, cached.formats?.get(file), sourceLinkResolver(cached.sources, file, cached.imports, cached.packageFiles))
   const key = `${integrity}\0${file}`
   return {
     content,

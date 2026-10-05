@@ -225,6 +225,29 @@ test('local Stasis focus/fullscreen sources retain imports across chained naviga
   assert.equal(fullBundleLoads, 1); assert.equal(calls.length, 0)
 })
 
+test('local focus and fullscreen previews link package imports using a manifest captured as a resource', async () => {
+  managed = false; localIntegrity = 'package-import-links-local'
+  state.bundles = [{ integrity: localIntegrity, name: 'aliases.stasis' }]
+  localDetails = { kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files: {
+      'package.json': JSON.stringify({ imports: { '#local/*': './_local/*' } }),
+      'src/main.js': "import { linking } from '#local/linking';",
+      '_local/linking/index.js': 'export const linking = true;',
+    } }]]),
+    formats: new Map([['package.json', 'resource']]),
+    imports: new Map([['node', new Map([['src/main.js', new Map([['./_local/linking', '_local/linking/index.js']])]])]]),
+  }) }
+  const local = { file: 'src/main.js', fileHash: 'hash', _bundleHashes: [localIntegrity], line: 1 }
+  getFocusCode([local]); await setImmediate()
+  getFocusCode([local]); await setImmediate()
+  assert.match(getFocusCode([local]).highlighted, /data-bundle-source-link="_local\/linking\/index.js"/u)
+  assert.match(bundleSource(localIntegrity, 'src/main.js').highlighted, /data-bundle-source-link="_local\/linking\/index.js"/u)
+  assert.deepEqual(focusCodeLinkPosition([local], localIntegrity, 'src/main.js', '_local/linking/index.js'), {
+    integrity: localIntegrity, file: '_local/linking/index.js', range: null,
+  })
+  assert.equal(fullBundleLoads, 1)
+})
+
 test('local and managed finding previews retain the format for an extensionless source', async t => {
   const content = 'const example = require("pkg")', path = 'bin/example'
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ integrity: 'format-managed',
