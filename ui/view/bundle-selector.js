@@ -1,4 +1,4 @@
-import { css, html, nothing } from 'lit'
+import { css, html } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { SearchableSelector } from './searchable-selector.js'
 import { BUNDLE_ICON_SVG } from './icons.js'
@@ -47,7 +47,6 @@ class BundleSelector extends SearchableSelector {
   optionIcon(option) {
     return html`<span class="bundle-icon" aria-hidden="true">${option.format === 'sourcemap' ? unsafeHTML(BUNDLE_ICON_SVG) : html`<img src="./stasis.svg" alt="">`}</span>`
   }
-  optionTooltip(_option) { return nothing }
 
   choices() {
     const words = this._query.normalize('NFKC').toLocaleLowerCase().trim().split(/\s+/u).filter(Boolean)

@@ -170,7 +170,7 @@ function renderRepositorySlide(repo, bucket) {
         aria-label="Back to repositories"
       >← Back</button>
       <div class="bundles-slide-title">
-        <div class="bundles-slide-name">${prettyRepoLabel(repo)}</div>
+        <div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${prettyRepoLabel(repo)}>${prettyRepoLabel(repo)}</div>
         <div class="bundles-slide-integrity">${total} ${noun} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</div>
       </div>
       <slide-triage-tabs kind="repository" .counts=${counts}></slide-triage-tabs>
@@ -206,7 +206,7 @@ function renderRepositoryRow(repo, bucket, isSel) {
   >
     <span class="packages-dot" style=${styleMap({ background: dotColor })}></span>
     <div class="packages-row-text">
-      <span class="packages-name">${label}</span>
+      <span class="packages-name" data-tooltip-truncated data-tooltip=${label}>${label}</span>
       <span class="packages-row-meta">${bucket.findings.length} ${bucket.findings.length === 1 ? 'finding' : 'findings'} · ${bucket.files.size} ${bucket.files.size === 1 ? 'file' : 'files'} · ${bucket.reports.size} ${bucket.reports.size === 1 ? 'report' : 'reports'}</span>
     </div>
     ${chips.length > 0 ? html`<div class="packages-row-chips">

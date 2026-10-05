@@ -23,6 +23,10 @@ export class ReportInputs extends LitElement {
     this._merge = emptySelection('bundle')
     this._link = emptySelection('repository')
   }
+  connectedCallback() {
+    super.connectedCallback()
+    this.dispatchEvent(new CustomEvent('tooltip-root-connected', { bubbles: true, composed: true }))
+  }
   disconnectedCallback() { super.disconnectedCallback(); this._controller?.abort() }
   updated(changed) {
     if (changed.has('loadSources')) { void this._load(); return }
@@ -151,7 +155,9 @@ export class ReportInputs extends LitElement {
     const count = this.mode === 'link' ? input.appFindings : input.findings
     const details = [input.model ? modelName(input.model) : null, count == null ? null : `${count} ${this.mode === 'link' ? 'app ' : ''}${count === 1 ? 'finding' : 'findings'}`, input.createdAt,
       input.repo ? `${input.repo}${input.directory ? `/${input.directory}` : ''}` : null].filter(Boolean)
-    return html`<label class="option"><input type="checkbox" ?disabled=${this._loading} .checked=${this._current.ids.has(input.id)} @change=${e => this._toggle(input.id, e.target.checked)}>${unsafeHTML(REPORT_FILE_ICONS[input.analyzer] ?? REPORT_FILE_ICONS.default)}<span class="copy"><strong>${input.title ?? input.filename}</strong><span>${details.join(' · ')}</span></span></label>`
+    const name = input.title ?? input.filename
+    const detail = details.join(' · ')
+    return html`<label class="option"><input type="checkbox" ?disabled=${this._loading} .checked=${this._current.ids.has(input.id)} @change=${e => this._toggle(input.id, e.target.checked)}>${unsafeHTML(REPORT_FILE_ICONS[input.analyzer] ?? REPORT_FILE_ICONS.default)}<span class="copy"><strong data-tooltip-truncated data-tooltip=${name}>${name}</strong><span data-tooltip-truncated data-tooltip=${detail}>${detail}</span></span></label>`
   }
   static styles = css`
     :host { display: block; min-width: 0; }
