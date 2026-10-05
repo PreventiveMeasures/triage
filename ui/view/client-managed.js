@@ -118,8 +118,8 @@ export async function logout(csrfToken) {
   return (await loadManagedBundle()).logout(csrfToken)
 }
 
-export async function fetchBundleMetadata(id) {
-  return (await loadManagedBundle()).fetchBundleMetadata(id)
+export async function fetchBundleMetadata(id, options) {
+  return (await loadManagedBundle()).fetchBundleMetadata(id, options)
 }
 
 export async function fetchBundleContents(id, options) {

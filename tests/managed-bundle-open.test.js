@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
+import { registerHooks } from 'node:module'
 import { setImmediate } from 'node:timers/promises'
 import { beforeEach, mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata } from '../common/bundle-metadata.js'
 import { managedRouteForIds, resolveManagedRoute } from '../common/managed/routes.js'
 import { managedAppState } from '../ui/managed/state.js'
-import { fetchBundleContents, fetchBundleMetadata } from '../ui/managed/bundle-data.js'
+import { fetchBundleMetadata } from '../ui/managed/bundle-data.js'
 import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
@@ -17,7 +18,13 @@ mock.module('../client/index.js', { namedExports: {
   state, isManagedUiMode: () => managed, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
 } })
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleContents, fetchBundleMetadata } })
+// The browser loads an emitted managed chunk beside view.js. Route that lazy
+// import to its real bundle APIs, keeping the navigation proxy under test.
+const proxyUrl = new URL('../ui/view/client-managed.js', import.meta.url).href
+const bundleDataUrl = new URL('../ui/managed/bundle-data.js', import.meta.url).href
+registerHooks({ resolve(specifier, context, nextResolve) {
+  return nextResolve(specifier === './client-managed.js' && context.parentURL === proxyUrl ? bundleDataUrl : specifier, context)
+} })
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
 mock.module('../ui/view/toast.js', { namedExports: { showToast() {} } })
 const { openManagedBundle } = await import('../ui/view/managed-bundle-open.js')
@@ -163,9 +170,10 @@ test('leaving during invalidation or a restarted metadata read wins over the old
       f.refresh('first')
       if (afterRetry) await setImmediate()
       assert.equal(await f.history.navigate({ view: 'manage' }), true)
-      if (afterRetry) f.requests[1].resolve(Response.json(metadata))
-      assert.equal(await f.opening, false)
+      f.refresh('second')
+      await setImmediate()
       assert.equal(f.requests.length, afterRetry ? 2 : 1)
+      assert.equal(await f.opening, false)
       assert.equal(state.currentView, 'manage')
       assert.equal(state.bundleDetails, null)
       assert.equal(f.browser.location.pathname, '/manage')
@@ -173,6 +181,19 @@ test('leaving during invalidation or a restarted metadata read wins over the old
       assert.deepEqual(notices, [])
     })
   }
+})
+
+test('a catalogue refresh after leaving Opening cannot retry metadata or show a failure on the destination', async t => {
+  const f = await fixture(t)
+  assert.equal(await f.history.navigate({ view: 'manage' }), true)
+  f.refresh('first')
+  await setImmediate()
+  assert.equal(f.requests.length, 1)
+  assert.equal(await f.opening, false)
+  assert.equal(state.currentView, 'manage')
+  assert.equal(f.browser.location.pathname, '/manage')
+  assert.deepEqual(f.landings, [])
+  assert.deepEqual(notices, [])
 })
 
 test('account and role changes during Opening never retry with a different managed identity', async t => {
