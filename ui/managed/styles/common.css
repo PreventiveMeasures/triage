@@ -1,5 +1,6 @@
 :host {
-  display: block;
+  display: flex;
+  flex-direction: column;
   position: relative;
   padding: 0 clamp(1rem, 3vw, 3rem) 3rem;
   color: var(--text);
@@ -62,6 +63,34 @@ code,
   width: 100%;
   max-width: 76rem;
   margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.manage-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.wrap:not(:has(> .manage-list)) .manage-header { background: var(--bg); }
+/* One bounded pane owns each complete collection, including group titles.
+   Headers, upload controls, filters, and history pagination stay in place. */
+.wrap:has(> .manage-list) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+.wrap:has(> .manage-list) > :not(.manage-list) { flex-shrink: 0; }
+.manage-list {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .manage-nav button {
   flex: 0 0 auto;
@@ -85,7 +114,7 @@ code,
 .manage-nav button[aria-current=page]::after {
   content: '';
   position: absolute;
-  bottom: 0;
+  bottom: .6rem;
   inset-inline: 0;
   height: 2px;
   background: var(--accent);
@@ -352,7 +381,6 @@ input[type=checkbox] {
 @media (display-mode: window-controls-overlay) {
   .manage-header {
     display: flow-root;
-    margin-top: calc(-1 * var(--report-padding-block));
   }
   .manage-header::before {
     content: '';
@@ -363,11 +391,13 @@ input[type=checkbox] {
   .manage-nav {
     width: max-content;
     max-width: 100%;
+    border-bottom: 0;
   }
   .manage-nav button {
     min-height: var(--wco-titlebar-height);
     padding-block: .35rem;
   }
+  .manage-nav button[aria-current=page]::after { bottom: 0; }
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 .intro {

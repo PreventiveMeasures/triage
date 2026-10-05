@@ -78,12 +78,20 @@ export class SearchableSelector extends LitElement {
     this.dispatchEvent(new CustomEvent('tooltip-root-connected', { bubbles: true, composed: true }))
     window.addEventListener('resize', this._onViewport)
     window.addEventListener('scroll', this._onViewport, true)
+    // Scroll events inside managed list panes do not cross shadow boundaries.
+    this._scrollRoots = []
+    for (let root = this.getRootNode(); root.host; root = root.host.getRootNode()) {
+      root.addEventListener('scroll', this._onViewport, true)
+      this._scrollRoots.push(root)
+    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     window.removeEventListener('resize', this._onViewport)
     window.removeEventListener('scroll', this._onViewport, true)
+    for (const root of this._scrollRoots ?? []) root.removeEventListener('scroll', this._onViewport, true)
+    this._scrollRoots = []
   }
 
   render() {

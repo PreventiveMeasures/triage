@@ -6,21 +6,24 @@
    description text + code blocks read better at typewriter
    widths than at 2400px wide. */
 
-/* The managed admin "Manage reports" / "Manage bundles" pages mount full-height
-   inside #report's flex column (via these slots), so the whole panel — not just
-   the short content area — is a drag&drop upload target. */
-#manage-reports-slot,
-#manage-bundles-slot,
-#manage-scans-slot,
+/* Scan forms fill the available area and let their content set the page height. */
 #scan-slot {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
 }
 
-#manage-reports-slot > managed-admin-reports,
-#manage-bundles-slot > managed-admin-bundles {
-  flex: 1 0 auto;
+/* Bound managed pages to the viewport so their collections own scrolling.
+   The entire report/bundle host remains a drag-and-drop upload target. */
+.managed-page-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.managed-page-slot > * {
+  flex: 1;
+  min-height: 0;
 }
 
 #report {
@@ -67,6 +70,7 @@
       .bundles-view, .packages-view, .links-view,
       .findings-content
     ) { flex-shrink: 1; }
+    &:has(> .managed-page-slot) { flex: 1; min-height: 0; }
   }
 
   /* Descendant selector, not direct child: the header is Lit-
@@ -291,6 +295,7 @@
    while keeping clearance for the theme button beneath that strip. */
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
+  #report:has(> .managed-page-slot) { padding-top: 0; }
   #report header.page-head {
     padding-right: max(56px, var(--wco-right-toolbar, 0px));
   }
@@ -397,6 +402,16 @@
     -webkit-app-region: no-drag;
     app-region: no-drag;
   }
+  .bundles-slide-header.boxed .bundles-slide-bar {
+    clear: both;
+    width: 100%;
+    padding: .6rem .75rem;
+    background: var(--surface);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-glass);
+  }
+  .bundles-slide-header.boxed .bundles-slide-title { max-width: none; }
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
