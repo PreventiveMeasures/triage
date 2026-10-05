@@ -120,10 +120,13 @@ For each report/bundle, the worker:
 
 1. Allocates a data key if absent, using the persisted winner if another worker
    allocated it first.
-2. Validates the original bytes against the SQL upload hash. Sourcemaps are
-   decompressed while hashing because their integrity covers the original upload.
-3. Streams encryption over the same path. Vercel uses conditional `put` with
-   `ifMatch`; disk writes use a synced temporary file and atomic rename.
+2. Downloads the original bytes once, checking the SQL upload hash while streaming
+   encryption. Sourcemaps are decompressed for hashing while their stored Brotli
+   bytes are encrypted. The stream ends successfully only after the hash passes.
+3. Replaces the same path only after that successful end. Vercel uses conditional
+   `put` with `ifMatch`; multipart uploads complete only after consuming the stream.
+   Disk writes use a synced temporary file and atomic rename. Verification errors
+   or interrupted reads leave the original object in place.
 4. Reads the replacement back, authenticates it, checks the upload hash, and
    marks the row encrypted. An interrupted replacement can be verified and
    completed on a later attempt using the same persisted data key. Disk workers
@@ -206,8 +209,12 @@ substituted into writes, and the row stays pending.
 Diagnostics are emitted as each failure occurs, before advancing the cursor;
 a later error cannot suppress earlier row warnings. `managed-storage-migration-start:`
 records batch start and `managed-storage-migration-row-start:` records each
-attempt's type and opaque ID. A hard invocation timeout can prevent the final
-summary, but does not undo already saved checkpoints or emitted diagnostics.
+attempt's type and opaque ID. `managed-storage-migration-row-phase:` adds a fixed
+phase name and elapsed milliseconds, and logs `aborted: true` directly when the
+work budget expires or shutdown cancels the row, even if an operation is slow to
+unwind. It never includes filenames, object paths, hashes, ETags, tokens or keys.
+A hard invocation timeout can prevent these logs and the final summary, but does
+not undo already saved checkpoints or emitted diagnostics.
 Temporary files left by later crashes are not swept after migration cleanup
 has completed; like encrypted orphan payloads, they can consume storage.
 

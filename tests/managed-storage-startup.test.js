@@ -117,7 +117,7 @@ for (const conflict of ['read version', 'conditional replacement']) {
           assert.equal(label, 'managed-storage-migration-row:')
           return JSON.parse(value)
         })
-        const message = conflict === 'read version' ? 'Payload disappeared or changed version before encryption'
+        const message = conflict === 'read version' ? 'Conditional replacement rejected (object version precondition failed); download=unquoted; metadata=quoted; comparison=different'
           : 'Conditional replacement rejected (object version precondition failed); download=quoted; metadata=quoted; comparison=same'
         assert.deepEqual(diagnostics, [...ids.map(id => ({ type: 'report', id, message })), { type: 'bundle', id: bundleId, message }])
         // Exact field checks above and absence of provider/payload data below

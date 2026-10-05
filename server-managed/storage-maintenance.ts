@@ -2,7 +2,7 @@ import { type StorageKey, decryptStorageStream, encryptStorageStream } from '../
 import { ENCRYPTED_CACHE_PREFIX, type RawObjectStorage, deleteObjects, isBlobId, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, unwrapDataKey } from './storage-db.ts'
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
-import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPath, verifyStoragePayload } from './storage-payload.ts'
+import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPath, verifiedStoragePayload, verifyStoragePayload } from './storage-payload.ts'
 
 async function replacementFailure(raw: RawObjectStorage, identity: string, version: string, signal: AbortSignal): Promise<string> {
   const format = (value: string) => value.startsWith('W/') ? 'weak' : value.startsWith('"') && value.endsWith('"') ? 'quoted' : 'unquoted'
@@ -20,12 +20,16 @@ async function replacementFailure(raw: RawObjectStorage, identity: string, versi
   return `${reason}; metadata=${format(current.version)}; comparison=${comparison}`
 }
 
-async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal): Promise<string | void> {
+type MigrationPhase = 'prepare-key' | 'open-payload' | 'verify-existing' | 'encrypt-upload' | 'verify-replacement' | 'checkpoint'
+async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey, item: StorageMigrationRow, signal: AbortSignal,
+  progress: (phase: MigrationPhase) => void): Promise<string | void> {
   if (item.type === 'user') { await db.migrateStorageUserTokens(item.id); return }
+  progress('prepare-key')
   const row = await db.ensureStorageDataKey(item.type, item.id)
   if (!row || row.encrypted) return
   const dataKey = unwrapDataKey(key, item.type, row), identity = storageRowPath(item.type, row)
   try {
+    progress('open-payload')
     const source = await raw.open(identity, signal)
     if (!source) {
       if (!await db.getStorageRow(item.type, item.id)) return
@@ -33,6 +37,7 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
     }
     let inspected = await inspectStorageObject(source)
     if (inspected.encrypted) {
+      progress('verify-existing')
       // A previous PUT may have completed before a timeout or lost SQL ack.
       try {
         const decoded = await decryptStorageStream(inspected.stream, dataKey, identity)
@@ -47,17 +52,19 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
       }
     }
     if (!inspected.encrypted) {
-      await verifyStoragePayload(item.type, row, inspected.stream, signal)
+      progress('encrypt-upload')
       signal.throwIfAborted()
-      const current = await openObjectVersion(raw, identity, source.version, signal)
-      if (!current) return 'Payload disappeared or changed version before encryption'
-      const encrypted = encryptStorageStream(current.stream, dataKey, identity, current.size)
+      const verified = verifiedStoragePayload(item.type, row, inspected.stream, signal)
+      const encrypted = encryptStorageStream(verified, dataKey, identity, inspected.size)
       let replaced: boolean
-      try { replaced = await raw.put(identity, encrypted, signal, source.version, current.size ?? undefined) }
-      finally { encrypted.destroy(); current.stream.destroy() }
+      try { replaced = await raw.put(identity, encrypted, signal, source.version, inspected.size ?? undefined) }
+      // A provider may wrap a request-body error; keep safe payload diagnostics.
+      catch (err) { throw verified.errored ?? err }
+      finally { encrypted.destroy(); verified.destroy(); inspected.stream.destroy(); source.stream.destroy() }
       if (!replaced) return await replacementFailure(raw, identity, source.version, signal)
       // Do not mark the row encrypted until the stored bytes authenticate and
       // match the original upload (including decompression for sourcemaps).
+      progress('verify-replacement')
       const replacement = await raw.open(identity, signal)
       if (!replacement) {
         if (!await db.getStorageRow(item.type, item.id)) return
@@ -69,6 +76,7 @@ async function migrateRow(raw: RawObjectStorage, db: StorageDb, key: StorageKey,
     signal.throwIfAborted()
     // Another process may have renamed ciphertext but stopped before syncing
     // the directory. Persist the observed rename even on the resume path.
+    progress('checkpoint')
     await raw.sync?.(identity, signal)
     await db.markStorageEncrypted(item.type, item.id, row.dataKey!)
   } finally { dataKey.fill(0) }
@@ -176,8 +184,17 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
     for (const row of rows) {
       if (Date.now() >= deadline || signal.aborted) break
       console.info('managed-storage-migration-row-start:', JSON.stringify({ type: row.type, id: row.id }))
+      const startedAt = Date.now()
+      let phase: MigrationPhase | 'tokens' = 'tokens'
+      const logPhase = (aborted = false) => console.info('managed-storage-migration-row-phase:', JSON.stringify({
+        type: row.type, id: row.id, phase, elapsedMs: Date.now() - startedAt, ...(aborted ? { aborted: true } : {}),
+      }))
+      // Log directly on cancellation even if an underlying operation stalls
+      // while unwinding. These fixed phases contain no object/provider data.
+      const aborted = () => logPhase(true)
+      signal.addEventListener('abort', aborted, { once: true })
       try {
-        const pending = await migrateRow(raw, db, key, row, signal)
+        const pending = await migrateRow(raw, db, key, row, signal, next => { phase = next; logPhase() })
         if (pending) failures.push(rowFailure(row, pending))
       }
       catch (err) {
@@ -192,6 +209,7 @@ export async function migrateStorage(raw: RawObjectStorage, db: StorageDb, key: 
           errors.push(new Error(`Could not migrate ${row.type} ${row.id}`, { cause: err }))
         } else failures.push(rowFailure(row, failure))
       }
+      finally { signal.removeEventListener('abort', aborted) }
       if (stopping?.aborted) break
       await db.advanceStorageMigration(state.cursor, row.position)
       processed++
