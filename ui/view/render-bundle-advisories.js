@@ -443,7 +443,7 @@ function renderAdvisoryRow(a, isCurrent) {
     <div class="bundle-advisory-body">
       <div class="bundle-advisory-header">
         ${typeof a.details === 'string' && a.details.trim()
-          ? html`<button type="button" class="bundle-advisory-title" aria-haspopup="dialog" @click=${() => openAdvisoryDetailsDialog({ heading: title, markdown: a.details, isCurrent })}>${title}</button>`
+          ? html`<button type="button" class="bundle-advisory-title" aria-haspopup="dialog" @click=${() => openAdvisoryDetailsDialog({ heading: title, severity: sev, markdown: a.details, isCurrent })}>${title}</button>`
           : html`<span class="bundle-advisory-title">${title}</span>`}
         ${source || idEl !== nothing ? html`<span class="bundle-advisory-reference">
           ${source ? html`<span class="bundle-advisory-source" role="img" aria-label=${source.label}>${source.icon}</span>` : nothing}

@@ -204,6 +204,7 @@ test('repository recheck button shows a busy state, prevents duplicate requests 
   title.values.find(value => typeof value === 'function')()
   assert.equal(openedDetails.length, 1)
   assert.equal(openedDetails[0].heading, 'Maintainer vulnerability')
+  assert.equal(openedDetails[0].severity, 'unknown')
   assert.equal(openedDetails[0].markdown, '# Impact\n\nFull advisory text.')
   assert.equal(openedDetails[0].isCurrent(), true)
   state.managedTeams = store(state.managedTeams)
