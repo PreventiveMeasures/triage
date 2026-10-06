@@ -65,7 +65,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
 
 // Collapse strongly connected packages before assigning rows. Cards stay at a
 // readable size; larger graphs scroll instead of shrinking names into dots.
-export function layoutDependencyChains(graph, { maxWidth = 1280 } = {}) {
+export function layoutDependencyChains(graph, { maxWidth = 1280, expandedCycles = new Set() } = {}) {
   const ids = [...graph.nodes.keys()].toSorted()
   const cycleImports = graph.cycleImports ?? graph.imports
   const { groups, componentOf } = stronglyConnected(ids, cycleImports)
@@ -92,7 +92,10 @@ export function layoutDependencyChains(graph, { maxWidth = 1280 } = {}) {
   // choosing cycle columns. A large SCC must not overflow its viewport.
   const hasBypasses = links.some((targets, from) => [...targets].some(to => depth[to] !== depth[from] + 1))
   const cycleWidth = maxWidth - DEPENDENCY_DIALOG_GUTTER - 24 - (hasBypasses ? 56 : 0)
-  const rows = Map.groupBy(groups.map((members, id) => layoutDependencyGroup(id, members, graph.imports, cycleWidth)), group => depth[group.id])
+  const rows = Map.groupBy(groups.map((members, id) => {
+    const collapsible = members.length > 10
+    return { ...layoutDependencyGroup(id, members, graph.imports, cycleWidth, collapsible && !expandedCycles.has(id)), collapsible }
+  }), group => depth[group.id])
   const rowWidth = row => row.reduce((w, group) => w + group.width, 0) + Math.max(0, row.length - 1) * 20
   const width = [...rows.values()].reduce((w, row) => Math.max(w, rowWidth(row) + 24), 240)
   const boxes = new Map()

@@ -191,8 +191,9 @@ test('a 190-package cycle at the top regroups to fit desktop, tablet and phone w
   const { ids, imports } = clusteredCycle(190)
   const graph = { nodes: new Map(ids.map(id => [id, { id }])), imports }
   const edgeCount = [...imports.values()].reduce((count, targets) => count + targets.size, 0)
+  const expandedCycles = new Set(layoutDependencyChains(graph).boxes.map(box => box.id))
   for (const [maxWidth, columns] of [[1280, 5], [900, 3], [600, 2], [375, 1]]) {
-    const layout = layoutDependencyChains(graph, { maxWidth })
+    const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles })
     assert.equal(layout.boxes.length, 1)
     const box = layout.boxes[0]
     assert.equal(box.packages.length, 190)
@@ -209,14 +210,40 @@ test('large cycles reserve space for excluded manifest reads pointing to earlier
   const cycleImports = new Map([...imports].map(([id, targets]) => [id, new Set(targets)]))
   imports.set('codegen', new Set([ids[0]]))
   const graph = { nodes: new Map([...ids, 'codegen'].map(id => [id, { id }])), imports, cycleImports }
+  const expandedCycles = new Set(layoutDependencyChains(graph).boxes.map(box => box.id))
   for (const maxWidth of [1280, 900, 600, 375]) {
-    const layout = layoutDependencyChains(graph, { maxWidth })
+    const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles })
     const cycle = layout.boxes.find(box => box.members.length === 190)
     const codegen = layout.boxes.find(box => box.members.includes('codegen'))
     assert.equal(layout.boxes.length, 2, 'the excluded read does not enlarge the cycle')
     assert.ok(codegen.y > cycle.y, 'ordinary imports determine the row order')
     assert.ok(layout.edges.some(edge => edge.from === codegen.id && edge.to === cycle.id), 'retain the backward read')
     assert.ok(layout.width + DEPENDENCY_DIALOG_GUTTER <= maxWidth, 'the cycle and backward route fit together')
+  }
+})
+
+test('only cycles larger than ten start collapsed, and expansion preserves their chains', () => {
+  for (const count of [2, 8, 10, 11, 40, 190]) {
+    const ids = Array.from({ length: count }, (_, i) => `package-${i}`)
+    const imports = new Map([['app', new Set([ids[0]])], ...ids.map((id, i) => [id, new Set([ids[(i + 1) % count]])])])
+    imports.get(ids[0]).add('target')
+    const graph = { nodes: new Map(['app', ...ids, 'target'].map(id => [id, { id }])), imports }
+    const initial = layoutDependencyChains(graph)
+    const group = initial.boxes.find(box => box.members.length === count)
+    assert.equal(group.collapsed, count > 10)
+    assert.equal(group.collapsible, count > 10)
+    assert.equal(group.packages.length, count > 10 ? 0 : count)
+    const expanded = layoutDependencyChains(graph, { expandedCycles: new Set([group.id]) })
+    const opened = expanded.boxes.find(box => box.id === group.id)
+    assert.equal(opened.packages.length, count)
+    assert.equal(opened.internalEdges.length, count)
+    assert.deepEqual(initial.edges.map(({ from, to }) => [from, to]), expanded.edges.map(({ from, to }) => [from, to]))
+    assert.deepEqual(initial.componentOf, expanded.componentOf)
+    if (count > 10) {
+      assert.ok(initial.height < expanded.height, 'collapsed groups free space for the rest of the chain')
+      assert.ok(initial.boxes.find(box => box.members.includes('target')).y < expanded.boxes.find(box => box.members.includes('target')).y)
+    }
+    assert.deepEqual(layoutDependencyChains(graph), initial, 'collapsing restores the compact layout')
   }
 })
 

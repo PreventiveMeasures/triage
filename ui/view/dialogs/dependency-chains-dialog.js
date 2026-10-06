@@ -15,15 +15,16 @@ class DependencyChainsDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(styles)]
   static properties = { _active: { state: true }, _current: { state: true }, _hovered: { state: true }, _focused: { state: true }, layout: { state: true } }
   constructor() { super(); this._active = null; this._hovered = null; this._focused = null }
+  _expandedCycles = new Set()
 
   layoutForViewport() {
     const focused = this.renderRoot?.activeElement
     this._hovered = null
     this._maxWidth = graphViewportWidth()
-    this.layout = layoutDependencyChains(this.graph, { maxWidth: this._maxWidth })
+    this.layout = layoutDependencyChains(this.graph, { maxWidth: this._maxWidth, expandedCycles: this._expandedCycles })
     // Keyed cards survive regrouping, but moving a focused DOM node can blur
     // it. Keep the same package focused and visible after the new placement.
-    if (focused?.matches('.package')) {
+    if (focused?.matches('.package, .cycle-toggle')) {
       this.updateComplete.then(() => {
         if (this._current && focused.isConnected) {
           focused.focus({ preventScroll: true })
@@ -32,6 +33,13 @@ class DependencyChainsDialog extends AppDialog {
         return undefined
       })
     }
+  }
+
+  toggleCycle(id) {
+    if (this._expandedCycles.has(id)) this._expandedCycles.delete(id)
+    else this._expandedCycles.add(id)
+    this._focused = null
+    this.layoutForViewport()
   }
 
   connectedCallback() {
@@ -99,20 +107,28 @@ class DependencyChainsDialog extends AppDialog {
   }
 
   renderGroup(box, highlighted, activePackage) {
+    const selected = box.members.some(id => this.graph.nodes.get(id).target)
     const neighbors = activePackage === null ? null : new Set([activePackage])
     if (neighbors) {for (const edge of box.internalEdges) {
       if (edge.from === activePackage || edge.to === activePackage) { neighbors.add(edge.from); neighbors.add(edge.to) }
     }}
-    return html`<div class=${`package-group${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
+    return html`<div class=${`package-group${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${box.collapsed ? ' collapsed' : ''}${box.collapsed && selected ? ' selected-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
       style=${styleMap({ left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px` })}
       @pointerenter=${() => { this._active = box.id }} @pointerleave=${() => { this._active = null }}>
-      ${box.members.length > 1 ? html`<div class="cycle-label">Circular imports${box.members.length > 8 ? ` · ${box.members.length} packages` : ''}</div>` : nothing}
+      ${box.collapsible ? html`<button type="button" class="cycle-label cycle-toggle" aria-expanded=${!box.collapsed} aria-controls=${`cycle-content-${box.id}`}
+        @click=${() => this.toggleCycle(box.id)}>
+        <span class="cycle-chevron" aria-hidden="true">${box.collapsed ? '▸' : '▾'}</span>
+        <span class="cycle-summary"><span>Circular imports</span><span class="cycle-count">${box.members.length} packages</span></span>
+        ${box.collapsed && selected ? html`<span class="badge selected-badge">Selected</span>` : nothing}
+      </button>` : box.members.length > 1 ? html`<div class="cycle-label">Circular imports${box.members.length > 8 ? ` · ${box.members.length} packages` : ''}</div>` : nothing}
+      <div id=${`cycle-content-${box.id}`} ?hidden=${box.collapsed}>
       ${box.internalEdges.length > 0 ? html`<svg class="connections cycle-connections" width=${box.width} height=${box.height} aria-hidden="true">
         ${box.internalEdges.map(edge => svg`<path d=${edge.path}
           class=${activePackage === null ? '' : edge.from === activePackage || edge.to === activePackage ? 'traced' : 'subdued'}
           style=${styleMap({ '--connection-color': packageColor(this.graph.nodes.get(edge.from)) })} marker-end="url(#dependency-arrow)"/>`)}
       </svg>` : nothing}
       ${repeat(box.packages, node => node.id, node => this.renderNode(node, neighbors))}
+      </div>
     </div>`
   }
 
