@@ -734,3 +734,31 @@ test('connecting the App redirects only for a valid installation response; failu
   assert.equal(destination, 'https://github.com/apps/triage-test/installations/new')
   assert.equal(page._actionError, null)
 })
+
+test('bundle visibility changes use CSRF, refresh catalogs and retain state on failure', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  page.session = adminSession
+  page.appState.setSession(adminSession)
+  const bundle = { id: 'bundle', filename: 'app.map', repoId: 7, visible: true }
+  const requests = []
+  const invalidated = t.mock.method(page.appState, 'invalidate')
+  let fail = false
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    requests.push({ url, options })
+    if (url.endsWith('/set-visible')) return Promise.resolve(fail ? new Response('', { status: 403 }) : Response.json({ ok: true }))
+    return Promise.resolve(Response.json({ bundles: [{ ...bundle }], repos: [] }))
+  })
+  await page._setVisible(bundle, false)
+  assert.equal(bundle.visible, false)
+  assert.ok(invalidated.mock.calls.some(call => ['bundles', 'teams'].every(key => call.arguments[0].includes(key))))
+  assert.equal(requests[0].url, '/api/admin/bundles/set-visible')
+  assert.equal(requests[0].options.headers['x-csrf-token'], 'current-token')
+  assert.deepEqual(JSON.parse(requests[0].options.body), { bundleId: 'bundle', visible: false })
+  assert.equal(page._data.bundles[0].visible, false)
+  assert.equal(page._visibilityBusy, null)
+  fail = true
+  await page._setVisible(bundle, true)
+  assert.equal(bundle.visible, false)
+  assert.match(page._error, /Couldn't change bundle visibility/u)
+  assert.equal(page._visibilityBusy, null)
+})

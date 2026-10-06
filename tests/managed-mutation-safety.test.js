@@ -20,11 +20,12 @@ async function fixture(t) {
 
 for (const revocation of ['none', 'view', 'logout', 'expired']) {
   test(`management writes reject ${revocation} while reading their request body`, async t => {
-    for (const route of ['publish', 'move-report', 'move-bundle', 'remove-repository', 'deactivate', 'stage']) {
+    for (const route of ['publish', 'hide-bundle', 'move-report', 'move-bundle', 'remove-repository', 'deactivate', 'stage']) {
       await t.test(route, async st => {
         const f = await fixture(st)
         const routes = {
           publish: ['/api/admin/reports/set-visible', { reportId: f.reportId, visible: true }],
+          'hide-bundle': ['/api/admin/bundles/set-visible', { bundleId: f.bundleId, visible: false }],
           'move-report': ['/api/admin/reports/set-repo', { reportId: f.reportId, repoId: 2 }],
           'move-bundle': ['/api/admin/bundles/set-repo', { bundleId: f.bundleId, repoId: 2 }],
           'remove-repository': ['/api/admin/repositories/remove', removal],
@@ -41,6 +42,7 @@ for (const revocation of ['none', 'view', 'logout', 'expired']) {
         assert.equal((await f.db.getReport(f.reportId)).visible, false)
         assert.equal((await f.db.getReport(f.reportId)).repoId, 1)
         assert.equal((await f.db.getBundle(f.bundleId)).repoId, 1)
+        assert.equal((await f.db.getBundle(f.bundleId)).visible, true)
         assert.equal((await f.db.listSelectedRepos()).length, 2)
         assert.equal(f.reports.blobs.size, 1)
         assert.equal(f.bundles.blobs.size, 1)

@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS managed_bundle (
   uploaded_by_login TEXT,
   repo_id      INTEGER REFERENCES managed_selected_repo(repo_id) ON DELETE SET NULL,
   repo_directory  TEXT NOT NULL DEFAULT '',
+  visible      INTEGER NOT NULL DEFAULT 1,
   uploaded_at  INTEGER NOT NULL
 ) STRICT;
 

@@ -279,8 +279,8 @@ function teamsSectionTemplate() {
 // server WITHOUT caching it to OPFS.
 function teamReportTemplate(team, r) {
   const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && ['findings', 'links'].includes(state.currentView)
-  return html`<li class=${`file-item indented team-report-item${current ? ' current' : ''}`}>
-    <button type="button" class="file-name" data-tooltip=${r.filename} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
+  return html`<li class=${`file-item indented team-report-item${r.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
+    <button type="button" class="file-name" aria-label=${r.visible === false ? `${r.filename} (hidden from teams)` : nothing} data-tooltip=${r.filename} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
       ${unsafeHTML(FILE_ICONS[reportGroup(r.filename, r.analyzer)])}<span class="file-label">${r.filename}</span>
     </button>
   </li>`
@@ -295,8 +295,8 @@ function openTeamReport(team, r) {
 // tooltip distinguishes similarly named uploads from different repositories.
 function teamBundleTemplate(team, bundle) {
   const current = state.currentView === 'bundles' && state.currentManagedTeam === team.id && state.bundleDetails?.managedId === bundle.id
-  return html`<li class=${`file-item indented team-bundle-item${current ? ' current' : ''}`}>
-    <button type="button" class="file-name" data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}
+  return html`<li class=${`file-item indented team-bundle-item${bundle.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
+    <button type="button" class="file-name" aria-label=${bundle.visible === false ? `${bundle.filename} (hidden from teams)` : nothing} data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}
       data-tooltip-bundle=${bundle.kind || nothing} data-tooltip-stats=${managedBundleStats(bundle) || nothing} data-tooltip-commit=${bundle.summary?.commit || nothing} data-tooltip-placement="right-start">
       ${BUNDLE_ICON}<span class="file-label">${bundle.filename}</span>
     </button>

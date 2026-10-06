@@ -1074,3 +1074,43 @@ for (const mode of ['refresh', 'expired', 'revoked', 'rejected']) {
     if (mode === 'refresh') assert.equal((await h.db.getUserTokens(h.users.viewer.userId)).accessToken, 'refreshed-token')
   })
 }
+
+test('bundle visibility controls downloads, cached sources, advisories and catalogs independently of reports', async t => {
+  const h = await setup(t)
+  const bundle = await h.seed({ repoId: 1 })
+  const reportId = randomUUID()
+  await h.db.insertReport({ id: reportId, filename: 'linked.json', contentType: 'application/json', byteSize: 2, sha256: 'report-hash',
+    uploadedBy: h.users.admin.userId, repoId: 1, bundleId: bundle.id, visible: true }, Date.now())
+  const toggle = (visible, who = 'manager', headers = {}) => h.send('/api/admin/bundles/set-visible', who, 'POST', JSON.stringify({ bundleId: bundle.id, visible }), headers)
+  assert.equal((await toggle(false, 'viewer')).status, 403)
+  assert.equal((await toggle(false, 'manager', { 'x-csrf-token': 'invalid' })).status, 403)
+  assert.equal((await toggle('false')).status, 400)
+  assert.equal((await toggle(false)).status, 200)
+  assert.equal((await h.db.getBundle(bundle.id)).visible, false)
+  assert.equal((await h.db.getReport(reportId)).visible, true, 'hiding a bundle preserves linked report visibility')
+  for (const suffix of ['download', 'metadata', 'contents', 'advisories']) {
+    assert.equal((await h.send(`/api/bundles/${bundle.id}/${suffix}`, 'viewer')).status, 404, suffix)
+  }
+  assert.equal((await h.send(`/api/admin/bundles/${bundle.id}`, 'viewer')).status, 404)
+  for (const who of ['admin', 'manager', 'owner']) {
+    assert.equal((await h.send(`/api/bundles/${bundle.id}/metadata`, who)).status, 200, who)
+    const inventory = (await h.send('/api/admin/bundles', who)).json().bundles
+    assert.equal(inventory.find(b => b.id === bundle.id).visible, false, who)
+  }
+  assert.deepEqual((await h.send('/api/teams', 'viewer')).json().teams[0].bundles, [])
+  assert.equal((await h.send('/api/teams', 'manager')).json().teams[0].bundles[0].visible, false)
+  const history = await h.db.listActivity({ page: 1, limit: 100, kind: 'visibility', query: '', contexts: null })
+  assert.equal(history.history[0].report, bundle.filename)
+  assert.equal(history.history[0].action, 'hid a bundle')
+  assert.equal((await toggle(true)).status, 200)
+  assert.equal((await h.send(`/api/bundles/${bundle.id}/download`, 'viewer')).status, 200)
+  assert.equal((await h.send('/api/teams', 'viewer')).json().teams[0].bundles[0].visible, true)
+
+  const open = h.cache.open.bind(h.cache)
+  t.mock.method(h.cache, 'open', async (...args) => {
+    const cached = await open(...args)
+    await h.db.setBundleVisible(bundle.id, false)
+    return cached
+  })
+  assert.equal((await h.send(`/api/bundles/${bundle.id}/metadata`, 'viewer')).status, 404, 'a slow cache read rechecks visibility before sending bytes')
+})

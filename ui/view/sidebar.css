@@ -504,6 +504,8 @@ sidebar-view-button[hidden] { display: none !important; }
   & .file-icon, & .file-count { color: var(--text); }
 }
 
+.file-item.content-hidden button.file-name .file-label { color: var(--muted); }
+
 /* Hover and selection cover metadata and first-row actions together. */
 .file-item.workspace-item:hover { background: rgb(from var(--text) r g b / .04); }
 .file-item.workspace-item button.file-name:hover { background: transparent; }

@@ -135,29 +135,6 @@
   padding-right: .65rem;
   text-align: right;
 }
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: .3rem;
-  width: fit-content;
-  padding: .1rem .4rem;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--muted);
-  font-size: .65rem;
-}
-.status::before {
-  content: '';
-  width: .25rem;
-  height: .25rem;
-  border-radius: 50%;
-  background: currentcolor;
-}
-.status.visible {
-  color: var(--green);
-  border-color: rgb(from var(--green) r g b / .2);
-  background: rgb(from var(--green) r g b / .06);
-}
 .report-actions {
   display: flex;
   justify-content: flex-end;

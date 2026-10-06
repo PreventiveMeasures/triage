@@ -47,7 +47,7 @@ const dataPaths = [
   '/api/admin/repositories/connect-app',
   '/api/admin/repositories/impact', '/api/admin/repositories/remove',
   '/api/admin/reports', `/api/admin/reports/${id}`, '/api/admin/reports/set-repo', '/api/admin/reports/set-visible',
-  '/api/admin/bundles', `/api/admin/bundles/${id}`, '/api/admin/bundles/set-repo',
+  '/api/admin/bundles', `/api/admin/bundles/${id}`, '/api/admin/bundles/set-repo', '/api/admin/bundles/set-visible',
   `/api/admin/uploads/reports/${id}/0`, `/api/admin/uploads/bundles/${id}/0`,
   '/api/admin/teams', ...['rename', 'delete', 'set-repo', 'remove-repo', 'set-member', 'remove-member'].map(action => `/api/admin/teams/${action}`),
   '/api/reports/query', `/api/reports/${id}`, `/api/reports/${id}/sources`,

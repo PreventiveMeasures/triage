@@ -13,7 +13,7 @@ import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
-import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import localImportStyles from './styles/local-import.css'
 import commonStyles from './styles/common.css'
@@ -866,7 +866,7 @@ class ManagedAdminReports extends ManagedPage {
     const canMakeVisible = report.repoEmbedded === true || report.repoId != null
     const location = report.repoFullName ? `${report.repoFullName}${report.repoDirectory ? `/${report.repoDirectory}` : ''}` : 'No repository assigned'
     const when = Number.isFinite(report.uploadedAt) ? new Date(report.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
-    return html`<li class="report">
+    return html`<li class=${`report${report.visible === false ? ' content-hidden' : ''}`}>
       <div class="report-main">
         <span class="report-mark" aria-hidden="true">${unsafeHTML(logo)}</span>
         <span class="report-name" data-tooltip-truncated data-tooltip=${report.filename}>${report.filename}</span>
@@ -981,6 +981,8 @@ class ManagedAdminBundles extends ManagedPage {
     installTooltips: { attribute: false },
     localImportSource: { attribute: false },
     _query: { state: true },
+    _visibility: { state: true },
+    _visibilityBusy: { state: true },
     _creating: { state: true },
     _data: { state: true },
     _locationBundle: { state: true },
@@ -999,6 +1001,8 @@ class ManagedAdminBundles extends ManagedPage {
   constructor() {
     super()
     this._query = ''
+    this._visibility = 'all'
+    this._visibilityBusy = null
     this._creating = false
     this._data = null
     this._error = null
@@ -1084,25 +1088,28 @@ class ManagedAdminBundles extends ManagedPage {
   _body() {
     const bundles = Array.isArray(this._data?.bundles) ? this._data.bundles : []
     const query = this._query.trim().toLocaleLowerCase()
-    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
+    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
+      && (this._visibility === 'all' || (bundle.visible !== false) === (this._visibility === 'visible')))
     const unassigned = filtered.filter(bundle => bundle.repoId == null).length
     const bytes = filtered.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
-    const count = `${query ? `${filtered.length} of ` : ''}${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}`
+    const count = `${query || this._visibility !== 'all' ? `${filtered.length} of ` : ''}${bundles.length} ${bundles.length === 1 ? 'bundle' : 'bundles'}`
     const groups = Map.groupBy(filtered, (bundle) => bundle.repoFullName || 'Unattached')
     return html`<div class="collection-toolbar" role="search">
       <input type="search" aria-label="Search bundles" placeholder="Search bundles or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}>
+      <select aria-label="Bundle visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All bundles</option><option value="visible">Visible to teams</option><option value="hidden">Hidden bundles</option></select>
       <span class="summary result-count" role="status"><span>${this._data == null ? '… bundles' : count}</span><span>${this._data == null ? '…' : formatBytes(bytes)}</span>
         ${this._data == null || unassigned ? html`<span class="unassigned">${this._data == null ? '… unattached' : `${unassigned} unattached`}</span>` : nothing}
       </span>
     </div>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
-      <div class="manage-list" aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading bundles…')) : filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${query ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${query ? 'Try another filename or repository.' : 'Drop source archives here or browse files above.'}</p></div>`}</div>`
+      <div class="manage-list" aria-busy=${this._loading}>${this._data == null ? (this._error ? nothing : loadingRows('Loading bundles…')) : filtered.length > 0 ? html`<div class="bundle-groups">${[...groups].toSorted(([a], [b]) => a === 'Unattached' ? -1 : b === 'Unattached' ? 1 : a.localeCompare(b)).map(([name, items]) => html`<section class="bundle-group"><div class="bundle-group-head"><strong>${name}</strong><span>${items.length} ${items.length === 1 ? 'bundle' : 'bundles'}</span></div><ul class="bundles">${items.map((b) => this._row(b))}</ul></section>`)}</div>` : html`<div class="empty"><strong>${bundles.length > 0 ? 'No matching bundles' : 'No bundles uploaded yet'}</strong><p>${bundles.length > 0 ? 'Try a different search or visibility filter.' : 'Drop source archives here or browse files above.'}</p></div>`}</div>`
   }
 
   _row(b) {
+    const visible = b.visible !== false
     const location = b.repoFullName ? `${b.repoFullName}${b.repoDirectory ? `/${b.repoDirectory}` : ''}` : 'No repository assigned'
     const when = Number.isFinite(b.uploadedAt) ? new Date(b.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
-    return html`<li class="bundle-row">
+    return html`<li class=${`bundle-row${visible ? '' : ' content-hidden'}`}>
       <span class="identity"><span class="bundle-icon" aria-hidden="true">${b.kind === 'stasis' ? html`<img src="./stasis.svg" width="16" height="16" alt="">` : BUNDLE_ICON}</span>
         <button type="button" class="filename bundle-open" data-tooltip-truncated data-tooltip=${b.filename} @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: b, bubbles: true, composed: true }))}>${b.filename}</button>
       </span>
@@ -1110,13 +1117,28 @@ class ManagedAdminBundles extends ManagedPage {
       <span class="meta bundle-date">${when}</span>
       <span class="meta bundle-size">${formatBytes(b.byteSize)}</span>
       <span class="bundle-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
+      <span class=${`status ${visible ? 'visible' : 'hidden'}`}>${visible ? 'Visible' : 'Hidden'}</span>
       <span class="actions">
         ${b.canChangeRepo === false ? nothing : html`<button type="button" class="action" aria-label=${`Set location for ${b.filename}`} data-tooltip="Set repository location" ?disabled=${this._locationBusy} @click=${() => this._openLocation(b)}>${adminIcon('repo')}</button>`}
+        <button type="button" class="action" aria-label=${`${visible ? 'Hide' : 'Make visible'} ${b.filename}`} data-tooltip=${visible ? 'Hide from teams' : b.repoId == null ? 'Assign a repository before publishing' : 'Make visible to teams'} ?disabled=${this._visibilityBusy != null || b.canChangeRepo === false || (!visible && b.repoId == null)} @click=${() => void this._setVisible(b, !visible)}>${adminIcon(visible ? 'hide' : 'show')}</button>
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
         <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : nothing} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
       ${this._locationBundle === b.id ? this._locationEditor(b) : nothing}
     </li>`
+  }
+
+  async _setVisible(bundle, visible) {
+    if (this._visibilityBusy != null || bundle.canChangeRepo === false) return
+    this._visibilityBusy = bundle.id
+    this._error = null
+    try {
+      await this.appState.mutate(() => setBundleVisible(bundle.id, visible, this._csrf), ['bundles', 'teams', 'history', 'scan-sources'])
+      bundle.visible = visible
+      this.requestUpdate()
+      await this._load()
+    } catch (err) { this._error = `Couldn't change bundle visibility: ${String(err?.message ?? err)}` }
+    finally { this._visibilityBusy = null }
   }
 
   _openLocation(bundle) {
