@@ -2,11 +2,12 @@ import { LitElement, css, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { REPORT_FILE_ICONS } from '../view/report-logos.js'
 import { modelName } from '../view/scan-models.js'
+import { ADD_ROW_ICON, REMOVE_ROW_ICON, ROW_ACTION_STYLES } from './row-actions.js'
 import '../view/bundle-selector.js'
 import '../view/repository-selector.js'
 import '../view/workspace-selector.js'
 
-const emptySelection = kind => ({ kind, sourceId: null, ids: new Set() })
+const emptySelection = kind => ({ kind, sourceIds: [null], ids: new Set() })
 
 export class ReportInputs extends LitElement {
   static properties = {
@@ -42,7 +43,11 @@ export class ReportInputs extends LitElement {
       ? (this._sources?.link?.workspaces ?? []).filter(workspace => reports.some(report => workspace.reports.includes(report.id)))
       : (this._sources?.link?.repositories ?? []).filter(repo => reports.some(report => report.repoIds.includes(repo.id)))
   }
-  get _parent() { return this._parents.find(parent => parent.id === this._current.sourceId) }
+  get _selectedParents() {
+    const parents = this._parents
+    return this._current.sourceIds.map(id => parents.find(parent => parent.id === id)).filter(Boolean)
+  }
+  get _parent() { return this._selectedParents[0] }
   get _scopeOptions() {
     const reports = this._sources?.link?.reports ?? []
     return this._parents.map(parent => {
@@ -51,14 +56,19 @@ export class ReportInputs extends LitElement {
     })
   }
   get _inputs() {
-    if (!this._parent) return []
-    if (this.mode === 'merge') return (this._sources?.merge?.results ?? []).filter(result => result.bundleId === this._parent.id)
+    const parents = this._selectedParents
+    if (parents.length === 0) return []
+    if (this.mode === 'merge') return (this._sources?.merge?.results ?? []).filter(result => result.bundleId === parents[0].id)
     return (this._sources?.link?.reports ?? []).filter(report => this._current.kind === 'workspace'
-      ? this._parent.reports.includes(report.id) : report.repoIds.includes(this._parent.id))
+      ? parents[0].reports.includes(report.id) : report.repoIds.some(id => parents.some(parent => parent.id === id)))
   }
   get selection() {
-    const parent = this._parent
-    return { mode: this.mode, source: parent ? { kind: this._current.kind, id: parent.id, label: parent.label ?? parent.filename } : null,
+    const parents = this._selectedParents
+    const parent = parents[0]
+    const source = parent ? this.mode === 'link' && this._current.kind === 'repository'
+      ? { kind: 'repository', ids: parents.map(item => item.id), label: parents.map(item => item.label).join(', ') }
+      : { kind: this._current.kind, id: parent.id, label: parent.label ?? parent.filename } : null
+    return { mode: this.mode, source,
       inputs: this._loading || this._error ? [] : this._inputs.filter(input => this._current.ids.has(input.id)) }
   }
   _notify() { this.dispatchEvent(new CustomEvent('report-inputs-change', { detail: this.selection, bubbles: true, composed: true })) }
@@ -92,11 +102,34 @@ export class ReportInputs extends LitElement {
     }
   }
   _setCurrent(value) { if (this.mode === 'merge') this._merge = value; else this._link = value }
-  _selectSource(id) {
-    if (id === this._current.sourceId || !this._parents.some(parent => parent.id === id)) return
-    this._setCurrent({ ...this._current, sourceId: id, ids: new Set() })
-    this._setCurrent({ ...this._current, ids: new Set(this._inputs.map(input => input.id)) })
+  _selectSource(id, index = 0) {
+    if (index < 0 || index >= this._current.sourceIds.length || this._current.sourceIds.includes(id) || !this._parents.some(parent => parent.id === id)) return
+    const previous = new Set(this.mode === 'link' && this._current.kind === 'repository' ? this._inputs.map(input => input.id) : [])
+    this._setCurrent({ ...this._current, sourceIds: this._current.sourceIds.map((value, i) => i === index ? id : value) })
+    // Select newly available reports without undoing choices in scopes that remain.
+    this._setCurrent({ ...this._current, ids: new Set(this._inputs.filter(input => !previous.has(input.id) || this._current.ids.has(input.id)).map(input => input.id)) })
     this._notify()
+  }
+  get _canAddRepository() {
+    return this.mode === 'link' && this._current.kind === 'repository' && !this._loading
+      && !this._current.sourceIds.includes(null) && this._parents.some(parent => !this._current.sourceIds.includes(parent.id))
+  }
+  _addRepository() {
+    if (!this._canAddRepository) return
+    this._link = { ...this._link, sourceIds: [...this._link.sourceIds, null] }
+    void this._focusRepository(this._link.sourceIds.length - 1)
+  }
+  _removeRepository(index) {
+    if (this.mode !== 'link' || this._link.kind !== 'repository' || this._loading || this._link.sourceIds.length <= 1
+      || index < 0 || index >= this._link.sourceIds.length) return
+    this._link = { ...this._link, sourceIds: this._link.sourceIds.filter((_, i) => i !== index) }
+    this._link = { ...this._link, ids: new Set(this._inputs.filter(input => this._link.ids.has(input.id)).map(input => input.id)) }
+    this._notify()
+    void this._focusRepository(Math.min(index, this._link.sourceIds.length - 1))
+  }
+  async _focusRepository(index) {
+    await this.updateComplete
+    this.renderRoot?.querySelectorAll('repository-selector')[index]?.renderRoot?.querySelector('.trigger')?.focus()
   }
   _changeKind(kind) {
     if (!['workspace', 'repository'].includes(kind)) return
@@ -106,7 +139,7 @@ export class ReportInputs extends LitElement {
     this._notify()
   }
   _selectOnlySource() {
-    if (this.mode === 'link' && this._current.sourceId == null && this._parents.length === 1) this._selectSource(this._parents[0].id)
+    if (this.mode === 'link' && this._current.sourceIds.length === 1 && this._current.sourceIds[0] == null && this._parents.length === 1) this._selectSource(this._parents[0].id)
   }
   _toggle(id, checked) {
     if (!this._inputs.some(input => input.id === id)) return
@@ -124,7 +157,9 @@ export class ReportInputs extends LitElement {
     if (!this._sources || restore?.mode !== this.mode || !restore.source) return
     const kind = this.mode === 'merge' ? 'bundle' : restore.source.kind
     if (this.mode === 'link' && (kind === 'workspace' ? !Array.isArray(this._sources.link?.workspaces) : kind !== 'repository')) return
-    this._setCurrent({ kind, sourceId: restore.source.id, ids: new Set() })
+    const ids = this.mode === 'link' && kind === 'repository' ? restore.source.ids ?? [restore.source.id] : [restore.source.id]
+    const sourceIds = [...new Set(ids)].filter(id => id != null)
+    this._setCurrent({ kind, sourceIds: sourceIds.length > 0 ? sourceIds : [null], ids: new Set() })
     this._setCurrent({ ...this._current, ids: new Set(this._inputs.filter(input => restore.inputIds.includes(input.id)).map(input => input.id)) })
   }
   render() {
@@ -138,9 +173,9 @@ export class ReportInputs extends LitElement {
       <div class="source">
         ${!merge && hasWorkspaces ? html`<div class="kinds" role="radiogroup" aria-label="Report source">${[['workspace', 'Workspace'], ['repository', 'Repository']].map(([kind, label]) => html`<button type="button" role="radio" aria-checked=${kind === this._link.kind} @click=${() => this._changeKind(kind)}>${label}</button>`)}</div>` : nothing}
         <div class="field">${merge ? html`<span>Bundle with scan results</span>` : nothing}
-          ${merge ? html`<bundle-selector .bundles=${this._parents} .value=${this._current.sourceId} ?disabled=${this._loading || this._parents.length === 0} @bundle-change=${e => this._selectSource(e.detail.value)}></bundle-selector>`
-            : this._current.kind === 'workspace' ? html`<workspace-selector .options=${this._scopeOptions} .value=${this._current.sourceId} ?disabled=${this._loading} @workspace-change=${e => this._selectSource(e.detail.value)}></workspace-selector>`
-              : html`<repository-selector .options=${this._scopeOptions} .value=${this._current.sourceId} ?disabled=${this._loading} @repository-change=${e => this._selectSource(e.detail.value)}></repository-selector>`}
+          ${merge ? html`<bundle-selector .bundles=${this._parents} .value=${this._current.sourceIds[0]} ?disabled=${this._loading || this._parents.length === 0} @bundle-change=${e => this._selectSource(e.detail.value)}></bundle-selector>`
+            : this._current.kind === 'workspace' ? html`<workspace-selector .options=${this._scopeOptions} .value=${this._current.sourceIds[0]} ?disabled=${this._loading} @workspace-change=${e => this._selectSource(e.detail.value)}></workspace-selector>`
+              : this._repositoryFields()}
         </div>
       </div>
       <div class="input-results">
@@ -150,6 +185,15 @@ export class ReportInputs extends LitElement {
             : html`<p class="empty">${merge && this._parents.length === 0 ? 'No scan results available.' : empty}</p>`}
       </div>
     </section>`
+  }
+  _repositoryFields() {
+    const ids = this._current.sourceIds, options = this._scopeOptions
+    return html`<div class="repository-fields"><div class="repository-rows">${ids.map((id, index) => html`<div class="repository-row">
+      <repository-selector .options=${options.filter(option => option.value === id || !ids.includes(option.value))}
+        .value=${id} label=${`Choose repository ${index + 1}`} ?disabled=${this._loading}
+        @repository-change=${e => this._selectSource(e.detail.value, index)}></repository-selector>
+      ${ids.length > 1 ? html`<button type="button" class="row-action" aria-label=${`Remove repository ${index + 1}`} ?disabled=${this._loading} @click=${() => this._removeRepository(index)}>${REMOVE_ROW_ICON}</button>` : nothing}
+    </div>`)}</div><button type="button" class="row-action" aria-label="Add repository" ?disabled=${!this._canAddRepository} @click=${() => this._addRepository()}>${ADD_ROW_ICON}</button></div>`
   }
   _row(input) {
     const count = this.mode === 'link' ? input.appFindings : input.findings
@@ -164,10 +208,16 @@ export class ReportInputs extends LitElement {
     * { box-sizing: border-box; }
     button, .field > span, .list-head, .empty:not([role='alert']) { cursor: default; user-select: none; -webkit-user-select: none; }
     .panel { border: 1px solid var(--border); border-radius: var(--ui-radius, 9px); background: var(--surface); overflow: hidden; }
-    .source { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; padding: .85rem .9rem; border-bottom: 1px solid var(--border); }
+    .source { display: flex; flex-wrap: wrap; align-items: start; gap: .7rem; padding: .85rem .9rem; border-bottom: 1px solid var(--border); }
     .field { display: grid; flex: 1 1 14rem; gap: .3rem; max-width: 32rem; min-width: 0; }
     .field > span { color: var(--muted); font-size: .72rem; }
     button { padding: .3rem .55rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
+    ${ROW_ACTION_STYLES}
+    .repository-fields { display: flex; align-items: start; gap: .4rem; }
+    .repository-fields > .row-action { margin-top: .25rem; }
+    .repository-rows { display: grid; flex: 1; min-width: 0; gap: .65rem; }
+    .repository-row { display: flex; align-items: center; gap: .4rem; }
+    .repository-row repository-selector { flex: 1; }
     .kinds { display: flex; width: fit-content; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); overflow: hidden; }
     .kinds button { padding-block: .5rem; border: 0; border-radius: 0; color: var(--muted); }
     .kinds button + button { border-left: 1px solid var(--border); }

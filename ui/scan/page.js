@@ -13,6 +13,7 @@ import './regime-editor.js'
 import './depth-toggle.js'
 import './mode-selector.js'
 import { SCAN_PAGE_STYLES } from './page-styles.js'
+import { ADD_ROW_ICON, REMOVE_ROW_ICON } from './row-actions.js'
 import { codeScanFiles, formatBytes, sourceMetrics } from './metrics.js'
 import '../view/bundle-scope-selector.js'
 
@@ -332,7 +333,7 @@ export class ScanPage extends LitElement {
   }
 
   _agenticPanel() {
-    return html`<section class="panel agentic-panel"><div class="panel-head"><h2>Agentic instructions</h2><button type="button" class="prompt-action" aria-label="Add prompt" @click=${() => this._addPrompt()}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div><div class="agentic-fields">${repeat(this._prompts, prompt => prompt.id, (prompt, index) => html`<div class="prompt-row"><textarea aria-label=${`Prompt ${index + 1}`} rows="3" placeholder=${this._promptPlaceholder(index)} .value=${live(prompt.text)} @input=${e => { this._prompts = this._prompts.map(item => item.id === prompt.id ? { ...item, text: e.target.value } : item) }}></textarea>${this._prompts.length > 1 ? html`<button type="button" class="prompt-action" aria-label=${`Remove prompt ${index + 1}`} @click=${() => this._removePrompt(prompt.id)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>` : nothing}</div>`)}</div></section>`
+    return html`<section class="panel agentic-panel"><div class="panel-head"><h2>Agentic instructions</h2><button type="button" class="row-action" aria-label="Add prompt" @click=${() => this._addPrompt()}>${ADD_ROW_ICON}</button></div><div class="agentic-fields">${repeat(this._prompts, prompt => prompt.id, (prompt, index) => html`<div class="prompt-row"><textarea aria-label=${`Prompt ${index + 1}`} rows="3" placeholder=${this._promptPlaceholder(index)} .value=${live(prompt.text)} @input=${e => { this._prompts = this._prompts.map(item => item.id === prompt.id ? { ...item, text: e.target.value } : item) }}></textarea>${this._prompts.length > 1 ? html`<button type="button" class="row-action" aria-label=${`Remove prompt ${index + 1}`} @click=${() => this._removePrompt(prompt.id)}>${REMOVE_ROW_ICON}</button>` : nothing}</div>`)}</div></section>`
   }
 
   _promptPlaceholder(index) {
