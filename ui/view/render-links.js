@@ -19,7 +19,7 @@ function statusTemplate(id, reports) {
   const ignored = reports.filter(({ name }) => isReportIgnored(state.triage, id, name))
   const status = triage ?? (ignored.length > 0 ? 'ignored' : null)
   if (!status) return nothing
-  const partial = status === 'ignored' && ignored.length < reports.length
+  const partial = triage !== 'ignored' && status === 'ignored' && ignored.length < reports.length
   const label = partial ? `Ignored in ${ignored.length}/${reports.length} reports` : TRIAGE_LABELS[status]
   return html`<span class=${`links-finding-status triage-${status}`}
     data-tooltip=${partial ? ignored.map(({ name }) => displayName(name)).join(', ') : nothing}

@@ -14,7 +14,7 @@
 // observer-util per-id re-render behavior the UI depends on.
 
 import { syncHost } from './host.ts'
-import { bucketOf, normalizeEntry, patchEntry, setEntry, setReportIgnored } from '../triage-entry.ts'
+import { allowsReportIgnores, bucketOf, normalizeEntry, patchEntry, setEntry, setReportIgnored } from '../triage-entry.ts'
 import type { Conflict, ConflictProperty, TriageStateMap } from './triage-changeset.ts'
 
 // The session's "effective" local state — what the next save
@@ -118,12 +118,9 @@ export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterab
       }
     }
 
-    // Per-report ignore: skipped when triage is set (mutex), and when
-    // the id already carries any ignoredReports (local-wins, like the
-    // checks above). No conflict path for ignoredReports — the mutex
-    // would make "user picks ignored over triage" require dropping
-    // triage too, which the dialog doesn't model.
-    const triageEffectivelySet = triageNext != null || bucketOf(cur) != null
+    // Dependency report ignores coexist with shared ignored. For the other
+    // statuses retain the mutex and existing local-wins hydration semantics.
+    const triageEffectivelySet = !allowsReportIgnores(entry) || !allowsReportIgnores(cur)
     if (triageEffectivelySet || !Array.isArray(entry.ignoredReports)) continue
     if ((cur?.ignoredReports?.length ?? 0) > 0) continue
     for (const r of entry.ignoredReports) {
@@ -161,9 +158,9 @@ export function applyHydrationDecisions(
     } else if (c.property === 'fix') {
       patchEntry(state.triage, c.id, { fix: c.imported })
     } else if (c.property === 'triage') {
-      if (c.imported === 'inprogress' || c.imported === 'fixed' || c.imported === 'invalid' || c.imported === 'deleted') {
+      if (c.imported === 'inprogress' || c.imported === 'fixed' || c.imported === 'invalid' || c.imported === 'deleted' || c.imported === 'ignored') {
         // Mutex — clear the id's per-report ignore alongside the bucket.
-        patchEntry(state.triage, c.id, { triage: c.imported, ignoredReports: undefined })
+        patchEntry(state.triage, c.id, { triage: c.imported, ...(c.imported === 'ignored' ? {} : { ignoredReports: undefined }) })
       } else {
         patchEntry(state.triage, c.id, { triage: undefined })
       }
@@ -188,19 +185,15 @@ function currentLocalValue(id: string, property: ConflictProperty): string {
   return ''
 }
 
-// Replace each in-scope id's live entry with `targetState`'s (deleting
-// when empty). Triage mutex: if the wire entry carries triage we drop
-// its ignoredReports — triage and ignore can't coexist on a tab, and a
-// stale chain carrying both resolves in favor of triage (matching the
-// action handler, which clears ignore when setting triage). Out-of-scope
-// ids untouched. `setEntry` normalizes the rest (legacy `deleted` →
-// bucket, prune empty fields, fresh arrays).
+// Replace in-scope live entries. Only shared ignored can coexist with
+// dependency report ignores; other buckets win over stale report ignores.
+// Out-of-scope entries remain untouched.
 export function applyToReactiveState(targetState: TriageStateMap, ids: Set<string> | Iterable<string>): void {
   const state = syncHost().state
   const idsSet: Set<string> = ids instanceof Set ? ids : new Set(ids)
   for (const id of idsSet) {
     const entry = targetState[id]
-    const ignoredReports = bucketOf(entry) ? undefined : entry?.ignoredReports
+    const ignoredReports = allowsReportIgnores(entry) ? entry?.ignoredReports : undefined
     setEntry(state.triage, id, { ...entry, ignoredReports })
   }
 }

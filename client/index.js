@@ -174,6 +174,7 @@ export {
   migrateTriageToEncrypted,
   migrateTriageToPlaintext,
   saveTriage,
+  migrateLoadedIgnores,
   setManagedTriageChangeNotifier,
   setTriageChangeNotifier,
   setTriageReloadNotifier,

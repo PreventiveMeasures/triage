@@ -1,6 +1,6 @@
 // Pure display formatting shared with the lazy managed history dialog.
 const FIELDS = { triage: 'Status', color: 'Label', flagged: 'Flagged', fix: 'Fix', comment: 'Comment' }
-const STATUSES = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted' }
+const STATUSES = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
 function value(entry, field) {
   if (field === 'triage') return STATUSES[entry?.triage] ?? 'Untriaged'
   if (field === 'flagged') return entry?.flagged ? 'Yes' : 'No'

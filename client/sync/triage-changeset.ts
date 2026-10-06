@@ -5,7 +5,7 @@
 // module state, no `state.*`, no I/O — safe to unit-test in isolation.
 
 import type { TriageEntry } from './host.ts'
-import { normalizeEntry } from '../triage-entry.ts'
+import { allowsReportIgnores, bucketOf, normalizeEntry } from '../triage-entry.ts'
 
 export type ConflictProperty = 'color' | 'triage' | 'comment' | 'fix' | 'flagged'
 
@@ -31,9 +31,7 @@ function normColor(entry: TriageEntry | null | undefined): string {
   return typeof entry?.color === 'string' ? entry.color : ''
 }
 function normTriage(entry: TriageEntry | null | undefined): string {
-  if (entry?.triage === 'inprogress' || entry?.triage === 'fixed' || entry?.triage === 'invalid' || entry?.triage === 'deleted') return entry.triage
-  if (entry?.deleted) return 'deleted'
-  return ''
+  return bucketOf(entry ?? undefined) ?? ''
 }
 function normComment(entry: TriageEntry | null | undefined): string {
   return typeof entry?.comment === 'string' ? entry.comment : ''
@@ -174,16 +172,18 @@ export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, re
         Object.assign(merged, { [field]: current[field] })
       }
     }
-    // Triage and ignoredReports are mutually exclusive. A conflicting
-    // bucket/ignore choice keeps the local choice, but when both sides
-    // remain untriaged, merge ignores per report so independent additions
-    // and removals survive.
+    // Shared ignored and dependency report ignores are independent. Other
+    // buckets retain the mutex; conflicts between those and ignores keep the
+    // local choice. Merge independent report additions/removals per report.
     if (preserveEntry || before.triage !== current.triage || !ignoredReportsEqual(before.ignoredReports, current.ignoredReports)) {
-      const reports = !preserveEntry && current.triage === undefined && merged.triage === undefined
+      const independentIgnores = !preserveEntry && allowsReportIgnores(current) && allowsReportIgnores(merged)
+      const reports = independentIgnores
         ? rebaseIgnoredReports(before.ignoredReports, current.ignoredReports, merged.ignoredReports)
         : current.ignoredReports ?? []
-      if (current.triage === undefined) delete merged.triage
-      else merged.triage = current.triage
+      if (!independentIgnores || before.triage !== current.triage) {
+        if (current.triage === undefined) delete merged.triage
+        else merged.triage = current.triage
+      }
       if (reports.length === 0) delete merged.ignoredReports
       else merged.ignoredReports = reports
     }

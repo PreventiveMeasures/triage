@@ -2660,7 +2660,7 @@ describe('triage-sync client', () => {
     await deleteWorkspace(wsId)
   })
 
-  it('triage state transitions (fixed/invalid/deleted) round-trip through the chain', async () => {
+  it('triage state transitions (fixed/invalid/ignored) round-trip through the chain', async () => {
     // Regression for the entriesEqual gap left over from the
     // Fixed/Invalid/Deleted bucket commit: snapshotEntry was
     // updated to emit `entry.triage` and applyToReactiveState was
@@ -2673,14 +2673,15 @@ describe('triage-sync client', () => {
     patchEntry(state.triage, 'finding-A', { triage: 'fixed' })
     await saveTriage()
     await waitFor(() => settledAfterAck(wsId), 'fixed acked')
-    const baseAfterFixed = triageSync.sessionInfo(wsId).baseRevision
-
-    patchEntry(state.triage, 'finding-A', { triage: 'invalid' })
-    await saveTriage()
-    await waitFor(
-      () => triageSync.sessionInfo(wsId).baseRevision !== baseAfterFixed,
-      'invalid acked (transition synced)',
-    )
+    for (const bucket of ['invalid', 'ignored']) {
+      const previousRevision = triageSync.sessionInfo(wsId).baseRevision
+      patchEntry(state.triage, 'finding-A', { triage: bucket })
+      await saveTriage()
+      await waitFor(
+        () => triageSync.sessionInfo(wsId).baseRevision !== previousRevision && settledAfterAck(wsId),
+        `${bucket} acked (transition synced)`,
+      )
+    }
 
     // Verify the chain on the server reflects the latest value.
     const tag = triageSync.sessionInfo(wsId).workspaceTag
@@ -2713,7 +2714,7 @@ describe('triage-sync client', () => {
         else cumulative[id] = entry
       }
     }
-    assert.equal(cumulative['finding-A']?.triage, 'invalid', 'latest triage value reached the chain')
+    assert.equal(cumulative['finding-A']?.triage, 'ignored', 'latest triage value reached the chain')
     reader.close()
 
     triageSync.closeSession(wsId)

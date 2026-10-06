@@ -1,4 +1,5 @@
-import { isManagedUiMode } from './state.ts'
+import { stampIndexedFindings } from './ignored-triage.js'
+import { isManagedUiMode, loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
 // OPFS-wide finding index — loads every report stored in OPFS
 // (not just the currently-active state.reports) and caches its
@@ -27,8 +28,7 @@ import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
 
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
-import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { findingTitle, inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '@preventive/report'
+import { findingTitle, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '@preventive/report'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -527,7 +527,7 @@ async function indexOne(name) {
     // mutation is safe: bucket dedupe + the index pass don't rely on
     // the absence of meta fields, and nothing has held the finding
     // before this point.
-    for (const f of findings) inheritReportMeta(f, data)
+    stampIndexedFindings(findings, data)
     stampSecurityGroups(reportEntries(data).map((entry) => Array.isArray(entry) ? entry : [entry]), { source: data.source })
     // Per-report repo — the LAST fallback when neither
     // `f.repo.github` nor `f._repoFallback` is present (the

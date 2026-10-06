@@ -831,3 +831,26 @@ describe('groupWithPassRows', () => {
     assert.equal(groupWithPassRows(orphan), orphan)
   })
 })
+
+
+describe('shared ignored triage', () => {
+  it('counts shared ignores as regular triage and levels eligible own-code siblings', () => {
+    const a = tab({ triage: 'ignored' }, { isApp: false })
+    const b = tab(null, { isApp: false })
+    assert.equal(groupState([a]).anyTriage, true)
+    assert.equal(groupState([a]).allTriaged, true)
+    assert.equal(isIgnored(a), true)
+    assert.equal(syncGroupTriage([a, b]), true)
+    assert.equal(state.triage.get(b.id).triage, 'ignored')
+  })
+  it('shared ignores do not apply to dependency occurrences or level dependency siblings', () => {
+    const own = tab({ triage: 'ignored' }, { isApp: false })
+    const dep = { ...own, file: 'node_modules/pkg/a.js', _depsDirectory: 'node_modules' }
+    assert.equal(tabTriage(dep), undefined)
+    assert.equal(triageEntry(dep)?.triage, undefined)
+    assert.equal(isIgnored(dep), false)
+    const other = tab(null, { file: dep.file, isApp: false, _depsDirectory: 'node_modules' })
+    assert.equal(syncGroupTriage([own, other]), false)
+    assert.equal(state.triage.get(other.id), undefined)
+  })
+})

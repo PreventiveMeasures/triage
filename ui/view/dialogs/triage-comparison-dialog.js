@@ -5,7 +5,7 @@ import comparisonCSS from './dialog-triage-comparison.css'
 
 const labels = { triage: 'Triage state', color: 'Color', fix: 'Fix', flagged: 'Flag', comment: 'Comments', ignoredReports: 'Per-report ignores' }
 const kinds = { 'managed-only': 'Only managed', 'local-only': 'Only local', mismatch: 'Different' }
-const buckets = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted' }
+const buckets = { inprogress: 'In progress', fixed: 'Fixed', invalid: 'Invalid', deleted: 'Deleted', ignored: 'Ignored' }
 
 function valueTemplate(property, value) {
   if (value === undefined || Array.isArray(value) && value.length === 0) return html`<em class="unset">Not set</em>`

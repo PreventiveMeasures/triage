@@ -1,3 +1,4 @@
+import { dependencyDirectory } from '../../client/dependency-paths.js'
 import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '@preventive/report'
 import { html, nothing } from './frontend-global.js'
 // Direct relative import, NOT `#client/index.js`: this module rides in
@@ -256,7 +257,6 @@ function depsSegRe(dir) { return new RegExp(`(^|/)${dir}/`, 'u') }
 // name or an `@scope/name` pair; captures `<rest>` for stripping.
 function depsStripRe(dir) { return new RegExp(`^(?:.*/)?${dir}/(?:@[^/]+/[^/]+|[^/]+)/(.*)$`, 'u') }
 
-// Detection matchers for the two non-fallback markers, built once.
 const NODE_MODULES_RE = depsSegRe('node_modules')
 const VENDOR_RE = depsSegRe('vendor')
 
@@ -272,24 +272,7 @@ function setDepsDir(dir) {
 }
 
 export function configureDepsDir(reports) {
-  let hasNodeModules = false
-  let hasVendor = false
-  // Returns true once `node_modules` is seen — the highest-precedence
-  // marker, so scanning can stop the moment it appears.
-  const note = (s) => {
-    if (!hasNodeModules && NODE_MODULES_RE.test(s)) hasNodeModules = true
-    if (!hasVendor && VENDOR_RE.test(s)) hasVendor = true
-    return hasNodeModules
-  }
-  outer: for (const r of reports) {
-    for (const g of r.groups ?? []) {
-      for (const f of g) if (note(f.file)) break outer
-    }
-    if (r.tree) {
-      for (const p of Object.keys(r.tree)) if (note(p)) break outer
-    }
-  }
-  setDepsDir(hasNodeModules ? 'node_modules' : hasVendor ? 'vendor' : 'dependencies')
+  setDepsDir(dependencyDirectory(reports))
 }
 
 export function depsDirName() { return depsDir }

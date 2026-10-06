@@ -1,7 +1,7 @@
 import { gunzipToText, gzipText } from '../common/gzip.js'
-import { bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { allowsReportIgnores, bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { importRepoUrls, readRepoUrlMap, state } from './state.ts'
-import { SESSION_ID_RE, buildPersistedTriageEntries, saveTriage } from './triage.js'
+import { SESSION_ID_RE, buildPersistedTriageEntries, migrateLocalStoredIgnores, saveTriage } from './triage.js'
 
 // Pure-logic side of the global triage backup. The DOM-touching
 // layer (file picker, anchor-click download, dialog) lives in
@@ -148,10 +148,10 @@ export async function applyTriageImport(payload, mode) {
     if (typeof v.flagged === 'boolean' && (!keepCurrent || map.get(id)?.flagged === undefined)) {
       patchEntry(map, id, { flagged: v.flagged })
     }
-    // Per-report ignore: mutex with triage state. Skip the
+    // Per-report ignore: mutex with non-ignored triage states. Skip the
     // ignoredReports merge when this id ended up with a triage
     // state (same rule the cross-tab apply path enforces).
-    if (Array.isArray(v.ignoredReports) && !bucketOf(map.get(id))) {
+    if (Array.isArray(v.ignoredReports) && allowsReportIgnores(map.get(id))) {
       for (const r of v.ignoredReports) {
         if (typeof r !== 'string') continue
         if (keepCurrent && isReportIgnored(map, id, r)) continue
@@ -160,6 +160,7 @@ export async function applyTriageImport(payload, mode) {
     }
   }
 
+  await migrateLocalStoredIgnores()
   await saveTriage()
 
   // Repo URLs — merge per mode through secure-storage's per-key Web

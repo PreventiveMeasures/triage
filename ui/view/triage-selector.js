@@ -1,5 +1,5 @@
-// `<triage-selector>` — In progress / Fixed / Invalid / Deleted
-// (+ Ignored for the findings tab) bucket-switcher buttons, shared by the findings
+// `<triage-selector>` — In progress / Fixed / Invalid / Deleted / Ignored
+// bucket-switcher buttons, shared by the findings
 // toolbar, the graph topbar, and the Packages / Repositories page
 // toolbars. All read `state.shownTriage` and emit the same button
 // shape; variants differ only in an extra marker class
@@ -25,10 +25,7 @@
 //   * `counts` — `{ inprogress?, fixed?, invalid?, deleted?, ignored? }`.
 //                Missing or zero buckets render no button.
 //   * `states` — array picking which buckets the selector renders.
-//                Defaults to all five; Packages / Repositories pass
-//                `['inprogress', 'fixed', 'invalid', 'deleted']` because
-//                ignore is per-report and treated as untriaged in those
-//                views.
+//                Defaults to all five shared buckets.
 //
 // Attributes:
 //   * `variant` — adds an extra class onto the host element so

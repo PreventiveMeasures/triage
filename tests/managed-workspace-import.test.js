@@ -59,7 +59,7 @@ test('preparation keeps report paths and link reports, limits triage to findings
   assert.equal(plan.reports[0].directory, 'src')
   assert.equal(plan.reports[0].repoId, 7)
   assert.deepEqual(plan.reports[1].ids, [])
-  assert.deepEqual({ ...plan.triage }, { f: { color: 'red', comment: 'Imported', flagged: false } })
+  assert.deepEqual({ ...plan.triage }, { f: { color: 'red', triage: 'ignored', comment: 'Imported', flagged: false } })
   assert.deepEqual(plan.bundles[0].bytes, bytes)
   data.bundleBlobs[0].data = new Uint8Array([0]).toBase64()
   await assert.rejects(prepareWorkspaceImport(data, repos), /integrity mismatch/u)
@@ -88,7 +88,7 @@ test('conflicts preserve omitted fields, reprompt after a concurrent edit, and i
   mock.onTriage = body => {
     if (body.findingIds) return { snapshots: { f: snapshot({ color: ++reads === 1 ? 'blue' : 'green', fix: 'keep', flagged: true }, [{ body: 'Stored comment' }], String(reads)) } }
     writes++
-    assert.deepEqual(body.entries.f, { color: 'red', fix: 'keep', flagged: false })
+    assert.deepEqual(body.entries.f, { color: 'red', triage: 'ignored', fix: 'keep', flagged: false })
     assert.equal(body.expected.f, String(reads))
     return { conflict: writes === 1 }
   }

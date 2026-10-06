@@ -1,3 +1,4 @@
+import { dependencyDirectory } from '../../client/dependency-paths.js'
 import { BUNDLE_TABS } from '../../common/bundle-tabs.js'
 import { managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
 import { setManagedWorkspace } from '../../client/managed/workspace.js'
@@ -1449,6 +1450,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // Preserve report boundaries and every original copy. Workspace grouping
     // depends on the App lens, so discarding duplicates here would make it
     // impossible to keep App rows separate and later merge their source rows.
+    const depsDirectory = dependencyDirectory([{ groups: rawEntries.map(toGroup), tree: data.tree }])
     const groups = []
     for (const entry of rawEntries) {
       const members = toGroup(entry)
@@ -1465,6 +1467,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
           _repoFallback: repoFallback,
           _repoDirectory: repoDir,
           _reportName: name,
+          _depsDirectory: depsDirectory,
           _managedReportId: managedReportId,
           _bundleHashes: data.bundleHashes ?? [],
         }

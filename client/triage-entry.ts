@@ -28,7 +28,7 @@ export type TriageMap = Map<string, TriageEntry>
 export type TriagePatch = { [K in keyof TriageEntry]?: TriageEntry[K] | undefined }
 
 function asBucket(v: unknown): TriageBucket | undefined {
-  return v === 'inprogress' || v === 'fixed' || v === 'invalid' || v === 'deleted' ? v : undefined
+  return v === 'inprogress' || v === 'fixed' || v === 'invalid' || v === 'deleted' || v === 'ignored' ? v : undefined
 }
 
 // The effective triage bucket, honoring the legacy `deleted: true`
@@ -36,6 +36,12 @@ function asBucket(v: unknown): TriageBucket | undefined {
 export function bucketOf(entry: TriageEntry | undefined): TriageBucket | undefined {
   if (!entry) return undefined
   return asBucket(entry.triage) ?? (entry.deleted ? 'deleted' : undefined)
+}
+
+// Shared ignores and dependency report ignores have independent scopes.
+export function allowsReportIgnores(entry: TriageEntry | undefined): boolean {
+  const bucket = bucketOf(entry)
+  return bucket === undefined || bucket === 'ignored'
 }
 
 export function entryIsEmpty(entry: TriageEntry | undefined): boolean {
