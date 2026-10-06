@@ -5,6 +5,8 @@ import '../ui/view/frontend-install.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { langForPath } from '../common/code-language.js'
 import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
+import { autorun } from '@rray/frontend/state-management'
+import { bundleWhy } from '../ui/view/bundle-why.js'
 
 // Keep the real modal and bundle source rendering without unrelated page
 // navigation, tooltip listeners, or asynchronous syntax highlighting.
@@ -13,9 +15,10 @@ mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/scan-navigation.js', { namedExports: { canScanBundle: () => false, openScan() {} } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : null } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip() {}, showTooltip() {} } })
-// Advisory popups have separate tests; keep their browser-only dependencies out of source rendering.
+// Dialogs have separate rendering tests; capture why requests without browser-only dependencies.
 mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
-mock.module('../ui/view/dialogs/dependency-chains-dialog.js', { exports: { openDependencyChainsDialog() {} } })
+const openedWhy = []
+mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog: props => openedWhy.push(props) } })
 const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
@@ -28,7 +31,13 @@ function renderText(value) {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
 }
 
+function templates(value) {
+  if (Array.isArray(value)) return value.flatMap(templates)
+  return value?.strings ? [value, ...value.values.flatMap(templates)] : []
+}
+
 beforeEach(() => {
+  openedWhy.length = 0
   highlightCalls.length = 0
   state.currentView = 'findings'
   state.bundleDetailsTab = 'overview'
@@ -383,7 +392,7 @@ test('the Overview Packages header sorts by total bytes or displayed name indepe
       assert.match(header, new RegExp(`aria-pressed=${sort === 'name'}[^>]*>Name<`, 'u'))
       assert.match(header, new RegExp(`aria-pressed=${sort === 'size'}[^>]*>Size<`, 'u'))
       const packages = markup.match(/<ul class="bundles-dist-list">(.*?)<\/ul>/su)[1]
-      assert.deepEqual([...packages.matchAll(/class="bundles-dist-pkg"[^>]*>(.*?)<\/span>/gu)].map(match => match[1]), expected)
+      assert.deepEqual([...packages.matchAll(/class="bundles-dist-pkg"[^>]*>(.*?)<\/(?:span|button)>/gu)].map(match => match[1]), expected)
       assert.equal(state.bundleOverviewFilesSort, 'name')
     }
   }
@@ -414,7 +423,7 @@ test('Overview and graph classify ordinary directories directly as Own source wh
       const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
       assert.match(markup, /Packages <span class="bundles-overview-col-count">3<\/span>/u)
       const distribution = markup.match(/<ul class="bundles-dist-list">(.*?)<\/ul>/su)[1]
-      assert.deepEqual([...distribution.matchAll(/class="bundles-dist-pkg"[^>]*>(.*?)<\/span>/gu)].map(match => match[1]), ['Own source', 'dep', workspace])
+      assert.deepEqual([...distribution.matchAll(/class="bundles-dist-pkg"[^>]*>(.*?)<\/(?:span|button)>/gu)].map(match => match[1]), ['Own source', 'dep', workspace])
       assert.match(distribution, /class="bundles-dist-size">3 B<\/span>/u)
     }
     const graph = buildBundleGraphData(details)
@@ -436,4 +445,64 @@ test('Overview and graph retain a sourcemap package identity when its entire dir
   const graph = buildBundleGraphData(state.bundleDetails)
   assert.deepEqual(graph.files, ['index.js', 'helper.js'])
   assert.equal(graph.options.pkgOf('index.js'), '@scope/dep')
+})
+
+test('Overview package names open why for all versions without requiring advisory access', async t => {
+  const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams, currentManagedTeam: state.currentManagedTeam }
+  t.after(() => Object.assign(state, previous))
+  const entry = { name: 'app.stasis', integrity: 'why-overview', managedId: 'bundle-id' }
+  const full = { ...entry, kind: 'stasis', size: 123, bundle: new Bundle({ modules: new Map([
+    ['.', { name: 'app', files: { 'index.js': 'app', 'src/index.js': 'own' } }],
+    ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'one' } }],
+    ['node_modules/parent/node_modules/dep', { name: 'dep', version: '2.0.0', files: { 'index.js': 'two' } }],
+    ['node_modules/alias', { name: 'real-name', version: '1', files: { 'index.js': 'alias' } }],
+    ['vendor/dep', { name: 'dep', ecosystem: 'cargo', version: '3', files: { 'main.rs': 'cargo' } }],
+    ['packages/workspace', { name: '@app/workspace', files: { 'index.js': 'workspace' } }],
+  ]) }) }
+  const cached = { ...parseBundleMetadata(await createBundleMetadata(full), entry.integrity), managedId: entry.managedId }
+  Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry],
+    managedSession: { role: 'view' }, currentManagedTeam: 'team',
+    managedTeams: [{ id: 'team', permissions: { security: false }, bundles: [{ id: entry.managedId }] }] })
+  for (const details of [full, cached]) {
+    state.bundleDetails = details
+    const view = renderBundlesList([entry])
+    assert.doesNotMatch(renderText(view), /data-bundle-tab="advisories"/u)
+    const buttons = templates(view).filter(template => template.strings.some(s => s.includes('class="bundles-dist-pkg" aria-haspopup="dialog"')))
+    assert.equal(buttons.length, 4, 'own-source rows stay text and versions share one package link')
+    for (const button of buttons) button.values.find(value => typeof value === 'function')()
+    const opened = openedWhy.splice(0)
+    assert.deepEqual(opened.map(props => props.packageKey).toSorted(), ['@app/workspace', 'cargo:dep', 'dep', 'real-name'])
+    for (const props of opened) {
+      assert.equal(props.version, undefined)
+      assert.equal(props.reason, undefined, 'overview uses the whole bundle')
+      assert.equal(props.isCurrent(), true)
+      const graph = bundleWhy(props.details, props)
+      assert.equal(graph.targets.length, props.packageKey === 'dep' ? 2 : 1)
+    }
+    const props = opened[0]
+    let current
+    const dispose = autorun(() => { current = props.isCurrent() })
+    try {
+      assert.equal(current, true, 'reactive wrappers do not invalidate the current bundle')
+      for (const [key, replacement] of [['currentView', 'findings'], ['selectedBundle', 'different-bundle'],
+        ['bundleDetails', null], ['currentManagedTeam', 'other-team'], ['managedSession', null], ['currentWorkspace', 'other-workspace']]) {
+        const original = state[key]
+        state[key] = replacement
+        assert.equal(current, false, `close on ${key} change`)
+        state[key] = original
+        assert.equal(current, true)
+      }
+    } finally { dispose() }
+  }
+})
+
+test('sourcemap package labels stay text when dependency metadata is unavailable', () => {
+  const entry = { name: 'app.map', integrity: 'why-sourcemap' }
+  Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry], bundleDetails: {
+    kind: 'sourcemap', integrity: entry.integrity, size: 10,
+    json: { version: 3, sources: ['node_modules/dep/index.js'], sourcesContent: ['dep'] },
+  } })
+  const markup = renderText(renderBundlesList([entry]))
+  assert.match(markup, /<span class="bundles-dist-pkg"[^>]*>dep<\/span>/u)
+  assert.doesNotMatch(markup, /<button[^>]*class="bundles-dist-pkg"/u)
 })

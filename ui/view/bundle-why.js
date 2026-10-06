@@ -3,7 +3,7 @@ import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
 import { countsTowardsCycles } from './graph/cycle-imports.js'
-import { DEPENDENCY_DIALOG_GUTTER, dependencyImportPath, layoutDependencyGroup } from './dependency-chain-layout.js'
+import { WHY_DIALOG_GUTTER, layoutWhyGroup, whyImportPath } from './why-layout.js'
 
 function packageNode(id, info = {}) {
   const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(id) ? 'npm' : '')
@@ -11,9 +11,19 @@ function packageNode(id, info = {}) {
   return { id, name, ecosystem, version: info.version ?? '', own: id === '.', root: false, target: false }
 }
 
+const packageKeyOf = node => node.ecosystem && node.ecosystem !== 'npm' ? `${node.ecosystem}:${node.name}` : node.name
+
+// Overview buckets use paths (including aliases and vendored directories).
+// Resolve their recorded identity before asking why that package is bundled.
+export function bundleWhyPackageKey(details, dir) {
+  const info = details?.bundle?.modules.get(dir)
+  return dir && dir !== '.' && info ? packageKeyOf(packageNode(dir, info)) : null
+}
+
 // The full graph groups npm packages by name. Here the installation directory
 // is the identity: merging copies would invent routes between their importers.
-export function bundleDependencyChains(details, { packageKey, version, reason = '' }) {
+// Omitting version selects every installed version of the package.
+export function bundleWhy(details, { packageKey, version, reason = '' }) {
   const importedBy = new Map(), imports = new Map(), nodes = new Map()
   const dirs = bundlePackageDirs(details) ?? new Map()
   const allPaths = new Map([...dirs.keys()].map(path => [path, path]))
@@ -49,7 +59,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   const { roots, appImports } = bundleLayerRoots(details, paths, path => dirs.get(path), dirs, allPaths)
   if (appImports.length > 0 && !nodes.has('.')) nodes.set('.', packageNode('.'))
   for (const target of appImports) link('.', target)
-  // Advisory chains stop at own source and Babel, and at React Native when own
+  // Why chains stop at own source and Babel, and at React Native when own
   // source imports that installation. Keep outgoing App edges, but do not follow
   // other parents or restore their edges when another path retains them.
   for (const [id, node] of nodes) {
@@ -70,10 +80,10 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   }
   const targets = []
   for (const node of nodes.values()) {
-    const key = node.ecosystem === 'npm' ? node.name : `${node.ecosystem}:${node.name}`
+    const key = packageKeyOf(node)
     const matches = node.ecosystem === 'github' ? key.toLowerCase() === packageKey.toLowerCase() : key === packageKey
-    const auditedVersion = node.ecosystem === 'github' && node.version === '.' ? '0.0.0' : node.version
-    if (!node.own && matches && auditedVersion === version) { node.target = true; targets.push(node.id) }
+    const normalizedVersion = node.ecosystem === 'github' && node.version === '.' ? '0.0.0' : node.version
+    if (!node.own && matches && (version === undefined || normalizedVersion === version)) { node.target = true; targets.push(node.id) }
   }
   // Reverse reachability retains every remaining route without enumerating an
   // exponential number of paths through diamonds or traversing cycles forever.
@@ -89,7 +99,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
 
 // Collapse strongly connected packages before assigning rows. Cards stay at a
 // readable size; larger graphs scroll instead of shrinking names into dots.
-export function layoutDependencyChains(graph, { maxWidth = 1280, expandedCycles = new Set() } = {}) {
+export function layoutWhy(graph, { maxWidth = 1280, expandedCycles = new Set() } = {}) {
   const ids = [...graph.nodes.keys()].toSorted()
   const { groups, componentOf } = stronglyConnected(ids, graph.imports)
   const links = groups.map(() => new Set())
@@ -116,10 +126,10 @@ export function layoutDependencyChains(graph, { maxWidth = 1280, expandedCycles 
   // Reserve the dialog padding, graph margins and shortcut lanes before
   // choosing cycle columns. A large SCC must not overflow its viewport.
   const hasBypasses = links.some((targets, from) => [...targets].some(to => depth[to] !== depth[from] + 1))
-  const cycleWidth = maxWidth - DEPENDENCY_DIALOG_GUTTER - 24 - (hasBypasses ? 56 : 0)
+  const cycleWidth = maxWidth - WHY_DIALOG_GUTTER - 24 - (hasBypasses ? 56 : 0)
   const rows = Map.groupBy(groups.map((members, id) => {
     const collapsible = members.length > 10
-    return { ...layoutDependencyGroup(id, members, graph.imports, cycleWidth, collapsible && !expandedCycles.has(id)), collapsible }
+    return { ...layoutWhyGroup(id, members, graph.imports, cycleWidth, collapsible && !expandedCycles.has(id)), collapsible }
   }), group => depth[group.id])
   const rowWidth = row => row.reduce((w, group) => w + group.width, 0) + Math.max(0, row.length - 1) * 20
   const width = [...rows.values()].reduce((w, row) => Math.max(w, rowWidth(row) + 24), 240)
@@ -136,12 +146,12 @@ export function layoutDependencyChains(graph, { maxWidth = 1280, expandedCycles 
   const edges = packageEdges.map(edge => {
     const bypassLane = depth[edge.to] === depth[edge.from] + 1 ? null : width + 8 + (bypasses++ % 4) * 10
     const ports = { bypassLane, fromIndex: fromPorts[edge.from]++, toIndex: toPorts[edge.to]++ }
-    return { ...edge, path: dependencyImportPath(boxes.get(edge.from), edge.fromPackage, boxes.get(edge.to), edge.toPackage, ports) }
+    return { ...edge, path: whyImportPath(boxes.get(edge.from), edge.fromPackage, boxes.get(edge.to), edge.toPackage, ports) }
   })
   return { boxes: [...boxes.values()], componentOf, edges, width: width + (bypasses ? 56 : 0), height: Math.max(0, y - 24) }
 }
 
-export function traceDependencyChains(layout, active) {
+export function traceWhy(layout, active) {
   if (active === null) return null
   const edges = new Set(), groups = new Set([active])
   // Ancestors and descendants are separate walks. A sibling's imports and a

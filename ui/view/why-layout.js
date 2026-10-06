@@ -1,8 +1,8 @@
-import { placeDependencyCycle } from './dependency-chain-order.js'
+import { placeWhyCycle } from './why-order.js'
 
-export const DEPENDENCY_CARD_WIDTH = 216
-export const DEPENDENCY_CARD_HEIGHT = 54
-export const DEPENDENCY_DIALOG_GUTTER = 32 // dialog borders, content padding and vertical scrollbar
+export const WHY_CARD_WIDTH = 216
+export const WHY_CARD_HEIGHT = 54
+export const WHY_DIALOG_GUTTER = 32 // dialog borders, content padding and vertical scrollbar
 const gapX = 20, gapY = 24, heading = 20, padding = 10
 
 function roundedPath(points) {
@@ -28,13 +28,13 @@ function importPort(box, id, incoming, index) {
     const x = box.x + box.width / 2 + offset
     return [[x, incoming ? box.y - 5 : box.y + box.height], [x, outerY]]
   }
-  const x = box.x + node.x + (incoming ? 0 : DEPENDENCY_CARD_WIDTH)
-  const y = box.y + node.y + DEPENDENCY_CARD_HEIGHT / 2 + (incoming ? offset / 2 : 0)
+  const x = box.x + node.x + (incoming ? 0 : WHY_CARD_WIDTH)
+  const y = box.y + node.y + WHY_CARD_HEIGHT / 2 + (incoming ? offset / 2 : 0)
   const lane = x + (incoming ? -7 - track * 2 : 3 + track * 2)
   return [[x + (incoming ? -4 : 0), y], [lane, y], [lane, outerY]]
 }
 
-export function dependencyImportPath(from, fromPackage, to, toPackage, { bypassLane, fromIndex, toIndex }) {
+export function whyImportPath(from, fromPackage, to, toPackage, { bypassLane, fromIndex, toIndex }) {
   const end = importPort(to, toPackage, true, toIndex), start = importPort(from, fromPackage, false, fromIndex)
   const [, y1] = start.at(-1), [x2, y2] = end.at(-1)
   // Only turn after leaving the tallest group in the source row. Shortcuts
@@ -45,7 +45,7 @@ export function dependencyImportPath(from, fromPackage, to, toPackage, { bypassL
 
 function cycleImportPath(a, b) {
   const dx = Math.sign(b.x - a.x), dy = Math.sign(b.y - a.y)
-  const h = DEPENDENCY_CARD_HEIGHT, w = DEPENDENCY_CARD_WIDTH
+  const h = WHY_CARD_HEIGHT, w = WHY_CARD_WIDTH
   // Opposite directions get distinct ports, so both arrowheads remain visible.
   if (dy === 0 && Math.abs(b.x - a.x) === w + gapX) {
     const y = a.y + h / 2 - dx * 6
@@ -67,15 +67,15 @@ function cycleImportPath(a, b) {
 
 // Cycles are small two-dimensional graphs, not stacks whose height grows with
 // every package. Keep fixed card dimensions and route edges between grid cells.
-export function layoutDependencyGroup(id, members, imports, maxWidth = 1184, collapsed = false) {
-  if (collapsed) return { id, members, collapsed, packages: [], internalEdges: [], width: DEPENDENCY_CARD_WIDTH + padding * 2, height: DEPENDENCY_CARD_HEIGHT }
+export function layoutWhyGroup(id, members, imports, maxWidth = 1184, collapsed = false) {
+  if (collapsed) return { id, members, collapsed, packages: [], internalEdges: [], width: WHY_CARD_WIDTH + padding * 2, height: WHY_CARD_HEIGHT }
   const cyclic = members.length > 1
-  const capacity = Math.max(1, Math.floor((maxWidth - padding * 2 + gapX) / (DEPENDENCY_CARD_WIDTH + gapX)))
+  const capacity = Math.max(1, Math.floor((maxWidth - padding * 2 + gapX) / (WHY_CARD_WIDTH + gapX)))
   const cols = cyclic ? Math.min(capacity, Math.max(2, Math.ceil(Math.sqrt(members.length / 2)))) : 1
   const pad = cyclic ? padding : 0, rows = Math.ceil(members.length / cols), top = cyclic ? heading : 0
-  const placement = cyclic ? placeDependencyCycle(members, imports, cols) : [{ id: members[0], col: 0, row: 0 }]
+  const placement = cyclic ? placeWhyCycle(members, imports, cols) : [{ id: members[0], col: 0, row: 0 }]
   const packages = placement.map(node => ({ id: node.id,
-    x: pad + node.col * (DEPENDENCY_CARD_WIDTH + gapX), y: pad + top + node.row * (DEPENDENCY_CARD_HEIGHT + gapY) }))
+    x: pad + node.col * (WHY_CARD_WIDTH + gapX), y: pad + top + node.row * (WHY_CARD_HEIGHT + gapY) }))
   const positions = new Map(packages.map(node => [node.id, node]))
   const internalEdges = []
   if (cyclic) {
@@ -86,6 +86,6 @@ export function layoutDependencyGroup(id, members, imports, maxWidth = 1184, col
     }
   }
   return { id, members, collapsed, packages, internalEdges,
-    width: cols * DEPENDENCY_CARD_WIDTH + (cols - 1) * gapX + pad * 2,
-    height: rows * DEPENDENCY_CARD_HEIGHT + (rows - 1) * gapY + pad * 2 + top }
+    width: cols * WHY_CARD_WIDTH + (cols - 1) * gapX + pad * 2,
+    height: rows * WHY_CARD_HEIGHT + (rows - 1) * gapY + pad * 2 + top }
 }

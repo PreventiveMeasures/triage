@@ -12,6 +12,7 @@
 // `refreshBundleGraphTopPkgs`, and `renderBundleSourceModal` from
 // this module.
 import { html, nothing } from 'lit'
+import { store } from '@rray/frontend/state-management'
 import { getPublicShare } from '../../client/managed/public-share.js'
 import { loadManagedBundle } from './client-managed.js'
 import { choose } from 'lit/directives/choose.js'
@@ -41,6 +42,8 @@ import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } fr
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
+import { bundleWhyPackageKey } from './bundle-why.js'
+import { openWhyDialog } from './dialogs/why-dialog.js'
 import { bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -336,17 +339,19 @@ export function setCurrentBundleGraphPrep(prep) {
 // panel — same `pkgColor` palette so the colors carry meaning
 // across both views (a `@noble/hashes` package shows the same hue
 // in the bundle-size chart and the canvas).
-function renderBundleSizeDistribution(items, sort) {
+function renderBundleSizeDistribution(items, sort, details) {
   // items: Array<{path, size, pkgDir}>; size may be 0 / null when the
   // bundle didn't carry per-source content (rare for sourcemaps).
   // `pkgDir` is the path's stasis package dir (undefined for sourcemap
   // bundles), so workspace packages bucket apart from their parent dir.
   const totalByPkg = new Map()
+  const packageKeys = new Map()
   let total = 0
   for (const { path, size, pkgDir } of items) {
     if (typeof size !== 'number' || size <= 0) continue
     const pkg = bundlePkgOf(path, { packageDir: pkgDir })
     totalByPkg.set(pkg, (totalByPkg.get(pkg) ?? 0) + size)
+    if (!packageKeys.has(pkg)) packageKeys.set(pkg, bundleWhyPackageKey(details, pkgDir))
     total += size
   }
   if (total === 0) return nothing
@@ -367,9 +372,13 @@ function renderBundleSizeDistribution(items, sort) {
         // When the name is clipped, show the full package key.
         const label = pkgLabel(pkg)
         const c = pkgColor(pkg)
+        const packageKey = packageKeys.get(pkg)
         return html`<li>
           <span class="bundles-dist-dot" style=${styleMap({ background: c })}></span>
-          <span class="bundles-dist-pkg" data-tooltip-truncated data-tooltip=${pkg === '__own__' ? nothing : pkg}>${label}</span>
+          ${packageKey ? html`<button type="button" class="bundles-dist-pkg" aria-haspopup="dialog"
+            aria-label=${`Show dependency chains for ${label}`} @click=${() => openBundleWhy(details, packageKey)}
+            data-tooltip-truncated data-tooltip=${pkg}>${label}</button>`
+            : html`<span class="bundles-dist-pkg" data-tooltip-truncated data-tooltip=${pkg === '__own__' ? nothing : pkg}>${label}</span>`}
           <span class="bundles-dist-bar-row" aria-hidden="true">
             <span class="bundles-dist-bar-fill" style=${styleMap({ width: `${pct}%`, background: c })}></span>
           </span>
@@ -379,6 +388,15 @@ function renderBundleSizeDistribution(items, sort) {
       })}
     </ul>
   </div>`
+}
+
+function openBundleWhy(details, packageKey) {
+  const team = state.currentManagedTeam, workspace = state.currentWorkspace
+  const session = state.managedSession && store(state.managedSession)
+  return openWhyDialog({ details, packageKey, isCurrent: () => state.currentView === 'bundles'
+    && state.selectedBundle === details.integrity && (state.bundleDetails && store(state.bundleDetails)) === store(details)
+    && state.currentWorkspace === workspace && state.currentManagedTeam === team
+    && (state.managedSession && store(state.managedSession)) === session })
 }
 
 // Sources panel for the bundles details view — shared between the
@@ -402,7 +420,7 @@ function renderBundleSizeDistribution(items, sort) {
 // weigh in the Packages column and list among the Files like any other
 // file, but are counted apart from Sources and open no source viewer:
 // there is no source to show.
-function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, resources = null } = {}) {
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, resources = null, details = null } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
   // the stripped paths are only for displaying the file list.
@@ -426,7 +444,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // empty-state so the Packages column doesn't render as a card
   // with a header and a yawning blank body.
   const packagesSort = state.bundleOverviewPackagesSort
-  const distContent = renderBundleSizeDistribution(distItems, packagesSort)
+  const distContent = renderBundleSizeDistribution(distItems, packagesSort, details)
   const distTpl = distContent === nothing
     ? html`<p class="bundles-overview-col-empty">No size information for this bundle's sources.</p>`
     : distContent
@@ -2399,7 +2417,7 @@ function renderBundleDetails(entry, details) {
     `
     // Stasis records authoritative package boundaries — feed them in so
     // workspace packages bucket apart from their shared parent dir.
-    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, { bundleSize: details.size, resources })
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, { bundleSize: details.size, resources, details })
   }
   // Stasis without a parsed bundle — likely a brotli decompression
   // that failed silently (no error path filled in). Fall back to

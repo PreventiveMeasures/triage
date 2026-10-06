@@ -9,7 +9,7 @@ import { renderMatrixPanel } from '../ui/view/graph/matrix-panel.js'
 import { dependencyNetwork } from '../ui/view/graph/package-network.js'
 import { layoutPackageDependencies } from '../ui/view/graph/dependency-layout.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
-import { bundleDependencyChains, layoutDependencyChains } from '../ui/view/bundle-dependency-chains.js'
+import { bundleWhy, layoutWhy } from '../ui/view/bundle-why.js'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const cli = '@react-native-community/cli-tools'
@@ -74,7 +74,7 @@ test('release-checker reads stay visible but cannot close grid or dependency cyc
   }
 })
 
-test('full and cached advisory graphs exclude release checks but preserve ordinary imports between the same packages', async () => {
+test('full and cached why graphs exclude release checks but preserve ordinary imports between the same packages', async () => {
   for (const ordinary of [false, true]) {
     const details = { kind: 'stasis', integrity: 'release-checker', size: 1, bundle: new Bundle({
       modules: new Map([
@@ -85,9 +85,9 @@ test('full and cached advisory graphs exclude release checks but preserve ordina
     }) }
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
-      const graph = bundleDependencyChains(input, { packageKey: 'react-native', version: '1.0.0' })
+      const graph = bundleWhy(input, { packageKey: 'react-native', version: '1.0.0' })
       assert.equal(graph.imports.get(`node_modules/${cli}`)?.has('node_modules/react-native') ?? false, ordinary)
-      const result = layoutDependencyChains(graph)
+      const result = layoutWhy(graph)
       assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinary ? 1 : 0)
       assert.equal(result.boxes.length, 1)
     }

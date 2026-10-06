@@ -15,7 +15,7 @@ import { sourceNpmIcon } from './source-file-icon.js'
 import osvIcon from './osv-icon.svg'
 import './bundle-scope-selector.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
-import { openDependencyChainsDialog } from './dialogs/dependency-chains-dialog.js'
+import { openWhyDialog } from './dialogs/why-dialog.js'
 
 const ADVISORY_SOURCES = new Map([
   ['registry', { label: 'Source: npm registry', icon: sourceNpmIcon }],
@@ -382,7 +382,7 @@ function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurr
       ${versions.length > 0 ? html`<span class="bundle-advisories-section-versions">
         ${versions.map(version => html`<button type="button" class="bundle-advisories-version" aria-haspopup="dialog"
           aria-label=${`Why is ${pkg}@${version} here?`}
-          @click=${() => openDependencyChainsDialog({ details, packageKey: pkg, version, reason: advisoryScope(details).selected, isCurrent })}>${version}</button>`)}
+          @click=${() => openWhyDialog({ details, packageKey: pkg, version, reason: advisoryScope(details).selected, isCurrent })}>${version}</button>`)}
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">
