@@ -1463,7 +1463,7 @@ test('db: teams — create/list/delete, repo (+path) & member (+perms) links, FK
   const tId = randomUUID()
   assert.equal(await db.createTeam(tId, 'Blue', now), true)
   assert.equal(await db.createTeam(randomUUID(), 'Blue', now), false) // name taken (UNIQUE)
-  assert.deepEqual(await db.getTeam(tId), { id: tId, slug: tId.split('-').at(-1), name: 'Blue' })
+  assert.deepEqual(await db.getTeam(tId), { id: tId, slug: tId.split('-').at(-1), name: 'Blue', hidden: false })
   assert.deepEqual(await db.listUserOptions(), [{ id: uid, login: 'alice', name: null, role: 'none' }])
 
   await db.setTeamRepo(tId, 7, 'src/app')

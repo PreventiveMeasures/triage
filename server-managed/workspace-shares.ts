@@ -48,7 +48,7 @@ export interface WorkspaceShareStore {
 function shareQueries(db: ManagedSql) {
   const manager = db.prepare(`SELECT 1 FROM managed_session s
     JOIN managed_user u ON u.id = s.user_id
-    JOIN managed_team t ON t.id = ?
+    JOIN managed_team t ON t.id = ? AND t.hidden = 0
     WHERE s.id = ? AND s.expires_at > ? AND (u.role = 'admin' OR (u.role = 'manage'
       AND EXISTS (SELECT 1 FROM managed_team_user tu WHERE tu.user_id = u.id AND tu.team_id = t.id)))`)
   const insert = db.prepare(`INSERT INTO managed_workspace_share (token_hash, team_id, created_by, created_at, dependencies, security)
@@ -63,12 +63,12 @@ function shareQueries(db: ManagedSql) {
     WHERE s.id = ? AND s.expires_at > ? AND u.role IN ('manage', 'admin')`)
   const all = db.prepare(`SELECT s.token_hash AS id, s.created_at AS createdAt, u.login AS createdBy, s.dependencies, s.security,
     t.id AS teamId, t.slug AS teamSlug, t.name AS teamName FROM managed_workspace_share s
-    JOIN managed_user u ON u.id = s.created_by JOIN managed_team t ON t.id = s.team_id
+    JOIN managed_user u ON u.id = s.created_by JOIN managed_team t ON t.id = s.team_id AND t.hidden = 0
     WHERE ? = 'admin' OR EXISTS (SELECT 1 FROM managed_team_user tu WHERE tu.user_id = ? AND tu.team_id = s.team_id)
     ORDER BY t.name, t.id, s.created_at DESC, s.token_hash`)
   const shareGrant = `FROM managed_workspace_share s
     JOIN managed_user u ON u.id = s.created_by
-    JOIN managed_team t ON t.id = s.team_id
+    JOIN managed_team t ON t.id = s.team_id AND t.hidden = 0
     WHERE s.token_hash = ? AND (u.role = 'admin' OR (u.role = 'manage'
       AND EXISTS (SELECT 1 FROM managed_team_user tu WHERE tu.user_id = u.id AND tu.team_id = s.team_id)))`
   const share = db.prepare(`SELECT t.id, t.slug, t.name, s.dependencies, s.security ${shareGrant}`)

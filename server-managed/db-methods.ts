@@ -278,6 +278,7 @@ export interface AdminTeam {
   id: string
   slug: string
   name: string
+  hidden: boolean
   repos: TeamRepoLink[]
   members: TeamMember[]
 }
@@ -442,26 +443,28 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // taken); renameTeam changes a team's name ('name-taken' iff another team
   // already has it, 'not-found' iff no such team, 'ok' otherwise — same name is
   // idempotent); deleteTeam drops it (cascading its links); listTeams returns
-  // every team with its repos + members inlined; listUserOptions is the id+login+name
+  // every team (including hidden ones) with its repos + members inlined; listUserOptions is the id+login+name
   // set for the member picker. The set*/remove* pairs maintain the link tables:
   // setTeamRepo adds a path (whole repo replaces paths); setTeamMember upserts a
   // membership + its visibility permissions (each resolves true iff a row was
   // written / removed; the caller validates the team/repo/user exist first).
   createTeam(id: string, name: string, now: number): Promise<boolean>
   renameTeam(id: string, name: string, now: number): Promise<'ok' | 'name-taken' | 'not-found'>
+  // Hiding preserves links but disables all grants and workspace access.
+  setTeamHidden(id: string, hidden: boolean, now: number): Promise<boolean>
   deleteTeam(id: string): Promise<boolean>
-  getTeam(id: string): Promise<{ id: string; slug: string; name: string } | null>
+  getTeam(id: string): Promise<{ id: string; slug: string; name: string; hidden: boolean } | null>
   listTeams(): Promise<AdminTeam[]>
   listUserOptions(): Promise<UserOption[]>
   // Current grants for manager content reads, writes, and repository pickers.
   listRepoScopesForUser(userId: string): Promise<{ repoId: number; path: string | null }[]>
-  // The teams a given user belongs to (name-sorted), each with reports and
+  // The non-hidden teams a given user belongs to (name-sorted), each with reports and
   // bundles attached to that team's repos — for that user's own sidebar Teams section.
   // Any user; only their own memberships.
   listTeamsForUser(userId: string): Promise<UserTeam[]>
   getUserTeamFeedSnapshot(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; revision: string; teams: UserTeam[]; catalog: number } | null>
   // Whether `userId` may read `reportId`: true iff the report's repo belongs to
-  // a team the user is a member of. Backs the team-scoped report view endpoint.
+  // a non-hidden team the user is a member of. Backs the team-scoped report view endpoint.
   userCanReadReport(userId: string, reportId: string): Promise<boolean>
   // The viewer's effective visibility permissions for a report, OR'd across the
   // teams (holding the report's repo) the user belongs to — drives the content
@@ -608,6 +611,7 @@ function prepareStatements(db: ManagedSql) {
          LEFT JOIN managed_bundle b ON b.id = r.bundle_id
         WHERE (? IS NULL OR r.uploaded_by = ? OR EXISTS (
           SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
           WHERE tr.repo_id = r.repo_id AND tu.user_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}))
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
@@ -629,6 +633,7 @@ function prepareStatements(db: ManagedSql) {
            FROM managed_report r JOIN requested q ON q.id = r.id
            JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
            JOIN managed_team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+           JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
           GROUP BY r.id
        )
        SELECT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
@@ -640,7 +645,8 @@ function prepareStatements(db: ManagedSql) {
         WHERE ? = 1 OR (? = 1 AND r.uploaded_by = ?)
            OR (g.id IS NOT NULL AND (? = 1 OR r.visible = 1))`,
     ),
-    selectTeamAccessStmt: db.prepare(`SELECT 1 FROM managed_team_user WHERE user_id = ? AND team_id = ?`),
+    selectTeamAccessStmt: db.prepare(`SELECT 1 FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
+      WHERE tu.user_id = ? AND tu.team_id = ? AND t.hidden = 0`),
     selectTeamRepositoriesStmt: db.prepare(
       `SELECT tr.repo_id AS repoId, sr.full_name AS github, tr.path AS path
          FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
@@ -651,6 +657,7 @@ function prepareStatements(db: ManagedSql) {
               r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
               tu.view_dependencies AS dependencies, tu.view_security AS security
          FROM managed_team_user tu
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
@@ -740,27 +747,33 @@ function prepareStatements(db: ManagedSql) {
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
         WHERE (? IS NULL OR (b.uploaded_by = ? OR EXISTS (
           SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
           WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?)))
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     selectBundleReadableStmt: db.prepare(
       `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR EXISTS (
           SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
           WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?))`,
     ),
     selectReadableBundleIdsStmt: db.prepare(
       `SELECT b.id FROM managed_bundle b WHERE b.id IN (SELECT value FROM json_each(?)) AND (b.uploaded_by = ? OR EXISTS (
           SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
           WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?))`,
     ),
     selectRepoReadableStmt: db.prepare(
       `SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
         WHERE tr.repo_id = ? AND tu.user_id = ? LIMIT 1`,
     ),
     selectRepoPathReadableStmt: db.prepare(
       `WITH r(repo_directory) AS (VALUES (?))
         SELECT 1 FROM r JOIN managed_team_repo tr ON tr.repo_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}
-        JOIN managed_team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ? LIMIT 1`,
+        JOIN managed_team_user tu ON tu.team_id = tr.team_id
+        JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+        WHERE tu.user_id = ? LIMIT 1`,
     ),
     deleteBundleStmt: db.prepare(`DELETE FROM managed_bundle WHERE id = ?`),
     setBundleRepoStmt: db.prepare(`UPDATE managed_bundle SET repo_id = ?, repo_directory = ? WHERE id = ?`),
@@ -770,6 +783,7 @@ function prepareStatements(db: ManagedSql) {
     linkReportsToBundleStmt: db.prepare(
       `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
        AND (? IS NULL OR r.uploaded_by = ? OR EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
          WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}))`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
@@ -779,19 +793,21 @@ function prepareStatements(db: ManagedSql) {
       SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_team WHERE slug = candidate.slug) THEN id ELSE slug END,
              ?, ?, ? FROM candidate`),
     deleteTeamStmt: db.prepare(`DELETE FROM managed_team WHERE id = ?`),
-    selectTeamStmt: db.prepare(`SELECT id, slug, name FROM managed_team WHERE id = ?`),
+    selectTeamStmt: db.prepare(`SELECT id, slug, name, hidden FROM managed_team WHERE id = ?`),
     selectTeamByNameStmt: db.prepare(`SELECT id FROM managed_team WHERE name = ?`),
     renameTeamStmt: db.prepare(`UPDATE managed_team SET name = ?, updated_at = ? WHERE id = ?`),
-    selectTeamsStmt: db.prepare(`SELECT id, slug, name FROM managed_team ORDER BY name ASC`),
+    setTeamHiddenStmt: db.prepare(`UPDATE managed_team SET hidden = ?, updated_at = ? WHERE id = ?`),
+    selectTeamsStmt: db.prepare(`SELECT id, slug, name, hidden FROM managed_team ORDER BY name ASC`),
     selectTeamsForUserStmt: db.prepare(
       `SELECT t.id AS id, t.slug AS slug, t.name AS name,
               tu.view_dependencies AS dependencies, tu.view_security AS security
          FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
-        WHERE tu.user_id = ? ORDER BY t.name ASC, t.id ASC`,
+        WHERE tu.user_id = ? AND t.hidden = 0 ORDER BY t.name ASC, t.id ASC`,
     ),
     selectUserTeamScopesStmt: db.prepare(
       `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, tr.path AS path, sr.full_name AS fullName
          FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
          JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
         WHERE tu.user_id = ? ORDER BY tr.team_id, tr.repo_id, tr.path`,
     ),
@@ -803,6 +819,7 @@ function prepareStatements(db: ManagedSql) {
               tu.view_dependencies AS dependencies, tu.view_security AS security,
               (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
          FROM managed_team_user tu
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
@@ -815,6 +832,7 @@ function prepareStatements(db: ManagedSql) {
       `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.slug AS slug, b.integrity AS integrity,
               b.filename AS filename, b.kind, b.visible, b.byte_size AS byteSize, b.repo_id AS repoId, b.repo_directory AS repoDirectory, sr.full_name AS repoFullName, b.uploaded_at
          FROM managed_team_user tu
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_bundle b ON b.repo_id = tr.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
          JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
@@ -823,19 +841,23 @@ function prepareStatements(db: ManagedSql) {
     ),
     selectUserRepoScopesStmt: db.prepare(
       `SELECT DISTINCT tr.repo_id AS repoId, NULLIF(tr.path, '') AS path
-         FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id WHERE tu.user_id = ?`,
+         FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+        WHERE tu.user_id = ?`,
     ),
     // A report is readable iff one of the user's team scopes contains it.
     selectReportReadableStmt: db.prepare(
       `SELECT 1 FROM managed_report r
          JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          JOIN managed_team_user tu ON tu.team_id = tr.team_id
+        JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
         WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
     ),
     selectBundleSecurityStmt: db.prepare(
       `SELECT 1 FROM managed_bundle b
          JOIN managed_team_repo tr ON tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
          JOIN managed_team_user tu ON tu.team_id = tr.team_id
+        JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
         WHERE b.id = ? AND tu.user_id = ? AND tu.view_security = 1
           AND (? IS NULL OR tr.team_id = ?) LIMIT 1`,
     ),
@@ -847,6 +869,7 @@ function prepareStatements(db: ManagedSql) {
          FROM managed_report r
          JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          JOIN managed_team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
         WHERE r.id = ?`,
     ),
     selectUserOptionsStmt: db.prepare(`SELECT id, login, name, role FROM managed_user ORDER BY login ASC`),
@@ -1296,7 +1319,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
   }
 }
 
-type TeamRow = { id: string; slug: string; name: string }
+type TeamRow = { id: string; slug: string; name: string; hidden: number }
 type TeamRepoRow = { teamId: string; repoId: number; fullName: string; path: string | null }
 type TeamMemberRow = { teamId: string; userId: string; login: string; viewDependencies: number; viewSecurity: number }
 
@@ -1305,7 +1328,7 @@ type TeamMemberRow = { teamId: string; userId: string; login: string; viewDepend
 // workspace has.
 function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql) {
   const {
-    insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, deleteTeamStmt, selectTeamStmt,
+    insertTeamStmt, selectTeamByNameStmt, renameTeamStmt, setTeamHiddenStmt, deleteTeamStmt, selectTeamStmt,
     selectUserRepoScopesStmt, selectTeamsStmt, selectTeamsForUserStmt, selectUserTeamReportsStmt, selectUserTeamBundlesStmt, selectReportReadableStmt,
     selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
     upsertTeamRepoStmt, deleteTeamRepoStmt, deleteTeamRepoPathStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
@@ -1325,9 +1348,12 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
     async deleteTeam(id: string): Promise<boolean> {
       return Number((await deleteTeamStmt.run(id)).changes) > 0
     },
-    async getTeam(id: string): Promise<{ id: string; slug: string; name: string } | null> {
+    async setTeamHidden(id: string, hidden: boolean, now: number): Promise<boolean> {
+      return Number((await setTeamHiddenStmt.run(hidden ? 1 : 0, now, id)).changes) > 0
+    },
+    async getTeam(id: string): Promise<{ id: string; slug: string; name: string; hidden: boolean } | null> {
       const row = (await selectTeamStmt.get(id)) as TeamRow | undefined
-      return row == null ? null : { id: row.id, slug: row.slug, name: row.name }
+      return row == null ? null : { id: row.id, slug: row.slug, name: row.name, hidden: row.hidden === 1 }
     },
     async listUserOptions(): Promise<UserOption[]> {
       return ((await selectUserOptionsStmt.all()) as UserOption[]).map((u) => ({ id: u.id, login: u.login, name: u.name, role: u.role }))
@@ -1408,6 +1434,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       }
       return teams.map((t) => ({
         id: t.id, slug: t.slug, name: t.name,
+        hidden: t.hidden === 1,
         repos: reposByTeam.get(t.id) ?? [],
         members: membersByTeam.get(t.id) ?? [],
       }))

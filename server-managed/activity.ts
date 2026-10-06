@@ -89,6 +89,7 @@ const managerSource = `SELECT ${triageFields},
   LEFT JOIN managed_selected_repo p ON p.repo_id = r.repo_id
   WHERE EXISTS (
     SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+    JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
     WHERE tu.user_id = :userId AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')}
   )
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
@@ -98,6 +99,7 @@ const managerSource = `SELECT ${triageFields},
   LEFT JOIN managed_selected_repo p ON p.repo_id = b.repo_id
   WHERE a.report_id IS NULL AND EXISTS (
     SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+    JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
     WHERE tu.user_id = :userId AND tr.repo_id = b.repo_id AND ${withinTeamPath('b.repo_directory')}
   )
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId, a.action, a.repo, a.report_id AS reportId,
@@ -106,6 +108,7 @@ const managerSource = `SELECT ${triageFields},
     AND NOT EXISTS (SELECT 1 FROM managed_report WHERE id = a.report_id)
     AND NOT EXISTS (SELECT 1 FROM managed_bundle WHERE id = a.bundle_id)
     AND EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+      JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
       WHERE tu.user_id = :userId AND tr.repo_id = a.repo_id
       AND ${withinTeamPath('a.repo_directory')})`
 
@@ -148,6 +151,7 @@ export function activityMethods(db: ManagedSql): ActivityStore {
   const reports = db.prepare(`SELECT r.id AS reportId, r.filename AS report, p.full_name AS repo
     FROM managed_report r JOIN managed_selected_repo p ON p.repo_id = r.repo_id
     WHERE EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+      JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
       WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')})
     ORDER BY r.uploaded_at DESC, r.id`)
   return {

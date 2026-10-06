@@ -41,6 +41,7 @@
 //   GET  /api/admin/teams        → admin teams (+ members/repos) + pickers | 401/403
 //   POST /api/admin/teams        → admin creates a team | 401/403/409
 //   POST /api/admin/teams/rename → admin renames a team | 401/403/404/409
+//   POST /api/admin/teams/set-hidden → admin hides/restores a team | 401/403/404
 //   POST /api/admin/teams/delete → admin deletes a team | 401/403/404
 //   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
@@ -131,6 +132,7 @@ const MY_REPORT_TRIAGE_HISTORY_SUFFIX = '/triage/history'
 const ADMIN_TEAMS_PATH = '/api/admin/teams'
 const TEAM_DELETE_PATH = '/api/admin/teams/delete'
 const TEAM_RENAME_PATH = '/api/admin/teams/rename'
+const TEAM_SET_HIDDEN_PATH = '/api/admin/teams/set-hidden'
 const TEAM_SET_REPO_PATH = '/api/admin/teams/set-repo'
 const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
@@ -2009,6 +2011,22 @@ async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps:
   sendJson(res, 200, { ok: true, name })
 }
 
+// Hidden teams retain their configuration but grant no access or sidebar presence.
+async function handleSetTeamHidden(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await adminMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const teamId = (body as { teamId?: unknown } | null)?.teamId
+  const hidden = (body as { hidden?: unknown } | null)?.hidden
+  if (typeof teamId !== 'string' || typeof hidden !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const team = await deps.db.getTeam(teamId)
+  if (await readAdminSession(res, deps, cookie) == null) return
+  if (!(await deps.db.setTeamHidden(teamId, hidden, Date.now()))) { sendJson(res, 404, { error: 'no-team' }); return }
+  if (team?.hidden !== hidden) await activity(deps, s.user, 'access', `${hidden ? 'hid' : 'restored'} team ${team?.name ?? teamId}`)
+  sendJson(res, 200, { ok: true, hidden })
+}
+
 // POST /api/admin/teams/delete — drop a team (its links cascade). Body { teamId }.
 async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie)
@@ -2435,11 +2453,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method === 'POST') { await handleCreateTeam(req, res, deps, cookie); return }
       send405(res, 'GET, POST'); return
     }
-    if (path === TEAM_DELETE_PATH || path === TEAM_RENAME_PATH || path === TEAM_SET_REPO_PATH || path === TEAM_REMOVE_REPO_PATH
+    if (path === TEAM_DELETE_PATH || path === TEAM_RENAME_PATH || path === TEAM_SET_HIDDEN_PATH || path === TEAM_SET_REPO_PATH || path === TEAM_REMOVE_REPO_PATH
       || path === TEAM_SET_MEMBER_PATH || path === TEAM_REMOVE_MEMBER_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       if (path === TEAM_DELETE_PATH) { await handleDeleteTeam(req, res, deps, cookie); return }
       if (path === TEAM_RENAME_PATH) { await handleRenameTeam(req, res, deps, cookie); return }
+      if (path === TEAM_SET_HIDDEN_PATH) { await handleSetTeamHidden(req, res, deps, cookie); return }
       if (path === TEAM_SET_REPO_PATH) { await handleSetTeamRepo(req, res, deps, cookie); return }
       if (path === TEAM_REMOVE_REPO_PATH) { await handleRemoveTeamRepo(req, res, deps, cookie); return }
       if (path === TEAM_SET_MEMBER_PATH) { await handleSetTeamMember(req, res, deps, cookie); return }
