@@ -17,6 +17,7 @@ const state = {
   managedReports: [],
   reports: [],
   triage: new Map(),
+  managedIssues: new Map(),
 }
 let notifier = () => {}
 let renders = 0, saves = 0
@@ -30,7 +31,7 @@ let annotationCalls = [], annotationResult = {}
 const pushes = () => calls.filter((c) => c.fetch === undefined)
 
 mock.module('../client/index.js', { namedExports: {
-  state, bucketOf, setEntry,
+  state, bucketOf, setEntry, isManagedUiMode: () => state.serverMode === 'managed' && !state.localMode,
   setManagedTriageChangeNotifier: (fn) => { notifier = fn },
   saveTriage: () => { saves++; notifier(); return Promise.resolve() },
 } })
@@ -47,7 +48,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   },
   pushReportTriage: (id, entries, csrfToken, teamId) => { calls.push({ id, entries, csrfToken, ...(teamId ? { teamId } : {}) }); return Promise.resolve(typeof pushStatus === 'function' ? pushStatus() : pushStatus) },
 } })
-mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedFixes: teamId => { invalidations.push(teamId) } } })
+mock.module('../ui/view/managed-pull-requests.js', { namedExports: { refreshManagedIssueMetadata() {}, invalidateManagedFixes: teamId => { invalidations.push(teamId) } } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => { renders++ } } })
 mock.method(console, 'warn', () => {})
 const { createManagedAnnotationRead, hydrateManagedReportTriage, initManagedTriagePush, resetManagedTriage } = await import('../ui/view/managed-triage.js')
@@ -682,4 +683,39 @@ test('managed shared ignored persists and hydrates without losing dependency rep
   assert.deepEqual(state.triage.get('x'), { triage: 'ignored', ignoredReports: ['dependency.json'] })
   await drain()
   assert.equal(pushes().length, 1)
+})
+
+
+test('issue hydration and live updates stay separate from manual triage and never push automatic fixes', async () => {
+  state.currentManagedTeam = 'team'
+  state.managedReports = [{ id: 'A' }]
+  state.reports = [{ _managedReportId: 'A', groups: [[{ id: 'x' }]] }]
+  const url = 'https://github.com/o/r/issues/1'
+  annotationResult = { A: { entries: { x: { fix: 'manual override' } }, issues: { x: { url, autoFix: 'https://github.com/o/r/pull/2' } } } }
+  assert.equal(await hydrateManagedReportTriage('A', { readAnnotations: createManagedAnnotationRead('team') }), true)
+  assert.equal(state.triage.get('x').fix, 'manual override')
+  assert.equal(state.managedIssues.get('x').autoFix, 'https://github.com/o/r/pull/2')
+  annotationResult.A.issues.x.autoFix = 'https://github.com/o/r/pull/3'
+  assert.equal(await refreshManagedReportTriage('A', { readAnnotations: createManagedAnnotationRead('team') }), true)
+  assert.equal(state.managedIssues.get('x').autoFix, 'https://github.com/o/r/pull/3')
+  assert.equal(state.triage.get('x').fix, 'manual override')
+  await drain()
+  assert.deepEqual(pushes(), [])
+  resetManagedTriage()
+  assert.equal(state.managedIssues.size, 0, 'switching scopes clears issue-derived state')
+})
+
+test('an annotation read cannot erase an issue created while it was in flight', async () => {
+  state.currentManagedTeam = 'team'
+  state.managedReports = [{ id: 'A' }]
+  state.reports = [{ _managedReportId: 'A', groups: [[{ id: 'x' }]] }]
+  const response = Promise.withResolvers()
+  annotationResult = () => response.promise
+  const hydrated = hydrateManagedReportTriage('A', { readAnnotations: createManagedAnnotationRead('team') })
+  await settle()
+  const created = { url: 'https://github.com/o/r/issues/1', autoFix: null }
+  state.managedIssues.set('x', created)
+  response.resolve({ A: { entries: {}, issues: {} } })
+  assert.equal(await hydrated, true)
+  assert.deepEqual(state.managedIssues.get('x'), created)
 })

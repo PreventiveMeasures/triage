@@ -8,6 +8,7 @@ import { filterReportData, projectFinding } from '../common/managed/report-filte
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import { triageWireEntry } from './triage-response.ts'
+import { visibleManagedIssues } from './managed-issues.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 
 type Finding = Record<string, unknown>
@@ -217,9 +218,11 @@ export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snaps
     : new Map([[reportId, await teamReportVisibility(db, store, snapshot, reportId)]])
   const ids = new Set<string>()
   for (const report of visible.values()) for (const id of report.ids) ids.add(id)
-  const { triage, comments } = await db.getAnnotations([...ids])
+  const { triage, comments, issues: savedIssues } = await db.getAnnotations([...ids])
+  const issues = Object.fromEntries(visibleManagedIssues(savedIssues, snapshot)
+    .map(issue => [issue.findingId, { url: issue.issueUrl!, autoFix: issue.autoFixUrl }]))
   const entries = Object.fromEntries(triage.map(row => [row.findingId, triageWireEntry(row)]))
-  const annotated = new Set([...triage.map(row => row.findingId), ...comments.map(comment => comment.findingId)])
+  const annotated = new Set([...triage.map(row => row.findingId), ...comments.map(comment => comment.findingId), ...Object.keys(issues)])
   const reports = Object.fromEntries([...visible].map(([id, report]) => [id, [...report.ids].filter(finding => annotated.has(finding))]))
-  return { reports, entries, comments }
+  return { reports, entries, comments, issues }
 }

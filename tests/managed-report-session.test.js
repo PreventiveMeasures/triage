@@ -43,10 +43,10 @@ test('team annotation transport validates batches and filters report views lazil
     return Promise.resolve(Response.json(body))
   })
   const read = await fetchTeamAnnotations('team id', { signal: controller.signal })
-  assert.deepEqual(read('r'), { entries: { f: null, shared: body.entries.shared }, comments: body.comments.slice(0, 2) })
-  assert.deepEqual(read('s'), { entries: { g: body.entries.g, shared: body.entries.shared }, comments: [body.comments[0], body.comments[2]] })
+  assert.deepEqual(read('r'), { entries: { f: null, shared: body.entries.shared }, comments: body.comments.slice(0, 2), issues: {} })
+  assert.deepEqual(read('s'), { entries: { g: body.entries.g, shared: body.entries.shared }, comments: [body.comments[0], body.comments[2]], issues: {} })
   assert.equal(read('r').comments[0], read('s').comments[0], 'shared comment bodies stay shared in memory')
-  assert.deepEqual(read('empty'), { entries: {}, comments: [] })
+  assert.deepEqual(read('empty'), { entries: {}, comments: [], issues: {} })
   assert.equal(read('missing'), null)
   assert.equal(read('toString'), null, 'inherited properties are not reports')
   for (body of [{}, { reports: [], entries: {}, comments: [] }, { reports: { r: [null] }, entries: {}, comments: [] },
@@ -66,7 +66,7 @@ test('focused annotation transport encodes its selector and forwards cancellatio
     return Promise.resolve(Response.json({ reports: { [reportId]: [] }, entries: {}, comments: [] }))
   })
   const read = await fetchTeamAnnotations('team id', { signal: controller.signal, reportId })
-  assert.deepEqual(read(reportId), { entries: {}, comments: [] })
+  assert.deepEqual(read(reportId), { entries: {}, comments: [], issues: {} })
   assert.equal(read('unrelated'), null)
 })
 
@@ -102,7 +102,17 @@ test('repeated scans reuse projections while preserving comment order and batch 
   assert.deepEqual(read('first').comments, body.comments, 'wire order wins over report finding order; repeated IDs do not duplicate comments')
   assert.deepEqual(read('restricted').comments, [body.comments[1], body.comments[3]])
   assert.deepEqual(read('restricted').entries, { b: body.entries.b })
-  assert.deepEqual(read('empty'), { entries: {}, comments: [] })
+  assert.deepEqual(read('empty'), { entries: {}, comments: [], issues: {} })
   const next = await fetchTeamAnnotations('team')
   assert.notEqual(next('first'), read('first'), 'a later batch cannot inherit stale projections')
+})
+
+
+test('annotation projection includes saved issues only for findings visible in that report', async t => {
+  const issue = { url: 'https://github.com/o/r/issues/1', autoFix: 'https://github.com/o/r/pull/2' }
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ reports: { a: ['f'], b: ['other'] },
+    entries: {}, comments: [], issues: { f: issue, hidden: { ...issue, url: 'https://github.com/o/r/issues/99' } } })))
+  const read = await fetchTeamAnnotations('team')
+  assert.deepEqual(read('a').issues, { f: issue })
+  assert.deepEqual(read('b').issues, {})
 })

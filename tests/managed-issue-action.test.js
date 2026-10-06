@@ -15,7 +15,7 @@ function templates(value) {
   return value?.strings ? [value, ...value.values.flatMap(templates)] : []
 }
 
-function issueAction(t, overrides = {}, findingOverrides = {}) {
+function cardTemplates(t, overrides = {}, findingOverrides = {}) {
   const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team',
     managedSession: { id: 'user', login: 'author', role: 'view', csrfToken: 'csrf' }, ...overrides }
   const previous = Object.fromEntries(Object.keys(next).map(key => [key, state[key]]))
@@ -23,7 +23,11 @@ function issueAction(t, overrides = {}, findingOverrides = {}) {
   t.after(() => Object.assign(state, previous))
   const finding = { id: 'finding', severity: 'high', title: 'Finding title', description: 'Finding description',
     file: 'src/file.js', repo: { github: 'https://github.com/o/r' }, _managedReportId: 'report', ...findingOverrides }
-  return templates(findingCardInnerTemplate([finding])).find(template => template.strings[0].includes('class="mark-issue"'))
+  return templates(findingCardInnerTemplate([finding]))
+}
+
+function issueAction(t, overrides, findingOverrides) {
+  return cardTemplates(t, overrides, findingOverrides).find(template => template.strings[0].includes('class="mark-issue"'))
 }
 
 test('managed issue action has no native creation URL for modified clicks or Open Link in New Tab', t => {
@@ -66,3 +70,18 @@ test('managed issue targets use finding/report metadata rather than unrelated lo
   assert.equal(new URL(assigned.values[0]).pathname, '/o/assigned/issues/new')
   assert.equal(issueAction(t, { repoUrl: 'o/global' }, { ...finding, repo: undefined, _repoFallback: null }), undefined)
 })
+
+
+for (const manual of ['', 'https://github.com/o/r/pull/2', 'https://github.com/o/r/pull/3']) {
+  test(`saved issue replaces creation and renders automatic Fix alongside manual ${manual || '(empty)'}`, t => {
+    const autoFix = 'https://github.com/o/r/pull/3', url = 'https://github.com/o/r/issues/1'
+    const rendered = cardTemplates(t, { triage: new Map([['finding', { fix: manual }]]), managedIssues: new Map([['finding', { url, autoFix }]]) })
+    assert.equal(rendered.some(template => template.strings[0].includes('class="mark-issue"')), false)
+    const links = rendered.filter(template => template.strings.join('').includes('<managed-fix-link'))
+    assert.ok(links.some(template => template.strings.join('').includes('Issue:') && template.values.includes(url)))
+    const auto = links.filter(template => template.strings.join('').includes('Fix from issue:'))
+    assert.equal(auto.length, manual === autoFix ? 0 : 1, 'matching links are shown once')
+    if (auto.length > 0) assert.ok(auto[0].values.includes(autoFix))
+    if (manual) assert.ok(links.some(template => template.values.includes(manual)))
+  })
+}

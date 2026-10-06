@@ -167,9 +167,10 @@ export function teamQuery(teamId) { return teamId ? `?team=${encodeURIComponent(
 export async function fetchTeamAnnotations(teamId, { reportId: selectedReportId, ...options } = {}) {
   const query = selectedReportId == null ? '' : `?reportId=${encodeURIComponent(selectedReportId)}`
   const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/annotations${query}`, null, options)
-  const { reports, entries, comments } = body ?? {}
+  const { reports, entries, comments, issues = {} } = body ?? {}
   if (!reports || typeof reports !== 'object' || Array.isArray(reports)
-      || !entries || typeof entries !== 'object' || Array.isArray(entries) || !Array.isArray(comments)) return null
+      || !entries || typeof entries !== 'object' || Array.isArray(entries) || !Array.isArray(comments)
+      || !issues || typeof issues !== 'object' || Array.isArray(issues)) return null
   if (Object.values(reports).some(ids => !Array.isArray(ids) || ids.some(id => typeof id !== 'string'))
       || comments.some(comment => !comment || typeof comment.findingId !== 'string')) return null
   const commentIndices = new Map()
@@ -193,6 +194,7 @@ export async function fetchTeamAnnotations(teamId, { reportId: selectedReportId,
       projection = {
         entries: Object.fromEntries(ids.filter(id => Object.hasOwn(entries, id)).map(id => [id, entries[id]])),
         comments: indices.toSorted((a, b) => a - b).map(index => comments[index]),
+        issues: Object.fromEntries(ids.filter(id => Object.hasOwn(issues, id)).map(id => [id, issues[id]])),
       }
       byFindings.set(key, projection)
     }

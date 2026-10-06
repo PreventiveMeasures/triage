@@ -121,6 +121,7 @@
     "server-managed/github-metadata.ts",
     "server-managed/github-issue-oauth.ts",
     "server-managed/github-issues.ts",
+    "server-managed/github-issue-links.ts",
     "server-managed/github-oauth.ts",
     "server-managed/github-pulls.ts",
     "server-managed/http-response.ts",

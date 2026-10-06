@@ -869,10 +869,22 @@ lost or malformed responses remain uncertain.
 
 The `managed_finding_issue.issue_url` field stores one permanent reference per
 finding ID, shared across reports and teams. No triage, import, or management
-write can replace or clear it. Later Issue clicks open the saved issue, without
-creating another. Reading the reference still requires finding visibility and
+write can replace or clear it. Findings with a saved issue show its link and
+GitHub status instead of the creation action. Reading the reference still requires finding visibility and
 access to its repository through the current team; a matching finding ID alone
 does not reveal another team's repository or issue URL.
+
+Issue details, manual Fix metadata and linked PR states use a single GraphQL
+batch with the viewer's GitHub token (additional batches for pagination or more
+than 200 distinct links). The newest linked PR by creation time, excluding
+closed-unmerged PRs, is saved separately in `managed_finding_issue.auto_fix_url`.
+Every successful complete refresh replaces or clears this derived value; failed
+or incomplete reads preserve it. Linked PRs outside the current team's repository
+grants are not exposed or saved. Public shares do not expose saved issue records.
+
+Manual `fix` remains exclusively a user override. Findings display both Fix links
+when they differ; small Kanban cards prefer manual Fix regardless of PR status.
+Either link satisfies **Has fix**. Derived updates do not create triage history.
 
 An atomic database reservation prevents simultaneous requests, including those
 on different servers, from creating duplicate issues. Definite GitHub rejection

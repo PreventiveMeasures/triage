@@ -89,6 +89,8 @@ import { acceptsReportMetadata } from './report-response.ts'
 import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
 import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { lookupFixes, storedFixUrls } from './github-pulls.ts'
+import { lookupIssueLinks } from './github-issue-links.ts'
+import { visibleManagedIssues } from './managed-issues.ts'
 import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
 import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
 import { sendJson, writeResponse } from './http-response.ts'
@@ -144,18 +146,27 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
   if (!s) return
   const snapshot = await teamSnapshot(deps.db, s.session.id, teamId, reportId)
   const ids = [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
-  const urls = storedFixUrls(await deps.db.listTriage(ids))
+  const manualUrls = storedFixUrls(await deps.db.listTriage(ids))
+  const storedIssues = await deps.db.listManagedIssues(ids)
+  const issues = visibleManagedIssues(storedIssues, snapshot)
+  const visibleIds = new Set(issues.map(issue => issue.findingId))
+  const urls = [...new Set([...manualUrls, ...issues.flatMap(issue => [issue.issueUrl!, ...(issue.autoFixUrl ? [issue.autoFixUrl] : [])])])]
   await recheckTeam(deps.db, s.session.id, snapshot)
-  const fixes = await lookupFixes(deps.config, deps.db, snapshot, urls)
+  const result = issues.length > 0
+    ? await lookupIssueLinks(deps.config, deps.db, snapshot, urls, storedIssues.filter(issue => visibleIds.has(issue.findingId)))
+    : { fixes: await lookupFixes(deps.config, deps.db, snapshot, urls), updates: [] }
   // Cold report reads, token refresh and upstream batches can outlive changes
   // to security/links, team grants, publication, sessions or the Fix links.
   const currentUrls = storedFixUrls(await deps.db.listTriage(ids))
   if (await readWorkspaceSession(res, deps, cookie) == null) return
   await recheckTeam(deps.db, s.session.id, snapshot)
-  if (JSON.stringify(currentUrls) !== JSON.stringify(urls)) {
+  if (JSON.stringify(currentUrls) !== JSON.stringify(manualUrls)) {
     sendJson(res, 404, { error: 'workspace-changed' }); return
   }
-  sendJson(res, 200, { fixes })
+  if (result.updates.length > 0 && !await deps.db.applyManagedIssueFixes(s.session.id, snapshot, result.updates)) {
+    sendJson(res, 404, { error: 'workspace-changed' }); return
+  }
+  sendJson(res, 200, { fixes: result.fixes })
 }
 
 async function handleWorkspaceIssue(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps,

@@ -33,7 +33,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 18 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 19 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -76,6 +76,13 @@ async function migrateHiddenTeams(db: PgConnection): Promise<void> {
   if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 18')).rows.length > 0) return
   await db.query('ALTER TABLE managed_team ADD COLUMN IF NOT EXISTS hidden INTEGER NOT NULL DEFAULT 0')
   await db.query('INSERT INTO managed_schema_version VALUES (18)')
+}
+
+async function migrateIssueFixes(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 19')).rows.length > 0) return
+  await db.query('ALTER TABLE managed_finding_issue ADD COLUMN IF NOT EXISTS auto_fix_url TEXT, ADD COLUMN IF NOT EXISTS auto_fix_checked_at BIGINT')
+  await db.query(postgresSchema(revisionSchema(true)))
+  await db.query('INSERT INTO managed_schema_version VALUES (19)')
 }
 
 async function initialize(db: PgConnection): Promise<void> {
@@ -151,7 +158,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

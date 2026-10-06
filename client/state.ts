@@ -235,6 +235,7 @@ export interface State {
   // each finding to a report that contains it.
   managedReports: { id: string; filename: string }[]
   managedComments: Map<string, ManagedComment[]>
+  managedIssues: Map<string, { url: string; autoFix: string | null }>
 }
 
 // View mode is deliberately session-local. Older builds persisted the
@@ -967,6 +968,7 @@ export const state: State = store<State>({
   managedReport: null,
   managedReports: [],
   managedComments: new Map(),
+  managedIssues: new Map(),
 })
 
 // The managed protocol and the visible local surface are separate concerns.

@@ -1,3 +1,4 @@
+import { automaticFixFor } from './managed-issues.js'
 import { sharedFindingTriage, usesReportIgnore } from '../../client/ignored-triage.js'
 import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, reportRowsForFindingIds, state } from '#client/index.js'
 import { stampSecurityGroups } from '@preventive/report'
@@ -218,7 +219,7 @@ export function groupTabsByLevel(tabs) {
 // the toolbar annotation filters.
 export function tabHasMarks(f) {
   const entry = triageEntry(f)
-  return Boolean(entry?.comment) || Boolean(entry?.fix) || entry?.flagged === true
+  return Boolean(entry?.comment) || Boolean(entry?.fix || automaticFixFor(f)) || entry?.flagged === true
 }
 
 export function activeTabFor(group) {

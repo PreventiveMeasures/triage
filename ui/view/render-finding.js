@@ -15,6 +15,7 @@ import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, g
 import { CLAUDE_MARK_PATH, GITHUB_ICON_SVG } from './icons.js'
 import { findingLinkFor } from './finding-link.js'
 import { managedCommentsFor } from './managed-comments.js'
+import { automaticFixFor, managedIssueFor } from './managed-issues.js'
 import { managedCommentTemplate } from './managed-comment.js'
 import { renderCommentText } from './comment-text.js'
 
@@ -977,7 +978,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
     labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
   const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam
   const issueContent = html`${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}`
-  const issueBtn = issueHref
+  const issueBtn = managedIssueFor(activeTab) ? nothing : issueHref
     ? managedIssue
       ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
       : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</a>`
@@ -1121,9 +1122,9 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
 // activating each sibling. Inert <span>s (the tab is the button); always
 // in the filled/accent state since they only render when the annotation
 // is present. `nothing` when the tab is unannotated.
-function tabMarksTemplate(entry) {
+function tabMarksTemplate(entry, finding) {
   const hasComment = Boolean(entry?.comment)
-  const hasFix = Boolean(entry?.fix)
+  const hasFix = Boolean(entry?.fix || automaticFixFor(finding))
   const flagged = entry?.flagged === true
   if (!hasComment && !hasFix && !flagged) return nothing
   return html`<span class="tab-marks">${
@@ -1187,7 +1188,7 @@ function tabTemplate(f, isActive, groupSt) {
   const detail = logo
     ? html`<span class="tab-analyzer" role="img" aria-label=${PRODUCER_LABELS[analyzer]}>${unsafeHTML(logo)}</span>`
     : hasConfidence ? html`<span class="tab-conf" aria-label=${`Confidence ${f.confidence} out of 10`}>${f.confidence}<span class="tab-conf-max">/10</span></span>` : nothing
-  return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span><span class="tab-indicators">${tabMarksTemplate(entry)}</span></span>${detail}</button>`
+  return html`<button type="button" class=${classes.join(' ')} data-tid=${key} aria-pressed=${isActive} aria-description=${color ? `${color} color label` : nothing}><span class="tab-label"><span class="tab-severity">${severityBadge(f, { variant: 'tab' })}</span><span class="tab-indicators">${tabMarksTemplate(entry, f)}</span></span>${detail}</button>`
 }
 
 // Confidence display for the finding-left badge column. The table
@@ -1258,6 +1259,7 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
   const entry = triageEntry(f)
   const comment = entry?.comment ?? ''
   const fix = entry?.fix ?? ''
+  const automaticFix = automaticFixFor(f), issue = managedIssueFor(f)
   // Location is rendered as `file:line` (linkified when we have a
   // repo URL). Standalone cards (the table view's detail panel) need
   // the file here because there's no surrounding header above; list /
@@ -1414,11 +1416,13 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
       ${isManagedUiMode() ? managedCommentsFor(f).map(item => html`<div class="comment-block">
         ${managedCommentTemplate(item, renderCommentText(item.body))}
       </div>`) : comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
+      ${issue ? html`<div class="fix-block"><span class="fix-label">Issue:</span> <managed-fix-link .url=${issue.url}></managed-fix-link></div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
           ? html`<managed-fix-link .url=${fix}></managed-fix-link>`
           : fix}</div>`
         : nothing}
+      ${automaticFix && automaticFix !== fix ? html`<div class="fix-block"><span class="fix-label">Fix from issue:</span> <managed-fix-link .url=${automaticFix}></managed-fix-link></div>` : nothing}
     </div>
   </div>`
 }

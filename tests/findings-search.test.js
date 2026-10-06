@@ -5,7 +5,7 @@
 // See the search block in matchesFilters.
 
 import assert from 'node:assert/strict'
-import { beforeEach, describe, it } from 'node:test'
+import { beforeEach, describe, it, test } from 'node:test'
 
 // Polyfills for `localStorage` etc. — client modules pulled in
 // transitively through `state.ts` touch them at module-load time.
@@ -261,4 +261,23 @@ describe('applyFilters — annotation filters (comment | fix | flag, group-level
     state.filterFlagged = 'without'
     assert.deepEqual(applyFilters([a, b, c]), [b])
   })
+})
+
+
+test('Has fix includes automatic and manual links across siblings, with Without as its complement', t => {
+  reset()
+  const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team', managedSession: { id: 'user' },
+    managedIssues: new Map([['auto', { url: 'https://github.com/o/r/issues/1', autoFix: 'https://github.com/o/r/pull/2' }]]) }
+  const previous = Object.fromEntries(Object.keys(next).map(key => [key, state[key]]))
+  Object.assign(state, next)
+  t.after(() => { Object.assign(state, previous); reset() })
+  state.triage.set('manual', { fix: 'manual override' })
+  const auto = [makeFinding('auto'), makeFinding('sibling')], manual = [makeFinding('manual')], plain = [makeFinding('plain')]
+  state.filterFix = 'with'
+  assert.deepEqual(applyFilters([auto, manual, plain]), [auto, manual])
+  state.filterFix = 'without'
+  assert.deepEqual(applyFilters([auto, manual, plain]), [plain])
+  state.localMode = true
+  state.filterFix = 'with'
+  assert.deepEqual(applyFilters([auto, manual, plain]), [manual], 'managed automatic links never bleed into local mode')
 })

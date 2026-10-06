@@ -1,3 +1,4 @@
+import { automaticFixFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { drawnTabs, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
@@ -684,7 +685,7 @@ function matchesAnnotationFilters(group) {
     if (F.filterComment === 'with' ? !has : has) return false
   }
   if (F.filterFix) {
-    const has = groupHas((e) => Boolean(e?.fix))
+    const has = group.some(f => Boolean(triageEntry(f)?.fix || automaticFixFor(f)))
     if (F.filterFix === 'with' ? !has : has) return false
   }
   if (F.filterFlagged) {
