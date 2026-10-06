@@ -103,6 +103,26 @@ test('global security propagation crosses absent IDs and rechecks link toggles d
   assert.notEqual((await h.send('/api/teams/team/reports', { method: 'GET' })).status, 200)
 })
 
+test('global links preserve hidden-report isolation and bridge published findings through hidden IDs', async t => {
+  const h = await fixture(t)
+  await h.seed('published', [{ id: 'a' }, { id: 'b' }])
+  await h.seed('hidden-report', [{ id: 'bridge' }, { id: 'hidden-peer' }])
+  await h.db.setReportVisible('hidden-report', false)
+  const { body: report } = await h.upload([['a', 'bridge'], ['bridge', 'b', 'hidden-peer']])
+  const read = path => h.send(path, { method: 'GET' })
+  const aggregate = await read('/api/teams/team/reports')
+  assert.deepEqual(aggregate.body.reports.map(r => r.id), ['published'])
+  assert.deepEqual(aggregate.body.links, [['a', 'b']])
+  const preview = await read('/api/teams/team/reports?reportId=hidden-report')
+  assert.deepEqual(preview.body.reports.map(r => r.id), ['hidden-report'])
+  assert.deepEqual(preview.body.links, [['bridge', 'hidden-peer']])
+  await h.db.setLinkReportEnabled(sessionId(h.session), report.id, false)
+  assert.equal((await read('/api/teams/team/reports')).body.links, undefined)
+  assert.equal((await read('/api/teams/team/reports?reportId=hidden-report')).body.links, undefined)
+  await h.db.setUserRole(h.session.userId, 'view')
+  assert.equal((await read('/api/teams/team/reports?reportId=hidden-report')).status, 404)
+})
+
 test('uploads require encryption, validate rows, enforce CSRF, and route regular link uploads away from blobs', async t => {
   const plain = await fixture(t, null)
   assert.equal((await plain.upload([['a', 'b']])).status, 503)
