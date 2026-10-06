@@ -53,8 +53,18 @@ for (const mode of ['default', 'configured', 'disabled', 'coverage']) {
   })
 }
 
-for (const mode of ['NODE_V8_COVERAGE', '--experimental-test-coverage']) {
-  test(`resource loader disables an inherited cache in coverage workers and servers (${mode})`, t => {
+const coverageModes = [
+  ['NODE_V8_COVERAGE', true],
+  ['--experimental-test-coverage', true],
+  ['--experimental-test-coverage=true', true],
+  ['--experimental-test-coverage=false', true],
+  ['--experimental_test_coverage=true', true],
+  ['--no-experimental_test_coverage --experimental-test_coverage=true', true],
+  ['--no-experimental_test_coverage', false],
+  ['--experimental-test-coverage --no-experimental-test-coverage', false],
+]
+for (const [mode, coverage] of coverageModes) {
+  test(`resource loader respects coverage options in workers and servers (${mode})`, t => {
     const dir = mkdtempSync(join(tmpdir(), 'triage-coverage-cache-'))
     t.after(() => rmSync(dir, { recursive: true, force: true }))
     const env = { ...process.env, NODE_COMPILE_CACHE: join(dir, 'cache') }
@@ -63,14 +73,20 @@ for (const mode of ['NODE_V8_COVERAGE', '--experimental-test-coverage']) {
     delete env.NODE_TEST_CONTEXT
     const args = [`--require=${loader}`, '--test']
     if (mode === 'NODE_V8_COVERAGE') env.NODE_V8_COVERAGE = join(dir, 'coverage')
-    else args.push(mode)
+    else args.push(...mode.split(' '))
 
     const checkCache = `
       import assert from 'node:assert/strict'
       import { constants, enableCompileCache, getCompileCacheDir } from 'node:module'
-      assert.equal(getCompileCacheDir(), undefined)
-      assert.equal(process.env.NODE_COMPILE_CACHE, undefined)
-      assert.equal(enableCompileCache().status, constants.compileCacheStatus.DISABLED)
+      if (${coverage}) {
+        assert.equal(getCompileCacheDir(), undefined)
+        assert.equal(process.env.NODE_COMPILE_CACHE, undefined)
+        assert.equal(enableCompileCache().status, constants.compileCacheStatus.DISABLED)
+      } else {
+        assert.ok(getCompileCacheDir())
+        assert.ok(process.env.NODE_COMPILE_CACHE)
+        assert.equal(enableCompileCache().status, constants.compileCacheStatus.ALREADY_ENABLED)
+      }
     `
     const fixture = join(dir, 'coverage.test.mjs')
     writeFileSync(fixture, `
@@ -86,5 +102,6 @@ for (const mode of ['NODE_V8_COVERAGE', '--experimental-test-coverage']) {
     const runner = spawnSync(process.execPath, [...args, fixture], { env, encoding: 'utf8', timeout: 30000 })
     assert.ifError(runner.error)
     assert.equal(runner.status, 0, runner.stdout + runner.stderr)
+    if (mode !== 'NODE_V8_COVERAGE') assert.equal(runner.stdout.includes('start of coverage report'), coverage)
   })
 }

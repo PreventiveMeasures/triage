@@ -11,7 +11,10 @@ import { svgTemplateModule } from '../build-lit-svg.js'
 // and an explicitly configured cache directory are also respected.
 // Use --require so this also runs in the test runner before it spawns workers;
 // --import only runs in the workers when Node uses process isolation.
-if (process.env.NODE_V8_COVERAGE || process.execArgv.includes('--experimental-test-coverage')) {
+// Node permits underscores and ignores boolean =values; the last flag wins.
+const coverageOption = process.execArgv.findLast(arg => /^--(?:no[-_])?experimental[-_]test[-_]coverage(?:=|$)/u.test(arg))
+const testCoverage = coverageOption !== undefined && !/^--no[-_]/u.test(coverageOption)
+if (process.env.NODE_V8_COVERAGE || testCoverage) {
   // Node may already have enabled the runner's cache at startup. Disable it for
   // test workers and their servers before those processes load any test code.
   delete process.env.NODE_COMPILE_CACHE
