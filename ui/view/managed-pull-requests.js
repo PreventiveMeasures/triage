@@ -33,12 +33,15 @@ export function invalidateManagedFixes(teamId) {
 }
 
 // Warm the batch even in kanban/filter views where the issue itself is not
-// rendered. A derived PR update already arrived in this batch's metadata and
-// must not invalidate it and cause a redundant second GitHub request.
+// rendered. Reuse derived PR metadata from our batch, but request any missing
+// PR introduced by another client's annotation update.
 export function refreshManagedIssueMetadata(teamId, ids, previous) {
   if (state.currentManagedTeam !== teamId) return
   const issues = [...ids].map(id => ({ id, issue: state.managedIssues.get(id) }))
   if (issues.some(({ id, issue }) => issue?.url !== previous.get(id)?.url)) invalidateManagedFixes(teamId)
+  for (const { id, issue } of issues) {
+    if (issue?.autoFix && issue.autoFix !== previous.get(id)?.autoFix) managedFixes.read(issue.autoFix, { refreshIfMissing: true })
+  }
   const url = issues.find(({ issue }) => issue?.url)?.issue.url
   if (url) managedFixes.read(url)
 }

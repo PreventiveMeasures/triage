@@ -19,6 +19,7 @@ export class FixCache {
     this.changed = changed
     this.now = now
     this.entries = new Map()
+    this.required = new Set()
     this.expires = 0
     this.context = null
     this.scope = null
@@ -32,6 +33,7 @@ export class FixCache {
     clearTimeout(this.timer)
     this.timer = null
     this.entries.clear()
+    this.required.clear()
     this.expires = 0
     this.context = null
     this.scope = null
@@ -48,13 +50,24 @@ export class FixCache {
     return this.scope === null ? null : this.context
   }
 
-  read(url) {
+  schedule() {
+    if (!this.timer && !this.run) this.timer = setTimeout(() => { this.timer = null; void this.flush() }, 0)
+  }
+
+  read(url, { refreshIfMissing = false } = {}) {
     const context = this.syncContext()
     const ref = context?.teamId && parseGithubFixUrl(url)
     if (!ref) return null
-    if (this.expires > this.now()) return this.entries.get(githubFixKey(ref)) ?? null
-    if (!this.timer && !this.run) this.timer = setTimeout(() => { this.timer = null; void this.flush() }, 0)
-    return this.entries.get(githubFixKey(ref)) ?? null
+    const key = githubFixKey(ref), result = this.entries.get(key) ?? null
+    // A new annotation can introduce a URL after the cached batch was read.
+    // Ordinary renders keep the TTL for unavailable links; only a changed
+    // annotation asks for missing metadata. Let an in-flight batch try first.
+    if (refreshIfMissing && !result) {
+      if (this.run) this.required.add(key)
+      else this.expires = 0
+    }
+    if (this.expires <= this.now()) this.schedule()
+    return result
   }
 
   async flush() {
@@ -76,6 +89,9 @@ export class FixCache {
     }
     this.expires = this.now() + 60_000
     this.run = null
+    const missing = [...this.required].some(key => !this.entries.has(key))
+    this.required.clear()
+    if (missing) { this.expires = 0; this.schedule() }
     this.changed()
   }
 }
