@@ -45,6 +45,20 @@ header button:hover { color: var(--text); }
   background: color-mix(in srgb, var(--muted) 4%, transparent);
 }
 .cycle-label { position: absolute; top: 7px; left: 14px; color: var(--muted); font-size: .63rem; user-select: none; }
+.cycle-toggle {
+  display: flex; align-items: center; gap: .4rem; padding: 0; border: 0;
+  background: transparent; font-family: inherit; line-height: 16px;
+}
+.cycle-toggle:hover { color: var(--text); }
+.cycle-chevron { font-size: .85rem; }
+.cycle-summary { display: flex; gap: .4rem; text-align: left; }
+.cycle-count { color: var(--muted); }
+.cycle-count::before { content: '· '; }
+.collapsed .cycle-toggle { inset: 0; width: 100%; padding: 8px 10px; border-radius: inherit; font-size: .75rem; }
+.collapsed .cycle-summary { flex: 1; flex-direction: column; gap: 2px; }
+.collapsed .cycle-count { font-size: .65rem; }
+.collapsed .cycle-count::before { content: none; }
+.selected-cycle { outline-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
 .cycle-connections > path { stroke: var(--connection-color); stroke-width: 1.25; opacity: .8; }
 .large-cycle .cycle-connections > path { stroke: var(--muted); opacity: .18; }
 .cycle-connections > path.subdued { opacity: .04; }

@@ -41,7 +41,8 @@ function cycleImportPath(a, b) {
 
 // Cycles are small two-dimensional graphs, not stacks whose height grows with
 // every package. Keep fixed card dimensions and route edges between grid cells.
-export function layoutDependencyGroup(id, members, imports, maxWidth = 1184) {
+export function layoutDependencyGroup(id, members, imports, maxWidth = 1184, collapsed = false) {
+  if (collapsed) return { id, members, collapsed, packages: [], internalEdges: [], width: DEPENDENCY_CARD_WIDTH + padding * 2, height: DEPENDENCY_CARD_HEIGHT }
   const cyclic = members.length > 1
   const capacity = Math.max(1, Math.floor((maxWidth - padding * 2 + gapX) / (DEPENDENCY_CARD_WIDTH + gapX)))
   const cols = cyclic ? Math.min(capacity, Math.max(2, Math.ceil(Math.sqrt(members.length / 2)))) : 1
@@ -58,7 +59,7 @@ export function layoutDependencyGroup(id, members, imports, maxWidth = 1184) {
       }
     }
   }
-  return { id, members, packages, internalEdges,
+  return { id, members, collapsed, packages, internalEdges,
     width: cols * DEPENDENCY_CARD_WIDTH + (cols - 1) * gapX + pad * 2,
     height: rows * DEPENDENCY_CARD_HEIGHT + (rows - 1) * gapY + pad * 2 + top }
 }
