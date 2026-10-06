@@ -25,6 +25,9 @@ function findingPath(id) {
 export function managedRoutePath(route) {
   if (!route) return null
   if (route.view === 'home') return '/'
+  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
+    return /^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') ? `/team/${route.teamSlug}/${route.view.slice(10)}` : null
+  }
   if (route.view === 'bundles') {
     if (!/^[A-Za-z0-9_-]+$/u.test(route.bundleSlug ?? '')
         || (route.teamSlug != null && !/^[A-Za-z0-9_-]+$/u.test(route.teamSlug))) return null
@@ -71,6 +74,8 @@ export function parseManagedRoute(url) {
     const bundleTab = bundle[3] ?? 'overview'
     return BUNDLE_TABS.has(bundleTab) ? { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab } : null
   }
+  const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
+  if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
   const match = /^\/team\/([^/]+)(?:\/report\/([^/]+))?(?:\/(files)|\/finding\/([^/]+))?$/u.exec(path)
   if (!match) return null
   try {
@@ -87,6 +92,10 @@ export function parseManagedRoute(url) {
 // URL tokens are exact server-assigned slugs. Application state and API calls
 // continue to use UUIDs; never guess IDs from suffixes or accept ID aliases.
 export function resolveManagedRoute(route, teams, adminBundles = []) {
+  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
+    const matches = teams.filter(team => team.slug === route.teamSlug)
+    return matches.length === 1 ? { view: route.view, teamId: matches[0].id } : null
+  }
   if (route.view === 'bundles') {
     const { teamSlug, bundleSlug, ...rest } = route
     const matches = teamSlug == null ? [] : teams.filter(team => team.slug === teamSlug)
@@ -110,6 +119,11 @@ export function resolveManagedRoute(route, teams, adminBundles = []) {
 }
 
 export function managedRouteForIds(route, teams, adminBundles = []) {
+  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
+    const team = teams.find(entry => entry.id === route.teamId)
+    const result = { view: route.view, teamSlug: team?.slug }
+    return team?.slug && resolveManagedRoute(result, teams) ? result : null
+  }
   if (route.view === 'bundles') {
     const { teamId, bundleId, ...rest } = route
     const team = teams.find(entry => entry.id === teamId)

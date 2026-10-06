@@ -110,22 +110,34 @@
        glance. Min-height matches the sibling repo-chip (which is
        sized by its 18px pencil button + .125rem padding) so all
        three pills in the title row share the same height. */
-    & .file-chip {
+    & .file-chip, & .files-toggle-btn {
       display: inline-flex; align-items: center; gap: .375rem;
-      /* Click-to-copy target — keep the default arrow (never a pointer)
-         and suppress selection, matching the sibling repo-chip.
-         `position: relative` anchors the copied overlay. */
-      cursor: default; user-select: none; position: relative;
       min-height: 24px; box-sizing: border-box;
-      padding: .125rem .5rem .125rem .4rem;
+      padding: .125rem .5rem;
       background: var(--surface);
       border: var(--header-tag-border, 1px solid var(--border));
       border-radius: var(--ui-radius, 999px);
       color: var(--muted);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: .72rem;
+      font-family: inherit;
+      font-size: .75rem;
       font-weight: 500;
+      line-height: 1.5;
+      letter-spacing: normal;
+      white-space: nowrap;
+      transition: border-color .12s, color .12s, background .12s;
+      &:is(button) {
+        cursor: pointer;
+        &:hover { border-color: var(--accent); color: var(--text); }
+        &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      }
+      &.active {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: var(--surface-active);
+      }
     }
+    /* Position the copy feedback over the report button without resizing it. */
+    & .file-chip { user-select: none; position: relative; }
     & .file-chip svg { flex-shrink: 0; }
     /* Click-to-copy the report name (data-copy-report, events.js): on
        copy, a frosted "Copied" overlay covers the chip for ~1s —
@@ -204,31 +216,18 @@
        inherit through the shadow boundary so theme switching works
        without copying rules here. */
 
-    /* Files toggle — same on/off shape as the toolbar's
-       `.trash-btn`, scoped to the page header next to the repo
-       chip. Pill chrome (`.125rem .5rem` padding, 999px radius,
-       .72rem font) mirrors the sibling `.file-chip` and the
-       repo-chip so all three title-row elements share one height +
-       corner shape. Active uses `--accent` not `--critical`
-       because Files isn't a destructive view. */
-    & .files-toggle-btn {
-      display: inline-flex; align-items: center;
-      min-height: 24px; box-sizing: border-box;
-      padding: .125rem .5rem;
-      background: var(--surface);
-      color: var(--muted);
-      border: var(--header-tag-border, 1px solid var(--border));
-      border-radius: var(--ui-radius, 999px);
-      font-family: inherit;
-      font-size: .72rem;
-      font-weight: 500;
-      transition: border-color .12s, color .12s, background .12s;
-      &:hover { border-color: var(--accent); color: var(--text); }
-      &.active {
-        border-color: var(--accent);
-        color: var(--accent);
-        background: var(--surface-active);
-      }
+    /* The title becomes a navigation button only outside findings. */
+    & .workspace-title-link {
+      border: 0;
+      padding: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
+      letter-spacing: inherit;
+      text-align: left;
+      cursor: pointer;
+      &:hover { color: var(--accent); }
+      &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
     }
 
     /* Per-report sync-status badge — rendered inside the title `h1`
@@ -1688,6 +1687,56 @@ bundle-search {
 .bundle-issue-reports-more {
   color: var(--muted);
   font-size: .68rem;
+}
+
+.workspace-content-view {
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.workspace-content-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 10px);
+  overflow: hidden;
+  & > li + li { border-top: 1px solid var(--border); }
+}
+
+.workspace-content-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  border: 0;
+  padding: 1rem 1.125rem;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  &:hover:not(:disabled) { background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  &:disabled { cursor: default; color: var(--muted); }
+}
+
+.workspace-content-icon { flex-shrink: 0; color: var(--muted); }
+.workspace-content-label { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.workspace-content-name { font-size: .875rem; font-weight: 500; overflow-wrap: anywhere; }
+.workspace-content-repo { font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
+.workspace-content-visibility { margin-left: .625rem; font-size: .7rem; font-weight: 400; }
+.workspace-content-hidden .workspace-content-row { color: var(--muted); }
+.workspace-content-stats { margin-left: auto; font-size: .75rem; color: var(--muted); text-align: right; }
+.workspace-content-arrow { color: var(--muted); }
+.workspace-content-empty { color: var(--muted); padding: 1rem 0; }
+
+@media (width < 600px) {
+  .workspace-content-row { flex-wrap: wrap; gap: .5rem .75rem; }
+  .workspace-content-label { flex: 1; }
+  .workspace-content-stats { flex-basis: 100%; margin-left: 2.125rem; text-align: left; }
+  .workspace-content-arrow { display: none; }
 }
 
 .bundles-view {

@@ -52,7 +52,7 @@ function setLandingModePending(pending) {
   if (pending) landing.dataset.serverModePending = 'true'
   else delete landing.dataset.serverModePending
 }
-import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace } from './ingest.js'
+import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -273,7 +273,7 @@ function teamsSectionTemplate() {
       const showBundles = teamSections.shown(t.id, 'bundles', compact, searchActive)
       const reportCount = reports.filter(r => r.analyzer !== LINKS_KIND).length
       return html`
-      <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && state.currentView === 'findings' ? ' current' : ''}`} data-team-id=${t.id}>
+      <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && ['findings', 'files', 'workspace-reports', 'workspace-bundles'].includes(state.currentView) ? ' current' : ''}`} data-team-id=${t.id}>
         <div class="workspace-heading">
           <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
           ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
@@ -446,7 +446,7 @@ const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
 function workspaceItemTemplate(w, { app, compact, reports, bundles, showReports, showBundles }) {
   const isCurrent = state.currentWorkspace === w.id
-    && (state.currentView === 'findings' || state.currentView === 'files')
+    && ['findings', 'files', 'workspace-reports', 'workspace-bundles'].includes(state.currentView)
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
   // Clicking the main button loads every report in the workspace
   // into a single merged view (the `.file-item` click delegate
@@ -2103,7 +2103,15 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
     }
     if (!isCurrent()) return false
   }
-  if (previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name) render({ animate: false })
+  if (!managedNavigationPending && ['workspace-reports', 'workspace-bundles'].includes(state.currentView) && !teams.some(team => team.id === state.currentManagedTeam)) {
+    const cleared = goHome({ history: false })
+    const clearing = currentViewGeneration()
+    await cleared
+    if (clearing === currentViewGeneration() && generation === clientModeGeneration && isCurrent()
+      && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role) managedHistory.replaceRoute({ view: 'home' })
+    return isCurrent()
+  }
+  if (!managedNavigationPending && (state.currentWorkspace || previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name)) render({ animate: false })
   renderSidebar()
   return true
 }
@@ -2156,7 +2164,7 @@ async function restoreManagedPageContent(route, isCurrent) {
   beginViewNavigation()
   // The shared catalog is kept current by feed revisions. Do not read it again
   // just to resolve another route; changed versions invalidate cached content.
-  if ((['findings', 'files', 'bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent, { reuse: true }))) return false
+  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles'].includes(route?.view) || route?.finding) && !(await refreshManagedTeams(isCurrent, { reuse: true }))) return false
   let adminBundles = []
   if (route?.view === 'bundles' && route.teamSlug == null) {
     if (!canAccessManagedPage('manage-bundles')) return false
@@ -2182,6 +2190,7 @@ async function restoreManagedPageContent(route, isCurrent) {
     startManagedTeamFeed()
     return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport, finding: { id: route.finding.id } }, state.managedTeams)
   }
+  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') return switchToWorkspaceContent(route.teamId, route.view.slice(10), { history: false })
   if (route.view === 'bundles') {
     const entries = route.teamId == null ? adminBundles.map(managedBundleEntry) : managedTeamBundleEntries(state.managedTeams)
     if (!(await openManagedBundle(route, entries, isCurrent, renderSidebar))) return false

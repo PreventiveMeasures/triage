@@ -210,7 +210,7 @@ function renderSearchNextFrame() {
 }
 import { ensureBundleSources, openBundle, prefetchBundleHashes, selectBundle, selectBundleTab } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
-import { BUNDLE_TABS, persistLastBundle, switchToFile } from './ingest.js'
+import { BUNDLE_TABS, persistLastBundle, switchToFile, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
 import { graph2, cleanupGraph2 } from './graph/state.js'
 import { hideToast, showToast } from './toast.js'
@@ -878,6 +878,47 @@ report.addEventListener('click', (e) => {
         if (state.bundleSourceFile === path) scrollSourceLineIntoView(line, { block, behavior: 'smooth' })
         return null
       })
+    }
+    return
+  }
+  const workspaceContentButton = e.target.closest('[data-action="workspace-reports"], [data-action="workspace-bundles"]')
+  if (workspaceContentButton) {
+    const kind = workspaceContentButton.dataset.action.slice(10)
+    if (state.currentView !== `workspace-${kind}`) void switchToWorkspaceContent(state.currentManagedTeam ?? state.currentWorkspace, kind)
+    return
+  }
+  if (e.target.closest('[data-action="workspace-findings"]')) {
+    if (state.currentView === 'findings') return
+    if (state.currentView === 'files') {
+      if (navigateManagedReportView('findings')) return
+      state.currentView = 'findings'
+      state.filesSelectedFile = null
+      document.body.classList.remove('report-fullscreen')
+      render()
+    } else if (isManagedUiMode()) {
+      void switchToManagedTeam(state.managedTeams.find(team => team.id === state.currentManagedTeam))
+    } else void switchToWorkspace(state.currentWorkspace)
+    return
+  }
+  const workspaceReport = e.target.closest('[data-workspace-report]')
+  if (workspaceReport) {
+    if (isManagedUiMode()) {
+      void switchToManagedTeam(state.managedTeams.find(team => team.id === state.currentManagedTeam), workspaceReport.dataset.workspaceReport)
+    } else void switchToFile(workspaceReport.dataset.workspaceReport, undefined, { workspaceId: state.currentWorkspace })
+    return
+  }
+  const workspaceBundle = e.target.closest('[data-workspace-bundle]')
+  if (workspaceBundle) {
+    if (isManagedUiMode()) {
+      void managedHistory.navigate(managedRouteForIds({ view: 'bundles', teamId: state.currentManagedTeam,
+        bundleId: workspaceBundle.dataset.workspaceBundle, bundleTab: 'overview' }, state.managedTeams))
+    } else {
+      const integrity = workspaceBundle.dataset.workspaceBundle
+      selectBundle(integrity, 'overview', { workspaceId: state.currentWorkspace })
+      persistLastBundle(integrity, 'overview')
+      render()
+      void renderSidebar()
+      void openBundle(integrity)
     }
     return
   }

@@ -14,7 +14,7 @@ import { dropZone, sidebar } from './view/dom.js'
 import { attachSharedWorkspace, ensureKnownLinkedFindingsIndexed, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { ensureClientMode, renderSidebar } from './view/sidebar.js'
-import { BUNDLE_TABS, LAST_FILE_KEY, currentViewGeneration, switchToFile, switchToWorkspace } from './view/ingest.js'
+import { BUNDLE_TABS, LAST_FILE_KEY, currentViewGeneration, switchToFile, switchToWorkspace, switchToWorkspaceContent } from './view/ingest.js'
 import { openBundle, selectBundle } from './view/bundle-load.js'
 import { revealFinding } from './view/finding-link-nav.js'
 import { decodeReportLocation } from '../client/report-location.js'
@@ -325,7 +325,9 @@ async function restoreInitialView() {
   if (revealed || !isCurrent()) return
   const last = getSecureItem(LAST_FILE_KEY)
   if (last) {
-    if (last.startsWith('ws:')) {
+    if (last.startsWith('wbs:') || last.startsWith('wrs:')) {
+      await switchToWorkspaceContent(last.slice(4), last.startsWith('wrs:') ? 'reports' : 'bundles')
+    } else if (last.startsWith('ws:')) {
       const id = last.slice(3)
       if (listWorkspaces().some((w) => w.id === id)) await switchToWorkspace(id)
     } else if (last.startsWith('b:')) {

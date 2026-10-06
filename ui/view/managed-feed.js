@@ -59,7 +59,8 @@ function waitForHydration(promise, signal) {
 export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   const session = state.managedSession, view = currentViewSignal()
   const focused = ['findings', 'files', 'links'].includes(state.currentView)
-  const teamId = focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted)
+  const contentList = ['workspace-reports', 'workspace-bundles'].includes(state.currentView)
+  const teamId = (contentList || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
     ? state.currentManagedTeam : null
   if (!isManagedUiMode() || !session || session.role === 'none' || session.publicShare && !teamId) {
     stopManagedTeamFeed(); return hydrate ? Promise.resolve(false) : undefined
@@ -80,7 +81,7 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   }
   const subscription = active
   // Sidebar renders must not start annotation reads while a report is loading.
-  if (catalogOnly || !teamId) return subscription.target?.ready
+  if (catalogOnly || contentList || !teamId) return subscription.target?.ready
   // The first reactive render can wrap this array after loading. Normalize its
   // identity so painting the hydrated view does not invalidate its consumer.
   const reports = store(state.reports)

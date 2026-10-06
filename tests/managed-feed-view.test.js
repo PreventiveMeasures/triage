@@ -138,6 +138,23 @@ test('unapproved users and public-share landing never open a user catalog feed',
   assert.equal(calls.length, 0)
 })
 
+for (const view of ['workspace-reports', 'workspace-bundles']) {
+  test(`${view} keeps the team's catalog feed without reading annotations, including public shares`, async () => {
+    state.managedSession = { id: 'share', role: 'view', publicShare: true }
+    state.currentView = view
+    state.currentManagedTeam = 'one'
+    state.currentManagedReport = null
+    state.reports = []
+    startManagedTeamFeed({ catalogOnly: true })
+    startManagedTeamFeed()
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].teamId, 'one')
+    assert.equal(await calls[0].onTeams(calls[0].signal), true)
+    assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+    assert.deepEqual(refreshes, [])
+  })
+}
+
 test('catalog and triage refreshes use connection cancellation without stopping the subscription', async () => {
   const catalogs = [], connection = new AbortController(), pending = Promise.withResolvers()
   setManagedTeamFeedRefresh((current, signal) => { catalogs.push({ current, signal }); return pending.promise })

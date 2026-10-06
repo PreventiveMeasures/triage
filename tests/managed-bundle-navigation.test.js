@@ -15,6 +15,20 @@ const teams = [
   { id: 'uuid-other', slug: 'other', bundles: [c] },
 ]
 
+for (const kind of ['reports', 'bundles']) {
+  test(`team ${kind} lists round-trip their route and require an unambiguous current team`, () => {
+    const view = `workspace-${kind}`
+    const route = managedRouteForIds({ view, teamId: 'uuid-first' }, teams)
+    assert.equal(managedRoutePath(route), `/team/first/${kind}`)
+    const parsed = parseManagedRoute(new URL(`/team/first/${kind}`, 'https://triage.test'))
+    assert.deepEqual(resolveManagedRoute(parsed, teams), { view, teamId: 'uuid-first' })
+    assert.equal(resolveManagedRoute(parsed, []), null)
+    assert.equal(resolveManagedRoute(parsed, [...teams, { id: 'duplicate', slug: 'first' }]), null)
+    assert.equal(managedRouteForIds({ view, teamId: 'missing' }, teams), null)
+    assert.equal(managedRoutePath({ view, teamSlug: '../bad' }), null)
+  })
+}
+
 test('cold managed catalogue offers every same-repository bundle, deduplicated across teams', () => {
   const entries = managedTeamBundleEntries(teams)
   assert.equal(entries.length, 3)
