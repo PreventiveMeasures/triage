@@ -12,6 +12,7 @@ export const MANAGED_PAGES = Object.freeze({
   'manage-teams': '/manage/team',
   'manage-import': '/manage/import',
   'manage-links': '/manage/links',
+  'manage-deduplication': '/manage/deduplication',
   'manage-history': '/manage/history',
 })
 
@@ -35,6 +36,7 @@ export function managedRoutePath(route) {
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
     if (route.view === 'manage-bundles' && Number.isSafeInteger(route.createRepoId) && route.createRepoId > 0) return `${path}?createRepo=${route.createRepoId}`
+    if (route.view === 'manage-scans' && route.scanMode === 'link') return `${path}?mode=link`
     if (route.view === 'manage-scans' && route.bundleId) return `${path}?bundle=${encodeURIComponent(route.bundleId)}`
     return route.view === 'manage-history' && route.actor ? `${path}?actor=${encodeURIComponent(route.actor)}` : path
   }
@@ -58,7 +60,8 @@ export function parseManagedRoute(url) {
     return { view,
       ...(view === 'manage-bundles' && Number.isSafeInteger(createRepoId) && createRepoId > 0 ? { createRepoId } : {}),
       ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}),
-      ...(view === 'manage-scans' && url.searchParams.get('bundle') ? { bundleId: url.searchParams.get('bundle') } : {}),
+      ...(view === 'manage-scans' ? url.searchParams.get('mode') === 'link' ? { scanMode: 'link' }
+        : url.searchParams.get('bundle') ? { bundleId: url.searchParams.get('bundle') } : {} : {}),
     }
   }
   const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+))?$/u.exec(path)

@@ -125,6 +125,7 @@
     "server-managed/github-pulls.ts",
     "server-managed/http-response.ts",
     "server-managed/http.ts",
+    "server-managed/link-reports.ts",
     "server-managed/import-triage.ts",
     "server-managed/managed-issues.ts",
     "server-managed/management.ts",

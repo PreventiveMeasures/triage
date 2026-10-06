@@ -34,6 +34,23 @@ export async function openManagedStorage(config: ManagedConfig) {
     }
     const objects = await createEncryptedObjectStorage(raw, db, key)
     const storage = createManagedStores(objects, !config.neonUrl)
+    // Move legacy team link uploads into encrypted SQL before serving catalogs.
+    // The DB transaction commits first; a failed blob cleanup cannot lose links.
+    for (const report of await db.listLegacyLinkReports()) {
+      if (!key) throw new Error('Migrating managed link reports requires MANAGED_STORAGE_ENCRYPTION_KEY')
+      let bytes
+      try { bytes = await storage.reportStore.get(report.id) } catch (error) {
+        if (!await db.getReport(report.id)) continue // another instance completed migration
+        throw error
+      }
+      if (!bytes) {
+        if (!await db.getReport(report.id)) continue
+        throw new Error(`Missing legacy link report: ${report.id}`)
+      }
+      if (await db.migrateLinkReport(report.id, bytes.toString('utf8'))) {
+        await storage.reportStore.delete(report.id).catch(error => console.warn('managed: legacy link cleanup failed:', error))
+      }
+    }
     return { ...storage, db, uploadStore: config.neonUrl ? storage.uploadStore : undefined,
       bundleCache: createBundleCache(storage.cacheStorage, db, storage.bundleStore),
       reportSourcesCache: createReportSourcesCache(storage.reportSourcesStorage, db, storage.reportStore, storage.bundleStore),

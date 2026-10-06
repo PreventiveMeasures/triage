@@ -1,3 +1,4 @@
+import { type LinkReportStore, linkReportMethods, linkRevision } from './link-reports.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { type Role, roleAtLeast } from '../common/managed/roles.ts'
@@ -132,6 +133,7 @@ export interface TeamReportAccessSnapshot extends ReportAccessSnapshot {
 }
 export interface ReportAccessSnapshot {
   user: StoredUser
+  linkRevision?: string
   reports: ReportAccessRecord[]
 }
 
@@ -325,7 +327,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, BundleBuildLeaseStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, BundleBuildLeaseStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -1030,7 +1032,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       const hidden = rows.find(row => row.id === reportId && row.visible === 0)
       const selected = hidden ? [hidden] : rows
       const repositories = await stmts.selectTeamRepositoriesStmt.all(teamId) as TeamReportAccessSnapshot['repositories']
-      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, reports: selected.map(row => ({
+      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, linkRevision: await linkRevision(db), reports: selected.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
@@ -1047,7 +1049,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
         id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
         repoFullName: string | null; dependencies: number; security: number
       }[]
-      return { user, reports: rows.map(row => ({
+      return { user, linkRevision: await linkRevision(db), reports: rows.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: admin || manage || row.dependencies === 1, security: admin || manage || row.security === 1 },
@@ -1335,6 +1337,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
     async listTeamsForUser(userId: string): Promise<UserTeam[]> {
       const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string; dependencies: number; security: number }[]
       const scopes = await stmts.selectUserTeamScopesStmt.all(userId) as { teamId: string; repoId: number; path: string; fullName: string }[]
+      const links = await linkRevision(db)
       const reportsByTeam = new Map<string, UserTeamReport[]>()
       for (const r of (await selectUserTeamReportsStmt.all(userId)) as {
         teamId: string; id: string; slug: string; filename: string; analyzer: string | null; sha256: string; bundleId: string | null; repoId: number
@@ -1342,7 +1345,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       }[]) {
         const list = reportsByTeam.get(r.teamId) ?? []
         const cacheKey = createHash('sha256').update(JSON.stringify([
-          r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role,
+          r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role, links,
         ])).digest('base64url')
         list.push({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible === 1, analyzer: r.analyzer, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory, cacheKey })
         reportsByTeam.set(r.teamId, list)
@@ -1358,7 +1361,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
         id: t.id, slug: t.slug, name: t.name,
         permissions: { dependencies: t.dependencies === 1, security: t.security === 1 },
         cacheKey: createHash('sha256').update(JSON.stringify([
-          t.dependencies, t.security, scopes.filter(scope => scope.teamId === t.id),
+          t.dependencies, t.security, links, scopes.filter(scope => scope.teamId === t.id),
         ])).digest('base64url'),
         reports: reportsByTeam.get(t.id) ?? [],
         bundles: bundlesByTeam.get(t.id) ?? [],
@@ -1449,6 +1452,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
 
   const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
     ...storageMethods(db, key),
+    ...linkReportMethods(db, key),
     ...bundleBuildLeaseMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {
       return !!await db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)

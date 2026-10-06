@@ -26,7 +26,7 @@ export async function prepareWorkspaceImport(data, repos) {
     if (!directory.ok) throw new Error(`${item.name}: invalid repository directory`)
     const findings = parsed.format === 'links' ? [] : (await loadManagedFindings(item.content, item.name))?.findings ?? []
     for (const finding of findings) if (finding.id) lookup.set(finding.id, finding)
-    reports.push({ ...item, repoId, directory: directory.path ?? '', github, embedded, ids: [...new Set(findings.map(f => f.id).filter(Boolean))], uploaded: null })
+    reports.push({ ...item, links: parsed.format === 'links', repoId, directory: directory.path ?? '', github, embedded, ids: [...new Set(findings.map(f => f.id).filter(Boolean))], uploaded: null })
   }
   const triage = Object.create(null)
   if (data.triage != null && (typeof data.triage !== 'object' || Array.isArray(data.triage))) throw new Error('Invalid workspace triage.')
@@ -87,6 +87,10 @@ async function grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles,
   }
 }
 
+async function importLinks(report, api) {
+  if (!report.uploaded) report.uploaded = await api.send('/api/admin/deduplication', new File([report.content], report.name), { 'x-report-filename': encodeURIComponent(report.name) })
+}
+
 export async function runWorkspaceImport(plan, { api, session, defaultRepo, includeTriage, resolveConflicts, signal, progress = () => {} }) {
   if (session?.role !== 'admin' || !session.csrfToken) throw new Error('An administrator session is required.')
   if (!plan.name.trim() || plan.name.trim().length > 100) throw new Error('Enter a team name of up to 100 characters.')
@@ -114,7 +118,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
   // Refresh the active set at execution time: the preview's catalogue may be
   // stale, and content deduplication can return records from inactive repos.
   const activeRepos = new Set((await api.send('/api/admin/repositories/browsable')).repos.map(repo => repo.repoId))
-  for (const report of plan.reports) {
+  for (const report of plan.reports.filter(item => !item.links)) {
     if (report.embedded && !activeRepos.has(report.repoId)) throw new Error(`Connect ${report.embedded} in Repositories before importing ${report.name}.`)
     if (!activeRepos.has(report.repoId) && !activeRepos.has(defaultRepo)) throw new Error(`Choose an active repository for ${report.name}.`)
   }
@@ -142,6 +146,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
   await grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles, activeRepos)
   for (const report of plan.reports) {
     check(); progress(`Importing ${report.name}…`)
+    if (report.links) { await importLinks(report, api); continue }
     const repoId = activeRepos.has(report.repoId) ? report.repoId : defaultRepo
     if (!report.uploaded) {
       const uploaded = await api.send('/api/admin/reports', new File([report.content], report.name), {

@@ -2124,9 +2124,10 @@ const ADMIN_PAGES = {
   'manage-teams': 'admin: teams bundle load failed:',
   'manage-import': 'admin: import bundle load failed:',
   'manage-links': 'admin: links bundle load failed:',
+  'manage-deduplication': 'admin: deduplication bundle load failed:',
   'manage-scans': 'admin: scans bundle load failed:',
 }
-const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams', 'manage-import'])
+const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams', 'manage-import', 'manage-deduplication'])
 let readyManagedView = null
 
 function canAccessManagedPage(view) {
@@ -2231,7 +2232,7 @@ document.addEventListener('managed-feed-closed', () => {
 export async function navigateToAdminPage(view, options = {}) {
   if (options.history !== false && isManagedUiMode()) {
     if (!managedHistory.active) await refreshManagedSession()
-    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}) })
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(options.scanMode === 'link' ? { scanMode: 'link' } : {}) })
   }
   if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
@@ -2243,7 +2244,7 @@ export async function navigateToAdminPage(view, options = {}) {
   catch (err) { console.warn(ADMIN_PAGES[view], err); return false }
   if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view
-  state.scanSelection = view === 'manage-scans' && options.bundleId ? { bundleId: options.bundleId } : null
+  state.scanSelection = view === 'manage-scans' ? options.scanMode === 'link' ? { mode: 'report', reportMode: 'link' } : options.bundleId ? { bundleId: options.bundleId } : null : null
   state.bundleCreationRepoId = view === 'manage-bundles' ? options.createRepoId ?? null : null
   render({ animate: false })
   renderSidebar()
@@ -2269,7 +2270,7 @@ document.addEventListener('managed-notice', event => showToast(event.detail.mess
 document.addEventListener('managed-admin-navigate', (event) => {
   const view = event.detail?.view
   const actor = event.detail?.actor
-  if (typeof view === 'string') void navigateToAdminPage(view, { actor })
+  if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode })
 })
 
 // Cold-start mode detection. With nothing cached we don't yet know the server's

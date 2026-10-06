@@ -55,6 +55,9 @@ const D = '44444444-4444-4444-8444-444444444444'
 const links = (...groups) => JSON.stringify(groups.map((g) => g.map((id) => ({ id }))))
 
 describe('parseLinkedFindings — what counts as a links file', () => {
+  it('accepts arrays of string IDs alongside existing object entries', () => {
+    assert.deepEqual(parseLinkedFindings(JSON.stringify([[A, B], [{ id: B }, C]])), { groups: [[A, B], [B, C]], skipped: 0 })
+  })
   it('reads the format: an array of arrays of {id}', () => {
     const parsed = parseLinkedFindings(links([A, B], [C, D]))
     assert.deepEqual(parsed, { groups: [[A, B], [C, D]], skipped: 0 })
@@ -88,7 +91,6 @@ describe('parseLinkedFindings — what counts as a links file', () => {
     for (const content of [
       '[1,2,3]',                                   // a list of numbers
       '[[1,2]]',                                   // a link of numbers
-      `[["${A}","${B}"]]`,                         // bare ids, not {id}
       `[[{"id":"${A}"}],${JSON.stringify({ id: B })}]`, // an entry outside a link
       '[[{"name":"a"},{"name":"b"}]]',             // objects, but no id
       '[[{"id":123}]]',                            // id that isn't a string

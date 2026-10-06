@@ -45,6 +45,8 @@
 //   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session
+import { mergeLinkGroups } from './link-reports.ts'
+import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
@@ -888,6 +890,11 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     sendJson(res, 400, { error: 'invalid-report', reason: parsed.reason ?? 'Unrecognized report format' })
     return
   }
+  if (parsed.format === 'links' || parsed.data.source === 'links') {
+    const result = await deps.db.importLinkReport(s.session.id, filename, bytes.toString('utf8'))
+    sendJson(res, result.reused ? 200 : 201, { ...result.report, kind: 'links', deduped: result.reused })
+    return
+  }
   const repoGithub = reportRepoGithub(parsed.data)
   const repoEmbedded = repoGithub != null
   const rawHeaderDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
@@ -1488,6 +1495,35 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
   try { await pipeline(cached.stream, res) } catch { res.destroy() }
 }
 
+async function reportIds(data: unknown): Promise<Set<string>> {
+  const findings = (reportEntries(data) ?? []).flat().filter((f): f is Record<string, unknown> => f !== null && typeof f === 'object' && !Array.isArray(f))
+  await backfillFindingIds(findings)
+  return new Set(findings.flatMap(f => typeof f['id'] === 'string' ? [f['id']] : []))
+}
+
+async function handleDeduplication(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id?: string): Promise<void> {
+  const method = req.method ?? 'GET'
+  if (id ? method !== 'PATCH' : !['GET', 'POST'].includes(method)) { send405(res, id ? 'PATCH' : 'GET, POST'); return }
+  const s = method === 'GET' ? await readSession(deps.config, deps.db, cookie, Date.now()) : await checkMutation(req, res, deps, cookie)
+  if (!s) { if (method === 'GET') sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
+  if (method === 'GET') { sendJson(res, 200, { reports: await deps.db.listLinkReports() }); return }
+  if (id) {
+    let body
+    try { body = await readJsonBody(req, 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+    const enabled = (body as { enabled?: unknown } | null)?.enabled
+    if (typeof enabled !== 'boolean') { sendJson(res, 400, { error: 'bad-enabled' }); return }
+    await deps.db.setLinkReportEnabled(s.session.id, id, enabled)
+    sendJson(res, 200, { ok: true }); return
+  }
+  let bytes: Buffer
+  try { bytes = await readBodyBytes(req, deps.config.maxReportBytes) }
+  catch (error) { const large = error instanceof Error && error.message === 'too-large'; sendJson(res, large ? 413 : 400, { error: large ? 'too-large' : 'bad-body' }); return }
+  const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.link.json')
+  const result = await deps.db.importLinkReport(s.session.id, filename, bytes.toString('utf8'))
+  sendJson(res, result.reused ? 200 : 201, { ...result.report, deduped: result.reused })
+}
+
 // GET /api/reports/<id> — admin/manager preview, within management access.
 // Accept: application/json includes parsed, filtered data and the server's repo
 // assignment. Other callers retain the raw text/plain response. The
@@ -1497,32 +1533,33 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
 async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
   const s = await readManageSession(res, deps, cookie)
   if (s == null) return
-  if (!(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  const snapshot = await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), [id])
+  const access = snapshot?.reports[0]
+  if (!snapshot || !access || !roleAtLeast(snapshot.user.role, 'manage')) { sendJson(res, 404, { error: 'no-report' }); return }
   const bytes = await deps.reportStore.get(id)
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
-  const current = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (!current || !roleAtLeast(current.user.role, 'manage') || !(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  if (acceptsReportMetadata(req.headers.accept)) {
-    const report = await deps.db.getReport(id)
-    if (report == null) { sendJson(res, 404, { error: 'no-report' }); return }
-    const repo = { github: await repositoryName(deps, report.repoId), directory: report.repoDirectory }
-    const { data } = readManagedReport(bytes.toString('utf8'), report.filename)
+  const metadata = acceptsReportMetadata(req.headers.accept)
+  let envelope
+  if (metadata) {
+    const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
     if (data == null) { sendJson(res, 422, { error: 'unreadable-report' }); return }
-    sendJson(res, 200, {
-      data,
-      repo,
-    }, { vary: 'Accept', 'x-content-type-options': 'nosniff' })
-    return
+    const links = mergeLinkGroups(snapshot.linkRevision ? await deps.db.getEnabledLinkGroups(snapshot.linkRevision) : [], await reportIds(data))
+    envelope = { data, repo: access.repo, ...(links.length > 0 ? { links } : {}) }
   }
-  const out = bytes
+  // Link decryption and finding-ID backfill can outlast access or link changes.
+  const current = await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), [id])
+  if (!current || current.user.id !== snapshot.user.id || current.user.role !== snapshot.user.role
+    || current.linkRevision !== snapshot.linkRevision || JSON.stringify(current.reports) !== JSON.stringify(snapshot.reports)) {
+    sendJson(res, 404, { error: 'no-report' }); return
+  }
+  if (metadata) {
+    sendJson(res, 200, envelope, { vary: 'Accept', 'x-content-type-options': 'nosniff' }); return
+  }
   res.writeHead(200, {
-    'content-type': 'text/plain; charset=utf-8',
-    'content-length': String(out.length),
-    'x-content-type-options': 'nosniff',
-    'cache-control': 'no-store',
-    vary: 'Accept',
+    'content-type': 'text/plain; charset=utf-8', 'content-length': String(bytes.length),
+    'x-content-type-options': 'nosniff', 'cache-control': 'no-store', vary: 'Accept',
   })
-  writeResponse(res, out)
+  writeResponse(res, bytes)
 }
 
 // A read-only POST avoids URL-length limits when a workspace has many reports.
@@ -1551,6 +1588,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   // Overlap remote blob reads, retaining only each report's encoded response
   // after processing. Check actual bytes too if storage and metadata disagree.
   const parts = [Buffer.from('{"reports":[')]
+  const findingIds = new Set<string>()
   let inputBytes = 0, outputBytes = parts[0]!.length + 2
   let next = 0, stopped = false
   let inFlightBytes = 0
@@ -1580,6 +1618,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
           if (inputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
           const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
           if (!data) return fail(422, 'unreadable-report')
+          for (const findingId of await reportIds(data)) findingIds.add(findingId)
           const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions, access.repo), repo: access.repo })}`)
           outputBytes += part.length
           if (outputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
@@ -1604,15 +1643,19 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
     if (result.status === 'rejected') throw result.reason
     if (result.value) { sendJson(res, result.value.status, { error: result.value.error }); return }
   }
+  const links = mergeLinkGroups(snapshot.linkRevision ? await deps.db.getEnabledLinkGroups(snapshot.linkRevision) : [], findingIds)
   // Access to an earlier report may change while a later blob is fetched.
   // Reject the whole answer if any content/access/assignment snapshot changed.
   const current = await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), ids)
   if (!current || current.user.id !== snapshot.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (current.user.role !== snapshot.user.role || current.reports.length !== reports.size
+  if (current.linkRevision !== snapshot.linkRevision || current.user.role !== snapshot.user.role || current.reports.length !== reports.size
     || current.reports.some(report => JSON.stringify(report) !== JSON.stringify(reports.get(report.id)))) {
     sendJson(res, 404, { error: 'no-report' }); return
   }
-  parts.push(Buffer.from(']}'))
+  const suffix = Buffer.from(links.length > 0 ? `],"links":${JSON.stringify(links)}}` : ']}')
+  outputBytes += suffix.length - 2
+  if (outputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
+  parts.push(suffix)
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
   writeResponse(res, Buffer.concat(parts, outputBytes))
 }
@@ -2133,6 +2176,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (issueRoute) {
       await handleWorkspaceIssue(req, res, deps, cookie, decodeURIComponent(issueRoute[1]!), url.searchParams); return
     }
+    const deduplication = /^\/api\/admin\/deduplication(?:\/([a-f\d-]{36}))?$/iu.exec(path)
+    if (deduplication) { await handleDeduplication(req, res, deps, cookie, deduplication[1]); return }
     if (path === '/api/admin/links') {
       if (!config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
       if (method !== 'GET') { send405(res, 'GET'); return }

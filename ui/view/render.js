@@ -1709,6 +1709,7 @@ function ensureReportSlot(id) {
 // paints itself. The sidebar gates content pages to admin|manage roles
 // and access pages (users, repositories, and teams) to admins.
 const ADMIN_VIEWS = {
+  'manage-deduplication': { slot: 'manage-deduplication-slot', tag: 'managed-admin-deduplication', title: 'DeepView — deduplication' },
   manage:           { slot: 'manage-slot',          tag: 'managed-admin-home',    title: 'DeepView — manage' },
   'admin-users':    { slot: 'admin-users-slot',    tag: 'managed-admin-users',   title: 'DeepView — users' },
   'manage-repos':   { slot: 'manage-repos-slot',   tag: 'managed-admin-repos',   title: 'DeepView — repositories' },

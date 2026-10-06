@@ -155,6 +155,7 @@ export async function uploadReport(file, csrfToken, repoId = null, directory = '
     if (res.status === 413) throw new Error('too large')
     if (res.status === 403) throw new Error('choose a repository and directory within your team access')
     const body = await res.json().catch(() => null)
+    if (body?.error === 'storage-encryption-required') throw new Error('Link reports require managed storage encryption. Configure MANAGED_STORAGE_ENCRYPTION_KEY.')
     if (body?.error === 'invalid-report') {
       throw new Error(typeof body.reason === 'string' && body.reason
         ? `This file is not a report: ${body.reason}` : 'This file is not a recognized report.')

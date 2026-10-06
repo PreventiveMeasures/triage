@@ -109,8 +109,14 @@ export class ScanPage extends LitElement {
       this._reason = bundle?.reasons?.[0]?.id ?? ''
       if (requested) {
         this._tab = 'new'
-        this._mode = 'code'
-        this._notice = bundle || this.source == null ? null : 'The selected bundle is no longer available in this source. Choose another bundle.'
+        this._mode = requested.mode === 'report' ? 'report' : 'code'
+        if (requested.mode === 'report') {
+          this._reportMode = 'link'
+          this._reportRestore = null
+          this._reportInput = null
+          this._pendingSelection = null
+        }
+        this._notice = requested.mode === 'report' || bundle || this.source == null ? null : 'The selected bundle is no longer available in this source. Choose another bundle.'
         if (bundle) this._pendingSelection = null
       }
     }

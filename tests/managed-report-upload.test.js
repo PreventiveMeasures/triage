@@ -93,7 +93,6 @@ test('report uploads preserve supported formats, empty findings and original byt
     ['groups.json', '{"groups":[]}'],
     ['report.md', '# Security finding\n\n---\n**Severity:** high\n'],
     ['export.CSV', managedCsv],
-    ['links.json', '[[{"id":"first"},{"id":"second"}]]'],
     ['content-detection.txt', '{"source":"test","findings":[]}'],
   ]
   for (const [filename, body] of cases) {

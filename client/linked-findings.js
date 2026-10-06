@@ -1,7 +1,8 @@
 // The "links" file — a small JSON document that says which findings
 // are the SAME finding, reported twice:
 //
-//   [[{"id":"a"},{"id":"b"}], [{"id":"c"},{"id":"d"},{"id":"e"}]]
+//   [["a", "b"], ["c", "d", "e"]]
+// Entries may also be objects such as {"id":"a"}, for existing exports.
 //
 // One inner array per link. Every finding named in it is a duplicate
 // of every other one in that array, and the file says nothing else:
@@ -30,11 +31,11 @@ import { isLinkableFindingId } from './finding-link.js'
 // here, never from a document's own content.
 export const LINKS_KIND = 'links'
 
-// Is this one entry of an inner array — `{"id": "…"}` — as the format
-// spells it? Extra fields are allowed and ignored: an exporter that
+// Read a string ID or an existing object entry — `{"id": "…"}`. Extra fields are allowed and ignored: an exporter that
 // writes the title or the report alongside the id is writing a
 // superset of this format, not a different one.
 function entryId(entry) {
+  if (typeof entry === 'string') return entry.length > 0 ? entry : null
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
   const { id } = entry
   return typeof id === 'string' && id.length > 0 ? id : null
@@ -50,7 +51,7 @@ function entryId(entry) {
 //
 // Recognition is on SHAPE, and it is strict, because this parser runs
 // against every dropped file before the report readers get their turn:
-// a top-level array, holding only arrays, holding only objects with a
+// a top-level array, holding only arrays, holding string IDs or objects with a
 // string `id`. Nothing else this app reads is a bare JSON array, so
 // nothing else can be mistaken for one — and an empty top-level array
 // is refused rather than claimed, since `[]` is every empty JSON list

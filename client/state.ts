@@ -113,7 +113,7 @@ export interface State {
   bundles: unknown[]
   selectedBundle: string | null
   selectedBundleWorkspace: string | null
-  scanSelection: { bundleId: string, repoId?: string | number } | null
+  scanSelection: { bundleId: string, repoId?: string | number } | { mode: 'report', reportMode: 'link' } | null
   bundleCreationRepoId: number | null
   bundleDetails: unknown
   bundleDetailsTab: string

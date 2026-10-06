@@ -1,3 +1,4 @@
+import { linkRevision } from './link-reports.ts'
 import type { ManagedSql } from './sql.ts'
 import type { ManagedBundle, TeamReportAccessSnapshot, UserTeam } from './db.ts'
 import { type TeamUserPermissions, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -141,17 +142,19 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       const { dependencies, security, ...team } = grant
       const permissions = { dependencies: dependencies === 1, security: security === 1 }
       const rows = await q.reports.all(team.id) as { id: string; slug: string; filename: string; analyzer: string | null; byteSize: number; sha256: string; directory: string; github: string }[]
+      const links = await linkRevision(db)
       const bundleRows = await q.bundles.all(team.id) as (ManagedBundle & { repoFullName: string })[]
       return {
         user: { id: `share:${tokenHash}`, login: 'public', name: 'Public workspace', avatarUrl: null, role: 'view' },
         teamId: team.id,
+        linkRevision: links,
         permissions,
         repositories: await q.repositories.all(team.id) as WorkspaceShareSnapshot['repositories'],
         reports: rows.map(row => ({ id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
           repo: { github: row.github, directory: row.directory }, permissions })),
-        team: { ...team, permissions,
+        team: { ...team, permissions, cacheKey: links,
           reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, visible: true, analyzer: row.analyzer, repoFullName: row.github, repoDirectory: row.directory,
-            cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions]) })),
+            cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions, links]) })),
           bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
             filename: row.filename, visible: true, kind: row.kind, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName })),
         },

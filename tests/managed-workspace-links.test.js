@@ -37,3 +37,18 @@ test('managed links and report rows stay in the active team, with no local index
   assert.deepEqual(reportRowsForFindingIds(['a']), [])
   assert.equal(records[0].data.findings[0]._managedReportId, undefined, 'indexing preserves cached response objects')
 })
+
+test('global response links drive finding duplicates without introducing team link files', () => {
+  state.serverMode = 'managed'
+  state.localMode = false
+  state.managedSession = { id: 'viewer', role: 'view' }
+  state.currentManagedTeam = 'one'
+  const reports = [records[0]]
+  Object.defineProperty(reports, 'links', { value: [['a', 'b']] })
+  setManagedWorkspace('one', reports)
+  assert.deepEqual(duplicatesOf('a'), ['b'])
+  assert.deepEqual(duplicatesOf('b'), ['a'])
+  assert.deepEqual(linkFiles(), [], 'global reports never appear as team files')
+  setManagedWorkspace('one', [records[0]])
+  assert.deepEqual(duplicatesOf('a'), [], 'reloading after disable removes the old links')
+})

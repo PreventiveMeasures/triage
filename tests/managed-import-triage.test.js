@@ -1,3 +1,4 @@
+import { parseStorageKey } from '../server-common/storage-crypto.ts'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
@@ -16,8 +17,8 @@ const config = {
   cookieSecure: false, sessionCookieName: 'import-test', sessionTtlMs: 3_600_000,
   maxReportBytes: 10_485_760, maxBundleBytes: 104_857_600,
 }
-async function fixture(t) {
-  const db = openSqliteManagedDb(':memory:')
+async function fixture(t, options = {}) {
+  const db = openSqliteManagedDb(':memory:', options)
   t.after(() => db.close())
   const sessions = {}
   for (const [index, role] of ['admin', 'manage', 'triage', 'view'].entries()) {
@@ -353,7 +354,7 @@ test('a report deleted between matching and import cannot leave orphan triage or
 })
 
 test('whole workspace import uses real managed routes to create a team, upload reports/links, resolve conflicts, and publish', async t => {
-  const { db, request, sessions } = await fixture(t)
+  const { db, request, sessions } = await fixture(t, { storageEncryptionKey: parseStorageKey(Buffer.alloc(32, 77).toString('base64')) })
   const admin = sessions.admin
   await db.selectRepo({ repoId: 7, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'https://github.com/org/repo', addedBy: admin.userId }, 1)
   await db.setTriage('f', { color: 'blue', fix: 'Existing fix' }, admin.userId, 'admin', 2)
@@ -375,7 +376,8 @@ test('whole workspace import uses real managed routes to create a team, upload r
   assert.equal(team.name, 'Imported workspace')
   const [visible] = await db.listTeamsForUser(admin.userId)
   assert.equal(visible.id, team.id)
-  assert.deepEqual(visible.reports.map(row => row.filename).toSorted(), ['imported.json', 'links.json'])
+  assert.deepEqual(visible.reports.map(row => row.filename).toSorted(), ['imported.json'])
+  assert.deepEqual((await db.listLinkReports()).map(row => [row.filename, row.enabled]), [['links.json', true]])
   assert.equal((await db.getReport(plan.reports[0].uploaded.id)).repoDirectory, 'src')
   assert.equal((await db.listTriage(['f']))[0].color, 'red')
   assert.equal((await db.listTriage(['f']))[0].fix, 'Existing fix')

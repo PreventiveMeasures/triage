@@ -104,10 +104,15 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
 // GET /api/reports/<id> → parsed, filtered data and the authoritative server repo.
 // Keep them together so viewing does not depend on a stale sidebar catalogue.
 // The caller renders it WITHOUT caching to OPFS. null on failure / no access.
+function responseLinks(body) {
+  if (body?.links === undefined) return []
+  return Array.isArray(body.links) && body.links.every(row => Array.isArray(row) && row.length >= 2 && row.every(id => typeof id === 'string')) ? body.links : null
+}
 function reportContent(body) {
   if (reportEntries(body?.data) === null || typeof body.repo?.directory !== 'string') return null
   if (body.repo.github !== null && typeof body.repo.github !== 'string') return null
-  return { data: body.data, repo: body.repo }
+  if (responseLinks(body) === null) return null
+  return { data: body.data, repo: body.repo, ...(body.links ? { links: body.links } : {}) }
 }
 
 export async function fetchReport(id, { signal } = {}) {
@@ -131,7 +136,9 @@ export async function fetchReports(ids, { signal } = {}) {
     if (!content || !unique.includes(entry.id) || reports.has(entry.id)) return null
     reports.set(entry.id, content)
   }
-  return ids.map(id => reports.get(id))
+  const links = responseLinks(body)
+  if (links === null) return null
+  return ids.map(id => ({ ...reports.get(id), ...(links.length > 0 ? { links } : {}) }))
 }
 
 // Published report selections keep the full workspace for classification.
@@ -147,6 +154,9 @@ export async function fetchTeamReports(teamId, { signal, reportId = null } = {})
     seen.add(entry.id)
     reports.push({ id: entry.id, filename: entry.filename, ...content })
   }
+  const links = responseLinks(body)
+  if (links === null) return null
+  Object.defineProperty(reports, 'links', { value: links })
   return reports
 }
 
