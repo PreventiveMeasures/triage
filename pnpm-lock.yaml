@@ -15,8 +15,8 @@ importers:
         specifier: 1.0.0-beta.5
         version: 1.0.0-beta.5
       '@preventive/report':
-        specifier: github:PreventiveMeasures/libraries#f6e11853451adb16a08d97613308ecdeec6f9670&path:/report
-        version: https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/f6e11853451adb16a08d97613308ecdeec6f9670#path:/report
+        specifier: github:PreventiveMeasures/libraries#0c5f120ed4a4e8f146bce59da6d2ee0ee293449a&path:/report
+        version: https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/0c5f120ed4a4e8f146bce59da6d2ee0ee293449a#path:/report
       '@preventive/upstream':
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
@@ -613,8 +613,8 @@ packages:
     resolution: {integrity: sha512-yMeHF6Wy6U2L+jcu+YWEtDmxQcDE0ptJmYMG5f8+N1ObzBOgl97I643MZOhH6YDSFG7DQyW9YmQxto+FJvHgmQ==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.5.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/report@https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/f6e11853451adb16a08d97613308ecdeec6f9670#path:/report':
-    resolution: {path: /report, gitHosted: true, integrity: sha512-aF5Irw/jHk7nQ8H9bZg0WnlnIHBi2TXYupWw9KrR8OLrkqXqTmmJI1Br3tbmiOLqL47FYUaLynhqcGnZzST+wQ==, tarball: https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/f6e11853451adb16a08d97613308ecdeec6f9670}
+  '@preventive/report@https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/0c5f120ed4a4e8f146bce59da6d2ee0ee293449a#path:/report':
+    resolution: {path: /report, gitHosted: true, integrity: sha512-3tbRopDNhA5uyQUOgFV6aEu6XiQcRbdz8unKw+TCHoHVau/ZcptD8bFljA2dcdrfuabhwHwyw9T2ysX71Ih1bg==, tarball: https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/0c5f120ed4a4e8f146bce59da6d2ee0ee293449a}
     version: 1.0.0-alpha.5
     engines: {node: '>=24.14.0'}
 
@@ -1756,7 +1756,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/report@https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/f6e11853451adb16a08d97613308ecdeec6f9670#path:/report':
+  '@preventive/report@https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/0c5f120ed4a4e8f146bce59da6d2ee0ee293449a#path:/report':
     dependencies:
       markdown-it: 15.0.2
 
