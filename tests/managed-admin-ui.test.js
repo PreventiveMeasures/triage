@@ -480,6 +480,7 @@ test('upload batches preserve arrival order, use the current token without locat
     const requests = []
     let refreshes = 0
     const fetch = t.mock.method(globalThis, 'fetch', (url, options) => {
+      if (url === '/api/config') return Promise.resolve(Response.json({ managed: {} }))
       assert.equal(url, `/api/admin/${kind}s`)
       if (options.method !== 'POST') {
         refreshes++
