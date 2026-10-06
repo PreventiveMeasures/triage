@@ -9,7 +9,7 @@ function weakEdgeFile(file, ownSource) {
   return {
     package: parts?.[1],
     path: parts?.[2] ?? file.replace(/^\/+/u, ''),
-    ownSource: ownSource ?? bundlePkgOf(file, { splitOwnDirs: false }) === '__own__',
+    ownSource: ownSource ?? bundlePkgOf(file) === '__own__',
   }
 }
 

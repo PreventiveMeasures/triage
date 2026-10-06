@@ -5,17 +5,14 @@
 //
 // The behavior under test: dependency paths bucket by package name
 // (scopes + pnpm's nested `node_modules` handled), own (first-party)
-// source buckets either by top-level directory or into the single
-// `__own__` group depending on `splitOwnDirs`, and a supplied stasis
+// source uses the single `__own__` identity, and a supplied stasis
 // `packageDir` keeps workspace packages (PHP `vendor/<vendor>/<pkg>`,
 // monorepo `packages/<name>`) separate from their shared parent dir.
-// The Graph tab's "Split dirs" toggle is the only caller that flips
-// `splitOwnDirs` off; everyone else keeps the default split.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundlePkgOf, ownSourceSplittable, pkgLabel } = await import('../ui/view/bundle-pkg-of.js')
+const { bundlePkgOf, pkgLabel } = await import('../ui/view/bundle-pkg-of.js')
 
 describe('bundlePkgOf', () => {
   it('buckets node_modules files by package name', () => {
@@ -43,37 +40,17 @@ describe('bundlePkgOf', () => {
     )
   })
 
-  describe('own (first-party) source', () => {
-    it('splits by top-level directory by default', () => {
-      assert.equal(bundlePkgOf('src/foo/a.js'), 'src')
-      assert.equal(bundlePkgOf('lib/x.js'), 'lib')
-      assert.equal(bundlePkgOf('playground/demo.js'), 'playground')
-    })
-
-    it('splits by top-level directory when splitOwnDirs is true', () => {
-      assert.equal(bundlePkgOf('src/foo/a.js', { splitOwnDirs: true }), 'src')
-    })
-
-    it('collapses into one __own__ group when splitOwnDirs is false', () => {
-      assert.equal(bundlePkgOf('src/foo/a.js', { splitOwnDirs: false }), '__own__')
-      assert.equal(bundlePkgOf('lib/x.js', { splitOwnDirs: false }), '__own__')
-    })
-
-    it('returns __own__ for repo-root files regardless of the flag', () => {
-      assert.equal(bundlePkgOf('index.js'), '__own__')
-      assert.equal(bundlePkgOf('index.js', { splitOwnDirs: false }), '__own__')
-    })
-
-    it('still resolves dependency packages when splitOwnDirs is false', () => {
-      assert.equal(bundlePkgOf('node_modules/foo/x.js', { splitOwnDirs: false }), 'foo')
-      assert.equal(bundlePkgOf('src/node_modules/foo/x.js', { splitOwnDirs: false }), 'foo')
-    })
+  it('classifies every ordinary source directory and root file as own source', () => {
+    for (const path of ['src/foo/a.js', 'lib/x.js', 'playground/demo.js', 'index.js']) {
+      assert.equal(bundlePkgOf(path), '__own__')
+    }
+    assert.equal(bundlePkgOf('src/node_modules/foo/x.js'), 'foo')
   })
 
   describe('stasis packageDir (workspace packages)', () => {
     it('buckets a vendored package by its package dir', () => {
       // PHP `vendor/<vendor>/<pkg>` — the heuristic alone would
-      // collapse both under the shared `vendor` top-level dir.
+      // treat these as own source without their recorded package dirs.
       assert.equal(
         bundlePkgOf('vendor/aws/aws-sdk-php/src/S3/S3Client.php', { packageDir: 'vendor/aws/aws-sdk-php' }),
         'vendor/aws/aws-sdk-php',
@@ -123,87 +100,23 @@ describe('bundlePkgOf', () => {
 
     it('keeps dependency-named source folders in their recorded owning module', () => {
       const path = 'subdir/dependencies/filename.js'
-      assert.equal(bundlePkgOf(path, { packageDir: '.', splitOwnDirs: false }), '__own__')
-      assert.equal(bundlePkgOf(path, { packageDir: '.', splitOwnDirs: true }), 'subdir')
-      assert.equal(bundlePkgOf(path, { packageDir: 'subdir', splitOwnDirs: false }), 'subdir')
+      assert.equal(bundlePkgOf(path, { packageDir: '.' }), '__own__')
+      assert.equal(bundlePkgOf(path, { packageDir: 'subdir' }), 'subdir')
       assert.equal(bundlePkgOf('dependencies/filename.js', { packageDir: 'packages/app' }), 'packages/app')
       // Without metadata, the legacy dependency-directory heuristic still applies.
-      assert.equal(bundlePkgOf(path, { splitOwnDirs: false }), 'filename.js')
+      assert.equal(bundlePkgOf(path), 'filename.js')
     })
 
-    it('treats the `.` root dir as own source (split by top-level dir)', () => {
-      assert.equal(bundlePkgOf('src/foo/a.js', { packageDir: '.' }), 'src')
+    it('treats the `.` root module as own source', () => {
       assert.equal(bundlePkgOf('index.js', { packageDir: '.' }), '__own__')
-      assert.equal(bundlePkgOf('src/foo/a.js', { packageDir: '.', splitOwnDirs: false }), '__own__')
-    })
-  })
-})
-
-describe('ownSourceSplittable', () => {
-  it('is false for an empty file set', () => {
-    assert.equal(ownSourceSplittable([]), false)
-  })
-
-  it('is false when every file is a dependency', () => {
-    assert.equal(ownSourceSplittable(['node_modules/foo/a.js', 'dependencies/bar/b.js']), false)
-  })
-
-  it('is false when all own source sits in one top-level dir', () => {
-    assert.equal(ownSourceSplittable(['src/a.js', 'src/b/c.js']), false)
-    // Dependencies alongside a single own dir don't make it splittable.
-    assert.equal(ownSourceSplittable(['src/a.js', 'node_modules/foo/i.js']), false)
-  })
-
-  it('is false when all own source is repo-root files (one __own__ bucket)', () => {
-    assert.equal(ownSourceSplittable(['index.js', 'main.js']), false)
-  })
-
-  it('is true when own source spans multiple top-level dirs', () => {
-    assert.equal(ownSourceSplittable(['src/a.js', 'lib/b.js']), true)
-    assert.equal(ownSourceSplittable(['node_modules/foo/i.js', 'src/a.js', 'app/b.js']), true)
-  })
-
-  it('is true when a top-level dir coexists with repo-root files', () => {
-    // split → { src, __own__ }: the root file separates from src.
-    assert.equal(ownSourceSplittable(['src/a.js', 'index.js']), true)
-  })
-
-  it('includes dependency-named own-source folders when authoritative metadata is present', () => {
-    assert.equal(ownSourceSplittable(['index.js', 'subdir/dependencies/filename.js'], () => '.'), true)
-    assert.equal(ownSourceSplittable(['subdir/dependencies/filename.js', 'subdir/main.js'], () => '.'), false)
-  })
-
-  describe('with a stasis packageDirOf', () => {
-    // Workspace packages resolve to a package either way, so they're
-    // not own source and must not make own source look splittable.
-    const dirs = new Map([
-      ['vendor/aws/aws-crt-php/a.php', 'vendor/aws/aws-crt-php'],
-      ['vendor/aws/aws-sdk-php/b.php', 'vendor/aws/aws-sdk-php'],
-      ['index.php', '.'],
-    ])
-    const dirOf = (p) => dirs.get(p)
-
-    it('excludes sibling workspace packages from the own-source tally', () => {
-      // Without the map these two would both bucket under `vendor`
-      // (still one bucket → false), but the root file alone is one
-      // `__own__` bucket, so own source is not splittable.
-      assert.equal(
-        ownSourceSplittable(['vendor/aws/aws-crt-php/a.php', 'vendor/aws/aws-sdk-php/b.php', 'index.php'], dirOf),
-        false,
-      )
-    })
-
-    it('still reports splittable own source alongside workspace packages', () => {
-      const paths = ['vendor/aws/aws-sdk-php/b.php', 'src/a.php', 'lib/c.php']
-      const withDirs = new Map([...dirs, ['src/a.php', '.'], ['lib/c.php', '.']])
-      assert.equal(ownSourceSplittable(paths, (p) => withDirs.get(p)), true)
+      assert.equal(bundlePkgOf('src/foo/a.js', { packageDir: '.' }), '__own__')
     })
   })
 })
 
 describe('pkgLabel', () => {
   it('spells out own source', () => {
-    assert.equal(pkgLabel('__own__'), 'own source')
+    assert.equal(pkgLabel('__own__'), 'Own source')
   })
 
   it('names a `cargo vendor` crate by the crate, not by `vendor/<crate>`', () => {

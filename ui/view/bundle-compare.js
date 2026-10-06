@@ -391,32 +391,14 @@ class BundleCompare extends LitElement {
       // images differ, and total less than the Overview does.
       const baseSources = bundleCompareFiles(this.details, this._scope)
       const otherSources = bundleCompareFiles(this._otherDetails, this._scope)
-      // Bucket packages on prefix-stripped paths so own-source files
-      // land under the same name the Overview / Treemap / Graph tabs
-      // show — those strip the shared build-output root before
-      // bundlePkgOf, so a raw path would bucket `dist/src/x` under `dist`
-      // here vs `src` there. The prefix spans BOTH bundles so the two
-      // sides align; node_modules / dependencies buckets are unaffected
-      // (their marker is matched anywhere in the path).
-      //
-      // Stasis bundles carry authoritative package boundaries, so feed
-      // each path's package dir through too — matching those tabs,
-      // workspace packages like `vendor/aws/aws-crt-php` stay separate
-      // instead of collapsing under their shared `vendor` parent. The
-      // dir is looked up by the ORIGINAL path (the maps are keyed
-      // pre-strip) while the stripped path drives own-source bucketing;
-      // both sides' maps are merged so a path resolves whichever bundle
-      // carries it. Null for sourcemap pairs → heuristic-only, as before.
-      const { prefix } = stripCommonPathPrefix([...baseSources.keys(), ...otherSources.keys()])
+      // Classify original paths and preserve recorded Stasis package
+      // boundaries from either side. Own source has one identity.
       const baseDirs = bundlePackageDirs(this.details)
       const otherDirs = bundlePackageDirs(this._otherDetails)
       const packageDirs = baseDirs || otherDirs
         ? new Map([...(baseDirs ?? []), ...(otherDirs ?? [])])
         : null
-      const pkgOf = (p) => bundlePkgOf(
-        prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p,
-        { packageDir: packageDirs?.get(p) },
-      )
+      const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
       this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
       this._diff.resolutions = computeResolutionDiff(
         bundleCompareResolutions(this.details, this._scope),

@@ -7,8 +7,7 @@
 // Bucket a bundle source path into a "package":
 //   - files under `node_modules/<pkg>/...` or `dependencies/<pkg>/...`
 //     return `<pkg>` (scoped names included);
-//   - own (first-party) source returns either its top-level directory
-//     or the single `__own__` bucket, per `splitOwnDirs`.
+//   - own (first-party) source returns the single `__own__` bucket.
 //
 // pnpm wraps each install in
 // `node_modules/.pnpm/<name>@<version>/node_modules/<name>/...` —
@@ -16,28 +15,20 @@
 // so when we hit that synthetic dir we walk past it to the inner
 // `node_modules/<pkg>` segment that names the actual package.
 //
-// `splitOwnDirs` (default true — what the size chart, treemap, and
-// compare views want) controls own-source bucketing: on, the first
-// path segment becomes the group so `src/foo/a.js` buckets under `src`
-// and `lib/...` under `lib` (distinct groups + colors); off, every
-// first-party file collapses into the single `__own__` group the graph
-// labels "own source". The bundle Graph tab passes this through from
-// its "Split dirs" topbar toggle.
-//
 // `packageDir` is this path's authoritative stasis package directory
 // (from `bundlePackageDirs` in bundle-sources.js), when one is known.
 // It takes precedence over path heuristics: a module can contain its own
 // `dependencies/` directory without those files becoming new packages.
 // Recorded `node_modules/<pkg>` directories use the bare package name;
 // other named module directories stay separate under their full dir, and
-// `.` uses own-source bucketing. Only bundles without this metadata use
+// `.` identifies own source. Only bundles without this metadata use
 // the path heuristic.
 //
 // The result is the package's identity — what files, sizes and edges are
 // grouped by — so a vendored package keeps its dir here: Cargo's
 // `vendor/log` is not npm's `log`, and one bundle can carry both. It is
 // `pkgLabel` that shows it by name.
-export function bundlePkgOf(path, { splitOwnDirs = true, packageDir = null } = {}) {
+export function bundlePkgOf(path, { packageDir = null } = {}) {
   if (packageDir) {
     if (packageDir !== '.') {
       const npm = packageDir.match(/(?:^|\/)node_modules\/(@[^/]+\/[^/]+|[^/]+)$/u)
@@ -50,42 +41,11 @@ export function bundlePkgOf(path, { splitOwnDirs = true, packageDir = null } = {
       if (m[1] !== '.pnpm') return m[1]
     }
   }
-  if (splitOwnDirs) {
-    const slash = path.indexOf('/')
-    if (slash > 0) return path.slice(0, slash)
-  }
   return '__own__'
 }
 
-// Whether splitting own source by top-level dir would actually divide
-// it — i.e. the own (non-dependency) files fall into more than one
-// bucket once split (multiple top-level dirs, or a top-level dir
-// alongside repo-root files). False when every own file shares a
-// single bucket, or there's no own source at all. The bundle Graph
-// tab uses this to hide its "Split dirs" toggle when flipping it would
-// be a no-op. Stops at the second distinct bucket — no need to walk
-// the whole bundle once the answer is settled.
-//
-// `packageDirOf(path)` (optional) supplies each path's stasis package
-// dir so workspace packages (PHP `vendor/<vendor>/<pkg>`, monorepo
-// `packages/<name>`) are recognized as their own packages and excluded
-// from the own-source tally — flipping "Split dirs" doesn't move them,
-// so they must not be what makes own source look splittable.
-export function ownSourceSplittable(paths, packageDirOf = null) {
-  const buckets = new Set()
-  for (const p of paths) {
-    const packageDir = packageDirOf?.(p) ?? null
-    // Dependency + workspace-package files (resolve to a package either
-    // way) never move when own-source splitting toggles — skip them.
-    if (bundlePkgOf(p, { splitOwnDirs: false, packageDir }) !== '__own__') continue
-    buckets.add(bundlePkgOf(p, { splitOwnDirs: true, packageDir }))
-    if (buckets.size > 1) return true
-  }
-  return false
-}
-
 // Display label for a package bucket: `__own__` is the sentinel for
-// own-source (non-dependency) files, spelled out as "own source" in
+// own-source (non-dependency) files, spelled out as "Own source" in
 // package lists and tooltips.
 //
 // A vendored package is shown by the path after the (last) `vendor/`,
@@ -96,7 +56,7 @@ export function ownSourceSplittable(paths, packageDirOf = null) {
 // Anything but a package key (the graph asks with no package focused)
 // passes through as it came.
 export function pkgLabel(pkg) {
-  if (pkg === '__own__') return 'own source'
+  if (pkg === '__own__') return 'Own source'
   if (typeof pkg !== 'string') return pkg
   return pkg.match(/^(?:.*\/)?vendor\/(.+)$/u)?.[1] ?? pkg
 }

@@ -112,7 +112,7 @@ test('config discovery ownership agrees across the grid, inspector, dependency g
   }
 })
 
-test('import-fresh ownership is per file when own-source and dependency package keys collide', () => {
+test('import-fresh distinguishes own source from a dependency with the same directory name', () => {
   const own = 'tools/local.config.js', target = 'node_modules/tools/metro.config.js'
   const name = 'import-fresh', source = 'node_modules/import-fresh/index.js'
   const edges = new Map([[source, [own, target]], [own, [source]], [target, [source]]])
@@ -122,9 +122,9 @@ test('import-fresh ownership is per file when own-source and dependency package 
     const tree = Object.fromEntries([...edges].map(([path, targets]) => [display.get(path), { imports: targets.map(to => display.get(to)) }]))
     const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: path => bundlePkgOf(original.get(path)) })
     for (const node of graph.nodes) node.origFile = original.get(node.file)
-    assert.equal(graph.nodeByFile.get(display.get(own)).pkg, 'tools')
+    assert.equal(graph.nodeByFile.get(display.get(own)).pkg, '__own__')
     assert.equal(graph.nodeByFile.get(display.get(target)).pkg, 'tools')
-    graph.ownSourcePackages = new Set(['tools'])
+    graph.ownSourcePackages = new Set(['__own__'])
     graph.ownSourceFiles = new Set([display.get(own)])
     const from = `f:${display.get(source)}`, to = `f:${display.get(target)}`
     for (const expanded of [new Set(), new Set(graph.packages)]) {

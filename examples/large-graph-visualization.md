@@ -58,7 +58,7 @@ Primary sources:
 - Zoom with the buttons or Ctrl/Command + wheel, pan by dragging or scrolling,
   and use fixed row/column labels. Arrow keys select cells; Enter expands.
   Minimum zoom is the smaller of 100% and Fit. Empty cells have no hover tooltip.
-- Existing Reason, Split dirs, theme, fullscreen, and finding highlights work
+- Existing Reason, theme, fullscreen, and finding highlights work
   with the new mode.
 
 ## Validation and limits

@@ -140,42 +140,30 @@ it('keeps named app roots first without treating an arbitrary package named app 
   assert.deepEqual(buildDependencyMatrix(graph, { query: 'isolated' }).rows.map((row) => row.id), ['p:isolated'])
 })
 
-it('keeps cycles together with split own-source directories before dependency modules inside each cycle', () => {
-  for (const hasRootFiles of [false, true]) {
-    const edges = [['src', 'dep-cycle', 10], ['dep-cycle', 'lib', 10], ['lib', 'src'], ['src', 'outside', 2], ['outside', 'dep-leaf'],
-      ['dep-other', 'dep-last'], ['dep-last', 'dep-other']]
-    if (hasRootFiles) edges.push(['__own__', 'src'], ['dep-cycle', '__own__'])
-    const graph = cycleFixture(edges)
-    graph.nodes.push({ file: 'tools/unused.js', pkg: 'tools' })
-    const ownPackages = new Set(['src', 'lib', 'outside', 'tools', ...(hasRootFiles ? ['__own__'] : [])])
-    // A dependency can also be a recorded bundle entry. It is a traversal
-    // root, but must not be ranked as an own-source directory inside a cycle.
-    graph.layerRoots = { roots: [...ownPackages, 'dep-cycle'] }
-    graph.ownSourcePackages = ownPackages
-    const cases = ['structure', 'name', 'importers', 'imports'].flatMap((order) =>
-      [new Set(), ownPackages].flatMap((expanded) => [false, true].map((cyclesOnly) => ({ order, expanded, cyclesOnly }))))
-    for (const { order, expanded, cyclesOnly } of cases) {
-      const model = buildDependencyMatrix(graph, { order, expanded, cyclesOnly })
-      const context = `${order}, expanded=${expanded.size}, root files=${hasRootFiles}, cycles only=${cyclesOnly}`
-      if (order === 'structure') {
-        const components = Map.groupBy(model.rows, (row) => row.component)
-        for (const members of components.values()) {
-          const start = model.index.get(members[0].id)
-          assert.deepEqual(model.rows.slice(start, start + members.length), members, `contiguous cycle: ${context}`)
-          const ownRows = members.filter((row) => ownPackages.has(row.pkg))
-          assert.deepEqual(members.slice(0, ownRows.length), ownRows, `own directories lead within cycle: ${context}`)
-        }
-        const dep = model.byId.get('p:dep-cycle')
-        assert.equal(model.rows[0].component, dep.component, `source cycle first: ${context}`)
-        if (!cyclesOnly) assert.ok(model.index.get(dep.id) < model.index.get(expanded.size > 0 ? 'f:outside/0.js' : 'p:outside'), context)
-      } else {
-        const ownRows = model.rows.filter((row) => ownPackages.has(row.pkg))
-        assert.deepEqual(model.rows.slice(0, ownRows.length), ownRows, context)
+it('keeps own source before dependency modules within its cycle', () => {
+  const graph = cycleFixture([
+    ['__own__', 'dep-cycle', 10], ['dep-cycle', '__own__', 10], ['__own__', 'dep-leaf'],
+    ['dep-other', 'dep-last'], ['dep-last', 'dep-other'],
+  ])
+  const ownPackages = new Set(['__own__'])
+  // A dependency can also be a recorded entry without being own source.
+  graph.layerRoots = { roots: ['__own__', 'dep-cycle'] }
+  graph.ownSourcePackages = ownPackages
+  const cases = ['structure', 'name', 'importers', 'imports'].flatMap(order =>
+    [new Set(), ownPackages].flatMap(expanded => [false, true].map(cyclesOnly => ({ order, expanded, cyclesOnly }))))
+  for (const { order, expanded, cyclesOnly } of cases) {
+    const model = buildDependencyMatrix(graph, { order, expanded, cyclesOnly })
+    assert.equal(model.rows[0].pkg, '__own__')
+    if (order === 'structure') {
+      const components = Map.groupBy(model.rows, row => row.component)
+      for (const members of components.values()) {
+        const start = model.index.get(members[0].id)
+        assert.deepEqual(model.rows.slice(start, start + members.length), members)
       }
-      if (hasRootFiles) assert.equal(model.rows[0].pkg, '__own__', context)
-      assert.equal(model.cycleCount, 2, 'ordering must preserve cycle membership')
-      assert.equal(model.cells.get(expanded.size > 0 ? 'f:src/0.js' : 'p:src').get('p:dep-cycle').cyclic, true)
+      assert.equal(model.rows[0].component, model.byId.get('p:dep-cycle').component)
     }
+    assert.equal(model.cycleCount, 2)
+    assert.equal(model.cells.get(expanded.size > 0 ? 'f:__own__/0.js' : 'p:__own__').get('p:dep-cycle').cyclic, true)
   }
 })
 

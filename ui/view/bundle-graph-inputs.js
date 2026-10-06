@@ -14,14 +14,6 @@ export function filterBundleGraphReason(tree, origToStripped, reasons, requested
   return { tree: filtered, origToStripped: paths, selected }
 }
 
-// Prefix stripping is for display only: removing node_modules/ must not turn
-// dependencies into own source. Own-source directory splitting still uses
-// the compact display path, preserving the ordinary graph's grouping.
-export function bundleGraphPackageOf(path, originalPath, { splitOwnDirs = false, packageDir } = {}) {
-  const pkg = bundlePkgOf(originalPath, { splitOwnDirs: false, packageDir })
-  return pkg === '__own__' ? bundlePkgOf(path, { splitOwnDirs, packageDir }) : pkg
-}
-
 // Include every recorded platform/condition variant; a Metro resolution can
 // be a platform -> file map instead of a single resolved path.
 export function bundleImportsAsMap(details) {
@@ -45,11 +37,9 @@ export function bundleImportsAsMap(details) {
 export function bundleLayerRoots(details, origToStripped, pkgOf, packageDirs, fullOrigToStripped = origToStripped) {
   const imports = bundleImportsAsMap(details)
   const roots = new Set()
-  // Split dirs changes the app's display buckets, not its dependency depth.
-  // Identify own source before splitting so every app directory stays at 0,
-  // even when only one directory contains an entry or imports another one.
+  // Own source is a root even when entry metadata is absent.
   for (const [orig, path] of origToStripped) {
-    if (bundlePkgOf(orig, { splitOwnDirs: false, packageDir: packageDirs?.get(orig) }) === '__own__') roots.add(pkgOf(path))
+    if (bundlePkgOf(orig, { packageDir: packageDirs?.get(orig) }) === '__own__') roots.add(pkgOf(path))
   }
   for (const entry of details?.bundle?.entries ?? []) {
     const path = origToStripped.get(entry)
@@ -80,7 +70,7 @@ export function bundleLayerRoots(details, origToStripped, pkgOf, packageDirs, fu
     // Filtered-out bundled files must not regain their edges through a
     // virtual App node. Only genuinely unbundled source qualifies here.
     if (fullOrigToStripped.has(parent)) continue
-    if (bundlePkgOf(parent, { splitOwnDirs: false, packageDir: packageDirs?.get(parent) }) !== '__own__') continue
+    if (bundlePkgOf(parent, { packageDir: packageDirs?.get(parent) }) !== '__own__') continue
     for (const target of targets) {
       const path = origToStripped.get(target)
       if (path !== undefined) appImports.add(pkgOf(path))

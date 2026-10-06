@@ -458,10 +458,8 @@ class BundleTreemap extends LitElement {
       let leaf = node.children.get(base)
       if (leaf && !leaf.isFile) continue
       if (!leaf) {
-        // Classify on the stripped path (own-source split matches the
-        // file labels) but resolve the stasis package dir from the
-        // original path (the map is keyed pre-strip).
-        const pkg = bundlePkgOf(stripped[i], { packageDir: packageDirs?.get(origPaths[i]) })
+        // Display-prefix stripping must not erase dependency boundaries.
+        const pkg = bundlePkgOf(origPaths[i], { packageDir: packageDirs?.get(origPaths[i]) })
         leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg, resource: kinds.get(origPaths[i]) === 'resource' }
         node.children.set(base, leaf)
       }

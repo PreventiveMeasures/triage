@@ -20,7 +20,7 @@ const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { state } = await import('../client/state.ts')
-const { renderBundleSourceModal, renderBundlesList } = await import('../ui/view/render-bundle.js')
+const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -387,4 +387,53 @@ test('the Overview Packages header sorts by total bytes or displayed name indepe
       assert.equal(state.bundleOverviewFilesSort, 'name')
     }
   }
+})
+
+test('Overview and graph classify ordinary directories directly as Own source while preserving packages', async () => {
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-own-source' }
+  const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
+    modules: new Map([
+      ['.', { name: 'app', version: '1', files: { 'src/main.js': '1', 'lib/util.js': '2', 'index.js': '3' } }],
+      ['node_modules/dep', { name: 'dep', version: '1', files: { 'index.js': '12345678' } }],
+      ['packages/shared', { name: 'shared', version: '1', files: { 'index.js': '1234' } }],
+    ]),
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
+  const sourcemap = { integrity: entry.integrity, kind: 'sourcemap', size: 123, json: {
+    version: 3,
+    sources: ['src/main.js', 'lib/util.js', 'index.js', 'node_modules/dep/index.js', 'node_modules/shared/index.js'],
+    sourcesContent: ['1', '2', '3', '12345678', '1234'],
+  } }
+  state.selectedBundle = entry.integrity
+  state.bundles = [entry]
+  for (const [details, managedId] of [[full, undefined], [cached, 'managed-bundle'], [sourcemap, undefined]]) {
+    state.bundleDetails = details
+    const workspace = details === sourcemap ? 'shared' : 'packages/shared'
+    for (const sort of ['name', 'size']) {
+      state.bundleOverviewPackagesSort = sort
+      const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
+      assert.match(markup, /Packages <span class="bundles-overview-col-count">3<\/span>/u)
+      const distribution = markup.match(/<ul class="bundles-dist-list">(.*?)<\/ul>/su)[1]
+      assert.deepEqual([...distribution.matchAll(/class="bundles-dist-pkg"[^>]*>(.*?)<\/span>/gu)].map(match => match[1]), ['Own source', 'dep', workspace])
+      assert.match(distribution, /class="bundles-dist-size">3 B<\/span>/u)
+    }
+    const graph = buildBundleGraphData(details)
+    assert.deepEqual(new Set(graph.files.map(graph.options.pkgOf)), new Set(['__own__', 'dep', workspace]))
+    assert.deepEqual(graph.ownSourceFiles, new Set(['src/main.js', 'lib/util.js', 'index.js']))
+  }
+})
+
+test('Overview and graph retain a sourcemap package identity when its entire directory prefix is stripped', () => {
+  const entry = { name: 'dep.map', integrity: 'sha512-single-dependency' }
+  state.selectedBundle = entry.integrity
+  state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 123, json: {
+    version: 3, sources: ['node_modules/@scope/dep/index.js', 'node_modules/@scope/dep/helper.js'], sourcesContent: ['dep', 'helper'],
+  } }
+  const markup = renderText(renderBundlesList([entry]))
+  const distribution = markup.match(/<ul class="bundles-dist-list">(.*?)<\/ul>/su)[1]
+  assert.match(distribution, />@scope\/dep<\/span>/u)
+  assert.doesNotMatch(distribution, /Own source/u)
+  const graph = buildBundleGraphData(state.bundleDetails)
+  assert.deepEqual(graph.files, ['index.js', 'helper.js'])
+  assert.equal(graph.options.pkgOf('index.js'), '@scope/dep')
 })

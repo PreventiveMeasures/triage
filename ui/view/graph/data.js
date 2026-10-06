@@ -317,7 +317,7 @@ export function buildPackageGraph(graph) {
 }
 
 // Display name for a package key — the synthetic `__own__` bucket
-// reads as "own source"; every real package is shown by name, a
+// reads as "Own source"; every real package is shown by name, a
 // vendored one without its `vendor/` dir (see `pkgLabel`).
 export function pkgLabelOf(pkg) {
   return pkgLabel(pkg)
@@ -325,14 +325,13 @@ export function pkgLabelOf(pkg) {
 
 // Strip a file path's package anchor so callers can show
 // "index.js" instead of "node_modules/foo/index.js" (npm) or
-// "foo/bar.js" instead of "src/foo/bar.js" (own source).
+// "foo/bar.js" instead of "packages/app/foo/bar.js" (workspace package).
 // Mirrors packageOf / bundlePkgOf: packages anchor on either
 // `node_modules/<pkg>/` or `dependencies/<pkg>/` — try both
 // regardless of the report-driven depsDirName, since the bundle
 // graph runs without a report (depsDirName falls back to
 // 'dependencies' even when the bundle paths use node_modules).
-// own source anchors on the top-level dir. For root files
-// (pkg === '/') and the synthetic '__own__' bucket the file is
+// For own source in the synthetic '__own__' bucket the file is
 // returned as-is — there's no meaningful prefix to strip and
 // consumers should fall back to the full path.
 export function pkgRelative(file, pkg) {

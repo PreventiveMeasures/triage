@@ -10,18 +10,14 @@ import { depsDirName, isModule } from '../format.js'
 // inside the active deps dir (`node_modules/<pkg>/` by default;
 // `vendor/<pkg>/` or `dependencies/<pkg>/` when the project ships no
 // node_modules — see `configureDepsDir` in format.js) group by
-// package name. Own
-// source (anything outside that dir) groups by top-level directory —
-// so `src/...` files all share a color, `playground/...` files share
-// another. Files at the repo root cluster under '/' (rare).
+// package name. Own source uses the single `__own__` identity.
 export function packageOf(file) {
   if (!file) return null
   const dir = depsDirName()
   const re = new RegExp(`^(?:.*/)?${dir}/(@[^/]+/[^/]+|[^/]+)`, 'u')
   const m = file.match(re)
   if (m) return m[1]
-  const slash = file.indexOf('/')
-  return slash > 0 ? file.slice(0, slash) : '/'
+  return '__own__'
 }
 
 // Snapshot the report's active dependency-directory classifier before handing

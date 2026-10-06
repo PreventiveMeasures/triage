@@ -1027,26 +1027,6 @@ report.addEventListener('click', (e) => {
     render()
     return
   }
-  // Split-dirs toggle (bundle Graph tab) — reclassifies own source
-  // (one `__own__` group ⇄ a group per top-level dir), which changes
-  // the package set, the colors, and the spiral clustering, so the
-  // graph rebuilds. A solo'd / focused package name may no longer
-  // exist after the flip (e.g. `src` → `__own__`), so clear both;
-  // the file set is unchanged, so `selected` stays valid at file
-  // altitude — but when the flip lands back on the packages view
-  // (focus was just cleared), a surviving file selection would put
-  // a file card over a package canvas, so it clears there.
-  const g2SplitOwn = pathClosest(e, '[data-g2-split-own]')
-  if (g2SplitOwn) {
-    graph2.splitOwnDirs = !graph2.splitOwnDirs
-    graph2.layoutCache = null
-    graph2.solo = null
-    graph2.focusedPkg = null
-    if (graph2.packagesView || graph2.bundleLayout === 'layers') graph2.selected = null
-    cleanupGraph2()
-    render()
-    return
-  }
   // Packages-view toggle (bundle Graph tab) — flips the canvas
   // between one-node-per-file and one-node-per-package. The node
   // set, layout, and hit-testing all change, so tear down + rebuild
