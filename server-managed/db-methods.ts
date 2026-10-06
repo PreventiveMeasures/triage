@@ -10,6 +10,7 @@ import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
 import { type GithubMetadataStore, githubMetadataMethods } from './github-metadata.ts'
 import { type ManagedIssueStore, managedIssueMethods } from './managed-issues.ts'
+import type { IssueFixUpdate } from './github-issue-links.ts'
 import { type BundleBuildLeaseStore, bundleBuildLeaseMethods } from './bundle-build-leases.ts'
 import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
@@ -405,7 +406,8 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // stamp nor the trail. Every change also appends to managed_finding_triage_event;
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
-  getAnnotations(findingIds: readonly string[]): Promise<{ triage: TriageRow[]; comments: Awaited<ReturnType<CommentStore['listComments']>> }>
+  getAnnotations(findingIds: readonly string[]): Promise<{ triage: TriageRow[]; comments: Awaited<ReturnType<CommentStore['listComments']>>; issues: Awaited<ReturnType<ManagedIssueStore['listManagedIssues']>> }>
+  applyManagedIssueFixes(sessionId: string, snapshot: TeamReportAccessSnapshot, updates: IssueFixUpdate[]): Promise<boolean>
   // A content-free fingerprint of current annotations, read in one snapshot.
   getAnnotationRevision(findingIds: readonly string[]): Promise<string>
   setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void>
@@ -1140,6 +1142,8 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
       return JSON.stringify([
         await stmts.annotationTriageRevisionStmt.all(ids),
         await stmts.annotationCommentRevisionStmt.all(ids),
+        await db.prepare(`SELECT finding_id, issue_url, auto_fix_url FROM managed_finding_issue
+          WHERE finding_id IN (SELECT value FROM json_each(?)) AND issue_url IS NOT NULL ORDER BY finding_id`).all(ids),
       ])
     },
     async deleteTriage(findingIds: readonly string[]): Promise<number> {
@@ -1554,7 +1558,14 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...activity,
     ...comments,
     async getAnnotations(ids) {
-      return { triage: await triage.listTriage(ids), comments: await comments.listComments(ids) }
+      return { triage: await triage.listTriage(ids), comments: await comments.listComments(ids), issues: await methods.listManagedIssues(ids) }
+    },
+    async applyManagedIssueFixes(sessionId, snapshot, updates) {
+      // Recheck access inside the same write transaction as the derived field.
+      const current = await methods.getTeamReportAccessSnapshot(sessionId, Date.now(), snapshot.teamId!, snapshot.reportId)
+      if (!current?.teamId || JSON.stringify(current) !== JSON.stringify(snapshot)) return false
+      for (const update of updates) await methods.setManagedIssueAutoFix(update.findingId, update.issueUrl, update.previous, update.next, update.checkedAt)
+      return true
     },
     ...workspaceShareMethods(db),
     ...reports,

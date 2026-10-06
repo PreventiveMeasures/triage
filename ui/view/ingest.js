@@ -583,6 +583,7 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
   state.managedReport = null
   state.managedReports = []
   state.managedComments.clear()
+  state.managedIssues.clear()
   // A report opens its findings from every non-report surface, including
   // Scans. Preserve the Files lens when moving between reports.
   // (A links file lands back on 'links' below, once the read confirms
@@ -830,6 +831,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   setManagedWorkspace(team.id, workspace)
   state.managedReports = selected.map((entry) => ({ id: entry.id, filename: entry.filename }))
   state.managedComments.clear()
+  state.managedIssues.clear()
   state.managedReport = reportId === null ? null : state.managedReports[0] ?? null
   state.currentReportWorkspace = null
   state.currentLinks = null
@@ -906,6 +908,7 @@ export async function switchToWorkspace(workspaceId) {
   state.managedReport = null
   state.managedReports = []
   state.managedComments.clear()
+  state.managedIssues.clear()
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   if (!ws) return
   const gen = beginViewNavigation()
@@ -1152,6 +1155,7 @@ function clearActiveView({ forgetLastView = true } = {}) {
   state.managedReport = null
   state.managedReports = []
   state.managedComments.clear()
+  state.managedIssues.clear()
   state.selectedBundle = null
   state.selectedBundleWorkspace = null
   state.scanSelection = null

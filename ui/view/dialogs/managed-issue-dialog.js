@@ -49,7 +49,7 @@ class ManagedIssueDialog extends AppDialog {
       if (!this.current()) return
       this.prepared = prepared
       this.uncertain = false
-      if (prepared.mode === 'existing') window.location.assign(prepared.url)
+      if (prepared.mode === 'existing') { this.onCreated?.(prepared.url); window.location.assign(prepared.url) }
       if (redirect && prepared.mode === 'form') window.location.assign(this.fallbackUrl())
     } catch (error) {
       if (!this.uncertain && !['pending', 'created-unavailable'].includes(this.prepared?.mode)) this.prepared = null
@@ -64,8 +64,8 @@ class ManagedIssueDialog extends AppDialog {
     try {
       const result = await requestGithubIssue(this.teamId, this.context, this.session.csrfToken, { title: this.title, body: this.body })
       if (!this.current()) return
-      if (result.mode === 'existing') window.location.assign(result.url)
-      else if (result.url) { this.createdUrl = result.url; this.createdIssue = result.issue; this.detailsUnavailable = result.detailsUnavailable === true }
+      if (result.mode === 'existing') { this.onCreated?.(result.url); window.location.assign(result.url) }
+      else if (result.url) { this.createdUrl = result.url; this.createdIssue = result.issue; this.detailsUnavailable = result.detailsUnavailable === true; this.onCreated?.(result.url) }
       else this.prepared = result
     } catch (error) {
       if (error.message === 'github-authorization-required') {

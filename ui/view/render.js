@@ -23,6 +23,7 @@ import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
+import { automaticFixFor } from './managed-issues.js'
 import { graph2 } from './graph/state.js'
 import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
@@ -949,7 +950,7 @@ function kanbanCardTemplate(g, opts = {}) {
   // `.mark-fix` / `.mark-comment` classes so the existing dialog
   // delegates in events.js pick the click up — the kanban modal-toggle
   // listener skips `.kanban-action` clicks so the popover stays shut.
-  const fix = activeEntry?.fix ?? ''
+  const fix = activeEntry?.fix || automaticFixFor(activeTab)
   const comment = activeEntry?.comment ?? ''
   let action = nothing
   if (isKanban && fix) {
@@ -2016,6 +2017,7 @@ function renderImpl() {
     for (const f of g) {
       if (hasSeverityCorrection(f)) hasCorrectedSeverity = true
       const e = triageEntry(f)
+      if (automaticFixFor(f)) hasFix = true
       if (!e) continue
       if (e.comment) hasComment = true
       if (e.fix) hasFix = true

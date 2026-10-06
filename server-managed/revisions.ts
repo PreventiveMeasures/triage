@@ -1,7 +1,7 @@
 // Internal invalidation counters. Never expose these global values to clients:
 // feeds still publish only the existing user/visibility-scoped revisions.
 const catalogTables = ['managed_link_report', 'managed_team', 'managed_team_user', 'managed_team_repo', 'managed_report', 'managed_bundle', 'managed_selected_repo']
-const annotationTables = ['managed_finding_triage', 'managed_finding_triage_event', 'managed_finding_comment']
+const annotationTables = ['managed_finding_triage', 'managed_finding_triage_event', 'managed_finding_comment', 'managed_finding_issue']
 export function revisionSchema(postgres = false): string {
   let sql = `CREATE TABLE IF NOT EXISTS managed_maintenance_lease (
     id INTEGER PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL

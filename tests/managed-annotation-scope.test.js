@@ -4,7 +4,7 @@ import { store } from '@rray/frontend/state-management'
 import { bucketOf, setEntry } from '../client/triage-entry.ts'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
-const state = store({ serverMode: 'managed', localMode: false, triage: new Map(), managedComments: new Map() })
+const state = store({ serverMode: 'managed', localMode: false, triage: new Map(), managedComments: new Map(), managedIssues: new Map() })
 const feeds = []
 let share = null
 mock.module('../client/index.js', { namedExports: {
@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     return new Promise(resolve => { options.signal.addEventListener('abort', resolve, { once: true }) })
   },
 } })
-mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedFixes: () => {} } })
+mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedFixes: () => {}, refreshManagedIssueMetadata: () => {} } })
 mock.module('../ui/view/render.js', { namedExports: { render: () => {} } })
 const { createManagedAnnotationRead, hydrateManagedReportTriage, resetManagedTriage } = await import('../ui/view/managed-triage.js')
 const { loadManagedReportComments } = await import('../ui/view/managed-comments.js')

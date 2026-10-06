@@ -5,6 +5,8 @@
 import { state } from '#client/index.js'
 import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
+import { applyManagedIssues } from './managed-issues.js'
+import { invalidateManagedFixes } from './managed-pull-requests.js'
 
 let loadPromise = null
 let managedModule = null
@@ -60,7 +62,12 @@ export async function openManagedIssueDialog(props) {
     && state.managedSession?.csrfToken === props.session.csrfToken && state.currentManagedTeam === props.teamId
   const managed = await loadManagedBundle()
   if (!isCurrent()) return null
-  return managed.openManagedIssueDialog({ ...props, isCurrent })
+  return managed.openManagedIssueDialog({ ...props, isCurrent, onCreated: url => {
+    if (!isCurrent()) return
+    const id = props.context.findingId, previous = state.managedIssues.get(id)
+    applyManagedIssues([id], { [id]: { url, autoFix: previous?.url === url ? previous.autoFix : null } })
+    invalidateManagedFixes(props.teamId)
+  } })
 }
 
 export async function openFindingHistoryDialog(finding) {

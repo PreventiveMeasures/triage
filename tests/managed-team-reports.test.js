@@ -283,7 +283,7 @@ test('team annotation batches match report reads and preserve per-report permiss
         assert.deepEqual({ entries, comments: visibleComments }, { entries: triage.body.entries, comments: comments.body.comments }, `${role}/${team}/${report}`)
         const focused = await h.request(`/api/teams/${team}/annotations?reportId=${report}`, role)
         assert.equal(focused.status, 200)
-        assert.deepEqual(focused.body, { reports: { [report]: batch.body.reports[report] }, entries, comments: visibleComments }, `focused ${role}/${team}/${report}`)
+        assert.deepEqual(focused.body, { reports: { [report]: batch.body.reports[report] }, entries, comments: visibleComments, issues: {} }, `focused ${role}/${team}/${report}`)
       }
     }
   }
@@ -329,7 +329,7 @@ test('focused annotations query only findings visible in the selected report', a
   assert.equal(response.status, 200)
   assert.ok(queried.includes('own'))
   for (const id of ['secret', 'downgraded', 'linked', 'transitive', 'dependent']) assert.equal(queried.includes(id), false, id)
-  assert.deepEqual(response.body, { reports: { a: ['own'] }, entries: { own: { color: 'blue' } }, comments: [] })
+  assert.deepEqual(response.body, { reports: { a: ['own'] }, entries: { own: { color: 'blue' } }, comments: [], issues: {} })
 })
 
 test('repeated scans serialize shared annotations once instead of once per report', async t => {

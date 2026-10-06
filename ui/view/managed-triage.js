@@ -18,7 +18,8 @@ import { clearManagedWorkspace } from '../../client/managed/workspace.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_COLOR, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_TEXT } from '../../common/managed/triage.ts'
 import { fetchReportTriage, fetchTeamAnnotations, pushReportTriage } from './client-managed.js'
-import { invalidateManagedFixes } from './managed-pull-requests.js'
+import { invalidateManagedFixes, refreshManagedIssueMetadata } from './managed-pull-requests.js'
+import { applyManagedIssues } from './managed-issues.js'
 import { render } from './render.js'
 
 const PUSH_DEBOUNCE_MS = 500
@@ -260,6 +261,7 @@ export function initManagedTriagePush() {
 export function resetManagedTriage() {
   clearManagedWorkspace()
   state.managedComments?.clear()
+  state.managedIssues.clear()
   globalThis.document?.dispatchEvent(new Event('managed-comments-reset'))
   if (pushTimer != null) { clearTimeout(pushTimer); pushTimer = null }
   pending.clear()
@@ -290,11 +292,14 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true, 
   // not what it reverts.
   flushPending()
   if (!(await waitForTriageFlush(signal)) || !isCurrent()) return false
-  const entries = readAnnotations ? (await readAnnotations(reportId))?.entries : await fetchReportTriage(reportId, teamId, { signal })
+  const previousIssues = new Map(state.managedIssues)
+  const annotations = readAnnotations ? await readAnnotations(reportId) : null
+  const entries = readAnnotations ? annotations?.entries : await fetchReportTriage(reportId, teamId, { signal })
   // Bail when the fetch failed or the user already navigated elsewhere.
   if (entries == null || !isCurrent()) return false
   let changed = false
   const reportFindingIds = findingIdsForManagedReport(reportId)
+  const issuesChanged = annotations && applyManagedIssues(reportFindingIds, annotations.issues, previousIssues)
   for (const id of reportFindingIds) {
     if (!Object.hasOwn(entries, id)) {
       // Never seen by the server: whatever the baseline remembered is stale.
@@ -307,6 +312,8 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true, 
     if (setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: state.triage.get(id)?.scopedIgnoredReports })) changed = true
   }
   hydratedReports.add(scopeFor(reportId))
+  if (annotations) refreshManagedIssueMetadata(teamId, reportFindingIds, previousIssues)
+  if (issuesChanged && !changed && renderView) render()
   if (changed) {
     // Notify the managed push and repaint the imperatively-rendered
     // surfaces (kanban, toolbar counts) that don't observe state.triage; the
@@ -348,8 +355,11 @@ export async function refreshManagedReportTriage(reportId, { signal, readAnnotat
   if (!(await waitForTriageFlush(signal)) || !current()) return false
   const ids = findingIdsForManagedReport(reportId)
   const before = new Map([...ids].map(id => [id, baseline.get(id)]))
-  const entries = readAnnotations ? (await readAnnotations(reportId))?.entries : await fetchReportTriage(reportId, teamId, { signal })
+  const previousIssues = new Map(state.managedIssues)
+  const annotations = readAnnotations ? await readAnnotations(reportId) : null
+  const entries = readAnnotations ? annotations?.entries : await fetchReportTriage(reportId, teamId, { signal })
   if (entries == null || !current()) return false
+  const issuesChanged = annotations && applyManagedIssues(ids, annotations.issues, previousIssues)
   let changed = false, fixChanged = false
   for (const id of ids) {
     const known = before.get(id), local = wireEntryOf(state.triage.get(id))
@@ -361,6 +371,8 @@ export async function refreshManagedReportTriage(reportId, { signal, readAnnotat
     if (setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: state.triage.get(id)?.scopedIgnoredReports })) changed = true
   }
   if (fixChanged) invalidateManagedFixes(teamId)
+  if (annotations) refreshManagedIssueMetadata(teamId, ids, previousIssues)
+  if (issuesChanged && !changed) render()
   if (changed) {
     await saveTriage()
     if (!current()) return false
