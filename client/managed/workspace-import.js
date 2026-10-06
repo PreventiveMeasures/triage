@@ -36,7 +36,7 @@ export async function prepareWorkspaceImport(data, repos) {
     if (!lookup.has(id)) continue
     const normalized = normalizeEntry(value)
     if (!normalized) continue
-    const { ignoredReports: _, ...entry } = normalized
+    const { ignoredReports: _, scopedIgnoredReports: _scoped, ...entry } = normalized
     if (Object.keys(entry).length === 0) continue
     triage[id] = entry
   }

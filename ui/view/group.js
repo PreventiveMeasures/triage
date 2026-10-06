@@ -87,7 +87,7 @@ export function triageEntry(f) {
 
 export function isIgnored(f) {
   return canTriageFinding(f) && (sharedFindingTriage(f, state.triage.get(tabKey(f)), depsDirName()) === 'ignored'
-    || isReportIgnored(state.triage, tabKey(f), findingReport(f)))
+    || (usesReportIgnore(f, depsDirName()) && isReportIgnored(state.triage, tabKey(f), findingReport(f))))
 }
 
 // Shared App/own-code triage and per-report dependency ignores both appear

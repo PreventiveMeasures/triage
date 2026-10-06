@@ -1,6 +1,6 @@
 import { inheritReportMeta, isAppFinding, loadFindings } from '@preventive/report'
 import { dependencyDirectory, isDependencyFile } from './dependency-paths.js'
-import { bucketOf, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { bucketOf, isReportIgnoreScoped, patchEntry, setReportIgnored } from './triage-entry.ts'
 
 // The aggregate index does not use ingest's stamped copies.
 export function stampIndexedFindings(findings, data) {
@@ -31,10 +31,12 @@ export function setFindingTriage(map, finding, target, directory) {
   if (perReport && (target === 'ignored' || target === 'untriaged')) {
     // A dependency action must not undo the shared ignore of an App/own row.
     if (bucketOf(map.get(id)) !== 'ignored') patchEntry(map, id, { triage: undefined })
-    setReportIgnored(map, id, report, target === 'ignored')
+    setReportIgnored(map, id, report, target === 'ignored', true)
   } else {
     patchEntry(map, id, { triage: target === 'untriaged' ? undefined : target })
-    setReportIgnored(map, id, report, false)
+    // A report can hold a dependency copy of this same App/own-code id.
+    // Shared ignore/restore must leave that independent report scope alone.
+    if (target !== 'ignored' && target !== 'untriaged') setReportIgnored(map, id, report, false)
   }
 }
 
@@ -53,10 +55,20 @@ export function migrateIgnoredReports(map, reports) {
       const name = finding._reportName ?? report.name ?? report.fileName ?? ''
       const entry = map.get(id)
       if (!entry?.ignoredReports?.includes(name)) continue
+      if (isReportIgnoreScoped(entry, name)) continue
       if (usesReportIgnore(classified(finding), directory)) continue
       if (!bucketOf(entry)) changed = patchEntry(map, id, { triage: 'ignored' }) || changed
       // A single report can contain both App and dependency copies of an id.
       if (!dependencyIds.has(id)) changed = setReportIgnored(map, id, name, false) || changed
+    }
+    // Persist classification after promoting legacy App/own copies. Otherwise
+    // a retained dependency ignore would re-ignore a restored shared copy on
+    // the next render, save, reload, or import.
+    for (const finding of findings) {
+      if (!usesReportIgnore(classified(finding), directory)) continue
+      const id = finding.id ?? String(finding._id)
+      const name = finding._reportName ?? report.name ?? report.fileName ?? ''
+      if (map.get(id)?.ignoredReports?.includes(name)) changed = setReportIgnored(map, id, name, true, true) || changed
     }
   }
   return changed
@@ -65,7 +77,8 @@ export function migrateIgnoredReports(map, reports) {
 // Migrate a detached snapshot for import without hydrating the local map into
 // managed state. Read only report names referenced by legacy ignores.
 export async function readIgnoredReportContexts(entries, readReport) {
-  const names = new Set(Object.values(entries ?? {}).flatMap(entry => entry?.ignoredReports ?? []))
+  const names = new Set(Object.values(entries ?? {}).flatMap(entry => Array.isArray(entry?.ignoredReports)
+    ? entry.ignoredReports.filter(name => typeof name === 'string' && !isReportIgnoreScoped(entry, name)) : []))
   const reports = []
   for (const name of names) {
     let report

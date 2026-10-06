@@ -1,7 +1,7 @@
 import { isManagedUiMode, state } from './state.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
 import { migrateIgnoredReports, readIgnoredReportContexts } from './ignored-triage.js'
-import { allowsReportIgnores, bucketOf, normalizeEntry, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { allowsReportIgnores, bucketOf, isReportIgnoreScoped, normalizeEntry, patchEntry, setReportIgnored } from './triage-entry.ts'
 import {
   VAULT_LOCK,
   getEnvelopeAadForTriage,
@@ -386,12 +386,9 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // Dependency report ignores may coexist with shared ignored. Other
     // shared statuses retain the existing mutex; merge report keys additively.
     if (allowsReportIgnores(v) && v && Array.isArray(v.ignoredReports)) {
-      const set = new Set(map.get(id)?.ignoredReports ?? [])
-      let added = false
       for (const r of v.ignoredReports) {
-        if (typeof r === 'string' && !set.has(r)) { set.add(r); added = true }
+        if (typeof r === 'string') setReportIgnored(map, id, r, true, isReportIgnoreScoped(v, r))
       }
-      if (added) patchEntry(map, id, { ignoredReports: [...set] })
     }
   }
 }

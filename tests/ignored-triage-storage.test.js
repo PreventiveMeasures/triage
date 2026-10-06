@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { state } from '../client/state.ts'
 import { deleteFile, saveFile } from '../client/storage.js'
-import { readTriageBlob, reloadTriageFromStorage, setTriageChangeNotifier } from '../client/triage.js'
+import { readTriageBlob, reloadTriageFromStorage, saveTriage, setTriageChangeNotifier } from '../client/triage.js'
+import { setFindingTriage } from '../client/ignored-triage.js'
+import { applyTriageImport } from '../client/triage-export.js'
 import { defaultSyncHost } from '../client/sync-host.js'
 import { applyToReactiveState, hydrateStateFromBaseState } from '../client/sync/triage-state-projection.ts'
 import { managedWorkspaceImportDeps } from '../client/managed/local-import.js'
@@ -15,7 +17,7 @@ const content = JSON.stringify({ findings: [
   { id: 'dep', file: 'node_modules/pkg/source.js', isApp: false },
 ] })
 const legacy = () => Object.fromEntries(['own', 'app', 'dep'].map(id => [id, { ignoredReports: [reportName] }]))
-const expected = { own: { triage: 'ignored' }, app: { triage: 'ignored' }, dep: { ignoredReports: [reportName] } }
+const expected = { own: { triage: 'ignored' }, app: { triage: 'ignored' }, dep: { ignoredReports: [reportName], scopedIgnoredReports: [reportName] } }
 async function fixture(t) {
   state.serverMode = 'e2e'
   state.localMode = false
@@ -25,6 +27,7 @@ async function fixture(t) {
   t.after(async () => {
     await deleteFile(reportName)
     state.triage.clear()
+    state.reports = []
     localStorage.removeItem('deepview.triage.pending')
     localStorage.removeItem('deepview.triage')
     setTriageChangeNotifier(null)
@@ -39,6 +42,32 @@ test('legacy local storage migrates and persists without opening the report', as
   assert.deepEqual(await readTriageBlob(), expected)
   await reloadTriageFromStorage()
   assert.deepEqual(Object.fromEntries(state.triage), expected)
+})
+
+test('restoring a migrated shared ignore survives save, reload, E2E hydration, and import', async t => {
+  await fixture(t)
+  const dep = { id: 'same', file: 'node_modules/pkg/a.js', isApp: false, _reportName: reportName }
+  const app = { ...dep, isApp: true }
+  await saveFile(reportName, JSON.stringify({ findings: [app, dep] }))
+  localStorage.setItem('deepview.triage.pending', JSON.stringify({ same: { ignoredReports: [reportName] } }))
+  await reloadTriageFromStorage()
+  state.reports = [{ name: reportName, groups: [[app], [dep]] }]
+  setFindingTriage(state.triage, app, 'untriaged')
+  const restored = { same: { ignoredReports: [reportName], scopedIgnoredReports: [reportName] } }
+  await saveTriage()
+  assert.deepEqual(await readTriageBlob(), restored)
+  state.triage.clear()
+  await reloadTriageFromStorage()
+  assert.deepEqual(Object.fromEntries(state.triage), restored)
+  state.triage.clear()
+  hydrateStateFromBaseState(restored, ['same'])
+  await defaultSyncHost.saveTriage()
+  assert.deepEqual(await readTriageBlob(), restored)
+  for (const mode of ['replace', 'prefer-current', 'prefer-imported']) {
+    state.triage.clear()
+    await applyTriageImport({ triage: restored, repoUrls: {} }, mode)
+    assert.deepEqual(await readTriageBlob(), restored, mode)
+  }
 })
 
 test('received E2E legacy state is migrated before persistence and sync notification', async t => {

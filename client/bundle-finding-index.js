@@ -560,7 +560,7 @@ async function indexOne(name) {
         // report-marker fallback ingest resolves into `_source`.
         members: members.map((f) => {
           const source = f.source ?? data.source ?? null
-          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source), isSecurity: f.isSecurity }
+          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source), isSecurity: f.isSecurity, ...(f.file ? { file: f.file, _depsDirectory: f._depsDirectory } : {}) }
         }),
       }
       for (const f of members) if (indexFindingById(f, name, row)) added = true

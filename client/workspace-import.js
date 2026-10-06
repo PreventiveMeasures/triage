@@ -6,7 +6,7 @@ import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
 import { loadFindings } from '@preventive/report'
-import { allowsReportIgnores, bucketOf, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { allowsReportIgnores, bucketOf, isReportIgnoreScoped, patchEntry, setReportIgnored } from './triage-entry.ts'
 
 // Pure-logic side of workspace import. The DOM-touching layer (unlock
 // dialog, conflict-resolution dialog, post-import re-render) lives in
@@ -149,7 +149,7 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     const ignoredReports = Array.isArray(entry.ignoredReports) ? entry.ignoredReports : []
     if (allowsReportIgnores(map.get(id))) {
       for (const r of ignoredReports) {
-        if (typeof r === 'string') setReportIgnored(map, id, r, true)
+        if (typeof r === 'string') setReportIgnored(map, id, r, true, isReportIgnoreScoped(entry, r))
       }
     }
   }

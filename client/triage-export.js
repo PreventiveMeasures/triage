@@ -1,5 +1,5 @@
 import { gunzipToText, gzipText } from '../common/gzip.js'
-import { allowsReportIgnores, bucketOf, isReportIgnored, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { allowsReportIgnores, bucketOf, isReportIgnoreScoped, patchEntry, setReportIgnored } from './triage-entry.ts'
 import { importRepoUrls, readRepoUrlMap, state } from './state.ts'
 import { SESSION_ID_RE, buildPersistedTriageEntries, migrateLocalStoredIgnores, saveTriage } from './triage.js'
 
@@ -154,8 +154,7 @@ export async function applyTriageImport(payload, mode) {
     if (Array.isArray(v.ignoredReports) && allowsReportIgnores(map.get(id))) {
       for (const r of v.ignoredReports) {
         if (typeof r !== 'string') continue
-        if (keepCurrent && isReportIgnored(map, id, r)) continue
-        setReportIgnored(map, id, r, true)
+        setReportIgnored(map, id, r, true, isReportIgnoreScoped(v, r))
       }
     }
   }

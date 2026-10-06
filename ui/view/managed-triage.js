@@ -304,7 +304,7 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true, 
     const wire = wireEntryOf(entries[id])
     baseline.set(id, { key: wireKey(wire), fix: wire?.fix ?? '' })
     const ignoredReports = (wire?.triage == null || wire.triage === 'ignored') ? state.triage.get(id)?.ignoredReports : undefined
-    if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
+    if (setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: state.triage.get(id)?.scopedIgnoredReports })) changed = true
   }
   hydratedReports.add(scopeFor(reportId))
   if (changed) {
@@ -358,7 +358,7 @@ export async function refreshManagedReportTriage(reportId, { signal, readAnnotat
     if ((known?.fix ?? '') !== (wire?.fix ?? '')) fixChanged = true
     baseline.set(id, { key: wireKey(wire), fix: wire?.fix ?? '' })
     const ignoredReports = (wire?.triage == null || wire.triage === 'ignored') ? state.triage.get(id)?.ignoredReports : undefined
-    if (setEntry(state.triage, id, { ...wire, ignoredReports })) changed = true
+    if (setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: state.triage.get(id)?.scopedIgnoredReports })) changed = true
   }
   if (fixChanged) invalidateManagedFixes(teamId)
   if (changed) {

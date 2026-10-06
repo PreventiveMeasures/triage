@@ -4,7 +4,8 @@
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bucketOf, encodeFindingRef, ensureBundleFindingsIndexed, findingTitleForId, isLinkableFindingId, isReportIgnored, reportRowsForFindingIds, reportsForFindingId, state } from '#client/index.js'
+import { encodeFindingRef, ensureBundleFindingsIndexed, findingTitleForId, isLinkableFindingId, isReportIgnored, reportRowsForFindingIds, reportsForFindingId, state } from '#client/index.js'
+import { sharedFindingTriage, usesReportIgnore } from '../../client/ignored-triage.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { displayFindingId, shortFindingId } from './format.js'
 import { groupLinkedReportRows } from './linked-report-rows.js'
@@ -14,9 +15,9 @@ function count(n, singular, plural) {
   return `${n} ${n === 1 ? singular : plural}`
 }
 
-function statusTemplate(id, reports) {
-  const triage = bucketOf(state.triage.get(id))
-  const ignored = reports.filter(({ name }) => isReportIgnored(state.triage, id, name))
+function statusTemplate(member, reports) {
+  const triage = sharedFindingTriage(member, state.triage.get(member.id))
+  const ignored = usesReportIgnore(member) ? reports.filter(({ name }) => isReportIgnored(state.triage, member.id, name)) : []
   const status = triage ?? (ignored.length > 0 ? 'ignored' : null)
   if (!status) return nothing
   const partial = triage !== 'ignored' && status === 'ignored' && ignored.length < reports.length
@@ -26,7 +27,8 @@ function statusTemplate(id, reports) {
   >${label}</span>`
 }
 
-function memberTemplate({ id, title }, reports = [], linked = true, chips = nothing) {
+function memberTemplate(member, reports = [], linked = true, chips = nothing) {
+  const { id, title } = member
   const report = reports[0]?.name
   const displayId = displayFindingId(id)
   const label = shortFindingId(id) ?? displayId
@@ -39,7 +41,7 @@ function memberTemplate({ id, title }, reports = [], linked = true, chips = noth
       href=${`#${encodeFindingRef({ id })}`} data-tooltip=${displayId}
     >${label}</a>` : html`<span class="links-finding-id mono">${label}</span>`}
     ${title ? html`<span class="links-finding-title">${title}</span>` : nothing}
-    ${statusTemplate(id, reports)}
+    ${statusTemplate(member, reports)}
     ${linked ? nothing : html`<span class="links-member-context">not in this link</span>`}
     ${chips}
   </li>`

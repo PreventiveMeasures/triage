@@ -134,6 +134,7 @@ function entriesEqual(a: TriageEntry, b: TriageEntry): boolean {
     && (a.fix ?? '') === (b.fix ?? '')
     && a.flagged === b.flagged
     && ignoredReportsEqual(a.ignoredReports, b.ignoredReports)
+    && ignoredReportsEqual(a.scopedIgnoredReports, b.scopedIgnoredReports)
 }
 
 export function statesEqual(a: TriageStateMap, b: TriageStateMap): boolean {
@@ -187,6 +188,9 @@ export function rebaseLocalState(base: TriageStateMap, local: TriageStateMap, re
       if (reports.length === 0) delete merged.ignoredReports
       else merged.ignoredReports = reports
     }
+    // Classification is monotonic for retained report ignores; keep either
+    // peer's marker while normalizing away markers for removed scopes.
+    merged.scopedIgnoredReports = [...new Set([...(current.scopedIgnoredReports ?? []), ...(merged.scopedIgnoredReports ?? [])])]
     const entry = normalizeEntry(merged)
     if (entry) out[id] = entry
     else delete out[id]

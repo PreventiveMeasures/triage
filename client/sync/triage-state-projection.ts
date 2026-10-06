@@ -14,7 +14,7 @@
 // observer-util per-id re-render behavior the UI depends on.
 
 import { syncHost } from './host.ts'
-import { allowsReportIgnores, bucketOf, normalizeEntry, patchEntry, setEntry, setReportIgnored } from '../triage-entry.ts'
+import { allowsReportIgnores, bucketOf, isReportIgnoreScoped, normalizeEntry, patchEntry, setEntry, setReportIgnored } from '../triage-entry.ts'
 import type { Conflict, ConflictProperty, TriageStateMap } from './triage-changeset.ts'
 
 // The session's "effective" local state — what the next save
@@ -122,9 +122,10 @@ export function hydrateStateFromBaseState(baseState: TriageStateMap, ids: Iterab
     // statuses retain the mutex and existing local-wins hydration semantics.
     const triageEffectivelySet = !allowsReportIgnores(entry) || !allowsReportIgnores(cur)
     if (triageEffectivelySet || !Array.isArray(entry.ignoredReports)) continue
-    if ((cur?.ignoredReports?.length ?? 0) > 0) continue
     for (const r of entry.ignoredReports) {
-      if (typeof r === 'string') setReportIgnored(state.triage, id, r, true)
+      if (typeof r !== 'string') continue
+      if ((cur?.ignoredReports?.length ?? 0) > 0 && !cur?.ignoredReports?.includes(r)) continue
+      setReportIgnored(state.triage, id, r, true, isReportIgnoreScoped(entry, r))
     }
   }
   return conflicts

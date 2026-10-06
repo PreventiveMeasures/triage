@@ -1,6 +1,8 @@
 // Identical report cards share a block and its report chips. Compare their
 // complete membership, not only the ids in this link: [A,B,X] and [A,B,Y]
 // must not become one row just because the link happens to name A and B.
+import { usesReportIgnore } from '../../client/ignored-triage.js'
+
 export function groupLinkedReportRows(ids, reportRows) {
   const linked = new Set(ids), located = new Set(), variants = new Map()
   const order = new Map(ids.map((id, i) => [id, i]))
@@ -15,12 +17,12 @@ export function groupLinkedReportRows(ids, reportRows) {
     // index builds them (client/bundle-finding-index.js).
     const members = allMembers.filter((f) => linked.has(f.id) || f.isApp)
     // Reports can stamp the same id differently, so share report chips only
-    // when both the original membership and visible member metadata agree.
+    // when the original membership, visible metadata, and ignore scope agree.
     // Fixed tuples make property order irrelevant; sort by id so reordered
     // copies still share a block without borrowing another report's title.
     const key = JSON.stringify([
       allMembers.map((f) => f.id).toSorted(),
-      members.map((f) => [f.id, f.title ?? '', f.source ?? null, f.revalidate ?? ''])
+      members.map((f) => [f.id, f.title ?? '', f.source ?? null, f.revalidate ?? '', usesReportIgnore(f)])
         .toSorted(([a], [b]) => a.localeCompare(b)),
     ])
     let variant = variants.get(key)

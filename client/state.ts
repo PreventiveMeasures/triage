@@ -84,6 +84,9 @@ export type TriageEntry = {
   // opinion" and get silently undone.
   flagged?: boolean
   ignoredReports?: string[]
+  // Report ignores already classified as dependency-only. Legacy scopes
+  // lack this marker and still need App/own-code migration.
+  scopedIgnoredReports?: string[]
   deleted?: boolean
 }
 

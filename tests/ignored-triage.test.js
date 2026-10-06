@@ -24,13 +24,13 @@ test('dependency ignore remains per report, independent of shared ignore on the 
   const map = new Map()
   setFindingTriage(map, own, 'ignored')
   setFindingTriage(map, dependency, 'ignored')
-  assert.deepEqual(map.get('finding'), { triage: 'ignored', ignoredReports: ['dep.json'] })
+  assert.deepEqual(map.get('finding'), { triage: 'ignored', ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] })
   assert.equal(sharedFindingTriage(dependency, map.get('finding')), undefined)
   setFindingTriage(map, dependency, 'untriaged')
   assert.deepEqual(map.get('finding'), { triage: 'ignored' })
   setFindingTriage(map, dependency, 'ignored')
   setFindingTriage(map, own, 'untriaged')
-  assert.deepEqual(map.get('finding'), { ignoredReports: ['dep.json'] })
+  assert.deepEqual(map.get('finding'), { ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] })
 })
 
 test('Windows and mixed-separator dependency ignores stay per report', () => {
@@ -39,7 +39,7 @@ test('Windows and mixed-separator dependency ignores stay per report', () => {
       const finding = { ...dependency, file }
       const map = new Map()
       setFindingTriage(map, finding, 'ignored')
-      assert.deepEqual(map.get('finding'), { ignoredReports: ['dep.json'] }, file)
+      assert.deepEqual(map.get('finding'), { ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] }, file)
       assert.equal(sharedFindingTriage(finding, { triage: 'ignored' }), undefined, file)
       setFindingTriage(map, finding, 'untriaged')
       assert.equal(map.has('finding'), false, file)
@@ -61,7 +61,7 @@ test('stored Windows dependency ignores survive migration while App and own igno
     const entries = Object.fromEntries(['dependency', 'app', 'own'].map(id => [id, { ignoredReports: ['windows.json'] }]))
     const result = await migrateStoredIgnores(entries, () => content)
     assert.deepEqual(result.entries, {
-      dependency: { ignoredReports: ['windows.json'] }, app: { triage: 'ignored' }, own: { triage: 'ignored' },
+      dependency: { ignoredReports: ['windows.json'], scopedIgnoredReports: ['windows.json'] }, app: { triage: 'ignored' }, own: { triage: 'ignored' },
     }, directory)
     assert.equal((await migrateStoredIgnores(result.entries, () => content)).changed, false)
   }
@@ -85,7 +85,7 @@ test('migration promotes only App/own report occurrences, preserves unknown scop
   ])
   const reports = [report(own), report(dependency), report(app), report({ ...own, id: 'already-fixed' })]
   assert.equal(migrateIgnoredReports(map, reports), true)
-  assert.deepEqual(map.get('finding'), { color: 'red', triage: 'ignored', ignoredReports: ['dep.json', 'missing.json'] })
+  assert.deepEqual(map.get('finding'), { color: 'red', triage: 'ignored', ignoredReports: ['dep.json', 'missing.json'], scopedIgnoredReports: ['dep.json'] })
   assert.deepEqual(map.get('already-fixed'), { triage: 'fixed', comment: 'done' })
   assert.equal(migrateIgnoredReports(map, reports), false)
 })
@@ -107,7 +107,7 @@ test('report content migration derives App layer, respects dependency directory 
   assert.equal(migrated.changed, true)
   assert.deepEqual(migrated.entries, {
     app: { triage: 'ignored' }, own: { triage: 'ignored' },
-    dependency: { ignoredReports: ['code.json'] }, absent: { ignoredReports: ['missing.json'] },
+    dependency: { ignoredReports: ['code.json'], scopedIgnoredReports: ['code.json'] }, absent: { ignoredReports: ['missing.json'] },
   })
   assert.deepEqual(entries.app, { ignoredReports: ['app.json'] }, 'detached import must not mutate its source')
   assert.equal(usesReportIgnore({ ...dependency, file: 'vendor/pkg/a.php' }), true)
@@ -135,8 +135,58 @@ test('migration retains a dependency scope when one report also contains an App 
     { id: 'same', file: 'node_modules/pkg/a.js', isApp: false },
   ] })
   const result = await migrateStoredIgnores({ same: { ignoredReports: ['both.json'] } }, () => content)
-  assert.deepEqual(result.entries, { same: { triage: 'ignored', ignoredReports: ['both.json'] } })
+  assert.deepEqual(result.entries, { same: { triage: 'ignored', ignoredReports: ['both.json'], scopedIgnoredReports: ['both.json'] } })
   assert.equal((await migrateStoredIgnores(result.entries, () => content)).changed, false)
+})
+
+test('shared ignore actions preserve an independent dependency ignore in the same report', () => {
+  for (const shared of [own, app]) {
+    const finding = { ...shared, _reportName: 'both.json' }
+    const dep = { ...dependency, _reportName: finding._reportName }
+    const map = new Map([['finding', { ignoredReports: ['both.json'] }]])
+    const reports = [{ name: 'both.json', groups: [[finding], [dep]] }]
+    const scoped = { ignoredReports: ['both.json'], scopedIgnoredReports: ['both.json'] }
+    migrateIgnoredReports(map, reports)
+    assert.deepEqual(map.get('finding'), { triage: 'ignored', ...scoped })
+    setFindingTriage(map, finding, 'untriaged')
+    assert.deepEqual(map.get('finding'), scoped)
+    assert.equal(migrateIgnoredReports(map, reports), false, 'saving must not undo a shared restore')
+    setFindingTriage(map, finding, 'ignored')
+    assert.deepEqual(map.get('finding'), { triage: 'ignored', ...scoped })
+    setFindingTriage(map, dep, 'untriaged')
+    assert.deepEqual(map.get('finding'), { triage: 'ignored' })
+  }
+})
+
+test('new dependency ignores do not migrate onto an App copy of the same id', () => {
+  const dep = { ...dependency, _reportName: 'both.json' }
+  const map = new Map()
+  setFindingTriage(map, dep, 'ignored')
+  assert.equal(migrateIgnoredReports(map, [{ name: 'both.json', groups: [[dep, { ...dep, isApp: true }]] }]), false)
+  assert.equal(map.get('finding').triage, undefined)
+})
+
+test('migration markers survive changesets and rebase without marking unknown legacy scopes', async () => {
+  const before = { f: { ignoredReports: ['dep.json', 'missing.json'] } }
+  const scoped = { ...before.f, scopedIgnoredReports: ['dep.json'] }
+  const changes = computeChangeset(before, { f: scoped })
+  assert.deepEqual(changes.f, scoped, 'classification alone is a persisted change')
+  const merged = rebaseLocalState(before, { f: scoped }, { f: { ...before.f, comment: 'peer' } })
+  assert.deepEqual(merged.f, { ...scoped, comment: 'peer' })
+  const reads = []
+  const migrated = await migrateStoredIgnores(applyChangeset(before, changes), name => {
+    reads.push(name)
+    return JSON.stringify({ findings: [{ id: 'f', file: 'src/own.js' }] })
+  })
+  assert.deepEqual(reads, ['missing.json'])
+  assert.deepEqual(migrated.entries.f, { triage: 'ignored', ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] })
+  assert.deepEqual(normalizeEntry({ ...scoped, ignoredReports: ['missing.json'] }), { ignoredReports: ['missing.json'] })
+})
+
+test('migration leaves malformed ignore fields for the normal import validator', async () => {
+  const entries = { invalid: { ignoredReports: 'not-an-array' }, marked: { ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] } }
+  const result = await migrateStoredIgnores(entries, () => assert.fail('no legacy report scopes to read'))
+  assert.deepEqual(result, { entries, changed: false })
 })
 
 test('switching from another bucket to shared ignored preserves a peer dependency ignore', () => {

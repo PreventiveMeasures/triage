@@ -56,6 +56,10 @@ export function isReportIgnored(map: TriageMap, id: string, report: string): boo
   return Array.isArray(list) && list.includes(report)
 }
 
+export function isReportIgnoreScoped(entry: TriageEntry | undefined, report: string): boolean {
+  return Array.isArray(entry?.scopedIgnoredReports) && entry.scopedIgnoredReports.includes(report)
+}
+
 // Report names in which `id` is per-report ignored, as a fresh array
 // (callers — snapshot / persist — must not alias the live entry).
 export function ignoredReportsFor(map: TriageMap, id: string): string[] {
@@ -73,7 +77,7 @@ export function normalizeEntry(src: unknown): TriageEntry | undefined {
   if (!src || typeof src !== 'object') return undefined
   const e = src as {
     color?: unknown, triage?: unknown, comment?: unknown,
-    fix?: unknown, flagged?: unknown, ignoredReports?: unknown, deleted?: unknown,
+    fix?: unknown, flagged?: unknown, ignoredReports?: unknown, scopedIgnoredReports?: unknown, deleted?: unknown,
   }
   const out: TriageEntry = {}
   if (typeof e.color === 'string' && e.color) out.color = e.color
@@ -87,6 +91,10 @@ export function normalizeEntry(src: unknown): TriageEntry | undefined {
   if (Array.isArray(e.ignoredReports)) {
     const reports = e.ignoredReports.filter((r): r is string => typeof r === 'string' && r.length > 0)
     if (reports.length > 0) out.ignoredReports = reports
+  }
+  if (Array.isArray(e.scopedIgnoredReports) && out.ignoredReports) {
+    const scoped = [...new Set(e.scopedIgnoredReports.filter((r): r is string => typeof r === 'string' && out.ignoredReports!.includes(r)))]
+    if (scoped.length > 0) out.scopedIgnoredReports = scoped
   }
   return entryIsEmpty(out) ? undefined : out
 }
@@ -111,6 +119,7 @@ function entriesEqual(a: TriageEntry | undefined, b: TriageEntry | undefined): b
     && (ea.fix ?? '') === (eb.fix ?? '')
     && ea.flagged === eb.flagged
     && ignoredEqual(ea.ignoredReports, eb.ignoredReports)
+    && ignoredEqual(ea.scopedIgnoredReports, eb.scopedIgnoredReports)
 }
 
 // Merge `patch` over id's current entry, normalize, and write back —
@@ -138,11 +147,13 @@ export function setEntry(map: TriageMap, id: string, entry: unknown): boolean {
 }
 
 // Add / remove a single report from id's ignoredReports.
-export function setReportIgnored(map: TriageMap, id: string, report: string, ignored: boolean): boolean {
+export function setReportIgnored(map: TriageMap, id: string, report: string, ignored: boolean, scoped = false): boolean {
   const set = new Set(map.get(id)?.ignoredReports ?? [])
   if (ignored) set.add(report)
   else set.delete(report)
-  return patchEntry(map, id, { ignoredReports: set.size > 0 ? [...set] : undefined })
+  const markers = new Set(map.get(id)?.scopedIgnoredReports ?? [])
+  if (ignored && scoped) markers.add(report)
+  return patchEntry(map, id, { ignoredReports: set.size > 0 ? [...set] : undefined, scopedIgnoredReports: [...markers] })
 }
 
 // Drop one report name from every entry's ignoredReports (report

@@ -8,7 +8,7 @@ export async function runLocalTriageImport(raw, { session, confirmImport, ...opt
   if (raw != null && (typeof raw !== 'object' || Array.isArray(raw))) throw new Error('Invalid local triage.')
   const triage = Object.create(null)
   for (const [id, value] of Object.entries(raw ?? {})) {
-    const { ignoredReports: _, ...entry } = normalizeEntry(value) ?? {}
+    const { ignoredReports: _, scopedIgnoredReports: _scoped, ...entry } = normalizeEntry(value) ?? {}
     if (Object.keys(entry).length === 0) continue
     triage[id] = entry
   }

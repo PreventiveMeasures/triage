@@ -255,10 +255,10 @@ test('local triage import sends only known findings through their reports, retai
   const knownIds = Array.from({ length: 205 }, (_, i) => `known-${i}`)
   const second = await addReport([...knownIds, 'f', 'legacy'].map(id => ({ id, file: 'a.js' })))
   const raw = Object.fromEntries(knownIds.map(id => [id, { color: 'red' }]))
-  raw.f = { color: 'red', comment: 'Imported note', flagged: false, ignoredReports: ['local.json'] }
+  raw.f = { color: 'red', comment: 'Imported note', flagged: false, ignoredReports: ['local.json'], scopedIgnoredReports: ['local.json'] }
   raw.g = { flagged: true }
   raw.legacy = { deleted: true }
-  raw.ignore = { ignoredReports: ['local.json'] }
+  raw.ignore = { ignoredReports: ['local.json'], scopedIgnoredReports: ['local.json'] }
   raw.unknown = { color: 'blue', comment: 'Local-only secret' }
   raw.oversizedUnknown = { comment: 'x'.repeat(10001) }
   const before = JSON.stringify(raw)
