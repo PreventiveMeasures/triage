@@ -1,9 +1,12 @@
-// Codegen scans package manifests and React Native configs; those reads do not
-// represent runtime dependency cycles. Match the original installation path,
+// Build tooling reads package manifests and configuration files; these reads
+// do not represent runtime dependency cycles. Match the original installation path,
 // including nested node_modules, rather than a shortened display path or basename.
 export function countsTowardsCycles(from, to) {
-  return !(/(?:^|\/)node_modules\/react-native\/scripts\/codegen\/generate-artifacts-executor\.js$/u.test(from)
-    && /(?:^|\/)(?:package\.json|react-native\.config\.js)$/u.test(to))
+  if (/(?:^|\/)node_modules\/react-native\/scripts\/codegen\/generate-artifacts-executor\.js$/u.test(from)
+    && /(?:^|\/)(?:package\.json|react-native\.config\.js)$/u.test(to)) return false
+  if (/(?:^|\/)node_modules\/@babel\/core\/lib\/config\//u.test(from)
+    && /(?:^|\/)babel\.config\.js$/u.test(to)) return false
+  return true
 }
 
 // Filter before grouping files into packages: another ordinary import between
