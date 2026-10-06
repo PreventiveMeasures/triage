@@ -28,7 +28,7 @@ test('loaded team classification ignores hidden reports and links and resets whe
   const cache = new ManagedTeamAppCache()
   const session = { id: 'manager', role: 'manage' }
   cache.sync(session, [team])
-  cache.record('team', cache.token('team'), workspace)
+  cache.record('team', cache.token('team'), workspace.slice(0, 1))
   assert.deepEqual(cache.get('team'), { appMode: true, appFindings: 2 })
   cache.sync(session, [{ ...team, reports: team.reports.map(r => ({ ...r, visible: true })) }])
   assert.equal(cache.get('team'), null)
@@ -36,13 +36,37 @@ test('loaded team classification ignores hidden reports and links and resets whe
   assert.deepEqual(cache.get('team'), { appMode: false })
 })
 
+for (const knownHidden of [false, true]) {
+  for (const cached of [false, true]) {
+    test(`${knownHidden ? 'publishing a hidden' : 'adding a new'} report cannot use ${cached ? 'cached' : 'new'} App metadata before the catalog catches up`, () => {
+      const cache = new ManagedTeamAppCache()
+      const session = { id: 'manager', role: 'manage' }
+      const team = { id: 'team', reports: [{ id: 'app' }, ...(knownHidden ? [{ id: 'source', visible: false }] : [])] }
+      cache.sync(session, [team])
+      const token = cache.token('team')
+      if (cached) {
+        cache.record('team', token, [report('app', app('A'))])
+        assert.deepEqual(cache.get('team'), { appMode: true, appFindings: 1 })
+      }
+      const workspace = [report('app', app('A')), report('source', source('S'))]
+      cache.record('team', token, workspace)
+      assert.equal(cache.get('team'), null, 'an unexpected report must leave the team unclassified')
+      cache.sync(session, [team])
+      assert.equal(cache.get('team'), null, 'repainting with the stale catalog must not restore App mode')
+      cache.sync(session, [{ ...team, reports: [{ id: 'app' }, { id: 'source' }] }])
+      cache.record('team', cache.token('team'), workspace.toReversed())
+      assert.deepEqual(cache.get('team'), { appMode: false }, 'the refreshed catalog classifies every published report regardless of response order')
+    })
+  }
+}
+
 test('incomplete, failed and isolated hidden reads leave teams expanded until a complete workspace is opened', () => {
   const cache = new ManagedTeamAppCache()
   const session = { id: 'manager', role: 'manage' }
   const team = { id: 'team', reports: [{ id: 'app' }, { id: 'source' }, { id: 'hidden', visible: false }] }
   cache.sync(session, [team])
   const token = cache.token('team')
-  for (const incomplete of [null, [], [report('app', app('A'))], [report('hidden', app('H'))]]) {
+  for (const incomplete of [null, [], [report('app', app('A'))], [report('hidden', app('H'))], [report('app', app('A')), report('hidden', app('H'))]]) {
     cache.record('team', token, incomplete)
     assert.equal(cache.get('team'), null)
   }

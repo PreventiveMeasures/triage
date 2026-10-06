@@ -49,11 +49,15 @@ export class ManagedTeamAppCache {
   token(id) { return this.entries.get(id) }
   record(id, token, workspace) {
     const entry = this.entries.get(id)
-    if (!entry || entry !== token || entry.metadata || workspace === null) return
+    if (!entry || entry !== token || workspace === null) return
     const loaded = new Set(workspace.map(r => r.id))
-    // Incomplete responses must not make an uncovered team appear covered.
-    if ([...entry.published].some(reportId => !loaded.has(reportId))) return
-    entry.metadata = managedTeamAppMetadata(workspace.filter(r => entry.published.has(r.id)))
+    // Both missing and newly published reports mean this catalog is stale.
+    // Do not drop unexpected reports or reuse metadata for a different set.
+    if (loaded.size !== entry.published.size || [...entry.published].some(reportId => !loaded.has(reportId))) {
+      entry.metadata = null
+      return
+    }
+    entry.metadata ??= managedTeamAppMetadata(workspace)
   }
 }
 
