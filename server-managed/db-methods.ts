@@ -126,6 +126,8 @@ export interface ReportAccessRecord {
 }
 export interface TeamReportAccessSnapshot extends ReportAccessSnapshot {
   teamId: string | null
+  reportId?: string | null
+  hiddenReportId?: string | null
   repositories: { repoId: number; github: string; path: string | null }[]
 }
 export interface ReportAccessSnapshot {
@@ -379,7 +381,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   getReport(id: string): Promise<ReportRecord | null>
   // Writer-locked reconciliation waits for an uncertain earlier insert.
   resolveReportUpload(id: string): Promise<ReportRecord | null>
-  getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null>
+  getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string, reportId?: string | null): Promise<TeamReportAccessSnapshot | null>
   getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null>
   listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
   deleteReport(id: string): Promise<boolean>
@@ -642,14 +644,14 @@ function prepareStatements(db: ManagedSql) {
         WHERE tr.team_id = ? ORDER BY tr.repo_id, tr.path`,
     ),
     selectTeamReportAccessStmt: db.prepare(
-      `SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
+      `SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256, r.visible AS visible,
               r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
               tu.view_dependencies AS dependencies, tu.view_security AS security
          FROM managed_team_user tu
          JOIN managed_team_repo tr ON tr.team_id = tu.team_id
          JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
-        WHERE tu.user_id = ? AND tu.team_id = ? AND (r.visible = 1 OR ? = 1)
+        WHERE tu.user_id = ? AND tu.team_id = ? AND (r.visible = 1 OR (? = 1 AND r.id = ?))
         ORDER BY r.id`,
     ),
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
@@ -1012,18 +1014,23 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     async listFindingCatalogReports(after: string, limit: number): Promise<Pick<ReportRecord, 'id' | 'byteSize'>[]> {
       return await stmts.findingCatalogReportsStmt.all(after, limit) as Pick<ReportRecord, 'id' | 'byteSize'>[]
     },
-    async getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string): Promise<TeamReportAccessSnapshot | null> {
+    async getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string, reportId: string | null = null): Promise<TeamReportAccessSnapshot | null> {
       const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
       if (!session) return null
       const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
       if (user.role === 'none' || !await stmts.selectTeamAccessStmt.get(user.id, teamId)) return { user, teamId: null, reports: [], repositories: [] }
       const whole = user.role === 'admin' || user.role === 'manage'
-      const rows = await stmts.selectTeamReportAccessStmt.all(user.id, teamId, whole ? 1 : 0) as {
+      const rows = await stmts.selectTeamReportAccessStmt.all(user.id, teamId, whole ? 1 : 0, reportId) as {
         id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
-        repoFullName: string | null; dependencies: number; security: number
+        repoFullName: string | null; dependencies: number; security: number; visible: number
       }[]
+      // Only privileged callers can receive a hidden row from this query. Give
+      // that individual preview its own capacity; published report selections
+      // still use the complete workspace for cross-report classification.
+      const hidden = rows.find(row => row.id === reportId && row.visible === 0)
+      const selected = hidden ? [hidden] : rows
       const repositories = await stmts.selectTeamRepositoriesStmt.all(teamId) as TeamReportAccessSnapshot['repositories']
-      return { user, teamId, repositories, reports: rows.map(row => ({
+      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, reports: selected.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },

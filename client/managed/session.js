@@ -134,9 +134,11 @@ export async function fetchReports(ids, { signal } = {}) {
   return ids.map(id => reports.get(id))
 }
 
-// A workspace is selected by team, never by a caller-provided report subset.
-export async function fetchTeamReports(teamId, { signal } = {}) {
-  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/reports`, null, { signal })
+// Published report selections keep the full workspace for classification.
+// An authorized hidden report opens independently of the published workspace.
+export async function fetchTeamReports(teamId, { signal, reportId = null } = {}) {
+  const query = reportId === null ? '' : `?reportId=${encodeURIComponent(reportId)}`
+  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/reports${query}`, null, { signal })
   if (!Array.isArray(body?.reports)) return null
   const reports = [], seen = new Set()
   for (const entry of body.reports) {
@@ -198,9 +200,10 @@ export async function fetchReportTriage(id, teamId, options) {
   return entries != null && typeof entries === 'object' && !Array.isArray(entries) ? entries : null
 }
 
-export async function fetchFixes(teamId, signal) {
+export async function fetchFixes(teamId, signal, reportId = null) {
   if (getPublicShare()) return []
-  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/fixes`, null, { signal })
+  const query = reportId === null ? '' : `?reportId=${encodeURIComponent(reportId)}`
+  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/fixes${query}`, null, { signal })
   return Array.isArray(body?.fixes) ? body.fixes : null
 }
 

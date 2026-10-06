@@ -276,3 +276,18 @@ test('workspace cache preserves closed issue reasons and ignores them for open i
   assert.equal(f.cache.read(open.url).stateReason, null)
   assert.equal(f.cache.read(link(1)).stateReason, null)
 })
+
+test('hidden report Fix metadata has its own scope and cannot populate the aggregate cache', async t => {
+  const f = fixture(t, (_teamId, _signal, reportId) => [result(reportId ? 2 : 1)])
+  f.cache.read(link(1)); await f.flush()
+  assert.ok(f.cache.read(link(1)))
+  f.context({ key: 'alice', teamId: 'team', reportId: 'draft', teams: [team()] })
+  assert.equal(f.cache.read(link(1)), null)
+  await f.flush()
+  assert.equal(f.calls[1][2], 'draft')
+  assert.ok(f.cache.read(link(2)))
+  f.context({ key: 'alice', teamId: 'team', teams: [team()] })
+  assert.equal(f.cache.read(link(2)), null)
+  await f.flush()
+  assert.ok(f.cache.read(link(1)))
+})

@@ -196,3 +196,21 @@ test('a changed links report invalidates the whole team response and cancels its
   assert.equal(await loading, null)
   assert.equal(managedAppState.read('reports:content:team:a'), undefined)
 })
+
+test('hidden individual responses never populate team aggregates and publication invalidates both', async t => {
+  const calls = t.mock.method(globalThis, 'fetch', url => Promise.resolve(Response.json({ reports: [
+    { id: url.includes('?reportId=') ? 'hidden' : 'published', filename: 'scan.json', ...content(url) },
+  ] })))
+  const visibilityCatalog = visible => [{ id: 'team', reports: [{ id: 'published' }, { id: 'hidden', visible }] }]
+  setManagedReportCatalog(visibilityCatalog(false))
+  const aggregate = await fetchTeamReports('team')
+  const focused = await fetchTeamReports('team', { reportId: 'hidden' })
+  assert.equal(focused[0].id, 'hidden')
+  assert.strictEqual(await fetchTeamReports('team'), aggregate)
+  assert.strictEqual(await fetchTeamReports('team', { reportId: 'hidden' }), focused)
+  assert.equal(calls.mock.callCount(), 2)
+  setManagedReportCatalog(visibilityCatalog(true))
+  assert.notStrictEqual(await fetchTeamReports('team'), aggregate)
+  assert.notStrictEqual(await fetchTeamReports('team', { reportId: 'hidden' }), focused)
+  assert.equal(calls.mock.callCount(), 4)
+})

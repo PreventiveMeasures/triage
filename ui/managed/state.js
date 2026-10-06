@@ -35,7 +35,7 @@ export class ManagedAppState {
     const changedTeams = new Set()
     const teamCatalog = new Map(teams.map(team => [team.id, JSON.stringify([
       team.cacheKey ?? null,
-      team.reports.map(report => [report.id, report.cacheKey ?? null]).toSorted(),
+      team.reports.map(report => [report.id, report.cacheKey ?? null, report.visible !== false]).toSorted(),
       (team.bundles ?? []).map(bundle => [bundle.id, bundle.filename, bundle.repoFullName, bundle.repoDirectory ?? '']).toSorted(),
     ])]))
     for (const id of new Set([...this.teamCatalog?.keys() ?? [], ...teamCatalog.keys()])) {
@@ -44,7 +44,7 @@ export class ManagedAppState {
     for (const key of this.resources.keys()) {
       const prefix = 'reports:content:team:'
       if (key.startsWith(prefix)) {
-        const teamId = key.slice(prefix.length)
+        const [teamId] = key.slice(prefix.length).split(':')
         if (!teamCatalog.has(teamId) || this.teamCatalog?.get(teamId) !== teamCatalog.get(teamId)) this.invalidate([key])
       }
     }

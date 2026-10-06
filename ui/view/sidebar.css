@@ -340,9 +340,8 @@ sidebar-view-button[hidden] { display: none !important; }
 
 /* Workspace row layout: name (flex-fill) | hover-revealed share /
    export / leave buttons, hidden until the row is hovered. */
-.file-item.workspace-item { display: block; border-radius: var(--ui-radius, 0 5px 5px 0); }
+.file-item:is(.workspace-item, .team-item) { display: block; border-radius: var(--ui-radius, 0 5px 5px 0); }
 .workspace-heading { display: flex; align-items: stretch; gap: .15rem; }
-.file-item.workspace-item button.file-name { flex: 1; min-width: 0; }
 .workspace-meta {
   display: flex; align-items: center; justify-content: space-between; gap: .35rem;
   padding: 0 .3rem .2rem calc(2rem - 3px);
@@ -380,8 +379,6 @@ sidebar-view-button[hidden] { display: none !important; }
 
   &:hover:not(:disabled) { color: var(--text); background: rgb(from var(--text) r g b / .06); border-color: var(--accent); }
 }
-.file-item.team-item { display: flex; }
-.file-item.team-item button.file-name { flex: 1; min-width: 0; }
 .file-item.team-item:focus-within .workspace-share { display: grid; }
 @media (hover: none) {
   .file-item.team-item .workspace-share { display: grid; }
@@ -483,7 +480,9 @@ sidebar-view-button[hidden] { display: none !important; }
 }
 
 /* Center workspace/team icons above their child guide without moving files. */
-.file-item:is(.workspace-item, .team-item) button.file-name { padding-left: calc(.55rem - 3px); }
+.file-item:is(.workspace-item, .team-item) button.file-name {
+  flex: 1; min-width: 0; padding-left: calc(.55rem - 3px);
+}
 
 /* Count number alongside file rows and workspace rows. Stripped of
    pill chrome (no background, padding, or min-width) so it reads as
@@ -507,14 +506,14 @@ sidebar-view-button[hidden] { display: none !important; }
 .file-item.content-hidden button.file-name .file-label { color: var(--muted); }
 
 /* Hover and selection cover metadata and first-row actions together. */
-.file-item.workspace-item:hover { background: rgb(from var(--text) r g b / .04); }
-.file-item.workspace-item button.file-name:hover { background: transparent; }
-.file-item.workspace-item.current {
+.file-item:is(.workspace-item, .team-item):hover { background: rgb(from var(--text) r g b / .04); }
+.file-item:is(.workspace-item, .team-item) button.file-name:hover { background: transparent; }
+.file-item:is(.workspace-item, .team-item).current {
   background: rgb(from var(--accent) r g b / .09);
   border-radius: var(--ui-radius, 0 5px 5px 0);
   box-shadow: inset 0 0 0 1px rgb(from var(--accent) r g b / .16);
 }
-.file-item.workspace-item.current button.file-name {
+.file-item:is(.workspace-item, .team-item).current button.file-name {
   background: transparent;
   border-color: transparent;
 }

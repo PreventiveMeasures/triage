@@ -526,6 +526,15 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
   assert.equal(sub.reports.length, 16)
   assert.ok(sub.reports.every(report => report.permissions.dependencies && !report.permissions.security))
   assert.equal((await db.getTeamReportAccessSnapshot('session', 10, 'missing')).teamId, null)
+  await db.setReportVisible(ids[0], false)
+  for (const role of ['manage', 'admin']) {
+    await db.setUserRole(viewer, role)
+    assert.equal((await db.getTeamReportAccessSnapshot('session', 10, 'app')).reports.length, 31, 'aggregate excludes hidden reports for privileged users')
+    assert.equal((await db.getTeamReportAccessSnapshot('session', 10, 'app', ids[0])).reports.length, 1, 'hidden selection loads only the individually authorized report')
+    assert.equal((await db.getTeamReportAccessSnapshot('session', 10, 'app', ids[1])).reports.length, 31, 'published selections still classify the whole workspace')
+  }
+  await db.setUserRole(viewer, 'view')
+  assert.equal((await db.getTeamReportAccessSnapshot('session', 10, 'app', ids[0])).reports.length, 31)
   await db.setTeamRepo('app', 7, 'elsewhere')
   await db.removeTeamRepo('app', 7, 'packages/app')
   await db.removeTeamMember('sub', viewer)

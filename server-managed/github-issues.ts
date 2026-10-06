@@ -60,7 +60,7 @@ function issueDetails(raw: unknown, url: string, number: number, fallback: { tit
 // Report filtering also supplies the full row/link isSecurity classification.
 export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, store: BlobStore,
   session: ManagedSession, teamId: string, context: Context, fetchImpl: typeof fetch = fetch) {
-  const snapshot = await teamSnapshot(db, session.id, teamId)
+  const snapshot = await teamSnapshot(db, session.id, teamId, context.reportId)
   if (!snapshot.reports.some(report => report.id === context.reportId)) throw new TeamReportsError(404, 'no-report')
   const reports = await loadTeamReports(db, store, snapshot)
   const report = reports.find(item => item.id === context.reportId)!

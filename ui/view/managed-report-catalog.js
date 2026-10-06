@@ -8,7 +8,7 @@ export function managedReportViewChanged(state, teams, changedReports) {
   const team = teams.find(entry => entry.id === state.currentManagedTeam)
   if (changedReports.has(`team:${state.currentManagedTeam}`)) return true
   if (!team || state.managedReports.some(report => changedReports.has(report.id))) return true
-  const available = new Set(team.reports.map(report => report.id))
+  const available = new Set(team.reports.filter(report => state.currentManagedReport !== null || report.visible !== false).map(report => report.id))
   if (state.currentManagedReport !== null) return !available.has(state.currentManagedReport)
   const loaded = new Set(state.managedReports.map(report => report.id))
   return available.size !== loaded.size || [...available].some(id => !loaded.has(id))

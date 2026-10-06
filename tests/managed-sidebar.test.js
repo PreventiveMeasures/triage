@@ -38,3 +38,27 @@ test('clearing the managed query restores every team, report and bundle', () => 
     assert.deepEqual(filterManagedTeams(teams, query), teams.map(team => ({ team, reports: team.reports ?? [], bundles: team.bundles ?? [] })))
   }
 })
+
+test('App team sections match workspace navigation, search and manual collapse behavior', async () => {
+  const { ManagedTeamSections } = await import('../ui/view/managed-sidebar.js')
+  const sections = new ManagedTeamSections()
+  const state = { managedSession: { id: 'user', role: 'manage' }, managedTeams: teams,
+    currentManagedTeam: 'a', currentManagedReport: null, currentView: 'findings' }
+  sections.sync(state)
+  assert.equal(sections.shown('a', 'reports', true, false), false)
+  assert.equal(sections.shown('a', 'bundles', true, false), false)
+  assert.equal(sections.shown('a', 'reports', false, false), true, 'ordinary teams remain expanded')
+  sections.sync({ ...state, currentManagedReport: 'report-a' })
+  assert.equal(sections.shown('a', 'reports', true, false), true)
+  sections.toggle('a', 'reports')
+  sections.sync({ ...state, currentManagedReport: 'report-a' })
+  assert.equal(sections.shown('a', 'reports', true, false), false, 'repaint preserves manual collapse')
+  assert.equal(sections.shown('a', 'reports', true, true), true, 'search reveals temporarily')
+  assert.equal(sections.shown('a', 'reports', true, false), false)
+  sections.sync({ ...state, currentView: 'bundles', bundleDetails: { managedId: 'shared' } })
+  assert.equal(sections.shown('a', 'bundles', true, false), true)
+  assert.equal(sections.shown('b', 'bundles', true, false), false, 'only the focused team expands')
+  assert.equal(sections.shown('a', 'reports', true, false), false)
+  sections.sync({ ...state, managedSession: { id: 'other', role: 'manage' } })
+  assert.equal(sections.shown('a', 'bundles', true, false), false, 'account changes reset choices')
+})

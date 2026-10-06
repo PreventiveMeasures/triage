@@ -100,3 +100,9 @@ test('moving a bundle within the same team refreshes its location and source cac
   assert.deepEqual([...changed], ['team:team', 'bundle:bundle'])
   assert.equal(cache.read('bundle-metadata:bundle'), undefined)
 })
+
+test('hidden catalog entries do not force an aggregate reload, but remain valid individual views', () => {
+  const catalog = [{ id: 'team', reports: [report('a'), { ...report('hidden'), visible: false }] }]
+  assert.equal(managedReportViewChanged(aggregate, catalog, new Set()), false)
+  assert.equal(managedReportViewChanged({ ...aggregate, currentManagedReport: 'hidden', managedReports: [report('hidden')] }, catalog, new Set()), false)
+})

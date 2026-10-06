@@ -193,34 +193,64 @@ They do not offer the local “Set repo” editor. Findings retain their own ups
 repository metadata (for example, a dependency's repository); source links that
 need a report fallback use the server assignment.
 
-`GET /api/teams/:id/reports` returns the complete workspace as separate
+`GET /api/teams/:id/reports` returns the complete **published** workspace as separate
 `{ id, filename, data, repo: { github, directory } }` envelopes in `{ reports }`.
 The server derives the report list from that team's repository paths and the
-caller's membership. Ordinary users receive published reports filtered by that
-team's security/dependency grants; grants in other teams do not broaden the
-answer. Admins and managers retain their filtering bypass. Opening an individual
-report in the viewer selects it from the same whole-team response.
+caller's membership, which is required even for admins and managers. Ordinary
+users receive findings filtered by that team's security/dependency grants;
+grants in other teams do not broaden the answer. Admins and managers bypass
+those finding filters, but unpublished reports are excluded from aggregate
+team responses for every role. Their hidden reports remain listed in the team
+catalog for individual access.
+
+The optional `?reportId=:reportId` query parameter selects a report in that team:
+
+- A published selection returns the same complete published workspace, preserving
+  cross-report classification. The viewer selects the individual report from it.
+- An unpublished selection requires an admin or manager with membership in the
+  team and a report matching its repository/directory scope. The response contains
+  **only that report**, in the same `{ reports: [...] }` envelope. This isolated
+  preview does not read or merge the team's published reports and has its own
+  query capacity, so a full published workspace cannot prevent opening it.
+- A missing or out-of-scope report, or an unpublished selection by a viewer or
+  triager, returns `404`.
+
+Both aggregate reads and isolated previews retain the existing query limits:
+4,096 reports and 1 GiB for input and encoded response size. Oversized requests
+return `413`. The server rechecks access and publication after loading content;
+a changed workspace is rejected instead of returning a stale response.
 
 Links files are uploaded, assigned and published like reports in Manage. Their
 wire data is `{ source: 'links', findings: [], links: [[findingId, ...], ...] }`.
-Security propagates across complete rows and links in the chosen team before
-dependency filtering. Links in the response contain only remaining finding IDs,
-and each retained link names at least two distinct findings. Unavailable reports
-and unpublished/out-of-scope links do not contribute to an ordinary user's view.
+Security propagates across complete rows and published links in the chosen team
+before dependency filtering. Aggregate links contain only remaining finding IDs,
+and each retained link names at least two distinct findings. Unpublished reports
+and out-of-scope links do not contribute to any role's aggregate view. An isolated
+unpublished links preview preserves its references without loading the reports
+they name.
 
 `GET /api/reports/:id` and `POST /api/reports/query` are reserved for admins and
 managers, with existing ownership/team access rules. Individual previews with
 `Accept: application/json` return `{ data, repo: { github, directory } }`;
 other callers receive raw text. `github: null` means unassigned.
 
-Managed clients cache complete workspace responses only in JavaScript memory,
-keyed by team and invalidated on catalogue or session changes. HTTP responses
-use `no-store`; no report response is written to browser storage.
+Managed clients load report content on demand and cache responses only in
+JavaScript memory. Aggregate responses are keyed by team; isolated previews also
+include the selected report ID and cannot populate the aggregate cache. Catalogue
+or session changes invalidate these caches. HTTP responses use `no-store`;
+no report response is written to browser storage.
+
+`GET /api/teams/:id/annotations` includes only published workspace findings for
+every role. With `?reportId=:reportId`, it returns annotations for the selected
+report: published reports use whole-workspace classification, while authorized
+unpublished previews use only that report. Hidden-only findings never enter the
+aggregate annotations.
 
 Ordinary users supply `?team=:teamId` for report triage, history, comments and
-sources. These endpoints authorize against the same complete workspace and
-recheck access after cold reads. Triage and comments remain shared by finding ID
-across teams; the team is only the authorization context.
+sources. These endpoints authorize against the same published workspace or
+authorized isolated preview when scoped to a team and recheck access after cold
+reads. Triage and comments remain shared by finding ID across teams; the team is
+only the authorization context.
 
 # Live team updates
 
@@ -232,6 +262,12 @@ user. One connection carries two invalidations, each with `data: {}`:
   refreshes `GET /api/teams`.
 - `triage`: visible triage and comments for **only the focused team**. The client
   refreshes the existing report annotation APIs.
+
+Team feeds exclude unpublished reports from aggregate triage updates for every
+role. `GET /api/teams/:id/feed?reportId=:reportId` uses the same selection and
+access rules as report reads: an authorized unpublished preview receives updates
+for that report alone; a published selection retains the published workspace
+scope. Catalog updates remain unchanged by this selection.
 
 `GET /api/teams/feed` provides the same catalog updates without subscribing to
 triage. It works even before the user has joined a team. Both event types are
@@ -267,12 +303,15 @@ reconnect. Slow consumers are disconnected without queuing a backlog.
 # Fix pull requests and issues
 
 `GET /api/teams/:id/fixes` returns GitHub PR and ordinary issue metadata
-for the workspace. It requires an approved managed session (at least `view`)
+for the published workspace. It requires an approved managed session (at least `view`)
 and membership in that team. URLs come only from persisted Fix links on findings
 surviving the same workspace security and dependency filters as report reads,
 including whole-row and linked security propagation. Admins and managers retain
-their report-filter bypass. The caller supplies only the team ID, never a URL
-list. Both the former `POST /api/github/pull-requests` and the team
+their security/dependency filter bypass. The optional `?reportId=:reportId`
+follows the report-read selection rules: an authorized unpublished preview uses
+only that report's findings, while a published selection uses the complete
+published workspace. The caller supplies IDs, never a URL list.
+Both the former `POST /api/github/pull-requests` and the team
 `GET /api/teams/:id/pull-requests` endpoints are removed.
 
 Each link's repository must match a repository assigned to this team, including

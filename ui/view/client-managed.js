@@ -89,8 +89,8 @@ export async function fetchReportTriage(id, teamId = state.currentManagedTeam, o
   return (await loadManagedBundle()).fetchReportTriage(id, teamId, options)
 }
 
-export async function fetchFixes(teamId, signal) {
-  return (await loadManagedBundle()).fetchFixes(teamId, signal)
+export async function fetchFixes(teamId, signal, reportId) {
+  return (await loadManagedBundle()).fetchFixes(teamId, signal, reportId)
 }
 
 export async function fetchReportComments(id, teamId = state.currentManagedTeam, options) {
@@ -126,7 +126,7 @@ export async function fetchBundleContents(id, options) {
   return (await loadManagedBundle()).fetchBundleContents(id, options)
 }
 
-export async function fetchTeamReports(teamId) { return (await loadManagedBundle()).fetchTeamReports(teamId) }
+export async function fetchTeamReports(teamId, options) { return (await loadManagedBundle()).fetchTeamReports(teamId, options) }
 
 export async function watchTeamFeed(teamId, options) {
   return (await loadManagedBundle()).watchTeamFeed(teamId, options)

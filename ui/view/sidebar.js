@@ -15,7 +15,7 @@ import { refreshManagedBundleView } from './managed-bundle-refresh.js'
 import { openManagedBundle } from './managed-bundle-open.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
-import { filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
+import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -28,6 +28,7 @@ import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-statu
 import { render } from './render.js'
 import { renderLandingWorkspaces } from './landing-workspaces.js'
 import { getLoadedWorkspaceAppMetadata } from './workspace-app-load.js'
+import { managedTeamAppCache as teamAppCache } from './managed-team-app.js'
 import { updateManagedLanding } from './landing-managed.js'
 import { refreshScanNavigation } from './scan-navigation.js'
 
@@ -181,6 +182,7 @@ let searchActive = false
 // without changing the user's independent report/bundle expansion choices.
 const expandedWorkspaceSections = new Map()
 let lastWorkspaceFocus = ''
+const teamSections = new ManagedTeamSections()
 
 function revealFocusedWorkspaceSection(workspaces, force) {
   const bundle = state.currentView === 'bundles' ? state.selectedBundle : null
@@ -264,13 +266,29 @@ function teamsSectionTemplate() {
   if (teams.length === 0) return nothing
   return html`
     ${groupHeaderTemplate('Teams')}
-    ${repeat(teams, ({ team }) => team.id, ({ team: t, reports, bundles }) => html`
-      <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && state.currentView === 'findings' ? ' current' : ''}`}>
-        <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
-        ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
+    ${repeat(teams, ({ team }) => team.id, ({ team: t, reports, bundles }) => {
+      const app = teamAppCache.get(t.id)
+      const compact = app?.appMode === true
+      const showReports = teamSections.shown(t.id, 'reports', compact, searchActive)
+      const showBundles = teamSections.shown(t.id, 'bundles', compact, searchActive)
+      const reportCount = reports.filter(r => r.analyzer !== LINKS_KIND).length
+      return html`
+      <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && state.currentView === 'findings' ? ' current' : ''}`} data-team-id=${t.id}>
+        <div class="workspace-heading">
+          <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
+          ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
+        </div>
+        ${compact ? html`<div class="workspace-meta">
+          <span class="workspace-findings">${app.appFindings.toLocaleString()} finding${app.appFindings === 1 ? '' : 's'}</span>
+          <span class="workspace-sections" role="group" aria-label="Team files">
+            <button type="button" data-team-section="reports" aria-expanded=${String(showReports)} ?disabled=${searchActive}>${reportCount.toLocaleString()} report${reportCount === 1 ? '' : 's'}</button>
+            ${bundles.length > 0 ? html`<button type="button" data-team-section="bundles" aria-expanded=${String(showBundles)} ?disabled=${searchActive}>${bundles.length.toLocaleString()} bundle${bundles.length === 1 ? '' : 's'}</button>` : nothing}
+          </span>
+        </div>` : nothing}
       </li>
-      ${repeat(reports, (r) => r.id, (r) => teamReportTemplate(t, r))}
-      ${repeat(bundles, (b) => b.id, (b) => teamBundleTemplate(t, b))}`)}`
+      ${showReports ? repeat(reports, r => r.id, r => teamReportTemplate(t, r)) : nothing}
+      ${showBundles ? repeat(bundles, b => b.id, b => teamBundleTemplate(t, b)) : nothing}`
+    })}`
 }
 
 // A clickable report row under its team (managed mode). Reuses the indented
@@ -496,6 +514,8 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   })
   refreshScanNavigation()
   if (isManagedUiMode()) {
+    teamSections.sync(state, revealSelection)
+    teamAppCache.sync(state.managedSession, state.managedTeams)
     if (!managedSessionPending && !managedTeamsPending && !managedSessionRefresh && !managedNavigationPending) startManagedTeamFeed({ catalogOnly: true })
     state.bundles = (state.bundles ?? []).filter(entry => entry.managedId)
     state.storedFiles = []
@@ -508,6 +528,8 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     renderSyncStatus()
     return
   }
+  teamAppCache.sync(null, [])
+  teamSections.sync({ managedTeams: [] })
   root?.querySelector('sidebar-view-button[kind="packages"]')?.removeAttribute('hidden')
   root?.querySelector('sidebar-view-button[kind="repositories"]')?.removeAttribute('hidden')
   // One-shot migration of `.deepseek` OPFS entries back to `.md`
@@ -812,6 +834,14 @@ async function switchClientMode() {
 // no `data-file` — but the add button still bubbles to the same
 // listener.
 async function onSidebarClick(e) {
+  const teamSectionButton = e.target.closest('[data-team-section]')
+  if (teamSectionButton) {
+    if (searchActive || teamSectionButton.disabled) return
+    const id = teamSectionButton.closest('[data-team-id]')?.dataset.teamId
+    if (id) teamSections.toggle(id, teamSectionButton.dataset.teamSection)
+    await renderSidebar()
+    return
+  }
   const sectionButton = e.target.closest('[data-workspace-section]')
   if (sectionButton) {
     if (searchActive || sectionButton.disabled) return
@@ -1814,6 +1844,7 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedTeamsPending = true
   managedNavigationPending = false
   resetManagedAppState()
+  teamAppCache.sync(null, [])
   resetManagedFixes()
   stopManagedTeamFeed()
   resetManagedTriage()

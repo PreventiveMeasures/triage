@@ -9,6 +9,8 @@ export const managedFixes = new FixCache({
     return isManagedUiMode() && session?.id && state.currentManagedTeam ? {
       key: JSON.stringify([session.id, session.role, session.csrfToken]),
       teamId: state.currentManagedTeam,
+      reportId: state.managedTeams.find(team => team.id === state.currentManagedTeam)?.reports
+        .find(report => report.id === state.currentManagedReport && report.visible === false)?.id ?? null,
       teams: state.managedTeams,
     } : null
   },
