@@ -398,6 +398,65 @@ function segmentsCross([a, b], [c, d]) {
   return turn(a, b, c) * turn(a, b, d) < -1e-8 && turn(c, d, a) * turn(c, d, b) < -1e-8
 }
 
+test('rows over five cards stack horizontally with visible ports and at least 30% of every card exposed', () => {
+  for (const count of [5, 6, 8, 40]) {for (const maxWidth of [1280, 600, 375]) {
+    const branches = Array.from({ length: count }, (_, i) => `branch-${i}`)
+    const imports = new Map([['app', new Set(branches)], ...branches.map(id => [id, new Set(['target'])]), ['target', new Set()]])
+    const graph = { nodes: new Map([...imports.keys()].map(id => [id, { id }])), imports }
+    const layout = layoutWhy(graph, { maxWidth })
+    const row = layout.boxes.filter(box => branches.includes(box.members[0])).toSorted((a, b) => a.x - b.x)
+    assert.equal(new Set(row.map(box => box.y)).size, 1, 'stack horizontally, never create new dependency levels')
+    assert.equal(layout.edges.length, count * 2, 'retain every importer and dependency')
+    for (const [i, box] of row.entries()) {
+      assert.equal(box.width, WHY_CARD_WIDTH, 'cards retain their full readable dimensions')
+      assert.ok(box.visibleWidth >= box.width * .3 - 1e-8)
+      assert.equal(box.stacked, count > 5)
+      if (i < row.length - 1) {
+        const next = row[i + 1]
+        assert.ok(count > 5 ? next.x < box.x + box.width : next.x > box.x + box.width)
+        assert.ok(next.x - box.x >= box.width * .3 - 1e-8, 'every underlying card has an exposed strip')
+      }
+      for (const edge of layout.edges.filter(link => link.from === box.id || link.to === box.id)) {
+        const segments = arrowSegments(edge.path)
+        const [x] = edge.from === box.id ? segments[0][0] : segments.at(-1)[1]
+        assert.ok(x > box.x && x < box.x + box.visibleWidth, 'arrow attaches to the exposed strip of its actual card')
+      }
+    }
+    assert.equal(row.at(-1).visibleWidth, row.at(-1).width, 'the front card remains fully visible')
+    if (count > 5) assert.ok(layout.width < count * WHY_CARD_WIDTH, 'stack reduces horizontal scrolling')
+    if (maxWidth === 1280 && count <= 8) assert.ok(layout.width + WHY_DIALOG_GUTTER <= maxWidth)
+    if (count === 40) assert.ok(layout.width + WHY_DIALOG_GUTTER > maxWidth, 'scroll instead of hiding more than 70%')
+  }}
+})
+
+test('collapsed cycles join dense stacks while expanded cycles retain their full grid and clear gutters', () => {
+  const branches = Array.from({ length: 6 }, (_, i) => `branch-${i}`), cycle = Array.from({ length: 11 }, (_, i) => `cycle-${i}`)
+  const imports = new Map([['app', new Set([...branches, cycle[0]])], ['target', new Set()],
+    ...branches.map(id => [id, new Set(['target'])]), ...cycle.map((id, i) => [id, new Set([cycle[(i + 1) % cycle.length], 'target'])])])
+  const graph = { nodes: new Map([...imports.keys()].map(id => [id, { id }])), imports }
+  for (const maxWidth of [1280, 375]) {
+    const initial = layoutWhy(graph, { maxWidth })
+    const collapsed = initial.boxes.find(box => box.collapsed)
+    assert.equal(collapsed.stacked, true)
+    assert.equal(initial.edges.length, 24)
+    const expanded = layoutWhy(graph, { maxWidth, expandedCycles: new Set([collapsed.id]) })
+    const group = expanded.boxes.find(box => box.id === collapsed.id)
+    assert.equal(group.stacked, false)
+    assert.equal(group.visibleWidth, group.width)
+    assert.equal(group.packages.length, 11)
+    assert.deepEqual(expanded.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]),
+      initial.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]))
+    for (const peer of expanded.boxes.filter(box => box.y === group.y && box.id !== group.id)) {
+      assert.ok(peer.x + peer.width < group.x || peer.x > group.x + group.width, 'no stack covers the expanded cycle')
+    }
+    const cards = expanded.boxes.flatMap(box => box.packages.map(node => ({ x: box.x + node.x, y: box.y + node.y, w: WHY_CARD_WIDTH, h: WHY_CARD_HEIGHT })))
+    for (const edge of expanded.edges) {
+      const commands = [...edge.path.matchAll(/([MLQ])([\d.,-]+)/gu)].map(([, command, args]) => ({ command, values: args.split(',').map(Number) }))
+      assertExternalPathClear(commands, cards, expanded)
+    }
+  }
+})
+
 test('fan-out and fan-in ports follow geometry without crossing sibling arrows or depending on import order', () => {
   for (const [count, reverse] of [2, 3, 8, 40].flatMap(n => [false, true].map(r => [n, r]))) {
     const children = Array.from({ length: count }, (_, i) => `child-${i}`)

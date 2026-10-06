@@ -123,7 +123,7 @@ class WhyDialog extends AppDialog {
   renderGroup(box, highlighted, activePackage, neighbors) {
     const selected = box.members.some(id => this.graph.nodes.get(id).target)
     const adjacent = neighbors && box.members.some(id => neighbors.has(id))
-    return html`<div class=${`package-group${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${box.collapsed ? ' collapsed' : ''}${box.collapsed && selected ? ' selected-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
+    return html`<div class=${`package-group${box.stacked ? ' stacked' : ''}${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${box.collapsed ? ' collapsed' : ''}${box.collapsed && selected ? ' selected-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
       style=${styleMap({ left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px` })}
       @pointerenter=${() => { this._active = box.id }} @pointerleave=${() => { this._active = null }}>
       ${box.collapsible ? html`<button type="button" class="cycle-label cycle-toggle" aria-expanded=${!box.collapsed} aria-controls=${`cycle-content-${box.id}`}

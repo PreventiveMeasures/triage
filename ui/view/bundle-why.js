@@ -4,7 +4,7 @@ import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
 import { countsTowardsCycles } from './graph/cycle-imports.js'
-import { WHY_DIALOG_GUTTER, layoutWhyGroup, routeWhyEdges } from './why-layout.js'
+import { WHY_DIALOG_GUTTER, layoutWhyGroup, layoutWhyRow, routeWhyEdges } from './why-layout.js'
 
 function packageNode(id, info = {}) {
   const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(id) ? 'npm' : '')
@@ -138,14 +138,12 @@ export function layoutWhy(graph, { maxWidth = 1280, expandedCycles = new Set() }
     const collapsible = members.length > 10
     return { ...layoutWhyGroup(id, members, graph.imports, cycleWidth, collapsible && !expandedCycles.has(id)), collapsible }
   }), group => depth[group.id])
-  const rowWidth = row => row.reduce((w, group) => w + group.width, 0) + Math.max(0, row.length - 1) * 20
-  const width = [...rows.values()].reduce((w, row) => Math.max(w, rowWidth(row) + 24), 240)
+  const placedRows = [...rows].toSorted(([a], [b]) => a - b).map(([, row]) => layoutWhyRow(row, cycleWidth))
+  const width = placedRows.reduce((w, row) => Math.max(w, row.width + 24), 240)
   const boxes = new Map()
   let y = 12
-  for (const [, row] of [...rows].toSorted(([a], [b]) => a - b)) {
-    const height = row.reduce((h, group) => Math.max(h, group.height), 0)
-    let x = (width - rowWidth(row)) / 2
-    for (const group of row) { boxes.set(group.id, { ...group, x, y, rowBottom: y + height }); x += group.width + 20 }
+  for (const { groups: row, width: rowWidth, height } of placedRows) {
+    for (const group of row) boxes.set(group.id, { ...group, x: group.x + (width - rowWidth) / 2, y, rowBottom: y + height })
     y += height + 36
   }
   let bypasses = 0

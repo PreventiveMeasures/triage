@@ -26,6 +26,15 @@ header button:hover { color: var(--text); }
 .connections { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .connections > path { fill: none; stroke: var(--connection-color, var(--muted)); stroke-width: 1.5; opacity: .65; }
 .package-group { position: absolute; cursor: default; }
+.package-group.stacked { background: var(--bg); border-radius: var(--ui-radius, 6px); }
+.stacked.collapsed { background: linear-gradient(var(--surface), var(--surface)), var(--bg); }
+.stacked.selected-cycle { background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
+.stacked:hover, .stacked:focus-within { z-index: 1; box-shadow: 0 2px 8px #0005; }
+.stacked.dimmed { opacity: 1; }
+.stacked.dimmed::after {
+  content: ''; position: absolute; inset: 0; background: var(--surface);
+  opacity: .8; border-radius: inherit; pointer-events: none;
+}
 .package {
   position: absolute; width: var(--package-width); height: var(--package-height);
   display: flex; flex-direction: column; gap: 4px; padding: 5px 7px;

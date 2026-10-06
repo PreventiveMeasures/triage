@@ -5,6 +5,28 @@ export const WHY_CARD_HEIGHT = 48
 export const WHY_DIALOG_GUTTER = 32 // dialog borders, content padding and vertical scrollbar
 const gapX = 20, gapY = 24, heading = 20, padding = 10
 
+// Dense rows overlap cards horizontally, with at least 30% of each exposed.
+// Expanded cycles keep their grid and gutters; only compact neighbors stack.
+export function layoutWhyRow(row, maxWidth) {
+  const compact = group => group && (group.collapsed || group.members.length === 1)
+  const overlap = row.map((group, i) => row.length > 5 && compact(group) && compact(row[i + 1]))
+  let fixed = 0, flexible = 0
+  row.forEach((group, i) => {
+    if (overlap[i]) flexible += group.width
+    else fixed += group.width + (i === row.length - 1 ? 0 : gapX)
+  })
+  const available = Math.min(maxWidth, WHY_CARD_WIDTH * 5 + gapX * 4)
+  const fraction = flexible ? Math.max(.3, Math.min(.9, (available - fixed) / flexible)) : 1
+  let width = 0
+  const groups = row.map((group, i) => {
+    const visibleWidth = group.width * (overlap[i] ? fraction : 1)
+    const placed = { ...group, x: width, visibleWidth, stacked: !!(overlap[i] || overlap[i - 1]) }
+    width += visibleWidth + (overlap[i] || i === row.length - 1 ? 0 : gapX)
+    return placed
+  })
+  return { groups, width, height: Math.max(...row.map(group => group.height)) }
+}
+
 function roundedPath(points) {
   let path = `M${points[0].join(',')}`
   for (let i = 1; i < points.length - 1; i++) {
@@ -25,7 +47,7 @@ function importPort(box, id, incoming, port) {
   const offset = portOffset(port)
   const outerY = incoming ? box.y - 12 : box.rowBottom
   if (box.members.length === 1 || box.collapsed) {
-    const x = box.x + box.width / 2 + offset
+    const x = box.x + box.visibleWidth / 2 + offset
     return [[x, incoming ? box.y - 5 : box.y + box.height], [x, outerY]]
   }
   const x = box.x + node.x + (incoming ? 0 : WHY_CARD_WIDTH)
@@ -37,6 +59,7 @@ function importPort(box, id, incoming, port) {
 export function routeWhyEdges(boxes, edges) {
   const center = (edge, side) => {
     const box = boxes.get(edge[side]), node = box.packages.find(card => card.id === edge[`${side}Package`])
+    if (box.members.length === 1 || box.collapsed) return [box.x + box.visibleWidth / 2, box.y + box.height / 2]
     return node ? [box.x + node.x + WHY_CARD_WIDTH / 2, box.y + node.y + WHY_CARD_HEIGHT / 2]
       : [box.x + box.width / 2, box.y + box.height / 2]
   }
