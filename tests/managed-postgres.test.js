@@ -19,15 +19,23 @@ import { hashToken } from '../server-managed/crypto.ts'
 import { serveTeamFeed } from '../server-managed/team-feed.ts'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
 
-// Tests in this file run sequentially. Reuse the expensive WASM engine, but
-// recreate the schema (including functions and triggers) so each test still
-// exercises initialization and migrations against an empty database.
+// Tests run sequentially. Reuse the engine and migrated schema, resetting all
+// rows and sequences to their initial state. A test that changes DDL invalidates
+// the schema so the next fixture also recreates its functions and triggers.
 let sharedPg
+let schemaChanged = true
+let initialTables
 after(async () => { await sharedPg?.close() })
 
 async function database(t, options = {}) {
   const pg = sharedPg ??= new PGlite()
-  await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
+  if (schemaChanged) await pg.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
+  else {
+    await pg.exec(`TRUNCATE ${initialTables.map(table => table.name).join(', ')} RESTART IDENTITY`)
+    for (const { name, rows } of initialTables) {
+      if (rows.length > 0) await pg.query(`INSERT INTO ${name} SELECT * FROM json_populate_recordset(NULL::${name}, $1)`, [JSON.stringify(rows)])
+    }
+  }
   const queries = []
   const faults = {}
   // PGlite has one connection. A lease covers the complete transaction, just
@@ -42,6 +50,7 @@ async function database(t, options = {}) {
     return {
       async query(sql, params) {
         queries.push(sql)
+        if (/\b(?:ALTER|CREATE|DROP)\b/iu.test(sql)) schemaChanged = true
         if (faults.deleteBundle && sql.startsWith('DELETE FROM managed_bundle')) {
           faults.deleteBundle = false
           throw new Error('injected bundle deletion failure')
@@ -70,9 +79,52 @@ async function database(t, options = {}) {
   }
   const db = await openPostgresManagedDb(connect, { triageHistoryLimit: 2, ...options })
   t.after(() => db.close())
+  if (schemaChanged) {
+    const { rows: tables } = await pg.query("SELECT quote_ident(tablename) AS name FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'managed_schema_version'")
+    initialTables = []
+    for (const { name } of tables) {
+      const { rows } = await pg.query(`SELECT * FROM ${name}`)
+      initialTables.push({ name, rows })
+    }
+    schemaChanged = false
+  }
   return { db, connect, queries, faults }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+test('Postgres fixtures isolate rows, sequences, revision counters and schema changes', async t => {
+  const first = await database(t)
+  await first.db.upsertUser(identity(1), 1)
+  await first.db.createTeam('old-team', 'Old team', 1)
+  await first.db.setTriage('old-finding', { color: 'red' }, null, null, 1)
+  await first.db.close()
+
+  const second = await database(t)
+  assert.deepEqual(await second.db.listUsers(), [])
+  assert.deepEqual(await second.db.listTeams(), [])
+  const connection = await second.connect()
+  try {
+    assert.deepEqual((await connection.query('SELECT * FROM managed_finding_triage_event')).rows, [])
+    const [revision] = (await connection.query('SELECT * FROM managed_change_revision')).rows
+    assert.equal(Number(revision.catalog), 0)
+    assert.equal(Number(revision.annotations), 0)
+  } finally { await connection.release() }
+  await second.db.setTriage('new-finding', { color: 'blue' }, null, null, 2)
+  const changed = await second.connect()
+  try {
+    const [event] = (await changed.query('SELECT seq FROM managed_finding_triage_event')).rows
+    assert.equal(Number(event.seq), 1, 'identity sequences restart with the fixture')
+    await changed.query('CREATE TABLE fixture_extra (id INTEGER)')
+  } finally { await changed.release() }
+  await second.db.close()
+
+  const third = await database(t)
+  const clean = await third.connect()
+  try {
+    assert.equal((await clean.query("SELECT to_regclass('fixture_extra') AS name")).rows[0].name, null)
+    assert.deepEqual((await clean.query('SELECT * FROM managed_finding_triage_event')).rows, [])
+  } finally { await clean.release() }
+})
 
 test('Postgres upgrades and persists nullable repository default caches without changing selection metadata', async t => {
   const { db, connect } = await database(t)

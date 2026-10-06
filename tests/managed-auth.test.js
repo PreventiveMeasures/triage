@@ -27,6 +27,14 @@ import { defaultScanModels } from '../ui/scan/default-models.js'
 import { createGithubIssue, parseIssueContext, prepareGithubIssue } from '../server-managed/github-issues.ts'
 import { isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from '../server-managed/github-issue-oauth.ts'
 
+// Authentication scenarios need real RSA signatures, but not a new key pair
+// for every request fixture. The key-rotation cache tests use distinct keys in
+// managed-installation-token-cache.test.js.
+let signingKeys
+function appKeyPair() {
+  return signingKeys ??= generateKeyPairSync('rsa', { modulusLength: 2048 })
+}
+
 const config = {
   port: 8765, host: '127.0.0.1', dbPath: ':memory:', debug: false, trustProxyEnv: undefined,
   githubClientId: 'cid', githubClientSecret: 'secret',
@@ -479,7 +487,7 @@ test('github-app: installUrl builds from the optional slug (null when unset)', (
 })
 
 test('github-app: appJwt is a verifiable RS256 JWT; githubAppConfigured needs id + key', () => {
-  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const { privateKey, publicKey } = appKeyPair()
   const pem = privateKey.export({ type: 'pkcs1', format: 'pem' })
   const now = 1_700_000_000_000
   const [h, p, sig] = appJwt('appid-9', pem, now).split('.')
@@ -504,7 +512,7 @@ test('mergeRepos: unions sources, dedupes by full name, sorts (later source wins
 })
 
 test('listInstalledRepos: aggregates the separate App\'s installations, skips archived', async () => {
-  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
+  const pem = appKeyPair().privateKey.export({ type: 'pkcs1', format: 'pem' })
   const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem, githubAppSlug: 'app' }
   const calls = []
   const fetchImpl = (url, opts) => {
@@ -588,7 +596,7 @@ test('db: selectRepo upserts (keeps added_at/by), listSelectedRepos reads, desel
 })
 
 test('collectRepos: merges public + private (install-tagged); tokenMissing without a user token', async t => {
-  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
+  const pem = appKeyPair().privateKey.export({ type: 'pkcs1', format: 'pem' })
   const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem, githubAppSlug: 'app' }
   const fetchImpl = (url) => {
     const u = String(url)
@@ -611,7 +619,7 @@ test('collectRepos: merges public + private (install-tagged); tokenMissing witho
 })
 
 test('repoAccessToken: installation id → installation token; null for public/unconfigured', async () => {
-  const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
+  const pem = appKeyPair().privateKey.export({ type: 'pkcs1', format: 'pem' })
   const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: pem }
   const fetchImpl = (url, opts) => (String(url).includes('/app/installations/7/access_tokens') && opts?.method === 'POST'
     ? jsonResponse({ token: 'inst-tok' })
@@ -2954,7 +2962,7 @@ test('team slugs are assigned by the server and cannot be edited through create 
 test('installed discovery defaults to acting GH access, Show all stays admin-only, and returns complete catalogues', async (t) => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
-  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) }
+  const cfg = { ...config, githubAppId: '1', githubAppPrivateKey: appKeyPair().privateKey.export({ type: 'pkcs1', format: 'pem' }) }
   const alice = await createSession(cfg, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, Date.now())
   await db.setUserRole(alice.userId, 'admin')
   const bob = await createSession(cfg, db, { githubUserId: 2, login: 'bob', name: null, avatarUrl: null }, Date.now())
@@ -3135,7 +3143,7 @@ async function issueFixture(t) {
   const team = (await db.listTeams()).find(item => item.name === 'Blue')
   const { session } = await readSession(config, db, cookiePair(fx.bobSess.setCookie), Date.now())
   await db.setUserTokens(session.userId, { accessToken: 'acting-user-token', refreshToken: null, expiresAt: null })
-  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const { privateKey } = appKeyPair()
   const cfg = { ...config, githubAppId: '123', githubAppSlug: 'triage',
     githubAppPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }), githubNewIssueLabels: 'custom, deepview, security' }
   return { db, store, fx, team, session, cfg, context: { reportId: fx.reportId, findingId: 'own', repository: 'o/r' } }

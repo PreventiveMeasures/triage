@@ -3,10 +3,12 @@ import './_password-crypto-mock.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { gzipSync } from 'node:zlib'
-import { decodeWorkspaceFile, prepareWorkspaceImport, runWorkspaceImport, workspaceImportApi } from '../client/managed/workspace-import.js'
-import { localWorkspaceReader } from '../client/managed/workspace-import-local.js'
-import { encryptBundle } from '../client/workspace-bundle-crypto.js'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES } from '../common/managed/triage.ts'
+
+// Load the client graph after the PBKDF2 mock has been registered.
+const { decodeWorkspaceFile, prepareWorkspaceImport, runWorkspaceImport, workspaceImportApi } = await import('../client/managed/workspace-import.js')
+const { localWorkspaceReader } = await import('../client/managed/workspace-import-local.js')
+const { encryptBundle } = await import('../client/workspace-bundle-crypto.js')
 
 const repos = [{ repoId: 7, fullName: 'org/repo' }]
 const session = { id: 'admin', role: 'admin', csrfToken: 'csrf' }
