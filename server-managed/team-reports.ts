@@ -1,5 +1,6 @@
 // Team content is filtered as one workspace, with separate report envelopes.
 // Bounded snapshots retain filtered content and visibility for repeated reads.
+import { mergeLinkGroups } from './link-reports.ts'
 import { Buffer } from 'node:buffer'
 import { backfillFindingIds, reportEntries, stampSecurityGroups } from '@preventive/report'
 import { managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
@@ -54,7 +55,7 @@ export class TeamReportsError extends Error {
   constructor(status: number, error: string) { super(error); this.status = status }
 }
 export function teamSnapshotKey(snapshot: TeamReportAccessSnapshot): string {
-  return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.hiddenReportId ?? null, snapshot.reports, snapshot.repositories])
+  return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.hiddenReportId ?? null, snapshot.reports, snapshot.repositories, snapshot.linkRevision])
 }
 export async function teamSnapshot(db: ManagedDb, sessionId: string, teamId: string, reportId: string | null = null): Promise<TeamReportAccessSnapshot> {
   const snapshot = await db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId, reportId)
@@ -101,6 +102,7 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
     }
   }))
   for (const result of results) if (result.status === 'rejected') throw result.reason
+  const globalLinks = snapshot.linkRevision ? await db.getEnabledLinkGroups(snapshot.linkRevision) : []
   const edges = new Map<string, Set<string>>()
   const connect = (a: string, b: string) => {
     if (!edges.has(a)) edges.set(a, new Set())
@@ -108,10 +110,8 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   }
   // A star is enough for transitive security propagation, without a quadratic
   // expansion for large links. Unknown IDs can connect known findings.
-  for (const report of reports) {
-    for (const ids of linksOf(report.data) ?? []) {
-      for (const id of ids.slice(1)) { connect(ids[0]!, id); connect(id, ids[0]!) }
-    }
+  for (const ids of globalLinks.concat(reports.flatMap(report => linksOf(report.data) ?? []))) {
+    for (const id of ids.slice(1)) { connect(ids[0]!, id); connect(id, ids[0]!) }
   }
   const groups = reports.flatMap(report => groupsOf(report.data).map(group => group.map(f => projectFinding(f, report.data as Finding)!)))
   stampSecurityGroups(groups, { linkedIds: id => edges.get(id) ?? [] })
@@ -144,7 +144,10 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
     if (index) parts.push(Buffer.from(','))
     parts.push(bytes)
   }
-  parts.push(Buffer.from(']}'))
+  const links = mergeLinkGroups(globalLinks, allIds)
+  const suffix = Buffer.from(links.length > 0 ? `],"links":${JSON.stringify(links)}}` : ']}')
+  if (outputBytes + suffix.length > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+  parts.push(suffix)
   const body = Buffer.concat(parts)
   retainVisibility(db, teamSnapshotKey(snapshot), visible)
   retainReports(db, teamSnapshotKey(snapshot), body)

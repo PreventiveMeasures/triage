@@ -72,3 +72,21 @@ test('dependency alerts show the reason selector without a source filter and pre
   assert.equal(page._scopeFiles.length, 3)
   for (const timer of page._timers) clearTimeout(timer)
 })
+
+
+test('link reports navigation opens Reports → Link before and after scan sources load', () => {
+  const page = new ScanPage()
+  page._tab = 'history'
+  page._reportMode = 'merge'
+  page.selection = { mode: 'report', reportMode: 'link' }
+  page.willUpdate(new Map([['selection', null]]))
+  assert.equal(page._tab, 'new')
+  assert.equal(page._mode, 'report')
+  assert.equal(page._reportMode, 'link')
+  assert.equal(page._notice, null)
+  page.source = { bundles: [{ id: 'bundle', repoId: 'repo', filename: 'bundle.stasis', reasons: [] }] }
+  page.willUpdate(new Map([['source', null]]))
+  assert.equal(page._mode, 'report')
+  assert.equal(page._reportMode, 'link')
+  assert.equal(page._notice, null)
+})

@@ -2,7 +2,7 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportsForFindingId, state } from '#client/index.js'
+import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId, isManagedUiMode, isPlaceholderNpmPackage, reportRowsForFindingIds, reportsForFindingId, state } from '#client/index.js'
 import { publicSharePath } from '../../client/managed/public-share.js'
 import { reportRepoGithub } from '@preventive/report'
 import { newIssueLabels } from '../../common/github-issue-labels.js'
@@ -355,12 +355,15 @@ function duplicatesTemplate(f, tabIds) {
     ids.map((other) => {
       const displayId = displayFindingId(other)
       const reports = reportsForFindingId(other)
+      const preview = state.currentView === 'links' && state.currentLinks?.managedId ? reportRowsForFindingIds([other])[0] : null
       const where = reports.length === 0
         ? ''
         : ` — in ${reports.map((r) => `${displayName(r)} (${producerLabel(r)})`).join(', ')}`
       return html`<a
         class="duplicate-ref"
         href=${isManagedUiMode() ? findingLinkFor({ id: other }, { teamOnly: true }) : `#${encodeFindingRef({ id: other })}`}
+        data-links-preview=${preview ? other : nothing} data-preview-report=${preview?.report ?? nothing}
+        data-preview-row=${preview?.index ?? nothing} data-preview-managed-report=${preview?.managedReportId ?? nothing}
         data-tooltip=${`${displayId}${where}`}
       >${distinctGroups(reports).map((g) => unsafeHTML(FILE_ICONS[g] ?? FILE_ICONS.default))}<span
         class="duplicate-ref-id"

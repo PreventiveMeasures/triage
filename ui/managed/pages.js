@@ -72,6 +72,7 @@ class ManagedAdminHome extends ManagedPage {
       ['manage-reports', 'Reports', 'Review, publish, and organize findings.', 'report'],
     ]
     const workspace = [
+      ['manage-deduplication', 'Deduplication', 'Link duplicate findings across all teams.', 'report'],
       ['manage-repos', 'Repositories', 'Connect sources and manage repository settings.', 'repo'],
       ['admin-users', 'Users', 'Manage accounts, roles, and workspace access.', 'users'],
       ['manage-teams', 'Teams', 'Bring people and repositories together.', 'team'],

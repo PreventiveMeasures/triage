@@ -1,3 +1,4 @@
+import { LINK_REPORT_SCHEMA } from './link-reports.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
 
 export const MANAGED_SCHEMA = `
@@ -204,4 +205,4 @@ CREATE TABLE IF NOT EXISTS managed_team_user (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS team_user_user_idx ON managed_team_user(user_id);
-` + WORKSPACE_SHARE_SCHEMA
+` + WORKSPACE_SHARE_SCHEMA + LINK_REPORT_SCHEMA

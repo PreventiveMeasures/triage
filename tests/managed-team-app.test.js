@@ -15,6 +15,9 @@ test('managed teams use workspace App coverage, conflicting verdicts and linked 
   assert.deepEqual(managedTeamAppMetadata(reports), { appMode: true, appFindings: 2 })
   const links = { id: 'links', filename: 'links.json', data: { source: 'links', links: [['A', 'B']] } }
   assert.deepEqual(managedTeamAppMetadata([...reports, links]), { appMode: true, appFindings: 1 })
+  const globalLinks = [...reports]
+  Object.defineProperty(globalLinks, 'links', { value: [['A', 'B']] })
+  assert.deepEqual(managedTeamAppMetadata(globalLinks), { appMode: true, appFindings: 1 }, 'global links count just like local link reports')
   assert.deepEqual(managedTeamAppMetadata([...reports, report('uncovered', source('U'))]), { appMode: false })
   assert.deepEqual(managedTeamAppMetadata([...reports, report('conflict', [app('A'), { ...source('S'), revalidate: 'partial' }])]), { appMode: false })
   assert.deepEqual(managedTeamAppMetadata([]), { appMode: false })

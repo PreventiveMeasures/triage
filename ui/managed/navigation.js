@@ -7,6 +7,7 @@ const PAGES = [
   ['manage-bundles', 'Bundles'],
   ['manage-scans', 'Scans'],
   ['manage-reports', 'Reports'],
+  ['manage-deduplication', 'Deduplication', 'admin'],
   ['manage-repos', 'Repositories', 'admin'],
   ['admin-users', 'Users', 'admin'],
   ['manage-teams', 'Teams', 'admin'],

@@ -3,6 +3,7 @@
 // view.js. It loads when a managed session or page is first requested.
 import './managed/pages.js'
 import './managed/links.js'
+import './managed/deduplication.js'
 import { ManagedPage } from './managed/page.js'
 import { managedFetch } from '../client/managed/request.js'
 import { managedAppState } from './managed/state.js'
@@ -24,6 +25,7 @@ export async function openFindingHistoryDialog(props) {
 export * from '../client/managed/session.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
 export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-data.js'
+export { fetchManagedLinkWorkspace } from './managed/deduplication-data.js'
 export { getPreviewRole, setPreviewRole } from '../client/managed/request.js'
 export { resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './managed/state.js'
 export { fetchBundleMetadata, fetchBundleContents, fetchBundleAdvisories, fetchManagedBundleCatalog } from './managed/bundle-data.js'

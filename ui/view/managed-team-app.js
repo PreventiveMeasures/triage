@@ -8,6 +8,7 @@ import { workspaceAppMetadata } from './workspace-app.js'
 // returning these envelopes. Never read or persist local reports.
 export function managedTeamAppMetadata(workspace) {
   const duplicates = new Map(), reports = []
+  collectDuplicates(workspace.links ?? [], duplicates)
   for (const { filename, data } of workspace) {
     if (data.source === 'links' && Array.isArray(data.links)) {
       collectDuplicates(data.links, duplicates)

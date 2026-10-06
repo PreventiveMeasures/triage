@@ -24,6 +24,7 @@ one supported master key; rotation and old-key lists are not implemented.
 | Bundles, including Brotli sourcemaps | Random per-bundle key, wrapped in `managed_bundle.data_key` |
 | Bundle metadata/package inventory and report-source caches | Their bundle's data key |
 | Temporary Vercel upload parts | Master key, with fresh per-write derivation |
+| Global deduplication link reports | Master key; encrypted JSON stored directly in `managed_link_report.encrypted_groups`, bound to the row |
 | GitHub access and refresh tokens | Master key; each SQL value is wrapped separately and bound to its user and field |
 | Public GitHub avatars | Unencrypted |
 | Other SQL data: users, permissions, sessions, triage, comments, activity and upload metadata | Unencrypted |
@@ -292,3 +293,28 @@ contents are immutable, and cached derivatives can be rebuilt.
 Tests exercise disk and Blob SDK fixtures, SQLite and PostgreSQL semantics
 (PGlite), API uploads/downloads, automatic startup activation, migration interruptions,
 concurrent keys/deletions, token encryption and a generated 115 MiB payload.
+
+## Deduplication reports
+
+Admins import `*.link.json` files in Manage → Deduplication. Link reports are
+installation-wide and have no repository or team assignment. Both arrays of
+string IDs (`[["a", "b"], ["b", "c"]]`) and the existing local `{ "id": "a" }`
+entries are accepted. New imports are enabled; disabling a report keeps its
+ciphertext in SQL but removes its contribution to finding links. Importing the
+same normalized content again preserves its enabled state.
+
+View opens the same Links presentation used in local/E2E mode, with original
+groups, matching report rows and finding previews. Admins can inspect disabled
+files and unpublished reports without enabling or publishing them.
+
+This feature requires `MANAGED_STORAGE_ENCRYPTION_KEY`; it never writes link
+payloads to the blob store or falls back to plaintext. On startup, legacy reports
+with analyzer `links` are moved from the report store into this table, retaining
+their publication state as enabled/disabled, before their old blobs are deleted.
+Legacy installations with such reports must configure the key before starting.
+
+Finding queries combine enabled reports transitively before retaining only IDs
+present in the response and dropping groups smaller than two. Hidden or absent
+IDs can bridge visible findings without being disclosed. Team security filtering
+also uses the complete link graph. Link changes refresh team catalogs, cached
+findings, annotations, and public workspace views.

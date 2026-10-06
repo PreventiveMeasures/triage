@@ -12,6 +12,7 @@ export function managedWorkspace() {
 }
 export function setManagedWorkspace(teamId, reports) {
   const byId = new Map(), duplicates = new Map(), links = [], rows = []
+  collectDuplicates(reports.links ?? [], duplicates)
   for (const report of reports) {
     const data = report.data
     if (data.source === 'links' && Array.isArray(data.links)) {

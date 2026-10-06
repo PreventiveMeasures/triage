@@ -1819,7 +1819,7 @@ function dismissLinksPreview() {
 }
 
 report.addEventListener('click', (e) => {
-  const previewTrigger = e.target.closest?.('[data-links-preview]')
+  const previewTrigger = pathClosest(e, '[data-links-preview]')
   if (previewTrigger) {
     e.preventDefault()
     linksPreviewTrigger = previewTrigger
