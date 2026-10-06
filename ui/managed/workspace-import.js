@@ -6,6 +6,7 @@ import { decodeWorkspaceFile, prepareWorkspaceImport, runWorkspaceImport, worksp
 import { localTriageReader, localWorkspaceReader } from '../../client/managed/workspace-import-local.js'
 import { runLocalTriageImport } from '../../client/managed/triage-import.js'
 import { prepareLocalContentImport, runLocalContentImport } from '../../client/managed/content-import.js'
+import { prepareLocalTriageComparison } from '../../client/managed/triage-compare.js'
 
 // The already-loaded management entry supplies its base class and request
 // transport, preserving its shared caches, session cancellation and preview mode.
@@ -31,9 +32,9 @@ export function registerWorkspaceImport(ManagedPage, request) {
         this._workspaces = []; this._localId = ''
         if (this._unlocking) return
         if (this._local) this._plan = null
-        if (this._local || this._importingTriage || this._importingContent) {
+        if (this._local || this._importingTriage || this._importingContent || this._comparingTriage) {
           this._operation?.abort(); this._message = ''
-          this._error = this._importingContent ? 'Local data changed or was locked. Choose files again to continue.' : this._importingTriage
+          this._error = this._comparingTriage ? 'Local data changed or was locked. Compare triage again to continue.' : this._importingContent ? 'Local data changed or was locked. Choose files again to continue.' : this._importingTriage
             ? 'Local data changed or was locked. Import triage again to continue.'
             : 'Local data changed or was locked. Choose the workspace again.'
         }
@@ -188,6 +189,29 @@ export function registerWorkspaceImport(ManagedPage, request) {
         }
       })
     }
+    async _compareLocalTriage() {
+      if (!this._csrf) return
+      await this._action(async signal => {
+        this._comparingTriage = true; this._message = ''
+        const source = this.localImportSource
+        const unsubscribe = source.subscribe(this._localChanged)
+        try {
+          if (!(await this._unlock(source, signal))) return
+          signal.throwIfAborted()
+          this._readingLocal = true
+          const reader = localTriageReader(this.localDeps)
+          const comparison = await prepareLocalTriageComparison({ source, signal,
+            readTriage: () => reader.read({ signal }), api: workspaceImportApi(request, this.session, signal),
+            progress: message => { this._message = message },
+          })
+          signal.throwIfAborted()
+          this._message = ''
+          await this.showTriageComparison({ comparison, signal })
+        } finally {
+          unsubscribe(); this._readingLocal = false; this._comparingTriage = false; this._message = ''
+        }
+      })
+    }
     async _importLocalContent(kind) {
       if (!this._csrf) return
       await this._action(async signal => {
@@ -230,7 +254,8 @@ export function registerWorkspaceImport(ManagedPage, request) {
           <p>Choose files from this browser, grouped by workspace. Import files without teams or triage.</p>
         </section>
         <section class="triage-import" aria-label="Local triage">
-          <button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalTriage()}>Import triage</button>
+          <div class="actions"><button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalTriage()}>Import triage</button>
+            <button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._compareLocalTriage()}>Compare triage</button></div>
           <p>Import saved triage and comments for findings already in managed reports.<br>
           Unmatched data stays in this browser.<br>
           Conflicting values prompt for resolution; per-report ignores are skipped.</p>

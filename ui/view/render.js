@@ -9,6 +9,7 @@ import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bund
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { openLocalTriageImportDialog } from './dialogs/local-triage-import-dialog.js'
 import { openLocalContentImportDialog } from './dialogs/local-content-import-dialog.js'
+import { openTriageComparisonDialog } from './dialogs/triage-comparison-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
@@ -1982,6 +1983,7 @@ function renderImpl() {
         el.resolveConflicts = resolveTriageConflicts
         el.confirmTriageImport = openLocalTriageImportDialog
         el.confirmContentImport = openLocalContentImportDialog
+        el.showTriageComparison = openTriageComparisonDialog
       }
       el.session = state.managedSession
       el.allowShare = state.managed?.allowShare === true
