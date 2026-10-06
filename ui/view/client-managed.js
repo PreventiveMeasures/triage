@@ -7,7 +7,6 @@ import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { applyManagedIssues } from './managed-issues.js'
 import { invalidateManagedFixes } from './managed-pull-requests.js'
-import { render } from './render.js'
 
 let loadPromise = null
 let managedModule = null
@@ -61,7 +60,9 @@ export async function openManagedShareDialog(team) {
 export async function openManagedIssueDialog(props) {
   const isCurrent = () => state.managedSession?.id === props.session.id
     && state.managedSession?.csrfToken === props.session.csrfToken && state.currentManagedTeam === props.teamId
-  const managed = await loadManagedBundle()
+  // API-only consumers (including finding-link resolution) must not load the
+  // renderer or touch the DOM until an issue dialog is actually opened.
+  const [managed, { render }] = await Promise.all([loadManagedBundle(), import('./render.js')])
   if (!isCurrent()) return null
   return managed.openManagedIssueDialog({ ...props, isCurrent, onCreated: url => {
     if (!isCurrent()) return
