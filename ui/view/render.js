@@ -52,6 +52,7 @@ import { findingDetailGroup, managedFindingSelectionRoute } from './finding-sele
 import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
+import { createViewRenderer } from './render-transition.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -1607,28 +1608,12 @@ function mountBundleSourceOverlay() {
   if (slot) litRender(renderBundleSourceModal(), slot)
 }
 
-// Wraps a real view switch in `document.startViewTransition` for a
-// crossfade. In-place re-renders ('findings' with new filters)
-// stay synchronous so callers that read the new DOM right after
-// `render()` returns keep working. The initial paint isn't
-// animated (`prev` is null on first call).
-let prevPaintedView = null
+// In-place updates, initial paints and bundle entry stay synchronous. Other
+// view switches retain their crossfade when supported and motion is enabled.
+const renderView = createViewRenderer(renderImpl)
 
-export function render({ animate = true } = {}) {
-  const prev = prevPaintedView
-  prevPaintedView = state.currentView
-  const viewChanged = prev !== null && prev !== state.currentView
-  if (
-    animate && viewChanged &&
-    typeof document.startViewTransition === 'function' &&
-    !matchMedia('(prefers-reduced-motion: reduce)').matches
-  ) {
-    const transition = document.startViewTransition(() => renderImpl())
-    // A newer navigation can skip the animation while its DOM update still runs.
-    transition.ready.catch(() => {})
-    return
-  }
-  renderImpl()
+export function render(options) {
+  renderView(state.currentView, options)
 }
 
 // Reuse #report's single slot div across renders — `innerHTML =
