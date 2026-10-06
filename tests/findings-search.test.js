@@ -1,9 +1,8 @@
 // `ui/view/filters.js` — `matchesFilters` is the per-finding predicate
 // behind the findings search box (`state.filterInclude`). This file
-// pins the search surface: the base finding fields PLUS the per-finding
-// triage annotations (`comment` and `fix`), which live in
-// `state.triage` and are matched on every query (not just URL-shaped
-// ones). See the search block in matchesFilters.
+// pins the search surface: base finding fields, triage annotations
+// (`comment` and `fix`), and finding IDs for words of six or more characters.
+// See the search block in matchesFilters.
 
 import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'
@@ -63,6 +62,48 @@ describe('matchesFilters — findings search', () => {
     assert.equal(matchesFilters(f), true)
     state.filterInclude = 'absent-term'
     assert.equal(matchesFilters(f), false)
+  })
+
+  it('matches finding IDs case-insensitively from six characters, including interior and suffix fragments', () => {
+    const f = makeFinding('6d8215a0-ABcDef-4f72-81ba-3456789abcde', { file: 'src/index.js', description: 'prototype pollution' })
+    for (const term of [f.id, '6d8215', 'a0-abc', 'ABCDEF', '9abcde']) {
+      state.filterInclude = term
+      assert.equal(matchesFilters(f), true, term)
+    }
+    for (const term of ['6d821', 'abcde', 'abcdf0', 'abc def', '  abcde  ']) {
+      state.filterInclude = term
+      assert.equal(matchesFilters(f), false, term)
+    }
+    state.filterInclude = 'src'
+    assert.equal(matchesFilters(f), true, 'short words still match normal finding fields')
+  })
+
+  it('matches individual long ID words without changing text phrase matching', () => {
+    const f = makeFinding('prefix-ABCDEF-suffix', { file: 'src/index.js', description: 'prototype pollution' })
+    for (const term of ['unrelated ABCDEF', 'absent\tAbCdEf\nother', '  abcdef  ']) {
+      state.filterInclude = term
+      assert.equal(matchesFilters(f), true, term)
+    }
+    for (const term of ['unrelated ABCDE', 'prototype absent']) {
+      state.filterInclude = term
+      assert.equal(matchesFilters(f), false, term)
+    }
+    state.filterInclude = 'abcdef'
+    assert.equal(matchesFilters({ ...f, id: undefined }), false, 'findings without an ID still support text search')
+  })
+
+  it('applies ID search to each finding and respects negation and other filters', () => {
+    const a = makeFinding('prefix-ABCDEF-suffix', { file: 'src/index.js', description: 'one' })
+    const b = makeFinding('prefix-123456-suffix', { file: 'src/index.js', description: 'two' })
+    state.filterInclude = 'abcdef'
+    assert.deepEqual(applyFilters([[a, b], [b]]), [[a, b]], 'a matching tab keeps its group visible')
+    state.filterIncludeNegate = true
+    assert.equal(matchesFilters(a), false)
+    assert.equal(matchesFilters(b), true)
+    assert.deepEqual(applyFilters([[a], [a, b], [b]]), [[a, b], [b]])
+    state.filterIncludeNegate = false
+    state.filterSeverities = new Set(['low'])
+    assert.equal(matchesFilters(a), false, 'an ID hit cannot bypass other filters')
   })
 
   it('matches the triage comment, case-insensitively', () => {

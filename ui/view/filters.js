@@ -658,6 +658,8 @@ export function matchesFilters(f) {
     const hit = findingText(f).includes(inc)
       || (entry?.comment ?? '').toLowerCase().includes(inc)
       || (entry?.fix ?? '').toLowerCase().includes(inc)
+      // Short words still search text, but must not match incidental ID fragments.
+      || inc.length >= 6 && inc.split(/\s+/u).some(word => word.length >= 6 && f.id?.toLowerCase().includes(word))
     // Negation toggle: when on, the query excludes — keep the findings
     // that DON'T match. Per-finding (a group stays visible if any tab
     // is a non-match, same group rule as every other filter below).
