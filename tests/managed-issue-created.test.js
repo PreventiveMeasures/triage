@@ -6,7 +6,7 @@ import '../ui/view/frontend-install.js'
 import { state } from '../client/state.ts'
 
 const invalidations = [], paints = []
-mock.module('../ui/view/render.js', { namedExports: { render: () => paints.push(state.managedIssues.get('finding')) } })
+mock.module('../ui/view/render.js', { namedExports: { render: () => {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 mock.module('../ui/view/managed-pull-requests.js', { namedExports: { invalidateManagedFixes: team => invalidations.push(team) } })
 mock.module('../ui/client-managed.js', { namedExports: { openManagedIssueDialog: props => props } })
@@ -33,7 +33,8 @@ beforeEach(t => {
   paints.length = 0; invalidations.length = 0
   t.after(() => Object.assign(state, previous))
 })
-const open = () => openManagedIssueDialog({ teamId: 'team', session, context: { findingId: 'finding' } })
+const repaint = () => paints.push(state.managedIssues.get('finding'))
+const open = () => openManagedIssueDialog({ teamId: 'team', session, context: { findingId: 'finding' }, repaint })
 
 test('creating an issue repaints the saved issue immediately without waiting for the feed', async () => {
   assert.ok(templates(findingCardInnerTemplate([finding])).some(item => item.strings[0].includes('class="mark-issue"')))

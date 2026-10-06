@@ -1304,7 +1304,7 @@ report.addEventListener('click', (e) => {
         formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
         finding, draftOptions: { sourceUrl: findingUrl(finding, findingRepoTarget(finding)),
           evidence: evidenceMarkdown(finding), showRevalidation: revalidationShown() },
-        renderBody: renderHighlighted,
+        renderBody: renderHighlighted, repaint: render,
       }).catch(() => showToast('Could not open issue creation. Please retry.'))
       return
     }

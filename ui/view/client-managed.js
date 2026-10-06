@@ -7,7 +7,6 @@ import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { applyManagedIssues } from './managed-issues.js'
 import { invalidateManagedFixes } from './managed-pull-requests.js'
-import { render } from './render.js'
 
 let loadPromise = null
 let managedModule = null
@@ -58,7 +57,9 @@ export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }
 
-export async function openManagedIssueDialog(props) {
+// `repaint` is injected rather than imported: render.js pulls in the DOM, and
+// this proxy must stay importable headless.
+export async function openManagedIssueDialog({ repaint, ...props }) {
   const isCurrent = () => state.managedSession?.id === props.session.id
     && state.managedSession?.csrfToken === props.session.csrfToken && state.currentManagedTeam === props.teamId
   const managed = await loadManagedBundle()
@@ -68,7 +69,7 @@ export async function openManagedIssueDialog(props) {
     const id = props.context.findingId, previous = state.managedIssues.get(id)
     const changed = applyManagedIssues([id], { [id]: { url, autoFix: previous?.url === url ? previous.autoFix : null } })
     invalidateManagedFixes(props.teamId)
-    if (changed) render()
+    if (changed) repaint()
   } })
 }
 
