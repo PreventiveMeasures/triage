@@ -18,11 +18,23 @@ test('build requests pin commits, reject unsafe inputs, and apply presets', () =
     { conditions: ['browser', 'development'], mainFields: ['browser', 'module', 'main'], typescript: true, jsx: true })
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'metro', conditions: ['react-native'], platforms: ['ios', 'android'] } }).options,
     { metro: true, platforms: ['ios', 'android'], typescript: true, jsx: true })
-  for (const entries of [[], ['../a.js'], ['/a.js'], ['a/./b.js'], ['a\\b.js'], ['a.js\n'], ['a.js', 'a.sol'], ['file.json'], ['main.rs'], Array.from({ length: 101 }, () => 'a.js')]) {
+  for (const entries of [[], ['../a.js'], ['/a.js'], ['a/./b.js'], ['a\\b.js'], ['a.js\n'], ['a.js', 'a.sol'], ['a.tsx', 'a.sol'],
+    ['file.json'], ['main.rs'], ['component.tsx.map'], ['dir.jsx/source.sol', 'component.jsx'], Array.from({ length: 101 }, () => 'a.js')]) {
     assert.throws(() => input(entries), { status: 400 })
   }
   for (const value of ['main', 'a'.repeat(39), null]) assert.throws(() => input(['a.js'], { commit: value }))
   assert.throws(() => input(['a.js'], { conditions: { preset: 'metro', conditions: ['development'], platforms: ['ios'] } }), { code: 'metro-conditions' })
+})
+
+test('JSX and TSX entry points use the same build options as other scripts for every preset', () => {
+  for (const preset of ['node', 'browser', 'metro']) {
+    const extra = { conditions: { preset, conditions: [preset === 'metro' ? 'react-native' : preset], platforms: ['ios', 'android'] } }
+    const entries = ['src/component.jsx', 'src/view.tsx', 'src/main.ts']
+    const parsed = input(entries, extra)
+    assert.deepEqual(parsed.entries, entries)
+    assert.equal(parsed.directory, 'src')
+    assert.deepEqual(parsed.options, input(['src/main.ts'], extra).options)
+  }
 })
 
 test('filenames follow Stasis github-bundle defaults and portable truncation', () => {

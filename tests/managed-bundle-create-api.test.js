@@ -79,6 +79,20 @@ test('creation stores a Stasis bundle with a routable slug and deduplicates retr
   }
 })
 
+test('creation accepts JSX and TSX entry points and forwards their conditions to the builder', async t => {
+  const f = await fixture(t)
+  const entries = ['app/component.jsx', 'app/view.tsx']
+  const conditions = { preset: 'browser', conditions: ['browser'], platforms: [] }
+  const response = await f.send({ ...body, entries, conditions })
+  assert.equal(response.status, 201)
+  assert.equal(f.builds.length, 1)
+  const input = f.builds[0][1].input
+  assert.deepEqual(input.entries, entries)
+  assert.equal(input.directory, 'app')
+  assert.deepEqual(input.options.conditions, ['browser'])
+  assert.deepEqual(input.options.mainFields, ['browser', 'module', 'main'])
+})
+
 test('creation returns the persisted slug when the shortened UUID collides', async t => {
   const f = await fixture(t)
   const insert = f.db.insertBundle.bind(f.db)

@@ -32,7 +32,7 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
     || typeof commit !== 'string' || !/^[a-f\d]{40}$/u.test(commit)
     || !Array.isArray(entries) || entries.length === 0 || entries.length > 100 || !entries.every(path)) return fail()
   const selected = [...new Set(entries as string[])]
-  const scripts = selected.every(entry => /\.[mc]?[jt]s$/u.test(entry))
+  const scripts = selected.every(entry => /\.[cm]?[tj]sx?$/iu.test(entry))
   if (!scripts && !selected.every(entry => entry.endsWith('.sol'))) return fail('unsupported-entries')
   const parts = posix.dirname(selected[0]!).split('/').filter(part => part !== '.')
   for (const entry of selected) {

@@ -32,7 +32,7 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory } = 
   return { run, reads, builds }
 }
 
-for (const extension of ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts']) {
+for (const extension of ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'jsx', 'mjsx', 'cjsx', 'tsx', 'mtsx', 'ctsx', 'JSX', 'TSX']) {
   test(`${extension} entry points use the nearest common package.json, ignoring Solidity manifests`, async () => {
     const entry = `packages/app/src/main.${extension}`
     const f = await fixture([entry], [file('package.json'), file('packages/app/package.json'), file('packages/app/src/foundry.toml')])
