@@ -106,6 +106,39 @@ test('retains imports from omitted app source and distinguishes direct entry pac
   assert.equal(graph.importedBy.get('node_modules/dep').size, 0)
 })
 
+test('advisory traversal stops at own source without restoring incoming edges through other paths', async () => {
+  const ancestor = 'node_modules/ancestor', loader = 'node_modules/loader', target = 'node_modules/dep', tool = 'node_modules/tool'
+  for (const independent of [false, true]) {
+    const details = fixture({ modules: { '.': {}, [ancestor]: dep('ancestor'), [loader]: dep('loader'), [tool]: dep('tool'), [target]: dep('dep') },
+      links: [['.', target], ['.', loader], [loader, '.'], [tool, '.'], [ancestor, tool], [target, '.'], ...(independent ? [[loader, target]] : [])] })
+    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+    for (const input of [details, metadata]) {
+      const originalImports = structuredClone(input.bundle.imports)
+      const graph = bundleDependencyChains(input, query)
+      assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? ['.', loader, target] : ['.', target]))
+      assert.deepEqual(graph.importedBy.get('.'), new Set())
+      assert.deepEqual(graph.imports.get('.'), new Set(independent ? [target, loader] : [target]), 'keep outgoing own-source imports')
+      assert.equal(graph.nodes.get('.').root, true)
+      assert.equal(graph.nodes.get('.').traceBoundary, true)
+      assert.ok([...graph.imports.values()].every(targets => !targets.has('.')), 'retained dependencies cannot restore incoming own-source edges')
+      const layout = layoutDependencyChains(graph)
+      assert.ok(layout.boxes.every(box => box.members.length === 1), 'own source does not form a cycle with its importers')
+      assert.equal(layout.edges.length, independent ? 3 : 1)
+      assert.deepEqual(input.bundle.imports, originalImports, 'other graphs retain the full import data')
+    }
+  }
+})
+
+test('a dependency marked as a bundle entry point is not an own-source tracing stop', () => {
+  const entry = 'node_modules/entry', importer = 'node_modules/importer', target = 'node_modules/dep'
+  const graph = bundleDependencyChains(fixture({ modules: { [entry]: dep('entry'), [importer]: dep('importer'), [target]: dep('dep') },
+    links: [[importer, entry], [entry, target]], entries: [entry] }), query)
+  assert.equal(graph.nodes.get(entry).root, true)
+  assert.equal(graph.nodes.get(entry).own, false)
+  assert.deepEqual(graph.importedBy.get(entry), new Set([importer]))
+  assert.deepEqual(new Set(graph.nodes.keys()), new Set([entry, importer, target]))
+})
+
 for (const packageName of ['react-native', '@babel/core']) {
   test(`direct own-source imports stop reverse tracing at ${packageName} in full and cached bundles`, async () => {
     const addon = 'node_modules/addon', bridge = 'node_modules/bridge', framework = `node_modules/${packageName}`, target = 'node_modules/dep'

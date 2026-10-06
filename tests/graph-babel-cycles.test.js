@@ -88,10 +88,10 @@ test('advisory popup cycles exclude Babel config reads in full bundles and cache
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
       const graph = bundleDependencyChains(input, { packageKey: 'plugin', version: '1.0.0' })
-      assert.equal(graph.imports.get('node_modules/@babel/core')?.has('.') ?? false, ordinaryImport)
+      assert.equal(graph.imports.get('node_modules/@babel/core')?.has('.') ?? false, false, 'advisory traversal stops at own source even for ordinary imports')
       const result = layoutDependencyChains(graph)
       assert.equal(result.boxes.filter(box => box.members.length > 1).length, 0)
-      assert.equal(result.boxes.length, ordinaryImport ? 3 : 2, 'the advisory graph stops at Babel instead of following React Native')
+      assert.equal(result.boxes.length, 2, 'the advisory graph stops at App instead of following its importers')
     }
   }
 })

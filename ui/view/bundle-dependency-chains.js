@@ -40,11 +40,13 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   const { roots, appImports } = bundleLayerRoots(details, paths, path => dirs.get(path), dirs, allPaths)
   if (appImports.length > 0 && !nodes.has('.')) nodes.set('.', packageNode('.'))
   for (const target of appImports) link('.', target)
-  // Advisory chains stop at Babel, and at React Native when own source imports
-  // that installation. Keep direct App edges, but do not follow other parents
-  // or restore their edges when another path retains them.
+  // Advisory chains stop at own source and Babel, and at React Native when own
+  // source imports that installation. Keep outgoing App edges, but do not follow
+  // other parents or restore their edges when another path retains them.
   for (const [id, node] of nodes) {
-    if (node.ecosystem !== 'npm' || !(node.name === '@babel/core' || node.name === 'react-native' && imports.get('.')?.has(id))) continue
+    const stop = node.own || node.ecosystem === 'npm'
+      && (node.name === '@babel/core' || node.name === 'react-native' && imports.get('.')?.has(id))
+    if (!stop) continue
     node.traceBoundary = true
     const parents = importedBy.get(id)
     for (const parent of parents ?? []) {
