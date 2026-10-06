@@ -105,6 +105,7 @@ export interface State {
   workspaceMerges: Array<Set<string>>
   currentFile: string | null
   currentWorkspace: string | null
+  workspaceContentFileCount: number
   currentManagedTeam: string | null
   currentManagedReport: string | null
   currentReportWorkspace: string | null
@@ -505,6 +506,7 @@ export const state: State = store<State>({
   // workspace. Persists via the same LAST_FILE_KEY entry, prefixed
   // with `ws:` when set.
   currentWorkspace: null,
+  workspaceContentFileCount: 0,
   currentManagedTeam: null,
   currentManagedReport: null,
   // Parent of the selected report row, without enabling merged mode.
