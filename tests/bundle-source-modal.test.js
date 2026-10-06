@@ -21,7 +21,10 @@ const openedWhy = []
 mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog: props => openedWhy.push(props) } })
 const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
-mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
+mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, template) => {
+  assert.equal(new Set(items.map(key)).size, items.length, 'repeat keys must distinguish every rendered row')
+  return items.map(template)
+} } })
 const { state } = await import('../client/state.ts')
 const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
 
@@ -533,5 +536,37 @@ test('aggregate issue badges respect shared-ignore scope for the same finding id
     state.triage.set(id, { triage: 'fixed' })
     const text = renderText(renderIssuesGroupedByFile(new Map([[dependency.file, [dependency]]]), { kind }))
     assert.match(text, /triage-fixed>FIXED<\/span>/u, `${kind}: other shared statuses still apply to dependencies`)
+  }
+})
+
+test('same-ID App and dependency findings remain selectable in package and bundle triage views', async t => {
+  const { saveFile, deleteFile } = await import('../client/storage.js')
+  const { ensureBundleFindingsIndexed, findingsForFileHash } = await import('../client/bundle-finding-index.js')
+  const { renderPackagesView } = await import('../ui/view/render-packages.js')
+  const previous = { shownTriage: state.shownTriage, selectedPackage: state.selectedPackage }
+  t.after(() => Object.assign(state, previous))
+  state.selectedPackage = null
+  for (const reverse of [false, true]) {
+    const pkg = `aggregate-scope-${reverse}`
+    const file = `node_modules/${pkg}/a.js`, hash = `hash-${pkg}`
+    const dep = { id: pkg, file, fileHash: hash, isApp: false, severity: 'high', description: 'Scope regression',
+      package: { npm: { name: pkg, version: '1.0.0' } } }
+    const app = { ...dep, isApp: true }
+    const name = `${pkg}.json`
+    await saveFile(name, JSON.stringify({ findings: reverse ? [dep, app] : [app, dep] }))
+    t.after(async () => { await deleteFile(name); state.triage.delete(pkg) })
+    await ensureBundleFindingsIndexed()
+    state.triage.set(pkg, { triage: 'ignored' })
+    const details = { kind: 'sourcemap', integrity: pkg, fileHashes: new Map([[file, hash]]),
+      json: { version: 3, sources: [file], sourcesContent: ['source'] } }
+    for (const triage of [null, 'ignored']) {
+      state.shownTriage = triage
+      assert.ok(renderText(renderPackagesView()).includes(`data-select-package=${pkg}`), `package remains visible in ${triage ?? 'live'}`)
+      const graph = buildBundleGraphData(details)
+      assert.equal([...graph.fileFindings.values()].flat().length, 1, `graph keeps the matching scope in ${triage ?? 'live'}`)
+    }
+    const markup = renderText(renderIssuesGroupedByFile(new Map([[file, findingsForFileHash(hash)]]), { kind: 'package', bucketKey: pkg }))
+    assert.equal((markup.match(/class="bundle-issues-finding"/gu) ?? []).length, 2)
+    assert.equal((markup.match(/triage-ignored>Ignored/gu) ?? []).length, 1)
   }
 })

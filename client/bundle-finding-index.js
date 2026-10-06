@@ -1,4 +1,4 @@
-import { stampIndexedFindings } from './ignored-triage.js'
+import { stampIndexedFindings, usesReportIgnore } from './ignored-triage.js'
 import { isManagedUiMode, loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
 // OPFS-wide finding index — loads every report stored in OPFS
@@ -273,11 +273,11 @@ export function reportRowsForFindingIds(ids) {
 // Dedupe key — preferred form is the analyzer's stable `id`; falls
 // back to a (severity, description, file, line, fileHash) tuple
 // when the report doesn't carry ids (older / hand-rolled inputs).
-// Same hash bucket: same source content; same key = same finding,
-// so we drop the second copy.
+// Preserve distinct ignore scopes of one id before aggregate triage filtering;
+// only copies within the same scope can share a finding and its report origins.
 function findingDedupeKey(f) {
-  if (f.id) return `id:${f.id}`
-  return `c:${f.severity ?? ''}|${f.description ?? ''}|${f.file ?? ''}|${f.line ?? ''}`
+  const identity = f.id ? `id:${f.id}` : `c:${f.severity ?? ''}|${f.description ?? ''}|${f.file ?? ''}|${f.line ?? ''}`
+  return JSON.stringify([identity, usesReportIgnore(f)])
 }
 
 function rememberContribution(name, kind, ref) {

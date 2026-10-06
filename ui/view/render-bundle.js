@@ -1,4 +1,4 @@
-import { sharedFindingTriage } from '../../client/ignored-triage.js'
+import { sharedFindingTriage, usesReportIgnore } from '../../client/ignored-triage.js'
 // Bundle-view rendering surface. Lifted out of `render.js` so the
 // findings-tab path doesn't have to scroll past ~1500 lines of
 // bundle chrome. Covers bundle data prep, the bundle graph, the
@@ -2098,7 +2098,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
           <ul class="bundle-issues-findings">
-            ${repeat(sortedFindings, (finding) => finding.id ?? `${file}\0${finding.line ?? ''}\0${finding.severity ?? ''}\0${finding.description ?? ''}`, (finding) => {
+            ${repeat(sortedFindings, (finding) => JSON.stringify([finding.id ?? `${file}\0${finding.line ?? ''}\0${finding.severity ?? ''}\0${finding.description ?? ''}`, usesReportIgnore(finding)]), (finding) => {
               // findingIdx is the position in the ORIGINAL per-file
               // findings array (the one findingsByFile returned);
               // the source viewer's bundleSourceFindingIdx points at
