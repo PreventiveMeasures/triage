@@ -8,6 +8,8 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { UPLOAD_CHUNK_BYTES } from '../server-managed/uploads.ts'
+import { splitMarkdownImport } from '../common/markdown-import.js'
+import { genericMarkdown } from './_generic-markdown.js'
 import { managedCsv } from './_managed-csv.js'
 import { vercelStores } from './_managed-storage.js'
 import { sdkFixture } from './_managed-vercel.js'
@@ -43,7 +45,7 @@ async function fixture(t) {
     await handler(req, res)
     return { status: res.status, ...res.body }
   }
-  return { db, objects, stores, send }
+  return { db, objects, stores, send, session }
 }
 
 test('report uploads reject code bundles and unrecognized content before storing bytes or metadata', async t => {
@@ -102,4 +104,34 @@ test('report uploads preserve supported formats, empty findings and original byt
     assert.deepEqual(await stores.reportStore.get(result.id), Buffer.from(body), filename)
   }
   assert.equal((await db.listReports()).length, cases.length)
+})
+
+test('managed API rejects unsplit multi-product Markdown before repository assignment or storage', async t => {
+  const { db, objects, send } = await fixture(t)
+  for (const headers of [{}, { 'x-repo-id': '11' }, { 'x-repo-id': '12' }]) {
+    const result = await send(genericMarkdown, 'audit.md', '/api/admin/reports', headers)
+    assert.equal(result.status, 400)
+    assert.equal(result.error, 'invalid-report')
+    assert.match(result.reason, /one report per product/u)
+    assert.deepEqual(await db.listReports(), [])
+    assert.equal(objects.size, 0)
+  }
+})
+
+test('managed API accepts split products and single-product Markdown under their embedded repositories', async t => {
+  const { db, send, session } = await fixture(t)
+  for (const [i, repo] of ['a/a', 'a/b'].entries()) {
+    await db.selectRepo({ repoId: 11 + i, fullName: repo, private: false, installationId: null,
+      defaultBranch: 'main', htmlUrl: `https://github.com/${repo}`, addedBy: session.userId }, Date.now())
+  }
+  for (const [i, product] of splitMarkdownImport(genericMarkdown, 'audit.md').entries()) {
+    const result = await send(product.content, product.name)
+    assert.equal(result.status, 201)
+    assert.equal((await db.getReport(result.id)).repoId, 11 + i)
+    assert.equal((await db.getReport(result.id)).repoEmbedded, true)
+  }
+  const single = genericMarkdown.replace('| 8 | BBB-05 | Product B | P2 | Title B. |\n', '').split('\n## 2.')[0]
+  const result = await send(single, 'single.md', '/api/admin/reports', { 'x-repo-id': '12' })
+  assert.equal(result.status, 201)
+  assert.equal((await db.getReport(result.id)).repoId, 11, 'embedded product repository wins over caller assignment')
 })

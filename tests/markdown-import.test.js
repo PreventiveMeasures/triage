@@ -14,6 +14,7 @@ test('generic imports produce independent JSON reports with repository metadata 
     assert.equal(data.repo.github, ['a/a', 'a/b'][index])
     assert.equal(data.findings.length, 1)
     assert.equal(data.findings[0].severity, ['critical', 'medium'][index])
+    assert.equal(data.findings[0].security, true)
     const loaded = await loadManagedFindings(report.content, report.name)
     assert.equal(loaded.findings[0].sourceId, ['AAA-02', 'BBB-05'][index])
     assert.match(loaded.findings[0].id, /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/u)

@@ -897,6 +897,12 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     return
   }
   const repoGithub = reportRepoGithub(parsed.data)
+  // The browser splits these documents before upload. Enforce that boundary
+  // for direct API clients too: one stored record has only one repo's ACL.
+  if (parsed.format === 'markdown-generic' && repoGithub == null) {
+    sendJson(res, 400, { error: 'invalid-report', reason: 'Multi-product Markdown must be split into one report per product before upload.' })
+    return
+  }
   const repoEmbedded = repoGithub != null
   const rawHeaderDirectory = firstHeader(req.headers['x-repo-directory']) ?? ''
   let headerDirectory = rawHeaderDirectory
