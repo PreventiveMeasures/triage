@@ -1305,11 +1305,16 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     const embedded = await bundleRepo(bytes)
     const github = reportRepoGithub({ repo: embedded })
     const embeddedDirectory = normalizeTeamPath(embedded?.directory)
-    if (!embeddedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
-    const location = github == null ? null : await resolveRepositoryImportLocation(deps.db, github, embeddedDirectory.path ?? '', () => bundleFilePrefix(bytes))
+    // Invalid optional metadata must not reject an otherwise unattached bundle.
+    // Only repository-wide aliases/direct connections can resolve without a
+    // valid directory; do not decode file paths or match directory aliases.
+    const location = github == null ? null : embeddedDirectory.ok
+      ? await resolveRepositoryImportLocation(deps.db, github, embeddedDirectory.path ?? '', () => bundleFilePrefix(bytes))
+      : await deps.db.getRepositoryImportLocation(github, '')
     if (location?.repoId != null) {
       repo.repoId = location.repoId
       if (req.headers['x-repo-directory'] == null) {
+        if (!embeddedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
         rawDirectory = location.directory
         inferredLocation = true
       }

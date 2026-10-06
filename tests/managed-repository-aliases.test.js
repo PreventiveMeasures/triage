@@ -113,6 +113,40 @@ test('bundle paths infer a whole-bundle directory for new imports and live sugge
   assert.equal((await db.getBundle(mapped.id)).repoDirectory, 'projects')
 })
 
+test('invalid embedded bundle directories remain optional until a repository can be assigned', async t => {
+  const { db, session, send, bundles, alias } = await fixture(t)
+  const upload = (github, directory, extraHeaders = {}) => {
+    const bytes = brotliCompressSync(Buffer.from(JSON.stringify({ repo: { github, directory } })))
+    return send('/api/admin/bundles', { session, body: bytes, headers: { 'x-bundle-filename': 'opaque.stasis.code.br', ...extraHeaders } })
+      .then(result => ({ result, bytes }))
+  }
+  for (const github of [undefined, 'not-a-repo', 'org/missing']) {
+    const { result, bytes } = await upload(github, '../src')
+    assert.equal(result.status, 201)
+    const stored = JSON.parse(result.body)
+    assert.equal(stored.repoId, null)
+    assert.equal(stored.repoDirectory, '')
+    assert.deepEqual(await bundles.get(stored.id), bytes)
+    assert.equal((await upload(github, '../src')).result.status, 200)
+  }
+  for (const github of ['org/repo1', alias.oldRepo]) {
+    assert.equal((await upload(github, '../src')).result.status, 400, 'connected or repository-wide alias destinations still validate inferred directories')
+    const { result } = await upload(github, '../src', { 'x-repo-directory': 'chosen' })
+    assert.equal(result.status, 201)
+    const stored = JSON.parse(result.body)
+    assert.equal(stored.repoId, github === 'org/repo1' ? 1 : 2)
+    assert.equal(stored.repoDirectory, 'chosen', 'explicit directories replace invalid embedded defaults')
+  }
+  await db.deactivateRepo(1)
+  assert.equal(JSON.parse((await upload('org/repo1', 'bad\\path')).result.body).repoId, null)
+  const invalidHeader = await upload('org/another', '../src', { 'x-repo-directory': '../chosen' })
+  assert.equal(invalidHeader.result.status, 400, 'explicit directory headers are validated even when no repository resolves')
+  await send(`${path}/${alias.id}`, { session, method: 'PATCH', body: { ...alias, oldPath: 'a' } })
+  const unmatchedAlias = await upload(alias.oldRepo, '../other')
+  assert.equal(unmatchedAlias.result.status, 201)
+  assert.equal(JSON.parse(unmatchedAlias.result.body).repoId, null, 'invalid paths cannot match directory aliases')
+})
+
 test('alias endpoints require admin and CSRF; imports enforce mapped destination permissions', async t => {
   const { db, session, send, alias } = await fixture(t)
   assert.equal((await send(path, { session, method: 'GET' })).status, 200)
