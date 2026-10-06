@@ -3,15 +3,15 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { autorun } from '@rray/frontend/state-management'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import { bundleDependencyChains, layoutDependencyChains, traceDependencyChains } from '../bundle-dependency-chains.js'
-import { DEPENDENCY_CARD_HEIGHT, DEPENDENCY_CARD_WIDTH, DEPENDENCY_DIALOG_GUTTER } from '../dependency-chain-layout.js'
+import { bundleWhy, layoutWhy, traceWhy } from '../bundle-why.js'
+import { WHY_CARD_HEIGHT, WHY_CARD_WIDTH, WHY_DIALOG_GUTTER } from '../why-layout.js'
 import { pkgColor } from '../graph/utils.js'
-import styles from './dialog-dependency-chains.css'
+import styles from './dialog-why.css'
 
 const packageColor = node => pkgColor(node.own ? '__own__' : node.name)
 const graphViewportWidth = () => Math.floor(Math.min(document.documentElement.clientWidth * .94, 80 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize)))
 
-class DependencyChainsDialog extends AppDialog {
+class WhyDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(styles)]
   static properties = { _active: { state: true }, _current: { state: true }, _hovered: { state: true }, _focused: { state: true }, layout: { state: true } }
   constructor() { super(); this._active = null; this._hovered = null; this._focused = null }
@@ -21,7 +21,7 @@ class DependencyChainsDialog extends AppDialog {
     const focused = this.renderRoot?.activeElement
     this._hovered = null
     this._maxWidth = graphViewportWidth()
-    this.layout = layoutDependencyChains(this.graph, { maxWidth: this._maxWidth, expandedCycles: this._expandedCycles })
+    this.layout = layoutWhy(this.graph, { maxWidth: this._maxWidth, expandedCycles: this._expandedCycles })
     // Keyed cards survive regrouping, but moving a focused DOM node can blur
     // it. Keep the same package focused and visible after the new placement.
     if (focused?.matches('.package, .cycle-toggle')) {
@@ -44,7 +44,7 @@ class DependencyChainsDialog extends AppDialog {
 
   connectedCallback() {
     super.connectedCallback()
-    this.graph = bundleDependencyChains(this.details, this)
+    this.graph = bundleWhy(this.details, this)
     this.layoutForViewport()
     this._dispose = autorun(() => {
       this._current = this.isCurrent()
@@ -55,7 +55,7 @@ class DependencyChainsDialog extends AppDialog {
     super.firstUpdated()
     const scroller = this.renderRoot.querySelector('.graph-scroll')
     if (!scroller) return
-    // Keep the app and selected version in view when the viewport is narrow;
+    // Keep the app and selected packages in view when the viewport is narrow;
     // side branches remain reachable by scrolling, with readable labels.
     this._resize = new ResizeObserver(() => {
       const maxWidth = graphViewportWidth()
@@ -74,7 +74,7 @@ class DependencyChainsDialog extends AppDialog {
     const parents = [...this.graph.importedBy.get(id)].map(parent => this.graph.nodes.get(parent))
     const version = `${node.version || 'Source'}${node.ecosystem && node.ecosystem !== 'npm' ? ` · ${node.ecosystem}` : ''}`
     const description = parents.length > 0 ? `Imported by ${parents.map(parent => `${parent.name}${parent.version ? `@${parent.version}` : ''}`).join(', ')}.`
-      : node.root ? 'Bundle entry point or app source.' : node.traceBoundary || node.excludedImporters?.size ? 'Advisory tracing stops here.' : 'No importer is recorded in this scope.'
+      : node.root ? 'Bundle entry point or app source.' : node.traceBoundary || node.excludedImporters?.size ? 'Dependency tracing stops here.' : 'No importer is recorded in this scope.'
     return html`<div class=${`package${node.target ? ' selected' : ''}${neighbors && !neighbors.has(id) ? ' package-subdued' : ''}`} tabindex="0" role="group"
       @pointerenter=${() => { this._hovered = id }} @pointerleave=${() => { this._hovered = null }}
       @focus=${() => { this._focused = id }} @blur=${() => { this._focused = null }}
@@ -93,7 +93,7 @@ class DependencyChainsDialog extends AppDialog {
     const { boxes, edges, width, height } = this.layout
     const activePackage = this._hovered ?? this._focused
     const activeGroup = activePackage === null ? this._active : this.layout.componentOf.get(activePackage)
-    const highlighted = traceDependencyChains(this.layout, activeGroup)
+    const highlighted = traceWhy(this.layout, activeGroup)
     const neighbors = activePackage === null ? null : new Set([activePackage, ...this.graph.imports.get(activePackage), ...this.graph.importedBy.get(activePackage)])
     const hasImporter = new Set(edges.map(edge => edge.to))
     const unrecorded = boxes.filter(box => !hasImporter.has(box.id) && !box.members.some(id => {
@@ -103,7 +103,7 @@ class DependencyChainsDialog extends AppDialog {
         || [...(node.excludedImporters ?? [])].some(parent => this.layout.componentOf.get(parent) !== box.id)
     }))
     return html`<div class="graph-scroll" tabindex="0" aria-label="Package dependency chains. Arrows point from importer to dependency.">
-      <div class="graph" style=${styleMap({ width: `${width}px`, height: `${height}px`, '--package-width': `${DEPENDENCY_CARD_WIDTH}px`, '--package-height': `${DEPENDENCY_CARD_HEIGHT}px` })}>
+      <div class="graph" style=${styleMap({ width: `${width}px`, height: `${height}px`, '--package-width': `${WHY_CARD_WIDTH}px`, '--package-height': `${WHY_CARD_HEIGHT}px` })}>
         <svg class="connections" width=${width} height=${height} aria-hidden="true">
           <defs><marker id="dependency-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10z" fill="context-stroke"/></marker></defs>
           ${edges.map(edge => {
@@ -123,7 +123,7 @@ class DependencyChainsDialog extends AppDialog {
   renderGroup(box, highlighted, activePackage, neighbors) {
     const selected = box.members.some(id => this.graph.nodes.get(id).target)
     const adjacent = neighbors && box.members.some(id => neighbors.has(id))
-    return html`<div class=${`package-group${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${box.collapsed ? ' collapsed' : ''}${box.collapsed && selected ? ' selected-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
+    return html`<div class=${`package-group${box.stacked ? ' stacked' : ''}${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${box.collapsed ? ' collapsed' : ''}${box.collapsed && selected ? ' selected-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
       style=${styleMap({ left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px` })}
       @pointerenter=${() => { this._active = box.id }} @pointerleave=${() => { this._active = null }}>
       ${box.collapsible ? html`<button type="button" class="cycle-label cycle-toggle" aria-expanded=${!box.collapsed} aria-controls=${`cycle-content-${box.id}`}
@@ -146,20 +146,20 @@ class DependencyChainsDialog extends AppDialog {
   render() {
     if (!this._current) return nothing
     const { nodes, targets } = this.graph
-    return html`<dialog aria-labelledby="dependency-title" style=${styleMap({ '--graph-dialog-width': `${Math.max(480, this.layout.width + DEPENDENCY_DIALOG_GUTTER)}px` })} @close=${this._onClose}>
-      <header><h3 id="dependency-title">${this.packageKey}<span class="heading-version">${this.version}</span></h3>
+    return html`<dialog aria-labelledby="why-title" style=${styleMap({ '--graph-dialog-width': `${Math.max(480, this.layout.width + WHY_DIALOG_GUTTER)}px` })} @close=${this._onClose} @click=${this._onBackdrop}>
+      <header><h3 id="why-title">${this.packageKey}${this.version === undefined ? nothing : html`<span class="heading-version">${this.version}</span>`}</h3>
         <button type="button" aria-label="Close dependency chains" @click=${this._onClose}>×</button>
       </header>
       <div class="graph-caption">
-        <span>${nodes.size} ${nodes.size === 1 ? 'package' : 'packages'}${targets.length > 1 ? ` · ${targets.length} installations of this version` : ''}${this.reason ? ` · Scope: ${this.reason}` : ''}</span>
+        <span>${nodes.size} ${nodes.size === 1 ? 'package' : 'packages'}${targets.length > 1 ? ` · ${targets.length} installations${this.version === undefined ? '' : ' of this version'}` : ''}${this.reason ? ` · Scope: ${this.reason}` : ''}</span>
         <span>↓ imports</span>
       </div>
-      ${targets.length > 0 ? this.renderGraph() : html`<p class="empty">Dependency metadata for this version is not available in this bundle scope.</p>`}
+      ${targets.length > 0 ? this.renderGraph() : html`<p class="empty">Dependency metadata for this ${this.version === undefined ? 'package' : 'version'} is not available in this bundle scope.</p>`}
     </dialog>`
   }
 }
-customElements.define('dependency-chains-dialog', DependencyChainsDialog)
+customElements.define('why-dialog', WhyDialog)
 
-export function openDependencyChainsDialog(props) {
-  return openAppDialog('dependency-chains-dialog', props)
+export function openWhyDialog(props) {
+  return openAppDialog('why-dialog', props)
 }

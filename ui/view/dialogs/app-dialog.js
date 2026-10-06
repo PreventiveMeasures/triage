@@ -111,6 +111,14 @@ export class AppDialog extends LitElement {
   // Native <dialog> close (Esc / programmatic) → cancel. Subclasses
   // that need a non-null cancel value override this.
   _onClose = () => this._finish(null)
+
+  // Opt in with @click=${this._onBackdrop}. Native backdrop clicks target
+  // the dialog itself, as do clicks on its padding; only close from outside.
+  _onBackdrop = (event) => {
+    if (event.target !== event.currentTarget) return
+    const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect()
+    if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) this._onClose()
+  }
 }
 
 // Shared open-helper: create the element, append to <body>, resolve

@@ -6,7 +6,7 @@ import { buildGraph } from '../ui/view/graph/data.js'
 import { buildDependencyMatrix } from '../ui/view/graph/matrix-model.js'
 import { dependencyNetwork } from '../ui/view/graph/package-network.js'
 import { layoutPackageDependencies } from '../ui/view/graph/dependency-layout.js'
-import { bundleDependencyChains, layoutDependencyChains } from '../ui/view/bundle-dependency-chains.js'
+import { bundleWhy, layoutWhy } from '../ui/view/bundle-why.js'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const executor = 'node_modules/react-native/scripts/codegen/generate-artifacts-executor.js'
@@ -118,7 +118,7 @@ test('ordinary imports between the same packages still form cycles, while manife
 })
 
 for (const filename of ['package.json', 'react-native.config.js']) {
-  test(`advisory chains exclude codegen ${filename} reads from traversal and rendering`, async () => {
+  test(`why chains exclude codegen ${filename} reads from traversal and rendering`, async () => {
     for (const ordinaryImport of [false, true]) {
       const details = { kind: 'stasis', integrity: 'codegen', size: 1, bundle: new Bundle({
         modules: new Map([
@@ -134,9 +134,9 @@ for (const filename of ['package.json', 'react-native.config.js']) {
       }) }
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
-        const graph = bundleDependencyChains(input, { packageKey: 'dep', version: '1.0.0' })
+        const graph = bundleWhy(input, { packageKey: 'dep', version: '1.0.0' })
         assert.equal(graph.imports.get('node_modules/react-native')?.has('node_modules/dep') ?? false, ordinaryImport)
-        const result = layoutDependencyChains(graph)
+        const result = layoutWhy(graph)
         assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinaryImport ? 1 : 0)
         if (!ordinaryImport) {
           assert.equal(result.boxes.length, 2)

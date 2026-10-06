@@ -8,7 +8,7 @@ import { buildDependencyMatrix } from '../ui/view/graph/matrix-model.js'
 import { dependencyNetwork } from '../ui/view/graph/package-network.js'
 import { layoutPackageDependencies } from '../ui/view/graph/dependency-layout.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
-import { bundleDependencyChains, layoutDependencyChains } from '../ui/view/bundle-dependency-chains.js'
+import { bundleWhy, layoutWhy } from '../ui/view/bundle-why.js'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const loader = 'node_modules/@babel/core/lib/config/files/module-types.js'
@@ -74,7 +74,7 @@ test('Babel config reads do not close indirect package cycles through own source
   }
 })
 
-test('advisory popup cycles exclude Babel config reads in full bundles and cached metadata', async () => {
+test('why popup cycles exclude Babel config reads in full bundles and cached metadata', async () => {
   for (const ordinaryImport of [false, true]) {
     const details = { kind: 'stasis', integrity: 'babel-config', size: 1, bundle: new Bundle({
       modules: new Map([
@@ -87,11 +87,11 @@ test('advisory popup cycles exclude Babel config reads in full bundles and cache
     }) }
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
-      const graph = bundleDependencyChains(input, { packageKey: 'plugin', version: '1.0.0' })
-      assert.equal(graph.imports.get('node_modules/@babel/core')?.has('.') ?? false, false, 'advisory traversal stops at own source even for ordinary imports')
-      const result = layoutDependencyChains(graph)
+      const graph = bundleWhy(input, { packageKey: 'plugin', version: '1.0.0' })
+      assert.equal(graph.imports.get('node_modules/@babel/core')?.has('.') ?? false, false, 'why traversal stops at own source even for ordinary imports')
+      const result = layoutWhy(graph)
       assert.equal(result.boxes.filter(box => box.members.length > 1).length, 0)
-      assert.equal(result.boxes.length, 2, 'the advisory graph stops at App instead of following its importers')
+      assert.equal(result.boxes.length, 2, 'the why graph stops at App instead of following its importers')
     }
   }
 })
@@ -149,7 +149,7 @@ test('TypeScript preset config loads match the whole config subtree and exact in
   assert.equal(countsTowardsCycles(target, loader), true, 'reverse imports still count')
 })
 
-test('grid, dependency and advisory cycles exclude config loads and retain imports from outside their matching loaders', async () => {
+test('grid, dependency and why cycles exclude config loads and retain imports from outside their matching loaders', async () => {
   for (const source of [...pluginLoaders, 'node_modules/@babel/core/lib/config/files/index.js',
     'node_modules/@babel/core/lib/config/index.js', 'node_modules/@babel/core/lib/index.js']) {
     for (const [name, file] of [...dynamicPlugins, ['@babel/preset-typescript', 'lib/index.js'], ['@babel/preset-typescript', 'lib/helpers.js'], ['@babel/preset-env', 'lib/index.js']]) {
@@ -188,10 +188,10 @@ test('grid, dependency and advisory cycles exclude config loads and retain impor
       }) }
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
-        const graph = bundleDependencyChains(input, { packageKey: name, version: '1.0.0' })
+        const graph = bundleWhy(input, { packageKey: name, version: '1.0.0' })
         assert.equal(graph.imports.get('node_modules/@babel/core')?.has(`node_modules/${name}`) ?? false, expectedCycles === 1)
-        const result = layoutDependencyChains(graph)
-        assert.equal(result.boxes.filter(box => box.members.length > 1).length, 0, 'advisory tracing always stops at Babel')
+        const result = layoutWhy(graph)
+        assert.equal(result.boxes.filter(box => box.members.length > 1).length, 0, 'why tracing always stops at Babel')
         assert.equal(result.boxes.length, expectedCycles ? 3 : 2)
       }
     }

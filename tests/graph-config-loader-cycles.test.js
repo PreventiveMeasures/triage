@@ -9,7 +9,7 @@ import { renderMatrixPanel } from '../ui/view/graph/matrix-panel.js'
 import { dependencyNetwork } from '../ui/view/graph/package-network.js'
 import { layoutPackageDependencies } from '../ui/view/graph/dependency-layout.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
-import { bundleDependencyChains, layoutDependencyChains } from '../ui/view/bundle-dependency-chains.js'
+import { bundleWhy, layoutWhy } from '../ui/view/bundle-why.js'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 import { configureDepsDir, depsDirName, isModule } from '../ui/view/format.js'
 import { reportOwnSourceFiles } from '../ui/view/graph/utils.js'
@@ -52,7 +52,7 @@ test('Cosmiconfig excludes every config target while import-fresh remains limite
   }
 })
 
-test('config discovery ownership agrees across the grid, inspector, dependency graph and cached advisory graph', async () => {
+test('config discovery ownership agrees across the grid, inspector, dependency graph and cached why graph', async () => {
   for (const [name, file] of loaders) {
     const source = `node_modules/${name}/${file}`, sourceDir = `node_modules/${name}`
     for (const [target, targetDir] of [
@@ -102,9 +102,9 @@ test('config discovery ownership agrees across the grid, inspector, dependency g
       }) }
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
-        const graph = bundleDependencyChains(input, { packageKey: name, version: '1.0.0' })
+        const graph = bundleWhy(input, { packageKey: name, version: '1.0.0' })
         assert.equal(graph.imports.get(sourceDir).has(targetDir), !excluded)
-        const result = layoutDependencyChains(graph)
+        const result = layoutWhy(graph)
         assert.equal(result.boxes.filter(box => box.members.length > 1).length, expectedCycles)
         assert.equal(result.boxes.length, expectedCycles ? 1 : 2)
       }

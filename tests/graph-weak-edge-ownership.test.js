@@ -8,7 +8,7 @@ import { buildDependencyMatrix } from '../ui/view/graph/matrix-model.js'
 import { renderMatrixPanel } from '../ui/view/graph/matrix-panel.js'
 import { dependencyNetwork } from '../ui/view/graph/package-network.js'
 import { layoutPackageDependencies } from '../ui/view/graph/dependency-layout.js'
-import { bundleDependencyChains } from '../ui/view/bundle-dependency-chains.js'
+import { bundleWhy } from '../ui/view/bundle-why.js'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const codegen = 'node_modules/react-native/scripts/codegen/generate-artifacts-executor.js'
@@ -60,7 +60,7 @@ test('grid cycles, inspectors and dependency networks use ownership at both ends
   }
 })
 
-test('full and metadata-only advisory chains retain own-source imports that resemble installed loaders', async () => {
+test('full and metadata-only why chains retain own-source imports that resemble installed loaders', async () => {
   for (const own of [false, true]) {
     const fromDir = own ? '.' : 'node_modules/react-native'
     const sourcePath = own ? codegen : codegen.slice(fromDir.length + 1)
@@ -73,7 +73,7 @@ test('full and metadata-only advisory chains retain own-source imports that rese
     }) }
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
-      const graph = bundleDependencyChains(input, { packageKey: 'dep', version: '1.0.0' })
+      const graph = bundleWhy(input, { packageKey: 'dep', version: '1.0.0' })
       assert.equal(graph.nodes.has(fromDir), own)
       assert.equal(graph.imports.get(fromDir)?.has('node_modules/dep') ?? false, own)
       assert.equal(graph.nodes.get('node_modules/dep').excludedImporters?.has(fromDir) ?? false, !own)

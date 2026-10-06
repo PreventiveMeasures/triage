@@ -26,7 +26,7 @@ function clusteredOrder(ids, neighbors) {
 // Start with the graph's dependency order, then keep connected packages close
 // on the grid. Bounded local swaps avoid an all-pairs force simulation for big
 // cycles; only the edges touching the two swapped packages need re-scoring.
-export function placeDependencyCycle(members, imports, cols) {
+export function placeWhyCycle(members, imports, cols) {
   const ids = members.toSorted(), known = new Set(ids)
   const cells = new Map(), neighbors = new Map(ids.map(id => [id, new Map()]))
   for (const from of ids) {

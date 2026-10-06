@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
-import { bundleDependencyChains, layoutDependencyChains, traceDependencyChains } from '../ui/view/bundle-dependency-chains.js'
-import { DEPENDENCY_CARD_HEIGHT, DEPENDENCY_CARD_WIDTH, DEPENDENCY_DIALOG_GUTTER, layoutDependencyGroup } from '../ui/view/dependency-chain-layout.js'
-import { placeDependencyCycle } from '../ui/view/dependency-chain-order.js'
+import { bundleWhy, bundleWhyQuery, layoutWhy, traceWhy } from '../ui/view/bundle-why.js'
+import { WHY_CARD_HEIGHT, WHY_CARD_WIDTH, WHY_DIALOG_GUTTER, layoutWhyGroup } from '../ui/view/why-layout.js'
+import { placeWhyCycle } from '../ui/view/why-order.js'
 
 const file = dir => dir === '.' ? 'index.js' : `${dir}/index.js`
 function fixture({ modules, links = [], entries = [], reason = {} }) {
@@ -33,14 +33,14 @@ test('retains every diamond branch, direct import and exact installed copy witho
     ['node_modules/a', 'node_modules/dep'], ['node_modules/b', 'node_modules/dep'],
     ['node_modules/b', 'node_modules/b/node_modules/dep'], ['node_modules/c', 'node_modules/c/node_modules/dep'],
   ] })
-  const graph = bundleDependencyChains(details, query)
+  const graph = bundleWhy(details, query)
   assert.equal(graph.targets.length, 2)
   assert.equal(graph.nodes.has('node_modules/b/node_modules/dep'), false)
   assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(['.', 'node_modules/a', 'node_modules/b']))
   assert.deepEqual(graph.importedBy.get('node_modules/c/node_modules/dep'), new Set(['node_modules/c']))
   assert.equal(graph.nodes.get('.').root, true)
   assert.equal(graph.imports.get('node_modules/c').has('node_modules/dep'), false, 'no invented path between copies')
-  const layout = layoutDependencyChains(graph)
+  const layout = layoutWhy(graph)
   assert.equal(layout.boxes.length, 6)
   assert.equal(layout.edges.length, 7)
   const from = layout.boxes.find(box => box.members.includes('.')).id
@@ -50,14 +50,93 @@ test('retains every diamond branch, direct import and exact installed copy witho
   assert.ok([...shortcut.path.matchAll(/(-?\d+(?:\.\d+)?),/gu)].some(([, x]) => Number(x) > right), 'shortcut routes outside intervening cards')
 })
 
+test('name-only queries retain all versions and their actual importers in full and cached bundles', async () => {
+  const copy = 'node_modules/copy/node_modules/dep', first = 'node_modules/dep', second = 'node_modules/parent/node_modules/dep'
+  const details = fixture({ modules: {
+    '.': {}, 'node_modules/parent': dep('parent'), [first]: dep('dep'), [second]: dep('dep', '2.0.0'), [copy]: dep('dep'),
+    'vendor/dep': dep('dep', '3.0.0', 'cargo'),
+  }, links: [['.', first], ['.', 'node_modules/parent'], ['node_modules/parent', second], ['.', copy], ['.', 'vendor/dep']],
+  reason: { run: ['.', 'node_modules/parent', second].map(file) } })
+  const cached = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+  for (const input of [details, cached]) {
+    const graph = bundleWhy(input, { packageKey: 'dep' })
+    assert.deepEqual(new Set(graph.targets), new Set([first, second, copy]))
+    assert.deepEqual(graph.importedBy.get(first), new Set(['.']))
+    assert.deepEqual(graph.importedBy.get(second), new Set(['node_modules/parent']))
+    assert.deepEqual(graph.importedBy.get(copy), new Set(['.']))
+    assert.equal(graph.nodes.has('vendor/dep'), false)
+    assert.ok(graph.targets.every(id => graph.nodes.get(id).target))
+    assert.deepEqual(bundleWhy(input, { packageKey: 'dep', reason: 'run' }).targets, [second])
+    assert.deepEqual(bundleWhy(input, { packageKey: 'dep', version: '2.0.0' }).targets, [second])
+  }
+})
+
+test('npm queries do not select untagged workspaces with the same recorded name', async () => {
+  const details = fixture({ modules: {
+    '.': {}, 'node_modules/dep': dep('dep'), 'packages/dep': { name: 'dep', version: '1.0.0' },
+  }, links: [['.', 'node_modules/dep'], ['.', 'packages/dep']] })
+  const cached = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+  for (const input of [details, cached]) {
+    for (const version of [undefined, '1.0.0']) {
+      assert.deepEqual(bundleWhy(input, { packageKey: 'dep', version }).targets, ['node_modules/dep'])
+    }
+  }
+})
+
+test('overview queries use recorded identities for aliases and scope directory rows to their installation', () => {
+  const details = fixture({ modules: {
+    '.': {}, 'node_modules/alias': dep('actual'), 'vendor/dep': dep('dep', '1.0.0', 'cargo'),
+    'packages/workspace': { name: '@app/workspace' }, 'dependencies/repo': dep('Owner/Repo', '.', 'github'),
+  }, links: [['.', 'node_modules/alias'], ['.', 'vendor/dep'], ['.', 'packages/workspace'], ['.', 'dependencies/repo']] })
+  for (const [dir, key] of [['node_modules/alias', 'actual'], ['vendor/dep', 'cargo:dep'],
+    ['packages/workspace', '@app/workspace'], ['dependencies/repo', 'github:Owner/Repo']]) {
+    const options = bundleWhyQuery(details, dir)
+    assert.deepEqual(options, { packageKey: key, packageGroup: dir === 'node_modules/alias' ? 'alias' : dir })
+    assert.deepEqual(bundleWhy(details, options).targets, [dir])
+  }
+  assert.deepEqual(bundleWhy(details, { packageKey: 'github:owner/repo' }).targets, ['dependencies/repo'])
+  assert.equal(bundleWhyQuery(details, '.'), null)
+  assert.equal(bundleWhyQuery(details, 'missing'), null)
+  assert.equal(bundleWhyQuery(null, undefined), null)
+})
+
+test('directory queries keep same-name workspaces and Cargo installations separate in full and cached bundles', async () => {
+  const directories = ['packages/dep', 'packages/copy', 'packages/npm-workspace', 'vendor/rand', 'vendor/rand-0.7.3']
+  const modules = { '.': {}, 'node_modules/dep': dep('dep'),
+    'packages/dep': { name: 'dep' }, 'packages/copy': { name: 'dep' }, 'packages/npm-workspace': dep('dep'),
+    'vendor/rand': dep('rand', '0.8.0', 'cargo'), 'vendor/rand-0.7.3': dep('rand', '0.7.3', 'cargo'),
+  }
+  const links = []
+  for (const [index, dir] of directories.entries()) {
+    const importer = `node_modules/importer-${index}`
+    modules[importer] = dep(`importer-${index}`)
+    links.push(['.', importer], [importer, dir])
+  }
+  const details = fixture({ modules, links, reason: { run: ['.', 'node_modules/importer-0', directories[0]].map(file) } })
+  const cached = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+  for (const input of [details, cached]) {
+    for (const [index, dir] of directories.entries()) {
+      const options = bundleWhyQuery(input, dir)
+      const graph = bundleWhy(input, options)
+      assert.equal(options.packageGroup, dir)
+      assert.deepEqual(graph.targets, [dir])
+      assert.deepEqual(new Set(graph.nodes.keys()), new Set(['.', `node_modules/importer-${index}`, dir]))
+    }
+    assert.deepEqual(bundleWhy(input, bundleWhyQuery(input, 'node_modules/dep')).targets, ['node_modules/dep'], 'the npm row excludes even explicitly npm-tagged workspace rows')
+    assert.deepEqual(new Set(bundleWhy(input, { packageKey: 'cargo:rand' }).targets), new Set(['vendor/rand', 'vendor/rand-0.7.3']), 'explicit name-wide queries still select all versions')
+    const excluded = { ...bundleWhyQuery(input, 'vendor/rand'), reason: 'run' }
+    assert.deepEqual(bundleWhy(input, excluded).targets, [], 'directory selection still respects reason scope')
+  }
+})
+
 test('metadata-only bundles retain the same chains and entry points without source bodies', async () => {
   const details = fixture({ modules: { 'app': { name: 'workspace' }, 'vendor/dep': dep('dep', '1.0.0', 'composer') },
     links: [['app', 'vendor/dep']], entries: ['app'] })
   const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
   assert.equal(metadata.metadataOnly, true)
   const options = { packageKey: 'composer:dep', version: '1.0.0' }
-  assert.deepEqual(bundleDependencyChains(metadata, options), bundleDependencyChains(details, options))
-  assert.equal(bundleDependencyChains(metadata, options).nodes.get('app').root, true)
+  assert.deepEqual(bundleWhy(metadata, options), bundleWhy(details, options))
+  assert.equal(bundleWhy(metadata, options).nodes.get('app').root, true)
 })
 
 test('keeps ecosystems separate and matches normalized GitHub unknown versions and case', () => {
@@ -65,9 +144,9 @@ test('keeps ecosystems separate and matches normalized GitHub unknown versions a
     '.': {}, 'node_modules/dep': dep('dep'), 'vendor/dep': dep('dep', '1.0.0', 'cargo'),
     'dependencies/lib': dep('Owner/Library', '.', 'github'),
   }, links: [['.', 'node_modules/dep'], ['.', 'vendor/dep'], ['.', 'dependencies/lib']] })
-  assert.deepEqual(bundleDependencyChains(details, query).targets, ['node_modules/dep'])
-  assert.deepEqual(bundleDependencyChains(details, { packageKey: 'cargo:dep', version: '1.0.0' }).targets, ['vendor/dep'])
-  const graph = bundleDependencyChains(details, { packageKey: 'github:owner/library', version: '0.0.0' })
+  assert.deepEqual(bundleWhy(details, query).targets, ['node_modules/dep'])
+  assert.deepEqual(bundleWhy(details, { packageKey: 'cargo:dep', version: '1.0.0' }).targets, ['vendor/dep'])
+  const graph = bundleWhy(details, { packageKey: 'github:owner/library', version: '0.0.0' })
   assert.deepEqual(graph.targets, ['dependencies/lib'])
   assert.equal(graph.nodes.get('dependencies/lib').version, '.')
 })
@@ -77,7 +156,7 @@ test('follows all platform resolutions and ignores internal package imports', ()
   details.bundle.imports.set('metro', new Map([['index.js', new Map([['dep', new Map([
     ['ios', 'node_modules/dep/index.js'], ['android', 'node_modules/platform/node_modules/dep/index.js'],
   ])]])], ['node_modules/dep/index.js', new Map([['self', 'node_modules/dep/index.js']])]]))
-  const graph = bundleDependencyChains(details, query)
+  const graph = bundleWhy(details, query)
   assert.deepEqual(graph.imports.get('.'), new Set(graph.targets))
   assert.equal(graph.imports.get('node_modules/dep').size, 0)
 })
@@ -86,27 +165,27 @@ test('scope filtering never restores an excluded bundled importer as virtual App
   const details = fixture({ modules: { '.': {}, 'node_modules/a': dep('a'), 'node_modules/dep': dep('dep') },
     links: [['.', 'node_modules/dep'], ['node_modules/a', 'node_modules/dep']],
     reason: { run: ['node_modules/a/index.js', 'node_modules/dep/index.js'], add: ['index.js'] } })
-  const graph = bundleDependencyChains(details, { ...query, reason: 'run' })
+  const graph = bundleWhy(details, { ...query, reason: 'run' })
   assert.equal(graph.nodes.has('.'), false)
   assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(['node_modules/a']))
   assert.equal([...graph.nodes.values()].some(node => node.root), false)
-  assert.equal(bundleDependencyChains(details, { ...query, reason: 'add' }).targets.length, 0)
-  assert.deepEqual(bundleDependencyChains(details, { ...query, reason: 'stale' }), bundleDependencyChains(details, query))
+  assert.equal(bundleWhy(details, { ...query, reason: 'add' }).targets.length, 0)
+  assert.deepEqual(bundleWhy(details, { ...query, reason: 'stale' }), bundleWhy(details, query))
 })
 
 test('retains imports from omitted app source and distinguishes direct entry packages from unexplained inclusion', () => {
   const details = fixture({ modules: { 'node_modules/dep': dep('dep') }, links: [['.', 'node_modules/dep']] })
-  assert.equal(bundleDependencyChains(details, query).nodes.get('.').root, true)
+  assert.equal(bundleWhy(details, query).nodes.get('.').root, true)
   const entry = fixture({ modules: { 'node_modules/dep': dep('dep') }, entries: ['node_modules/dep'] })
-  assert.equal(bundleDependencyChains(entry, query).nodes.get('node_modules/dep').root, true)
+  assert.equal(bundleWhy(entry, query).nodes.get('node_modules/dep').root, true)
   const unknown = fixture({ modules: { 'node_modules/dep': dep('dep') } })
-  const graph = bundleDependencyChains(unknown, query)
+  const graph = bundleWhy(unknown, query)
   assert.equal(graph.nodes.size, 1)
   assert.equal(graph.nodes.get('node_modules/dep').root, false)
   assert.equal(graph.importedBy.get('node_modules/dep').size, 0)
 })
 
-test('advisory traversal stops at own source without restoring incoming edges through other paths', async () => {
+test('why traversal stops at own source without restoring incoming edges through other paths', async () => {
   const ancestor = 'node_modules/ancestor', loader = 'node_modules/loader', target = 'node_modules/dep', tool = 'node_modules/tool'
   for (const independent of [false, true]) {
     const details = fixture({ modules: { '.': {}, [ancestor]: dep('ancestor'), [loader]: dep('loader'), [tool]: dep('tool'), [target]: dep('dep') },
@@ -114,14 +193,14 @@ test('advisory traversal stops at own source without restoring incoming edges th
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
       const originalImports = structuredClone(input.bundle.imports)
-      const graph = bundleDependencyChains(input, query)
+      const graph = bundleWhy(input, query)
       assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? ['.', loader, target] : ['.', target]))
       assert.deepEqual(graph.importedBy.get('.'), new Set())
       assert.deepEqual(graph.imports.get('.'), new Set(independent ? [target, loader] : [target]), 'keep outgoing own-source imports')
       assert.equal(graph.nodes.get('.').root, true)
       assert.equal(graph.nodes.get('.').traceBoundary, true)
       assert.ok([...graph.imports.values()].every(targets => !targets.has('.')), 'retained dependencies cannot restore incoming own-source edges')
-      const layout = layoutDependencyChains(graph)
+      const layout = layoutWhy(graph)
       assert.ok(layout.boxes.every(box => box.members.length === 1), 'own source does not form a cycle with its importers')
       assert.equal(layout.edges.length, independent ? 3 : 1)
       assert.deepEqual(input.bundle.imports, originalImports, 'other graphs retain the full import data')
@@ -131,7 +210,7 @@ test('advisory traversal stops at own source without restoring incoming edges th
 
 test('a dependency marked as a bundle entry point is not an own-source tracing stop', () => {
   const entry = 'node_modules/entry', importer = 'node_modules/importer', target = 'node_modules/dep'
-  const graph = bundleDependencyChains(fixture({ modules: { [entry]: dep('entry'), [importer]: dep('importer'), [target]: dep('dep') },
+  const graph = bundleWhy(fixture({ modules: { [entry]: dep('entry'), [importer]: dep('importer'), [target]: dep('dep') },
     links: [[importer, entry], [entry, target]], entries: [entry] }), query)
   assert.equal(graph.nodes.get(entry).root, true)
   assert.equal(graph.nodes.get(entry).own, false)
@@ -149,32 +228,32 @@ for (const packageName of ['react-native', '@babel/core']) {
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
         const originalImports = structuredClone(input.bundle.imports)
-        const graph = bundleDependencyChains(input, query)
+        const graph = bundleWhy(input, query)
         assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? ['.', framework, addon, bridge, target] : ['.', framework, target]))
         assert.deepEqual(graph.importedBy.get(framework), new Set(['.']))
         assert.equal(graph.imports.get(addon)?.has(framework) ?? false, false, 'independent paths do not restore the stopped edge')
         assert.deepEqual(graph.importedBy.get(target), new Set(independent ? [framework, addon] : [framework]))
-        const layout = layoutDependencyChains(graph)
+        const layout = layoutWhy(graph)
         assert.equal(layout.edges.length, independent ? 5 : 2)
         assert.ok(layout.edges.every(edge => edge.toPackage !== framework || edge.fromPackage === '.'))
-        const selectedGraph = bundleDependencyChains(input, { packageKey: packageName, version: '1.0.0' })
+        const selectedGraph = bundleWhy(input, { packageKey: packageName, version: '1.0.0' })
         assert.deepEqual(new Set(selectedGraph.nodes.keys()), new Set(['.', framework]), 'the same boundary applies when the framework is selected')
         assert.deepEqual(input.bundle.imports, originalImports, 'the imports used by other graphs remain unchanged')
       }
     }}
   })
 
-  test(`${packageName} uses its advisory boundary rule without a direct own-source import in the current scope`, () => {
+  test(`${packageName} uses its why boundary rule without a direct own-source import in the current scope`, () => {
     const addon = 'node_modules/addon', framework = `node_modules/${packageName}`, target = 'node_modules/dep'
     const modules = { '.': {}, [framework]: dep(packageName), [addon]: dep('addon'), [target]: dep('dep') }
     const links = [['.', addon], [addon, framework], [framework, target]]
-    const indirect = bundleDependencyChains(fixture({ modules, links }), query)
+    const indirect = bundleWhy(fixture({ modules, links }), query)
     const stop = packageName === '@babel/core'
     assert.deepEqual(indirect.importedBy.get(framework), new Set(stop ? [] : [addon]))
     assert.deepEqual(new Set(indirect.nodes.keys()), new Set(stop ? [framework, target] : ['.', addon, framework, target]))
     assert.equal(indirect.nodes.get(framework).traceBoundary ?? false, stop)
     const scoped = fixture({ modules, links: [...links, ['.', framework]], reason: { run: [addon, framework, target].map(file), add: ['index.js'] } })
-    const graph = bundleDependencyChains(scoped, { ...query, reason: 'run' })
+    const graph = bundleWhy(scoped, { ...query, reason: 'run' })
     assert.equal(graph.nodes.has('.'), false)
     assert.deepEqual(graph.importedBy.get(framework), new Set(stop ? [] : [addon]))
     assert.deepEqual(new Set(graph.nodes.keys()), new Set(stop ? [framework, target] : [addon, framework, target]))
@@ -183,7 +262,7 @@ for (const packageName of ['react-native', '@babel/core']) {
   test(`the ${packageName} boundary applies per installation and only to the npm package`, () => {
     const framework = `node_modules/${packageName}`, nested = `node_modules/addon/node_modules/${packageName}`
     const addon = 'node_modules/addon', target = 'node_modules/dep', vendor = `vendor/${packageName}`
-    const graph = bundleDependencyChains(fixture({ modules: {
+    const graph = bundleWhy(fixture({ modules: {
       '.': {}, [framework]: dep(packageName), [nested]: dep(packageName), [vendor]: dep(packageName, '1.0.0', 'cargo'), [addon]: dep('addon'), [target]: dep('dep'),
     }, links: [['.', framework], ['.', addon], ['.', vendor], [addon, framework], [addon, nested], [addon, vendor], [framework, target], [nested, target], [vendor, target]] }), query)
     assert.deepEqual(graph.importedBy.get(framework), new Set(['.']))
@@ -194,7 +273,7 @@ for (const packageName of ['react-native', '@babel/core']) {
   })
 }
 
-test('Babel stops advisory traversal without own source, including cycles and cached metadata', async () => {
+test('Babel stops why traversal without own source, including cycles and cached metadata', async () => {
   const addon = 'node_modules/addon', core = 'node_modules/@babel/core', target = 'node_modules/dep'
   for (const independent of [false, true]) {
     const details = fixture({ modules: { [addon]: dep('addon'), [core]: dep('@babel/core'), [target]: dep('dep') },
@@ -202,13 +281,13 @@ test('Babel stops advisory traversal without own source, including cycles and ca
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
       const originalImports = structuredClone(input.bundle.imports)
-      const graph = bundleDependencyChains(input, query)
+      const graph = bundleWhy(input, query)
       assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? [core, addon, target] : [core, target]))
       assert.deepEqual(graph.importedBy.get(core), new Set())
       assert.equal(graph.nodes.get(core).root, false, 'do not invent a bundle entry point')
       assert.equal(graph.nodes.get(core).traceBoundary, true, 'the missing incoming chain is intentional')
-      assert.ok(layoutDependencyChains(graph).boxes.every(box => box.members.length === 1), 'do not restore the return edge through an independent branch')
-      const selectedGraph = bundleDependencyChains(input, { packageKey: '@babel/core', version: '1.0.0' })
+      assert.ok(layoutWhy(graph).boxes.every(box => box.members.length === 1), 'do not restore the return edge through an independent branch')
+      const selectedGraph = bundleWhy(input, { packageKey: '@babel/core', version: '1.0.0' })
       assert.deepEqual([...selectedGraph.nodes.keys()], [core])
       assert.deepEqual(input.bundle.imports, originalImports)
     }
@@ -218,7 +297,7 @@ test('Babel stops advisory traversal without own source, including cycles and ca
 test('cycles remain visible in finite groups with their incoming and outgoing chains', () => {
   const details = fixture({ modules: { '.': {}, 'node_modules/a': dep('a'), 'node_modules/b': dep('b'), 'node_modules/dep': dep('dep') },
     links: [['.', 'node_modules/a'], ['node_modules/a', 'node_modules/b'], ['node_modules/b', 'node_modules/a'], ['node_modules/b', 'node_modules/dep']] })
-  const graph = bundleDependencyChains(details, query), layout = layoutDependencyChains(graph)
+  const graph = bundleWhy(details, query), layout = layoutWhy(graph)
   assert.equal(graph.imports.get('node_modules/b').has('node_modules/a'), true)
   assert.equal(layout.boxes.length, 3)
   assert.deepEqual(layout.boxes.find(box => box.members.length === 2).members, ['node_modules/a', 'node_modules/b'])
@@ -249,7 +328,7 @@ function assertExternalPathClear(commands, cards, layout) {
 }
 
 test('external arrows retain exact package endpoints through cycle expansion without crossing cards', () => {
-  const h = DEPENDENCY_CARD_HEIGHT, w = DEPENDENCY_CARD_WIDTH
+  const h = WHY_CARD_HEIGHT, w = WHY_CARD_WIDTH
   for (const count of [7, 11, 190]) {
     const ids = Array.from({ length: count }, (_, i) => `source-${i}`), targets = ['dest-a', 'dest-b', 'dest-c']
     const imports = new Map([
@@ -260,9 +339,9 @@ test('external arrows retain exact package endpoints through cycle expansion wit
     imports.get(ids[1]).add(targets[0])
     imports.get(targets[2]).add('target')
     const graph = { nodes: new Map([...imports.keys()].map(id => [id, { id }])), imports }
-    const initial = layoutDependencyChains(graph)
+    const initial = layoutWhy(graph)
     for (const [maxWidth, expand] of [1280, 600, 375].flatMap(width => [false, true].map(open => [width, open]))) {
-      const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles: new Set(expand ? initial.boxes.map(box => box.id) : []) })
+      const layout = layoutWhy(graph, { maxWidth, expandedCycles: new Set(expand ? initial.boxes.map(box => box.id) : []) })
       assert.equal(layout.edges.length, 7, 'separate imports between the same two cycles are never merged')
       const sharedTarget = layout.edges.filter(edge => edge.toPackage === targets[0])
       assert.notEqual(sharedTarget[0].path.split(' L').at(-1), sharedTarget[1].path.split(' L').at(-1), 'direct importers get distinct arrowheads')
@@ -278,7 +357,10 @@ test('external arrows retain exact package endpoints through cycle expansion wit
         if (from.collapsed || from.members.length === 1) {
           assert.equal(sy, from.y + from.height)
           assert.ok(sx > from.x && sx < from.x + from.width)
-        } else assert.deepEqual([sx, sy], [from.x + a.x + w, from.y + a.y + h / 2])
+        } else {
+          assert.equal(sx, from.x + a.x + w)
+          assert.ok(sy > from.y + a.y && sy < from.y + a.y + h)
+        }
         if (to.collapsed || to.members.length === 1) {
           assert.equal(ty, to.y - 5)
           assert.ok(tx > to.x && tx < to.x + to.width)
@@ -292,31 +374,149 @@ test('external arrows retain exact package endpoints through cycle expansion wit
   }
 })
 
+function arrowSegments(path) {
+  const commands = [...path.matchAll(/([MLQ])([\d.,-]+)/gu)].map(([, command, args]) => ({ command, values: args.split(',').map(Number) }))
+  const segments = []
+  let point = commands[0].values
+  for (const { command, values } of commands.slice(1)) {
+    const end = values.slice(-2), start = point
+    const steps = command === 'Q' ? 12 : 1
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps
+      const next = end.map((value, axis) => command === 'Q'
+        ? (1 - t) ** 2 * start[axis] + 2 * (1 - t) * t * values[axis] + t ** 2 * value
+        : value)
+      if (point[0] !== next[0] || point[1] !== next[1]) segments.push([point, next])
+      point = next
+    }
+  }
+  return segments
+}
+
+function segmentsCross([a, b], [c, d]) {
+  const turn = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+  return turn(a, b, c) * turn(a, b, d) < -1e-8 && turn(c, d, a) * turn(c, d, b) < -1e-8
+}
+
+test('rows over five cards stack horizontally with visible ports and at least 30% of every card exposed', () => {
+  for (const count of [5, 6, 8, 40]) {for (const maxWidth of [1280, 600, 375]) {
+    const branches = Array.from({ length: count }, (_, i) => `branch-${i}`)
+    const imports = new Map([['app', new Set(branches)], ...branches.map(id => [id, new Set(['target'])]), ['target', new Set()]])
+    const graph = { nodes: new Map([...imports.keys()].map(id => [id, { id }])), imports }
+    const layout = layoutWhy(graph, { maxWidth })
+    const row = layout.boxes.filter(box => branches.includes(box.members[0])).toSorted((a, b) => a.x - b.x)
+    assert.equal(new Set(row.map(box => box.y)).size, 1, 'stack horizontally, never create new dependency levels')
+    assert.equal(layout.edges.length, count * 2, 'retain every importer and dependency')
+    for (const [i, box] of row.entries()) {
+      assert.equal(box.width, WHY_CARD_WIDTH, 'cards retain their full readable dimensions')
+      assert.ok(box.visibleWidth >= box.width * .3 - 1e-8)
+      assert.equal(box.stacked, count > 5)
+      if (i < row.length - 1) {
+        const next = row[i + 1]
+        assert.ok(count > 5 ? next.x < box.x + box.width : next.x > box.x + box.width)
+        assert.ok(next.x - box.x >= box.width * .3 - 1e-8, 'every underlying card has an exposed strip')
+      }
+      for (const edge of layout.edges.filter(link => link.from === box.id || link.to === box.id)) {
+        const segments = arrowSegments(edge.path)
+        const [x] = edge.from === box.id ? segments[0][0] : segments.at(-1)[1]
+        assert.ok(x > box.x && x < box.x + box.visibleWidth, 'arrow attaches to the exposed strip of its actual card')
+      }
+    }
+    assert.equal(row.at(-1).visibleWidth, row.at(-1).width, 'the front card remains fully visible')
+    if (count > 5) assert.ok(layout.width < count * WHY_CARD_WIDTH, 'stack reduces horizontal scrolling')
+    if (maxWidth === 1280 && count <= 8) assert.ok(layout.width + WHY_DIALOG_GUTTER <= maxWidth)
+    if (count === 40) assert.ok(layout.width + WHY_DIALOG_GUTTER > maxWidth, 'scroll instead of hiding more than 70%')
+  }}
+})
+
+test('collapsed cycles join dense stacks while expanded cycles retain their full grid and clear gutters', () => {
+  const branches = Array.from({ length: 6 }, (_, i) => `branch-${i}`), cycle = Array.from({ length: 11 }, (_, i) => `cycle-${i}`)
+  const imports = new Map([['app', new Set([...branches, cycle[0]])], ['target', new Set()],
+    ...branches.map(id => [id, new Set(['target'])]), ...cycle.map((id, i) => [id, new Set([cycle[(i + 1) % cycle.length], 'target'])])])
+  const graph = { nodes: new Map([...imports.keys()].map(id => [id, { id }])), imports }
+  for (const maxWidth of [1280, 375]) {
+    const initial = layoutWhy(graph, { maxWidth })
+    const collapsed = initial.boxes.find(box => box.collapsed)
+    assert.equal(collapsed.stacked, true)
+    assert.equal(initial.edges.length, 24)
+    const expanded = layoutWhy(graph, { maxWidth, expandedCycles: new Set([collapsed.id]) })
+    const group = expanded.boxes.find(box => box.id === collapsed.id)
+    assert.equal(group.stacked, false)
+    assert.equal(group.visibleWidth, group.width)
+    assert.equal(group.packages.length, 11)
+    assert.deepEqual(expanded.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]),
+      initial.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]))
+    for (const peer of expanded.boxes.filter(box => box.y === group.y && box.id !== group.id)) {
+      assert.ok(peer.x + peer.width < group.x || peer.x > group.x + group.width, 'no stack covers the expanded cycle')
+    }
+    const cards = expanded.boxes.flatMap(box => box.packages.map(node => ({ x: box.x + node.x, y: box.y + node.y, w: WHY_CARD_WIDTH, h: WHY_CARD_HEIGHT })))
+    for (const edge of expanded.edges) {
+      const commands = [...edge.path.matchAll(/([MLQ])([\d.,-]+)/gu)].map(([, command, args]) => ({ command, values: args.split(',').map(Number) }))
+      assertExternalPathClear(commands, cards, expanded)
+    }
+  }
+})
+
+test('fan-out and fan-in ports follow geometry without crossing sibling arrows or depending on import order', () => {
+  for (const [count, reverse] of [2, 3, 8, 40].flatMap(n => [false, true].map(r => [n, r]))) {
+    const children = Array.from({ length: count }, (_, i) => `child-${i}`)
+    const nodes = new Map(['parent', ...children].map(id => [id, { id }]))
+    let previous
+    for (const ordered of [children, children.toReversed()]) {
+      const imports = new Map(reverse ? ordered.map(id => [id, new Set(['parent'])]) : [['parent', new Set(ordered)]])
+      const layout = layoutWhy({ nodes, imports })
+      assert.equal(layout.edges.length, count)
+      const arrows = layout.edges.map(edge => arrowSegments(edge.path))
+      for (let i = 0; i < arrows.length; i++) {for (let j = i + 1; j < arrows.length; j++) {
+        assert.ok(!arrows[i].some(a => arrows[j].some(b => segmentsCross(a, b))), `no sibling crossings for ${count} ${reverse ? 'incoming' : 'outgoing'} arrows`)
+      }}
+      const paths = new Map(layout.edges.map(edge => [`${edge.fromPackage}:${edge.toPackage}`, edge.path]))
+      if (previous) assert.deepEqual(paths, previous, 'reordering recorded imports does not move ports or bends')
+      previous = paths
+    }
+  }
+})
+
+test('expanded cycle arrows enter a shared target in gutter order without crossing each other', () => {
+  const cycle = Array.from({ length: 7 }, (_, i) => `cycle-${i}`)
+  const imports = new Map([['app', new Set([cycle[0], 'target'])], ['target', new Set()],
+    ...cycle.map((id, i) => [id, new Set([cycle[(i + 1) % cycle.length], ...(i < 2 ? ['target'] : [])])])])
+  const nodes = new Map([...imports.keys()].map(id => [id, { id }]))
+  for (const maxWidth of [1280, 600, 375]) {
+    const layout = layoutWhy({ nodes, imports }, { maxWidth })
+    const arrows = layout.edges.filter(edge => edge.toPackage === 'target').map(edge => arrowSegments(edge.path))
+    assert.equal(arrows.length, 3)
+    for (let i = 0; i < arrows.length; i++) {for (let j = i + 1; j < arrows.length; j++) {
+      assert.ok(!arrows[i].some(a => arrows[j].some(b => segmentsCross(a, b))), 'cycle columns and bypasses approach the target without crossing')
+    }}
+  }
+})
+
 test('compact cycle grids preserve every internal edge without overlapping cards or escaping their group', () => {
   for (const count of [3, 4, 9, 40]) {
     const ids = Array.from({ length: count }, (_, i) => `package-${i}`)
     const imports = new Map(ids.map((id, i) => [id, new Set([ids[(i + 1) % count], ids[(i + count - 1) % count]])]))
-    const group = layoutDependencyGroup(0, ids, imports)
+    const group = layoutWhyGroup(0, ids, imports)
     assert.ok(new Set(group.packages.map(node => node.x)).size > 1)
     assert.ok(new Set(group.packages.map(node => node.y)).size > 1)
     assert.ok(group.height < count * 86, 'shorter than the former stack')
     assert.equal(group.internalEdges.length, count * 2)
-    assert.deepEqual(group, layoutDependencyGroup(0, ids, imports), 'deterministic layout')
+    assert.deepEqual(group, layoutWhyGroup(0, ids, imports), 'deterministic layout')
     for (const node of group.packages) {
-      assert.ok(node.x >= 0 && node.x + DEPENDENCY_CARD_WIDTH <= group.width)
-      assert.ok(node.y >= 20 && node.y + DEPENDENCY_CARD_HEIGHT <= group.height)
+      assert.ok(node.x >= 0 && node.x + WHY_CARD_WIDTH <= group.width)
+      assert.ok(node.y >= 20 && node.y + WHY_CARD_HEIGHT <= group.height)
       for (const peer of group.packages) {
         if (node === peer) continue
-        assert.ok(node.x + DEPENDENCY_CARD_WIDTH <= peer.x || peer.x + DEPENDENCY_CARD_WIDTH <= node.x
-          || node.y + DEPENDENCY_CARD_HEIGHT <= peer.y || peer.y + DEPENDENCY_CARD_HEIGHT <= node.y)
+        assert.ok(node.x + WHY_CARD_WIDTH <= peer.x || peer.x + WHY_CARD_WIDTH <= node.x
+          || node.y + WHY_CARD_HEIGHT <= peer.y || peer.y + WHY_CARD_HEIGHT <= node.y)
       }
     }
     for (const edge of group.internalEdges) {
       const points = [...edge.path.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/gu)].map(([, x, y]) => [Number(x), Number(y)])
       for (const [x, y] of points) {
         assert.ok(x >= 0 && x <= group.width && y >= 0 && y <= group.height)
-        assert.ok(group.packages.every(node => x <= node.x || x >= node.x + DEPENDENCY_CARD_WIDTH
-          || y <= node.y || y >= node.y + DEPENDENCY_CARD_HEIGHT), 'edge bends stay in the gutters')
+        assert.ok(group.packages.every(node => x <= node.x || x >= node.x + WHY_CARD_WIDTH
+          || y <= node.y || y >= node.y + WHY_CARD_HEIGHT), 'edge bends stay in the gutters')
       }
     }
   }
@@ -349,10 +549,10 @@ test('40- and 190-package cycles place connected packages closer than alphabetic
       return total
     }
     const baseline = ids.toSorted().map((id, i) => ({ id, col: i % 5, row: Math.floor(i / 5) }))
-    const placement = placeDependencyCycle(ids, imports, 5)
+    const placement = placeWhyCycle(ids, imports, 5)
     assert.ok(distance(placement) < distance(baseline) / 2, 'connected clusters shorten imports')
     assert.equal(new Set(placement.map(node => `${node.col},${node.row}`)).size, count)
-    assert.deepEqual(placeDependencyCycle(ids.toReversed(), imports, 5), placement)
+    assert.deepEqual(placeWhyCycle(ids.toReversed(), imports, 5), placement)
   }
 })
 
@@ -360,16 +560,16 @@ test('a 190-package cycle at the top regroups to fit desktop, tablet and phone w
   const { ids, imports } = clusteredCycle(190)
   const graph = { nodes: new Map(ids.map(id => [id, { id }])), imports }
   const edgeCount = [...imports.values()].reduce((count, targets) => count + targets.size, 0)
-  const expandedCycles = new Set(layoutDependencyChains(graph).boxes.map(box => box.id))
+  const expandedCycles = new Set(layoutWhy(graph).boxes.map(box => box.id))
   for (const [maxWidth, columns] of [[1280, 5], [900, 3], [600, 2], [375, 1]]) {
-    const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles })
+    const layout = layoutWhy(graph, { maxWidth, expandedCycles })
     assert.equal(layout.boxes.length, 1)
     const box = layout.boxes[0]
     assert.equal(box.packages.length, 190)
     assert.equal(new Set(box.packages.map(node => node.x)).size, columns)
     assert.equal(box.internalEdges.length, edgeCount, 'resizing preserves all connections')
-    assert.ok(layout.width + DEPENDENCY_DIALOG_GUTTER <= maxWidth, 'all columns fit inside the dialog')
-    assert.ok(box.packages.every(node => node.x + DEPENDENCY_CARD_WIDTH <= box.width && node.y + DEPENDENCY_CARD_HEIGHT <= box.height))
+    assert.ok(layout.width + WHY_DIALOG_GUTTER <= maxWidth, 'all columns fit inside the dialog')
+    assert.ok(box.packages.every(node => node.x + WHY_CARD_WIDTH <= box.width && node.y + WHY_CARD_HEIGHT <= box.height))
   }
 })
 
@@ -379,12 +579,12 @@ test('only cycles larger than ten start collapsed, and expansion preserves their
     const imports = new Map([['app', new Set([ids[0]])], ...ids.map((id, i) => [id, new Set([ids[(i + 1) % count]])])])
     imports.get(ids[0]).add('target')
     const graph = { nodes: new Map(['app', ...ids, 'target'].map(id => [id, { id }])), imports }
-    const initial = layoutDependencyChains(graph)
+    const initial = layoutWhy(graph)
     const group = initial.boxes.find(box => box.members.length === count)
     assert.equal(group.collapsed, count > 10)
     assert.equal(group.collapsible, count > 10)
     assert.equal(group.packages.length, count > 10 ? 0 : count)
-    const expanded = layoutDependencyChains(graph, { expandedCycles: new Set([group.id]) })
+    const expanded = layoutWhy(graph, { expandedCycles: new Set([group.id]) })
     const opened = expanded.boxes.find(box => box.id === group.id)
     assert.equal(opened.packages.length, count)
     assert.equal(opened.internalEdges.length, count)
@@ -394,7 +594,7 @@ test('only cycles larger than ten start collapsed, and expansion preserves their
       assert.ok(initial.height < expanded.height, 'collapsed groups free space for the rest of the chain')
       assert.ok(initial.boxes.find(box => box.members.includes('target')).y < expanded.boxes.find(box => box.members.includes('target')).y)
     }
-    assert.deepEqual(layoutDependencyChains(graph), initial, 'collapsing restores the compact layout')
+    assert.deepEqual(layoutWhy(graph), initial, 'collapsing restores the compact layout')
   }
 })
 
@@ -420,15 +620,15 @@ test('discovery-only branches are neither followed nor drawn, while ordinary imp
     const details = { kind: 'stasis', integrity: `discovery-${count}-${ordinary}`, size: 1, bundle: new Bundle({ config: { scope: 'full' }, modules, imports: new Map([['node,import', imports]]) }) }
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
-      const graph = bundleDependencyChains(input, query)
+      const graph = bundleWhy(input, query)
       assert.equal(graph.imports.get('node_modules/dep').size, 0)
       assert.equal(graph.nodes.has('node_modules/react-native'), ordinary, 'do not follow discovery-only importers')
       assert.equal(graph.nodes.has('node_modules/bridge'), ordinary, 'do not follow their ancestors either')
       assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(ordinary ? ['.', 'node_modules/react-native'] : ['.']))
-      const initial = layoutDependencyChains(graph)
+      const initial = layoutWhy(graph)
       const groupId = initial.componentOf.get('node_modules/react-native')
       for (const maxWidth of [1280, 600, 375]) {for (const expandedCycles of [new Set(), new Set([groupId])]) {
-        const result = layoutDependencyChains(graph, { maxWidth, expandedCycles })
+        const result = layoutWhy(graph, { maxWidth, expandedCycles })
         assert.equal(result.edges.length, ordinary ? 4 : 1)
         assert.equal(result.boxes.length, ordinary ? 4 : 2)
         assert.ok(result.edges.every(edge => {
@@ -442,23 +642,23 @@ test('discovery-only branches are neither followed nor drawn, while ordinary imp
 
 test('missing metadata or version produces an empty graph', () => {
   for (const details of [undefined, { kind: 'stasis', managedId: 'metadata-unavailable' }, fixture({ modules: { 'node_modules/dep': dep('dep', '2.0.0') } })]) {
-    const graph = bundleDependencyChains(details, query)
+    const graph = bundleWhy(details, query)
     assert.equal(graph.nodes.size, 0)
-    assert.deepEqual(layoutDependencyChains(graph).boxes, [])
+    assert.deepEqual(layoutWhy(graph).boxes, [])
   }
 })
 
 test('tracing follows only paths through the focused package, excluding siblings and shortcuts', () => {
   const details = fixture({ modules: { '.': {}, 'node_modules/a': dep('a'), 'node_modules/b': dep('b'), 'node_modules/dep': dep('dep') },
     links: [['.', 'node_modules/a'], ['.', 'node_modules/b'], ['.', 'node_modules/dep'], ['node_modules/a', 'node_modules/dep'], ['node_modules/b', 'node_modules/dep']] })
-  const layout = layoutDependencyChains(bundleDependencyChains(details, query))
+  const layout = layoutWhy(bundleWhy(details, query))
   const box = id => layout.boxes.find(group => group.members.includes(id)).id
-  const highlighted = traceDependencyChains(layout, box('node_modules/a'))
+  const highlighted = traceWhy(layout, box('node_modules/a'))
   assert.deepEqual(highlighted.groups, new Set([box('.'), box('node_modules/a'), box('node_modules/dep')]))
   assert.deepEqual([...highlighted.edges].map(edge => [edge.from, edge.to]).toSorted(), [
     [box('.'), box('node_modules/a')], [box('node_modules/a'), box('node_modules/dep')],
   ].toSorted())
-  assert.equal(traceDependencyChains(layout, null), null)
+  assert.equal(traceWhy(layout, null), null)
 })
 
 test('long dependency chains do not recurse and repeated diamonds do not enumerate paths', () => {
@@ -471,7 +671,7 @@ test('long dependency chains do not recurse and repeated diamonds do not enumera
   }
   modules['node_modules/dep'] = dep('dep')
   for (const from of previous) links.push([from, 'node_modules/dep'])
-  const graph = bundleDependencyChains(fixture({ modules, links }), query), layout = layoutDependencyChains(graph)
+  const graph = bundleWhy(fixture({ modules, links }), query), layout = layoutWhy(graph)
   assert.equal(graph.nodes.size, 2002)
   assert.equal(layout.boxes.length, 2002)
   assert.equal(layout.edges.length, 4000)

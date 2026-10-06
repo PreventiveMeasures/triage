@@ -9,7 +9,7 @@ import { renderMatrixPanel } from '../ui/view/graph/matrix-panel.js'
 import { dependencyNetwork } from '../ui/view/graph/package-network.js'
 import { layoutPackageDependencies } from '../ui/view/graph/dependency-layout.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
-import { bundleDependencyChains, layoutDependencyChains } from '../ui/view/bundle-dependency-chains.js'
+import { bundleWhy, layoutWhy } from '../ui/view/bundle-why.js'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 
 const source = 'node_modules/react-native/react-native.config.js'
@@ -43,7 +43,7 @@ test('only React Native’s own config loading the Android or iOS CLI entry poin
   }
 })
 
-test('platform config loads remain visible without closing grid, dependency, or full/cached advisory cycles', async () => {
+test('platform config loads remain visible without closing grid, dependency, or full/cached why cycles', async () => {
   for (const platform of platforms) {
     const pkg = `@react-native-community/cli-platform-${platform}`, target = `node_modules/${pkg}/build/index.js`
     for (const ordinary of [false, true]) {
@@ -81,9 +81,9 @@ test('platform config loads remain visible without closing grid, dependency, or 
       }) }
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
-        const graph = bundleDependencyChains(input, { packageKey: pkg, version: '1.0.0' })
+        const graph = bundleWhy(input, { packageKey: pkg, version: '1.0.0' })
         assert.equal(graph.imports.get('node_modules/react-native')?.has(`node_modules/${pkg}`) ?? false, ordinary)
-        const result = layoutDependencyChains(graph)
+        const result = layoutWhy(graph)
         assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinary ? 1 : 0)
         assert.equal(result.boxes.length, 1)
       }

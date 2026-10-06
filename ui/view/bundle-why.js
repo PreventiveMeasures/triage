@@ -1,9 +1,10 @@
 import { bundlePackageDirs } from './bundle-sources.js'
+import { bundlePkgOf } from './bundle-pkg-of.js'
 import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
 import { countsTowardsCycles } from './graph/cycle-imports.js'
-import { DEPENDENCY_DIALOG_GUTTER, dependencyImportPath, layoutDependencyGroup } from './dependency-chain-layout.js'
+import { WHY_DIALOG_GUTTER, layoutWhyGroup, layoutWhyRow, routeWhyEdges } from './why-layout.js'
 
 function packageNode(id, info = {}) {
   const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(id) ? 'npm' : '')
@@ -11,9 +12,23 @@ function packageNode(id, info = {}) {
   return { id, name, ecosystem, version: info.version ?? '', own: id === '.', root: false, target: false }
 }
 
+const packageKeyOf = node => node.ecosystem === 'npm' ? node.name : `${node.ecosystem}:${node.name}`
+
+// Match the Overview's grouping: node_modules rows combine versions by name;
+// workspace and vendored rows represent one installation directory each.
+export function bundleWhyQuery(details, dir) {
+  const info = details?.bundle?.modules.get(dir)
+  if (!dir || dir === '.' || !info) return null
+  const node = packageNode(dir, info)
+  const packageKey = node.ecosystem ? packageKeyOf(node) : node.name
+  return { packageKey, packageGroup: bundlePkgOf('', { packageDir: dir }) }
+}
+
 // The full graph groups npm packages by name. Here the installation directory
 // is the identity: merging copies would invent routes between their importers.
-export function bundleDependencyChains(details, { packageKey, version, reason = '' }) {
+// Omitting version selects every installed version of the package. Overview
+// queries use its package group instead, preserving the clicked row's scope.
+export function bundleWhy(details, { packageKey, packageGroup, version, reason = '' }) {
   const importedBy = new Map(), imports = new Map(), nodes = new Map()
   const dirs = bundlePackageDirs(details) ?? new Map()
   const allPaths = new Map([...dirs.keys()].map(path => [path, path]))
@@ -49,7 +64,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   const { roots, appImports } = bundleLayerRoots(details, paths, path => dirs.get(path), dirs, allPaths)
   if (appImports.length > 0 && !nodes.has('.')) nodes.set('.', packageNode('.'))
   for (const target of appImports) link('.', target)
-  // Advisory chains stop at own source and Babel, and at React Native when own
+  // Why chains stop at own source and Babel, and at React Native when own
   // source imports that installation. Keep outgoing App edges, but do not follow
   // other parents or restore their edges when another path retains them.
   for (const [id, node] of nodes) {
@@ -70,10 +85,12 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   }
   const targets = []
   for (const node of nodes.values()) {
-    const key = node.ecosystem === 'npm' ? node.name : `${node.ecosystem}:${node.name}`
-    const matches = node.ecosystem === 'github' ? key.toLowerCase() === packageKey.toLowerCase() : key === packageKey
-    const auditedVersion = node.ecosystem === 'github' && node.version === '.' ? '0.0.0' : node.version
-    if (!node.own && matches && auditedVersion === version) { node.target = true; targets.push(node.id) }
+    const key = packageKeyOf(node)
+    const matches = packageGroup === undefined
+      ? node.ecosystem === 'github' ? key.toLowerCase() === packageKey.toLowerCase() : key === packageKey
+      : bundlePkgOf('', { packageDir: node.id }) === packageGroup
+    const normalizedVersion = node.ecosystem === 'github' && node.version === '.' ? '0.0.0' : node.version
+    if (!node.own && matches && (version === undefined || normalizedVersion === version)) { node.target = true; targets.push(node.id) }
   }
   // Reverse reachability retains every remaining route without enumerating an
   // exponential number of paths through diamonds or traversing cycles forever.
@@ -89,7 +106,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
 
 // Collapse strongly connected packages before assigning rows. Cards stay at a
 // readable size; larger graphs scroll instead of shrinking names into dots.
-export function layoutDependencyChains(graph, { maxWidth = 1280, expandedCycles = new Set() } = {}) {
+export function layoutWhy(graph, { maxWidth = 1280, expandedCycles = new Set() } = {}) {
   const ids = [...graph.nodes.keys()].toSorted()
   const { groups, componentOf } = stronglyConnected(ids, graph.imports)
   const links = groups.map(() => new Set())
@@ -116,32 +133,28 @@ export function layoutDependencyChains(graph, { maxWidth = 1280, expandedCycles 
   // Reserve the dialog padding, graph margins and shortcut lanes before
   // choosing cycle columns. A large SCC must not overflow its viewport.
   const hasBypasses = links.some((targets, from) => [...targets].some(to => depth[to] !== depth[from] + 1))
-  const cycleWidth = maxWidth - DEPENDENCY_DIALOG_GUTTER - 24 - (hasBypasses ? 56 : 0)
+  const cycleWidth = maxWidth - WHY_DIALOG_GUTTER - 24 - (hasBypasses ? 56 : 0)
   const rows = Map.groupBy(groups.map((members, id) => {
     const collapsible = members.length > 10
-    return { ...layoutDependencyGroup(id, members, graph.imports, cycleWidth, collapsible && !expandedCycles.has(id)), collapsible }
+    return { ...layoutWhyGroup(id, members, graph.imports, cycleWidth, collapsible && !expandedCycles.has(id)), collapsible }
   }), group => depth[group.id])
-  const rowWidth = row => row.reduce((w, group) => w + group.width, 0) + Math.max(0, row.length - 1) * 20
-  const width = [...rows.values()].reduce((w, row) => Math.max(w, rowWidth(row) + 24), 240)
+  const placedRows = [...rows].toSorted(([a], [b]) => a - b).map(([, row]) => layoutWhyRow(row, cycleWidth))
+  const width = placedRows.reduce((w, row) => Math.max(w, row.width + 24), 240)
   const boxes = new Map()
   let y = 12
-  for (const [, row] of [...rows].toSorted(([a], [b]) => a - b)) {
-    const height = row.reduce((h, group) => Math.max(h, group.height), 0)
-    let x = (width - rowWidth(row)) / 2
-    for (const group of row) { boxes.set(group.id, { ...group, x, y, rowBottom: y + height }); x += group.width + 20 }
+  for (const { groups: row, width: rowWidth, height } of placedRows) {
+    for (const group of row) boxes.set(group.id, { ...group, x: group.x + (width - rowWidth) / 2, y, rowBottom: y + height })
     y += height + 36
   }
   let bypasses = 0
-  const fromPorts = groups.map(() => 0), toPorts = groups.map(() => 0)
-  const edges = packageEdges.map(edge => {
+  const edges = routeWhyEdges(boxes, packageEdges.map(edge => {
     const bypassLane = depth[edge.to] === depth[edge.from] + 1 ? null : width + 8 + (bypasses++ % 4) * 10
-    const ports = { bypassLane, fromIndex: fromPorts[edge.from]++, toIndex: toPorts[edge.to]++ }
-    return { ...edge, path: dependencyImportPath(boxes.get(edge.from), edge.fromPackage, boxes.get(edge.to), edge.toPackage, ports) }
-  })
+    return { ...edge, bypassLane }
+  }))
   return { boxes: [...boxes.values()], componentOf, edges, width: width + (bypasses ? 56 : 0), height: Math.max(0, y - 24) }
 }
 
-export function traceDependencyChains(layout, active) {
+export function traceWhy(layout, active) {
   if (active === null) return null
   const edges = new Set(), groups = new Set([active])
   // Ancestors and descendants are separate walks. A sibling's imports and a
