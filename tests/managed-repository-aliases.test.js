@@ -81,6 +81,38 @@ test('directory aliases keep suffixes and explicit or missing locations bypass a
   assert.equal(JSON.parse(unstamped.body).repoDirectory, 'selected')
 })
 
+test('bundle paths infer a whole-bundle directory for new imports and live suggestions only', async t => {
+  const { db, session, send, bundles } = await fixture(t)
+  await db.selectRepo({ repoId: 3, fullName: 'org/mono', private: false, installationId: null, defaultBranch: 'main',
+    htmlUrl: 'https://github.com/org/mono', addedBy: session.userId }, Date.now())
+  const body = brotliCompressSync(Buffer.from(JSON.stringify({ version: 0, config: { scope: 'full' },
+    repo: { github: 'org/c' }, formats: {}, imports: {}, sources: { 'a/src/x.js': 'x', 'a/icon.png': 'icon' } })))
+  const upload = bytes => send('/api/admin/bundles', { session, body: bytes, headers: { 'x-bundle-filename': 'old.stasis.code.br' } })
+  const stored = JSON.parse((await upload(body)).body)
+  assert.equal(stored.repoId, null)
+  const result = await send(path, { session, body: { oldRepo: 'org/c', oldPath: 'a', repoId: 3, newPath: 'projects/a' } })
+  assert.equal(result.status, 201)
+  const alias = JSON.parse(result.body)
+  const suggest = prefix => send(`/api/admin/repositories/resolve?repo=org%2Fc&directory=&filePrefix=${encodeURIComponent(prefix)}`, { session, method: 'GET' })
+  assert.deepEqual(JSON.parse((await suggest('a')).body).location, { repoId: 3, github: 'org/mono', directory: 'projects', mapped: true })
+  assert.equal(JSON.parse((await suggest('ab')).body).location, null)
+  assert.equal((await suggest('../a')).status, 400)
+  assert.equal((await db.getBundle(stored.id)).repoId, null, 'new aliases only affect the suggestion for old bundles')
+  assert.equal(JSON.parse((await upload(body)).body).repoId, null, 'identical reuploads retain their assignment')
+  const newer = brotliCompressSync(Buffer.from(JSON.stringify({ version: 0, config: { scope: 'full' },
+    repo: { github: 'org/c' }, formats: {}, imports: {}, sources: { 'a/src/x.js': 'new x', 'a/icon.png': 'icon' } })))
+  const created = await upload(newer)
+  assert.equal(created.status, 201)
+  const mapped = JSON.parse(created.body)
+  assert.equal(mapped.repoId, 3)
+  assert.equal(mapped.repoDirectory, 'projects')
+  assert.equal(mapped.integrity, bundleIntegrity(newer))
+  assert.deepEqual(await bundles.get(mapped.id), newer)
+  await send(`${path}/${alias.id}`, { session, method: 'PATCH', body: { ...alias, newPath: 'moved/b' } })
+  assert.equal(JSON.parse((await suggest('a')).body).location, null, 'incompatible suffixes do not suggest path rewrites')
+  assert.equal((await db.getBundle(mapped.id)).repoDirectory, 'projects')
+})
+
 test('alias endpoints require admin and CSRF; imports enforce mapped destination permissions', async t => {
   const { db, session, send, alias } = await fixture(t)
   assert.equal((await send(path, { session, method: 'GET' })).status, 200)

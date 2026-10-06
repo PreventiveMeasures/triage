@@ -60,7 +60,8 @@ import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AvatarStore } from './avatar-store.ts'
 import type { BlobStore } from './blob-store.ts'
-import { bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
+import { bundleFilePrefix, bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
+import { resolveRepositoryImportLocation } from './repository-aliases.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedBundle, ManagedDb, ManagedSession, ReportRecord, SelectedRepo, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
@@ -1305,7 +1306,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     const github = reportRepoGithub({ repo: embedded })
     const embeddedDirectory = normalizeTeamPath(embedded?.directory)
     if (!embeddedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
-    const location = github == null ? null : await deps.db.getRepositoryImportLocation(github, embeddedDirectory.path ?? '')
+    const location = github == null ? null : await resolveRepositoryImportLocation(deps.db, github, embeddedDirectory.path ?? '', () => bundleFilePrefix(bytes))
     if (location?.repoId != null) {
       repo.repoId = location.repoId
       if (req.headers['x-repo-directory'] == null) {
@@ -1555,8 +1556,9 @@ async function handleRepositorySuggestion(req: IncomingMessage, res: ServerRespo
   const params = new URL(req.url!, 'http://localhost').searchParams
   const github = reportRepoGithub({ repo: { github: params.get('repo') } })
   const directory = normalizeTeamPath(params.get('directory'))
-  if (!github || !directory.ok) { sendJson(res, 400, { error: 'bad-location' }); return }
-  const location = await deps.db.getRepositoryImportLocation(github, directory.path ?? '')
+  const filePrefix = normalizeTeamPath(params.get('filePrefix'))
+  if (!github || !directory.ok || !filePrefix.ok) { sendJson(res, 400, { error: 'bad-location' }); return }
+  const location = await deps.db.getRepositoryImportLocation(github, directory.path ?? '', filePrefix.path ?? '')
   const repo = location.repoId == null ? null : (await deps.db.listSelectedRepos()).find(row => row.repoId === location.repoId)
   const s = await readManageSession(res, deps, cookie)
   if (!s) return

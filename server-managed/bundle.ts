@@ -8,7 +8,12 @@
 import { createHash } from 'node:crypto'
 import type { Buffer } from 'node:buffer'
 import { StringDecoder } from 'node:string_decoder'
-import { createBrotliDecompress } from 'node:zlib'
+import { brotliDecompress, createBrotliDecompress } from 'node:zlib'
+import { promisify } from 'node:util'
+import { parseBundleContents } from '../common/bundle-metadata.js'
+import { bundleFilesAsMap } from '../common/bundle-sources.js'
+import { commonFileDirectory } from '../common/managed/repository-alias.ts'
+import { decodeUtf8 } from '../common/utf8.js'
 
 // `sha512-<base64>` identity for a bundle's bytes. MUST stay byte-identical to
 // the client's common/integrity.js (SHA-512 → standard base64 WITH padding) so
@@ -90,6 +95,17 @@ export async function bundleRepo(bytes: Buffer): Promise<BundleRepo | null> {
     return null
   } catch { return null }
   finally { stream.destroy() }
+}
+
+const decompress = promisify(brotliDecompress)
+// Same decoded size bound as the bundle metadata cache; only reached when an
+// alias can use a shared file suffix. Invalid/opaque bundles keep header defaults.
+export async function bundleFilePrefix(bytes: Buffer): Promise<string> {
+  try {
+    const decoded = await decompress(bytes, { maxOutputLength: 512 * 1024 * 1024 })
+    const details = parseBundleContents(decodeUtf8(decoded), { integrity: '', kind: 'stasis', size: bytes.length })
+    return commonFileDirectory(bundleFilesAsMap(details).keys())
+  } catch { return '' }
 }
 
 // Extract the bundle integrities a report declares (its top-level

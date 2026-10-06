@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { reportRepoGithub } from '@preventive/report'
-import { type RepositoryAliasInput, matchRepositoryAlias } from '../common/managed/repository-alias.ts'
+import { type RepositoryAliasInput, matchRepositoryAlias, repositoryAliasNeedsFilePrefix } from '../common/managed/repository-alias.ts'
+import type { ManagedDb } from './db.ts'
 import { ManagedMutationError } from './management.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import type { ManagedSql } from './sql.ts'
@@ -20,7 +21,19 @@ export interface RepositoryAliasStore {
   listRepositoryAliases(): Promise<RepositoryAlias[]>
   saveRepositoryAlias(sessionId: string, id: string | null, input: unknown): Promise<RepositoryAlias>
   deleteRepositoryAlias(sessionId: string, id: string): Promise<void>
-  getRepositoryImportLocation(github: string, directory: string): Promise<{ repoId: number | null; directory: string }>
+  getRepositoryImportLocation(github: string, directory: string, filePrefix?: string): Promise<{ repoId: number | null; directory: string }>
+}
+
+// Keep expensive inventory reads outside database transactions and skip them
+// unless a currently connected alias can use the bundle's existing paths.
+export async function resolveRepositoryImportLocation(db: ManagedDb, github: string, directory: string, loadFilePrefix: () => Promise<string>) {
+  const aliases = await db.listRepositoryAliases()
+  let filePrefix = ''
+  if (repositoryAliasNeedsFilePrefix(github, directory, aliases)) {
+    const active = new Set((await db.listSelectedRepos()).map(repo => repo.repoId))
+    if (repositoryAliasNeedsFilePrefix(github, directory, aliases.filter(alias => active.has(alias.repoId)))) filePrefix = await loadFilePrefix()
+  }
+  return db.getRepositoryImportLocation(github, directory, filePrefix)
 }
 
 function parseAlias(input: unknown): RepositoryAliasInput {
@@ -65,8 +78,8 @@ export function repositoryAliasMethods(db: ManagedSql): RepositoryAliasStore {
       await authorize(sessionId)
       if (!(await db.prepare('DELETE FROM managed_repository_alias WHERE id = ?').run(id)).changes) throw new ManagedMutationError(404, 'no-alias')
     },
-    async getRepositoryImportLocation(github, directory) {
-      const alias = matchRepositoryAlias(github, directory, await listRepositoryAliases())
+    async getRepositoryImportLocation(github, directory, filePrefix = '') {
+      const alias = matchRepositoryAlias(github, directory, await listRepositoryAliases(), filePrefix)
       const normalized = normalizeTeamPath(alias?.directory ?? directory)
       if (!normalized.ok) throw new ManagedMutationError(400, 'bad-directory')
       const repo = await (alias

@@ -196,6 +196,15 @@ once without chaining. For example, `org/a` with an empty old path can map to
 `org/b` at `projects/a`; `org/c` at `a` can map to that same location, and an import
 declaring `org/c` at `a/src` is assigned to `org/b` at `projects/a/src`.
 
+For Stasis bundles, aliases can also match a directory shared by every bundled
+file. With `org/c` at `a` mapped to `org/mono` at `projects/a`, a bundle declaring
+`org/c` with no directory and files under `a/` is assigned to `org/mono` at
+`projects`. The part already in the file paths must be a common suffix of the
+old and new paths; otherwise this inference cannot apply without rewriting
+files. Imports skip decoding the file inventory unless a compatible alias has
+an active destination. Location suggestions use the same rule on metadata's
+existing file inventory, including resources.
+
 Aliases are stored in `managed_repository_alias` and affect only the detected
 repository and directory of new reports and Stasis bundles. Original bytes,
 individual findings, relative file paths, and content hashes are unchanged.
