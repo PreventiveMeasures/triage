@@ -25,7 +25,7 @@ header button:hover { color: var(--text); }
 .graph { position: relative; margin-inline: auto; }
 .connections { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .connections > path { fill: none; stroke: var(--muted); stroke-width: 1.5; opacity: .65; }
-.package-group { position: absolute; }
+.package-group { position: absolute; cursor: default; }
 .package {
   position: absolute; width: var(--package-width); height: var(--package-height);
   display: flex; flex-direction: column; gap: 4px; padding: 8px 10px;
