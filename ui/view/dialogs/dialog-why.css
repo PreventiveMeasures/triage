@@ -28,7 +28,7 @@ header button:hover { color: var(--text); }
 .package-group { position: absolute; cursor: default; }
 .package {
   position: absolute; width: var(--package-width); height: var(--package-height);
-  display: flex; flex-direction: column; gap: 4px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 4px; padding: 5px 7px;
   background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--package-color);
   border-radius: var(--ui-radius, 6px); font-size: .75rem; overflow: hidden;
 }
@@ -54,7 +54,7 @@ header button:hover { color: var(--text); }
 .cycle-summary { display: flex; gap: .4rem; text-align: left; }
 .cycle-count { color: var(--muted); }
 .cycle-count::before { content: '· '; }
-.collapsed .cycle-toggle { inset: 0; width: 100%; padding: 8px 10px; border-radius: inherit; font-size: .75rem; }
+.collapsed .cycle-toggle { inset: 0; width: 100%; padding: 5px 7px; border-radius: inherit; font-size: .75rem; }
 .collapsed .cycle-summary { flex: 1; flex-direction: column; gap: 2px; }
 .collapsed .cycle-count { font-size: .65rem; }
 .collapsed .cycle-count::before { content: none; }

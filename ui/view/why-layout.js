@@ -1,7 +1,7 @@
 import { placeWhyCycle } from './why-order.js'
 
 export const WHY_CARD_WIDTH = 216
-export const WHY_CARD_HEIGHT = 54
+export const WHY_CARD_HEIGHT = 48
 export const WHY_DIALOG_GUTTER = 32 // dialog borders, content padding and vertical scrollbar
 const gapX = 20, gapY = 24, heading = 20, padding = 10
 
