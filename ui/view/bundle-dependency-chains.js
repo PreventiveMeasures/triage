@@ -36,7 +36,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
     for (const target of targets) {
       if (!paths.has(target)) continue
       const from = dirs.get(parent), to = dirs.get(target)
-      if (countsTowardsCycles(parent, target, to === '.')) link(from, to)
+      if (countsTowardsCycles(parent, target, to === '.', from === '.')) link(from, to)
       else if (from !== to) {
         // The removed importer may disappear from the final graph. Retain its
         // identity so a deliberately cut chain is not reported as missing data.

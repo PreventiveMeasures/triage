@@ -40,7 +40,7 @@ export function renderMatrixPanel(model, graph, selection, { select, expand, exp
       <button class="matrix-import-target" data-bundle-view-source=${graph.nodeByFile.get(to)?.origFile ?? to} data-tooltip-truncated data-tooltip=${to}>${to}</button>
       <ul class="matrix-import-sources" aria-label="Imported by">${imports.map(([from]) => html`<li>
         <button data-bundle-view-source=${graph.nodeByFile.get(from)?.origFile ?? from}><span aria-hidden="true">←</span><span data-tooltip-truncated data-tooltip=${from}>${from}</span></button>
-        ${countsTowardsCycles(originalPath(from), originalPath(to), graph.ownSourceFiles?.has(to)) ? null : html`<span class="matrix-import-excluded">Excluded from cycles</span>`}
+        ${countsTowardsCycles(originalPath(from), originalPath(to), graph.ownSourceFiles?.has(to), graph.ownSourceFiles?.has(from)) ? null : html`<span class="matrix-import-excluded">Excluded from cycles</span>`}
       </li>`)}</ul>
     </div>`) : html`<p class="matrix-empty">No direct imports in this direction.</p>`}
     ${cell && cell.count > cell.examples.length ? html`<p class="matrix-empty">Showing ${cell.examples.length} of ${number(cell.count)} imports.</p>` : null}
