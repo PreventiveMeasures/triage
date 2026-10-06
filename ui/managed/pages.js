@@ -9,6 +9,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ROLES, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
+import { displayName } from '../../common/report-display-name.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
@@ -702,7 +703,7 @@ class ManagedAdminRepos extends ManagedPage {
         <h2 id="remove-repo-title">Remove ${repo.fullName} permanently?</h2>
         <p class="dialog-copy">${hasAttached ? 'This destructive action will remove the repository and the stored data listed below. Deactivation keeps all of it.' : 'This repository has no attached reports or bundles. Permanent removal deletes its connection record.'}</p>
         ${hasAttached ? html`<div class="dialog-data">
-          <section><h3>Reports to delete (${reports.length})</h3><ul>${reports.map((report) => html`<li>${report.filename}${report.repoDirectory ? ` · ${report.repoDirectory}` : nothing}</li>`)}</ul></section>
+          <section><h3>Reports to delete (${reports.length})</h3><ul>${reports.map((report) => html`<li>${displayName(report.filename)}${report.repoDirectory ? ` · ${report.repoDirectory}` : nothing}</li>`)}</ul></section>
           <section><h3>Bundles to delete (${bundles.length})</h3><ul>${bundles.map((bundle) => html`<li>${bundle.filename}</li>`)}</ul></section>
         </div>` : nothing}
         <label class="confirm-line"><input type="checkbox" .checked=${this._acknowledge} @change=${(event) => { this._acknowledge = event.target.checked }}><span>I understand this permanently deletes the repository connection${hasAttached ? ', reports, and bundles' : ''}.</span></label>
@@ -854,7 +855,7 @@ class ManagedAdminReports extends ManagedPage {
   _body() {
     const reports = Array.isArray(this._data?.reports) ? this._data.reports : []
     const query = this._query.trim().toLocaleLowerCase()
-    const filtered = reports.filter(report => [report.filename, report.repoFullName, report.repoDirectory, report.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
+    const filtered = reports.filter(report => [report.filename, displayName(report.filename), report.repoFullName, report.repoDirectory, report.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
       && (this._visibility === 'all' || Boolean(report.visible) === (this._visibility === 'visible')))
     const count = `${query || this._visibility !== 'all' ? `${filtered.length} of ` : ''}${reports.length} ${reports.length === 1 ? 'report' : 'reports'}`
     return html`<div class="collection-toolbar" role="search"><input type="search" aria-label="Search reports" placeholder="Search reports or repositories…" .value=${this._query} @input=${e => { this._query = e.target.value }}><select aria-label="Report visibility" .value=${this._visibility} @change=${e => { this._visibility = e.target.value }}><option value="all">All reports</option><option value="visible">Visible to teams</option><option value="hidden">Hidden reports</option></select><span class="result-count" role="status">${this._data == null ? '… reports' : count}</span></div>
@@ -863,6 +864,7 @@ class ManagedAdminReports extends ManagedPage {
   }
 
   _row(report) {
+    const name = displayName(report.filename)
     const analyzer = report.analyzer ?? report.source ?? report.producer ?? 'default'
     const logo = REPORT_LOGOS[analyzer] ?? REPORT_LOGOS.default
     const canAssignLocation = report.repoEmbedded !== true && report.canChangeRepo !== false
@@ -872,18 +874,18 @@ class ManagedAdminReports extends ManagedPage {
     return html`<li class=${`report${report.visible === false ? ' content-hidden' : ''}`}>
       <div class="report-main">
         <span class="report-mark" aria-hidden="true">${unsafeHTML(logo)}</span>
-        <span class="report-name" data-tooltip-truncated data-tooltip=${report.filename}>${report.filename}</span>
+        <span class="report-name" data-tooltip-truncated data-tooltip=${name}>${name}</span>
         <span class="report-location" data-tooltip-truncated data-tooltip=${location}>${location}</span>
         <span class="report-meta report-uploader" data-tooltip-truncated data-tooltip=${report.uploadedByLogin ?? 'Uploader removed'}>${report.uploadedByLogin ?? 'Uploader removed'}</span>
         <span class="report-meta report-date">${when}</span>
         <span class="report-meta report-size">${formatBytes(report.byteSize)}</span>
         <span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span>
         <span class="report-actions">
-          ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${report.filename}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
-          <button type="button" class="action" aria-label=${`Preview ${report.filename}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
-          <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${report.filename}`} ?disabled=${report.canChangeRepo === false || (!canMakeVisible && !report.visible)} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
-          <a class="action" aria-label=${`Download ${report.filename}`} href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>${adminIcon('download')}</a>
-          <button type="button" class="action danger" aria-label=${`Delete ${report.filename}`} ?disabled=${report.canChangeRepo === false} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
+          ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${name}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
+          <button type="button" class="action" aria-label=${`Preview ${name}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
+          <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${name}`} ?disabled=${report.canChangeRepo === false || (!canMakeVisible && !report.visible)} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
+          <a class="action" aria-label=${`Download ${name}`} href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>${adminIcon('download')}</a>
+          <button type="button" class="action danger" aria-label=${`Delete ${name}`} ?disabled=${report.canChangeRepo === false} @click=${() => this._delete(report)}>${ADMIN_DELETE_ICON}</button>
         </span>
       </div>
       ${this._preview === report.id ? html`<div class="preview">${this._previewLoading === report.id ? html`<span class="preview-loading">Loading preview…</span>` : html`<pre>${this._previewText ?? ''}</pre>`}</div>` : nothing}
@@ -960,7 +962,7 @@ class ManagedAdminReports extends ManagedPage {
   }
 
   async _delete(report) {
-    if (!globalThis.confirm?.(`Delete “${report.filename}”? This can't be undone.`)) return
+    if (!globalThis.confirm?.(`Delete “${displayName(report.filename)}”? This can't be undone.`)) return
     this._error = null
     try { await this.appState.mutate(() => deleteReport(report.id, this._csrf), ['reports', `report-preview:${report.id}`, 'repo-impact', 'history', 'scan-sources']) }
     catch (err) { this._error = `Delete failed: ${String(err?.message ?? err)}` }
@@ -1263,7 +1265,7 @@ class ManagedAdminScans extends ManagedPage {
       // filter. The administration catalogue alone does not carry findings.
       data.reports = await Promise.all((data.reports ?? []).filter(report => report.visible && report.repoId != null).map(async report => {
         const response = await managedFetch(`/api/admin/reports/${encodeURIComponent(report.id)}`, { signal, credentials: 'same-origin' })
-        if (!response.ok) throw new Error(`Report ${report.filename}: HTTP ${response.status}`)
+        if (!response.ok) throw new Error(`Report ${displayName(report.filename)}: HTTP ${response.status}`)
         return { ...report, content: await response.text() }
       }))
       return managedReportSources(data, results.ok ? await results.json() : { bundles: [], results: [] })

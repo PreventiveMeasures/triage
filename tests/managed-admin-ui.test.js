@@ -19,6 +19,28 @@ const Reports = customElements.get('managed-admin-reports')
 const repo = { id: 7, fullName: 'owner/repo' }
 const impact = { repoId: 7, reports: [{ id: 'r', filename: 'report.json' }], bundles: [], triageCount: 0 }
 
+test('managed report labels, actions and search use decoded product names', (t) => {
+  const page = createPage(Reports)
+  const report = { id: 'generic', filename: 'Audit%20notes: Product%20A%2FB%20100%25.generic-md', visible: true }
+  const name = 'Audit notes: Product A/B 100%'
+  function values(value) {
+    if (Array.isArray(value)) return value.flatMap(values)
+    return value?.strings ? value.values.flatMap(values) : [value]
+  }
+  const labels = values(page._row(report)).filter(value => typeof value === 'string')
+  assert.ok(labels.includes(name), 'visible label and tooltip decode the stored name')
+  for (const action of ['Preview', 'Hide', 'Download', 'Delete']) assert.ok(labels.includes(`${action} ${name}`))
+  assert.ok(!labels.some(label => label.includes('%20') || label.includes('.generic-md')))
+  page._data = { reports: [report] }
+  const row = t.mock.method(page, '_row', () => null)
+  for (const query of ['Product A/B', '100%', 'Audit notes']) {
+    page._query = query
+    page._body()
+  }
+  assert.equal(row.mock.callCount(), 3)
+  assert.equal(report.filename, 'Audit%20notes: Product%20A%2FB%20100%25.generic-md')
+})
+
 test('repository removal requires valid impact and confirmation, including after a failed load', async (t) => {
   const page = createPage(Repositories)
   let response = new Response('unavailable', { status: 503 })

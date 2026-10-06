@@ -39,6 +39,15 @@ test('clearing the managed query restores every team, report and bundle', () => 
   }
 })
 
+test('managed search matches decoded product names without changing stored filenames', () => {
+  const report = { id: 'generic', filename: 'Audit%20notes: Product%20A%2FB%20100%25.generic-md' }
+  const team = { id: 'product', name: 'Product team', reports: [report] }
+  for (const query of ['Audit notes', 'Product A/B', '100%', 'Product%20A']) {
+    assert.deepEqual(filterManagedTeams([team], query), [{ team, reports: [report], bundles: [] }])
+  }
+  assert.equal(report.filename, 'Audit%20notes: Product%20A%2FB%20100%25.generic-md')
+})
+
 test('App team sections match workspace navigation, search and manual collapse behavior', async () => {
   const { ManagedTeamSections } = await import('../ui/view/managed-sidebar.js')
   const sections = new ManagedTeamSections()

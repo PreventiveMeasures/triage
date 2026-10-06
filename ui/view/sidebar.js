@@ -297,10 +297,11 @@ function teamsSectionTemplate() {
 // it — opening is handled by its own @click, which renders the report from the
 // server WITHOUT caching it to OPFS.
 function teamReportTemplate(team, r) {
+  const name = displayName(r.filename)
   const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && ['findings', 'links'].includes(state.currentView)
   return html`<li class=${`file-item indented team-report-item${r.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
-    <button type="button" class="file-name" aria-label=${r.visible === false ? `${r.filename} (hidden from teams)` : nothing} data-tooltip=${r.filename} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
-      ${unsafeHTML(FILE_ICONS[reportGroup(r.filename, r.analyzer)])}<span class="file-label">${r.filename}</span>
+    <button type="button" class="file-name" aria-label=${r.visible === false ? `${name} (hidden from teams)` : nothing} data-tooltip=${name} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
+      ${unsafeHTML(FILE_ICONS[reportGroup(r.filename, r.analyzer)])}<span class="file-label">${name}</span>
     </button>
   </li>`
 }

@@ -567,8 +567,12 @@ describe('reaper × concurrent ops — never unlink a live file', () => {
         // already ran (grace window protects a young blob); a grace-0
         // sweep now collects it deterministically, proving nothing but
         // the absent reference protected it.
+        const orphan = liveFilePath(objDir, 'ws-1', chash('reap-race'))
+        // Filesystem mtimes can be fractionally ahead of Date.now(), even
+        // with zero grace. Age the finished write before testing collection.
+        if (existsSync(orphan)) ageBlob(orphan)
         await reapOrphans(handle, 0)
-        assert.equal(existsSync(liveFilePath(objDir, 'ws-1', chash('reap-race'))), false, 'no live row ⇒ blob unreferenced, GCd by a grace-0 sweep')
+        assert.equal(existsSync(orphan), false, 'no live row ⇒ blob unreferenced, GCd by a grace-0 sweep')
       }
       void reapResult
     } finally { cleanup() }
