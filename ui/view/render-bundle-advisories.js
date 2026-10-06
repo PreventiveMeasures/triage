@@ -280,7 +280,6 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
     ${summary !== nothing || reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-toolbar">
     ${summary}
     ${reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-scopes">
-    ${renderRepositoryRecheck(details, renderFn)}
     ${reasons.length > 0 ? html`<bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
       @scope-change=${event => {
@@ -290,6 +289,7 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
         renderFn()
         return loading
       }}></bundle-scope-selector>` : nothing}
+    ${renderRepositoryRecheck(details, renderFn)}
     </div>` : nothing}
     </div>` : nothing}
     ${renderAdvisoriesBody(details)}
