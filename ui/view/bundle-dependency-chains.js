@@ -34,7 +34,16 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
     // Use the cycle exclusions for dependency chains too. Filter before
     // package aggregation and reverse reachability, not just layout.
     for (const target of targets) {
-      if (paths.has(target) && countsTowardsCycles(parent, target, dirs.get(target) === '.')) link(dirs.get(parent), dirs.get(target))
+      if (!paths.has(target)) continue
+      const from = dirs.get(parent), to = dirs.get(target)
+      if (countsTowardsCycles(parent, target, to === '.')) link(from, to)
+      else if (from !== to) {
+        // The removed importer may disappear from the final graph. Retain its
+        // identity so a deliberately cut chain is not reported as missing data.
+        const node = nodes.get(to)
+        node.excludedImporters ??= new Set()
+        node.excludedImporters.add(from)
+      }
     }
   }
   const { roots, appImports } = bundleLayerRoots(details, paths, path => dirs.get(path), dirs, allPaths)
