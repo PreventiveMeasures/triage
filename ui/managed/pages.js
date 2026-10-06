@@ -1373,11 +1373,15 @@ class ManagedAdminTeams extends ManagedPage {
             <button class="btn" ?disabled=${this._busy} @click=${(e) => this._saveRename(team, e)}>Save</button>
             <button class="btn" @click=${() => { this._renamingId = null }}>Cancel</button>`
           : html`<h2 class="team-name">${team.name}</h2>
+            ${team.hidden ? html`<span class="muted ui-hint">Hidden</span>` : nothing}
             <span class="team-actions">
+              <button class="btn" aria-label=${`${team.hidden ? 'Restore' : 'Hide'} ${team.name}`} ?disabled=${this._busy}
+                @click=${() => this._do(() => postTeam('/api/admin/teams/set-hidden', this._csrf, { teamId: team.id, hidden: !team.hidden }))}>${team.hidden ? 'Restore' : 'Hide'}</button>
               <button class="icon-btn" aria-label=${`Rename ${team.name}`} ?disabled=${this._busy} @click=${() => { this._renamingId = team.id }}>${ADMIN_EDIT_ICON}</button>
               <button class="icon-btn danger" aria-label=${`Delete ${team.name}`} ?disabled=${this._busy} @click=${() => this._deleteTeam(team)}>${ADMIN_DELETE_ICON}</button>
             </span>`}
       </div>
+      ${team.hidden ? html`<p class="team-hidden-note muted ui-hint">Hidden from everyone's sidebar. Access grants and public links are disabled until this team is restored.</p>` : nothing}
       <div class="team-body">
       <div class="sub">
         <h3 class="sub-title">Repositories <span class="count">${team.repos.length}</span></h3>

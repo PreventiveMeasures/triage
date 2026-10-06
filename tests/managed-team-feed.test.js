@@ -144,13 +144,14 @@ test('another instance changes only the visible annotation revision, including c
   assert.ok(res.frames.every(frame => frame === 'event: triage\ndata: {}\n\n'))
 })
 
-for (const change of ['logout', 'membership', 'permission', 'publication']) {
+for (const change of ['logout', 'membership', 'permission', 'publication', 'hidden team']) {
   test(`a live feed closes when ${change} changes access`, async t => {
     const h = await fixture(t), { res, done } = await h.feed()
     if (change === 'logout') await h.writer.deleteSession(h.session.id)
     if (change === 'membership') await h.writer.removeTeamMember('team', h.session.userId)
     if (change === 'permission') await h.writer.setTeamMember('team', h.session.userId, { security: true, dependencies: true })
     if (change === 'publication') await h.writer.setReportVisible('report', false)
+    if (change === 'hidden team') await h.writer.setTeamHidden('team', true, Date.now())
     await done
     assert.equal(res.frames.at(-1), 'event: close\ndata: {}\n\n')
     assert.equal(res.ended, true)
@@ -232,6 +233,7 @@ test('public feeds skip unchanged snapshots and ignore unrelated annotation chan
 })
 
 const shareChanges = {
+  hiddenTeam: h => h.writer.setTeamHidden('team', true, Date.now()),
   permissions: h => h.writer.updateWorkspaceShare(h.session.id, Date.now(), 'team', 'share', { security: true, dependencies: false }),
   revocation: h => h.writer.revokeWorkspaceShares(h.session.id, Date.now(), 'team', 'share'),
   issuerRole: h => h.writer.setUserRole(h.session.userId, 'view'),
@@ -370,18 +372,22 @@ test('catalog-only feed works with no memberships and observes empty-team grants
   assert.deepEqual(eventNames(http.res), ['event: teams'])
 })
 
-test('losing the focused team preserves the catalog feed and stops its annotation reads', async t => {
-  const h = await fixture(t), { res } = await h.userFeed()
-  await h.writer.removeTeamMember('team', h.session.userId)
-  await until(() => teamEvents(res) === 2)
-  const triage = triageEvents(res)
-  await h.writer.setTriage('visible', { color: 'red' }, null, null, 2)
-  await delay(40)
-  assert.equal(triageEvents(res), triage)
-  assert.equal(res.ended, undefined)
-  await h.writer.setTeamMember('team', h.session.userId, { security: false, dependencies: false })
-  await until(() => teamEvents(res) === 3 && triageEvents(res) === triage + 1)
-})
+for (const change of ['hiding', 'losing membership in']) {
+  test(`${change} the focused team preserves the catalog feed and stops its annotation reads`, async t => {
+    const h = await fixture(t), { res } = await h.userFeed()
+    if (change === 'hiding') await h.writer.setTeamHidden('team', true, Date.now())
+    else await h.writer.removeTeamMember('team', h.session.userId)
+    await until(() => teamEvents(res) === 2)
+    const triage = triageEvents(res)
+    await h.writer.setTriage('visible', { color: 'red' }, null, null, 2)
+    await delay(40)
+    assert.equal(triageEvents(res), triage)
+    assert.equal(res.ended, undefined)
+    if (change === 'hiding') await h.writer.setTeamHidden('team', false, Date.now())
+    else await h.writer.setTeamMember('team', h.session.userId, { security: false, dependencies: false })
+    await until(() => teamEvents(res) === 3 && triageEvents(res) === triage + 1)
+  })
+}
 
 test('revocation during an annotation read discards the poll, then reports membership loss only', async t => {
   const h = await fixture(t), { res } = await h.userFeed()

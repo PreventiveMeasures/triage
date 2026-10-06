@@ -171,12 +171,13 @@ CREATE TABLE IF NOT EXISTS managed_finding_triage_event (
 CREATE INDEX IF NOT EXISTS finding_triage_event_finding_idx ON managed_finding_triage_event(finding_id, seq);
 CREATE INDEX IF NOT EXISTS finding_triage_event_actor_at_idx ON managed_finding_triage_event(actor_id, at);
 
--- Teams group users + repos for access scoping. A team has just a name here;
+-- Teams group users + repos for access scoping. Hidden teams grant no access;
 -- the two link tables below carry the many-many relations.
 CREATE TABLE IF NOT EXISTS managed_team (
   id          TEXT PRIMARY KEY,
   slug        TEXT NOT NULL,
   name        TEXT NOT NULL UNIQUE,
+  hidden      INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 ) STRICT;

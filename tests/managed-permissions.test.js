@@ -49,7 +49,7 @@ const dataPaths = [
   '/api/admin/reports', `/api/admin/reports/${id}`, '/api/admin/reports/set-repo', '/api/admin/reports/set-visible',
   '/api/admin/bundles', `/api/admin/bundles/${id}`, '/api/admin/bundles/set-repo', '/api/admin/bundles/set-visible',
   `/api/admin/uploads/reports/${id}/0`, `/api/admin/uploads/bundles/${id}/0`,
-  '/api/admin/teams', ...['rename', 'delete', 'set-repo', 'remove-repo', 'set-member', 'remove-member'].map(action => `/api/admin/teams/${action}`),
+  '/api/admin/teams', ...['rename', 'delete', 'set-hidden', 'set-repo', 'remove-repo', 'set-member', 'remove-member'].map(action => `/api/admin/teams/${action}`),
   '/api/reports/query', `/api/reports/${id}`, `/api/reports/${id}/sources`,
   `/api/reports/${id}/triage`, `/api/reports/${id}/triage/history?finding=secret`,
   `/api/reports/${id}/comments`, `/api/reports/${id}/comments/${id}`,
@@ -104,6 +104,38 @@ test('every managed data route rejects anonymous, invalid, expired, revoked, and
   }
 })
 
+test('only admins can hide and restore teams, with strict input validation and an audit trail', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const session = await createSession(config, db, identity(1), Date.now())
+  await db.createTeam('team', 'Team', 1)
+  await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
+  const path = '/api/admin/teams/set-hidden', send = harness(db)
+  const request = body => send(path, { method: 'POST', session, body })
+  for (const role of ['none', 'view', 'triage', 'manage']) {
+    await db.setUserRole(session.userId, role)
+    assert.equal((await request({ teamId: 'team', hidden: true })).status, 403, role)
+    assert.equal((await db.getTeam('team')).hidden, false)
+  }
+  await db.setUserRole(session.userId, 'admin')
+  assert.equal((await send(path, { method: 'POST', session: { ...session, csrfToken: 'bad' }, body: { teamId: 'team', hidden: true } })).status, 403)
+  assert.equal((await send(path, { session })).status, 405)
+  for (const body of [null, {}, { teamId: 'team' }, { hidden: true }, { teamId: 1, hidden: true }, { teamId: 'team', hidden: 'true' }, { teamId: 'team', hidden: 1 }]) {
+    assert.equal((await request(body)).status, 400)
+  }
+  assert.equal((await request({ teamId: 'missing', hidden: true })).status, 404)
+  for (const hidden of [true, true, false]) {
+    assert.equal((await request({ teamId: 'team', hidden })).status, 200)
+    assert.equal((await db.getTeam('team')).hidden, hidden)
+    const sidebar = JSON.parse((await send('/api/teams', { session })).body)
+    assert.equal(sidebar.teams.length, hidden ? 0 : 1, 'even admins lose the sidebar entry')
+    const management = JSON.parse((await send('/api/admin/teams', { session })).body)
+    assert.equal(management.teams[0].hidden, hidden, 'admins can still restore hidden teams')
+  }
+  const history = await db.listActivity({ page: 1, limit: 100, kind: 'access', query: '', contexts: null })
+  assert.deepEqual(history.history.map(row => row.action).toSorted(), ['hid team Team', 'restored team Team'])
+})
+
 test('role and team mutations reject admin access lost while the request body is pending', async t => {
   for (const revocation of ['none', 'manage', 'logout', 'expired']) {
     await t.test(revocation, async st => {
@@ -121,6 +153,7 @@ test('role and team mutations reject admin access lost while the request body is
         ['/api/admin/set-role', { userId: target.userId, role: 'admin' }],
         ['/api/admin/teams', { name: 'New team' }],
         ['/api/admin/teams/rename', { teamId: 'team', name: 'Renamed team' }],
+        ['/api/admin/teams/set-hidden', { teamId: 'team', hidden: true }],
         ['/api/admin/teams/delete', { teamId: 'team' }],
         ['/api/admin/teams/set-repo', { teamId: 'team', repoId: 7, path: '' }],
         ['/api/admin/teams/remove-repo', { teamId: 'team', repoId: 7 }],

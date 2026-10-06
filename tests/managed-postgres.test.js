@@ -1,5 +1,6 @@
 import { checkLinkReports } from './_managed-link-reports.js'
 import { checkRepositoryAliases } from './_managed-repository-aliases.js'
+import { checkHiddenTeams } from './_managed-hidden-teams.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
@@ -93,6 +94,27 @@ async function database(t, options = {}) {
   return { db, connect, queries, faults }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+test('hidden teams disable navigation, grants and public links on Postgres', async t => {
+  const { db } = await database(t)
+  await checkHiddenTeams(db)
+})
+
+test('Postgres migrates existing teams as visible and preserves hidden teams across restarts', async t => {
+  const { db, connect } = await database(t)
+  await db.createTeam('team', 'Team', 1)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_team DROP COLUMN hidden; DELETE FROM managed_schema_version WHERE version = 18;') }
+  finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  assert.equal((await upgraded.getTeam('team')).hidden, false)
+  await upgraded.setTeamHidden('team', true, 2)
+  await upgraded.close()
+  const reopened = await openPostgresManagedDb(connect)
+  t.after(() => reopened.close())
+  assert.equal((await reopened.getTeam('team')).hidden, true)
+})
 
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {
   const { db } = await database(t)
