@@ -33,6 +33,51 @@ test('dependency ignore remains per report, independent of shared ignore on the 
   assert.deepEqual(map.get('finding'), { ignoredReports: ['dep.json'] })
 })
 
+test('Windows and mixed-separator dependency ignores stay per report', () => {
+  for (const directory of ['node_modules', 'vendor', 'dependencies']) {
+    for (const file of [`${directory}\\pkg\\a.js`, `C:\\project\\${directory}\\pkg\\a.js`, `x\\${directory}/pkg\\a.js`]) {
+      const finding = { ...dependency, file }
+      const map = new Map()
+      setFindingTriage(map, finding, 'ignored')
+      assert.deepEqual(map.get('finding'), { ignoredReports: ['dep.json'] }, file)
+      assert.equal(sharedFindingTriage(finding, { triage: 'ignored' }), undefined, file)
+      setFindingTriage(map, finding, 'untriaged')
+      assert.equal(map.has('finding'), false, file)
+      setFindingTriage(map, { ...finding, isApp: true }, 'ignored')
+      assert.deepEqual(map.get('finding'), { triage: 'ignored' }, `App: ${file}`)
+    }
+    assert.equal(usesReportIgnore({ ...dependency, file: `x\\my-${directory}\\a.js` }), false)
+    assert.equal(usesReportIgnore({ ...dependency, file: `x\\${directory}-copy\\a.js` }), false)
+  }
+})
+
+test('stored Windows dependency ignores survive migration while App and own ignores become shared', async () => {
+  for (const directory of ['node_modules', 'vendor', 'dependencies']) {
+    const content = JSON.stringify({ findings: [
+      { id: 'dependency', file: `x\\${directory}\\pkg\\a.js`, isApp: false },
+      { id: 'app', file: `x\\${directory}\\pkg\\a.js`, isApp: true },
+      { id: 'own', file: 'src\\a.js', isApp: false },
+    ] })
+    const entries = Object.fromEntries(['dependency', 'app', 'own'].map(id => [id, { ignoredReports: ['windows.json'] }]))
+    const result = await migrateStoredIgnores(entries, () => content)
+    assert.deepEqual(result.entries, {
+      dependency: { ignoredReports: ['windows.json'] }, app: { triage: 'ignored' }, own: { triage: 'ignored' },
+    }, directory)
+    assert.equal((await migrateStoredIgnores(result.entries, () => content)).changed, false)
+  }
+})
+
+test('Windows tree paths select the dependency directory before migrating own-code ignores', async () => {
+  for (const treeFile of ['x\\node_modules\\pkg\\a.js', 'x\\node_modules/pkg\\a.js']) {
+    const content = JSON.stringify({
+      tree: { [treeFile]: {} },
+      findings: [{ id: 'own', file: 'vendor/own.js', isApp: false }],
+    })
+    const result = await migrateStoredIgnores({ own: { ignoredReports: ['windows.json'] } }, () => content)
+    assert.deepEqual(result.entries, { own: { triage: 'ignored' } })
+  }
+})
+
 test('migration promotes only App/own report occurrences, preserves unknown scopes and decisions', () => {
   const map = new Map([
     ['finding', { color: 'red', ignoredReports: ['own.json', 'dep.json', 'app.json', 'missing.json'] }],

@@ -1,7 +1,9 @@
 // Match whole path segments, using the same directory precedence as the
 // findings dependency filter. Less-specific directory names can be own source.
 export function isDependencyFile(file, directory) {
-  return typeof file === 'string' && (file.startsWith(`${directory}/`) || file.includes(`/${directory}/`))
+  if (typeof file !== 'string') return false
+  const path = file.replaceAll('\\', '/')
+  return path.startsWith(`${directory}/`) || path.includes(`/${directory}/`)
 }
 
 export function dependencyDirectory(reports) {
