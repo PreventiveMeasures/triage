@@ -5,7 +5,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedModeLink, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { clearPreviewRole, fetchManagedBundleCatalog, fetchTeamReports, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './client-managed.js'
+import { clearPreviewRole, fetchManagedBundleCatalog, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './client-managed.js'
 import { resetManagedFixes } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
@@ -28,7 +28,7 @@ import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-statu
 import { render } from './render.js'
 import { renderLandingWorkspaces } from './landing-workspaces.js'
 import { getLoadedWorkspaceAppMetadata } from './workspace-app-load.js'
-import { ManagedTeamAppCache } from './managed-team-app.js'
+import { managedTeamAppCache as teamAppCache } from './managed-team-app.js'
 import { updateManagedLanding } from './landing-managed.js'
 import { refreshScanNavigation } from './scan-navigation.js'
 
@@ -183,7 +183,6 @@ let searchActive = false
 const expandedWorkspaceSections = new Map()
 let lastWorkspaceFocus = ''
 const teamSections = new ManagedTeamSections()
-const teamAppCache = new ManagedTeamAppCache(fetchTeamReports, () => void renderSidebar())
 
 function revealFocusedWorkspaceSection(workspaces, force) {
   const bundle = state.currentView === 'bundles' ? state.selectedBundle : null
@@ -1845,6 +1844,7 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedTeamsPending = true
   managedNavigationPending = false
   resetManagedAppState()
+  teamAppCache.sync(null, [])
   resetManagedFixes()
   stopManagedTeamFeed()
   resetManagedTriage()

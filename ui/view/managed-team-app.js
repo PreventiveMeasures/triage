@@ -4,7 +4,8 @@ import { hasRevalidateStamp } from './format.js'
 import { workspaceAppMetadata } from './workspace-app.js'
 
 // The same classification as local workspaces, using only the complete,
-// server-filtered published workspace. Never read or persist local reports.
+// server-filtered published workspace. The server backfills finding IDs before
+// returning these envelopes. Never read or persist local reports.
 export function managedTeamAppMetadata(workspace) {
   const duplicates = new Map(), reports = []
   for (const { filename, data } of workspace) {
@@ -26,15 +27,11 @@ export function managedTeamAppMetadata(workspace) {
   return workspaceAppMetadata(reports, id => [...duplicates.get(id) ?? []])
 }
 
-// Background promotion is bounded and session-owned. Navigation shares the
-// underlying report cache; an old catalog/account can never promote a new one.
+// Classify only workspaces already loaded for navigation. Sidebar rendering
+// must never fetch report bodies; retain just catalog identity and metadata.
+// An old catalog/account can never promote a new one.
 export class ManagedTeamAppCache {
-  constructor(load, changed) {
-    this.load = load
-    this.changed = changed
-    this.entries = new Map()
-    this.running = 0
-  }
+  entries = new Map()
   sync(session, teams) {
     const owner = JSON.stringify([session?.id, session?.role, session?.csrfToken])
     if (owner !== this.owner) { this.entries.clear(); this.owner = owner }
@@ -42,31 +39,22 @@ export class ManagedTeamAppCache {
     for (const id of this.entries.keys()) if (!ids.has(id)) this.entries.delete(id)
     for (const team of teams) {
       const key = JSON.stringify([team.cacheKey, team.reports.map(r => [r.id, r.cacheKey, r.visible !== false]).toSorted()])
-      // Failed/incomplete checks stay expanded until this catalog or session changes.
-      if (this.entries.get(team.id)?.key !== key) this.entries.set(team.id, { key, team, metadata: null })
+      if (this.entries.get(team.id)?.key !== key) {
+        const published = new Set(team.reports.filter(r => r.visible !== false).map(r => r.id))
+        this.entries.set(team.id, { key, published, metadata: null })
+      }
     }
-    this.pump()
   }
   get(id) { return this.entries.get(id)?.metadata ?? null }
-  pump() {
-    for (const [id, entry] of this.entries) {
-      if (this.running >= 2) return
-      if (entry.loading || entry.done) continue
-      entry.loading = true
-      this.running++
-      void this.load(id).then(workspace => {
-        if (this.entries.get(id) !== entry || workspace === null) return
-        const published = new Set(entry.team.reports.filter(r => r.visible !== false).map(r => r.id))
-        // Incomplete responses must not make an uncovered team appear covered.
-        if ([...published].some(reportId => !workspace.some(r => r.id === reportId))) return
-        entry.metadata = managedTeamAppMetadata(workspace.filter(r => published.has(r.id)))
-        return this.changed()
-      }).catch(() => {}).finally(() => {
-        entry.loading = false
-        entry.done = true
-        this.running--
-        this.pump()
-      })
-    }
+  token(id) { return this.entries.get(id) }
+  record(id, token, workspace) {
+    const entry = this.entries.get(id)
+    if (!entry || entry !== token || entry.metadata || workspace === null) return
+    const loaded = new Set(workspace.map(r => r.id))
+    // Incomplete responses must not make an uncovered team appear covered.
+    if ([...entry.published].some(reportId => !loaded.has(reportId))) return
+    entry.metadata = managedTeamAppMetadata(workspace.filter(r => entry.published.has(r.id)))
   }
 }
+
+export const managedTeamAppCache = new ManagedTeamAppCache()

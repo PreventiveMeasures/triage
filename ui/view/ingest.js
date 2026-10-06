@@ -28,6 +28,7 @@ import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
 import { startManagedTeamFeed } from './managed-feed.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
+import { managedTeamAppCache as teamAppCache } from './managed-team-app.js'
 import { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
@@ -717,6 +718,8 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   if (reportId !== null && !team.reports.some(r => r.id === reportId)) return false
   const gen = beginViewNavigation()
   const hiddenReport = team.reports.find(r => r.id === reportId && r.visible === false)
+  teamAppCache.sync(state.managedSession, state.managedTeams)
+  const appToken = teamAppCache.token(team.id)
   const workspace = await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
   if (isStaleLoad(gen)) return false
   clearReportSources()
@@ -798,6 +801,12 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   } else {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return false
+  }
+  // Published report navigation also loads the complete workspace. Hidden
+  // previews are isolated responses and cannot classify the team's findings.
+  if (!hiddenReport) {
+    teamAppCache.sync(state.managedSession, state.managedTeams)
+    teamAppCache.record(team.id, appToken, workspace)
   }
   startManagedTeamFeed()
   await renderSidebar()
