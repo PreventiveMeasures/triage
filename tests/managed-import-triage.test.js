@@ -7,6 +7,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { prepareWorkspaceImport, runWorkspaceImport } from '../client/managed/workspace-import.js'
 import { runLocalTriageImport } from '../client/managed/triage-import.js'
+import { prepareLocalTriageComparison } from '../client/managed/triage-compare.js'
 import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from '../server-managed/report-query.ts'
 
 const config = {
@@ -99,6 +100,33 @@ test('stale imports are rejected atomically; accepted triage and unattributed co
   const latest = (await request({ findingIds: ['f'] })).snapshots.f
   assert.equal((await request({ entries: { f: body.entries.f }, expected: { f: latest.version } })).status, 200)
   assert.equal((await db.listComments(['f'])).length, 2, 'reimport does not duplicate equal comments or delete existing discussion')
+})
+
+test('Compare triage reads current managed annotations without changing either side', async t => {
+  const { db, request, sessions } = await fixture(t)
+  await db.setTriage('f', { color: 'blue' }, sessions.admin.userId, 'admin', 2)
+  await db.createComment({ findingId: 'g', body: 'Only managed', authorId: sessions.admin.userId, authorLogin: 'admin' }, 3)
+  const before = await db.getImportTriage(['f', 'g'])
+  const raw = { f: { color: 'red', fix: 'Local fix' }, foreign: { comment: 'Private local note' } }
+  const local = JSON.stringify(raw)
+  const file = new File(['{"findings":[{"id":"f"},{"id":"g"},{"id":"foreign"}]}'], 'local.json')
+  const comparison = await prepareLocalTriageComparison({
+    source: { list: () => [{ value: 'local', label: 'local.json' }], importItem: (_kind, _value, read) => read(file) },
+    readTriage: () => raw, signal: new AbortController().signal,
+    api: { send: async (path, body) => {
+      if (body) assert.deepEqual(Object.keys(body), ['findingIds'])
+      assert.equal(JSON.stringify(body ?? '').includes('foreign'), false)
+      const response = await request(body, 'admin', true, body ? 'POST' : 'GET', path)
+      assert.equal(response.status, 200)
+      return response
+    } },
+  })
+  assert.equal(comparison.matched, 2)
+  assert.deepEqual(comparison.findings.map(row => [row.id, row.differences.map(diff => diff.kind)]), [
+    ['f', ['mismatch', 'local-only']], ['g', ['managed-only']],
+  ])
+  assert.deepEqual(await db.getImportTriage(['f', 'g']), before)
+  assert.equal(JSON.stringify(raw), local)
 })
 
 test('admin role is rechecked after loading report content', async t => {

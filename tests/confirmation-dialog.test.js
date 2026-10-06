@@ -4,7 +4,7 @@ import { mock, test } from 'node:test'
 // Keep the real modal completion logic; only stub its document-level imports.
 mock.module('../ui/view/dom.js', { namedExports: { makeStackedModalError: cause => new Error('Modal conflict', { cause }) } })
 mock.module('../ui/view/tooltip.js', { namedExports: { installShadowTooltipListener() {} } })
-for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'local-triage-import', 'local-content-import']) {
+for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'local-triage-import', 'local-content-import', 'triage-comparison']) {
   await import(`../ui/view/dialogs/${name}-dialog.js`)
 }
 
@@ -113,5 +113,15 @@ test('content confirmation cannot approve after its import session is cancelled'
   controller.abort()
   dialog._onConfirm()
   assert.deepEqual(results, [{ confirmed: false, selected: [] }])
+  dialog.disconnectedCallback()
+})
+
+test('triage comparison is dismissible and closes when its session is cancelled', () => {
+  const { dialog, results } = createDialog('triage-comparison')
+  const controller = new AbortController()
+  dialog.signal = controller.signal
+  dialog.firstUpdated()
+  controller.abort()
+  assert.deepEqual(results, [{ confirmed: false }])
   dialog.disconnectedCallback()
 })

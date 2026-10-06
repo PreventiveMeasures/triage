@@ -352,3 +352,57 @@ test('cancelled content selections and local/session changes cannot start upload
     fetch.mock.restore()
   }
 })
+
+test('Compare triage reads shared findings without writes or changes to a pending import', async t => {
+  const p = page(), pendingPlan = { name: 'Pending' }
+  const { listeners } = contentSource(p, 'report')
+  const file = new File(['{"findings":[{"id":"shared","title":"Shared finding"}]}'], 'local.json')
+  p.localImportSource.importItem = (_kind, _value, read) => read(file)
+  p.localDeps = triageDeps(() => ({}))
+  p._plan = pendingPlan
+  p.appState.invalidate = () => assert.fail('comparison must not invalidate managed data')
+  p.dispatchEvent = () => assert.fail('comparison must not report an import')
+  let shown = false
+  p.showTriageComparison = ({ comparison, signal }) => {
+    shown = true
+    assert.equal(signal.aborted, false)
+    assert.equal(comparison.matched, 1)
+    assert.equal(comparison.findings[0].differences[0].kind, 'managed-only')
+  }
+  t.mock.method(globalThis, 'fetch', (path, options) => {
+    if (path === '/api/admin/reports/finding-ids') {
+      assert.equal(options.body, undefined)
+      return Response.json({ reports: [{ id: 'r', findingIds: ['shared', 'other'] }] })
+    }
+    assert.equal(path, '/api/admin/reports/r/import-triage')
+    assert.deepEqual(JSON.parse(options.body), { findingIds: ['shared'] })
+    return Response.json({ snapshots: { shared: { entry: { flagged: true }, comments: [] } } })
+  })
+  await p._compareLocalTriage()
+  assert.equal(shown, true)
+  assert.equal(p._error, '')
+  assert.equal(p._message, '')
+  assert.equal(p._busy, false)
+  assert.equal(p._plan, pendingPlan)
+  assert.equal(listeners.size, 0)
+})
+
+test('Compare triage aborts on local data changes and closes when the managed session changes', async t => {
+  for (const duringDialog of [false, true]) {
+    const p = page(), { listeners } = contentSource(p, 'report')
+    p.localDeps = triageDeps(() => ({}))
+    p.localImportSource.list = () => []
+    if (!duringDialog) p.localDeps.readTriageBlob = () => { p._localChanged(); return {} }
+    p.showTriageComparison = ({ signal }) => {
+      assert.equal(duringDialog, true, 'cancelled reads must not open a comparison')
+      p.appState.setSession({ id: 'other', role: 'admin' })
+      assert.equal(signal.aborted, true)
+    }
+    const fetch = t.mock.method(globalThis, 'fetch', () => assert.fail('no findings to request'))
+    await p._compareLocalTriage()
+    assert.equal(p._busy, false)
+    assert.equal(p._comparingTriage, false)
+    assert.equal(listeners.size, 0)
+    fetch.mock.restore()
+  }
+})
