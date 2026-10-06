@@ -31,7 +31,7 @@ export async function openLinksPreview(id, reportName, rowIndex, managedReportId
   try {
     if (isManagedUiMode()) {
       const row = reportRowsForFindingIds([id]).find(candidate => candidate.report === reportName && (!managedReportId || candidate.managedReportId === managedReportId) && (rowIndex == null || candidate.index === Number(rowIndex)))
-      if (!row) throw new Error('This finding is no longer in the team.')
+      if (!row) throw new Error('This finding is no longer in the report.')
       preview = { owner, id, reportName, group: row.members.map(f => ({ ...f })), error: '' }
       state.activeTabByGroup.set(row.members[0].id, id)
       return

@@ -22,14 +22,14 @@ import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
 import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { openSyncDownloadDialog } from './dialogs/sync-download-dialog.js'
-import { clearReportSources, fetchTeamReports, login as managedLogin } from './client-managed.js'
+import { clearReportSources, fetchTeamReports, loadManagedBundle, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
 import { startManagedTeamFeed } from './managed-feed.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 import { managedTeamAppCache as teamAppCache } from './managed-team-app.js'
-import { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
+import { beginViewNavigation, currentViewGeneration, currentViewSignal } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
 // localStorage key for the last-viewed file — restored on page load so
@@ -712,7 +712,14 @@ export async function switchToFile(name, content, { workspaceId } = {}) {
 // filtering lens, but fetch on demand and never create a local workspace or
 // persist report bytes. Individual reports share this navigation generation
 // so a slow team load cannot overwrite a later report click (or Home).
-export async function switchToManagedTeam(team, reportId = null, { history = true } = {}) {
+export function switchToManagedDeduplication(id) {
+  if (state.managedSession?.role !== 'admin') return false
+  // Reuse report hydration and the Links viewer with an in-memory management
+  // scope. No team or catalog entry is created for the link report.
+  return switchToManagedTeam({ id: null, reports: [{ id }] }, id, { history: false, deduplication: true })
+}
+
+export async function switchToManagedTeam(team, reportId = null, { history = true, deduplication = false } = {}) {
   if (!isManagedUiMode() || !team || !Array.isArray(team.reports)) return false
   if (history && managedHistory.active) return managedHistory.navigate(managedRouteForIds({ view: 'findings', teamId: team.id, reportId }, state.managedTeams))
   if (reportId !== null && !team.reports.some(r => r.id === reportId)) return false
@@ -720,7 +727,15 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   const hiddenReport = team.reports.find(r => r.id === reportId && r.visible === false)
   teamAppCache.sync(state.managedSession, state.managedTeams)
   const appToken = teamAppCache.token(team.id)
-  const workspace = await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
+  const viewSignal = currentViewSignal()
+  let workspace
+  try {
+    workspace = deduplication ? await (await loadManagedBundle()).fetchManagedLinkWorkspace(reportId, { signal: viewSignal })
+      : await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
+  } catch (error) {
+    if (!isStaleLoad(gen)) showToast(error.message || 'Could not load link report.')
+    return false
+  }
   if (isStaleLoad(gen)) return false
   clearReportSources()
   if (workspace === null || reportId !== null && !workspace.some(r => r.id === reportId)) {
@@ -777,14 +792,15 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   if (findings.length > 0) {
     const { createManagedAnnotationRead, hydrateManagedReportTriage } = await import('./managed-triage.js')
     if (isStaleLoad(gen)) return false
-    const hydrated = await startManagedTeamFeed({ hydrate: async signal => {
+    const hydrate = async signal => {
       const readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal)
       const results = await Promise.all(findings.flatMap(entry => [
         hydrateManagedReportTriage(entry.id, { renderView: false, signal, readAnnotations }),
         loadManagedReportComments(entry.id, { signal, readAnnotations }),
       ]))
       return results.every(Boolean) && !signal.aborted && !isStaleLoad(gen)
-    } })
+    }
+    const hydrated = deduplication ? await hydrate(currentViewSignal()) : await startManagedTeamFeed({ hydrate })
     if (isStaleLoad(gen)) return false
     if (!hydrated) {
       await goHome({ history: false })
@@ -794,7 +810,8 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   }
   if (selectedLink) {
     state.currentView = 'links'
-    state.currentLinks = { name: selectedLink.filename, groups: selectedLink.data.links, skipped: 0 }
+    state.currentLinks = { name: selectedLink.filename, groups: selectedLink.data.links, skipped: 0,
+      ...(deduplication ? { managedId: reportId } : {}) }
     if (!(await renderAfterAnimationFrame(gen))) return false
   } else if (selected.length === 0) {
     showEmptyMainPane()
@@ -804,7 +821,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   }
   // Published report navigation also loads the complete workspace. Hidden
   // previews are isolated responses and cannot classify the team's findings.
-  if (!hiddenReport) {
+  if (!hiddenReport && !deduplication) {
     teamAppCache.sync(state.managedSession, state.managedTeams)
     teamAppCache.record(team.id, appToken, workspace)
   }

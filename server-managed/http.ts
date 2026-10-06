@@ -1503,11 +1503,11 @@ async function reportIds(data: unknown): Promise<Set<string>> {
 
 async function handleDeduplication(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id?: string): Promise<void> {
   const method = req.method ?? 'GET'
-  if (id ? method !== 'PATCH' : !['GET', 'POST'].includes(method)) { send405(res, id ? 'PATCH' : 'GET, POST'); return }
+  if (!(id ? ['GET', 'PATCH'] : ['GET', 'POST']).includes(method)) { send405(res, id ? 'GET, PATCH' : 'GET, POST'); return }
   const s = method === 'GET' ? await readSession(deps.config, deps.db, cookie, Date.now()) : await checkMutation(req, res, deps, cookie)
   if (!s) { if (method === 'GET') sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
-  if (method === 'GET') { sendJson(res, 200, { reports: await deps.db.listLinkReports() }); return }
+  if (method === 'GET') { sendJson(res, 200, id ? await deps.db.getLinkReport(s.session.id, id) : { reports: await deps.db.listLinkReports() }); return }
   if (id) {
     let body
     try { body = await readJsonBody(req, 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }

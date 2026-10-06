@@ -35,6 +35,7 @@ export function managedRoutePath(route) {
   }
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
+    if (route.view === 'manage-deduplication' && route.linkId) return `${path}?report=${encodeURIComponent(route.linkId)}`
     if (route.view === 'manage-bundles' && Number.isSafeInteger(route.createRepoId) && route.createRepoId > 0) return `${path}?createRepo=${route.createRepoId}`
     if (route.view === 'manage-scans' && route.scanMode === 'link') return `${path}?mode=link`
     if (route.view === 'manage-scans' && route.bundleId) return `${path}?bundle=${encodeURIComponent(route.bundleId)}`
@@ -58,6 +59,7 @@ export function parseManagedRoute(url) {
   if (view) {
     const createRepoId = Number(url.searchParams.get('createRepo'))
     return { view,
+      ...(view === 'manage-deduplication' && url.searchParams.get('report') ? { linkId: url.searchParams.get('report') } : {}),
       ...(view === 'manage-bundles' && Number.isSafeInteger(createRepoId) && createRepoId > 0 ? { createRepoId } : {}),
       ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}),
       ...(view === 'manage-scans' ? url.searchParams.get('mode') === 'link' ? { scanMode: 'link' }

@@ -47,6 +47,7 @@ export type CurrentView = 'findings' | 'files' | 'bundles' | 'links' | 'scan' | 
 // this is set — but `currentFile` still names it, because it IS the
 // open file as far as the sidebar and the delete button are concerned.
 export type OpenLinksFile = {
+  managedId?: string
   name: string
   groups: string[][]
   skipped: number

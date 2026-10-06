@@ -142,6 +142,22 @@ test('manager batch and single previews include only relevant global links', asy
   assert.deepEqual(batch.body.links, [['a', 'b', 'c']])
 })
 
+test('admins can view original groups in disabled link reports without enabling them', async t => {
+  const groups = [['a', 'hidden'], ['hidden', 'b']], h = await fixture(t)
+  const { body: report } = await h.upload(groups)
+  await h.db.setLinkReportEnabled(sessionId(h.session), report.id, false)
+  const path = `/api/admin/deduplication/${report.id}`
+  const detail = await h.send(path, { method: 'GET' })
+  assert.equal(detail.status, 200)
+  assert.deepEqual(detail.body.groups, groups)
+  assert.equal(detail.body.enabled, false)
+  assert.equal(Object.hasOwn(detail.body, 'payload'), false)
+  assert.equal(await h.db.getLinkRevision(), '')
+  assert.equal((await h.send('/api/admin/deduplication/00000000-0000-0000-0000-000000000000', { method: 'GET' })).status, 404)
+  await h.db.setUserRole(h.session.userId, 'manage')
+  assert.equal((await h.send(path, { method: 'GET' })).status, 403)
+})
+
 test('public workspace snapshots project the global graph and invalidate when it changes', async t => {
   const h = await fixture(t)
   await h.seed('first', [{ id: 'a', file: 'src/a.js' }, { id: 'hidden', file: 'node_modules/private/b.js' }])

@@ -303,6 +303,10 @@ entries are accepted. New imports are enabled; disabling a report keeps its
 ciphertext in SQL but removes its contribution to finding links. Importing the
 same normalized content again preserves its enabled state.
 
+View opens the same Links presentation used in local/E2E mode, with original
+groups, matching report rows and finding previews. Admins can inspect disabled
+files and unpublished reports without enabling or publishing them.
+
 This feature requires `MANAGED_STORAGE_ENCRYPTION_KEY`; it never writes link
 payloads to the blob store or falls back to plaintext. On startup, legacy reports
 with analyzer `links` are moved from the report store into this table, retaining

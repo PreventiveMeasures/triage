@@ -25,6 +25,7 @@ export async function openFindingHistoryDialog(props) {
 export * from '../client/managed/session.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
 export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-data.js'
+export { fetchManagedLinkWorkspace } from './managed/deduplication-data.js'
 export { getPreviewRole, setPreviewRole } from '../client/managed/request.js'
 export { resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './managed/state.js'
 export { fetchBundleMetadata, fetchBundleContents, fetchBundleAdvisories, fetchManagedBundleCatalog } from './managed/bundle-data.js'

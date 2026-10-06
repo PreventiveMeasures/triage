@@ -24,6 +24,7 @@ export interface LinkReportStore {
   listLegacyLinkReports(): Promise<{ id: string; filename: string }[]>
   migrateLinkReport(id: string, content: string): Promise<boolean>
   listLinkReports(): Promise<LinkReport[]>
+  getLinkReport(sessionId: string, id: string): Promise<LinkReport & { groups: string[][] }>
   getLinkRevision(): Promise<string>
   getEnabledLinkGroups(revision: string): Promise<string[][]>
   importLinkReport(sessionId: string, filename: string, content: string): Promise<{ report: LinkReport; reused: boolean }>
@@ -32,6 +33,11 @@ export interface LinkReportStore {
 const columns = `id, filename, enabled, group_count AS groupCount, finding_count AS findingCount,
   uploaded_by_login AS uploadedByLogin, uploaded_at AS uploadedAt`
 const identity = (id: string) => `managed_link_report.encrypted_groups:${id}`
+function decryptGroups(key: StorageKey | null, id: string, payload: string): string[][] {
+  if (!key) throw new ManagedMutationError(503, 'storage-encryption-required')
+  const plain = unwrapStorageValue(key, identity(id), payload)
+  try { return JSON.parse(plain.toString('utf8')) as string[][] } finally { plain.fill(0) }
+}
 export async function linkRevision(db: ManagedSql): Promise<string> {
   const rows = await db.prepare('SELECT id, sha256 FROM managed_link_report WHERE enabled = 1 ORDER BY id').all()
   return rows.length > 0 ? createHash('sha256').update(JSON.stringify(rows)).digest('base64url') : ''
@@ -84,15 +90,19 @@ export function linkReportMethods(db: ManagedSql, key: StorageKey | null): LinkR
     async listLinkReports() {
       return (await db.prepare(`SELECT ${columns} FROM managed_link_report ORDER BY uploaded_at DESC, id`).all() as Parameters<typeof map>[0][]).map(map)
     },
+    async getLinkReport(sessionId, id) {
+      await authorize(sessionId)
+      const row = await db.prepare(`SELECT ${columns}, encrypted_groups AS payload FROM managed_link_report WHERE id = ?`).get(id) as (Parameters<typeof map>[0] & { payload: string }) | undefined
+      if (!row) throw new ManagedMutationError(404, 'no-link-report')
+      const { payload, ...report } = row
+      return { ...map(report), groups: decryptGroups(key, id, payload) }
+    },
     getLinkRevision: () => linkRevision(db),
     async getEnabledLinkGroups(revision) {
       if (await linkRevision(db) !== revision) throw new ManagedMutationError(409, 'deduplication-changed')
       const rows = await db.prepare('SELECT id, encrypted_groups AS payload FROM managed_link_report WHERE enabled = 1 ORDER BY id').all() as { id: string; payload: string }[]
       if (rows.length > 0 && !key) throw new Error('Managed link reports require MANAGED_STORAGE_ENCRYPTION_KEY')
-      return rows.flatMap(row => {
-        const plain = unwrapStorageValue(key!, identity(row.id), row.payload)
-        try { return JSON.parse(plain.toString('utf8')) as string[][] } finally { plain.fill(0) }
-      })
+      return rows.flatMap(row => decryptGroups(key, row.id, row.payload))
     },
     async importLinkReport(sessionId, filename, content) {
       const user = await authorize(sessionId)

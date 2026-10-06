@@ -59,6 +59,11 @@ test('all managed pages and team/report Files routes round-trip', () => {
   assert.equal(managedRoutePath({ view: 'files', teamSlug: '../api' }), null)
 })
 
+test('managed deduplication details round-trip through history', () => {
+  const route = { view: 'manage-deduplication', linkId: 'a-link-report' }
+  assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
+})
+
 test('E2E creates no history entries or navigation listeners', async () => {
   const { browser, writes } = browserAt('/?e2e=1#workspace-secret')
   const nav = createManagedHistory(browser)

@@ -46,9 +46,12 @@ function memberTemplate({ id, title }, reports = [], linked = true, chips = noth
 }
 
 function reportChipsTemplate(reports) {
-  return html`<div class="links-finding-reports">${reports.map(({ name, findingId, managedReportId }) => html`<button
+  const management = Boolean(state.currentLinks?.managedId)
+  return html`<div class="links-finding-reports">${reports.map(({ name, findingId, managedReportId, rowIndex }) => html`<button
     type="button" class="links-finding-report report-button"
-    data-links-report=${name} data-links-finding=${findingId} data-managed-report=${managedReportId ?? nothing}
+    data-links-report=${management ? nothing : name} data-links-finding=${findingId} data-managed-report=${managedReportId ?? nothing}
+    data-links-preview=${management ? findingId : nothing} data-preview-report=${management ? name : nothing}
+    data-preview-row=${management ? rowIndex : nothing} data-preview-managed-report=${management ? managedReportId : nothing}
   >${unsafeHTML(REPORT_LOGOS[groupOf(name)] ?? REPORT_LOGOS.default)}<span class="links-finding-report-label report-button-label" data-tooltip-truncated data-tooltip=${displayName(name)}>${displayName(name)}</span></button>`)}</div>`
 }
 
@@ -105,6 +108,7 @@ export function renderLinksView(badge = nothing) {
     }
   }
   return html`<div class="links-view">
+    ${open.managedId ? html`<div class="meta-row"><button type="button" class="report-button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-deduplication' } }))}>‹ Deduplication</button></div>` : nothing}
     <header class="page-head">
       <div class="page-title">
         <h1>Links${badge}</h1>

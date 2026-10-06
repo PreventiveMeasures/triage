@@ -24,6 +24,10 @@ export async function checkLinkReports(db, readRows) {
   assert.equal(await db.getLinkRevision(), '')
   await assert.rejects(db.getEnabledLinkGroups(revision), /deduplication-changed/u)
   assert.deepEqual(await db.getEnabledLinkGroups(''), [])
+  const detail = await db.getLinkReport(session.sessionId, imported.report.id)
+  assert.equal(detail.enabled, false)
+  assert.deepEqual(detail.groups, [['visible-a', 'hidden-bridge'], ['hidden-bridge', 'visible-b']])
+  assert.equal(Object.hasOwn(detail, 'payload'), false)
   const repeated = await db.importLinkReport(session.sessionId, 'again.link.json', '[[{"id":"visible-a"},{"id":"hidden-bridge"}], [{"id":"hidden-bridge"},{"id":"visible-b"}]]')
   assert.equal(repeated.reused, true)
   assert.equal(repeated.report.id, imported.report.id)
@@ -31,6 +35,7 @@ export async function checkLinkReports(db, readRows) {
   await db.setLinkReportEnabled(session.sessionId, imported.report.id, true)
   assert.equal(await db.getLinkRevision(), revision)
   await db.setUserRole(session.userId, 'manage')
+  await assert.rejects(db.getLinkReport(session.sessionId, imported.report.id), /forbidden/u)
   await assert.rejects(db.setLinkReportEnabled(session.sessionId, imported.report.id, false), /forbidden/u)
   await assert.rejects(db.importLinkReport(session.sessionId, 'new.link.json', '[["a", "b"]]'), /forbidden/u)
   return imported.report.id

@@ -57,6 +57,9 @@ class ManagedAdminDeduplication extends ManagedPage {
       if (queued.length > 0) void this._upload(queued)
     }
   }
+  _view(report) {
+    document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-deduplication', linkId: report.id }, bubbles: true, composed: true }))
+  }
   _linkReports() {
     document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-scans', scanMode: 'link' }, bubbles: true, composed: true }))
   }
@@ -70,7 +73,7 @@ class ManagedAdminDeduplication extends ManagedPage {
         ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
         <div class="manage-list" aria-busy=${this._loading}>${this._data === null ? (this._error ? nothing : loadingRows('Loading deduplication reports…')) : reports.length === 0 ? html`<div class="empty"><strong>No link reports imported yet</strong><p>Each row in a link report lists IDs for the same finding.</p></div>` : html`
           <div class="link-table"><table><thead><tr><th>Report</th><th>Groups</th><th>Finding IDs</th><th>Imported by</th><th>Imported</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead>
-          <tbody>${reports.map(report => html`<tr><td>${report.filename}</td><td>${report.groupCount}</td><td>${report.findingCount}</td><td>${report.uploadedByLogin ?? 'Removed user'}</td><td>${new Date(report.uploadedAt).toLocaleDateString()}</td><td>${report.enabled ? 'Enabled' : 'Disabled'}</td><td><button type="button" class="btn" ?disabled=${this._busy} aria-label=${`${report.enabled ? 'Disable' : 'Enable'} ${report.filename}`} @click=${() => void this._toggle(report)}>${report.enabled ? 'Disable' : 'Enable'}</button></td></tr>`)}</tbody></table></div>`}</div>
+          <tbody>${reports.map(report => html`<tr><td>${report.filename}</td><td>${report.groupCount}</td><td>${report.findingCount}</td><td>${report.uploadedByLogin ?? 'Removed user'}</td><td>${new Date(report.uploadedAt).toLocaleDateString()}</td><td>${report.enabled ? 'Enabled' : 'Disabled'}</td><td><button type="button" class="btn" aria-label=${`View ${report.filename}`} @click=${() => this._view(report)}>View</button> <button type="button" class="btn" ?disabled=${this._busy} aria-label=${`${report.enabled ? 'Disable' : 'Enable'} ${report.filename}`} @click=${() => void this._toggle(report)}>${report.enabled ? 'Disable' : 'Enable'}</button></td></tr>`)}</tbody></table></div>`}</div>
       </div>`
   }
 }

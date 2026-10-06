@@ -52,7 +52,7 @@ function setLandingModePending(pending) {
   if (pending) landing.dataset.serverModePending = 'true'
   else delete landing.dataset.serverModePending
 }
-import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedTeam, switchToWorkspace } from './ingest.js'
+import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -2188,6 +2188,9 @@ async function restoreManagedPageContent(route, isCurrent) {
     return managedRouteForIds({ ...route, bundleTab: state.bundleDetailsTab }, state.managedTeams, adminBundles)
   }
   if (route.view === 'home') return goHome({ history: false })
+  if (route.view === 'manage-deduplication' && route.linkId) {
+    return canAccessManagedPage(route.view) && await switchToManagedDeduplication(route.linkId)
+  }
   if (Object.hasOwn(MANAGED_PAGES, route.view)) return navigateToAdminPage(route.view, { ...route, history: false })
   const team = state.managedTeams.find(candidate => candidate.id === route.teamId)
   if (!team) return false
@@ -2232,7 +2235,7 @@ document.addEventListener('managed-feed-closed', () => {
 export async function navigateToAdminPage(view, options = {}) {
   if (options.history !== false && isManagedUiMode()) {
     if (!managedHistory.active) await refreshManagedSession()
-    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(options.scanMode === 'link' ? { scanMode: 'link' } : {}) })
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(options.scanMode === 'link' ? { scanMode: 'link' } : {}), ...(options.linkId ? { linkId: options.linkId } : {}) })
   }
   if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
@@ -2270,7 +2273,7 @@ document.addEventListener('managed-notice', event => showToast(event.detail.mess
 document.addEventListener('managed-admin-navigate', (event) => {
   const view = event.detail?.view
   const actor = event.detail?.actor
-  if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode })
+  if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode, linkId: event.detail?.linkId })
 })
 
 // Cold-start mode detection. With nothing cached we don't yet know the server's
