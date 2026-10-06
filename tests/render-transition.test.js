@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createViewRenderer } from '../ui/view/render-transition.js'
+import { createViewRenderer, startViewTransition } from '../ui/view/render-transition.js'
 
 globalThis.document = {}
 globalThis.matchMedia = () => ({ matches: false })
@@ -8,7 +8,7 @@ globalThis.matchMedia = () => ({ matches: false })
 function fixture(t, { reduced = false, supported = true } = {}) {
   const paints = [], transitions = []
   let current
-  const startViewTransition = update => {
+  const startNativeTransition = update => {
     const finished = Promise.withResolvers(), ready = Promise.withResolvers()
     const transition = { ready: ready.promise, finished: finished.promise,
       skipped: false, skipTransition() { this.skipped = true; ready.reject(new DOMException('Skipped', 'AbortError')) },
@@ -17,11 +17,16 @@ function fixture(t, { reduced = false, supported = true } = {}) {
     transitions.push(transition)
     return transition
   }
-  t.mock.property(globalThis, 'document', supported ? { startViewTransition } : {})
+  t.mock.property(globalThis, 'document', supported ? { startViewTransition: startNativeTransition } : {})
   t.mock.property(globalThis, 'matchMedia', () => ({ matches: reduced }))
+  t.after(async () => {
+    for (const transition of transitions) transition.finish()
+    await Promise.all(transitions.map(transition => transition.finished))
+  })
   const render = createViewRenderer(() => paints.push({ ...current }))
+  const repaint = () => render(current.view)
   const show = (view, ready = false, options) => { current = { view, ready }; render(view, options) }
-  return { paints, show, transitions }
+  return { paints, repaint, show, transitions }
 }
 
 for (const from of ['workspace-bundles', 'findings']) {
@@ -47,6 +52,37 @@ test('bundle entry skips an earlier pending crossfade and its late callback pain
   assert.deepEqual(paints.slice(1), [{ view: 'bundles', ready: true }, { view: 'bundles', ready: true }])
   transitions[0].finish()
   await transitions[0].finished
+})
+
+for (const phase of ['pending', 'animating']) {
+  test(`bundle entry skips an outside detail transition in its ${phase} phase`, async t => {
+    const { paints, repaint, show, transitions } = fixture(t)
+    show('findings')
+    const transition = startViewTransition(repaint)
+    if (phase === 'animating') transition.update()
+    assert.equal(transition.skipped, false, 'the detail animation runs while findings remains active')
+    show('bundles', true)
+    assert.equal(transition.skipped, true, 'the detail snapshot is removed on bundle entry')
+    assert.deepEqual(paints.at(-1), { view: 'bundles', ready: true }, 'the bundle paints immediately')
+    assert.equal(transitions.length, 1, 'bundle entry does not start a replacement animation')
+    if (phase === 'pending') transition.update()
+    assert.deepEqual(paints.at(-1), { view: 'bundles', ready: true }, 'a late detail callback keeps the bundle visible')
+    transition.finish()
+    await transition.finished
+  })
+}
+
+test('a completed view transition does not lose a newer detail transition', async t => {
+  const { repaint, show, transitions } = fixture(t)
+  show('files')
+  show('findings')
+  transitions[0].update()
+  const detail = startViewTransition(repaint)
+  transitions[0].finish()
+  await transitions[0].finished
+  show('bundles')
+  assert.equal(detail.skipped, true)
+  detail.update()
 })
 
 test('other view switches still animate; completed transitions do not replace newer transitions', async t => {
