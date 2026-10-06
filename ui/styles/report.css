@@ -126,7 +126,7 @@
       white-space: nowrap;
       transition: border-color .12s, color .12s, background .12s;
       &:is(button) {
-        cursor: pointer;
+        cursor: default;
         &:hover { border-color: var(--accent); color: var(--text); }
         &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       }
@@ -225,7 +225,7 @@
       font: inherit;
       letter-spacing: inherit;
       text-align: left;
-      cursor: pointer;
+      cursor: default;
       &:hover { color: var(--accent); }
       &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
     }
@@ -1716,7 +1716,7 @@ bundle-search {
   color: var(--text);
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
   &:hover:not(:disabled) { background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   &:disabled { cursor: default; color: var(--muted); }
