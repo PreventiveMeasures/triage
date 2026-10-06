@@ -67,12 +67,6 @@ class FindingSourceDialog extends AppDialog {
     if (event.key === 'Escape') event.stopPropagation()
   }
 
-  _onBackdrop = (event) => {
-    if (event.target !== event.currentTarget) return
-    const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect()
-    if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) this._finish(null)
-  }
-
   render() {
     const range = lineRange(this.line)
     return html`<dialog aria-labelledby="source-title" @close=${this._onClose} @keydown=${this._onKeydown} @click=${this._onBackdrop}>
