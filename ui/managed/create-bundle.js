@@ -368,7 +368,7 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   hasScriptEntryPoints() {
-    return [...this._selected].some(path => /\.[mc]?[jt]s$/iu.test(path))
+    return [...this._selected].some(path => /\.[cm]?[tj]sx?$/iu.test(path))
   }
 
   async buildBundle() {

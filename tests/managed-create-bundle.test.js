@@ -172,11 +172,12 @@ test('conditions depend on selected JS/TS entry-file extensions, including mixed
     return view.values[view.strings.findIndex(string => string.includes('.showConditions='))]
   }
   assert.equal(shown(), false)
-  for (const path of ['Contract.sol', 'src/main.rs', 'package.json', 'component.jsx', 'component.tsx', 'dir.js/source.sol', 'app.js.map']) {
+  for (const path of ['Contract.sol', 'src/main.rs', 'package.json', 'dir.js/source.sol', 'app.js.map', 'app.tsx.map', 'source.json']) {
     page.toggleFile(path)
     assert.equal(shown(), false, path)
   }
-  for (const path of ['index.js', 'index.mjs', 'index.cjs', 'index.ts', 'index.mts', 'index.cts', 'src/INDEX.JS']) {
+  for (const path of ['index.js', 'index.mjs', 'index.cjs', 'index.ts', 'index.mts', 'index.cts', 'src/INDEX.JS',
+    'component.jsx', 'component.tsx', 'component.mjsx', 'component.cjsx', 'component.mtsx', 'component.ctsx', 'src/COMPONENT.TSX']) {
     page.toggleFile(path)
     assert.equal(shown(), true, path)
     page.toggleFile(path)
