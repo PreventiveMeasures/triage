@@ -23,7 +23,7 @@ const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { state } = await import('../client/state.ts')
-const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList } = await import('../ui/view/render-bundle.js')
+const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -513,4 +513,25 @@ test('sourcemap package labels stay text when dependency metadata is unavailable
   const markup = renderText(renderBundlesList([entry]))
   assert.match(markup, /<span class="bundles-dist-pkg"[^>]*>dep<\/span>/u)
   assert.doesNotMatch(markup, /<button[^>]*class="bundles-dist-pkg"/u)
+})
+
+test('aggregate issue badges respect shared-ignore scope for the same finding id', t => {
+  const id = 'shared-ignore-issue-badge'
+  const previous = state.triage.get(id)
+  t.after(() => previous === undefined ? state.triage.delete(id) : state.triage.set(id, previous))
+  const dependency = { id, file: 'node_modules/pkg/index.js', isApp: false, severity: 'high', line: 1, description: 'Shared issue' }
+  const own = { ...dependency, file: 'src/index.js' }
+  const app = { ...dependency, isApp: true }
+  for (const kind of ['bundle', 'package', 'repository']) {
+    state.triage.set(id, { triage: 'ignored', ignoredReports: ['dependency.json'] })
+    for (const finding of [dependency, own, app]) {
+      const text = renderText(renderIssuesGroupedByFile(new Map([[finding.file, [finding]]]), { kind }))
+      assert.match(text, /Shared issue/u, `${kind}: the issue remains visible`)
+      if (finding === dependency) assert.doesNotMatch(text, /bundle-issues-finding-triage/u, `${kind}: dependency ignores are per report`)
+      else assert.match(text, /triage-ignored>Ignored<\/span>/u, `${kind}: App/own shared ignore is shown`)
+    }
+    state.triage.set(id, { triage: 'fixed' })
+    const text = renderText(renderIssuesGroupedByFile(new Map([[dependency.file, [dependency]]]), { kind }))
+    assert.match(text, /triage-fixed>FIXED<\/span>/u, `${kind}: other shared statuses still apply to dependencies`)
+  }
 })

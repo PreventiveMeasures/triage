@@ -2107,16 +2107,9 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               const findingIdx = findings.indexOf(finding)
               const sev = finding.severity
               const lineLabel = formatFindingLine(finding.line)
-              const triage = state.triage.get(tabKey(finding))?.triage
-              // Show the badge for any persisted triage state. The
-              // bundle Issues tab + the package slide's `live` view
-              // both filter invalid + deleted out of `findingsByFile`
-              // upstream, so only `fixed` ever surfaces there. On the
-              // package slide's `[Invalid]` / `[Deleted]` tabs the
-              // findings carry the matching state by construction —
-              // tagging each row makes it obvious which bucket the
-              // user is looking at without having to remember which
-              // tab they clicked.
+              const triage = sharedFindingTriage(finding, state.triage.get(tabKey(finding)))
+              // Match the aggregate filters: a shared App/own-code ignore
+              // does not give a dependency occurrence an Ignored badge.
               const triageLabel = (triage === 'fixed' || triage === 'invalid' || triage === 'deleted')
                 ? triage.toUpperCase()
                 : triage === 'inprogress' ? 'In progress' : triage === 'ignored' ? 'Ignored' : null
