@@ -269,7 +269,7 @@
   "dependencies": {
     "@exodus/stasis": "1.0.0-beta.5",
     "@exodus/stasis-core": "1.0.0-beta.5",
-    "@preventive/report": "github:PreventiveMeasures/libraries#0957edb63d3ff1a58fa92f41962186aafb1df368&path:/report",
+    "@preventive/report": "1.0.0-alpha.6",
     "@preventive/upstream": "1.0.0-alpha.9",
     "ws": "^8.20.1"
   },

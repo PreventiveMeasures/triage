@@ -18,7 +18,7 @@ test('report upload errors explain invalid content and preserve other failures',
     [500, null, 'HTTP 500'],
   ]
   for (const [status, body, message] of cases) {
-    const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json(body, { status }))
+    const fetch = t.mock.method(globalThis, 'fetch', async url => url === '/api/config' ? Response.json({ managed: {} }) : Response.json(body, { status }))
     await assert.rejects(uploadReport(new File(['{}'], 'file.json'), 'csrf'), { message })
     fetch.mock.restore()
   }
@@ -145,10 +145,13 @@ test('managed generic Markdown upload splits by product before sending bytes', a
 })
 
 test('invalid generic Markdown uploads reject before sending any product', async t => {
-  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('unexpected upload') })
+  const fetch = t.mock.method(globalThis, 'fetch', async url => {
+    assert.equal(url, '/api/config')
+    return Response.json({ managed: {} })
+  })
   const invalid = genericMarkdown.replace('a/b/blob/abcdef0/f/g/h.js', 'a/other/blob/abcdef0/f/g/h.js')
   await assert.rejects(uploadReport(new File([invalid], 'bad.md'), 'csrf'), /exactly one repository/u)
-  assert.equal(fetch.mock.callCount(), 0)
+  assert.equal(fetch.mock.callCount(), 1)
 })
 
 test('oversized report uploads fail before decoding the file', async t => {
@@ -156,14 +159,17 @@ test('oversized report uploads fail before decoding the file', async t => {
   t.mock.method(globalThis, 'fetch', async url => {
     calls.push(url)
     assert.equal(url, '/api/config')
-    return Response.json({ managed: { uploadChunkBytes: CHUNK, uploadMaxBytes: { reports: CHUNK } } })
+    return Response.json({ managed: { uploadChunkBytes: CHUNK, uploadMaxBytes: { reports: 1024 } } })
   })
   for (const name of ['huge.json', 'huge.csv', 'huge.md']) {
     const file = new File([''], name)
-    Object.defineProperty(file, 'size', { value: 2 ** 32 })
+    Object.defineProperty(file, 'size', { value: 2 ** 32, configurable: true })
     t.mock.method(file, 'text', () => { throw new Error('must not decode oversized input') })
-    await assert.rejects(uploadReport(file, 'csrf'), { message: 'too large' })
-    assert.equal(file.text.mock.callCount(), 0)
+    for (const size of [1025, CHUNK, CHUNK + 1, 2 ** 32]) {
+      Object.defineProperty(file, 'size', { value: size })
+      await assert.rejects(uploadReport(file, 'csrf'), { message: 'too large' })
+      assert.equal(file.text.mock.callCount(), 0)
+    }
   }
-  assert.equal(calls.length, 3)
+  assert.equal(calls.length, 12)
 })

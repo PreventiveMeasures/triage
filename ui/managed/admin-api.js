@@ -147,11 +147,12 @@ export async function createBundle(input, csrfToken, signal) {
 // the bytes + records the metadata/attribution + auto-links the bundle. Throws
 // with the status word the row surfaces (e.g. 413 → too large).
 export async function uploadReport(file, csrfToken, repoId = null, directory = '') {
-  if (file.size > 3 * 1024 * 1024) {
-    const maxBytes = (await readJson('/api/config')).managed?.uploadMaxBytes?.reports
-    // Without an advertised bound, leave large files on the raw upload path.
-    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) return uploadSingleReport(file, csrfToken, repoId, directory)
+  const maxBytes = (await readJson('/api/config')).managed?.uploadMaxBytes?.reports
+  if (Number.isSafeInteger(maxBytes) && maxBytes > 0) {
     if (file.size > maxBytes) throw new Error('too large')
+  } else if (file.size > 3 * 1024 * 1024) {
+    // Without an advertised bound, leave large files on the raw upload path.
+    return uploadSingleReport(file, csrfToken, repoId, directory)
   }
   const products = splitMarkdownImport(await file.text(), file.name)
   if (!products) return uploadSingleReport(file, csrfToken, repoId, directory)
