@@ -29,6 +29,7 @@ class DependencyMatrix extends LitElement {
   willUpdate(changes) {
     if (!this.graph) return
     if (changes.has('graph') || this.query !== graph2.pathFilter || this.dirty) {
+      const previousRows = this.model?.rows
       this.query = graph2.pathFilter
       this.model = buildDependencyMatrix(this.graph, { expanded: this.expanded, order: this.order,
         query: this.query, neighborhood: this.neighborhood, cyclesOnly: this.cyclesOnly })
@@ -40,7 +41,11 @@ class DependencyMatrix extends LitElement {
         || (this.selection.to && (!this.model.index.has(this.selection.to)
           || (this.cyclesOnly && !this.model.cells.get(this.selection.from)?.has(this.selection.to)))))) this.selection = null
       this.hover = null
-      this.dirty = false; this.needsFit = true
+      this.dirty = false
+      // Popup and background renders supply fresh graph objects. Refresh the
+      // cells and inspector without moving the viewport unless its axes change.
+      this.needsFit ||= !previousRows || previousRows.length !== this.model.rows.length
+        || this.model.rows.some((row, i) => row.id !== previousRows[i].id)
     }
   }
 
