@@ -1608,12 +1608,11 @@ function mountBundleSourceOverlay() {
   if (slot) litRender(renderBundleSourceModal(), slot)
 }
 
-// In-place updates, initial paints and bundle navigation stay synchronous. Other
-// view switches retain their crossfade when supported and motion is enabled.
+// Paint synchronously, cancelling any detail animation when the view changes.
 const renderView = createViewRenderer(renderImpl)
 
-export function render(options) {
-  renderView(state.currentView, options)
+export function render() {
+  renderView(state.currentView)
 }
 
 // Reuse #report's single slot div across renders — `innerHTML =

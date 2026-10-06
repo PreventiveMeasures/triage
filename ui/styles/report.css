@@ -45,12 +45,8 @@
      when findings overflow — without it, findings are clipped
      outside the report's painted area and padding-bottom has no
      effect. */
-  /* `view-transition-name` is gated on `.active` so it's only set
-     once a report is mounted — `#report` is `display: none` until
-     then and has nothing to snapshot. */
   &.active {
     display: flex; flex-direction: column; min-height: 100%; flex-shrink: 0;
-    view-transition-name: report-view;
 
     /* Inner views that own their own scroll (bundle terminal,
        code viewer, packages slide, kanban board, bundles/packages
@@ -2960,19 +2956,9 @@ body.report-fullscreen {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* Cross-view transition — render.js wraps the DOM swap in
-   `document.startViewTransition` when `state.currentView` changes.
-   We avoid any translate / scale because the old + new snapshots
-   overlap during the animation and a positional offset on one side
-   shows up as a double-image wobble. Linear easing keeps the
-   opacity crossfade symmetric at the midpoint. */
-::view-transition-old(report-view),
-::view-transition-new(report-view),
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 90ms;
-  animation-timing-function: linear;
-}
+/* Only explicitly named detail elements participate in transitions. The
+   browser's default root snapshot would crossfade the entire page. */
+:root { view-transition-name: none; }
 
 /* Advisories tab body — bundle slide. Stasis bundles carry per-
    module name+version, so the tab fans out a bulk lookup against
