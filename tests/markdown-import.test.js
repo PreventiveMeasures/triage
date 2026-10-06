@@ -43,8 +43,15 @@ test('repository and prefix errors reject the complete import, while other forma
   const invalidRepo = genericMarkdown.replace('a/b/blob/abcdef0/f/g/h.js', 'a/other/blob/abcdef0/f/g/h.js')
   assert.throws(() => splitMarkdownImport(invalidRepo, 'bad.md'), /exactly one repository/u)
   assert.equal(readManagedReport(invalidRepo, 'bad.md').data, null)
-  assert.throws(() => splitMarkdownImport(genericMarkdown.replaceAll('BBB-05', 'AAA-05'), 'bad.md'), /prefix.*shared/u)
+  assert.throws(() => splitMarkdownImport(genericMarkdown.replaceAll('BBB-05', 'AAA-05'), 'bad.md'), /unsupported product ID prefixes/u)
   for (const content of ['{"findings":[]}', '# Claude report\n\n## Details\n\nText', 'finding_url,repository\na,b']) {
     assert.equal(splitMarkdownImport(content, 'existing.csv'), null)
   }
+})
+
+test('unsupported generic Markdown aborts both local and managed imports', async () => {
+  const text = genericMarkdown.replace('### Title', '<!-- hidden -->\n\n### Title')
+  assert.throws(() => splitMarkdownImport(text, 'bad.md'), /unsupported Markdown syntax/u)
+  assert.equal(readManagedReport(text, 'bad.md').data, null)
+  assert.equal(await loadManagedFindings(text, 'bad.md'), null)
 })

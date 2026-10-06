@@ -150,3 +150,20 @@ test('invalid generic Markdown uploads reject before sending any product', async
   await assert.rejects(uploadReport(new File([invalid], 'bad.md'), 'csrf'), /exactly one repository/u)
   assert.equal(fetch.mock.callCount(), 0)
 })
+
+test('oversized report uploads fail before decoding the file', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls.push(url)
+    assert.equal(url, '/api/config')
+    return Response.json({ managed: { uploadChunkBytes: CHUNK, uploadMaxBytes: { reports: CHUNK } } })
+  })
+  for (const name of ['huge.json', 'huge.csv', 'huge.md']) {
+    const file = new File([''], name)
+    Object.defineProperty(file, 'size', { value: 2 ** 32 })
+    t.mock.method(file, 'text', () => { throw new Error('must not decode oversized input') })
+    await assert.rejects(uploadReport(file, 'csrf'), { message: 'too large' })
+    assert.equal(file.text.mock.callCount(), 0)
+  }
+  assert.equal(calls.length, 3)
+})
