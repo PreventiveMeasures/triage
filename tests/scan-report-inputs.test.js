@@ -160,7 +160,7 @@ test('Link auto-selects a sole workspace or repository, without undoing deselect
   assert.deepEqual(selectedIds(component), [])
   component._sources.link.reports = [{ id: 'report-1', repoIds: [1] }]
   component._changeKind('repository')
-  assert.equal(component.selection.source.id, 1)
+  assert.deepEqual(component.selection.source.ids, [1])
   assert.deepEqual(selectedIds(component), ['report-1'])
   component.loadSources = () => Promise.resolve(component._sources)
   await component._load()
@@ -181,6 +181,109 @@ test('managed Link rejects workspace scopes and restored inputs stay within thei
   component._restore()
   assert.deepEqual(selectedIds(component), [])
   assert.equal(component.selection.source, null)
+})
+
+test('Link combines repositories once and preserves report choices when adding, replacing, and removing rows', () => {
+  const component = inputs()
+  component.mode = 'link'
+  component._sources.link.repositories.push({ id: 3, label: 'acme/three' })
+  component._sources.link.reports.push({ id: 'shared', repoIds: [1, 2] }, { id: 'report-4', repoIds: [3] })
+  component._addRepository()
+  assert.deepEqual(component._current.sourceIds, [null], 'choose the initial repository before adding another')
+  component._selectSource(1)
+  component._toggle('report-1', false)
+  component._toggle('shared', false)
+  component._addRepository()
+  component._addRepository()
+  assert.deepEqual(component._current.sourceIds, [1, null], 'only one empty picker at a time')
+  component._selectSource(1, 1)
+  component._selectSource(99, 1)
+  assert.deepEqual(component._current.sourceIds, [1, null], 'reject duplicate and unavailable repositories')
+  component._selectSource(2, 1)
+  assert.deepEqual(component._inputs.map(input => input.id), ['report-1', 'report-2', 'report-3', 'shared'])
+  assert.deepEqual(selectedIds(component), ['report-2', 'report-3'], 'adding a repository keeps existing deselections')
+  assert.deepEqual(component.selection.source, { kind: 'repository', ids: [1, 2], label: 'acme/one, acme/two' })
+  component._selectAll(true)
+  assert.deepEqual(selectedIds(component), ['report-1', 'report-2', 'report-3', 'shared'], 'shared reports are selected only once')
+  component._toggle('report-3', false)
+  component._selectSource(3, 0)
+  assert.deepEqual(selectedIds(component), ['shared', 'report-4'], 'replacement removes old-only reports and preserves the remaining scope')
+  component._removeRepository(0)
+  assert.deepEqual(component.selection.source.ids, [2])
+  assert.deepEqual(selectedIds(component), ['shared'], 'removal retains shared reports and prior deselections')
+  component._removeRepository(0)
+  assert.deepEqual(component._current.sourceIds, [2], 'the final picker stays')
+  component._selectAll(false)
+  assert.deepEqual(selectedIds(component), [])
+  component._selectAll(true)
+  assert.deepEqual(selectedIds(component), ['report-3', 'shared'])
+})
+
+test('repository rows retain opaque local/managed IDs and stay independent of Merge and workspace scopes', () => {
+  for (const ids of [[1, 2], ['acme/one', 'acme/two']]) {
+    const component = inputs()
+    component._sources.link.repositories.forEach((repo, index) => { repo.id = ids[index] })
+    component._sources.link.reports.forEach(report => { report.repoIds = report.repoIds.map(id => ids[id - 1]) })
+    component._selectSource('bundle-1')
+    component._toggle('result-1', false)
+    component.mode = 'link'
+    component._selectSource(ids[0])
+    component._addRepository()
+    component._selectSource(ids[1], 1)
+    assert.equal(component._canAddRepository, false, 'no more rows when all repositories are selected')
+    component._addRepository()
+    assert.deepEqual(component.selection.source.ids, ids)
+    component._loading = true
+    component._removeRepository(0)
+    assert.deepEqual(component._current.sourceIds, ids)
+    assert.deepEqual(selectedIds(component), [])
+    component._loading = false
+    component.mode = 'merge'
+    assert.deepEqual(selectedIds(component), ['result-2'])
+    component._addRepository()
+    assert.deepEqual(component._current.sourceIds, ['bundle-1'])
+    component.mode = 'link'
+    assert.deepEqual(component.selection.source.ids, ids)
+    component._changeKind('workspace')
+    assert.equal(component.selection.source.id, 'workspace-1')
+    assert.deepEqual(selectedIds(component), ['report-1', 'report-3'])
+    component._addRepository()
+    assert.deepEqual(component._current.sourceIds, ['workspace-1'])
+  }
+})
+
+test('multi-repository restarts retain exact inputs and exclude unavailable scopes and reports', () => {
+  const component = inputs()
+  component.mode = 'link'
+  component._selectSource(1)
+  component._addRepository()
+  component._selectSource(2, 1)
+  component._toggle('report-1', false)
+  const page = new ScanPage()
+  page._mode = 'report'
+  page._reportMode = 'link'
+  page._reportInput = component.selection
+  page._runScan()
+  for (const timer of page._timers) clearTimeout(timer)
+  const scan = page._scans[0]
+  assert.deepEqual(scan.reportSource.ids, [1, 2])
+  assert.deepEqual(scan.inputIds, ['report-2', 'report-3'])
+  assert.equal(scan.bundleName, 'acme/one, acme/two')
+  component._removeRepository(0)
+  assert.deepEqual(scan.reportSource.ids, [1, 2], 'editing the form cannot mutate saved settings')
+  page._restartScan(scan)
+  component.restore = page._reportRestore
+  component._restore()
+  assert.deepEqual(component.selection.source.ids, [1, 2])
+  assert.deepEqual(selectedIds(component), ['report-2', 'report-3'])
+  component._sources.link.repositories = component._sources.link.repositories.filter(repo => repo.id !== 1)
+  component._restore()
+  assert.deepEqual(component.selection.source.ids, [2])
+  assert.deepEqual(selectedIds(component), ['report-3'], 'stale reports cannot reintroduce a removed repository')
+  component._sources.link.reports = []
+  component._restore()
+  assert.equal(component.selection.source, null)
+  assert.deepEqual(selectedIds(component), [])
 })
 
 test('stale report-source loads are ignored and loading/errors cannot submit earlier selections', async () => {

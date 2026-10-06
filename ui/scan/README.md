@@ -60,8 +60,13 @@ available in local/E2E, using actual browser storage membership. Managed uses
 visible reports with an assigned repository. Both apply the report library's
 `isAppFinding` rule: a report must contain at least one application-layer finding.
 Empty scopes are hidden, and a sole scope is selected automatically. Choosing a
-scope selects all its reports; users can deselect any of them. Restarts preserve
-the exact scope and selected IDs, intersected with the current catalogue.
+scope selects all its reports; users can deselect any of them. Repository scopes
+have a + button to add more repositories and remove buttons for extra rows.
+The combined report list counts shared reports once. Adding or replacing a
+repository selects newly available reports while preserving existing checkbox
+choices; removing one drops only reports outside the remaining repositories.
+Restarts preserve the selected repositories and report IDs, intersected with
+the current catalogue. Existing single-repository restarts remain supported.
 Rows show app-finding counts, excluding source-only findings; deduplicated groups
 count once. Future Link requests will contain a raw reports export, like workspace
 export, filtered to app findings only. Export and submission are deliberately

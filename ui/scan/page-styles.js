@@ -1,4 +1,5 @@
 import { css } from 'lit'
+import { ROW_ACTION_STYLES } from './row-actions.js'
 
 export const SCAN_PAGE_STYLES = css`
   /* The containing page owns the outer gutters, in both Manage and local. */
@@ -114,9 +115,7 @@ export const SCAN_PAGE_STYLES = css`
   .agentic-panel .panel-head { align-items: center; }
   .prompt-row { display: flex; align-items: start; gap: .4rem; min-width: 0; }
   .prompt-row textarea { flex: 1; width: 0; }
-  .prompt-action { display: grid; place-items: center; flex: 0 0 auto; width: 1.5rem; height: 1.5rem; padding: .25rem; border: 0; border-radius: var(--ui-radius, 4px); color: var(--muted); background: transparent; }
-  .prompt-action:hover { color: var(--text); background: var(--surface-active); }
-  .prompt-action svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.4; }
+  ${ROW_ACTION_STYLES}
   textarea { min-width: 0; resize: vertical; padding: .4rem .5rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .76rem; }
   .run { padding: .48rem .8rem; border: 0; border-radius: var(--ui-radius, 6px); color: var(--bg); background: var(--accent); font-size: .8rem; font-weight: 600; }
   .run:disabled { opacity: .45; }
