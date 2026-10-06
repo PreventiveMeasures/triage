@@ -932,6 +932,11 @@ report.addEventListener('click', (e) => {
   const filesToggle = e.target.closest('[data-action="toggle-files"]')
   if (filesToggle) {
     if (navigateManagedReportView(state.currentView === 'files' ? 'findings' : 'files')) return
+    if (state.currentView === 'workspace-reports' || state.currentView === 'workspace-bundles') {
+      state.currentView = 'files'
+      void switchToWorkspace(state.currentWorkspace)
+      return
+    }
     if (state.currentView === 'files') {
       state.currentView = 'findings'
     } else {

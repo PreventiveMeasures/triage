@@ -51,7 +51,7 @@ import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
-import { renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
+import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -315,15 +315,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   // like the Trash button: clicking flips state.currentView between
   // 'files' and the previous (saved) view. Gated on
   // `treeFileCount > 1`; a single-file tree adds no value.
-  const filesActive = state.currentView === 'files'
-  const filesBtnTpl = (treeFileCount ?? 0) > 1
-    ? html`<button
-        type="button"
-        class=${classMap({ 'files-toggle-btn': true, active: filesActive })}
-        data-action="toggle-files"
-        aria-pressed=${String(filesActive)}
-      >${`${treeFileCount} files`}</button>`
-    : nothing
+  const filesBtnTpl = filesButtonTemplate(treeFileCount, state.currentView)
 
   return html`<header class="page-head">
     <div class="page-title">
@@ -1787,7 +1779,7 @@ function renderImpl() {
     const kind = state.currentView.slice(10)
     const context = workspaceContent(state, listWorkspaces(), getKind)
     const slot = ensureReportSlot('workspace-content-slot')
-    if (slot) litRender(renderWorkspaceContent(context, kind), slot)
+    if (slot) litRender(renderWorkspaceContent(context, kind, state.workspaceContentFileCount), slot)
     document.title = context ? `${context.title} — ${kind}` : `DeepView — ${kind}`
     return
   }

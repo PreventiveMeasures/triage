@@ -41,13 +41,23 @@ export function workspaceContentButton(context, kind, view) {
   return html`<button type="button" class=${`files-toggle-btn${active ? ' active' : ''}`} data-action=${`workspace-${kind}`} aria-pressed=${String(active)}>${`${count} ${count === 1 ? kind.slice(0, -1) : kind}`}</button>`
 }
 
-export function renderWorkspaceContent(context, kind) {
+export function workspaceFileCount(reports) {
+  return new Set(reports.flatMap(report => report?.source === 'links' ? [] : Object.keys(report?.tree ?? {}))).size
+}
+
+export function filesButtonTemplate(count, view) {
+  if (!(count > 1)) return nothing
+  const active = view === 'files'
+  return html`<button type="button" class=${`files-toggle-btn${active ? ' active' : ''}`} data-action="toggle-files" aria-pressed=${String(active)}>${`${count} files`}</button>`
+}
+
+export function renderWorkspaceContent(context, kind, fileCount = 0) {
   if (!context) return html`<p class="workspace-content-empty">This workspace is no longer available.</p>`
   const view = `workspace-${kind}`
   const items = context[kind]
   return html`<section class="workspace-content-view">
     <header class="page-head"><div class="page-title">
-      <h1>${workspaceTitleTemplate(context, view)}${workspaceContentButton(context, 'reports', view)}${workspaceContentButton(context, 'bundles', view)}</h1>
+      <h1>${workspaceTitleTemplate(context, view)}${workspaceContentButton(context, 'reports', view)}${workspaceContentButton(context, 'bundles', view)}${filesButtonTemplate(fileCount, view)}</h1>
     </div></header>
     ${items.length > 0 ? html`<ul class="workspace-content-list">
       ${items.map(item => {
@@ -61,7 +71,7 @@ export function renderWorkspaceContent(context, kind) {
           <button type="button" class="workspace-content-row"
             data-workspace-report=${kind === 'reports' ? item.managedId ?? item.name : nothing}
             data-workspace-bundle=${kind === 'bundles' ? item.managedId ?? item.integrity : nothing} ?disabled=${!item.available}>
-            <svg class="workspace-content-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <svg class="workspace-content-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <path d=${kind === 'bundles' ? 'm12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5' : 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5'}/>
             </svg>
             <span class="workspace-content-label"><span class="workspace-content-name">${item.name}${item.hidden ? html` <span class="workspace-content-visibility">Hidden</span>` : nothing}</span>

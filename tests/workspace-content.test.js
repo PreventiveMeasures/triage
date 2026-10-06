@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from '../ui/view/workspace-content.js'
+import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceFileCount, workspaceTitleTemplate } from '../ui/view/workspace-content.js'
 
 function text(value) {
   if (value == null || typeof value === 'symbol') return ''
@@ -46,6 +46,21 @@ test('workspace titles navigate from Files and bundle lists but are plain text i
   for (const view of ['files', 'workspace-reports', 'workspace-bundles']) {
     assert.match(text(workspaceTitleTemplate(context, view)), /data-action="workspace-findings"/u)
   }
+})
+
+test('report and bundle lists retain the Files button with the merged source file count', () => {
+  const reports = [{ tree: { 'src/a.js': {}, 'src/shared.js': {} } }, { tree: { 'src/shared.js': {}, 'src/b.js': {} } }, null]
+  const count = workspaceFileCount(reports)
+  assert.equal(count, 3)
+  const context = { title: 'Workspace: App', reports: [], bundles: [] }
+  for (const kind of ['reports', 'bundles']) {
+    const list = text(renderWorkspaceContent(context, kind, count))
+    assert.match(list, /data-action="toggle-files" aria-pressed=false>3 files/u)
+  }
+  assert.match(text(filesButtonTemplate(count, 'files')), /aria-pressed=true>3 files/u)
+  assert.equal(text(filesButtonTemplate(1, 'workspace-reports')), '')
+  assert.equal(text(filesButtonTemplate(0, 'workspace-bundles')), '')
+  assert.equal(workspaceFileCount([null, { source: 'links', tree: { ignored: {} } }]), 0)
 })
 
 test('report lists match workspace membership and expose missing local files without opening them', () => {

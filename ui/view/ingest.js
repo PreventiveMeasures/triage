@@ -29,6 +29,7 @@ import { loadManagedReportComments } from './managed-comments.js'
 import { startManagedTeamFeed } from './managed-feed.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 import { managedTeamAppCache as teamAppCache } from './managed-team-app.js'
+import { workspaceFileCount } from './workspace-content.js'
 import { beginViewNavigation, currentViewGeneration, currentViewSignal } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
@@ -728,10 +729,16 @@ export async function switchToWorkspaceContent(id, kind, { history = true } = {}
   if (managed && history && managedHistory.active) {
     return managedHistory.navigate(managedRouteForIds({ view, teamId: id }, state.managedTeams))
   }
+  const workspaceId = managed ? `managed-team:${id}` : id
+  const fileCount = state.currentWorkspace === workspaceId
+    ? ['workspace-reports', 'workspace-bundles'].includes(state.currentView)
+      ? state.workspaceContentFileCount : workspaceFileCount(state.reports)
+    : 0
   const gen = beginViewNavigation()
   closeSessionsExcept(new Set())
   clearActiveView({ forgetLastView: false })
-  state.currentWorkspace = managed ? `managed-team:${id}` : id
+  state.currentWorkspace = workspaceId
+  state.workspaceContentFileCount = fileCount
   state.currentManagedTeam = managed ? id : null
   state.currentView = view
   if (managed) state.bundles = managedTeamBundleEntries(state.managedTeams)
@@ -743,6 +750,17 @@ export async function switchToWorkspaceContent(id, kind, { history = true } = {}
   if (!managed) setSecureItem(LAST_FILE_KEY, `${kind === 'reports' ? 'wrs' : 'wbs'}:${id}`).catch(() => {})
   await renderSidebar()
   if (isStaleLoad(gen)) return false
+  render({ animate: false })
+  // Lists need the same union of source files as Findings/Files, including on
+  // direct entry. Read report data without hydrating findings or annotations;
+  // the normal workspace/team loader runs when the Files button is pressed.
+  const reports = managed
+    ? (await fetchTeamReports(id, { signal: currentViewSignal() }).catch(() => null))?.map(entry => entry.data)
+    : await Promise.all((parent.reports ?? []).map(async name => {
+      try { return readReport(await readFile(name)).data } catch { return null }
+    }))
+  if (isStaleLoad(gen)) return false
+  if (reports) state.workspaceContentFileCount = workspaceFileCount(reports)
   render({ animate: false })
   return true
 }
@@ -1114,6 +1132,7 @@ function clearActiveView({ forgetLastView = true } = {}) {
   state.currentManagedReport = null
   state.currentFile = null
   state.currentWorkspace = null
+  state.workspaceContentFileCount = 0
   state.currentReportWorkspace = null
   state.currentLinks = null
   state.managedReport = null
