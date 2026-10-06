@@ -47,7 +47,7 @@ header button:hover { color: var(--text); }
 .cycle-label { position: absolute; top: 7px; left: 14px; color: var(--muted); font-size: .63rem; user-select: none; }
 .cycle-toggle {
   display: flex; align-items: center; gap: .4rem; padding: 0; border: 0;
-  background: transparent; font-family: inherit; line-height: 16px; cursor: pointer;
+  background: transparent; font-family: inherit; line-height: 16px;
 }
 .cycle-toggle:hover { color: var(--text); }
 .cycle-chevron { font-size: .85rem; }
