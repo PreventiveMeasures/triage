@@ -17,6 +17,7 @@ const config = 'babel.config.js'
 const pluginLoaders = [loader, 'node_modules/@babel/core/lib/config/files/plugins.js']
 const dynamicPlugins = [
   ['@react-native/babel-preset', 'index.js'],
+  ['@react-native/babel-preset', 'src/index.js'],
   ['react-native-reanimated', 'plugin/index.js'],
   ['@org/react-native-reanimated', 'plugin/index.js'],
 ]
@@ -107,7 +108,7 @@ test('Babel dynamic plugin exclusions match exact loader and entry-point paths',
       ...targets.flatMap(path => [`${path}.bak`, `${path}/other.js`, path.replace('node_modules/', 'my_node_modules/')]),
       'node_modules/@babel/preset-typescript/lib/index.js', 'node_modules/@babel/plugin-transform-typescript/lib/index.js',
       'node_modules/react-native-reanimated/index.js', 'node_modules/react-native-reanimated/plugin/helper.js',
-      'node_modules/@react-native/babel-preset/src/index.js', 'node_modules/@other/babel-preset/index.js',
+      'node_modules/@react-native/babel-preset/src/helpers.js', 'node_modules/@other/babel-preset/index.js',
     ]) assert.equal(countsTowardsCycles(source, target), true, `${source} -> ${target}`)
   }
   for (const source of [
