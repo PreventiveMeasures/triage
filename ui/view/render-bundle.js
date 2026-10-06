@@ -330,7 +330,7 @@ export function buildBundleGraphData(details) {
     supportsLayers: true,
     layerRoots,
     // Entry packages are traversal roots too, but are not necessarily own source.
-    ownSourcePackages: ownFiles.length > 0 ? new Set(ownFiles.map(pkgOf)) : undefined,
+    ownSourcePackages: new Set(ownFiles.map(pkgOf)),
     reasons: [...reasons.keys()],
   }
 }
