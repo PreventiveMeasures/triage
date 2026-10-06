@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
@@ -17,11 +18,23 @@ test('build requests pin commits, reject unsafe inputs, and apply presets', () =
     { conditions: ['browser', 'development'], mainFields: ['browser', 'module', 'main'], typescript: true, jsx: true })
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'metro', conditions: ['react-native'], platforms: ['ios', 'android'] } }).options,
     { metro: true, platforms: ['ios', 'android'], typescript: true, jsx: true })
-  for (const entries of [[], ['../a.js'], ['/a.js'], ['a/./b.js'], ['a\\b.js'], ['a.js\n'], ['a.js', 'a.sol'], ['file.json'], ['main.rs'], Array.from({ length: 101 }, () => 'a.js')]) {
+  for (const entries of [[], ['../a.js'], ['/a.js'], ['a/./b.js'], ['a\\b.js'], ['a.js\n'], ['a.js', 'a.sol'], ['a.tsx', 'a.sol'],
+    ['file.json'], ['main.rs'], ['component.tsx.map'], ['dir.jsx/source.sol', 'component.jsx'], Array.from({ length: 101 }, () => 'a.js')]) {
     assert.throws(() => input(entries), { status: 400 })
   }
   for (const value of ['main', 'a'.repeat(39), null]) assert.throws(() => input(['a.js'], { commit: value }))
   assert.throws(() => input(['a.js'], { conditions: { preset: 'metro', conditions: ['development'], platforms: ['ios'] } }), { code: 'metro-conditions' })
+})
+
+test('JSX and TSX entry points use the same build options as other scripts for every preset', () => {
+  for (const preset of ['node', 'browser', 'metro']) {
+    const extra = { conditions: { preset, conditions: [preset === 'metro' ? 'react-native' : preset], platforms: ['ios', 'android'] } }
+    const entries = ['src/component.jsx', 'src/view.tsx', 'src/main.ts']
+    const parsed = input(entries, extra)
+    assert.deepEqual(parsed.entries, entries)
+    assert.equal(parsed.directory, 'src')
+    assert.deepEqual(parsed.options, input(['src/main.ts'], extra).options)
+  }
 })
 
 test('filenames follow Stasis github-bundle defaults and portable truncation', () => {
@@ -58,10 +71,28 @@ function tarball(files) {
 }
 
 function projectClient(files) {
+  const trees = new Map()
   return {
     listRepoDir({ repo, sha, directory }) {
-      assert.equal(repo, 'org/repo'); assert.equal(sha, commit); assert.equal(directory, undefined)
-      return Promise.resolve(Object.keys(files).map(path => ({ path, type: 'blob', mode: '100644', sha: 'b'.repeat(40) })))
+      assert.equal(repo, 'org/repo'); assert.equal(sha, commit)
+      const prefix = directory ? directory + '/' : ''
+      const entries = new Map()
+      for (const path of Object.keys(files).filter(candidate => candidate.startsWith(prefix))) {
+        const relative = path.slice(prefix.length)
+        const name = relative.split('/')[0]
+        const isDirectory = relative.includes('/')
+        const treeSha = createHash('sha1').update(prefix + name).digest('hex')
+        if (isDirectory) trees.set(treeSha, prefix + name)
+        entries.set(name, { path: name, type: isDirectory ? 'tree' : 'blob', mode: isDirectory ? '040000' : '100644', sha: treeSha })
+      }
+      return Promise.resolve([...entries.values()])
+    },
+    getRepoTreeTarball({ repo, tree }) {
+      assert.equal(repo, 'org/repo')
+      assert.ok(trees.has(tree))
+      const prefix = trees.get(tree) + '/'
+      return Promise.resolve(tarball(Object.fromEntries(Object.entries(files)
+        .filter(([path]) => path.startsWith(prefix)).map(([path, text]) => [path.slice(prefix.length), text]))))
     },
     getRepoTarball({ repo, sha }) {
       assert.equal(repo, 'org/repo'); assert.equal(sha, commit)
@@ -90,6 +121,25 @@ test('real Stasis builds a commit-pinned TypeScript import graph and produces re
   assert.deepEqual([...bundle.entries], ['index.ts'])
   await assert.rejects(buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1, scopes: [null] }, projectClient(files)), /too-large/u)
   await assert.rejects(buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: ['src'] }, projectClient(files)), /build-scope/u)
+})
+
+test('real Stasis builds from the nearest package and preserves entries under a wider workspace root', async () => {
+  const root = { name: 'fixture', version: '1.0.0', workspaces: ['app'] }
+  const app = { name: 'app', version: '1.0.0', type: 'module' }
+  const project = {
+    'package.json': JSON.stringify(root),
+    'package-lock.json': JSON.stringify({ name: root.name, version: root.version, lockfileVersion: 3, requires: true,
+      packages: { '': root, app: { version: app.version }, 'node_modules/app': { resolved: 'app', link: true } } }, null, 2) + '\n',
+    'app/package.json': JSON.stringify(app),
+    'app/src/index.ts': files['index.ts'], 'app/src/value.ts': files['value.ts'],
+  }
+  const result = await buildStasisBundle({ input: input(['app/src/index.ts']), github: 'org/repo', token: null,
+    maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+  const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
+  assert.equal(result.filename, 'org-repo.app.aaaaaaa.stasis.code.br')
+  assert.equal(result.directory, '')
+  assert.deepEqual([...bundle.entries], ['app/src/index.ts'])
+  assert.ok(bundle.sources.has('app/src/value.ts'))
 })
 
 test('worker cancellation releases the per-user build slot and prevents duplicate builds', async () => {
@@ -134,6 +184,23 @@ test('real Stasis builds Solidity with Soldeer and follows local imports', async
   const bundle = Bundle.parse(brotliDecompressSync(built.bytes).toString())
   assert.deepEqual([...bundle.entries], ['Token.sol'])
   assert.equal(bundle.formats.get('Base.sol'), 'solidity')
+})
+
+test('real Stasis builds nested Solidity from its dependency files despite a closer package.json', async () => {
+  const project = {
+    'contracts/foundry.toml': '[profile.default]\nsrc = "src"\nlibs = ["dependencies"]\n[dependencies]\n',
+    'contracts/soldeer.lock': 'version = 2\ndependencies = []\n',
+    'contracts/src/package.json': '{"name":"unrelated"}',
+    'contracts/src/Token.sol': 'pragma solidity ^0.8.0; import "./Base.sol"; contract Token is Base {}',
+    'contracts/src/Base.sol': 'pragma solidity ^0.8.0; contract Base {}',
+  }
+  const result = await buildStasisBundle({ input: input(['contracts/src/Token.sol']), github: 'org/repo', token: null,
+    maxBytes: 1_000_000, scopes: ['contracts'] }, projectClient(project))
+  const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
+  assert.equal(result.filename, 'org-repo.contracts.aaaaaaa.stasis.code.br')
+  assert.equal(result.directory, 'contracts')
+  assert.deepEqual([...bundle.entries], ['src/Token.sol'])
+  assert.equal(bundle.formats.get('src/Base.sol'), 'solidity')
 })
 
 test('Stasis honors Browser conditions and Metro platform-specific imports', async () => {

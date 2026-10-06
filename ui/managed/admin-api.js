@@ -121,7 +121,7 @@ export async function createBundle(input, csrfToken, signal) {
   const data = await res.json()
   if (!res.ok) {
     const messages = {
-      'unsupported-entries': 'Select JavaScript/TypeScript files or Solidity files. Stasis cannot mix languages or use JSON, JSX, TSX, or Rust as remote entry points.',
+      'unsupported-entries': 'Select JavaScript/TypeScript files (including JSX/TSX) or Solidity files. Stasis cannot mix languages or use JSON or Rust as remote entry points.',
       'bad-conditions': 'Check the export conditions and selected platforms.',
       'metro-conditions': 'Stasis’s Metro preset requires the react-native condition without manual changes.',
       'build-lockfile': 'Stasis needs a supported lockfile: pnpm-lock.yaml, yarn.lock (Yarn 1), package-lock.json, or soldeer.lock.',

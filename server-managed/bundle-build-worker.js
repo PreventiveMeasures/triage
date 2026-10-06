@@ -8,15 +8,35 @@ import { HttpError, createClient } from '@preventive/upstream/github.js'
 import { githubBundleFilename } from './bundle-build.ts'
 import { bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
 
+async function projectDirectory(input, github, client) {
+  // Input validation permits either JS/TS entries or Solidity entries, never a mix.
+  const manifests = input.entries[0].endsWith('.sol') ? ['foundry.toml', 'soldeer.toml', 'soldeer.lock'] : ['package.json']
+  if (!input.directory) return ''
+  for (let directory = input.directory; ; directory = posix.dirname(directory).replace(/^\.$/u, '')) {
+    const entries = await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
+    if (entries.some(entry => manifests.includes(entry.path) && entry.type === 'blob' && ['100644', '100755'].includes(entry.mode))) return directory
+    if (!directory) return input.directory
+  }
+}
+
 export async function buildStasisBundle({ input, github, token, maxBytes, scopes }, client = createClient({ token }), progress = () => {}) {
   const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
+  // Reuse these immutable listings when Stasis discovers the lockfile root.
+  const listings = new Map()
+  const buildClient = { ...client, listRepoDir(options) {
+    const key = JSON.stringify([options.repo, options.sha, options.directory ?? ''])
+    if (!listings.has(key)) listings.set(key, client.listRepoDir(options))
+    return listings.get(key)
+  } }
   // Stasis/upstream cache writes are disabled by default; this fresh worker
   // never enables a cache directory or inherits application credentials.
   progress('build')
+  const project = await projectDirectory(input, github, buildClient)
+  if (!allowed(project)) throw new Error('build-scope')
   const { bundle } = await buildGitHubBundle({
-    github, sha: input.commit, directory: input.directory || undefined,
-    entries: input.entries.map(entry => posix.relative(input.directory || '.', entry)),
-    ...input.options, client,
+    github, sha: input.commit, directory: project || undefined,
+    entries: input.entries.map(entry => posix.relative(project || '.', entry)),
+    ...input.options, client: buildClient,
   })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')
@@ -29,7 +49,7 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   progress('compress')
   const bytes = brotliCompressSync(serialized, brotliOptions())
   if (bytes.length > maxBytes) throw new Error('too-large')
-  return { bytes, directory, filename: githubBundleFilename(github, input.directory, input.commit) }
+  return { bytes, directory, filename: githubBundleFilename(github, project, input.commit) }
 }
 
 if (parentPort && workerData?.type === 'managed-bundle-build') {
