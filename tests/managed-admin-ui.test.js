@@ -296,6 +296,7 @@ test('bundle origins load only for open Stasis editors and never replace the ass
   const page = createPage(customElements.get('managed-admin-bundles'))
   const requests = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url.startsWith('/api/admin/repositories/resolve?')) return Promise.resolve(Response.json({ location: null }))
     const pending = Promise.withResolvers()
     requests.push({ url, options, ...pending })
     return pending.promise
@@ -366,7 +367,8 @@ test('bundle origin errors are retryable and cancelled editors ignore late metad
   const requests = []
   const notices = []
   t.mock.method(managedAppState, 'notify', message => notices.push(message))
-  t.mock.method(globalThis, 'fetch', () => {
+  t.mock.method(globalThis, 'fetch', url => {
+    if (url.startsWith('/api/admin/repositories/resolve?')) return Promise.resolve(Response.json({ location: null }))
     const pending = Promise.withResolvers()
     requests.push(pending)
     return pending.promise
@@ -393,6 +395,36 @@ test('bundle origin errors are retryable and cancelled editors ignore late metad
   await setImmediate()
   assert.equal(page._locationOrigin, null)
   assert.equal(page._locationBundle, null)
+})
+
+test('bundle metadata suggestions use current aliases without replacing the saved or edited location', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  page._data = { repos: [] }
+  page._locationRepo = null
+  page._locationDirectory = 'user edit'
+  let target = { repoId: 8, github: 'org/mono', directory: 'projects/a', mapped: true }
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url.endsWith('/metadata')) return Promise.resolve(Response.json({ bundle: { repo: { github: 'org/old', directory: 'a' } } }))
+    assert.equal(url, '/api/admin/repositories/resolve?repo=org%2Fold&directory=a')
+    assert.equal(options.cache, 'no-store')
+    return Promise.resolve(Response.json({ location: target }))
+  })
+  await page._loadLocationOrigin({ id: 'origin' })
+  assert.deepEqual(page._locationOrigin, { github: 'org/mono', directory: 'projects/a' })
+  assert.deepEqual(page._data.repos, [{ repoId: 8, fullName: 'org/mono' }], 'newly connected destinations become selectable')
+  assert.equal(page._locationRepo, null)
+  assert.equal(page._locationDirectory, 'user edit')
+  target = { ...target, directory: 'moved/a' }
+  await page._loadLocationOrigin({ id: 'origin' })
+  assert.equal(page._locationOrigin.directory, 'moved/a', 'opening again reads current aliases')
+  function templates(value) {
+    if (Array.isArray(value)) return value.flatMap(templates)
+    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
+  }
+  const shortcut = templates(page._locationEditor({ id: 'origin' })).find(template => template.values.includes('Use repository from metadata: org/mono'))
+  shortcut.values.find(value => typeof value === 'function')()
+  assert.equal(page._locationRepo, 8)
+  assert.equal(page._locationDirectory, 'moved/a')
 })
 
 for (const abandon of ['close', 'switch', 'disconnect']) {

@@ -1,0 +1,60 @@
+:host {
+  padding: 0;
+  margin-top: 2rem;
+  container-type: normal;
+}
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+.intro {
+  margin: .5rem 0 1rem;
+}
+.alias-table {
+  overflow-x: auto;
+  padding-bottom: .5rem;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+th,
+td {
+  padding: .35rem .5rem;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  color: var(--muted);
+  font-weight: 500;
+}
+td:not(.actions, .empty) {
+  overflow-wrap: anywhere;
+}
+input {
+  width: 100%;
+  min-width: 7rem;
+  padding: .3rem .45rem;
+  border: 1px solid var(--border);
+  border-radius: .375rem;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.actions .btn {
+  min-height: 1.75rem;
+  padding: .2rem .55rem;
+}
+.actions .btn + .btn {
+  margin-left: .25rem;
+}

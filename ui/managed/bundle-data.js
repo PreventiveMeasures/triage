@@ -1,5 +1,7 @@
 import { managedFetch } from '../../client/managed/request.js'
 import { managedAppState } from './state.js'
+import { reportRepoGithub } from '@preventive/report'
+import { commonFileDirectory } from '../../common/managed/repository-alias.ts'
 
 export async function fetchManagedBundleCatalog({ signal } = {}) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
@@ -33,7 +35,22 @@ export function fetchBundleMetadata(id, { signal } = {}) {
 export async function fetchBundleOrigin(id, { signal } = {}) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
   const data = await requestBundle(id, 'metadata', signal)
-  return data?.bundle?.repo ?? null
+  const repo = data?.bundle?.repo ?? null
+  const github = reportRepoGithub({ repo })
+  if (!github) return repo
+  const params = new URLSearchParams({ repo: github, directory: repo.directory ?? '' })
+  // The metadata already has file paths; resources count, directory captures
+  // do not. No source bodies need to be requested to refine this suggestion.
+  const unsized = new Set(data.unsized ?? [])
+  const filePrefix = commonFileDirectory((data.files ?? []).filter(([path, size]) => size != null || unsized.has(path)).map(([path]) => path))
+  if (filePrefix) params.set('filePrefix', filePrefix)
+  const response = await managedFetch(`/api/admin/repositories/resolve?${params}`, { credentials: 'same-origin', cache: 'no-store', signal })
+  signal.throwIfAborted()
+  if (!response.ok) throw new Error(`Repository suggestion request failed (${response.status})`)
+  const { location } = await response.json()
+  signal.throwIfAborted()
+  if (!location) return repo
+  return { ...repo, github: location.github, ...(location.mapped ? { directory: location.directory } : {}), repoId: location.repoId }
 }
 
 export async function fetchBundleContents(id, { signal } = {}) {

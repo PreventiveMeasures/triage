@@ -6,6 +6,7 @@ import { normalizeEntry } from '../triage-entry.ts'
 import { MAX_FINDING_ID, parseTriageEntryPatch } from '../../common/managed/triage.ts'
 import { importTriageEntries } from './triage-import.js'
 import { normalizeTeamPath } from '../../server-managed/repo-path.ts'
+import { matchRepositoryAlias } from '../../common/managed/repository-alias.ts'
 
 export async function decodeWorkspaceFile(file, promptPassword) {
   const bytes = new Uint8Array(await file.arrayBuffer())
@@ -13,7 +14,13 @@ export async function decodeWorkspaceFile(file, promptPassword) {
   return bytes[0] === 0x1f && bytes[1] === 0x8b ? parseWorkspaceBundleBytes(bytes) : parseWorkspaceJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
 }
 
-export async function prepareWorkspaceImport(data, repos) {
+function reportLocation(github, directory, repos, aliases) {
+  const mapped = github ? matchRepositoryAlias(github, directory, aliases) : null
+  const repo = repos.find(item => mapped ? item.repoId === mapped.repoId : item.fullName.toLowerCase() === github?.toLowerCase())
+  return { repoId: repo?.repoId ?? null, directory: mapped?.directory ?? directory, github: repo?.fullName ?? github }
+}
+
+export async function prepareWorkspaceImport(data, repos, aliases = []) {
   const lookup = new Map(), reports = []
   for (const item of data.reports) {
     if (typeof item?.name !== 'string' || !item.name || typeof item.content !== 'string') throw new Error('Every report must have a name and content.')
@@ -21,12 +28,13 @@ export async function prepareWorkspaceImport(data, repos) {
     if (!parsed.data) throw new Error(`${item.name}: ${parsed.reason ?? 'Unsupported report'}`)
     const embedded = reportRepoGithub(parsed.data)
     const github = embedded ?? reportRepoGithub(item) ?? reportRepoGithub({ repo: { github: data.repoUrls?.[item.name] } })
-    const repoId = repos.find(repo => repo.fullName.toLowerCase() === github?.toLowerCase())?.repoId ?? null
     const directory = normalizeTeamPath(parsed.data.repo?.directory)
     if (!directory.ok) throw new Error(`${item.name}: invalid repository directory`)
     const findings = parsed.format === 'links' ? [] : (await loadManagedFindings(item.content, item.name))?.findings ?? []
     for (const finding of findings) if (finding.id) lookup.set(finding.id, finding)
-    reports.push({ ...item, links: parsed.format === 'links', repoId, directory: directory.path ?? '', github, embedded, ids: [...new Set(findings.map(f => f.id).filter(Boolean))], uploaded: null })
+    const declaredDirectory = directory.path ?? ''
+    reports.push({ ...item, links: parsed.format === 'links', ...reportLocation(github, declaredDirectory, repos, embedded ? aliases : []),
+      declaredDirectory, embedded, ids: [...new Set(findings.map(f => f.id).filter(Boolean))], uploaded: null })
   }
   const triage = Object.create(null)
   if (data.triage != null && (typeof data.triage !== 'object' || Array.isArray(data.triage))) throw new Error('Invalid workspace triage.')
@@ -91,6 +99,16 @@ async function importLinks(report, api) {
   if (!report.uploaded) report.uploaded = await api.send('/api/admin/deduplication', new File([report.content], report.name), { 'x-report-filename': encodeURIComponent(report.name) })
 }
 
+async function refreshReportLocations(plan, api) {
+  const repos = (await api.send('/api/admin/repositories/browsable')).repos
+  const reports = plan.reports.filter(item => !item.links && item.embedded && !item.uploaded)
+  if (reports.length > 0) {
+    const { aliases = [] } = await api.send('/api/admin/repositories/aliases')
+    for (const report of reports) Object.assign(report, reportLocation(report.embedded, report.declaredDirectory, repos, aliases))
+  }
+  return new Set(repos.map(repo => repo.repoId))
+}
+
 export async function runWorkspaceImport(plan, { api, session, defaultRepo, includeTriage, resolveConflicts, signal, progress = () => {} }) {
   if (session?.role !== 'admin' || !session.csrfToken) throw new Error('An administrator session is required.')
   if (!plan.name.trim() || plan.name.trim().length > 100) throw new Error('Enter a team name of up to 100 characters.')
@@ -117,7 +135,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
   }
   // Refresh the active set at execution time: the preview's catalogue may be
   // stale, and content deduplication can return records from inactive repos.
-  const activeRepos = new Set((await api.send('/api/admin/repositories/browsable')).repos.map(repo => repo.repoId))
+  const activeRepos = await refreshReportLocations(plan, api)
   for (const report of plan.reports.filter(item => !item.links)) {
     if (report.embedded && !activeRepos.has(report.repoId)) throw new Error(`Connect ${report.embedded} in Repositories before importing ${report.name}.`)
     if (!activeRepos.has(report.repoId) && !activeRepos.has(defaultRepo)) throw new Error(`Choose an active repository for ${report.name}.`)
@@ -139,7 +157,7 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
     check(); progress(`Importing ${bundle.name}…`)
     if (!bundle.uploaded) {
       bundle.uploaded = await api.send('/api/admin/bundles', new File([bundle.bytes], bundle.name), {
-        'x-bundle-filename': encodeURIComponent(bundle.name), 'x-repo-id': String(defaultRepo),
+        'x-bundle-filename': encodeURIComponent(bundle.name),
       })
     }
   }

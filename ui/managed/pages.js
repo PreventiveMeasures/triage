@@ -34,6 +34,7 @@ import { fetchScanModels } from '../view/scan-models.js'
 import { repositoryChoices } from '../view/repository-options.js'
 import '../view/repository-selector.js'
 import '../view/user-selector.js'
+import './repository-aliases.js'
 
 function openAdminPage(view) {
   document.dispatchEvent(new CustomEvent('managed-admin-navigate', {
@@ -548,6 +549,7 @@ class ManagedAdminRepos extends ManagedPage {
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
       ${!connected && this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
       <div aria-busy=${this._loading}>${this._body(choices)}</div>
+      ${connected && this._role === 'admin' ? html`<managed-repository-aliases .session=${this.session} .repositories=${this._data?.repositories}></managed-repository-aliases>` : nothing}
     </div>`
   }
 
@@ -1169,12 +1171,16 @@ class ManagedAdminBundles extends ManagedPage {
     try {
       const repo = await fetchBundleOrigin(bundle.id, { signal: request.signal })
       if (this._locationOriginRequest !== request) return
+      // A repository may have been connected after this catalogue was loaded.
+      if (repo?.repoId != null && this._data) {
+        this._data = { ...this._data, repos: [...(this._data.repos ?? []).filter(item => item.repoId !== repo.repoId), { repoId: repo.repoId, fullName: repo.github }] }
+      }
       this._locationOrigin = typeof repo?.github === 'string' && repo.github
         ? { github: repo.github, directory: typeof repo.directory === 'string' ? repo.directory : repo.root === true ? '/' : null } : null
     } catch (err) {
       if (this._locationOriginRequest !== request) return
       this._locationOrigin = null
-      if (err?.name !== 'AbortError') this._locationOriginError = "Couldn't load the bundle’s self-reported location."
+      if (err?.name !== 'AbortError') this._locationOriginError = "Couldn't load the bundle’s suggested location."
     }
   }
 

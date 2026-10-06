@@ -35,7 +35,7 @@ function previewResponse(url, options) {
   if (path.startsWith('/api/admin/') && !roleAtLeast(preview.user.role, 'manage')) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
-  if (['/api/admin/users', '/api/admin/teams', '/api/admin/repositories'].includes(path) && preview.user.role !== 'admin') {
+  if (['/api/admin/users', '/api/admin/teams', '/api/admin/repositories', '/api/admin/repositories/aliases'].includes(path) && preview.user.role !== 'admin') {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   const data = {
@@ -43,6 +43,8 @@ function previewResponse(url, options) {
     '/api/admin/teams': { teams: [], users: [preview.user], repos: [], permissions: VISIBILITY_PERMISSIONS },
     '/api/admin/links': { shares: [] },
     '/api/admin/repositories': { repositories: [], total: 0, connectedCount: 0, installUrl: null, tokenMissing: false },
+    '/api/admin/repositories/aliases': { aliases: [], repos: [] },
+    '/api/admin/repositories/resolve': { location: null },
     '/api/admin/reports': { reports: [], repos: [], maxBytes: 26_214_400 },
     '/api/admin/bundles': { bundles: [], repos: [], maxBytes: 209_715_200 },
     '/api/admin/history': { history: [], total: 0, page: 1, limit: 100, filters: { repos: [], users: [] } },

@@ -168,7 +168,7 @@ test('repositories deactivated after preview are revalidated before creating the
     ? { repos: [{ repoId: 9, fullName: 'org/other' }] } : send(path, body, headers)
   await assert.rejects(runWorkspaceImport(plan, { api: mock.api, session, defaultRepo: 9, includeTriage: false }), /Connect org\/repo/u)
   assert.equal(plan.team, null)
-  assert.equal(mock.calls.length, 0, 'embedded repositories cannot be reassigned')
+  assert.deepEqual(mock.calls.map(call => call.path), ['/api/admin/repositories/aliases'], 'no writes occur before validating destinations')
 
   const external = await prepareWorkspaceImport({ ...exported(), reports: [{ name: 'external.json', repo: { github: 'org/repo' }, content: '{"findings":[]}' }] }, repos)
   await runWorkspaceImport(external, { api: mock.api, session, defaultRepo: 9, includeTriage: false })
@@ -187,6 +187,23 @@ test('a conflicting report upload remains retryable and does not grant access or
   mock.api.send = send
   await runWorkspaceImport(plan, options)
   assert.ok(plan.reports[0].uploaded.id)
+})
+
+test('workspace import previews aliases and refreshes them before assigning the imported team', async () => {
+  const content = JSON.stringify({ repo: { github: 'org/old', directory: 'a/src' }, findings: [{ id: 'f', file: 'a.js' }] })
+  const data = { ...exported(), reports: [{ name: 'old.json', content }] }
+  const aliases = [{ oldRepo: 'org/old', oldPath: 'a', repoId: 7, newPath: 'projects/a' }]
+  const plan = await prepareWorkspaceImport(data, repos, aliases)
+  assert.equal(plan.reports[0].repoId, 7)
+  assert.equal(plan.reports[0].directory, 'projects/a/src')
+  assert.equal(plan.reports[0].github, 'org/repo')
+  assert.equal(plan.reports[0].content, content)
+  const mock = serverMock(), send = mock.api.send
+  aliases[0].newPath = 'moved/a'
+  mock.api.send = (url, body, headers) => url === '/api/admin/repositories/aliases' ? { aliases } : send(url, body, headers)
+  await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: false })
+  assert.deepEqual(mock.calls.find(call => call.path.endsWith('/teams/set-repo')).body, { teamId: 'team', repoId: 7, path: 'moved/a/src' })
+  assert.equal(await mock.calls.find(call => call.path === '/api/admin/reports').body.text(), content)
 })
 
 test('session cancellation while resolving prevents triage writes and publication', async () => {

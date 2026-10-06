@@ -73,8 +73,8 @@ export function registerWorkspaceImport(ManagedPage, request) {
       try {
         await this._loadCollection('workspace-import:catalog', 'import options', async signal => {
           const api = workspaceImportApi(request, this.session, signal)
-          const [reports, teams, bundles] = await Promise.all([api.send('/api/admin/reports'), api.send('/api/admin/teams'), api.send('/api/admin/bundles')])
-          return { repos: reports.repos, teams: teams.teams, bundles: bundles.bundles }
+          const [reports, teams, bundles, aliases] = await Promise.all([api.send('/api/admin/reports'), api.send('/api/admin/teams'), api.send('/api/admin/bundles'), api.send('/api/admin/repositories/aliases')])
+          return { repos: reports.repos, teams: teams.teams, bundles: bundles.bundles, aliases: aliases.aliases }
         }, data => { this._catalog = data })
       } catch (err) { this._error = String(err?.message ?? err) }
     }
@@ -89,7 +89,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
       if (!this._catalog) await this._loadCatalog()
       signal.throwIfAborted()
       if (!this._catalog) throw new Error('Could not load repositories. Try again.')
-      const plan = await prepareWorkspaceImport(data, this._catalog.repos)
+      const plan = await prepareWorkspaceImport(data, this._catalog.repos, this._catalog.aliases)
       signal.throwIfAborted()
       const names = new Set(this._catalog.teams.map(team => team.name))
       const base = plan.name || 'Imported workspace'

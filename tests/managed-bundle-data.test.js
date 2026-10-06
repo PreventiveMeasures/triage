@@ -101,6 +101,19 @@ test('origin reference failures stay local while ordinary metadata failures stil
   assert.deepEqual(notices, ["Couldn't refresh bundle metadata: Bundle metadata request failed (503)"])
 })
 
+test('origin suggestions use shared paths from metadata without fetching contents or changing metadata', async t => {
+  const original = { github: 'org/c' }
+  const metadata = { bundle: { repo: original }, files: [['.', null, null, null], ['a/src/x.js', 1, 'hash', 1], ['a/icon.png', null, null, null]], unsized: ['a/icon.png'] }
+  t.mock.method(globalThis, 'fetch', url => {
+    if (url.endsWith('/metadata')) return Promise.resolve({ ok: true, json: () => Promise.resolve(metadata) })
+    assert.equal(url, '/api/admin/repositories/resolve?repo=org%2Fc&directory=&filePrefix=a')
+    return Promise.resolve(Response.json({ location: { github: 'org/mono', repoId: 1, directory: 'projects', mapped: true } }))
+  })
+  assert.deepEqual(await fetchBundleOrigin('bundle/id'), { github: 'org/mono', repoId: 1, directory: 'projects' })
+  assert.deepEqual(original, { github: 'org/c' })
+  assert.equal(metadata.files[1][0], 'a/src/x.js')
+})
+
 test('session changes abort origin reads and discard late response bodies', async t => {
   const body = Promise.withResolvers()
   const reading = Promise.withResolvers()
