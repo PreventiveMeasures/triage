@@ -247,6 +247,63 @@ test('only cycles larger than ten start collapsed, and expansion preserves their
   }
 })
 
+test('a terminal target stays below a circular branch that discovers its config', async () => {
+  for (const count of [7, 11, 190]) {
+    const core = 'node_modules/@babel/core/lib/config/files/plugins.js'
+    const paths = [core, ...Array.from({ length: count - 1 }, (_, i) => `node_modules/helper-${i}/index.js`)]
+    const modules = new Map([
+      ['.', { name: 'app', files: { 'index.js': 'app' } }],
+      ['node_modules/bridge', { ...dep('bridge'), files: { 'index.js': 'bridge' } }],
+      ['node_modules/dep', { ...dep('dep'), files: { 'index.js': 'dep', 'babel.config.js': 'config' } }],
+      ['node_modules/@babel/core', { ...dep('@babel/core'), files: { 'lib/config/files/plugins.js': 'loader' } }],
+      ...paths.slice(1).map((path, i) => [path.slice(0, -'/index.js'.length), { ...dep(`helper-${i}`), files: { 'index.js': 'helper' } }]),
+    ])
+    const imports = new Map([
+      ['index.js', new Map([['dep', 'node_modules/dep/index.js'], ['bridge', 'node_modules/bridge/index.js']])],
+      ['node_modules/bridge/index.js', new Map([['core', core]])],
+      ...paths.map((path, i) => [path, new Map([['next', paths[(i + 1) % count]]])]),
+    ])
+    imports.get(core).set('config', 'node_modules/dep/babel.config.js')
+    const details = { kind: 'stasis', integrity: `terminal-${count}`, size: 1, bundle: new Bundle({ config: { scope: 'full' }, modules, imports: new Map([['node,import', imports]]) }) }
+    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+    for (const input of [details, metadata]) {
+      const graph = bundleDependencyChains(input, query)
+      assert.equal(graph.imports.get('node_modules/dep').size, 0, 'the selected target is terminal')
+      assert.equal(graph.cycleImports.get('node_modules/@babel/core').has('node_modules/dep'), false)
+      const initial = layoutDependencyChains(graph)
+      const groupId = initial.componentOf.get('node_modules/@babel/core')
+      for (const maxWidth of [1280, 600, 375]) {for (const expandedCycles of [new Set(), new Set([groupId])]) {
+        const result = layoutDependencyChains(graph, { maxWidth, expandedCycles })
+        const cycle = result.boxes.find(box => box.id === groupId)
+        const target = result.boxes.find(box => box.members.includes('node_modules/dep'))
+        assert.equal(cycle.members.length, count, 'config discovery does not enlarge the circular group')
+        assert.ok(target.y > cycle.y + cycle.height, 'the target follows the entire circular branch')
+        assert.equal(result.edges.length, 4, 'preserve both paths to the target')
+        assert.ok(result.edges.every(edge => {
+          const from = result.boxes.find(box => box.id === edge.from), to = result.boxes.find(box => box.id === edge.to)
+          return from.y + from.height < to.y
+        }), 'every connection between these groups points down')
+      }}
+    }
+  }
+})
+
+test('terminal targets follow the whole branch when discovery returns to an earlier importer', () => {
+  const imports = new Map([
+    ['app', new Set(['bridge'])], ['bridge', new Set(['loader', 'target'])],
+    ['loader', new Set(['core'])], ['core', new Set(['helper', 'bridge'])], ['helper', new Set(['core'])],
+  ])
+  const cycleImports = new Map([...imports].map(([id, targets]) => [id, new Set(targets)]))
+  cycleImports.get('core').delete('bridge')
+  const graph = { imports, cycleImports, nodes: new Map(['app', 'bridge', 'loader', 'core', 'helper', 'target'].map(id => [id, { id }])) }
+  const result = layoutDependencyChains(graph)
+  const target = result.boxes.find(box => box.members.includes('target'))
+  const cycle = result.boxes.find(box => box.members.includes('core'))
+  assert.equal(cycle.members.length, 2, 'the discovery return does not merge the earlier importers into the cycle')
+  assert.equal(result.edges.length, 5, 'the return connection stays visible')
+  assert.ok(result.boxes.every(box => box === target || box.y + box.height < target.y), 'the terminal target follows all blocks that lead to it')
+})
+
 test('missing metadata or version produces an empty graph', () => {
   for (const details of [undefined, { kind: 'stasis', managedId: 'metadata-unavailable' }, fixture({ modules: { 'node_modules/dep': dep('dep', '2.0.0') } })]) {
     const graph = bundleDependencyChains(details, query)

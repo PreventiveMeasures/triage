@@ -69,22 +69,37 @@ export function layoutDependencyChains(graph, { maxWidth = 1280, expandedCycles 
   const ids = [...graph.nodes.keys()].toSorted()
   const cycleImports = graph.cycleImports ?? graph.imports
   const { groups, componentOf } = stronglyConnected(ids, cycleImports)
-  const depth = groups.map(() => 0), incoming = groups.map(() => 0), links = groups.map(() => new Set())
-  const cycleLinks = groups.map(() => new Set())
+  const links = groups.map(() => new Set())
+  const rankLinks = groups.map(() => new Set())
   for (const [from, targets] of graph.imports) {
     const a = componentOf.get(from)
     for (const to of targets) {
       const b = componentOf.get(to)
       if (a === b) continue
       links[a].add(b)
-      if (cycleImports.get(from)?.has(to) && !cycleLinks[a].has(b)) { cycleLinks[a].add(b); incoming[b]++ }
+      if (cycleImports.get(from)?.has(to)) rankLinks[a].add(b)
     }
   }
-  const queue = groups.flatMap((_, i) => incoming[i] === 0 ? [i] : [])
+  // Discovery loads affect placement without changing the visible cycle
+  // groups. If they close a loop, keep ordinary imports ordered within it,
+  // then place outgoing branches after every group in that loop.
+  const { groups: regions, componentOf: regionOf } = stronglyConnected([...links.keys()], new Map(links.entries()))
+  for (const [region, members] of regions.entries()) {
+    const end = rankLinks.length
+    rankLinks.push(new Set())
+    for (const from of members) {
+      rankLinks[from].add(end)
+      for (const to of links[from]) if (regionOf.get(to) !== region) rankLinks[end].add(to)
+    }
+  }
+  const depth = rankLinks.map(() => 0), incoming = rankLinks.map(() => 0)
+  for (const targets of rankLinks) for (const to of targets) incoming[to]++
+  const queue = rankLinks.flatMap((_, i) => incoming[i] === 0 ? [i] : [])
   for (let i = 0; i < queue.length; i++) {
     const from = queue[i]
-    for (const to of cycleLinks[from]) {
-      depth[to] = Math.max(depth[to], depth[from] + 1)
+    for (const to of rankLinks[from]) {
+      // Virtual region endpoints share their last real row, adding no gap.
+      depth[to] = Math.max(depth[to], depth[from] + (to < groups.length ? 1 : 0))
       if (--incoming[to] === 0) queue.push(to)
     }
   }
