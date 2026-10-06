@@ -56,14 +56,15 @@ export class TeamReportsError extends Error {
 export function teamSnapshotKey(snapshot: TeamReportAccessSnapshot): string {
   return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.reports, snapshot.repositories])
 }
-export async function teamSnapshot(db: ManagedDb, sessionId: string, teamId: string): Promise<TeamReportAccessSnapshot> {
-  const snapshot = await db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+export async function teamSnapshot(db: ManagedDb, sessionId: string, teamId: string, reportId: string | null = null): Promise<TeamReportAccessSnapshot> {
+  const snapshot = await db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId, reportId)
   if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
   if (!snapshot.teamId) throw new TeamReportsError(404, 'no-team')
+  if (reportId !== null && !snapshot.reports.some(report => report.id === reportId)) throw new TeamReportsError(404, 'no-report')
   return snapshot
 }
 export async function recheckTeam(db: ManagedDb, sessionId: string, snapshot: TeamReportAccessSnapshot): Promise<void> {
-  if (teamSnapshotKey(await teamSnapshot(db, sessionId, snapshot.teamId!)) !== teamSnapshotKey(snapshot)) throw new TeamReportsError(404, 'workspace-changed')
+  if (teamSnapshotKey(await teamSnapshot(db, sessionId, snapshot.teamId!, snapshot.reportId)) !== teamSnapshotKey(snapshot)) throw new TeamReportsError(404, 'workspace-changed')
 }
 function groupsOf(data: unknown): Finding[][] {
   return (reportEntries(data) ?? []).map(entry => (Array.isArray(entry) ? entry : [entry]).filter(
@@ -190,13 +191,13 @@ export async function teamReportVisibility(db: ManagedDb, store: BlobStore, snap
   return visible.get(reportId)!
 }
 export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
-  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  const snapshot = await teamSnapshot(db, sessionId, teamId, reportId)
   const visible = await teamReportVisibility(db, store, snapshot, reportId)
   await recheckTeam(db, sessionId, snapshot)
   return visible.ids
 }
 export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
-  const snapshot = await teamSnapshot(db, sessionId, teamId)
+  const snapshot = await teamSnapshot(db, sessionId, teamId, reportId)
   const visible = await teamReportVisibility(db, store, snapshot, reportId)
   await recheckTeam(db, sessionId, snapshot)
   return visible.sourcePaths

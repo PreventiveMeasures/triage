@@ -47,7 +47,7 @@ export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
 // the focused team needs report parsing or annotation reads; null is the
 // catalog-only subscription used on landing and management pages.
 export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
-  sessionId: string, user: StoredUser, teamId: string | null, options: FeedOptions = {}): Promise<void> {
+  sessionId: string, user: StoredUser, teamId: string | null, options: FeedOptions & { reportId?: string | null } = {}): Promise<void> {
   let ids: string[] = [], visibilityKey: string | undefined
   let focusedKey: string | undefined
   let previousState: { catalog: number; annotations: number } | undefined
@@ -86,7 +86,7 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
       return
     }
     let triage: string | undefined
-    const snapshot = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+    const snapshot = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId, options.reportId)
     if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
     checkUser(snapshot)
     const key = teamSnapshotKey(snapshot)
@@ -102,7 +102,7 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
       }
     }
     if (snapshot.teamId) triage = JSON.stringify([key, await deps.db.getAnnotationRevision(ids)])
-    const current = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId)
+    const current = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId, options.reportId)
     // A concurrent access/content change discards only the annotation read.
     checkUser(current)
     if (!current || teamSnapshotKey(current) !== key) return

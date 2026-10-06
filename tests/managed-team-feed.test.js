@@ -521,3 +521,16 @@ test('unrelated annotations do not reload catalog or workspace snapshots', async
   assert.equal(catalog.mock.callCount(), 0)
   assert.equal(workspace.mock.callCount(), 0)
 })
+
+test('manager aggregate feeds exclude hidden findings while a focused hidden report receives updates', async t => {
+  const h = await fixture(t)
+  await h.writer.setUserRole(h.session.userId, 'manage')
+  await h.writer.setReportVisible('report', false)
+  const aggregate = await h.userFeed()
+  const focused = await h.userFeed('team', { reportId: 'report' })
+  const triageFrames = res => res.frames.filter(frame => frame.startsWith('event: triage')).length
+  await until(() => triageFrames(aggregate.res) === 1 && triageFrames(focused.res) === 1)
+  await h.writer.setTriage('visible', { color: 'blue' }, null, null, 1)
+  await until(() => triageFrames(focused.res) === 2)
+  assert.equal(triageFrames(aggregate.res), 1)
+})

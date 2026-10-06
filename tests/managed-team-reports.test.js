@@ -344,3 +344,37 @@ test('repeated scans serialize shared annotations once instead of once per repor
   assert.deepEqual(Object.keys(response.body.entries), ['shared'])
   for (let i = 0; i < reportCount; i++) assert.deepEqual(response.body.reports[`repeat-${i}`], ['shared'])
 })
+
+test('hidden reports stay individually accessible without joining team findings, links or annotations', async t => {
+  const h = await fixture(t)
+  await h.seed('draft', { findings: [{ id: 'draft-finding', file: 'src/draft.js' }] }, { visible: false })
+  await h.db.setTriage('draft-finding', { color: 'red' }, null, 'admin', 1)
+  for (const role of ['admin', 'manage']) {
+    const catalog = await h.request('/api/teams', role)
+    assert.equal(catalog.body.teams.find(team => team.id === 'broad').reports.find(r => r.id === 'draft').visible, false)
+    const combined = await h.request('/api/teams/broad/reports', role)
+    assert.equal(combined.status, 200)
+    assert.deepEqual(combined.body.reports.map(r => r.id), ['a', 'b', 'links'])
+    assert.equal(combined.body.reports[0].data.findings.flat().find(f => f.id === 'own').isSecurity, false, 'hidden links do not classify published findings')
+    const annotations = await h.request('/api/teams/broad/annotations', role)
+    assert.equal(annotations.body.entries['draft-finding'], undefined)
+    assert.equal(annotations.body.reports.draft, undefined)
+    const selected = await h.request('/api/teams/broad/reports?reportId=draft', role)
+    assert.equal(selected.status, 200)
+    assert.deepEqual(selected.body.reports.map(r => r.id), ['a', 'b', 'draft', 'links'], 'the selected draft is added to the published context only')
+    const focused = await h.request('/api/teams/broad/annotations?reportId=draft', role)
+    assert.equal(focused.status, 200)
+    assert.deepEqual(focused.body.reports, { draft: ['draft-finding'] })
+    assert.deepEqual(focused.body.entries['draft-finding'], { color: 'red' })
+    assert.equal((await h.request('/api/reports/draft', role)).status, 200)
+    assert.equal((await h.request('/api/teams/broad/reports?reportId=foreign-links', role)).status, 404)
+  }
+  for (const role of ['view', 'triage']) {
+    assert.equal((await h.request('/api/teams/broad/reports?reportId=draft', role)).status, 404)
+    assert.equal((await h.request('/api/teams/broad/annotations?reportId=draft', role)).status, 404)
+  }
+  await h.db.setReportVisible('draft', true)
+  assert.ok((await h.request('/api/teams/broad/reports', 'manage')).body.reports.some(r => r.id === 'draft'))
+  await h.db.setReportVisible('draft', false)
+  assert.ok(!(await h.request('/api/teams/broad/reports', 'manage')).body.reports.some(r => r.id === 'draft'))
+})

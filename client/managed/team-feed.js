@@ -13,7 +13,7 @@ function wait(ms, signal) {
 // URL. Reconnection confirms the catalog version and invalidates annotations,
 // so no replay cursor or instance affinity is needed. The caller owns the
 // subscription's lifetime.
-export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose }) {
+export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose, reportId = null }) {
   if (getPreviewRole()) return
   let backoff = 1_000
   const eventReceived = async (event, data, requestSignal) => {
@@ -43,7 +43,8 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose
     }
     try {
       alive()
-      const response = await managedFetch(teamId ? `/api/teams/${encodeURIComponent(teamId)}/feed` : '/api/teams/feed', {
+      const query = reportId === null ? '' : `?reportId=${encodeURIComponent(reportId)}`
+      const response = await managedFetch(teamId ? `/api/teams/${encodeURIComponent(teamId)}/feed${query}` : '/api/teams/feed', {
         credentials: 'same-origin', headers: { accept: 'text/event-stream' }, signal: request.signal,
       })
       if ([401, 403, 404].includes(response.status)) {

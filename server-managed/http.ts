@@ -134,10 +134,10 @@ const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
 
-async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<void> {
+async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string, reportId: string | null): Promise<void> {
   const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return
-  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
+  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId, reportId)
   const ids = [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
   const urls = storedFixUrls(await deps.db.listTriage(ids))
   await recheckTeam(deps.db, s.session.id, snapshot)
@@ -1619,8 +1619,8 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
 
 // The server selects the complete workspace; clients cannot omit a report
 // or links file to evade classification through the rest of their team.
-async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, teamId: string): Promise<void> {
-  const snapshot = await teamSnapshot(deps.db, session.id, teamId)
+async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, teamId: string, reportId: string | null): Promise<void> {
+  const snapshot = await teamSnapshot(deps.db, session.id, teamId, reportId)
   const body = await loadTeamReportsResponse(deps.db, deps.reportStore, snapshot)
   await recheckTeam(deps.db, session.id, snapshot)
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
@@ -2272,18 +2272,19 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const s = await readWorkspaceSession(res, deps, cookie)
       if (!s) return
       const teamId = teamFeed?.[1] ?? null
-      if (teamId) await teamSnapshot(db, s.session.id, teamId)
-      await serveUserTeamFeed(res, deps, s.session.id, s.user, teamId); return
+      const reportId = url.searchParams.get('reportId')
+      if (teamId) await teamSnapshot(db, s.session.id, teamId, reportId)
+      await serveUserTeamFeed(res, deps, s.session.id, s.user, teamId, { reportId }); return
     }
     const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
     if (teamFixes) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleWorkspaceFixes(res, deps, cookie, teamFixes[1]!); return
+      await handleWorkspaceFixes(res, deps, cookie, teamFixes[1]!, url.searchParams.get('reportId')); return
     }
     const teamAnnotations = /^\/api\/teams\/([^/]+)\/annotations$/u.exec(path)
     if (teamAnnotations) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      const snapshot = await teamSnapshot(db, workspaceSession!.session.id, teamAnnotations[1]!)
+      const snapshot = await teamSnapshot(db, workspaceSession!.session.id, teamAnnotations[1]!, url.searchParams.get('reportId'))
       const annotations = await loadTeamAnnotations(db, deps.reportStore, snapshot, url.searchParams.get('reportId'))
       await recheckTeam(db, workspaceSession!.session.id, snapshot)
       sendJson(res, 200, annotations); return
@@ -2291,7 +2292,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const teamReports = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
     if (teamReports) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleTeamReports(res, deps, workspaceSession!.session, teamReports[1]!); return
+      await handleTeamReports(res, deps, workspaceSession!.session, teamReports[1]!, url.searchParams.get('reportId')); return
     }
     if (path === '/api/reports/query') {
       if (method !== 'POST') { send405(res, 'POST'); return }

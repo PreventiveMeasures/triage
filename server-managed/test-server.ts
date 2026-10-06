@@ -18,6 +18,7 @@ import { acceptsReportMetadata } from './report-response.ts'
 import { readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { randomUUID } from 'node:crypto'
+import { reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
 
@@ -115,7 +116,7 @@ const reportFixtures = [
       source: 'claude-security',
       repo: { github: 'https://github.com/example/managed-fixtures' },
       findings: [{
-        id: 'managed-fixture-3', severity: 'high', confidence: 9,
+        id: 'managed-fixture-3', severity: 'high', confidence: 9, isApp: true, revalidate: 'revalidation',
         title: 'API fixture finding', file: 'src/api.js', line: 27,
         description: 'A third canned report keeps the managed list realistic.',
       }],
@@ -584,12 +585,26 @@ async function handleReportQuery(req: IncomingMessage, res: ServerResponse): Pro
     repo: { github: repoById(report!.repoId)?.fullName ?? null, directory: report!.repoDirectory } })) })
 }
 
-function serveTeamReports(path: string, res: ServerResponse): boolean {
-  const match = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
+function serveTeamReports(url: URL, res: ServerResponse): boolean {
+  const match = /^\/api\/teams\/([^/]+)\/(reports|annotations)$/u.exec(url.pathname)
   if (!match) return false
   const team = currentTeams().find(entry => entry.id === match[1])
   if (!team) { sendJson(res, 404, { error: 'no-team' }); return true }
-  sendJson(res, 200, { reports: team.reports.map(entry => {
+  const reportId = url.searchParams.get('reportId')
+  if (reportId !== null && !team.reports.some(report => report.id === reportId)) { sendJson(res, 404, { error: 'no-report' }); return true }
+  const selected = team.reports.filter(report => report.visible || report.id === reportId)
+  if (match[2] === 'annotations') {
+    const byReport = new Map(selected.filter(report => reportId === null || report.id === reportId).map(entry => {
+      const report = reportFixtures.find(item => item.id === entry.id)!
+      const data = readManagedReport(report.content, report.filename).data
+      const ids = (reportEntries(data) ?? []).flat().map(finding => (finding as { id: string }).id).filter(id => typeof id === 'string')
+      return [entry.id, ids] as const
+    }))
+    const ids = new Set([...byReport.values()].flat())
+    sendJson(res, 200, { reports: Object.fromEntries(byReport), entries: Object.fromEntries([...triage].filter(([id]) => ids.has(id))), comments: comments.filter(comment => ids.has(comment.findingId)) })
+    return true
+  }
+  sendJson(res, 200, { reports: selected.map(entry => {
     const report = reportFixtures.find(item => item.id === entry.id)!
     return { id: report.id, filename: report.filename, data: readManagedReport(report.content, report.filename).data,
       repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } }
@@ -638,7 +653,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     const teams = currentTeams()
     sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) }); return
   }
-  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url.pathname, res)) return
+  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url, res)) return
   if (url.pathname === '/api/reports/query') {
     if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })

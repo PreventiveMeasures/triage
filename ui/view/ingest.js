@@ -716,7 +716,8 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   if (history && managedHistory.active) return managedHistory.navigate(managedRouteForIds({ view: 'findings', teamId: team.id, reportId }, state.managedTeams))
   if (reportId !== null && !team.reports.some(r => r.id === reportId)) return false
   const gen = beginViewNavigation()
-  const workspace = await fetchTeamReports(team.id)
+  const hiddenReport = team.reports.find(r => r.id === reportId && r.visible === false)
+  const workspace = await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
   if (isStaleLoad(gen)) return false
   clearReportSources()
   if (workspace === null || reportId !== null && !workspace.some(r => r.id === reportId)) {

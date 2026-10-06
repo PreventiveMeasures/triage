@@ -217,7 +217,10 @@ test('workspace GET derives only saved Fix PRs surviving the complete security/d
   for (const role of ['admin', 'manage']) {
     await f.db.setUserRole(f.session.userId, role)
     const whole = await f.send()
-    assert.equal(whole.body.fixes.length, 8, `${role} retains the report filtering bypass`)
+    assert.equal(whole.body.fixes.length, 7, `${role} retains the permission bypass while excluding hidden reports`)
+    assert.ok(!whole.body.fixes.some(row => row.url === link(7)), 'draft fixes stay out of the aggregate')
+    const focused = await f.send({ path: '/api/teams/team/fixes?reportId=draft' })
+    assert.ok(focused.body.fixes.some(row => row.url === link(7)), 'individual drafts retain Fix metadata')
     assert.ok(!whole.body.fixes.some(row => row.url === link(8)), 'outside report paths stay excluded')
   }
 })

@@ -64,11 +64,13 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   if (!isManagedUiMode() || !session || session.role === 'none' || session.publicShare && !teamId) {
     stopManagedTeamFeed(); return hydrate ? Promise.resolve(false) : undefined
   }
-  const key = JSON.stringify([teamId, session.id, session.role, session.csrfToken, !!session.publicShare])
+  const reportId = state.managedTeams?.find(team => team.id === teamId)?.reports
+    .find(report => report.id === state.currentManagedReport && report.visible === false)?.id ?? null
+  const key = JSON.stringify([teamId, reportId, session.id, session.role, session.csrfToken, !!session.publicShare])
   if (active?.key !== key || active.signal.aborted) {
     stopManagedTeamFeed()
     const controller = new AbortController()
-    const subscription = { key, controller, signal: controller.signal, teamId, version: 0, target: null }
+    const subscription = { key, controller, signal: controller.signal, teamId, reportId, version: 0, target: null }
     subscription.current = (signal = subscription.signal) => !signal.aborted && !subscription.signal.aborted
       && active === subscription && isManagedUiMode()
       && state.managedSession?.id === session.id && state.managedSession?.role === session.role
@@ -116,7 +118,7 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
 function watchSubscription(subscription) {
   const { signal, controller, current } = subscription
   void watchTeamFeed(subscription.teamId, {
-    signal,
+    signal, reportId: subscription.reportId,
     onTeams: async (requestSignal, revision) => {
       const isCurrent = () => current(requestSignal)
       if (!isCurrent()) return false

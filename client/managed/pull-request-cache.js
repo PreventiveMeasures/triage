@@ -7,7 +7,7 @@ function workspaceScope(context) {
   // A catalog refresh or rename alone must not discard authorized metadata.
   // Older/unversioned catalogs conservatively revalidate on every refresh.
   if (!team.cacheKey || !Array.isArray(team.reports) || team.reports.some(report => !report.cacheKey)) return context.teams
-  return JSON.stringify([team.cacheKey, team.reports.map(report => [report.id, report.cacheKey]).toSorted()])
+  return JSON.stringify([team.cacheKey, team.reports.map(report => [report.id, report.cacheKey, report.visible !== false]).toSorted()])
 }
 
 // One in-memory response per active workspace/session. A rendered URL is only
@@ -39,9 +39,9 @@ export class FixCache {
 
   syncContext() {
     const next = this.getContext()
-    if (next?.key !== this.context?.key || next?.teamId !== this.context?.teamId || next?.teams !== this.context?.teams) {
+    if (next?.key !== this.context?.key || next?.teamId !== this.context?.teamId || next?.reportId !== this.context?.reportId || next?.teams !== this.context?.teams) {
       const scope = workspaceScope(next)
-      if (next?.key !== this.context?.key || next?.teamId !== this.context?.teamId || scope !== this.scope) this.reset()
+      if (next?.key !== this.context?.key || next?.teamId !== this.context?.teamId || next?.reportId !== this.context?.reportId || scope !== this.scope) this.reset()
       this.context = next
       this.scope = scope
     }
@@ -62,7 +62,7 @@ export class FixCache {
     if (!context?.teamId || this.run || this.expires > this.now()) return
     const controller = this.run = new AbortController()
     let results
-    try { results = await this.fetchWorkspace(context.teamId, controller.signal) }
+    try { results = await this.fetchWorkspace(context.teamId, controller.signal, context.reportId) }
     catch { results = null }
     this.syncContext()
     if (this.run !== controller || controller.signal.aborted) return

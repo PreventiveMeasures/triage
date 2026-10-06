@@ -105,7 +105,7 @@ test('managed preview triage persists in memory and stays scoped to the requeste
     }
     for (const team of await probeTeams()) {
       const workspace = await fetchTeamReports(team.id)
-      assert.deepEqual(workspace.map(report => report.id), team.reports.map(report => report.id))
+      assert.deepEqual(workspace.map(report => report.id), team.reports.filter(report => report.visible).map(report => report.id))
     }
     assert.equal(await fetchReport('unknown'), null)
     const ids = exported.reports.map(report => report.id)

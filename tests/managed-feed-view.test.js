@@ -403,3 +403,18 @@ test('a live event joining navigation catch-up propagates its watchdog to the sh
   refresh = () => Promise.resolve(true)
   assert.equal(await calls[1].onUpdate(calls[1].signal), true)
 })
+
+test('hidden report navigation subscribes to its individual updates, then restores the team stream', () => {
+  state.managedTeams = [{ id: 'one', reports: [{ id: 'draft', visible: false }, { id: 'published', visible: true }] }]
+  state.currentManagedReport = null
+  open('one')
+  assert.equal(calls[0].reportId, null)
+  state.currentManagedReport = 'draft'
+  open('one')
+  assert.equal(calls[0].signal.aborted, true)
+  assert.equal(calls[1].reportId, 'draft')
+  state.currentManagedReport = 'published'
+  open('one')
+  assert.equal(calls[1].signal.aborted, true)
+  assert.equal(calls[2].reportId, null)
+})
