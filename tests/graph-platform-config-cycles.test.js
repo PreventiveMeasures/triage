@@ -82,10 +82,10 @@ test('platform config loads remain visible without closing grid, dependency, or 
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
         const graph = bundleDependencyChains(input, { packageKey: pkg, version: '1.0.0' })
-        assert.ok(graph.imports.get('node_modules/react-native').has(`node_modules/${pkg}`))
+        assert.equal(graph.imports.get('node_modules/react-native')?.has(`node_modules/${pkg}`) ?? false, ordinary)
         const result = layoutDependencyChains(graph)
         assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinary ? 1 : 0)
-        assert.equal(result.boxes.length, ordinary ? 1 : 2)
+        assert.equal(result.boxes.length, 1)
       }
     }
   }

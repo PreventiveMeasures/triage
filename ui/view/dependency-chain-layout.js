@@ -17,6 +17,32 @@ function roundedPath(points) {
   return `${path} L${points.at(-1).join(',')}`
 }
 
+// Expanded cycles expose the actual importing/imported card. Follow a column
+// gutter out of the group so an edge never cuts through its other packages.
+function importPort(box, id, incoming, index) {
+  const node = box.packages.find(card => card.id === id)
+  const track = index % 4
+  const offset = [0, 8, -8, 16][track]
+  const outerY = incoming ? box.y - 12 : box.rowBottom + 9 + track * 3
+  if (box.members.length === 1 || box.collapsed) {
+    const x = box.x + box.width / 2 + offset
+    return [[x, incoming ? box.y - 5 : box.y + box.height], [x, outerY]]
+  }
+  const x = box.x + node.x + (incoming ? 0 : DEPENDENCY_CARD_WIDTH)
+  const y = box.y + node.y + DEPENDENCY_CARD_HEIGHT / 2 + (incoming ? offset / 2 : 0)
+  const lane = x + (incoming ? -7 - track * 2 : 3 + track * 2)
+  return [[x + (incoming ? -4 : 0), y], [lane, y], [lane, outerY]]
+}
+
+export function dependencyImportPath(from, fromPackage, to, toPackage, { bypassLane, fromIndex, toIndex }) {
+  const end = importPort(to, toPackage, true, toIndex), start = importPort(from, fromPackage, false, fromIndex)
+  const [, y1] = start.at(-1), [x2, y2] = end.at(-1)
+  // Only turn after leaving the tallest group in the source row. Shortcuts
+  // also go around intervening rows before entering the destination gutter.
+  const middle = bypassLane === null ? [[x2, y1]] : [[bypassLane, y1], [bypassLane, y2]]
+  return roundedPath([...start, ...middle, ...end.toReversed()])
+}
+
 function cycleImportPath(a, b) {
   const dx = Math.sign(b.x - a.x), dy = Math.sign(b.y - a.y)
   const h = DEPENDENCY_CARD_HEIGHT, w = DEPENDENCY_CARD_WIDTH

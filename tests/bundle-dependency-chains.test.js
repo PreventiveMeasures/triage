@@ -123,6 +123,66 @@ test('cycles remain visible in finite groups with their incoming and outgoing ch
   }
 })
 
+function assertExternalPathClear(commands, cards, layout) {
+  let point = commands[0].values
+  for (const { command, values } of commands.slice(1)) {
+    const end = values.slice(-2), start = point
+    for (let step = 0; step <= 12; step++) {
+      const t = step / 12
+      const [x, y] = end.map((value, axis) => command === 'Q'
+        ? (1 - t) ** 2 * start[axis] + 2 * (1 - t) * t * values[axis] + t ** 2 * value
+        : start[axis] + t * (value - start[axis]))
+      assert.ok(x >= 0 && x <= layout.width && y >= 0 && y <= layout.height)
+      assert.ok(cards.every(card => x <= card.x || x >= card.x + card.w || y <= card.y || y >= card.y + card.h), 'external arrows stay outside every card')
+    }
+    point = end
+  }
+}
+
+test('external arrows retain exact package endpoints through cycle expansion without crossing cards', () => {
+  const h = DEPENDENCY_CARD_HEIGHT, w = DEPENDENCY_CARD_WIDTH
+  for (const count of [7, 11, 190]) {
+    const ids = Array.from({ length: count }, (_, i) => `source-${i}`), targets = ['dest-a', 'dest-b', 'dest-c']
+    const imports = new Map([
+      ['app', new Set([ids[0], 'short'])], ['short', new Set(['target'])], ['target', new Set()],
+      ...[ids, targets].flatMap(group => group.map((id, i) => [id, new Set([group[(i + 1) % group.length]])])),
+    ])
+    imports.get(ids[0]).add(targets[0]).add(targets[1])
+    imports.get(ids[1]).add(targets[0])
+    imports.get(targets[2]).add('target')
+    const graph = { nodes: new Map([...imports.keys()].map(id => [id, { id }])), imports }
+    const initial = layoutDependencyChains(graph)
+    for (const [maxWidth, expand] of [1280, 600, 375].flatMap(width => [false, true].map(open => [width, open]))) {
+      const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles: new Set(expand ? initial.boxes.map(box => box.id) : []) })
+      assert.equal(layout.edges.length, 7, 'separate imports between the same two cycles are never merged')
+      const sharedTarget = layout.edges.filter(edge => edge.toPackage === targets[0])
+      assert.notEqual(sharedTarget[0].path.split(' L').at(-1), sharedTarget[1].path.split(' L').at(-1), 'direct importers get distinct arrowheads')
+      assert.deepEqual(layout.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]), initial.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]))
+      const boxes = new Map(layout.boxes.map(box => [box.id, box]))
+      const cards = layout.boxes.flatMap(box => box.collapsed ? [{ x: box.x, y: box.y, w: box.width, h: box.height }]
+        : box.packages.map(node => ({ x: box.x + node.x, y: box.y + node.y, w, h })))
+      for (const edge of layout.edges) {
+        const from = boxes.get(edge.from), to = boxes.get(edge.to)
+        const a = from.packages.find(node => node.id === edge.fromPackage), b = to.packages.find(node => node.id === edge.toPackage)
+        const commands = [...edge.path.matchAll(/([MLQ])([\d.,-]+)/gu)].map(([, command, args]) => ({ command, values: args.split(',').map(Number) }))
+        const [sx, sy] = commands[0].values, [tx, ty] = commands.at(-1).values
+        if (from.collapsed || from.members.length === 1) {
+          assert.equal(sy, from.y + from.height)
+          assert.ok(sx > from.x && sx < from.x + from.width)
+        } else assert.deepEqual([sx, sy], [from.x + a.x + w, from.y + a.y + h / 2])
+        if (to.collapsed || to.members.length === 1) {
+          assert.equal(ty, to.y - 5)
+          assert.ok(tx > to.x && tx < to.x + to.width)
+        } else {
+          assert.equal(tx, to.x + b.x - 4)
+          assert.ok(ty > to.y + b.y && ty < to.y + b.y + h)
+        }
+        assertExternalPathClear(commands, cards, layout)
+      }
+    }
+  }
+})
+
 test('compact cycle grids preserve every internal edge without overlapping cards or escaping their group', () => {
   for (const count of [3, 4, 9, 40]) {
     const ids = Array.from({ length: count }, (_, i) => `package-${i}`)
@@ -204,24 +264,6 @@ test('a 190-package cycle at the top regroups to fit desktop, tablet and phone w
   }
 })
 
-test('large cycles reserve space for excluded manifest reads pointing to earlier rows', () => {
-  const { ids, imports } = clusteredCycle(190)
-  imports.get(ids[0]).add('codegen')
-  const cycleImports = new Map([...imports].map(([id, targets]) => [id, new Set(targets)]))
-  imports.set('codegen', new Set([ids[0]]))
-  const graph = { nodes: new Map([...ids, 'codegen'].map(id => [id, { id }])), imports, cycleImports }
-  const expandedCycles = new Set(layoutDependencyChains(graph).boxes.map(box => box.id))
-  for (const maxWidth of [1280, 900, 600, 375]) {
-    const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles })
-    const cycle = layout.boxes.find(box => box.members.length === 190)
-    const codegen = layout.boxes.find(box => box.members.includes('codegen'))
-    assert.equal(layout.boxes.length, 2, 'the excluded read does not enlarge the cycle')
-    assert.ok(codegen.y > cycle.y, 'ordinary imports determine the row order')
-    assert.ok(layout.edges.some(edge => edge.from === codegen.id && edge.to === cycle.id), 'retain the backward read')
-    assert.ok(layout.width + DEPENDENCY_DIALOG_GUTTER <= maxWidth, 'the cycle and backward route fit together')
-  }
-})
-
 test('only cycles larger than ten start collapsed, and expansion preserves their chains', () => {
   for (const count of [2, 8, 10, 11, 40, 190]) {
     const ids = Array.from({ length: count }, (_, i) => `package-${i}`)
@@ -247,13 +289,13 @@ test('only cycles larger than ten start collapsed, and expansion preserves their
   }
 })
 
-test('a terminal target stays below a circular branch that discovers its config', async () => {
-  for (const count of [7, 11, 190]) {
+test('discovery-only branches are neither followed nor drawn, while ordinary imports between the same packages remain', async () => {
+  for (const [count, ordinary] of [7, 11, 190].flatMap(size => [false, true].map(include => [size, include]))) {
     const core = 'node_modules/@babel/core/lib/config/files/plugins.js'
     const paths = [core, ...Array.from({ length: count - 1 }, (_, i) => `node_modules/helper-${i}/index.js`)]
     const modules = new Map([
       ['.', { name: 'app', files: { 'index.js': 'app' } }],
-      ['node_modules/bridge', { ...dep('bridge'), files: { 'index.js': 'bridge' } }],
+      ['node_modules/bridge', { ...dep('bridge'), files: { 'index.js': 'bridge', 'babel.config.js': 'config' } }],
       ['node_modules/dep', { ...dep('dep'), files: { 'index.js': 'dep', 'babel.config.js': 'config' } }],
       ['node_modules/@babel/core', { ...dep('@babel/core'), files: { 'lib/config/files/plugins.js': 'loader' } }],
       ...paths.slice(1).map((path, i) => [path.slice(0, -'/index.js'.length), { ...dep(`helper-${i}`), files: { 'index.js': 'helper' } }]),
@@ -264,44 +306,29 @@ test('a terminal target stays below a circular branch that discovers its config'
       ...paths.map((path, i) => [path, new Map([['next', paths[(i + 1) % count]]])]),
     ])
     imports.get(core).set('config', 'node_modules/dep/babel.config.js')
-    const details = { kind: 'stasis', integrity: `terminal-${count}`, size: 1, bundle: new Bundle({ config: { scope: 'full' }, modules, imports: new Map([['node,import', imports]]) }) }
+    imports.get(core).set('return', 'node_modules/bridge/babel.config.js')
+    if (ordinary) imports.get(core).set('dep', 'node_modules/dep/index.js')
+    const details = { kind: 'stasis', integrity: `discovery-${count}-${ordinary}`, size: 1, bundle: new Bundle({ config: { scope: 'full' }, modules, imports: new Map([['node,import', imports]]) }) }
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
       const graph = bundleDependencyChains(input, query)
-      assert.equal(graph.imports.get('node_modules/dep').size, 0, 'the selected target is terminal')
-      assert.equal(graph.cycleImports.get('node_modules/@babel/core').has('node_modules/dep'), false)
+      assert.equal(graph.imports.get('node_modules/dep').size, 0)
+      assert.equal(graph.nodes.has('node_modules/@babel/core'), ordinary, 'do not follow discovery-only importers')
+      assert.equal(graph.nodes.has('node_modules/bridge'), ordinary, 'do not follow their ancestors either')
+      assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(ordinary ? ['.', 'node_modules/@babel/core'] : ['.']))
       const initial = layoutDependencyChains(graph)
       const groupId = initial.componentOf.get('node_modules/@babel/core')
       for (const maxWidth of [1280, 600, 375]) {for (const expandedCycles of [new Set(), new Set([groupId])]) {
         const result = layoutDependencyChains(graph, { maxWidth, expandedCycles })
-        const cycle = result.boxes.find(box => box.id === groupId)
-        const target = result.boxes.find(box => box.members.includes('node_modules/dep'))
-        assert.equal(cycle.members.length, count, 'config discovery does not enlarge the circular group')
-        assert.ok(target.y > cycle.y + cycle.height, 'the target follows the entire circular branch')
-        assert.equal(result.edges.length, 4, 'preserve both paths to the target')
+        assert.equal(result.edges.length, ordinary ? 4 : 1)
+        assert.equal(result.boxes.length, ordinary ? 4 : 2)
         assert.ok(result.edges.every(edge => {
           const from = result.boxes.find(box => box.id === edge.from), to = result.boxes.find(box => box.id === edge.to)
           return from.y + from.height < to.y
-        }), 'every connection between these groups points down')
+        }), 'external imports always point to a later row, including expanded cycles')
       }}
     }
   }
-})
-
-test('terminal targets follow the whole branch when discovery returns to an earlier importer', () => {
-  const imports = new Map([
-    ['app', new Set(['bridge'])], ['bridge', new Set(['loader', 'target'])],
-    ['loader', new Set(['core'])], ['core', new Set(['helper', 'bridge'])], ['helper', new Set(['core'])],
-  ])
-  const cycleImports = new Map([...imports].map(([id, targets]) => [id, new Set(targets)]))
-  cycleImports.get('core').delete('bridge')
-  const graph = { imports, cycleImports, nodes: new Map(['app', 'bridge', 'loader', 'core', 'helper', 'target'].map(id => [id, { id }])) }
-  const result = layoutDependencyChains(graph)
-  const target = result.boxes.find(box => box.members.includes('target'))
-  const cycle = result.boxes.find(box => box.members.includes('core'))
-  assert.equal(cycle.members.length, 2, 'the discovery return does not merge the earlier importers into the cycle')
-  assert.equal(result.edges.length, 5, 'the return connection stays visible')
-  assert.ok(result.boxes.every(box => box === target || box.y + box.height < target.y), 'the terminal target follows all blocks that lead to it')
 })
 
 test('missing metadata or version produces an empty graph', () => {

@@ -94,26 +94,30 @@ class DependencyChainsDialog extends AppDialog {
     const activePackage = this._hovered ?? this._focused
     const activeGroup = activePackage === null ? this._active : this.layout.componentOf.get(activePackage)
     const highlighted = traceDependencyChains(this.layout, activeGroup)
+    const neighbors = activePackage === null ? null : new Set([activePackage, ...this.graph.imports.get(activePackage), ...this.graph.importedBy.get(activePackage)])
     const hasImporter = new Set(edges.map(edge => edge.to))
     const unrecorded = boxes.filter(box => !hasImporter.has(box.id) && !box.members.some(id => this.graph.nodes.get(id).root))
     return html`<div class="graph-scroll" tabindex="0" aria-label="Package dependency chains. Arrows point from importer to dependency.">
       <div class="graph" style=${styleMap({ width: `${width}px`, height: `${height}px`, '--package-width': `${DEPENDENCY_CARD_WIDTH}px`, '--package-height': `${DEPENDENCY_CARD_HEIGHT}px` })}>
         <svg class="connections" width=${width} height=${height} aria-hidden="true">
           <defs><marker id="dependency-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10z" fill="context-stroke"/></marker></defs>
-          ${edges.map(edge => svg`<path d=${edge.path} class=${highlighted && !highlighted.edges.has(edge) ? 'dimmed' : ''} marker-end="url(#dependency-arrow)"/>`)}
+          ${edges.map(edge => {
+            const direct = edge.fromPackage === activePackage || edge.toPackage === activePackage
+            const unrelated = highlighted && !highlighted.edges.has(edge)
+              || activePackage !== null && (edge.from === activeGroup || edge.to === activeGroup) && !direct
+            return svg`<path d=${edge.path} class=${unrelated ? 'dimmed' : direct ? 'traced' : ''}
+              style=${styleMap({ '--connection-color': packageColor(this.graph.nodes.get(edge.fromPackage)) })} marker-end="url(#dependency-arrow)"/>`
+          })}
         </svg>
-        ${boxes.map(box => this.renderGroup(box, highlighted, box.id === activeGroup ? activePackage : null))}
+        ${boxes.map(box => this.renderGroup(box, highlighted, activePackage, neighbors))}
       </div>
       ${unrecorded.length > 0 ? html`<p class="note">Some chains have no recorded app or entry point. These packages are bundled, but their origin is not captured in this scope.</p>` : nothing}
     </div>`
   }
 
-  renderGroup(box, highlighted, activePackage) {
+  renderGroup(box, highlighted, activePackage, neighbors) {
     const selected = box.members.some(id => this.graph.nodes.get(id).target)
-    const neighbors = activePackage === null ? null : new Set([activePackage])
-    if (neighbors) {for (const edge of box.internalEdges) {
-      if (edge.from === activePackage || edge.to === activePackage) { neighbors.add(edge.from); neighbors.add(edge.to) }
-    }}
+    const adjacent = neighbors && box.members.some(id => neighbors.has(id))
     return html`<div class=${`package-group${box.members.length > 1 ? ' cycle' : ''}${box.members.length > 8 ? ' large-cycle' : ''}${box.collapsed ? ' collapsed' : ''}${box.collapsed && selected ? ' selected-cycle' : ''}${highlighted && !highlighted.groups.has(box.id) ? ' dimmed' : ''}`}
       style=${styleMap({ left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px` })}
       @pointerenter=${() => { this._active = box.id }} @pointerleave=${() => { this._active = null }}>
@@ -126,10 +130,10 @@ class DependencyChainsDialog extends AppDialog {
       <div id=${`cycle-content-${box.id}`} ?hidden=${box.collapsed}>
       ${box.internalEdges.length > 0 ? html`<svg class="connections cycle-connections" width=${box.width} height=${box.height} aria-hidden="true">
         ${box.internalEdges.map(edge => svg`<path d=${edge.path}
-          class=${activePackage === null ? '' : edge.from === activePackage || edge.to === activePackage ? 'traced' : 'subdued'}
+          class=${adjacent ? edge.from === activePackage || edge.to === activePackage ? 'traced' : 'subdued' : ''}
           style=${styleMap({ '--connection-color': packageColor(this.graph.nodes.get(edge.from)) })} marker-end="url(#dependency-arrow)"/>`)}
       </svg>` : nothing}
-      ${repeat(box.packages, node => node.id, node => this.renderNode(node, neighbors))}
+      ${repeat(box.packages, node => node.id, node => this.renderNode(node, adjacent ? neighbors : null))}
       </div>
     </div>`
   }
