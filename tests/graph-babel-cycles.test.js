@@ -14,6 +14,13 @@ import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-meta
 const loader = 'node_modules/@babel/core/lib/config/files/module-types.js'
 const native = 'node_modules/react-native/index.js', plugin = 'node_modules/plugin/index.js'
 const config = 'babel.config.js'
+const pluginLoaders = [loader, 'node_modules/@babel/core/lib/config/files/plugins.js']
+const dynamicPlugins = [
+  ['@react-native/babel-preset', 'index.js'],
+  ['@react-native/babel-preset', 'src/index.js'],
+  ['react-native-reanimated', 'plugin/index.js'],
+  ['@org/react-native-reanimated', 'plugin/index.js'],
+]
 
 function imports(ordinaryImport) {
   return new Map([
@@ -83,6 +90,78 @@ test('advisory popup cycles exclude Babel config reads in full bundles and cache
       const result = layoutDependencyChains(graph)
       assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinaryImport ? 1 : 0)
       assert.equal(result.boxes.length, ordinaryImport ? 1 : 4)
+    }
+  }
+})
+
+test('Babel dynamic plugin exclusions match exact loader and entry-point paths', () => {
+  const targets = dynamicPlugins.map(([name, file]) => `node_modules/${name}/${file}`)
+  targets.push('node_modules/@another-org/react-native-reanimated/plugin/index.js')
+  for (const source of pluginLoaders) {
+    for (const prefix of ['', '/project/', 'node_modules/outer/', 'node_modules/.pnpm/@babel+core@7.0.0/']) {
+      for (const target of targets) {
+        assert.equal(countsTowardsCycles(prefix + source, target), false, `${prefix + source} -> ${target}`)
+        assert.equal(countsTowardsCycles(source, prefix + target), false, `${source} -> ${prefix + target}`)
+      }
+    }
+    for (const target of [
+      ...targets.flatMap(path => [`${path}.bak`, `${path}/other.js`, path.replace('node_modules/', 'my_node_modules/')]),
+      'node_modules/@babel/preset-typescript/lib/index.js', 'node_modules/@babel/plugin-transform-typescript/lib/index.js',
+      'node_modules/react-native-reanimated/index.js', 'node_modules/react-native-reanimated/plugin/helper.js',
+      'node_modules/@react-native/babel-preset/src/helpers.js', 'node_modules/@other/babel-preset/index.js',
+    ]) assert.equal(countsTowardsCycles(source, target), true, `${source} -> ${target}`)
+  }
+  for (const source of [
+    ...pluginLoaders.flatMap(path => [`${path}.bak`, path.replace('node_modules/', 'my_node_modules/'), path.replace('/core/', '/core-other/')]),
+    'lib/config/files/module-types.js', 'node_modules/@babel/core/lib/config/files/index.js',
+    'node_modules/@babel/core/lib/config/plugins.js', 'node_modules/@babel/core/lib/index.js',
+  ]) {
+    for (const target of targets) assert.equal(countsTowardsCycles(source, target), true, `${source} -> ${target}`)
+  }
+})
+
+test('grid, dependency and advisory cycles exclude dynamic React Native plugin loads but retain TypeScript preset imports', async () => {
+  for (const source of pluginLoaders) {
+    for (const [name, file] of [...dynamicPlugins, ['@babel/preset-typescript', 'lib/index.js']]) {
+      const expectedCycles = name === '@babel/preset-typescript' ? 1 : 0, target = `node_modules/${name}/${file}`
+      const edges = new Map([['index.js', [target]], [source, [target]], [target, [source]]])
+      for (const shortened of [false, true]) {
+        const original = new Map([...edges.keys()].map(path => [shortened ? path.replace('node_modules/', '') : path, path]))
+        const display = new Map([...original].map(([path, orig]) => [orig, path]))
+        const tree = Object.fromEntries([...edges].map(([path, targets]) => [display.get(path), { imports: targets.map(to => display.get(to)) }]))
+        const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: path => bundlePkgOf(original.get(path)) })
+        for (const node of graph.nodes) node.origFile = original.get(node.file)
+        for (const expanded of [new Set(), new Set(graph.packages)]) {
+          const full = buildDependencyMatrix(graph, { expanded })
+          assert.equal(full.cycleCount, expectedCycles, `${source} -> ${target}`)
+          assert.equal(full.importCount, 3)
+          const filtered = buildDependencyMatrix(graph, { expanded, cyclesOnly: true })
+          assert.equal(filtered.importCount, expectedCycles ? 2 : 0)
+          assert.equal(filtered.rows.length, expectedCycles ? 2 : 0)
+        }
+        for (const packagesView of [false, true]) {
+          const network = dependencyNetwork(graph, packagesView)
+          const result = layoutPackageDependencies(network.nodes.map(node => node.file), network.importsOf, [], { cycleImportsOf: network.cycleImportsOf })
+          assert.equal(result.cycles.length, expectedCycles)
+          assert.equal(result.edges.length, 3)
+        }
+      }
+      const details = { kind: 'stasis', integrity: 'babel-plugin', size: 1, bundle: new Bundle({
+        modules: new Map([
+          ['.', { name: 'app', files: { 'index.js': 'app' } }],
+          ['node_modules/@babel/core', { name: '@babel/core', version: '1.0.0', files: { [source.slice('node_modules/@babel/core/'.length)]: 'loader' } }],
+          [`node_modules/${name}`, { name, version: '1.0.0', files: { [file]: 'plugin' } }],
+        ]),
+        imports: new Map([['node,import', new Map([...edges].map(([path, targets]) => [path, new Map(targets.map(to => [to, to]))]))]]),
+      }) }
+      const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+      for (const input of [details, metadata]) {
+        const graph = bundleDependencyChains(input, { packageKey: name, version: '1.0.0' })
+        assert.ok(graph.imports.get('node_modules/@babel/core').has(`node_modules/${name}`))
+        const result = layoutDependencyChains(graph)
+        assert.equal(result.boxes.filter(box => box.members.length > 1).length, expectedCycles)
+        assert.equal(result.boxes.length, expectedCycles ? 2 : 3)
+      }
     }
   }
 })

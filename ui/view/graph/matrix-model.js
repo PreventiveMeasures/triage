@@ -70,7 +70,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
       if (!cells.get(from).has(to)) cells.get(from).set(to, { from, to, count: 0, cycleCount: 0, examples: [] })
       const cell = cells.get(from).get(to)
       cell.count++
-      const cycleImport = countsTowardsCycles(originalPaths.get(file), originalPaths.get(target))
+      const cycleImport = countsTowardsCycles(originalPaths.get(file), originalPaths.get(target), graph.ownSourceFiles?.has(target))
       if (cell.examples.length < 80 && (!cyclesOnly || cycleImport)) cell.examples.push([file, target])
       importCount++
       byId.get(from).outgoing++; byId.get(to).incoming++

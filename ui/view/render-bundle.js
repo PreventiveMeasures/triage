@@ -331,6 +331,8 @@ export function buildBundleGraphData(details) {
     layerRoots,
     // Entry packages are traversal roots too, but are not necessarily own source.
     ownSourcePackages: ownFiles.length > 0 ? new Set(ownFiles.map(pkgOf)) : undefined,
+    // Display package keys can collide when an own directory shares a dependency's name.
+    ownSourceFiles: new Set(ownFiles),
     reasons: [...reasons.keys()],
   }
 }

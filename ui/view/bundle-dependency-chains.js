@@ -35,7 +35,7 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   }
   for (const [parent, targets] of bundleImportsAsMap(details)) {
     if (!paths.has(parent)) continue
-    for (const target of targets) if (paths.has(target)) link(dirs.get(parent), dirs.get(target), countsTowardsCycles(parent, target))
+    for (const target of targets) if (paths.has(target)) link(dirs.get(parent), dirs.get(target), countsTowardsCycles(parent, target, dirs.get(target) === '.'))
   }
   const { roots, appImports } = bundleLayerRoots(details, paths, path => dirs.get(path), dirs, allPaths)
   if (appImports.length > 0 && !nodes.has('.')) nodes.set('.', packageNode('.'))
