@@ -1,3 +1,4 @@
+import { sharedFindingTriage, usesReportIgnore } from '../../client/ignored-triage.js'
 // Bundle-view rendering surface. Lifted out of `render.js` so the
 // findings-tab path doesn't have to scroll past ~1500 lines of
 // bundle chrome. Covers bundle data prep, the bundle graph, the
@@ -124,7 +125,7 @@ export { computeBundleFileHashes }
 // hash → finding index bundleFindingsByFile uses, bucketing each
 // finding by triage state (or 'live' when none).
 export function countBundleTriageBuckets(details, sourcePaths = null) {
-  const counts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
+  const counts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
   if (!details?.fileHashes) return counts
   const seen = new Set()
   for (const [file, hash] of details.fileHashes) {
@@ -132,7 +133,7 @@ export function countBundleTriageBuckets(details, sourcePaths = null) {
     if (seen.has(hash)) continue
     seen.add(hash)
     for (const f of findingsForFileHash(hash)) {
-      const t = state.triage.get(tabKey(f))?.triage
+      const t = sharedFindingTriage(f, state.triage.get(tabKey(f)))
       if (t && counts[t] !== undefined) counts[t]++
     }
   }
@@ -152,13 +153,8 @@ export function countBundleTriageBuckets(details, sourcePaths = null) {
 // duplicate sources).
 // Bundle-side per-finding filter. Two modes:
 //
-//   'graph'  — bundle graph view. Follows state.shownTriage (null =
-//              live + ignored, 'fixed'/'invalid'/'deleted' = exact
-//              bucket). Ignore is intentionally NOT considered: it's
-//              a per-report flag and a bundle aggregates across
-//              reports, so an ignored finding still counts as live
-//              in the non-triaged view. The selector exposes only
-//              the three triage buckets accordingly.
+//   'graph'  — follows state.shownTriage for shared triage. Per-report
+//              dependency ignores remain live in this cross-report view.
 //
 //   'issues' — bundle Issues list (and the source viewer's per-line
 //              dots / panel). Always shows live + in-progress + fixed + ignored;
@@ -174,7 +170,7 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
     const found = findingsForFileHash(hash)
     if (found.length === 0) continue
     const filtered = found.filter((f) => {
-      const t = state.triage.get(tabKey(f))?.triage ?? null
+      const t = sharedFindingTriage(f, state.triage.get(tabKey(f))) ?? null
       if (mode === 'issues') return t !== 'invalid' && t !== 'deleted'
       return t === state.shownTriage
     })
@@ -709,16 +705,10 @@ function renderBundleSourceFindingPanel(findings) {
   const f = findings[idx]
   if (!f) return nothing
   const reports = f.fileHash ? reportsForFinding(f.fileHash, f) : []
-  // Display-only triage badge in the header. The bundle Issues
-  // filter excludes invalid/deleted, and ignored is per-report
-  // (the bundle treats ignored findings as live), so the only
-  // statuses that surface here are 'fixed' and 'inprogress' —
-  // every other case (live or ignored) renders without a badge. An
-  // "Untriaged" label would conflate live + ignored, which is
-  // misleading because the user might have ignored the finding in a
-  // report even though the bundle still treats it as active.
-  const triage = state.triage.get(tabKey(f))?.triage
-  const triageLabel = triage === 'fixed' ? 'Fixed' : triage === 'inprogress' ? 'In progress' : null
+  // Shared triage can be displayed across reports. Dependency report ignores
+  // stay local to their report and have no aggregate badge.
+  const triage = sharedFindingTriage(f, state.triage.get(tabKey(f)))
+  const triageLabel = triage === 'fixed' ? 'Fixed' : triage === 'inprogress' ? 'In progress' : triage === 'ignored' ? 'Ignored' : null
   // Run meta — analyzer / model / effort / exportsMode chained
   // with `·`, same shape the report's tab-body uses (see
   // render-finding.js's `meta`). Sits to the right of the Line
@@ -2108,7 +2098,7 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
             <span class="bundle-issues-file-count">${findings.length} ${findings.length === 1 ? 'issue' : 'issues'}</span>
           </header>
           <ul class="bundle-issues-findings">
-            ${repeat(sortedFindings, (finding) => finding.id ?? `${file}\0${finding.line ?? ''}\0${finding.severity ?? ''}\0${finding.description ?? ''}`, (finding) => {
+            ${repeat(sortedFindings, (finding) => JSON.stringify([finding.id ?? `${file}\0${finding.line ?? ''}\0${finding.severity ?? ''}\0${finding.description ?? ''}`, usesReportIgnore(finding)]), (finding) => {
               // findingIdx is the position in the ORIGINAL per-file
               // findings array (the one findingsByFile returned);
               // the source viewer's bundleSourceFindingIdx points at
@@ -2117,19 +2107,12 @@ export function renderIssuesGroupedByFile(findingsByFile, { kind, bucketKey } = 
               const findingIdx = findings.indexOf(finding)
               const sev = finding.severity
               const lineLabel = formatFindingLine(finding.line)
-              const triage = state.triage.get(tabKey(finding))?.triage
-              // Show the badge for any persisted triage state. The
-              // bundle Issues tab + the package slide's `live` view
-              // both filter invalid + deleted out of `findingsByFile`
-              // upstream, so only `fixed` ever surfaces there. On the
-              // package slide's `[Invalid]` / `[Deleted]` tabs the
-              // findings carry the matching state by construction —
-              // tagging each row makes it obvious which bucket the
-              // user is looking at without having to remember which
-              // tab they clicked.
+              const triage = sharedFindingTriage(finding, state.triage.get(tabKey(finding)))
+              // Match the aggregate filters: a shared App/own-code ignore
+              // does not give a dependency occurrence an Ignored badge.
               const triageLabel = (triage === 'fixed' || triage === 'invalid' || triage === 'deleted')
                 ? triage.toUpperCase()
-                : triage === 'inprogress' ? 'In progress' : null
+                : triage === 'inprogress' ? 'In progress' : triage === 'ignored' ? 'Ignored' : null
               const inner = html`<div class="bundle-issues-finding-head">
                 <span class=${`bundle-issue-sev sev-${sev}`}>${sev.replaceAll('_', ' ')}</span>
                 ${lineLabel ? html`<span class="bundle-issues-finding-line">${lineLabel}</span>` : nothing}

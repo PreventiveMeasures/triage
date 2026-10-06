@@ -1,3 +1,4 @@
+import { migrateStoredIgnores } from './ignored-triage.js'
 import { adoptRepoUrls, state } from './state.ts'
 import { saveBundle, saveFile } from './storage.js'
 import { upsertWorkspace } from './workspaces.js'
@@ -5,7 +6,7 @@ import { saveTriage } from './triage.js'
 import { analyzeContent, getKind, setCount } from './counts.js'
 import { firstDescriptionLine } from './finding-lookup.js'
 import { loadFindings } from '@preventive/report'
-import { bucketOf, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { allowsReportIgnores, bucketOf, isReportIgnoreScoped, patchEntry, setReportIgnored } from './triage-entry.ts'
 
 // Pure-logic side of workspace import. The DOM-touching layer (unlock
 // dialog, conflict-resolution dialog, post-import re-render) lives in
@@ -117,12 +118,8 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
       conflicts.push({ id, property: 'triage', local: localTriage, imported: importedTriage })
     } else if (importedTriage && !localTriage) {
       // Clear any pre-existing local per-report ignore on this id —
-      // triage and ignoredReports are mutually exclusive (same mutex
-      // applyConflictDecisions enforces via `ignoredReports:
-      // undefined`). Without it, patchEntry's {...cur, ...patch} merge
-      // leaves an entry carrying BOTH a triage bucket and a stale
-      // ignoredReports set.
-      patchEntry(map, id, { triage: importedTriage, ignoredReports: undefined })
+      // Only shared ignored preserves independent dependency report scopes.
+      patchEntry(map, id, { triage: importedTriage, ...(importedTriage === 'ignored' ? {} : { ignoredReports: undefined }) })
     }
 
     // Tri-state attention flag — gap-fill when local is unset, surface a
@@ -150,9 +147,9 @@ async function mergeTriage(triage, conflictResolver, findingLookup) {
     // just-imported above), skip the ignored merge to honor the per-
     // tab invariant.
     const ignoredReports = Array.isArray(entry.ignoredReports) ? entry.ignoredReports : []
-    if (!bucketOf(map.get(id))) {
+    if (allowsReportIgnores(map.get(id))) {
       for (const r of ignoredReports) {
-        if (typeof r === 'string') setReportIgnored(map, id, r, true)
+        if (typeof r === 'string') setReportIgnored(map, id, r, true, isReportIgnoreScoped(entry, r))
       }
     }
   }
@@ -185,7 +182,7 @@ function applyConflictDecisions(conflicts, decisions) {
     else if (c.property === 'fix') patchEntry(state.triage, c.id, { fix: c.imported })
     else if (c.property === 'triage') {
       // Clear the per-report ignore on the same id — mutex with triage.
-      patchEntry(state.triage, c.id, { triage: c.imported, ignoredReports: undefined })
+      patchEntry(state.triage, c.id, { triage: c.imported, ...(c.imported === 'ignored' ? {} : { ignoredReports: undefined }) })
     }
     else if (c.property === 'flagged') {
       // 'not flagged' resolves to the explicit `false` tombstone, never
@@ -309,7 +306,8 @@ export async function applyWorkspaceImport(data, { conflictResolver } = {}) {
   const lookup = hasIncomingTriage
     ? await buildImportedFindingLookup(data.reports)
     : new Map()
-  await mergeTriage(data.triage, conflictResolver, lookup)
+  const migrated = await migrateStoredIgnores(data.triage, name => data.reports.find(report => report.name === name)?.content)
+  await mergeTriage(migrated.entries, conflictResolver, lookup)
 
   // Bundle membership rides as pointers (sha512 integrities). Bytes,
   // when shipped, rode in `data.bundleBlobs` and were persisted to

@@ -74,20 +74,15 @@ const triage = {
     if (triageVal !== undefined) {
       if (triageVal === null || triageVal === '' || triageVal === false) {
         if (patchEntry(state.triage, id, { triage: undefined })) changed = true
-      } else if (triageVal === 'inprogress' || triageVal === 'fixed' || triageVal === 'invalid' || triageVal === 'deleted') {
+      } else if (triageVal === 'inprogress' || triageVal === 'fixed' || triageVal === 'invalid' || triageVal === 'deleted' || triageVal === 'ignored') {
         if (state.triage.get(id)?.triage !== triageVal) {
           patchEntry(state.triage, id, { triage: triageVal })
           changed = true
         }
       } else {
-        // Reject unknown triage values loudly. 'ignored' is a
-        // common mistake — the per-report ignore set is keyed by
-        // (reportName, id), not id alone, so it can't be expressed
-        // through this id-only API. Use the per-finding ignore
-        // button or the workspace import path instead.
         throw new TypeError(
           `DeepView.triage.set: unknown triage value ${JSON.stringify(triageVal)} ` +
-          "(expected 'inprogress' | 'fixed' | 'invalid' | 'deleted' | null)",
+          "(expected 'inprogress' | 'fixed' | 'invalid' | 'deleted' | 'ignored' | null)",
         )
       }
     }

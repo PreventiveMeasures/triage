@@ -73,13 +73,14 @@ describe('tab levels', () => {
 let nextId = 0
 // One finding (= one tab). `ann` carries the triage-entry fields to
 // install in state.triage for it: { color?, triage?, fix?, ignored? }
-// — `ignored: true` writes the per-report ignoredReports list keyed to
-// this finding's `_reportName`.
+// — `ignored: true` makes a dependency finding with a per-report ignore
+// keyed to this finding's `_reportName`.
 function tab(ann = null, extra = {}) {
   const f = {
     id: `t${nextId++}`,
     severity: 'high',
-    file: 'src/a.js',
+    file: ann?.ignored ? 'node_modules/pkg/a.js' : 'src/a.js',
+    _depsDirectory: 'node_modules',
     line: '1',
     description: 'finding',
     _reportName: REPORT,
@@ -829,5 +830,41 @@ describe('groupWithPassRows', () => {
     state.showRevalidation = false
     const orphan = [tab(null), tab(null)]
     assert.equal(groupWithPassRows(orphan), orphan)
+  })
+})
+
+
+describe('shared ignored triage', () => {
+  it('reads per-report ignores only on dependency occurrences of the same id', () => {
+    reset()
+    const dep = tab({ ignored: true }, { file: 'node_modules/pkg/a.js', isApp: false, _depsDirectory: 'node_modules' })
+    const own = { ...dep, file: 'src/a.js' }
+    const app = { ...dep, isApp: true }
+    assert.equal(isIgnored(dep), true)
+    assert.equal(tabTriage(dep), 'ignored')
+    for (const finding of [own, app]) {
+      assert.equal(isIgnored(finding), false)
+      assert.equal(tabTriage(finding), undefined)
+      assert.equal(groupState([finding]).isIgnored, false)
+    }
+  })
+  it('counts shared ignores as regular triage and levels eligible own-code siblings', () => {
+    const a = tab({ triage: 'ignored' }, { isApp: false })
+    const b = tab(null, { isApp: false })
+    assert.equal(groupState([a]).anyTriage, true)
+    assert.equal(groupState([a]).allTriaged, true)
+    assert.equal(isIgnored(a), true)
+    assert.equal(syncGroupTriage([a, b]), true)
+    assert.equal(state.triage.get(b.id).triage, 'ignored')
+  })
+  it('shared ignores do not apply to dependency occurrences or level dependency siblings', () => {
+    const own = tab({ triage: 'ignored' }, { isApp: false })
+    const dep = { ...own, file: 'node_modules/pkg/a.js', _depsDirectory: 'node_modules' }
+    assert.equal(tabTriage(dep), undefined)
+    assert.equal(triageEntry(dep)?.triage, undefined)
+    assert.equal(isIgnored(dep), false)
+    const other = tab(null, { file: dep.file, isApp: false, _depsDirectory: 'node_modules' })
+    assert.equal(syncGroupTriage([own, other]), false)
+    assert.equal(state.triage.get(other.id), undefined)
   })
 })

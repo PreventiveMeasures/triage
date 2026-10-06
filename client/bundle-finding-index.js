@@ -1,4 +1,5 @@
-import { isManagedUiMode } from './state.ts'
+import { stampIndexedFindings, usesReportIgnore } from './ignored-triage.js'
+import { isManagedUiMode, loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
 import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
 // OPFS-wide finding index — loads every report stored in OPFS
 // (not just the currently-active state.reports) and caches its
@@ -27,8 +28,7 @@ import { managedRowsForIds, managedTitleForId } from './managed/workspace.js'
 
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
-import { loadRepoUrlFor, onRepoUrlChanged } from './state.ts'
-import { findingTitle, inheritReportMeta, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '@preventive/report'
+import { findingTitle, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '@preventive/report'
 
 const byHash = new Map()
 const byPackage = new Map()
@@ -273,11 +273,11 @@ export function reportRowsForFindingIds(ids) {
 // Dedupe key — preferred form is the analyzer's stable `id`; falls
 // back to a (severity, description, file, line, fileHash) tuple
 // when the report doesn't carry ids (older / hand-rolled inputs).
-// Same hash bucket: same source content; same key = same finding,
-// so we drop the second copy.
+// Preserve distinct ignore scopes of one id before aggregate triage filtering;
+// only copies within the same scope can share a finding and its report origins.
 function findingDedupeKey(f) {
-  if (f.id) return `id:${f.id}`
-  return `c:${f.severity ?? ''}|${f.description ?? ''}|${f.file ?? ''}|${f.line ?? ''}`
+  const identity = f.id ? `id:${f.id}` : `c:${f.severity ?? ''}|${f.description ?? ''}|${f.file ?? ''}|${f.line ?? ''}`
+  return JSON.stringify([identity, usesReportIgnore(f)])
 }
 
 function rememberContribution(name, kind, ref) {
@@ -527,7 +527,7 @@ async function indexOne(name) {
     // mutation is safe: bucket dedupe + the index pass don't rely on
     // the absence of meta fields, and nothing has held the finding
     // before this point.
-    for (const f of findings) inheritReportMeta(f, data)
+    stampIndexedFindings(findings, data)
     stampSecurityGroups(reportEntries(data).map((entry) => Array.isArray(entry) ? entry : [entry]), { source: data.source })
     // Per-report repo — the LAST fallback when neither
     // `f.repo.github` nor `f._repoFallback` is present (the
@@ -560,7 +560,7 @@ async function indexOne(name) {
         // report-marker fallback ingest resolves into `_source`.
         members: members.map((f) => {
           const source = f.source ?? data.source ?? null
-          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source), isSecurity: f.isSecurity }
+          return { id: f.id, title: findingTitle(f), source, revalidate: revalidateKindOf(f), isApp: f.isApp ?? isAppFinding(f, source), isSecurity: f.isSecurity, ...(f.file ? { file: f.file, _depsDirectory: f._depsDirectory } : {}) }
         }),
       }
       for (const f of members) if (indexFindingById(f, name, row)) added = true

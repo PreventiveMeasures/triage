@@ -1,11 +1,15 @@
 // Identical report cards share a block and its report chips. Compare their
 // complete membership, not only the ids in this link: [A,B,X] and [A,B,Y]
 // must not become one row just because the link happens to name A and B.
+import { usesReportIgnore } from '../../client/ignored-triage.js'
+
 export function groupLinkedReportRows(ids, reportRows) {
   const linked = new Set(ids), located = new Set(), variants = new Map()
   const order = new Map(ids.map((id, i) => [id, i]))
   for (const row of reportRows) {
-    const allMembers = [...new Map(row.members.map((f) => [f.id, f])).values()]
+    // One id can have shared and per-report ignore scopes within one card.
+    // Only copies with the same scope can share a rendered member/status.
+    const allMembers = [...new Map(row.members.map((f) => [JSON.stringify([f.id, usesReportIgnore(f)]), f])).values()]
     const matches = allMembers.filter((f) => linked.has(f.id))
     if (matches.length === 0) continue
     for (const f of matches) located.add(f.id)
@@ -15,13 +19,13 @@ export function groupLinkedReportRows(ids, reportRows) {
     // index builds them (client/bundle-finding-index.js).
     const members = allMembers.filter((f) => linked.has(f.id) || f.isApp)
     // Reports can stamp the same id differently, so share report chips only
-    // when both the original membership and visible member metadata agree.
-    // Fixed tuples make property order irrelevant; sort by id so reordered
+    // when the original membership, visible metadata, and ignore scope agree.
+    // Fixed tuples make property order irrelevant; sort by id and scope so reordered
     // copies still share a block without borrowing another report's title.
     const key = JSON.stringify([
       allMembers.map((f) => f.id).toSorted(),
-      members.map((f) => [f.id, f.title ?? '', f.source ?? null, f.revalidate ?? ''])
-        .toSorted(([a], [b]) => a.localeCompare(b)),
+      members.map((f) => [f.id, usesReportIgnore(f), f.title ?? '', f.source ?? null, f.revalidate ?? ''])
+        .toSorted(([a, aScope], [b, bScope]) => a.localeCompare(b) || Number(aScope) - Number(bScope)),
     ])
     let variant = variants.get(key)
     if (!variant) {

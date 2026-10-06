@@ -95,3 +95,11 @@ test('unreadable reports are disclosed and do not imply that there are no differ
   const empty = fixture({}, {}, () => assert.fail('no local findings to compare'), {})
   assert.deepEqual(await prepareLocalTriageComparison(empty), { localFindings: 0, matched: 0, skipped: [], findings: [] })
 })
+
+
+test('shared ignored compares as a regular triage bucket', () => {
+  assert.deepEqual(compareTriageEntries({ triage: 'ignored' }, snapshot({ triage: 'ignored' })), [])
+  assert.deepEqual(compareTriageEntries({ triage: 'ignored' }, snapshot({ triage: 'fixed' })), [
+    { property: 'triage', local: 'ignored', managed: 'fixed', kind: 'mismatch' },
+  ])
+})

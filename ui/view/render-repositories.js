@@ -1,3 +1,4 @@
+import { sharedFindingTriage } from '../../client/ignored-triage.js'
 // Repositories view — cross-report aggregation of own-source
 // findings (anything NOT in `node_modules/` / `dependencies/`)
 // bucketed by their repo URL. Complements `render-packages.js`:
@@ -40,17 +41,18 @@ export function renderRepositoriesView() {
   // re-renders progressively as more reports finish indexing.
   ensureBundleFindingsIndexed().catch(() => {})
   const buckets = getRepositoriesIndex()
-  const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
+  const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
   const filtered = []
   for (const [repo, bucket] of buckets) {
     const findings = []
     const files = new Map()
     for (const f of bucket.findings) {
-      const t = state.triage.get(tabKey(f))?.triage ?? null
+      const t = sharedFindingTriage(f, state.triage.get(tabKey(f))) ?? null
       if (t === 'inprogress') triageCounts.inprogress++
       else if (t === 'fixed') triageCounts.fixed++
       else if (t === 'invalid') triageCounts.invalid++
       else if (t === 'deleted') triageCounts.deleted++
+      else if (t === 'ignored') triageCounts.ignored++
       if (t !== state.shownTriage) continue
       findings.push(f)
       if (!files.has(f.file)) files.set(f.file, [])
@@ -122,7 +124,7 @@ function repositoriesToolbarTemplate(triageCounts) {
 // view/triage-selector.js) — same 4-bucket state list, same marker
 // class (`.packages-triage-selector`) so events.js's click routing
 // applies.
-const REPOSITORIES_TRIAGE_STATES = ['inprogress', 'fixed', 'invalid', 'deleted']
+const REPOSITORIES_TRIAGE_STATES = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
 
 function sortRepositories(arr, sortBy) {
   const cmp = sortBy === 'name-asc'
@@ -140,7 +142,7 @@ function repositoryBucketCounts(rawBucket) {
   if (!rawBucket) return counts
   for (const findings of rawBucket.files.values()) {
     for (const f of findings) {
-      const t = state.triage.get(tabKey(f))?.triage ?? null
+      const t = sharedFindingTriage(f, state.triage.get(tabKey(f))) ?? null
       if (t === 'invalid') counts.invalid++
       else if (t === 'deleted') counts.deleted++
       else counts.live++
@@ -247,7 +249,7 @@ function repositoryFindingsByFile(rawBucket, mode = 'live') {
   const result = new Map()
   for (const [file, findings] of rawBucket.files) {
     const filtered = findings.filter((f) => {
-      const t = state.triage.get(tabKey(f))?.triage ?? null
+      const t = sharedFindingTriage(f, state.triage.get(tabKey(f))) ?? null
       if (mode === 'invalid') return t === 'invalid'
       if (mode === 'deleted') return t === 'deleted'
       return t !== 'invalid' && t !== 'deleted'

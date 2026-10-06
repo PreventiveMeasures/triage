@@ -670,3 +670,16 @@ test('team annotation reads wait for pending writes and respect cancellation', a
   await settle()
   assert.equal(annotationCalls.length, 0)
 })
+
+
+test('managed shared ignored persists and hydrates without losing dependency report scopes', async () => {
+  await open('A', ['x'])
+  await edit('x', { triage: 'ignored', ignoredReports: ['dependency.json'] })
+  await drain()
+  assert.deepEqual(pushes(), [push('A', { x: { triage: 'ignored' } })])
+  serverEntries = { B: { x: { triage: 'ignored' } } }
+  await open('B', ['x'])
+  assert.deepEqual(state.triage.get('x'), { triage: 'ignored', ignoredReports: ['dependency.json'] })
+  await drain()
+  assert.equal(pushes().length, 1)
+})

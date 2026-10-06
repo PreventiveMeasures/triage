@@ -1,13 +1,14 @@
+import { setFindingTriage } from '../../client/ignored-triage.js'
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { managedBundleRoute } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { openFindingHistoryDialog, openManagedIssueDialog } from './client-managed.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { renderHighlighted } from './render-finding.js'
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, setReportIgnored, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, configureRevalidation, evidenceMarkdown, findingUrl, handoffBlock, isModule, lineRange, revalidationShown } from './format.js'
-import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, findingReport, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
+import { commonPrefix, configureRevalidation, depsDirName, evidenceMarkdown, findingUrl, handoffBlock, isModule, lineRange, revalidationShown } from './format.js'
+import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, focusCodeLinkPosition, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
@@ -1500,18 +1501,7 @@ const KANBAN_DATA_TYPE = 'application/x-deepview-kanban-gid'
 function applyTriage(targets, target) {
   for (const f of targets) {
     if (!canTriageFinding(f)) continue
-    const key = tabKey(f)
-    const reportName = findingReport(f)
-    if (target === 'untriaged') {
-      patchEntry(state.triage, key, { triage: undefined })
-      setReportIgnored(state.triage, key, reportName, false)
-    } else if (target === 'ignored') {
-      patchEntry(state.triage, key, { triage: undefined })
-      setReportIgnored(state.triage, key, reportName, true)
-    } else {
-      patchEntry(state.triage, key, { triage: target })
-      setReportIgnored(state.triage, key, reportName, false)
-    }
+    setFindingTriage(state.triage, f, target, depsDirName())
   }
 }
 

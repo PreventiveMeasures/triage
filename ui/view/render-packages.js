@@ -1,3 +1,4 @@
+import { sharedFindingTriage } from '../../client/ignored-triage.js'
 // Packages view — cross-report aggregation of findings by package
 // name (`node_modules/<pkg>/` or `dependencies/<pkg>/` prefix).
 // Pulls from `client/bundle-finding-index.js` (the OPFS-wide
@@ -31,12 +32,8 @@ export function renderPackagesView() {
   // yet; the events.js subscriber re-renders progressively as more
   // reports finish indexing.
   //
-  // Triage filter: state.shownTriage gates which findings count
-  // (null = untriaged, 'fixed' / 'invalid' / 'deleted' = those
-  // buckets). Ignore is per-report and intentionally NOT
-  // considered here — a finding ignored in some report still
-  // counts against its package because the package itself isn't
-  // ignored. Same rule the bundle paths follow.
+  // Filter by shared triage; dependency report ignores remain live when
+  // aggregating across reports.
   ensureBundleFindingsIndexed().catch(() => {})
   const buckets = getPackagesIndex()
   // Per-package filtered view + cross-bucket triage counts.
@@ -51,7 +48,7 @@ export function renderPackagesView() {
   // latest version's row inline + an expand chevron that reveals
   // the older versions underneath; single-slot packages collapse
   // back to the original one-row shape (no chevron).
-  const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0 }
+  const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
   const filtered = []
   for (const [pkg, bucket] of buckets) {
     const versions = []
@@ -62,11 +59,12 @@ export function renderPackagesView() {
       const findings = []
       const files = new Map()
       for (const f of sub.findings) {
-        const t = state.triage.get(tabKey(f))?.triage ?? null
+        const t = sharedFindingTriage(f, state.triage.get(tabKey(f))) ?? null
         if (t === 'inprogress') triageCounts.inprogress++
         else if (t === 'fixed') triageCounts.fixed++
         else if (t === 'invalid') triageCounts.invalid++
         else if (t === 'deleted') triageCounts.deleted++
+        else if (t === 'ignored') triageCounts.ignored++
         if (t !== state.shownTriage) continue
         findings.push(f)
         if (!files.has(f.file)) files.set(f.file, [])
@@ -245,8 +243,8 @@ function packagesToolbarTemplate(triageCounts) {
 
 // State list for `<triage-selector variant="packages">` (see
 // view/triage-selector.js) — the only thing the call site passes.
-// No `ignored`: it's per-report and treated as untriaged in this view.
-const PACKAGES_TRIAGE_STATES = ['inprogress', 'fixed', 'invalid', 'deleted']
+// Include shared App/own-code ignores; per-report dependency ignores stay live.
+const PACKAGES_TRIAGE_STATES = ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored']
 
 // In-place sort by the user-selected key. Every option falls back
 // to alphabetical name ordering on ties so the list stays stable
@@ -281,7 +279,7 @@ function packageBucketCounts(rawBucket, version) {
     : (rawBucket.byVersion.get(version)?.files.values() ?? [].values())
   for (const findings of fileSources) {
     for (const f of findings) {
-      const t = state.triage.get(tabKey(f))?.triage ?? null
+      const t = sharedFindingTriage(f, state.triage.get(tabKey(f))) ?? null
       if (t === 'invalid') counts.invalid++
       else if (t === 'deleted') counts.deleted++
       else counts.live++
@@ -524,7 +522,7 @@ function packageFindingsByFile(rawBucket, pkg, mode = 'live', version) {
     : (rawBucket.byVersion.get(version)?.files ?? new Map())
   for (const [file, findings] of fileSource) {
     const filtered = findings.filter((f) => {
-      const t = state.triage.get(tabKey(f))?.triage ?? null
+      const t = sharedFindingTriage(f, state.triage.get(tabKey(f))) ?? null
       if (mode === 'invalid') return t === 'invalid'
       if (mode === 'deleted') return t === 'deleted'
       return t !== 'invalid' && t !== 'deleted'

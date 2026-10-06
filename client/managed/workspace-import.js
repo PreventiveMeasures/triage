@@ -1,3 +1,4 @@
+import { migrateStoredIgnores } from '../ignored-triage.js'
 import { parseWorkspaceBundleBytes, parseWorkspaceJson } from '../workspace-format.js'
 import { isEncryptedBundle } from '../workspace-bundle-crypto.js'
 import { loadManagedFindings, readManagedReport } from '../../common/managed/report-content.ts'
@@ -38,11 +39,12 @@ export async function prepareWorkspaceImport(data, repos, aliases = []) {
   }
   const triage = Object.create(null)
   if (data.triage != null && (typeof data.triage !== 'object' || Array.isArray(data.triage))) throw new Error('Invalid workspace triage.')
-  for (const [id, value] of Object.entries(data.triage ?? {})) {
+  const migrated = await migrateStoredIgnores(data.triage, name => data.reports.find(report => report.name === name)?.content)
+  for (const [id, value] of Object.entries(migrated.entries)) {
     if (!lookup.has(id)) continue
     const normalized = normalizeEntry(value)
     if (!normalized) continue
-    const { ignoredReports: _, ...entry } = normalized
+    const { ignoredReports: _, scopedIgnoredReports: _scoped, ...entry } = normalized
     if (Object.keys(entry).length === 0) continue
     triage[id] = entry
   }

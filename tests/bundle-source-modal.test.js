@@ -21,9 +21,12 @@ const openedWhy = []
 mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog: props => openedWhy.push(props) } })
 const highlightCalls = []
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, langForTag: () => null, highlight: (content, lang) => { highlightCalls.push({ content, lang }); return Promise.resolve(null) } } })
-mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
+mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, template) => {
+  assert.equal(new Set(items.map(key)).size, items.length, 'repeat keys must distinguish every rendered row')
+  return items.map(template)
+} } })
 const { state } = await import('../client/state.ts')
-const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList } = await import('../ui/view/render-bundle.js')
+const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -513,4 +516,57 @@ test('sourcemap package labels stay text when dependency metadata is unavailable
   const markup = renderText(renderBundlesList([entry]))
   assert.match(markup, /<span class="bundles-dist-pkg"[^>]*>dep<\/span>/u)
   assert.doesNotMatch(markup, /<button[^>]*class="bundles-dist-pkg"/u)
+})
+
+test('aggregate issue badges respect shared-ignore scope for the same finding id', t => {
+  const id = 'shared-ignore-issue-badge'
+  const previous = state.triage.get(id)
+  t.after(() => previous === undefined ? state.triage.delete(id) : state.triage.set(id, previous))
+  const dependency = { id, file: 'node_modules/pkg/index.js', isApp: false, severity: 'high', line: 1, description: 'Shared issue' }
+  const own = { ...dependency, file: 'src/index.js' }
+  const app = { ...dependency, isApp: true }
+  for (const kind of ['bundle', 'package', 'repository']) {
+    state.triage.set(id, { triage: 'ignored', ignoredReports: ['dependency.json'] })
+    for (const finding of [dependency, own, app]) {
+      const text = renderText(renderIssuesGroupedByFile(new Map([[finding.file, [finding]]]), { kind }))
+      assert.match(text, /Shared issue/u, `${kind}: the issue remains visible`)
+      if (finding === dependency) assert.doesNotMatch(text, /bundle-issues-finding-triage/u, `${kind}: dependency ignores are per report`)
+      else assert.match(text, /triage-ignored>Ignored<\/span>/u, `${kind}: App/own shared ignore is shown`)
+    }
+    state.triage.set(id, { triage: 'fixed' })
+    const text = renderText(renderIssuesGroupedByFile(new Map([[dependency.file, [dependency]]]), { kind }))
+    assert.match(text, /triage-fixed>FIXED<\/span>/u, `${kind}: other shared statuses still apply to dependencies`)
+  }
+})
+
+test('same-ID App and dependency findings remain selectable in package and bundle triage views', async t => {
+  const { saveFile, deleteFile } = await import('../client/storage.js')
+  const { ensureBundleFindingsIndexed, findingsForFileHash } = await import('../client/bundle-finding-index.js')
+  const { renderPackagesView } = await import('../ui/view/render-packages.js')
+  const previous = { shownTriage: state.shownTriage, selectedPackage: state.selectedPackage }
+  t.after(() => Object.assign(state, previous))
+  state.selectedPackage = null
+  for (const reverse of [false, true]) {
+    const pkg = `aggregate-scope-${reverse}`
+    const file = `node_modules/${pkg}/a.js`, hash = `hash-${pkg}`
+    const dep = { id: pkg, file, fileHash: hash, isApp: false, severity: 'high', description: 'Scope regression',
+      package: { npm: { name: pkg, version: '1.0.0' } } }
+    const app = { ...dep, isApp: true }
+    const name = `${pkg}.json`
+    await saveFile(name, JSON.stringify({ findings: reverse ? [dep, app] : [app, dep] }))
+    t.after(async () => { await deleteFile(name); state.triage.delete(pkg) })
+    await ensureBundleFindingsIndexed()
+    state.triage.set(pkg, { triage: 'ignored' })
+    const details = { kind: 'sourcemap', integrity: pkg, fileHashes: new Map([[file, hash]]),
+      json: { version: 3, sources: [file], sourcesContent: ['source'] } }
+    for (const triage of [null, 'ignored']) {
+      state.shownTriage = triage
+      assert.ok(renderText(renderPackagesView()).includes(`data-select-package=${pkg}`), `package remains visible in ${triage ?? 'live'}`)
+      const graph = buildBundleGraphData(details)
+      assert.equal([...graph.fileFindings.values()].flat().length, 1, `graph keeps the matching scope in ${triage ?? 'live'}`)
+    }
+    const markup = renderText(renderIssuesGroupedByFile(new Map([[file, findingsForFileHash(hash)]]), { kind: 'package', bucketKey: pkg }))
+    assert.equal((markup.match(/class="bundle-issues-finding"/gu) ?? []).length, 2)
+    assert.equal((markup.match(/triage-ignored>Ignored/gu) ?? []).length, 1)
+  }
 })

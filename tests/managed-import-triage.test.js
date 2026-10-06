@@ -255,10 +255,10 @@ test('local triage import sends only known findings through their reports, retai
   const knownIds = Array.from({ length: 205 }, (_, i) => `known-${i}`)
   const second = await addReport([...knownIds, 'f', 'legacy'].map(id => ({ id, file: 'a.js' })))
   const raw = Object.fromEntries(knownIds.map(id => [id, { color: 'red' }]))
-  raw.f = { color: 'red', comment: 'Imported note', flagged: false, ignoredReports: ['local.json'] }
+  raw.f = { color: 'red', comment: 'Imported note', flagged: false, ignoredReports: ['local.json'], scopedIgnoredReports: ['local.json'] }
   raw.g = { flagged: true }
   raw.legacy = { deleted: true }
-  raw.ignore = { ignoredReports: ['local.json'] }
+  raw.ignore = { ignoredReports: ['local.json'], scopedIgnoredReports: ['local.json'] }
   raw.unknown = { color: 'blue', comment: 'Local-only secret' }
   raw.oversizedUnknown = { comment: 'x'.repeat(10001) }
   const before = JSON.stringify(raw)
@@ -382,4 +382,28 @@ test('whole workspace import uses real managed routes to create a team, upload r
   assert.equal((await db.listTriage(['f']))[0].color, 'red')
   assert.equal((await db.listTriage(['f']))[0].fix, 'Existing fix')
   assert.equal((await db.listComments(['f']))[0].body, 'Imported comment')
+})
+
+
+test('shared ignored survives managed import, read, and history', async t => {
+  const { request, id, db } = await fixture(t)
+  const initial = (await request({ findingIds: ['f'] })).snapshots.f
+  assert.equal((await request({ entries: { f: { triage: 'ignored' } }, expected: { f: initial.version } })).status, 200)
+  const result = await request(undefined, 'admin', true, 'GET', `/api/reports/${id}/triage`)
+  assert.equal(result.status, 200)
+  assert.equal(result.entries.f.triage, 'ignored')
+  assert.equal((await db.listTriage(['f']))[0].triage, 'ignored')
+  const history = await db.listTriageHistory('f', 10)
+  assert.equal(history.length, 1)
+  assert.match(JSON.stringify(history), /ignored/u)
+})
+
+test('workspace import migrates own/App ignores and omits dependency report ignores', async () => {
+  const data = { workspace: { name: 'Old export' }, reports: [{ name: 'old.json', content: JSON.stringify({ findings: [
+    { id: 'own', file: 'src/app.js' },
+    { id: 'app', file: 'node_modules/pkg/app.js', isApp: true },
+    { id: 'dep', file: 'node_modules/pkg/source.js', isApp: false },
+  ] }) }], triage: Object.fromEntries(['own', 'app', 'dep'].map(id => [id, { ignoredReports: ['old.json'] }])) }
+  const plan = await prepareWorkspaceImport(data, [])
+  assert.deepEqual({ ...plan.triage }, { own: { triage: 'ignored' }, app: { triage: 'ignored' } })
 })

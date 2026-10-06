@@ -411,6 +411,8 @@ it('a frame received without a matching session cannot attach to a workspace ope
 for (const field of ['color', 'triage', 'comment', 'fix', 'flagged', 'ignoredReports']) {
   it(`unanchored recovery preserves an acknowledged ${field} clear`, async () => {
     const f = await fixture()
+    // This case exercises a dependency's per-report ignore, not shared triage.
+    if (field === 'ignoredReports') Object.assign(state.reports[0].groups[0][0], { file: 'node_modules/pkg/a.js', isApp: false })
     const value = { color: 'red', triage: 'fixed', comment: 'old comment', fix: 'old fix', flagged: true, ignoredReports: ['regression.md'] }[field]
     const remaining = field === 'comment' ? { fix: 'keep this fix' } : { comment: 'keep this comment' }
     const old = await f.revision(null, { A: { ...remaining, [field]: value } }, true)

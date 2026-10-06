@@ -1,6 +1,7 @@
 import { isManagedUiMode, state } from './state.ts'
 import { decodeUtf8, encodeUtf8 } from '../common/utf8.js'
-import { bucketOf, normalizeEntry, patchEntry, setReportIgnored } from './triage-entry.ts'
+import { migrateIgnoredReports, readIgnoredReportContexts } from './ignored-triage.js'
+import { allowsReportIgnores, bucketOf, isReportIgnoreScoped, normalizeEntry, patchEntry, setReportIgnored } from './triage-entry.ts'
 import {
   VAULT_LOCK,
   getEnvelopeAadForTriage,
@@ -118,7 +119,12 @@ let saveGen = 0
 // `buildTriageExportPayload` (backup export) so the two can't drift.
 // Per-report ignore persists as `ignoredReports: ['nameA', ...]` on
 // the entry.
+export function migrateLoadedIgnores() {
+  return !isManagedUiMode() && migrateIgnoredReports(state.triage, state.reports)
+}
+
 export function buildPersistedTriageEntries() {
+  migrateLoadedIgnores()
   const entries = {}
   for (const [id, entry] of state.triage) {
     if (SESSION_ID_RE.test(id)) continue
@@ -342,7 +348,7 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // Per-report ignore. Drop a report from an id's `ignoredReports`
     // when the new blob no longer lists it. Session-only ids are left
     // alone, same as the fields above. If the blob's entry carries a
-    // triage state, drop every ignored report for that id — mutex with
+    // non-ignored triage state, drop every ignored report for that id — mutex with
     // triage means the apply path skips re-adding ignoredReports, so
     // the local state must mirror that resolution.
     for (const id of [...map.keys()]) {
@@ -350,7 +356,7 @@ function applyTriageEntries(entries, { replace = false } = {}) {
       const reports = map.get(id)?.ignoredReports
       if (!reports || reports.length === 0) continue
       const v = entries?.[id]
-      const triageWasSet = !!bucketOf(v)
+      const triageWasSet = !allowsReportIgnores(v)
       for (const reportName of [...reports]) {
         // Local pending-write protection (round-9 M3) — see above.
         if (pendingHas(id) && Array.isArray(pendingEntries[id]?.ignoredReports)
@@ -377,23 +383,25 @@ function applyTriageEntries(entries, { replace = false } = {}) {
     // explicit "unflagged" tombstone, not "unset").
     if (v && typeof v.flagged === 'boolean') patch.flagged = v.flagged
     if (Object.keys(patch).length > 0) patchEntry(map, id, patch)
-    // Mutual exclusion with triage: triage and per-report ignore
-    // can't coexist on a tab. Skip importing `ignoredReports` when
-    // the same entry carries a triage state — mirrors the
-    // applyToReactiveState rule in triage-state-projection.ts so a
-    // corrupt blob (legitimately impossible from the action handlers,
-    // but possible from a sibling tab running an older version, or
-    // pre-mutex-fix data) can't land this tab in the forbidden state.
-    // Additive: unions with whatever ignoredReports already survived.
-    if (!bucket && v && Array.isArray(v.ignoredReports)) {
-      const set = new Set(map.get(id)?.ignoredReports ?? [])
-      let added = false
+    // Dependency report ignores may coexist with shared ignored. Other
+    // shared statuses retain the existing mutex; merge report keys additively.
+    if (allowsReportIgnores(v) && v && Array.isArray(v.ignoredReports)) {
       for (const r of v.ignoredReports) {
-        if (typeof r === 'string' && !set.has(r)) { set.add(r); added = true }
+        if (typeof r === 'string') setReportIgnored(map, id, r, true, isReportIgnoreScoped(v, r))
       }
-      if (added) patchEntry(map, id, { ignoredReports: [...set] })
     }
   }
+}
+
+export async function migrateLocalStoredIgnores() {
+  if (isManagedUiMode()) return false
+  if (![...state.triage.values()].some(entry => entry.ignoredReports?.length)) return
+  const { readFileFresh, withStoredItem } = await import('./storage.js')
+  const reports = await readIgnoredReportContexts(Object.fromEntries(state.triage),
+    name => withStoredItem('report', name, () => readFileFresh(name)))
+  if (isManagedUiMode()) return
+  // Apply to the current live map after IO; a user edit or peer update wins.
+  return migrateIgnoredReports(state.triage, reports)
 }
 
 async function loadTriage() {
@@ -402,6 +410,7 @@ async function loadTriage() {
     const entries = await readTriageBlob()
     if (isManagedUiMode()) return
     applyTriageEntries(entries)
+    if (await migrateLocalStoredIgnores()) await saveTriage()
   } catch (err) {
     console.warn('Failed to load triage:', err)
   }
@@ -419,6 +428,7 @@ export async function reloadTriageFromStorage() {
     const entries = await readTriageBlob()
     if (isManagedUiMode()) return
     applyTriageEntries(entries, { replace: true })
+    if (await migrateLocalStoredIgnores()) await saveTriage()
     // Repaint the imperatively-rendered surfaces (kanban board, toolbar
     // counts, bucket filtering) that don't observe `state.triage` on
     // their own — without this they stay frozen on a sibling tab's edit

@@ -19,7 +19,7 @@ import { addReportToWorkspace, listWorkspaces, removeReportFromWorkspace } from 
 import { loadRepoUrlFor, saveRepoUrlFor, state } from './state.ts'
 import { ensureTriageLoaded, saveTriage } from './triage.js'
 import { getItem as getSecureItem, setItem as setSecureItem } from './secure-storage.js'
-import { setReportIgnored } from './triage-entry.ts'
+import { isReportIgnoreScoped, setReportIgnored } from './triage-entry.ts'
 import { decodeReportLocation, encodeReportLocation } from './report-location.js'
 
 // Inlined to avoid the circular import sidebar.js → migrate-legacy.js
@@ -121,7 +121,7 @@ async function run() {
     for (const [id, entry] of [...state.triage]) {
       if (!entry.ignoredReports?.includes(name)) continue
       setReportIgnored(state.triage, id, name, false)
-      setReportIgnored(state.triage, id, target, true)
+      setReportIgnored(state.triage, id, target, true, isReportIgnoreScoped(entry, name))
       renamedIgnores = true
     }
     if (renamedIgnores) await saveTriage()

@@ -1,6 +1,7 @@
+import { sharedFindingTriage, usesReportIgnore } from '../../client/ignored-triage.js'
 import { duplicatesOf, getPackagesIndex, isManagedUiMode, isReportIgnored, patchEntry, reportRowsForFindingIds, state } from '#client/index.js'
 import { stampSecurityGroups } from '@preventive/report'
-import { SEVERITY_ORDER, canDropRevalidation, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
+import { SEVERITY_ORDER, canDropRevalidation, depsDirName, displayedSeverity, isRevalidation, isRuledOut } from './format.js'
 // NOTE: filters.js imports from this module too (primaryTab / tabKey).
 // The cycle is deliberate and benign: both sides only call across
 // inside function bodies, never during module evaluation, so whichever
@@ -74,7 +75,8 @@ export function canTriageFinding(f) {
 
 export function triageEntry(f) {
   if (!canTriageFinding(f)) return undefined
-  const entry = state.triage.get(tabKey(f))
+  const raw = state.triage.get(tabKey(f))
+  const entry = raw?.triage === 'ignored' && usesReportIgnore(f, depsDirName()) ? { ...raw, triage: undefined } : raw
   if (!isManagedUiMode()) return entry
   // A read-only projection keeps search, annotation filters, and copy helpers
   // useful without putting managed comments into the triage/sync write path.
@@ -84,14 +86,12 @@ export function triageEntry(f) {
 }
 
 export function isIgnored(f) {
-  return canTriageFinding(f) && isReportIgnored(state.triage, tabKey(f), findingReport(f))
+  return canTriageFinding(f) && (sharedFindingTriage(f, state.triage.get(tabKey(f)), depsDirName()) === 'ignored'
+    || (usesReportIgnore(f, depsDirName()) && isReportIgnored(state.triage, tabKey(f), findingReport(f))))
 }
 
-// One tab's triage "bucket": its triage value if set, else 'ignored'
-// when the tab sits in its report's ignore set, else undefined (live).
-// Ignore behaves like a fourth bucket for rollup / conflict detection
-// but mutates differently (per-report key, its own store), so every
-// reader goes through this one definition rather than re-deriving it.
+// Shared App/own-code triage and per-report dependency ignores both appear
+// in the Ignored bucket. All readers use this scope-aware projection.
 //
 // `entry` is the tab's triage entry when the caller has already read it
 // — groupState reads it for the color axis anyway, and this is the
@@ -99,7 +99,7 @@ export function isIgnored(f) {
 // second observable read per tab.
 export function tabTriage(f, entry = triageEntry(f)) {
   if (!canTriageFinding(f)) return undefined
-  return entry?.triage ?? (isIgnored(f) ? 'ignored' : undefined)
+  return sharedFindingTriage(f, entry, depsDirName()) ?? (isIgnored(f) ? 'ignored' : undefined)
 }
 
 // The tabs of a group the App lens DRAWS. Detail off (the default),
@@ -374,11 +374,8 @@ export function triageTabs(group) {
 //   A(green, fixed), B(green, deleted), C()→ conflict (triage disagrees: fixed vs deleted)
 export function groupState(group) {
   const statusMembers = triageTabs(group)
-  // Per-tab "bucket": triage value if set, else 'ignored' if the
-  // tab is in the ignore set, else undefined (live). Ignore behaves
-  // like a fourth bucket for rollup / conflict detection but
-  // mutates differently (per-report key) and doesn't propagate
-  // cross-report at the action layer (see events.js).
+  // Shared statuses and per-report dependency ignores participate in rollup.
+  // Only shared statuses count as regular triage and can level other tabs.
   //
   // Single allocation-free pass — this is the hottest helper in the
   // findings render path (once per group in the orchestrator, again
@@ -406,7 +403,7 @@ export function groupState(group) {
   // when there's no conflict).
   let firstTriage = null
   let anyTriage = false
-  // Every annotated tab carries a truthy bucket !== 'ignored'.
+  // Every annotated tab carries a shared triage bucket.
   let allBucketed = true
   for (const f of statusMembers) {
     const entry = triageEntry(f)
@@ -422,7 +419,7 @@ export function groupState(group) {
     else if (bucket !== firstBucketSlot) bucketsConflict = true
     if (bucket) {
       if (firstTriage === null) firstTriage = bucket
-      if (bucket === 'ignored') allBucketed = false
+      if (bucket === 'ignored' && entry?.triage !== 'ignored') allBucketed = false
       else anyTriage = true
     } else {
       allBucketed = false
@@ -436,13 +433,8 @@ export function groupState(group) {
   const commonTriage = !hasConflict && firstTriage !== null ? firstTriage : null
   return {
     hasConflict, commonColor, anyTriage, allTriaged, commonTriage,
-    // True when EVERY tab is ignored, not just the annotated ones —
-    // the one bucket `syncGroupTriage` never levels, so "the rollup says
-    // ignored" and "each tab is ignored in its own report" are different
-    // facts and the tab glyph has to key off the stricter one (see
-    // tabTemplate). Safe as a count comparison: with no conflict, every
-    // annotated tab shares the 'ignored' bucket, so a full annotated
-    // count means a fully ignored group.
+    // Every member must actually be ignored, including dependency members
+    // whose per-report scope cannot be levelled from a shared ignore.
     allIgnored: commonTriage === 'ignored' && annotatedCount === statusMembers.length,
     // Convenience flags so downstream code that asks "is this group in
     // the trash bucket" needn't branch on commonTriage.
@@ -566,7 +558,8 @@ export function syncGroupTriage(group) {
   if (tabs.length < 2) return false
   const st = groupState(group)
   const bucket = st.commonTriage
-  if (!bucket || bucket === 'ignored') return false
+  if (!bucket) return false
+  if (bucket === 'ignored' && !tabs.some(f => triageEntry(f)?.triage === 'ignored')) return false
   let changed = false
   for (const f of tabs) {
     if (!canTriageFinding(f)) continue
@@ -575,15 +568,10 @@ export function syncGroupTriage(group) {
     // Anything still off the bucket here carries no bucket at all — an
     // annotated tab holding a different one would have conflicted above.
     if (tabTriage(f, entry) === bucket) continue
-    // A tab holding an ignore for ANOTHER report reads as unannotated
-    // here (isIgnored is per-report) but is not a blank slate: triage
-    // and ignoredReports are mutually exclusive on an entry, and the
-    // load path resolves a violation by dropping the ignore
-    // (client/triage.js — a bucket-bearing entry never re-imports it).
-    // Levelling such a tab would silently destroy an ignore the user
-    // set somewhere else, so leave it alone; the group stays partial,
-    // which is the truth about it.
-    if (entry?.ignoredReports?.length) continue
+    // Shared ignores level only App/own-code tabs. Other buckets retain the
+    // mutex, so don't level them over another report's dependency ignore.
+    if (bucket === 'ignored' && usesReportIgnore(f, depsDirName())) continue
+    if (bucket !== 'ignored' && entry?.ignoredReports?.length) continue
     if (patchEntry(state.triage, key, { triage: bucket })) changed = true
   }
   return changed

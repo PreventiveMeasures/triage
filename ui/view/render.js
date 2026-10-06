@@ -4,7 +4,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand } from './file-display.js'
-import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, getKind, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, state } from '#client/index.js'
+import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, getKind, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, migrateLoadedIgnores, saveTriage, state } from '#client/index.js'
 import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bundle-dialog.js'
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { openLocalTriageImportDialog } from './dialogs/local-triage-import-dialog.js'
@@ -1715,6 +1715,7 @@ function renderImpl() {
   // (fallback). Once per render is enough — every helper call below
   // sees the freshly chosen dir.
   configureDepsDir(state.reports)
+  if (migrateLoadedIgnores()) queueMicrotask(() => { void saveTriage() })
   // With the dir settled, the source-layer findings that sit in it can
   // be marked as upstream code. Cheap and idempotent — it only fills a
   // field in, so a re-render costs a walk and writes nothing new.
@@ -1805,7 +1806,7 @@ function renderImpl() {
               // no "All files" toggle (that's a findings-tab control).
               hideAllFiles: true,
               triageCounts,
-              triageStates: ['inprogress', 'fixed', 'invalid', 'deleted'],
+              triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
               // Bundle-only "Packages" toggle — per-file graph
               // (default) vs. one node per package. Hidden below 3
               // packages, where the package graph carries no signal.

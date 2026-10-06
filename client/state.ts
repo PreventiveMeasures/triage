@@ -52,18 +52,11 @@ export type OpenLinksFile = {
   groups: string[][]
   skipped: number
 }
-export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted'
-// One kanban board column. The four real triage buckets plus the two
-// pseudo-buckets the board also shows as columns: 'untriaged' (no
-// `triage` set) and 'ignored' (per-report ignore, which lives outside
-// `TriageEntry.triage`). See the `columns` list in ui/view/render.js.
-export type KanbanColumnKey = TriageBucket | 'untriaged' | 'ignored'
-// Which single bucket the non-kanban views are partitioned to, as
-// `shownTriage` and as a group's `commonTriage` rollup. Wider than
-// `TriageBucket` by 'ignored': that one lives outside
-// `TriageEntry.triage`, but the findings toolbar offers it as a
-// fifth button and the split honours it like any other.
-export type ShownTriage = TriageBucket | 'ignored'
+export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted' | 'ignored'
+// The board adds an untriaged column; Ignored covers shared App/own-code
+// triage and per-report dependency ignores.
+export type KanbanColumnKey = TriageBucket | 'untriaged'
+export type ShownTriage = TriageBucket
 
 // Tri-state for the toolbar annotation filters (comment / fix / flag):
 // '' = off, 'with' = only findings carrying it, 'without' = only findings
@@ -75,7 +68,7 @@ export type AnnotationFilterState = '' | 'with' | 'without'
 // `triage-entry.ts` prune emptied fields and drop the id entirely when
 // nothing remains, so iteration / persistence / GC only ever see
 // meaningful ids. `ignoredReports` lists the report names in which the
-// finding is per-report ignored. `deleted` is the legacy persisted/wire
+// non-App dependency finding is per-report ignored. `deleted` is the legacy persisted/wire
 // form, migrated to `triage: 'deleted'` on load and never written back
 // in-memory.
 export type TriageEntry = {
@@ -91,6 +84,9 @@ export type TriageEntry = {
   // opinion" and get silently undone.
   flagged?: boolean
   ignoredReports?: string[]
+  // Report ignores already classified as dependency-only. Legacy scopes
+  // lack this marker and still need App/own-code migration.
+  scopedIgnoredReports?: string[]
   deleted?: boolean
 }
 
@@ -822,7 +818,7 @@ export const state: State = store<State>({
   // Currently displayed triage bucket — null = live view (no triage
   // state); 'inprogress' / 'fixed' / 'invalid' / 'deleted' = filter to
   // that bucket only. The toolbar's segmented selector flips between
-  // these states (+ 'ignored' on the findings tab).
+  // these shared states; findings also include dependency report ignores.
   shownTriage: null,
   nextFindingId: 0,
   // Ephemeral per-render state — which tab is active within each dedup

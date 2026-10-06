@@ -108,6 +108,66 @@ describe('bundle-finding-index — hash-keyed lookup', () => {
     assert.equal(list[0].description, 'first hit')
   })
 
+  it('retains same-ID ignore scopes across hash/package/version indexes and pruning', async () => {
+    for (const reverse of [false, true]) {
+      const hash = uniqueName('scope-hash'), pkg = uniqueName('scope-package')
+      const dep = { id: pkg, file: `node_modules/${pkg}/a.js`, fileHash: hash, isApp: false,
+        package: { npm: { name: pkg, version: '1.2.3' } } }
+      const app = { ...dep, isApp: true }
+      const first = await seedReport({ findings: reverse ? [dep, app] : [app, dep] })
+      const appReport = await seedReport({ findings: [app] })
+      const depReport = await seedReport({ findings: [dep] })
+      await ensureBundleFindingsIndexed()
+      const scopes = findings => findings.map(f => f.isApp).toSorted()
+      const assertScopes = expected => {
+        assert.deepEqual(scopes(findingsForFileHash(hash)), expected)
+        assert.deepEqual(scopes(getPackagesIndex().get(pkg).findings), expected)
+        assert.deepEqual(scopes(getPackagesIndex().get(pkg).byVersion.get('1.2.3').findings), expected)
+        assert.deepEqual(scopes(getPackagesIndex().get(pkg).files.get(dep.file)), expected)
+      }
+      assertScopes([false, true])
+      for (const finding of findingsForFileHash(hash)) {
+        const expected = [first, finding.isApp ? appReport : depReport].toSorted()
+        assert.deepEqual(reportsForFinding(hash, finding).toSorted(), expected)
+        assert.deepEqual(reportsForFindingByPackage(pkg, finding).toSorted(), expected)
+      }
+      await deleteFile(first)
+      assertScopes([false, true])
+      await deleteFile(appReport)
+      assertScopes([false])
+      await saveFile(depReport, JSON.stringify({ findings: [app] }))
+      await ensureBundleFindingsIndexed()
+      assertScopes([true])
+      await deleteFile(depReport)
+      assert.deepEqual(findingsForFileHash(hash), [])
+      assert.equal(getPackagesIndex().has(pkg), false)
+    }
+  })
+
+  it('keeps own-code and dependency scopes when report context classifies the same path differently', async () => {
+    const hash = uniqueName('context-hash'), pkg = uniqueName('context-package'), repo = `org/${pkg}`
+    const finding = { id: pkg, file: 'vendor/pkg/a.js', fileHash: hash, isApp: false,
+      package: { npm: { name: pkg, version: '1.0.0' } }, repo: { github: repo } }
+    const ownReport = await seedReport({ findings: [finding], tree: { 'node_modules/other/a.js': {} } })
+    const depReport = await seedReport({ findings: [finding] })
+    await ensureBundleFindingsIndexed()
+    for (const findings of [findingsForFileHash(hash), getPackagesIndex().get(pkg).findings,
+      getPackagesIndex().get(pkg).byVersion.get('1.0.0').findings, getRepositoriesIndex().get(repo).findings]) {
+      assert.deepEqual(findings.map(f => f._depsDirectory).toSorted(), ['node_modules', 'vendor'])
+    }
+    for (const indexed of getRepositoriesIndex().get(repo).findings) {
+      const expected = [indexed._depsDirectory === 'node_modules' ? ownReport : depReport]
+      assert.deepEqual(reportsForFinding(hash, indexed), expected)
+      assert.deepEqual(reportsForFindingByRepo(repo, indexed), expected)
+    }
+    await deleteFile(ownReport)
+    assert.deepEqual(getRepositoriesIndex().get(repo).findings.map(f => f._depsDirectory), ['vendor'])
+    await deleteFile(depReport)
+    assert.equal(getRepositoriesIndex().has(repo), false)
+    assert.equal(getPackagesIndex().has(pkg), false)
+    assert.deepEqual(findingsForFileHash(hash), [])
+  })
+
   it('falls back to a content-based dedupe key when findings have no id', async () => {
     const hash = `H${Date.now()}-NOID`
     // Two id-less findings with identical (severity, description, file, line, fileHash).

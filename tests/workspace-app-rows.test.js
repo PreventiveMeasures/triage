@@ -594,9 +594,9 @@ describe('status actions on mixed App/source rows', () => {
   it('counts ignored App members without requiring underlying dependencies to be ignored', () => {
     const row = makeRow().map((f) => ({ ...f, _reportName: 'report.json' }))
     state.triage = new Map([
-      ['P', { ignoredReports: ['report.json'] }],
-      ['C', { ignoredReports: ['report.json'] }],
-      ['Own', { ignoredReports: ['report.json'] }],
+      ['P', { triage: 'ignored' }],
+      ['C', { triage: 'ignored' }],
+      ['Own', { triage: 'ignored' }],
     ])
     assert.equal(groupState(row).commonTriage, 'ignored')
     assert.equal(groupState(row).allIgnored, true)

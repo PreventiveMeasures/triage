@@ -41,6 +41,25 @@ describe('linked report rows', () => {
     assert.deepEqual(rows[0].reports, [{ name: 'first', findingId: 'A', rowIndex: 0 }, { name: 'second', findingId: 'B', rowIndex: 0 }])
   })
 
+  it('preserves both ignore scopes of an id while merging reordered copies of the row', () => {
+    const dependency = { id: 'A', title: 'Dependency', file: 'node_modules/pkg/a.js', isApp: false }
+    for (const shared of [{ ...dependency, isApp: true }, { ...dependency, file: 'src/a.js' }]) {
+      const first = { report: 'first', index: 0, members: [shared, dependency, { ...dependency }] }
+      const second = { report: 'second', index: 0, members: [dependency, shared, { ...shared }] }
+      const input = [first, second]
+      const original = structuredClone(input)
+      const { rows, missing } = groupLinkedReportRows(['A'], input)
+      assert.equal(rows.length, 1, 'reordering the scopes must not split identical cards')
+      assert.deepEqual(rows[0].members, [shared, dependency], 'keep both scopes and deduplicate within each scope')
+      assert.deepEqual(rows[0].reports.map(r => r.name), ['first', 'second'])
+      assert.deepEqual(missing, [])
+      assert.deepEqual(input, original)
+      const reversed = groupLinkedReportRows(['A'], input.toReversed())
+      assert.equal(reversed.rows[0].key, rows[0].key, 'the canonical row key includes both scopes regardless of order')
+      assert.deepEqual(reversed.rows[0].members, [dependency, shared])
+    }
+  })
+
   for (const [field, value] of [['title', 'Updated title'], ['source', 'claude-security'], ['revalidate', 'revalidation']]) {
     it(`keeps report copies separate when a linked member's ${field} differs`, () => {
       const first = row('first', ['A', 'B'])
