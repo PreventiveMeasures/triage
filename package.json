@@ -249,8 +249,8 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.5",
     "@noble/ciphers": "^2.3.0",
-    "@preventive/diff": "^1.0.0",
-    "@preventive/lockfile": "1.0.0-alpha.5",
+    "@preventive/diff": "^1.0.1",
+    "@preventive/lockfile": "1.0.0-alpha.7",
     "@preventive/terminal": "2.0.0-beta.1",
     "@rray/frontend": "^1.0.0",
     "@stylistic/stylelint-plugin": "^5.3.0",
@@ -270,8 +270,8 @@
   "dependencies": {
     "@exodus/stasis": "1.0.0-beta.5",
     "@exodus/stasis-core": "1.0.0-beta.5",
-    "@preventive/report": "1.0.0-alpha.6",
-    "@preventive/upstream": "1.0.0-alpha.9",
+    "@preventive/report": "1.0.0-alpha.7",
+    "@preventive/upstream": "1.0.0-alpha.10",
     "ws": "^8.20.1"
   },
   "peerDependencies": {
