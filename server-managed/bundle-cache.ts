@@ -38,7 +38,7 @@ export interface BundleCacheStorage {
 }
 
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
-const packagesFilename = 'v4-advisory-inventory.json'
+const packagesFilename = 'v5-advisory-inventory.json'
 
 // All scopes share one bounded derivative. Never decode full bundle metadata
 // on advisory requests, including when selecting a reason. Persist null when

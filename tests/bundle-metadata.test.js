@@ -11,7 +11,7 @@ function details() {
     entries: new Set(['src/main.js']),
     modules: new Map([
       ['.', { name: 'app', version: '1', files: { 'src/main.js': 'private source €😀', 'src/empty.js': '', 'icon.png': { base64: 'private asset' } } }],
-      ['node_modules/dep', { name: 'dep', version: '2', files: { 'a.js': 'private dependency' } }],
+      ['node_modules/dep', { name: 'dep', version: '2', repo: { github: 'org/dep', directory: 'packages/dep' }, files: { 'a.js': 'private dependency' } }],
     ]),
     formats: new Map([['src/main.js', 'module']]),
     imports: new Map([['node,import', new Map([['src/main.js', new Map([['dep', new Map([['ios', 'node_modules/dep/a.js'], ['android', 'src/empty.js']])]])]])]]),
@@ -54,6 +54,7 @@ it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, an
   assert.deepEqual(bundleImportsAsMap(cached), bundleImportsAsMap(full))
   assert.deepEqual(cached.bundle.entries, full.bundle.entries)
   assert.deepEqual(cached.bundle.repo, full.bundle.repo)
+  assert.deepEqual({ ...cached.bundle.modules.get('node_modules/dep').repo }, full.bundle.modules.get('node_modules/dep').repo)
   assert.deepEqual(cached.bundle.package, full.bundle.package)
   assert.deepEqual(bundleGraphReasons(cached, cached.fileHashes.keys()), bundleGraphReasons(full, full.fileHashes.keys()))
   assert.equal(bundleSourcesAsMap(cached).size, 0, 'metadata cannot masquerade as source bodies')
@@ -85,7 +86,7 @@ it('supports legacy Stasis bundles and sourcemaps with absent source content', a
 it('rejects wrong integrities, versions, invalid sizes/hashes and mismatched inventories', async () => {
   const data = await createBundleMetadata(details())
   for (const corrupt of [
-    { ...data, integrity: 'other' }, { ...data, version: 4 },
+    { ...data, integrity: 'other' }, { ...data, version: 5 },
     { ...data, files: data.files.map((row) => row.slice(0, 3)) },
     { ...data, files: [['src/main.js', -1, 'bad']] },
     { ...data, files: [['src/main.js', 12, 'bad']] },
@@ -127,7 +128,7 @@ function withResources() {
 it('keeps a resource\'s byte size, and no hash or line count, since it is no source', async () => {
   const full = withResources()
   const data = await createBundleMetadata(full)
-  assert.equal(data.version, 3)
+  assert.equal(data.version, 4)
   const rows = new Map(data.files.map(([path, ...rest]) => [path, rest]))
   assert.deepEqual(rows.get('assets/logo.png'), [7, null, null])
   assert.deepEqual(rows.get('assets/icon.svg'), [6, null, null])
@@ -146,6 +147,22 @@ it('reads version 2 hashes but rebuilds metadata that predates bundle origins', 
   const cached = parseBundleMetadata(data, full.integrity)
   assert.equal(cached.stale, true)
   assert.deepEqual(cached.fileHashes, full.fileHashes)
+})
+
+it('retains an explicit repository root and rebuilds version 3 metadata without dependency repositories', async () => {
+  const full = details()
+  full.bundle.repo = { github: 'org/app', directory: '' }
+  const data = await createBundleMetadata(full)
+  assert.equal(parseBundleMetadata(data, full.integrity).bundle.repo.directory, '')
+  const legacy = structuredClone(data)
+  legacy.version = 3
+  delete legacy.bundle.modules['node_modules/dep'].repo
+  const cached = parseBundleMetadata(legacy, full.integrity)
+  assert.equal(cached.stale, true)
+  assert.deepEqual(cached.fileHashes, full.fileHashes)
+  const oldBundle = JSON.parse(full.bundle.serialize())
+  oldBundle.repo = { github: 'org/app', root: true }
+  assert.equal(Bundle.parse(JSON.stringify(oldBundle)).repo.directory, undefined, 'legacy root markers remain unknown')
 })
 
 it('records a base64 resource that does not decode without a size, and reads it back', async () => {

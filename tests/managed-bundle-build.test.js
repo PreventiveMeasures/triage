@@ -115,7 +115,7 @@ test('real Stasis builds a commit-pinned TypeScript import graph and produces re
   const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
   assert.equal(result.filename, 'org-repo.aaaaaaa.stasis.code.br')
   assert.equal(result.directory, '')
-  assert.deepEqual({ ...bundle.repo }, { github: 'org/repo', commit, root: true })
+  assert.deepEqual({ ...bundle.repo }, { github: 'org/repo', commit, directory: '' })
   assert.ok(bundle.sources.has('index.ts'))
   assert.ok(bundle.sources.has('value.ts'))
   assert.deepEqual([...bundle.entries], ['index.ts'])
@@ -123,7 +123,29 @@ test('real Stasis builds a commit-pinned TypeScript import graph and produces re
   await assert.rejects(buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: ['src'] }, projectClient(files)), /build-scope/u)
 })
 
-test('real Stasis builds from the nearest package and preserves entries under a wider workspace root', async () => {
+for (const preset of ['node', 'browser', 'metro']) {
+  for (const extension of ['jsx', 'tsx']) {
+    test(`real Stasis auto-detects ${extension} entry syntax with the ${preset} preset`, async () => {
+      const entry = `src/index.${extension}`
+      const project = { ...files,
+        [entry]: 'import { view } from "./view.tsx"; export const app = <main>{view}</main>',
+        'src/view.tsx': 'const label: string = "ready"; export const view = <span>{label}</span>',
+      }
+      const request = input([entry], { conditions: { preset, conditions: [preset === 'metro' ? 'react-native' : preset], platforms: ['ios', 'android'] } })
+      // Extension-based parsing works without the option for JSX inside .js files.
+      delete request.options.jsx
+      const result = await buildStasisBundle({ input: request, github: 'org/repo', token: null,
+        maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+      const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
+      assert.equal(result.directory, '')
+      assert.deepEqual([...bundle.entries], [entry])
+      assert.equal(bundle.sources.get(entry), project[entry])
+      assert.equal(bundle.sources.get('src/view.tsx'), project['src/view.tsx'])
+    })
+  }
+}
+
+test('real Stasis uses the innermost package root and checks access when imports widen it', async () => {
   const root = { name: 'fixture', version: '1.0.0', workspaces: ['app'] }
   const app = { name: 'app', version: '1.0.0', type: 'module' }
   const project = {
@@ -133,13 +155,21 @@ test('real Stasis builds from the nearest package and preserves entries under a 
     'app/package.json': JSON.stringify(app),
     'app/src/index.ts': files['index.ts'], 'app/src/value.ts': files['value.ts'],
   }
-  const result = await buildStasisBundle({ input: input(['app/src/index.ts']), github: 'org/repo', token: null,
-    maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+  const request = { input: input(['app/src/index.ts']), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: ['app'] }
+  const result = await buildStasisBundle(request, projectClient(project))
   const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
   assert.equal(result.filename, 'org-repo.app.aaaaaaa.stasis.code.br')
-  assert.equal(result.directory, '')
-  assert.deepEqual([...bundle.entries], ['app/src/index.ts'])
-  assert.ok(bundle.sources.has('app/src/value.ts'))
+  assert.equal(result.directory, 'app')
+  assert.deepEqual([...bundle.entries], ['src/index.ts'])
+  assert.ok(bundle.sources.has('src/value.ts'))
+  project['shared.ts'] = 'export const shared = 1'
+  project['app/src/index.ts'] += '; export { shared } from "../../shared.ts"'
+  await assert.rejects(buildStasisBundle(request, projectClient(project)), /build-scope/u)
+  const wider = await buildStasisBundle({ ...request, scopes: [null] }, projectClient(project))
+  const widerBundle = Bundle.parse(brotliDecompressSync(wider.bytes).toString())
+  assert.equal(wider.directory, '')
+  assert.deepEqual([...widerBundle.entries], ['app/src/index.ts'])
+  assert.ok(widerBundle.sources.has('shared.ts'))
 })
 
 test('worker cancellation releases the per-user build slot and prevents duplicate builds', async () => {

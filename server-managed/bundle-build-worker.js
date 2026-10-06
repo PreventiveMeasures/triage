@@ -40,7 +40,7 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')
-  // A workspace lockfile may widen the build root. Never publish it under a
+  // Imports outside the selected package may widen the root. Never publish it under a
   // narrower team grant: the storage location must cover the actual bundle.
   if (!allowed(directory)) throw new Error('build-scope')
   progress('serialize')

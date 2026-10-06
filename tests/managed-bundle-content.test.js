@@ -130,7 +130,7 @@ test('catalog summaries reuse one cached count per hash across teams, uploads an
   await h.send('/api/admin/bundles')
   assert.equal(reads.mock.callCount(), 3, 'the upload builds full metadata once; repeat catalogs only read counts')
   const cold = createBundleCache(h.cacheStorage, h.db, { ...h.store, get() { throw new Error('must use summary cache') } })
-  await writeFile(join(h.cacheDir, archive.id, 'v3-metadata.json.br'), 'summary must not decode the full metadata')
+  await writeFile(join(h.cacheDir, archive.id, 'v4-metadata.json.br'), 'summary must not decode the full metadata')
   assert.deepEqual(await cold.summary(archive), { files: 3, codeFiles: 2, lines: 2 })
   await h.db.deleteBundle(archive.id)
   await cold.delete(archive.id)
@@ -271,7 +271,7 @@ test('new Stasis uploads default to connected header repositories and retain ori
   const metadata = (await h.send(`/api/bundles/${id}/metadata`, 'viewer')).json()
   assert.deepEqual(metadata.bundle.repo, JSON.parse(JSON.stringify(bundle.repo)))
   assert.deepEqual(metadata.bundle.package, JSON.parse(JSON.stringify(bundle.package)))
-  assert.equal(metadata.version, 3)
+  assert.equal(metadata.version, 4)
   assert.deepEqual(parseBundleMetadata(metadata, stored.integrity).bundle.repo, bundle.repo)
   // Location edits and future uploads keep the original row's assignment.
   await h.send('/api/admin/bundles/set-repo', 'admin', 'POST', JSON.stringify({ bundleId: id, repoId: 2, directory: 'moved' }))
@@ -301,8 +301,9 @@ test('bundle upload origin defaults allow unmatched repos and honor explicit loc
   assert.equal(directory.status, 201)
   assert.equal(directory.json().repoId, 1)
   assert.equal(directory.json().repoDirectory, 'override')
-  const root = await upload({ github: 'org/repo1', root: true })
+  const root = await upload({ github: 'org/repo1', directory: '' })
   assert.equal(root.status, 201)
+  assert.equal(root.json().repoId, 1)
   assert.equal(root.json().repoDirectory, '')
   const absent = await upload(undefined)
   assert.equal(absent.status, 201)
@@ -544,7 +545,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v3-metadata.json.br', 'v3-summary.json', 'v4-advisory-inventory.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v3-summary.json', 'v4-metadata.json.br', 'v5-advisory-inventory.json'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -601,7 +602,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v3-metadata.json.br', 'v3-summary.json', 'v4-advisory-inventory.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v3-summary.json', 'v4-metadata.json.br', 'v5-advisory-inventory.json'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -624,7 +625,7 @@ test('sourcemap uploads retain their identity while storing and serving only Bro
   assert.equal(contents.headers['content-encoding'], 'br')
   assert.deepEqual(contents.bytes, encoded)
   await Promise.allSettled([...h.pending])
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v3-metadata.json.br', 'v3-summary.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v3-summary.json', 'v4-metadata.json.br'])
   const duplicate = await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)
   assert.equal(duplicate.status, 200)
   assert.equal(duplicate.json().id, id)
@@ -842,7 +843,7 @@ test('advisories use cached inventory, handle upstream failures, and reject unsu
 test('package inventories persist separately; concurrent cache upgrades build once', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
   await h.cache.prebuild(record)
-  const inventory = join(h.cacheDir, record.id, 'v4-advisory-inventory.json')
+  const inventory = join(h.cacheDir, record.id, 'v5-advisory-inventory.json')
   assert.deepEqual(JSON.parse(await readFile(inventory, 'utf8')), { all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'] }], skipped: [] }, reasons: {} })
   // Both older npm-only and unfiltered inventories must rebuild, once even with simultaneous requests.
   await rm(inventory)
@@ -857,7 +858,7 @@ test('package inventories persist separately; concurrent cache upgrades build on
   for (const packages of await Promise.all(queries)) assert.deepEqual(packages, { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'] }], skipped: [] })
   assert.equal(builds, 1)
   // A fresh instance needs neither the full metadata nor original bundle bytes.
-  await writeFile(join(h.cacheDir, record.id, 'v3-metadata.json.br'), 'not compressed metadata')
+  await writeFile(join(h.cacheDir, record.id, 'v4-metadata.json.br'), 'not compressed metadata')
   const restarted = createBundleCache(h.cacheStorage, h.db, { ...h.store, get() { throw new Error('must use inventory') } })
   assert.deepEqual(await restarted.advisoryInventory(record), { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'] }], skipped: [] })
 })
@@ -867,7 +868,7 @@ test('oversized inventories persist a rejection marker and return 413 without co
   const large = stasis.replace('2.0.0', '1'.repeat(MAX_PACKAGE_INVENTORY_BYTES))
   const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(large)) })
   await h.cache.prebuild(record)
-  assert.equal(await readFile(join(h.cacheDir, record.id, 'v4-advisory-inventory.json'), 'utf8'), 'null')
+  assert.equal(await readFile(join(h.cacheDir, record.id, 'v5-advisory-inventory.json'), 'utf8'), 'null')
   t.mock.method(globalThis, 'fetch', () => { throw new Error('must reject before contacting npm') })
   t.mock.method(h.store, 'get', () => { throw new Error('must not rebuild rejected inventories') })
   const response = await h.send(`/api/bundles/${record.id}/advisories`, 'viewer')
@@ -887,7 +888,7 @@ for (const reportedSize of [MAX_PACKAGE_INVENTORY_BYTES + 1, null, 1]) {
     const cache = createBundleCache({
       exists: () => Promise.resolve(true),
       open: (_id, name) => {
-        assert.equal(name, 'v4-advisory-inventory.json')
+        assert.equal(name, 'v5-advisory-inventory.json')
         return Promise.resolve({ size: reportedSize, stream })
       },
     }, {}, { get() { throw new Error('must use inventory') } })
@@ -913,7 +914,7 @@ test('advisory reasons select exact package versions from persisted inventory', 
   await h.cache.prebuild(record)
   // Scope switches must not read full bundle contents or decode full metadata.
   t.mock.method(h.store, 'get', () => { throw new Error('must use bounded inventory') })
-  await writeFile(join(h.cacheDir, record.id, 'v3-metadata.json.br'), 'not compressed metadata')
+  await writeFile(join(h.cacheDir, record.id, 'v4-metadata.json.br'), 'not compressed metadata')
   await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: true })
   const calls = []
   t.mock.method(globalThis, 'fetch', (_url, init) => {
@@ -950,7 +951,7 @@ test('managed non-npm advisories use persisted ecosystem inventory and respect r
   const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(bundle)) })
   await h.cache.prebuild(record)
   t.mock.method(h.store, 'get', () => { throw new Error('must use persisted inventory') })
-  await writeFile(join(h.cacheDir, record.id, 'v3-metadata.json.br'), 'not compressed metadata')
+  await writeFile(join(h.cacheDir, record.id, 'v4-metadata.json.br'), 'not compressed metadata')
   const queries = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
     assert.equal(url, 'https://api.osv.dev/v1/querybatch')
@@ -1007,6 +1008,45 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
   assert.ok(calls.every(call => !call.body?.includes('vendor/pkg') && !call.body?.includes('private source')))
   await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
   assert.deepEqual((await h.send(`${path}?reason=dev`, 'viewer')).json(), { error: 'security-access-required' })
+})
+
+test('cached bundle repositories bypass npm metadata discovery after upgrading old inventories', async t => {
+  const h = await setup(t)
+  const bundle = Bundle.parse(stasis)
+  bundle.repo = { github: 'org/repo1', directory: '' }
+  bundle.modules.get('node_modules/dep').repo = { github: 'org/dep', directory: 'packages/dep' }
+  bundle.reason = { run: ['node_modules/dep/index.js'] }
+  const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(bundle.serialize())) })
+  await h.cacheStorage.put(record.id, 'v3-metadata.json.br', Buffer.from('old metadata'))
+  await h.cacheStorage.put(record.id, 'v4-advisory-inventory.json', Buffer.from(JSON.stringify({
+    all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'] }], skipped: [] }, reasons: {},
+  })))
+  const reads = t.mock.method(h.store, 'get')
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    calls.push(url)
+    if (url === 'https://registry.npmjs.org/-/npm/v1/security/advisories/bulk') {
+      assert.deepEqual(JSON.parse(init.body), { dep: ['2.0.0'] })
+      return Promise.resolve(Response.json({}))
+    }
+    assert.equal(new URL(url).origin, 'https://api.github.com')
+    assert.equal(new URL(url).pathname, '/repos/org/dep/security-advisories')
+    return Promise.resolve(Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability',
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<3.0.0' }] }]))
+  })
+  for (const reason of ['', '&reason=run']) {
+    const response = await h.send(`/api/bundles/${record.id}/advisories?repoAdvisories=true${reason}`, 'viewer')
+    assert.equal(response.status, 200)
+    assert.deepEqual(response.json().packages, [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'], github: 'org/dep' }])
+    assert.equal(response.json().advisories[0].title, 'Maintainer vulnerability')
+  }
+  assert.equal(calls.length, 4, 'only the advisory bulk API and known GitHub repo are queried')
+  assert.equal(reads.mock.callCount(), 1, 'the upgraded inventory is reused for the scoped request')
+  const metadata = (await h.send(`/api/bundles/${record.id}/metadata`, 'viewer')).json()
+  const cached = parseBundleMetadata(metadata, record.integrity)
+  assert.equal(cached.bundle.repo.directory, '')
+  assert.equal(cached.bundle.modules.get('node_modules/dep').repo.github, 'org/dep')
+  assert.equal(reads.mock.callCount(), 1)
 })
 
 test('managed repository rechecks enrich advisories and recheck security before returning', async t => {

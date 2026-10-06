@@ -83,7 +83,7 @@ test('Brotli metadata persists across cold starts while contents use stored bund
   assert.equal(JSON.parse(brotliDecompressSync(await consume(cached))).id, id)
   assert.deepEqual(brotliDecompressSync(await consume(await cold.open(record, 'contents'))), body)
   assert.deepEqual(await cold.summary(record), { files: 1, codeFiles: 1, lines: 1 })
-  assert.deepEqual([...objects.keys()].filter(path => path.includes('/cache/')), [`.managed/cache/bundles/${id}/v3-metadata.json.br`, `.managed/cache/bundles/${id}/v3-summary.json`])
+  assert.deepEqual([...objects.keys()].filter(path => path.includes('/cache/')), [`.managed/cache/bundles/${id}/v4-metadata.json.br`, `.managed/cache/bundles/${id}/v3-summary.json`])
   await cold.delete(id)
   assert.deepEqual(brotliDecompressSync(await consume(await cold.open(record, 'contents'))), body, 'contents work without metadata')
   await cache.prebuild(record)
@@ -93,7 +93,7 @@ test('Brotli metadata persists across cold starts while contents use stored bund
 test('cache deletion removes every version across pages without touching other stored data', async t => {
   const { sdk, objects } = sdkFixture()
   const id = randomUUID(), other = randomUUID(), prefix = `.managed/cache/bundles/${id}/`
-  const versions = ['v1-metadata.json.gz', 'v1-contents.json.gz', 'v2-metadata.json.br', 'v3-metadata.json.br', 'old/metadata.json.br']
+  const versions = ['v1-metadata.json.gz', 'v1-contents.json.gz', 'v2-metadata.json.br', 'v3-metadata.json.br', 'v4-metadata.json.br', 'old/metadata.json.br']
   const retained = [`.managed/cache/bundles/${other}/v1-metadata.json.br`, `.managed/cache/bundles/${id}-other/metadata.json.br`,
     `.managed/bundles/${id}`, `.managed/bundles/${id}.map.br`, `.managed/reports/${id}`, `.managed/uploads/${id}`]
   for (const path of [...versions.map(file => prefix + file), ...retained]) objects.set(path, { bytes: Buffer.from('stored') })
@@ -378,7 +378,7 @@ test('a second Blob-backed instance reads the bounded package inventory without 
   const cold = createBundleCache(storage.cacheStorage, db, { get() { throw new Error('must use persisted inventory') } })
   assert.deepEqual(await cold.advisoryInventory(record), { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.2.3'] }], skipped: [] })
   assert.equal(calls.filter(call => call.op === 'get').length, 1)
-  const inventory = objects.get(`.managed/cache/bundles/${id}/v4-advisory-inventory.json`)
+  const inventory = objects.get(`.managed/cache/bundles/${id}/v5-advisory-inventory.json`)
   assert.deepEqual(JSON.parse(inventory.bytes), { all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.2.3'] }], skipped: [] }, reasons: {} })
   await cold.delete(id)
   assert.equal([...objects.keys()].some(key => key.includes('/cache/')), false)
@@ -396,7 +396,7 @@ test('encrypted metadata hits need one row lookup and GET, without HEADs or an u
   const dataKey = await storage.bundleStore.put(id, bytes, 'stasis')
   await db.insertBundle({ id, filename: 'bundle.stasis', integrity: 'sha512-test', kind: 'stasis', byteSize: bytes.length,
     uploadedBy: null, repoId: null, dataKey }, 1)
-  await storage.cacheStorage.put(id, 'v3-metadata.json.br', Buffer.from('already cached'))
+  await storage.cacheStorage.put(id, 'v4-metadata.json.br', Buffer.from('already cached'))
   const record = await db.getBundle(id)
   const cache = createBundleCache(storage.cacheStorage, db, {
     get() { throw new Error('metadata hits must not decode the bundle to create package inventory') },
