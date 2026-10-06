@@ -40,6 +40,18 @@ export function bundleDependencyChains(details, { packageKey, version, reason = 
   const { roots, appImports } = bundleLayerRoots(details, paths, path => dirs.get(path), dirs, allPaths)
   if (appImports.length > 0 && !nodes.has('.')) nodes.set('.', packageNode('.'))
   for (const target of appImports) link('.', target)
+  // Own source already explains this React Native installation. Do not walk
+  // its other importers, or restore their edges when another path retains them.
+  for (const id of imports.get('.') ?? []) {
+    const node = nodes.get(id)
+    if (node?.ecosystem !== 'npm' || node.name !== 'react-native') continue
+    const parents = importedBy.get(id)
+    for (const parent of parents) {
+      if (parent === '.') continue
+      parents.delete(parent)
+      imports.get(parent).delete(id)
+    }
+  }
   for (const root of roots) {
     const node = nodes.get(root === '__own__' ? '.' : root)
     if (node) node.root = true

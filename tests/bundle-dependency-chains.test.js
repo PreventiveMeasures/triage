@@ -106,6 +106,57 @@ test('retains imports from omitted app source and distinguishes direct entry pac
   assert.equal(graph.importedBy.get('node_modules/dep').size, 0)
 })
 
+test('direct own-source imports stop reverse tracing at React Native in full and cached bundles', async () => {
+  const addon = 'node_modules/addon', bridge = 'node_modules/bridge', rn = 'node_modules/react-native', target = 'node_modules/dep'
+  for (const bundledApp of [false, true]) {for (const independent of [false, true]) {
+    const details = fixture({ modules: {
+      ...(bundledApp ? { '.': {} } : {}), [rn]: dep('react-native'), [addon]: dep('addon'), [bridge]: dep('bridge'), [target]: dep('dep'),
+    }, links: [['.', rn], ['.', bridge], [bridge, addon], [addon, rn], [rn, target], ...(independent ? [[addon, target]] : [])] })
+    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+    for (const input of [details, metadata]) {
+      const originalImports = structuredClone(input.bundle.imports)
+      const graph = bundleDependencyChains(input, query)
+      assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? ['.', rn, addon, bridge, target] : ['.', rn, target]))
+      assert.deepEqual(graph.importedBy.get(rn), new Set(['.']))
+      assert.equal(graph.imports.get(addon)?.has(rn) ?? false, false, 'independent paths do not restore the stopped edge')
+      assert.deepEqual(graph.importedBy.get(target), new Set(independent ? [rn, addon] : [rn]))
+      const layout = layoutDependencyChains(graph)
+      assert.equal(layout.edges.length, independent ? 5 : 2)
+      assert.ok(layout.edges.every(edge => edge.toPackage !== rn || edge.fromPackage === '.'))
+      const native = bundleDependencyChains(input, { packageKey: 'react-native', version: '1.0.0' })
+      assert.deepEqual(new Set(native.nodes.keys()), new Set(['.', rn]), 'the same boundary applies when React Native is selected')
+      assert.deepEqual(input.bundle.imports, originalImports, 'the imports used by other graphs remain unchanged')
+    }
+  }}
+})
+
+test('React Native tracing stays complete without a direct own-source import in the current scope', () => {
+  const addon = 'node_modules/addon', rn = 'node_modules/react-native', target = 'node_modules/dep'
+  const modules = { '.': {}, [rn]: dep('react-native'), [addon]: dep('addon'), [target]: dep('dep') }
+  const links = [['.', addon], [addon, rn], [rn, target]]
+  const indirect = bundleDependencyChains(fixture({ modules, links }), query)
+  assert.deepEqual(indirect.importedBy.get(rn), new Set([addon]))
+  assert.deepEqual(new Set(indirect.nodes.keys()), new Set(['.', addon, rn, target]))
+  const scoped = fixture({ modules, links: [...links, ['.', rn]], reason: { run: [addon, rn, target].map(file), add: ['index.js'] } })
+  const graph = bundleDependencyChains(scoped, { ...query, reason: 'run' })
+  assert.equal(graph.nodes.has('.'), false)
+  assert.deepEqual(graph.importedBy.get(rn), new Set([addon]), 'a filtered-out app import must not stop traversal')
+  assert.deepEqual(new Set(graph.nodes.keys()), new Set([addon, rn, target]))
+})
+
+test('the React Native boundary applies per installation and only to the npm package', () => {
+  const nested = 'node_modules/addon/node_modules/react-native', rn = 'node_modules/react-native'
+  const addon = 'node_modules/addon', target = 'node_modules/dep', vendor = 'vendor/react-native'
+  const graph = bundleDependencyChains(fixture({ modules: {
+    '.': {}, [rn]: dep('react-native'), [nested]: dep('react-native'), [vendor]: dep('react-native', '1.0.0', 'cargo'), [addon]: dep('addon'), [target]: dep('dep'),
+  }, links: [['.', rn], ['.', addon], ['.', vendor], [addon, rn], [addon, nested], [addon, vendor], [rn, target], [nested, target], [vendor, target]] }), query)
+  assert.deepEqual(graph.importedBy.get(rn), new Set(['.']))
+  assert.deepEqual(graph.importedBy.get(nested), new Set([addon]))
+  assert.deepEqual(graph.importedBy.get(vendor), new Set(['.', addon]))
+  assert.deepEqual(graph.imports.get(addon), new Set([nested, vendor]))
+  assert.deepEqual(new Set(graph.nodes.keys()), new Set(['.', rn, nested, vendor, addon, target]))
+})
+
 test('cycles remain visible in finite groups with their incoming and outgoing chains', () => {
   const details = fixture({ modules: { '.': {}, 'node_modules/a': dep('a'), 'node_modules/b': dep('b'), 'node_modules/dep': dep('dep') },
     links: [['.', 'node_modules/a'], ['node_modules/a', 'node_modules/b'], ['node_modules/b', 'node_modules/a'], ['node_modules/b', 'node_modules/dep']] })

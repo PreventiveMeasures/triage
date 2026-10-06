@@ -91,7 +91,7 @@ test('advisory popup cycles exclude Babel config reads in full bundles and cache
       assert.equal(graph.imports.get('node_modules/@babel/core')?.has('.') ?? false, ordinaryImport)
       const result = layoutDependencyChains(graph)
       assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinaryImport ? 1 : 0)
-      assert.equal(result.boxes.length, ordinaryImport ? 1 : 2)
+      assert.equal(result.boxes.length, 2, 'the advisory graph omits the plugin-to-React-Native edge when App imports that installation')
     }
   }
 })
