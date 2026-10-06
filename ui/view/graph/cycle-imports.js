@@ -6,6 +6,8 @@ import { bundlePkgOf } from '../bundle-pkg-of.js'
 export function countsTowardsCycles(from, to, ownSource) {
   if (/(?:^|\/)node_modules\/react-native\/scripts\/codegen\/generate-artifacts-executor\.js$/u.test(from)
     && /(?:^|\/)(?:package\.json|react-native\.config\.js)$/u.test(to)) return false
+  if (/(?:^|\/)node_modules\/@react-native-community\/cli-tools\/build\/releaseChecker\/index\.js$/u.test(from)
+    && /(?:^|\/)node_modules\/react-native\/package\.json$/u.test(to)) return false
   if (/(?:^|\/)node_modules\/@babel\/core\/lib\/config\//u.test(from)
     && /(?:^|\/)babel\.config\.js$/u.test(to)) return false
   // Bundles do not distinguish literal imports from computed loads. Match
