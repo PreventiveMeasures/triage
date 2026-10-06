@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
-import { bundleWhy, bundleWhyPackageKey, layoutWhy, traceWhy } from '../ui/view/bundle-why.js'
+import { bundleWhy, bundleWhyQuery, layoutWhy, traceWhy } from '../ui/view/bundle-why.js'
 import { WHY_CARD_HEIGHT, WHY_CARD_WIDTH, WHY_DIALOG_GUTTER, layoutWhyGroup } from '../ui/view/why-layout.js'
 import { placeWhyCycle } from '../ui/view/why-order.js'
 
@@ -71,20 +71,62 @@ test('name-only queries retain all versions and their actual importers in full a
   }
 })
 
-test('overview package keys use recorded names, ecosystems and aliases, including unversioned workspaces', () => {
+test('npm queries do not select untagged workspaces with the same recorded name', async () => {
+  const details = fixture({ modules: {
+    '.': {}, 'node_modules/dep': dep('dep'), 'packages/dep': { name: 'dep', version: '1.0.0' },
+  }, links: [['.', 'node_modules/dep'], ['.', 'packages/dep']] })
+  const cached = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+  for (const input of [details, cached]) {
+    for (const version of [undefined, '1.0.0']) {
+      assert.deepEqual(bundleWhy(input, { packageKey: 'dep', version }).targets, ['node_modules/dep'])
+    }
+  }
+})
+
+test('overview queries use recorded identities for aliases and scope directory rows to their installation', () => {
   const details = fixture({ modules: {
     '.': {}, 'node_modules/alias': dep('actual'), 'vendor/dep': dep('dep', '1.0.0', 'cargo'),
     'packages/workspace': { name: '@app/workspace' }, 'dependencies/repo': dep('Owner/Repo', '.', 'github'),
   }, links: [['.', 'node_modules/alias'], ['.', 'vendor/dep'], ['.', 'packages/workspace'], ['.', 'dependencies/repo']] })
   for (const [dir, key] of [['node_modules/alias', 'actual'], ['vendor/dep', 'cargo:dep'],
     ['packages/workspace', '@app/workspace'], ['dependencies/repo', 'github:Owner/Repo']]) {
-    assert.equal(bundleWhyPackageKey(details, dir), key)
-    assert.deepEqual(bundleWhy(details, { packageKey: key }).targets, [dir])
+    const options = bundleWhyQuery(details, dir)
+    assert.deepEqual(options, { packageKey: key, packageGroup: dir === 'node_modules/alias' ? 'alias' : dir })
+    assert.deepEqual(bundleWhy(details, options).targets, [dir])
   }
   assert.deepEqual(bundleWhy(details, { packageKey: 'github:owner/repo' }).targets, ['dependencies/repo'])
-  assert.equal(bundleWhyPackageKey(details, '.'), null)
-  assert.equal(bundleWhyPackageKey(details, 'missing'), null)
-  assert.equal(bundleWhyPackageKey(null, undefined), null)
+  assert.equal(bundleWhyQuery(details, '.'), null)
+  assert.equal(bundleWhyQuery(details, 'missing'), null)
+  assert.equal(bundleWhyQuery(null, undefined), null)
+})
+
+test('directory queries keep same-name workspaces and Cargo installations separate in full and cached bundles', async () => {
+  const directories = ['packages/dep', 'packages/copy', 'packages/npm-workspace', 'vendor/rand', 'vendor/rand-0.7.3']
+  const modules = { '.': {}, 'node_modules/dep': dep('dep'),
+    'packages/dep': { name: 'dep' }, 'packages/copy': { name: 'dep' }, 'packages/npm-workspace': dep('dep'),
+    'vendor/rand': dep('rand', '0.8.0', 'cargo'), 'vendor/rand-0.7.3': dep('rand', '0.7.3', 'cargo'),
+  }
+  const links = []
+  for (const [index, dir] of directories.entries()) {
+    const importer = `node_modules/importer-${index}`
+    modules[importer] = dep(`importer-${index}`)
+    links.push(['.', importer], [importer, dir])
+  }
+  const details = fixture({ modules, links, reason: { run: ['.', 'node_modules/importer-0', directories[0]].map(file) } })
+  const cached = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+  for (const input of [details, cached]) {
+    for (const [index, dir] of directories.entries()) {
+      const options = bundleWhyQuery(input, dir)
+      const graph = bundleWhy(input, options)
+      assert.equal(options.packageGroup, dir)
+      assert.deepEqual(graph.targets, [dir])
+      assert.deepEqual(new Set(graph.nodes.keys()), new Set(['.', `node_modules/importer-${index}`, dir]))
+    }
+    assert.deepEqual(bundleWhy(input, bundleWhyQuery(input, 'node_modules/dep')).targets, ['node_modules/dep'], 'the npm row excludes even explicitly npm-tagged workspace rows')
+    assert.deepEqual(new Set(bundleWhy(input, { packageKey: 'cargo:rand' }).targets), new Set(['vendor/rand', 'vendor/rand-0.7.3']), 'explicit name-wide queries still select all versions')
+    const excluded = { ...bundleWhyQuery(input, 'vendor/rand'), reason: 'run' }
+    assert.deepEqual(bundleWhy(input, excluded).targets, [], 'directory selection still respects reason scope')
+  }
 })
 
 test('metadata-only bundles retain the same chains and entry points without source bodies', async () => {

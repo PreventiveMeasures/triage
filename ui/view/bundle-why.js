@@ -1,4 +1,5 @@
 import { bundlePackageDirs } from './bundle-sources.js'
+import { bundlePkgOf } from './bundle-pkg-of.js'
 import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
@@ -11,19 +12,23 @@ function packageNode(id, info = {}) {
   return { id, name, ecosystem, version: info.version ?? '', own: id === '.', root: false, target: false }
 }
 
-const packageKeyOf = node => node.ecosystem && node.ecosystem !== 'npm' ? `${node.ecosystem}:${node.name}` : node.name
+const packageKeyOf = node => node.ecosystem === 'npm' ? node.name : `${node.ecosystem}:${node.name}`
 
-// Overview buckets use paths (including aliases and vendored directories).
-// Resolve their recorded identity before asking why that package is bundled.
-export function bundleWhyPackageKey(details, dir) {
+// Match the Overview's grouping: node_modules rows combine versions by name;
+// workspace and vendored rows represent one installation directory each.
+export function bundleWhyQuery(details, dir) {
   const info = details?.bundle?.modules.get(dir)
-  return dir && dir !== '.' && info ? packageKeyOf(packageNode(dir, info)) : null
+  if (!dir || dir === '.' || !info) return null
+  const node = packageNode(dir, info)
+  const packageKey = node.ecosystem ? packageKeyOf(node) : node.name
+  return { packageKey, packageGroup: bundlePkgOf('', { packageDir: dir }) }
 }
 
 // The full graph groups npm packages by name. Here the installation directory
 // is the identity: merging copies would invent routes between their importers.
-// Omitting version selects every installed version of the package.
-export function bundleWhy(details, { packageKey, version, reason = '' }) {
+// Omitting version selects every installed version of the package. Overview
+// queries use its package group instead, preserving the clicked row's scope.
+export function bundleWhy(details, { packageKey, packageGroup, version, reason = '' }) {
   const importedBy = new Map(), imports = new Map(), nodes = new Map()
   const dirs = bundlePackageDirs(details) ?? new Map()
   const allPaths = new Map([...dirs.keys()].map(path => [path, path]))
@@ -81,7 +86,9 @@ export function bundleWhy(details, { packageKey, version, reason = '' }) {
   const targets = []
   for (const node of nodes.values()) {
     const key = packageKeyOf(node)
-    const matches = node.ecosystem === 'github' ? key.toLowerCase() === packageKey.toLowerCase() : key === packageKey
+    const matches = packageGroup === undefined
+      ? node.ecosystem === 'github' ? key.toLowerCase() === packageKey.toLowerCase() : key === packageKey
+      : bundlePkgOf('', { packageDir: node.id }) === packageGroup
     const normalizedVersion = node.ecosystem === 'github' && node.version === '.' ? '0.0.0' : node.version
     if (!node.own && matches && (version === undefined || normalizedVersion === version)) { node.target = true; targets.push(node.id) }
   }

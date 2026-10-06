@@ -42,7 +42,7 @@ import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } fr
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
-import { bundleWhyPackageKey } from './bundle-why.js'
+import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './dialogs/why-dialog.js'
 import { bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
@@ -345,13 +345,13 @@ function renderBundleSizeDistribution(items, sort, details) {
   // `pkgDir` is the path's stasis package dir (undefined for sourcemap
   // bundles), so workspace packages bucket apart from their parent dir.
   const totalByPkg = new Map()
-  const packageKeys = new Map()
+  const whyQueries = new Map()
   let total = 0
   for (const { path, size, pkgDir } of items) {
     if (typeof size !== 'number' || size <= 0) continue
     const pkg = bundlePkgOf(path, { packageDir: pkgDir })
     totalByPkg.set(pkg, (totalByPkg.get(pkg) ?? 0) + size)
-    if (!packageKeys.has(pkg)) packageKeys.set(pkg, bundleWhyPackageKey(details, pkgDir))
+    if (!whyQueries.has(pkg)) whyQueries.set(pkg, bundleWhyQuery(details, pkgDir))
     total += size
   }
   if (total === 0) return nothing
@@ -372,11 +372,11 @@ function renderBundleSizeDistribution(items, sort, details) {
         // When the name is clipped, show the full package key.
         const label = pkgLabel(pkg)
         const c = pkgColor(pkg)
-        const packageKey = packageKeys.get(pkg)
+        const query = whyQueries.get(pkg)
         return html`<li>
           <span class="bundles-dist-dot" style=${styleMap({ background: c })}></span>
-          ${packageKey ? html`<button type="button" class="bundles-dist-pkg" aria-haspopup="dialog"
-            aria-label=${`Show dependency chains for ${label}`} @click=${() => openBundleWhy(details, packageKey)}
+          ${query ? html`<button type="button" class="bundles-dist-pkg" aria-haspopup="dialog"
+            aria-label=${`Show dependency chains for ${label}`} @click=${() => openBundleWhy(details, query)}
             data-tooltip-truncated data-tooltip=${pkg}>${label}</button>`
             : html`<span class="bundles-dist-pkg" data-tooltip-truncated data-tooltip=${pkg === '__own__' ? nothing : pkg}>${label}</span>`}
           <span class="bundles-dist-bar-row" aria-hidden="true">
@@ -390,10 +390,10 @@ function renderBundleSizeDistribution(items, sort, details) {
   </div>`
 }
 
-function openBundleWhy(details, packageKey) {
+function openBundleWhy(details, query) {
   const team = state.currentManagedTeam, workspace = state.currentWorkspace
   const session = state.managedSession && store(state.managedSession)
-  return openWhyDialog({ details, packageKey, isCurrent: () => state.currentView === 'bundles'
+  return openWhyDialog({ details, ...query, isCurrent: () => state.currentView === 'bundles'
     && state.selectedBundle === details.integrity && (state.bundleDetails && store(state.bundleDetails)) === store(details)
     && state.currentWorkspace === workspace && state.currentManagedTeam === team
     && (state.managedSession && store(state.managedSession)) === session })

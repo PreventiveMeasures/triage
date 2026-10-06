@@ -447,7 +447,7 @@ test('Overview and graph retain a sourcemap package identity when its entire dir
   assert.equal(graph.options.pkgOf('index.js'), '@scope/dep')
 })
 
-test('Overview package names open why for all versions without requiring advisory access', async t => {
+test('Overview package names preserve row grouping in why without requiring advisory access', async t => {
   const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams, currentManagedTeam: state.currentManagedTeam }
   t.after(() => Object.assign(state, previous))
   const entry = { name: 'app.stasis', integrity: 'why-overview', managedId: 'bundle-id' }
@@ -458,6 +458,9 @@ test('Overview package names open why for all versions without requiring advisor
     ['node_modules/alias', { name: 'real-name', version: '1', files: { 'index.js': 'alias' } }],
     ['vendor/dep', { name: 'dep', ecosystem: 'cargo', version: '3', files: { 'main.rs': 'cargo' } }],
     ['packages/workspace', { name: '@app/workspace', files: { 'index.js': 'workspace' } }],
+    ['packages/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'workspace dep' } }],
+    ['vendor/rand', { name: 'rand', ecosystem: 'cargo', version: '0.8.0', files: { 'main.rs': 'rand' } }],
+    ['vendor/rand-0.7.3', { name: 'rand', ecosystem: 'cargo', version: '0.7.3', files: { 'main.rs': 'old rand' } }],
   ]) }) }
   const cached = { ...parseBundleMetadata(await createBundleMetadata(full), entry.integrity), managedId: entry.managedId }
   Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry],
@@ -468,16 +471,21 @@ test('Overview package names open why for all versions without requiring advisor
     const view = renderBundlesList([entry])
     assert.doesNotMatch(renderText(view), /data-bundle-tab="advisories"/u)
     const buttons = templates(view).filter(template => template.strings.some(s => s.includes('class="bundles-dist-pkg" aria-haspopup="dialog"')))
-    assert.equal(buttons.length, 4, 'own-source rows stay text and versions share one package link')
+    assert.equal(buttons.length, 7, 'own-source rows stay text and npm versions share one package link')
     for (const button of buttons) button.values.find(value => typeof value === 'function')()
     const opened = openedWhy.splice(0)
-    assert.deepEqual(opened.map(props => props.packageKey).toSorted(), ['@app/workspace', 'cargo:dep', 'dep', 'real-name'])
+    assert.deepEqual(opened.map(props => props.packageKey).toSorted(), ['@app/workspace', 'cargo:dep', 'cargo:rand', 'cargo:rand', 'dep', 'dep', 'real-name'])
+    const expected = new Map([
+      ['dep', ['node_modules/dep', 'node_modules/parent/node_modules/dep']],
+      ['alias', ['node_modules/alias']], ['vendor/dep', ['vendor/dep']], ['packages/workspace', ['packages/workspace']],
+      ['packages/dep', ['packages/dep']], ['vendor/rand', ['vendor/rand']], ['vendor/rand-0.7.3', ['vendor/rand-0.7.3']],
+    ])
     for (const props of opened) {
       assert.equal(props.version, undefined)
       assert.equal(props.reason, undefined, 'overview uses the whole bundle')
       assert.equal(props.isCurrent(), true)
       const graph = bundleWhy(props.details, props)
-      assert.equal(graph.targets.length, props.packageKey === 'dep' ? 2 : 1)
+      assert.deepEqual(graph.targets, expected.get(props.packageGroup), 'the popup selects exactly the installations represented by the clicked row')
     }
     const props = opened[0]
     let current
