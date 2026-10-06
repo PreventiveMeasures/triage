@@ -2,7 +2,8 @@ import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { gzipBytes } from '../common/gzip.js'
-import { createManagedLocalImportSource } from '../client/managed/local-import.js'
+import { createManagedLocalImportSource, managedWorkspaceImportDeps } from '../client/managed/local-import.js'
+import { computeContentHash } from '../client/sync/objstore-crypto.ts'
 import { ManagedLocalImport } from '../ui/managed/local-import.js'
 import * as storage from '../client/storage.js'
 import * as vault from '../client/passkey-vault.js'
@@ -50,6 +51,7 @@ test('reselecting a report after refocus imports current disk bytes despite a wa
       // A sibling document writes without notifying this realm's registries.
       let bytes = new TextEncoder().encode(after)
       if (encoding !== 'plain') bytes = await gzipBytes(bytes)
+      const expectedSyncHash = await computeContentHash(bytes)
       if (encoding === 'encrypted') bytes = await vault.sealForOpfs(bytes, name)
       if (backend === 'opfs') files.set(name, bytes)
       else { files.delete(name); localStorage.setItem('deepview.report:' + name, bytes.toBase64()) }
@@ -60,6 +62,8 @@ test('reselecting a report after refocus imports current disk bytes despite a wa
       await ui.importSelected()
       assert.equal(ui.error, '')
       assert.equal(await uploads[1].text(), after)
+      assert.equal(await managedWorkspaceImportDeps().reportSyncHash(name), expectedSyncHash,
+        'cloud status hashes the current stored representation, without the passkey envelope')
     } finally { ui.hostDisconnected(); vault.__test__.reset() }
   }
 })

@@ -8,6 +8,7 @@ import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, isMan
 import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bundle-dialog.js'
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { openLocalTriageImportDialog } from './dialogs/local-triage-import-dialog.js'
+import { openLocalContentImportDialog } from './dialogs/local-content-import-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
@@ -1980,6 +1981,7 @@ function renderImpl() {
         el.promptPassword = openWorkspaceUnlockBundleDialog
         el.resolveConflicts = resolveTriageConflicts
         el.confirmTriageImport = openLocalTriageImportDialog
+        el.confirmContentImport = openLocalContentImportDialog
       }
       el.session = state.managedSession
       el.allowShare = state.managed?.allowShare === true

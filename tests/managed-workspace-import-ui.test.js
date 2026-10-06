@@ -1,5 +1,6 @@
 import './_polyfills.js'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import '../ui/client-managed.js'
 import { registerWorkspaceImport } from '../ui/client-managed-import.js'
@@ -269,6 +270,85 @@ test('vault changes during reads and local/session changes during conflicts canc
     assert.equal(p._busy, false)
     assert.equal(notifyVault, null, 'vault listener is released after the read')
     assert.equal(fetch.mock.callCount(), change === 'read' ? 0 : 2)
+    fetch.mock.restore()
+  }
+})
+
+function contentSource(p, kind) {
+  const content = kind === 'report' ? '{"repo":{"github":"org/repo","directory":"src"},"findings":[]}' : 'bundle bytes'
+  const value = kind === 'report' ? 'report.json' : `sha512-${createHash('sha512').update(content).digest('base64')}`
+  const file = new File([content], kind === 'report' ? value : 'source.bundle')
+  const listeners = new Set()
+  p.localImportSource = {
+    locked: false, subscribe: callback => { listeners.add(callback); return () => listeners.delete(callback) },
+    list: () => [{ value, label: file.name }], importItem: (_kind, _value, use) => use(file),
+  }
+  p.localDeps = {
+    hydrateKey: key => {
+      assert.equal(key, 'deepview.workspaces')
+      return JSON.stringify([{ id: 'local', name: 'Local workspace', [`${kind}s`]: [value], privateKey: 'never-send' }])
+    },
+    reportSyncHash: () => 'raw-bytes-hash',
+    localContentSyncStatus: () => ({ synced: true, cached: true }),
+  }
+  return { content, value, listeners }
+}
+
+test('bare imports wait for selection, use normal upload defaults, and preserve a workspace import plan', async t => {
+  for (const kind of ['bundle', 'report']) {
+    const p = page(), workspacePlan = { name: 'Pending workspace' }
+    p._plan = workspacePlan
+    const { content, value, listeners } = contentSource(p, kind)
+    const decision = Promise.withResolvers(), shown = Promise.withResolvers()
+    p.confirmContentImport = ({ plan, signal }) => { shown.resolve({ plan, signal }); return decision.promise }
+    let uploads = 0
+    p.dispatchEvent = event => { assert.equal(event.type, 'managed-import-complete') }
+    const fetch = t.mock.method(globalThis, 'fetch', async (path, options) => {
+      assert.equal(path, `/api/admin/${kind}s`)
+      if (!options.body) return Response.json({ [`${kind}s`]: [] })
+      uploads++
+      assert.ok(options.body instanceof File)
+      assert.equal(await options.body.text(), content)
+      assert.deepEqual(options.headers, { 'x-csrf-token': 'csrf', [`x-${kind}-filename`]: encodeURIComponent(options.body.name) })
+      return Response.json({ id: 'stored', repoId: kind === 'report' ? 1 : null })
+    })
+    const importing = p._importLocalContent(kind)
+    const { plan, signal } = await shown.promise
+    assert.equal(uploads, 0)
+    assert.equal(signal.aborted, false)
+    assert.equal(plan.groups[0].name, 'Local workspace')
+    decision.resolve({ confirmed: true, selected: [value] })
+    await importing
+    assert.equal(p._error, '')
+    assert.equal(p._message, `Imported 1 ${kind}.`)
+    assert.equal(uploads, 1)
+    assert.equal(p._plan, workspacePlan)
+    assert.equal(listeners.size, 0)
+    fetch.mock.restore()
+  }
+})
+
+test('cancelled content selections and local/session changes cannot start uploads', async t => {
+  for (const change of ['cancel', 'storage', 'session', 'mutation']) {
+    const p = page(), { value, listeners } = contentSource(p, 'bundle')
+    const decision = Promise.withResolvers(), shown = Promise.withResolvers()
+    p.confirmContentImport = ({ signal }) => { shown.resolve(signal); return decision.promise }
+    const fetch = t.mock.method(globalThis, 'fetch', (path, options) => {
+      assert.equal(path, '/api/admin/bundles')
+      assert.equal(options.body, undefined, 'no files may be sent')
+      return Response.json({ bundles: [] })
+    })
+    const importing = p._importLocalContent('bundle')
+    const signal = await shown.promise
+    if (change === 'storage') p._localChanged()
+    if (change === 'session') p.appState.setSession({ id: 'other-admin', role: 'admin' })
+    if (change === 'mutation') for (const notify of listeners) notify()
+    assert.equal(signal.aborted, change !== 'cancel')
+    decision.resolve({ confirmed: change !== 'cancel', selected: [value] })
+    await importing
+    assert.equal(p._message, '')
+    assert.equal(p._busy, false)
+    assert.equal(listeners.size, 0)
     fetch.mock.restore()
   }
 })
