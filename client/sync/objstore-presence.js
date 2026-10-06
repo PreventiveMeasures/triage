@@ -786,6 +786,23 @@ export function isBundleInRemote(workspaceId, integrity) {
   return entry.remoteTags.has(tag)
 }
 
+// Import previews must also work without starting a local sync session. Cached
+// presence is explicitly marked as last-known; report bytes must match its hash.
+export function localContentSyncStatus(workspaceId, kind, value, hash) {
+  const entry = sessions.get(workspaceId)
+  const tag = (kind === 'bundle' ? entry?.bundleTags : entry?.fileTags)?.get(value)
+  if (tag !== undefined) {
+    const baseline = entry.baselines.get(tag), remote = entry.remoteMeta.get(tag)
+    const synced = entry.remoteTags.has(tag) && (kind === 'bundle'
+      || !!remote && baselineIs(baseline, remote) && baseline.hash === hash && !entry.localChanged.has(tag))
+    return { synced, cached: false }
+  }
+  const cached = loadPresenceCache(workspaceId)
+  const known = Object.entries((kind === 'bundle' ? cached?.bundles : cached?.names) ?? {}).find(([, name]) => name === value)?.[0]
+  const baseline = cached?.baselines?.[known]
+  return { synced: known !== undefined && (kind === 'bundle' || baseline?.synced === true && baseline.hash === hash), cached: true }
+}
+
 // Pre-warm the bundle tag cache. Mirrors `trackFile` for bundles —
 // called when a bundle is freshly attached to a workspace, so a
 // follow-up `isBundleInRemote` check has the tag ready.

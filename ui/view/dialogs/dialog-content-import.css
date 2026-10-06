@@ -1,0 +1,13 @@
+dialog { width: min(42rem, 90vw); }
+.content-import-groups { max-height: 55vh; overflow: auto; }
+fieldset { margin: .7rem 0; padding: .5rem .75rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); }
+legend { padding: 0 .35rem; font-size: .85rem; font-weight: 600; }
+.content-import-item { display: flex; gap: .65rem; align-items: flex-start; padding: .65rem 0; }
+.content-import-item + .content-import-item { border-top: 1px solid var(--border); }
+.content-import-item input { margin: .15rem 0 0; accent-color: var(--accent); }
+.content-import-item.unavailable { opacity: .55; cursor: default; }
+.content-import-label { display: grid; gap: .25rem; min-width: 0; overflow-wrap: anywhere; font-size: .82rem; }
+.content-import-status { display: flex; flex-wrap: wrap; gap: .4rem; color: var(--muted); font-size: .74rem; }
+.content-import-present { border: 1px solid var(--border); border-radius: 3px; padding: 0 .3rem; }
+input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .5; }

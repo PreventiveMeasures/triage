@@ -1,12 +1,17 @@
-import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFileFresh, withStoredItem } from '../storage.js'
+import { hasStoredBundleBytes, listBundles, listFiles, onBundleMutated, onFileMutated, readBundle, readFileBytes, readFileFresh, withStoredItem } from '../storage.js'
 import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption } from '../passkey-vault.js'
 import { hydrateKey } from '../secure-storage.js'
 import { readTriageBlob } from '../triage.js'
+import { localContentSyncStatus } from '../sync/objstore-presence.js'
+import { computeContentHash } from '../sync/objstore-crypto.ts'
 
 // Only dependency handles cross the lazy import boundary. The workspace reader
 // lives in the on-demand bundle and never hydrates managed reactive state.
 export function managedWorkspaceImportDeps() {
-  return { ...defaultDeps, hydrateKey, readTriageBlob }
+  return { ...defaultDeps, hydrateKey, readTriageBlob, localContentSyncStatus,
+    // Cloud reports can contain gzip bytes; upload previews read decoded text.
+    reportSyncHash: value => withStoredItem('report', value, async () => computeContentHash(await readFileBytes(value))),
+  }
 }
 
 // Created in the main bundle and injected into the lazy Manage pages. Importing

@@ -5,6 +5,7 @@ import importStyles from './styles/workspace-import.css'
 import { decodeWorkspaceFile, prepareWorkspaceImport, runWorkspaceImport, workspaceImportApi } from '../../client/managed/workspace-import.js'
 import { localTriageReader, localWorkspaceReader } from '../../client/managed/workspace-import-local.js'
 import { runLocalTriageImport } from '../../client/managed/triage-import.js'
+import { prepareLocalContentImport, runLocalContentImport } from '../../client/managed/content-import.js'
 
 // The already-loaded management entry supplies its base class and request
 // transport, preserving its shared caches, session cancellation and preview mode.
@@ -30,9 +31,9 @@ export function registerWorkspaceImport(ManagedPage, request) {
         this._workspaces = []; this._localId = ''
         if (this._unlocking) return
         if (this._local) this._plan = null
-        if (this._local || this._importingTriage) {
+        if (this._local || this._importingTriage || this._importingContent) {
           this._operation?.abort(); this._message = ''
-          this._error = this._importingTriage
+          this._error = this._importingContent ? 'Local data changed or was locked. Choose files again to continue.' : this._importingTriage
             ? 'Local data changed or was locked. Import triage again to continue.'
             : 'Local data changed or was locked. Choose the workspace again.'
         }
@@ -187,6 +188,33 @@ export function registerWorkspaceImport(ManagedPage, request) {
         }
       })
     }
+    async _importLocalContent(kind) {
+      if (!this._csrf) return
+      await this._action(async signal => {
+        this._importingContent = true; this._message = ''
+        const source = this.localImportSource
+        const families = ['reports', 'bundles', 'bundle-metadata', 'history', 'workspace-import', 'scan-sources', 'repo-impact'], imported = new Set()
+        const unsubscribe = source.subscribe(this._localChanged)
+        try {
+          if (!(await this._unlock(source, signal))) return
+          signal.throwIfAborted()
+          this._readingLocal = true
+          const api = workspaceImportApi(request, this.session, signal)
+          const plan = await prepareLocalContentImport(kind, { source, deps: this.localDeps, api, signal })
+          const decision = await this.confirmContentImport({ plan, signal })
+          signal.throwIfAborted()
+          if (!decision?.confirmed) return
+          const count = await runLocalContentImport(plan, decision.selected, {
+            source, api, signal, imported, progress: message => { this._message = message },
+          })
+          this._message = `Imported ${count} ${kind}${count === 1 ? '' : 's'}.`
+        } finally {
+          unsubscribe(); this._readingLocal = false; this._importingContent = false
+          this.appState.invalidate(families)
+          if (imported.size > 0) this.dispatchEvent(new CustomEvent('managed-import-complete', { bubbles: true, composed: true }))
+        }
+      })
+    }
     render() {
       if (this._role !== 'admin') return nothing
       const plan = this._plan
@@ -196,6 +224,11 @@ export function registerWorkspaceImport(ManagedPage, request) {
       const missing = plan?.references.filter(hash => !plan.bundles.some(bundle => bundle.integrity === hash)).length ?? 0
       return html`<div class="wrap" @dragleave=${() => { this._drag = false }}>${adminNavigation('manage-import', this._role, this.allowShare)}
         <h1>Import</h1>
+        <section class="triage-import" aria-label="Import local files">
+          <div class="actions"><button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalContent('bundle')}>Import bundles</button>
+            <button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalContent('report')}>Import reports</button></div>
+          <p>Choose files from this browser, grouped by workspace. Import files without teams or triage.</p>
+        </section>
         <section class="triage-import" aria-label="Local triage">
           <button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalTriage()}>Import triage</button>
           <p>Import saved triage and comments for findings already in managed reports.<br>

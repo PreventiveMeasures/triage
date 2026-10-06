@@ -4,7 +4,7 @@ import { mock, test } from 'node:test'
 // Keep the real modal completion logic; only stub its document-level imports.
 mock.module('../ui/view/dom.js', { namedExports: { makeStackedModalError: cause => new Error('Modal conflict', { cause }) } })
 mock.module('../ui/view/tooltip.js', { namedExports: { installShadowTooltipListener() {} } })
-for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'local-triage-import']) {
+for (const name of ['delete-report', 'delete-bundle', 'detach-report', 'detach-bundle', 'local-triage-import', 'local-content-import']) {
   await import(`../ui/view/dialogs/${name}-dialog.js`)
 }
 
@@ -84,4 +84,34 @@ test('local triage confirmation closes on cancellation before or after opening',
     assert.equal(view.closes(), 1)
     view.dialog.disconnectedCallback()
   }
+})
+
+test('content import defaults to synced files, permits local selection, and never selects existing files', () => {
+  const { dialog } = createDialog('local-content-import')
+  const items = [
+    { value: 'synced', synced: true }, { value: 'local', synced: false }, { value: 'existing', synced: true, present: true },
+    { value: 'unreadable', synced: true, error: 'Missing' },
+  ]
+  dialog.plan = { kind: 'bundle', items, groups: [{ name: 'Workspace', items: items.map(item => ({ item, synced: item.synced })) }] }
+  dialog.beforeOpen()
+  assert.deepEqual([...dialog.selected], ['synced'])
+  dialog.toggle(items[0], false)
+  assert.deepEqual(dialog.confirmationResult(true), { confirmed: false, selected: [] })
+  dialog.toggle(items[1], true)
+  dialog.toggle(items[2], true)
+  dialog.toggle(items[3], true)
+  assert.deepEqual(dialog.confirmationResult(true), { confirmed: true, selected: ['local'] })
+  assert.deepEqual(dialog.confirmationResult(false), { confirmed: false, selected: [] })
+})
+
+test('content confirmation cannot approve after its import session is cancelled', () => {
+  const { dialog, results } = createDialog('local-content-import')
+  const controller = new AbortController()
+  dialog.signal = controller.signal
+  dialog.plan = { items: [{ value: 'bundle', synced: true }] }
+  dialog.firstUpdated()
+  controller.abort()
+  dialog._onConfirm()
+  assert.deepEqual(results, [{ confirmed: false, selected: [] }])
+  dialog.disconnectedCallback()
 })
