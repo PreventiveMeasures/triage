@@ -11,11 +11,12 @@ export function countsTowardsCycles(from, to, ownSource) {
   // Bundles do not distinguish literal imports from computed loads. Match
   // known dynamic entry points, keeping dependencies such as preset-typescript.
   if (/(?:^|\/)node_modules\/@babel\/core\/lib\/config\/files\/(?:module-types|plugins)\.js$/u.test(from)
-    && /(?:^|\/)node_modules\/(?:@react-native\/babel-preset\/(?:src\/)?index\.js|(?:@[^/]+\/)?react-native-reanimated\/plugin\/index\.js)$/u.test(to)) return false
-  if (to.endsWith('.config.js') && (ownSource ?? bundlePkgOf(to, { splitOwnDirs: false }) === '__own__')) {
+    && /(?:^|\/)node_modules\/(?:@babel\/plugin-transform-[^/]+\/lib\/index\.js|@react-native\/babel-preset\/(?:src\/)?index\.js|(?:@[^/]+\/)?react-native-reanimated\/plugin\/index\.js)$/u.test(to)) return false
+  if (to.endsWith('.config.js')) {
     // The last installation boundary excludes import-fresh's nested dependencies.
     const installedSource = from.split(/(?:^|\/)node_modules\//u).slice(1).at(-1)
-    if (installedSource === 'cosmiconfig/dist/loaders.js' || installedSource?.startsWith('import-fresh/')) return false
+    if (installedSource === 'cosmiconfig/dist/loaders.js') return false
+    if (installedSource?.startsWith('import-fresh/') && (ownSource ?? bundlePkgOf(to, { splitOwnDirs: false }) === '__own__')) return false
   }
   return true
 }

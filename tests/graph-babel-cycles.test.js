@@ -20,6 +20,8 @@ const dynamicPlugins = [
   ['@react-native/babel-preset', 'src/index.js'],
   ['react-native-reanimated', 'plugin/index.js'],
   ['@org/react-native-reanimated', 'plugin/index.js'],
+  ...['template-literals', 'shorthand-properties', 'nullish-coalescing-operator', 'export-namespace-from', 'typescript']
+    .map(name => [`@babel/plugin-transform-${name}`, 'lib/index.js']),
 ]
 
 function imports(ordinaryImport) {
@@ -106,7 +108,9 @@ test('Babel dynamic plugin exclusions match exact loader and entry-point paths',
     }
     for (const target of [
       ...targets.flatMap(path => [`${path}.bak`, `${path}/other.js`, path.replace('node_modules/', 'my_node_modules/')]),
-      'node_modules/@babel/preset-typescript/lib/index.js', 'node_modules/@babel/plugin-transform-typescript/lib/index.js',
+      'node_modules/@babel/preset-typescript/lib/index.js', 'node_modules/@babel/plugin-syntax-typescript/lib/index.js',
+      'node_modules/@other/plugin-transform-template-literals/lib/index.js', 'node_modules/@babel/plugin-transform-/lib/index.js',
+      'node_modules/@babel/plugin-transform-template-literals/lib/helpers.js',
       'node_modules/react-native-reanimated/index.js', 'node_modules/react-native-reanimated/plugin/helper.js',
       'node_modules/@react-native/babel-preset/src/helpers.js', 'node_modules/@other/babel-preset/index.js',
     ]) assert.equal(countsTowardsCycles(source, target), true, `${source} -> ${target}`)
@@ -120,10 +124,10 @@ test('Babel dynamic plugin exclusions match exact loader and entry-point paths',
   }
 })
 
-test('grid, dependency and advisory cycles exclude dynamic React Native plugin loads but retain TypeScript preset imports', async () => {
-  for (const source of pluginLoaders) {
+test('grid, dependency and advisory cycles exclude config plugin loads but retain literal imports and TypeScript presets', async () => {
+  for (const source of [...pluginLoaders, 'node_modules/@babel/core/lib/config/files/index.js']) {
     for (const [name, file] of [...dynamicPlugins, ['@babel/preset-typescript', 'lib/index.js']]) {
-      const expectedCycles = name === '@babel/preset-typescript' ? 1 : 0, target = `node_modules/${name}/${file}`
+      const expectedCycles = name === '@babel/preset-typescript' || !pluginLoaders.includes(source) ? 1 : 0, target = `node_modules/${name}/${file}`
       const edges = new Map([['index.js', [target]], [source, [target]], [target, [source]]])
       for (const shortened of [false, true]) {
         const original = new Map([...edges.keys()].map(path => [shortened ? path.replace('node_modules/', '') : path, path]))
