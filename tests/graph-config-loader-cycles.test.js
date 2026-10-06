@@ -61,6 +61,7 @@ test('config discovery ownership agrees across the grid, inspector, dependency g
         const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf })
         for (const node of graph.nodes) node.origFile = original.get(node.file)
         graph.ownSourcePackages = new Set(own ? [pkgOf(display.get(target))] : [])
+        graph.ownSourceFiles = new Set(own ? [display.get(target)] : [])
         for (const expanded of [new Set(), new Set(graph.packages)]) {
           const full = buildDependencyMatrix(graph, { expanded })
           assert.equal(full.cycleCount, expectedCycles, `${source} -> ${target}`)
@@ -94,6 +95,47 @@ test('config discovery ownership agrees across the grid, inspector, dependency g
         const result = layoutDependencyChains(graph)
         assert.equal(result.boxes.filter(box => box.members.length > 1).length, expectedCycles)
         assert.equal(result.boxes.length, expectedCycles ? 1 : 2)
+      }
+    }
+  }
+})
+
+test('split own-source directories cannot exclude dependency configs with the same package key', () => {
+  const own = 'tools/local.config.js', target = 'node_modules/tools/metro.config.js'
+  for (const [name, file] of loaders) {
+    const source = `node_modules/${name}/${file}`
+    const edges = new Map([[source, [own, target]], [own, [source]], [target, [source]]])
+    for (const shortened of [false, true]) {
+      const original = new Map([...edges.keys()].map(path => [shortened ? path.replace('node_modules/', '') : path, path]))
+      const display = new Map([...original].map(([path, orig]) => [orig, path]))
+      const tree = Object.fromEntries([...edges].map(([path, targets]) => [display.get(path), { imports: targets.map(to => display.get(to)) }]))
+      const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: path => bundlePkgOf(original.get(path)) })
+      for (const node of graph.nodes) node.origFile = original.get(node.file)
+      assert.equal(graph.nodeByFile.get(display.get(own)).pkg, 'tools')
+      assert.equal(graph.nodeByFile.get(display.get(target)).pkg, 'tools')
+      graph.ownSourcePackages = new Set(['tools'])
+      graph.ownSourceFiles = new Set([display.get(own)])
+      const from = `f:${display.get(source)}`, to = `f:${display.get(target)}`
+      for (const expanded of [new Set(), new Set(graph.packages)]) {
+        const full = buildDependencyMatrix(graph, { expanded })
+        assert.equal(full.cycleCount, 1, 'the dependency config must still close a real cycle')
+        if (expanded.size > 0) {
+          assert.equal(full.cells.get(from).get(to).cyclic, true)
+          assert.equal(full.cells.get(from).get(`f:${display.get(own)}`).cyclic, false)
+          const filtered = buildDependencyMatrix(graph, { expanded, cyclesOnly: true })
+          assert.deepEqual(new Set(filtered.rows.map(row => row.file)), new Set([display.get(source), display.get(target)]))
+          assert.doesNotMatch(text(renderMatrixPanel(full, graph, { from, to }, { expanded })), /Excluded from cycles/u)
+          assert.match(text(renderMatrixPanel(full, graph, { from, to: `f:${display.get(own)}` }, { expanded })), /Excluded from cycles/u)
+        } else {
+          const filtered = buildDependencyMatrix(graph, { cyclesOnly: true })
+          assert.deepEqual(filtered.cells.get(`p:${name}`).get('p:tools').examples, [[display.get(source), display.get(target)]])
+        }
+      }
+      for (const packagesView of [false, true]) {
+        const network = dependencyNetwork(graph, packagesView)
+        const result = layoutPackageDependencies(network.nodes.map(node => node.file), network.importsOf, [], { cycleImportsOf: network.cycleImportsOf })
+        assert.equal(result.cycles.length, 1)
+        assert.deepEqual(new Set(result.cycles[0]), new Set(packagesView ? [name, 'tools'] : [display.get(source), display.get(target)]))
       }
     }
   }

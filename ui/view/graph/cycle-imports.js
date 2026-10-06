@@ -30,7 +30,7 @@ export function cycleImportsOf(graph, groupOf = node => node.file) {
     if (!from) continue
     for (const target of targets) {
       const to = nodes.get(target)
-      if (to && countsTowardsCycles(from.origFile ?? file, to.origFile ?? target, graph.ownSourcePackages?.has(to.pkg))) links.get(groupOf(from)).add(groupOf(to))
+      if (to && countsTowardsCycles(from.origFile ?? file, to.origFile ?? target, graph.ownSourceFiles?.has(target))) links.get(groupOf(from)).add(groupOf(to))
     }
   }
   return links
