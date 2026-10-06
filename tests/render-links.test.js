@@ -86,3 +86,37 @@ test('managed Links classifies members with the whole report dependency director
   state.triage.set(id, { ignoredReports: ['managed.json'] })
   assert.doesNotMatch(renderText(renderLinksView()), /links-finding-status/u)
 })
+
+test('Links renders both same-ID scopes in a grouped row regardless of member order', async () => {
+  for (const kind of ['app', 'own']) {
+    for (const reverse of [false, true]) {
+      const id = `links-same-row-${kind}-${reverse}`
+      const dependency = { id, title: 'Dependency copy', file: 'node_modules/pkg/a.js', isApp: false }
+      const shared = { ...dependency, title: 'Shared copy', ...(kind === 'app' ? { isApp: true } : { file: 'src/a.js' }) }
+      const members = reverse ? [dependency, shared] : [shared, dependency]
+      const first = `${id}-a.json`, second = `${id}-b.json`
+      await openLocalReports(id, {
+        [first]: { findings: [members] }, [second]: { findings: [members.toReversed()] },
+      })
+      const copies = () => {
+        const view = renderText(renderLinksView())
+        assert.equal((view.match(/class="links-report-row"/gu) ?? []).length, 1, 'reordered report copies share one card')
+        const rows = view.match(/<li class=links-finding>[\s\S]*?<\/li>/gu) ?? []
+        assert.equal(rows.length, 2, 'both occurrence scopes are represented')
+        return [rows.find(row => row.includes('Shared copy')), rows.find(row => row.includes('Dependency copy'))]
+      }
+      state.triage.set(id, { triage: 'ignored' })
+      let [sharedView, dependencyView] = copies()
+      assert.match(sharedView, />Ignored<\/span>/u)
+      assert.doesNotMatch(dependencyView, /links-finding-status/u)
+      state.triage.set(id, { ignoredReports: [first] })
+      ;[sharedView, dependencyView] = copies()
+      assert.doesNotMatch(sharedView, /links-finding-status/u)
+      assert.match(dependencyView, /Ignored in 1\/2 reports/u)
+      state.triage.set(id, { triage: 'ignored', ignoredReports: [first] })
+      ;[sharedView, dependencyView] = copies()
+      assert.match(sharedView, />Ignored<\/span>/u)
+      assert.match(dependencyView, /Ignored in 1\/2 reports/u)
+    }
+  }
+})
