@@ -1,5 +1,5 @@
 import { BUNDLE_TABS } from '../../common/bundle-tabs.js'
-import { managedBundleRoute } from './managed-bundle-navigation.js'
+import { managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
 import { setManagedWorkspace } from '../../client/managed/workspace.js'
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
@@ -12,7 +12,7 @@ import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { readManagedReport } from '../../common/managed/report-content.ts'
 import { encodeReportLocation } from '../../client/report-location.js'
-import { configureReportRevalidation, render } from './render.js'
+import { configureReportRevalidation, render, renderEmptyWorkspace } from './render.js'
 import { ensureClientMode, navigateToAdminPage, renderSidebar } from './sidebar.js'
 import { resetBundleTerminal } from './terminal-attach.js'
 import { cleanupGraph2, graph2 } from './graph/state.js'
@@ -36,7 +36,7 @@ export { beginViewNavigation, currentViewGeneration } from './view-navigation.js
 // the user picks back up where they left off. The stored value is the
 // OPFS filename for a single-file view, or `r:` + JSON containing its
 // name and selected workspace parent; prefixed with `ws:` for a
-// workspace view; or prefixed with `b:` followed by the SRI-shaped
+// workspace view, `wrs:`/`wbs:` for its report/bundle lists; or `b:` followed by the SRI-shaped
 // integrity for a bundle view, optionally followed by a space and the
 // active sub-tab (`b:<integrity> <tab>`). Mutually exclusive — one
 // current selection at a time, last-clicked wins.
@@ -719,6 +719,34 @@ export function switchToManagedDeduplication(id) {
   return switchToManagedTeam({ id: null, reports: [{ id }] }, id, { history: false, deduplication: true })
 }
 
+export async function switchToWorkspaceContent(id, kind, { history = true } = {}) {
+  if (kind !== 'reports' && kind !== 'bundles') return false
+  const view = `workspace-${kind}`
+  const managed = isManagedUiMode()
+  const parent = managed ? state.managedTeams.find(team => team.id === id) : listWorkspaces().find(workspace => workspace.id === id)
+  if (!parent) return false
+  if (managed && history && managedHistory.active) {
+    return managedHistory.navigate(managedRouteForIds({ view, teamId: id }, state.managedTeams))
+  }
+  const gen = beginViewNavigation()
+  closeSessionsExcept(new Set())
+  clearActiveView({ forgetLastView: false })
+  state.currentWorkspace = managed ? `managed-team:${id}` : id
+  state.currentManagedTeam = managed ? id : null
+  state.currentView = view
+  if (managed) state.bundles = managedTeamBundleEntries(state.managedTeams)
+  report.classList.add('active')
+  dropZone.classList.add('hidden')
+  document.body.classList.remove('report-fullscreen')
+  render({ animate: false })
+  document.querySelector('#main-content')?.scrollTo({ top: 0 })
+  if (!managed) setSecureItem(LAST_FILE_KEY, `${kind === 'reports' ? 'wrs' : 'wbs'}:${id}`).catch(() => {})
+  await renderSidebar()
+  if (isStaleLoad(gen)) return false
+  render({ animate: false })
+  return true
+}
+
 export async function switchToManagedTeam(team, reportId = null, { history = true, deduplication = false } = {}) {
   if (!isManagedUiMode() || !team || !Array.isArray(team.reports)) return false
   if (history && managedHistory.active) return managedHistory.navigate(managedRouteForIds({ view: 'findings', teamId: team.id, reportId }, state.managedTeams))
@@ -813,8 +841,8 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
     state.currentLinks = { name: selectedLink.filename, groups: selectedLink.data.links, skipped: 0,
       ...(deduplication ? { managedId: reportId } : {}) }
     if (!(await renderAfterAnimationFrame(gen))) return false
-  } else if (selected.length === 0) {
-    showEmptyMainPane()
+  } else if (findings.length === 0) {
+    renderEmptyWorkspace()
   } else {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return false
@@ -876,14 +904,8 @@ export async function switchToWorkspace(workspaceId) {
   state.repoEditing = false
   resetGraph2()
   setSecureItem(LAST_FILE_KEY, `ws:${workspaceId}`).catch(() => {})
-  // Empty workspace — the readFile loop below is a no-op, so without
-  // clearing the report pane the user sees whatever was last rendered
-  // (stale finding, bundle, …) while the sidebar marks this workspace
-  // current: a "dead click". Mirror leaveWorkspace's empty-state
-  // teardown so the drop zone re-appears. Bundle-only workspaces (no
-  // reports, some bundles) get the same treatment — bundles render in
-  // the sidebar; the workspace row itself is a no-op for the main pane
-  // until reports land.
+  // Clear the previous view while the empty workspace loads. Its header
+  // below still offers navigation to bundles when there are no findings.
   if (ws.reports.length === 0) showEmptyMainPane()
   // Kick off every readFile concurrently up front, then ingest in
   // workspace order. The await inside the loop only blocks on each
@@ -947,7 +969,7 @@ export async function switchToWorkspace(workspaceId) {
   if (ingested > 0) {
     applyOpeningFilters(getShownGroups())
     if (!(await renderAfterAnimationFrame(gen))) return
-  }
+  } else renderEmptyWorkspace()
   // Discover global links and derive metadata in the background. A cold
   // counts cache must never delay opening this workspace or a finding link.
   // Late promotion can update the opening defaults only while the user has

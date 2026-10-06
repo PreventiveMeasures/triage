@@ -3,8 +3,8 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, loadedBrands } from './file-display.js'
-import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, state } from '#client/index.js'
+import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand } from './file-display.js'
+import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, getKind, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, state } from '#client/index.js'
 import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bundle-dialog.js'
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { openLocalTriageImportDialog } from './dialogs/local-triage-import-dialog.js'
@@ -51,6 +51,7 @@ import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
 import { canViewFindingHistory } from './finding-history.js'
+import { renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -240,27 +241,23 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     : null
   const team = state.currentWorkspace && state.currentManagedTeam
     ? state.managedTeams.find((t) => t.id === state.currentManagedTeam) : null
+  const context = workspaceContent(state, ws ? [ws] : [], getKind)
   const titleText = team ? `Team: ${team.name}` : ws
     ? `Workspace: ${ws.name}`
     : (singleSource ? sourceTitle(singleSource) : 'Findings')
 
-  // File chip: single-file reports get the filename verbatim with a
-  // brand sticker for the source bucket (Claude / Codex / DeepSec /
-  // DeepView eye for analyzer-native). Multi-report loads (workspace
-  // merge) collapse to "N reports" with a GENERIC outline file glyph
-  // — even under one shared source, a brand sticker would mis-imply
-  // the chip names a single item rather than the collection it is.
-  // Clicking the chip copies the report name(s) to the clipboard
-  // (`data-copy-report`, handled in events.js); no pointer cursor, in
-  // keeping with the rest of the page-head chrome.
+  // Workspace/team counts open their report list. Individual reports keep
+  // their branded filename button and click-to-copy behavior.
   const singleStickerKey = singleSource && FILE_ICONS[singleSource] ? singleSource : 'default'
   const singleSticker = unsafeHTML(FILE_ICONS[singleStickerKey])
   const multiSticker = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
   let fileChip = nothing
-  if (fileNames.length === 1) {
-    fileChip = html`<span class="file-chip" data-copy-report=${fileNames[0]}>${singleSticker}<span>${fileNames[0]}</span></span>`
+  if (context) {
+    fileChip = workspaceContentButton(context, 'reports', state.currentView)
+  } else if (fileNames.length === 1) {
+    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames[0]}>${singleSticker}<span>${fileNames[0]}</span></button>`
   } else if (fileNames.length > 1) {
-    fileChip = html`<span class="file-chip" data-copy-report=${fileNames.join('\n')}>${multiSticker}<span>${fileNames.length} reports</span></span>`
+    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames.join('\n')}>${multiSticker}<span>${fileNames.length} reports</span></button>`
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flat())
@@ -272,54 +269,9 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const findingNoun = `finding${totalCount === 1 ? '' : 's'}`
   const countLabel = `${totalCount} ${findingNoun}`
 
-  // Source-marked reports (claude-security, codex-security, deepsec,
-  // piolium) are one analyzer each — the product — and stamp no
-  // per-finding `type`, so the slot is omitted from the header tags:
-  // the title already conveys the product (`Claude Security
-  // findings`, etc.), and a bare `analyzer: null` under it would only
-  // say so again. The analyzer-prefix label only makes sense for the
-  // DeepView native bucket and any mixed loads. Workspace mode also
-  // drops the `analyzer:` tag — a merged view of multiple reports
-  // tends to accumulate several combos and the prefix tag inflates
-  // the header into a visually crowded strip.
-  const dropAnalyzerType = singleSource || state.currentWorkspace
-  const tagFields = dropAnalyzerType
-    ? COMBO_FIELDS.filter((f) => f !== 'type')
-    : COMBO_FIELDS
-  const tags = buildAnalyzerTags(findings, tagFields)
-
-  // …then one chip per non-DeepView producer in the load, closing the
-  // strip. Workspace only — which is to say whenever more than one
-  // report is in view at all, a workspace being the only load that
-  // merges several. It is also the only title that names neither a
-  // product nor an analyzer, since it says the workspace's own NAME,
-  // and the run-meta tags can't cover for that: a source-marked report
-  // stamps no `type` / `model` / `effort`, so the findings a product
-  // contributed leave no trace in the strip. A single-report load
-  // needs none of this — its title already reads `Claude Security
-  // findings`, or it is a native dump with no producer to name.
-  //
-  // AFTER the run-meta tags, which describe what a workspace is mostly
-  // made of — DeepView's own runs. A product chip says something else
-  // also contributed, which is a footnote to that rather than a
-  // replacement for it, so it reads at the tail instead of displacing
-  // the strip's subject.
-  //
-  // Plain text chips, like every other tag in the row: the producer's
-  // mark already rides each of its findings (the tabs' branded
-  // segment, the kanban card's corner), so a logo here repeats what
-  // the list below will say anyway, and a row of brand fills at the
-  // head of the strip pulls the eye off the count and severity bar
-  // that the row exists for.
-  //
-  // DeepView gets no chip at all — it is the unmarked default, and one
-  // for it would label the bulk of a typical workspace.
-  // Read off the report records rather than `findings` so a product
-  // whose pass found nothing is named too — see `loadedBrands`.
-  const producerTags = state.currentWorkspace
-    ? loadedBrands(state.reports).map((k) => PRODUCER_LABELS[k] ?? k)
-    : []
-  const stripTags = [...tags, ...producerTags]
+  // Analyzer and run metadata belong to individual reports, not the combined view.
+  const stripTags = state.currentWorkspace ? [] : buildAnalyzerTags(findings,
+    singleSource ? COMBO_FIELDS.filter(f => f !== 'type') : COMBO_FIELDS)
 
   // Severity status bar — stacked bar sized proportionally to each
   // severity's group count (using the primary tab's severity, so
@@ -370,12 +322,12 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
         class=${classMap({ 'files-toggle-btn': true, active: filesActive })}
         data-action="toggle-files"
         aria-pressed=${String(filesActive)}
-      >${`Files: ${treeFileCount}`}</button>`
+      >${`${treeFileCount} files`}</button>`
     : nothing
 
   return html`<header class="page-head">
     <div class="page-title">
-      <h1>${titleText}${fileChip}${repoTpl}${filesBtnTpl}${syncBadgeTemplate()}</h1>
+      <h1>${context ? workspaceTitleTemplate(context, state.currentView) : titleText}${fileChip}${workspaceContentButton(context, 'bundles', state.currentView)}${repoTpl}${filesBtnTpl}${syncBadgeTemplate()}</h1>
       <div class="meta-row">
         <span>${countLabel}</span>
         ${statusBarTpl}
@@ -1702,6 +1654,15 @@ function ensureReportSlot(id) {
   return slot
 }
 
+export function renderEmptyWorkspace() {
+  const context = workspaceContent(state, listWorkspaces(), getKind)
+  document.title = context ? `${context.title} — findings` : 'DeepView'
+  const slot = ensureReportSlot('empty-workspace-slot')
+  if (slot) litRender(html`${headerTemplate([], [], false, null, 0)}<p class="workspace-content-empty">No findings available.</p>`, slot)
+  report.classList.add('active')
+  dropZone.classList.add('hidden')
+}
+
 // Managed admin full-page views. The lazily-loaded admin bundle
 // (loaded by the sidebar's "Manage users" / "Manage repositories" /
 // "Manage reports" / "Manage bundles" / "Manage teams" entries)
@@ -1822,6 +1783,14 @@ function renderImpl() {
   // Lives before the reports-gate below because the bundles list is
   // independent of any loaded report; the user can browse OPFS
   // bundles even without a finding-bearing JSON open.
+  if (state.currentView === 'workspace-reports' || state.currentView === 'workspace-bundles') {
+    const kind = state.currentView.slice(10)
+    const context = workspaceContent(state, listWorkspaces(), getKind)
+    const slot = ensureReportSlot('workspace-content-slot')
+    if (slot) litRender(renderWorkspaceContent(context, kind), slot)
+    document.title = context ? `${context.title} — ${kind}` : `DeepView — ${kind}`
+    return
+  }
   if (state.currentView === 'bundles') {
     if ((state.bundles ?? []).length === 0) {
       // Defensive fallback — the sidebar header that drove the user
@@ -2023,7 +1992,10 @@ function renderImpl() {
   // Sync/presence notifications can render between clearing the report state
   // and finishing a navigation load. Keep the current surface until navigation
   // replaces it; Home and mode transitions explicitly clear the active view.
-  if (state.reports.length === 0) return
+  if (state.reports.length === 0) {
+    if (state.currentWorkspace && document.querySelector('#empty-workspace-slot')) renderEmptyWorkspace()
+    return
+  }
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
   // group); single findings were wrapped at ingest, so downstream code
   // doesn't branch on shape. The trash-view split happens here, not in
