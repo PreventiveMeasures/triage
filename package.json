@@ -269,7 +269,7 @@
   "dependencies": {
     "@exodus/stasis": "1.0.0-beta.5",
     "@exodus/stasis-core": "1.0.0-beta.5",
-    "@preventive/report": "1.0.0-alpha.5",
+    "@preventive/report": "1.0.0-alpha.6",
     "@preventive/upstream": "1.0.0-alpha.9",
     "ws": "^8.20.1"
   },

@@ -1,3 +1,4 @@
+import { splitMarkdownImport } from '../../common/markdown-import.js'
 import { dependencyDirectory } from '../../client/dependency-paths.js'
 import { BUNDLE_TABS } from '../../common/bundle-tabs.js'
 import { managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
@@ -471,7 +472,16 @@ async function addFiles(files) {
       const content = await file.text()
       // Codex is named by the file, not its content (see @preventive/report);
       // `lower` has the download-duplicate suffix stripped already.
-      if (detectFormat(content, lower) === 'codex') {
+      const products = splitMarkdownImport(content, file.name)
+      if (products) {
+        for (const product of products) {
+          const { count, source } = analyzeContent(product.content)
+          const imported = await importReportContent({ ...product, existingNames })
+          if (!imported) continue
+          setCount(imported.name, count, source)
+          last = { name: imported.name, content: imported.content }
+        }
+      } else if (detectFormat(content, lower) === 'codex') {
         const scans = parseCodexCsvToScans(content)
         for (const { displayName, data } of scans) {
           // '/' → '__': OPFS filenames can't contain '/'; file-display.js
@@ -498,7 +508,7 @@ async function addFiles(files) {
         // in the sidebar's bucket and in `switchToFile` below.
         const result = analyzeContent(content)
         if (!result.recognized) {
-          throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, or Codex report, and not a links file')
+          throw new Error('not a recognized DeepView, DeepSec, Piolium, Claude Security, Codex, or Markdown (generic) report, and not a links file')
         }
         const imported = await importReportContent({ name: file.name, content, existingNames })
         if (!imported) continue

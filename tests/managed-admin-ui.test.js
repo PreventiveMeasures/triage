@@ -19,6 +19,28 @@ const Reports = customElements.get('managed-admin-reports')
 const repo = { id: 7, fullName: 'owner/repo' }
 const impact = { repoId: 7, reports: [{ id: 'r', filename: 'report.json' }], bundles: [], triageCount: 0 }
 
+test('managed report labels, actions and search use decoded product names', (t) => {
+  const page = createPage(Reports)
+  const report = { id: 'generic', filename: 'Audit%20notes: Product%20A%2FB%20100%25.generic-md', visible: true }
+  const name = 'Audit notes: Product A/B 100%'
+  function values(value) {
+    if (Array.isArray(value)) return value.flatMap(values)
+    return value?.strings ? value.values.flatMap(values) : [value]
+  }
+  const labels = values(page._row(report)).filter(value => typeof value === 'string')
+  assert.ok(labels.includes(name), 'visible label and tooltip decode the stored name')
+  for (const action of ['Preview', 'Hide', 'Download', 'Delete']) assert.ok(labels.includes(`${action} ${name}`))
+  assert.ok(!labels.some(label => label.includes('%20') || label.includes('.generic-md')))
+  page._data = { reports: [report] }
+  const row = t.mock.method(page, '_row', () => null)
+  for (const query of ['Product A/B', '100%', 'Audit notes']) {
+    page._query = query
+    page._body()
+  }
+  assert.equal(row.mock.callCount(), 3)
+  assert.equal(report.filename, 'Audit%20notes: Product%20A%2FB%20100%25.generic-md')
+})
+
 test('repository removal requires valid impact and confirmation, including after a failed load', async (t) => {
   const page = createPage(Repositories)
   let response = new Response('unavailable', { status: 503 })
@@ -454,15 +476,18 @@ test('upload batches preserve arrival order, use the current token without locat
     const page = createPage(customElements.get(`managed-admin-${kind}s`))
     page.session = adminSession
     const first = Promise.withResolvers()
+    const firstStarted = Promise.withResolvers()
     const requests = []
     let refreshes = 0
     const fetch = t.mock.method(globalThis, 'fetch', (url, options) => {
+      if (url === '/api/config') return Promise.resolve(Response.json({ managed: {} }))
       assert.equal(url, `/api/admin/${kind}s`)
       if (options.method !== 'POST') {
         refreshes++
         return Promise.resolve(Response.json({ [`${kind}s`]: [], repos: [] }))
       }
       requests.push({ name: options.body.name, headers: options.headers })
+      firstStarted.resolve()
       return requests.length === 1 ? first.promise : Promise.resolve(new Response('', { status: 500 }))
     })
     try {
@@ -470,6 +495,7 @@ test('upload batches preserve arrival order, use the current token without locat
       assert.equal(refreshes, 0, 'an empty selection must not reload the page')
       const pending = page._upload([new File(['{}'], 'first.json'), new File(['{}'], 'second.json')])
       await page._upload([new File(['{}'], 'dropped.json')])
+      await firstStarted.promise // report uploads may read and split Markdown before sending
       assert.equal(page._busy, true)
       assert.equal(requests.length, 1, 'only one upload runs at a time')
       page.session = { ...adminSession, csrfToken: 'rotated' }

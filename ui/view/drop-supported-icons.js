@@ -21,6 +21,7 @@ const ICONS = {
   'codex-security': FILE_ICONS['codex-security'],
   'deepsec': FILE_ICONS.deepsec,
   'piolium': FILE_ICONS.piolium,
+  'markdown-generic': FILE_ICONS['markdown-generic'],
   'bundle': BUNDLE_ICON_SVG,
   'workspace': WORKSPACE_ICON_SVG,
   'links': LINKS_ICON_SVG,

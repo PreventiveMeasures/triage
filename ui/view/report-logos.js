@@ -6,13 +6,14 @@ export const REPORT_BRANDS = {
   'claude-security': { className: 'brand-claude', mark: `<path class="fg" d="${CLAUDE_MARK_PATH}"/>` },
   'codex-security': { className: 'brand-codex', mark: `<path class="fg" d="M11.04 8.364a1.72 1.72 0 0 0-.152-1.432 1.8 1.8 0 0 0-1.925-.846 1.8 1.8 0 0 0-.778-.498 1.8 1.8 0 0 0-.927-.05 1.8 1.8 0 0 0-.827.414 1.77 1.77 0 0 0-.507.767 1.8 1.8 0 0 0-.683.297 1.75 1.75 0 0 0-.499.549 1.75 1.75 0 0 0 .22 2.07 1.72 1.72 0 0 0 .151 1.432 1.8 1.8 0 0 0 1.926.846 1.77 1.77 0 0 0 1.333.587c.78 0 1.47-.496 1.707-1.227a1.8 1.8 0 0 0 .684-.298 1.75 1.75 0 0 0 .499-.548 1.75 1.75 0 0 0-.222-2.063m-2.667 3.678a1.33 1.33 0 0 1-.851-.304l.042-.024 1.413-.804a.23.23 0 0 0 .116-.199V8.747l.597.34q.01.005.011.015v1.629a1.323 1.323 0 0 1-1.328 1.31m-2.857-1.203a1.3 1.3 0 0 1-.158-.879l.042.025 1.414.805a.23.23 0 0 0 .23 0l1.729-.982v.68a.02.02 0 0 1-.01.018l-1.431.814a1.34 1.34 0 0 1-1.816-.48m-.372-3.037a1.32 1.32 0 0 1 .7-.574v1.656a.22.22 0 0 0 .114.197l1.72.979-.598.34a.02.02 0 0 1-.021 0L5.63 9.587a1.304 1.304 0 0 1-.487-1.791zm4.907 1.125L8.327 7.94l.596-.34a.02.02 0 0 1 .02 0l1.43.814a1.3 1.3 0 0 1 .512.528 1.3 1.3 0 0 1-.118 1.4 1.33 1.33 0 0 1-.595.436V9.122a.23.23 0 0 0-.12-.195m.594-.881-.042-.025-1.411-.812a.23.23 0 0 0-.232 0l-1.727.983v-.68a.02.02 0 0 1 .008-.018l1.429-.813a1.34 1.34 0 0 1 1.425.061 1.3 1.3 0 0 1 .55 1.298zM6.908 9.252l-.597-.34a.02.02 0 0 1-.012-.016V7.271c0-.249.073-.493.209-.703s.329-.378.557-.483a1.35 1.35 0 0 1 1.415.18l-.042.023-1.413.804a.23.23 0 0 0-.116.2zm.324-.69.77-.438.77.438v.875l-.768.437-.77-.437z"/>` },
   'deepsec': { className: 'brand-vercel', mark: `<path class="fg" d="m8 5.97 3.5 6.062h-7Z"/>` },
+  'markdown-generic': { className: 'brand-markdown', mark: `<path class="fg" d="M4 7h1.2l1.2 1.5L7.6 7h1.2v4H7.6V8.8L6.4 10 5.2 8.8V11H4zm5.6 0h1.2v2.3H12l-1.8 1.8-1.8-1.8h1.2Z"/>` },
   'piolium': { className: 'brand-piolium', mark: `<path class="fg" d="M8 6.4 5.6 7.2v2.3c0 1.6 1 2.7 2.4 3.3 1.4-.6 2.4-1.7 2.4-3.3V7.2Z"/>` },
 }
 
 // The same folded-paper sticker is used in the sidebar and scan inputs. Give
 // it presentation attributes as well as theme classes so it also works inside
 // isolated component shadow roots without a second branding stylesheet.
-const BRAND_COLORS = { default: ['#2563eb', '#fff'], 'claude-security': ['#d97757', '#fff'], 'codex-security': ['#fff', '#000'], deepsec: ['#000', '#fff'], piolium: ['#fbb829', '#1c1b19'] }
+const BRAND_COLORS = { default: ['#2563eb', '#fff'], 'claude-security': ['#d97757', '#fff'], 'codex-security': ['#fff', '#000'], deepsec: ['#000', '#fff'], piolium: ['#fbb829', '#1c1b19'], 'markdown-generic': ['#374151', '#fff'] }
 export const REPORT_FILE_ICONS = Object.fromEntries(Object.entries(REPORT_BRANDS).map(([key, { className, mark }]) => {
   const [bg, fg] = BRAND_COLORS[key]
   const border = key === 'codex-security' || key === 'deepsec' ? ` stroke="${fg}" stroke-width=".5"` : ''
