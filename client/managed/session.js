@@ -134,8 +134,8 @@ export async function fetchReports(ids, { signal } = {}) {
   return ids.map(id => reports.get(id))
 }
 
-// Published reports form the workspace. A focused hidden report may be added
-// to that context without allowing callers to omit published classification.
+// Published report selections keep the full workspace for classification.
+// An authorized hidden report opens independently of the published workspace.
 export async function fetchTeamReports(teamId, { signal, reportId = null } = {}) {
   const query = reportId === null ? '' : `?reportId=${encodeURIComponent(reportId)}`
   const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/reports${query}`, null, { signal })

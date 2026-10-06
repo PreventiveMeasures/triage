@@ -73,3 +73,26 @@ test('background report loads are bounded and reuse unchanged metadata', async (
   assert.equal(pending.length, 3)
   assert.deepEqual(cache.get('c'), { appMode: true, appFindings: 1 })
 })
+
+for (const failure of ['unavailable', 'incomplete', 'rejected']) {
+  test(`sidebar renders retain ${failure} App checks until the catalog changes`, async () => {
+    let calls = 0, repaired = false
+    const cache = new ManagedTeamAppCache(() => {
+      calls++
+      if (repaired) return Promise.resolve([report('app', app('A'))])
+      if (failure === 'rejected') return Promise.reject(new Error('unavailable'))
+      return Promise.resolve(failure === 'incomplete' ? [] : null)
+    }, () => {})
+    const session = { id: 'manager', role: 'manage' }, team = { id: 'team', reports: [{ id: 'app', cacheKey: 'v1' }] }
+    cache.sync(session, [team]); await tick()
+    for (let i = 0; i < 4; i++) {
+      cache.sync(session, [{ ...team, name: `Renamed ${i}` }]); await tick()
+    }
+    assert.equal(calls, 1, 'repaints and equivalent catalog objects must not retry')
+    assert.equal(cache.get('team'), null, 'failed teams remain expanded')
+    repaired = true
+    cache.sync(session, [{ ...team, reports: [{ id: 'app', cacheKey: 'v2' }] }]); await tick()
+    assert.equal(calls, 2)
+    assert.deepEqual(cache.get('team'), { appMode: true, appFindings: 1 })
+  })
+}

@@ -54,7 +54,7 @@ export class TeamReportsError extends Error {
   constructor(status: number, error: string) { super(error); this.status = status }
 }
 export function teamSnapshotKey(snapshot: TeamReportAccessSnapshot): string {
-  return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.reports, snapshot.repositories])
+  return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.hiddenReportId ?? null, snapshot.reports, snapshot.repositories])
 }
 export async function teamSnapshot(db: ManagedDb, sessionId: string, teamId: string, reportId: string | null = null): Promise<TeamReportAccessSnapshot> {
   const snapshot = await db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId, reportId)
@@ -131,7 +131,9 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   }
   for (const report of reports) {
     const links = linksOf(report.data)
-    if (links) report.data = { source: 'links', findings: [], links: links.map(ids => [...new Set(ids.filter(id => allIds.has(id)))]).filter(ids => ids.length >= 2) }
+    // Hidden previews are independently authorized; preserve a hidden links
+    // document even though its referenced findings are outside this response.
+    if (links && !snapshot.hiddenReportId) report.data = { source: 'links', findings: [], links: links.map(ids => [...new Set(ids.filter(id => allIds.has(id)))]).filter(ids => ids.length >= 2) }
   }
   let outputBytes = 14
   const parts = [Buffer.from('{"reports":[')]

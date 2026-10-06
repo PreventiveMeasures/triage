@@ -1617,8 +1617,8 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   writeResponse(res, Buffer.concat(parts, outputBytes))
 }
 
-// The server selects the complete workspace; clients cannot omit a report
-// or links file to evade classification through the rest of their team.
+// The server selects the complete published workspace for classification.
+// Privileged hidden-report previews are independently scoped and bounded.
 async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, teamId: string, reportId: string | null): Promise<void> {
   const snapshot = await teamSnapshot(deps.db, session.id, teamId, reportId)
   const body = await loadTeamReportsResponse(deps.db, deps.reportStore, snapshot)

@@ -592,7 +592,8 @@ function serveTeamReports(url: URL, res: ServerResponse): boolean {
   if (!team) { sendJson(res, 404, { error: 'no-team' }); return true }
   const reportId = url.searchParams.get('reportId')
   if (reportId !== null && !team.reports.some(report => report.id === reportId)) { sendJson(res, 404, { error: 'no-report' }); return true }
-  const selected = team.reports.filter(report => report.visible || report.id === reportId)
+  const hidden = team.reports.find(report => report.id === reportId && !report.visible)
+  const selected = hidden ? [hidden] : team.reports.filter(report => report.visible)
   if (match[2] === 'annotations') {
     const byReport = new Map(selected.filter(report => reportId === null || report.id === reportId).map(entry => {
       const report = reportFixtures.find(item => item.id === entry.id)!

@@ -42,8 +42,8 @@ export class ManagedTeamAppCache {
     for (const id of this.entries.keys()) if (!ids.has(id)) this.entries.delete(id)
     for (const team of teams) {
       const key = JSON.stringify([team.cacheKey, team.reports.map(r => [r.id, r.cacheKey, r.visible !== false]).toSorted()])
+      // Failed/incomplete checks stay expanded until this catalog or session changes.
       if (this.entries.get(team.id)?.key !== key) this.entries.set(team.id, { key, team, metadata: null })
-      else if (!this.entries.get(team.id).metadata) this.entries.get(team.id).done = false
     }
     this.pump()
   }

@@ -127,6 +127,7 @@ export interface ReportAccessRecord {
 export interface TeamReportAccessSnapshot extends ReportAccessSnapshot {
   teamId: string | null
   reportId?: string | null
+  hiddenReportId?: string | null
   repositories: { repoId: number; github: string; path: string | null }[]
 }
 export interface ReportAccessSnapshot {
@@ -643,7 +644,7 @@ function prepareStatements(db: ManagedSql) {
         WHERE tr.team_id = ? ORDER BY tr.repo_id, tr.path`,
     ),
     selectTeamReportAccessStmt: db.prepare(
-      `SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
+      `SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256, r.visible AS visible,
               r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
               tu.view_dependencies AS dependencies, tu.view_security AS security
          FROM managed_team_user tu
@@ -1021,10 +1022,15 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       const whole = user.role === 'admin' || user.role === 'manage'
       const rows = await stmts.selectTeamReportAccessStmt.all(user.id, teamId, whole ? 1 : 0, reportId) as {
         id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
-        repoFullName: string | null; dependencies: number; security: number
+        repoFullName: string | null; dependencies: number; security: number; visible: number
       }[]
+      // Only privileged callers can receive a hidden row from this query. Give
+      // that individual preview its own capacity; published report selections
+      // still use the complete workspace for cross-report classification.
+      const hidden = rows.find(row => row.id === reportId && row.visible === 0)
+      const selected = hidden ? [hidden] : rows
       const repositories = await stmts.selectTeamRepositoriesStmt.all(teamId) as TeamReportAccessSnapshot['repositories']
-      return { user, teamId, reportId, repositories, reports: rows.map(row => ({
+      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, reports: selected.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },

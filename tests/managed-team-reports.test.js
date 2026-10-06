@@ -4,6 +4,7 @@ import { Readable } from 'node:stream'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from '../server-managed/report-query.ts'
 
 async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
@@ -22,10 +23,10 @@ async function fixture(t) {
     for (const s of Object.values(sessions)) await db.setTeamMember(team, s.userId, { security, dependencies })
   }
   const store = { async get(id) { reads.push(id); await store.afterRead?.(id); return blobs.get(id) } }
-  async function seed(id, data, { directory = 'app', visible = true, filename = `${id}.json`, analyzer = null } = {}) {
+  async function seed(id, data, { directory = 'app', visible = true, filename = `${id}.json`, analyzer = null, byteSize } = {}) {
     const body = Buffer.from(typeof data === 'string' ? data : JSON.stringify(data))
     blobs.set(id, body)
-    await db.insertReport({ id, filename, analyzer, repoId: 1, repoDirectory: directory, contentType: 'application/json', byteSize: body.length, sha256: body.toString('base64'), uploadedBy: sessions.admin.userId, visible, bundleId: null, bundleIntegrity: null }, Date.now())
+    await db.insertReport({ id, filename, analyzer, repoId: 1, repoDirectory: directory, contentType: 'application/json', byteSize: byteSize ?? body.length, sha256: body.toString('base64'), uploadedBy: sessions.admin.userId, visible, bundleId: null, bundleIntegrity: null }, Date.now())
   }
   await seed('a', { findings: [
     { id: 'own', file: 'src/a.js' }, { id: 'other', file: 'src/b.js' },
@@ -361,7 +362,7 @@ test('hidden reports stay individually accessible without joining team findings,
     assert.equal(annotations.body.reports.draft, undefined)
     const selected = await h.request('/api/teams/broad/reports?reportId=draft', role)
     assert.equal(selected.status, 200)
-    assert.deepEqual(selected.body.reports.map(r => r.id), ['a', 'b', 'draft', 'links'], 'the selected draft is added to the published context only')
+    assert.deepEqual(selected.body.reports.map(r => r.id), ['draft'], 'the selected draft loads independently of the published workspace')
     const focused = await h.request('/api/teams/broad/annotations?reportId=draft', role)
     assert.equal(focused.status, 200)
     assert.deepEqual(focused.body.reports, { draft: ['draft-finding'] })
@@ -377,4 +378,44 @@ test('hidden reports stay individually accessible without joining team findings,
   assert.ok((await h.request('/api/teams/broad/reports', 'manage')).body.reports.some(r => r.id === 'draft'))
   await h.db.setReportVisible('draft', false)
   assert.ok(!(await h.request('/api/teams/broad/reports', 'manage')).body.reports.some(r => r.id === 'draft'))
+})
+
+for (const limit of ['count', 'bytes']) {
+  test(`a hidden report opens independently when published team content reaches the ${limit} limit`, async t => {
+    const h = await fixture(t)
+    const published = (await h.db.listReports()).filter(r => r.visible && r.repoDirectory === 'app')
+    if (limit === 'count') {
+      for (let i = published.length; i < MAX_REPORT_QUERY_COUNT; i++) await h.seed(`padding-${i}`, { findings: [] })
+    } else {
+      // Exercise stored-size admission without allocating a gigabyte fixture.
+      await h.seed('padding', { findings: [] }, { byteSize: MAX_REPORT_QUERY_BYTES - published.reduce((sum, r) => sum + r.byteSize, 0) })
+    }
+    await h.seed('draft', { findings: [{ id: 'draft-finding', file: 'src/draft.js' }] }, { visible: false })
+    for (const role of ['admin', 'manage']) {
+      assert.equal((await h.request('/api/teams/broad/reports', role)).status, 200, 'the published workspace itself is valid')
+      h.reads.length = 0
+      const focused = await h.request('/api/teams/broad/reports?reportId=draft', role)
+      assert.equal(focused.status, 200, 'individual hidden content has independent capacity')
+      assert.deepEqual(focused.body.reports.map(r => r.id), ['draft'])
+      assert.deepEqual(h.reads, ['draft'], 'preview does not download published reports')
+    }
+    await h.seed('oversized-draft', { findings: [] }, { visible: false, byteSize: MAX_REPORT_QUERY_BYTES + 1 })
+    assert.equal((await h.request('/api/teams/broad/reports?reportId=oversized-draft', 'manage')).status, 413, 'the individual response is still bounded')
+  })
+}
+
+test('individual hidden links retain their references without loading published reports', async t => {
+  const h = await fixture(t)
+  h.store.afterRead = id => assert.equal(id, 'private-links')
+  const focused = await h.request('/api/teams/broad/reports?reportId=private-links', 'manage')
+  assert.equal(focused.status, 200)
+  assert.deepEqual(focused.body.reports.map(r => r.id), ['private-links'])
+  assert.deepEqual(focused.body.reports[0].data.links, [['own', 'secret']])
+})
+
+test('publication changes reject an in-flight individual preview', async t => {
+  const h = await fixture(t)
+  h.store.afterRead = async id => { if (id === 'private-links') await h.db.setReportVisible(id, true) }
+  const focused = await h.request('/api/teams/broad/reports?reportId=private-links', 'manage')
+  assert.equal(focused.status, 404)
 })
