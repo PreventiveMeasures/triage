@@ -26,7 +26,7 @@ import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
 import { ensureBundleSources } from './bundle-load.js'
 import { bundleNeedsSources } from './bundle-metadata.js'
-import { packageOf } from './graph/utils.js'
+import { packageOf, reportOwnSourceFiles } from './graph/utils.js'
 import { renderPackagesView } from './render-packages.js'
 import { renderRepositoriesView } from './render-repositories.js'
 import { renderLinksView } from './render-links.js'
@@ -133,6 +133,7 @@ function buildGraph2Data() {
   return {
     treeData, files, ownCounts: findingCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
+    ownSourceFiles: reportOwnSourceFiles(files),
   }
 }
 

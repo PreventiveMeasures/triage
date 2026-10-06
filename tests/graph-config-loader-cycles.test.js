@@ -11,6 +11,8 @@ import { layoutPackageDependencies } from '../ui/view/graph/dependency-layout.js
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
 import { bundleDependencyChains, layoutDependencyChains } from '../ui/view/bundle-dependency-chains.js'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
+import { configureDepsDir, depsDirName, isModule } from '../ui/view/format.js'
+import { reportOwnSourceFiles } from '../ui/view/graph/utils.js'
 
 const loaders = [
   ['cosmiconfig', 'dist/loaders.js'],
@@ -49,6 +51,7 @@ test('config discovery ownership agrees across the grid, inspector, dependency g
     for (const [target, targetDir] of [
       ['metro.config.js', '.'], ['tools/metro.config.js', '.'],
       ['node_modules/dep/metro.config.js', 'node_modules/dep'], ['packages/tool/metro.config.js', 'packages/tool'],
+      ['dependencies/dep/metro.config.js', 'dependencies/dep'],
     ]) {
       const own = targetDir === '.'
       const expectedCycles = own ? 0 : 1
@@ -137,6 +140,43 @@ test('split own-source directories cannot exclude dependency configs with the sa
         assert.equal(result.cycles.length, 1)
         assert.deepEqual(new Set(result.cycles[0]), new Set(packagesView ? [name, 'tools'] : [display.get(source), display.get(target)]))
       }
+    }
+  }
+})
+
+test('report config exclusions follow the active dependency directory and retain ownership across context changes', (t) => {
+  const previous = depsDirName()
+  t.after(() => configureDepsDir([{ tree: { [`${previous}/restore/index.js`]: {} } }]))
+  for (const [name, file] of loaders) {
+    const source = `node_modules/${name}/${file}`
+    for (const target of ['dependencies/foo.config.js', 'vendor/foo.config.js', 'node_modules/dep/foo.config.js']) {
+      const own = !target.startsWith('node_modules/')
+      const tree = { [source]: { imports: [target] }, [target]: { imports: [source] } }
+      configureDepsDir([{ tree }])
+      assert.equal(depsDirName(), 'node_modules')
+      assert.equal(isModule(target), !own)
+      const files = Object.keys(tree)
+      const graph = buildGraph(tree, files, new Map())
+      graph.ownSourceFiles = reportOwnSourceFiles(files)
+      // The report owning this graph must not change when a different report
+      // (or workspace load state) selects a different dependency directory.
+      configureDepsDir([])
+      assert.equal(depsDirName(), 'dependencies')
+      for (const expanded of [new Set(), new Set(graph.packages)]) {
+        const model = buildDependencyMatrix(graph, { expanded })
+        assert.equal(model.cycleCount, own ? 0 : 1, `${source} -> ${target}`)
+        assert.equal(buildDependencyMatrix(graph, { expanded, cyclesOnly: true }).importCount, own ? 0 : 2)
+        const from = expanded.size > 0 ? `f:${source}` : `p:${graph.nodeByFile.get(source).pkg}`
+        const to = expanded.size > 0 ? `f:${target}` : `p:${graph.nodeByFile.get(target).pkg}`
+        assert.equal(text(renderMatrixPanel(model, graph, { from, to }, { expanded })).includes('Excluded from cycles'), own)
+      }
+      for (const packagesView of [false, true]) {
+        const network = dependencyNetwork(graph, packagesView)
+        const result = layoutPackageDependencies(network.nodes.map(node => node.file), network.importsOf, [], { cycleImportsOf: network.cycleImportsOf })
+        assert.equal(result.cycles.length, own ? 0 : 1)
+        assert.equal(result.edges.length, 2)
+      }
+      assert.equal(reportOwnSourceFiles([target]).has(target), !target.startsWith('dependencies/'))
     }
   }
 })

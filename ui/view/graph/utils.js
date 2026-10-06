@@ -1,4 +1,4 @@
-import { depsDirName } from '../format.js'
+import { depsDirName, isModule } from '../format.js'
 
 // Graph-flavored utilities. Helpers consumed by the Files tab and
 // graph data prep (rather than graph-internal rendering) live in
@@ -22,6 +22,12 @@ export function packageOf(file) {
   if (m) return m[1]
   const slash = file.indexOf('/')
   return slash > 0 ? file.slice(0, slash) : '/'
+}
+
+// Snapshot the report's active dependency-directory classifier before handing
+// data to the lazy graph bundle. Bundle graphs provide their own file ownership.
+export function reportOwnSourceFiles(files) {
+  return new Set(files.filter(file => !isModule(file)))
 }
 
 // ── Vivid per-package color palette ─────────────────────────────────────────
