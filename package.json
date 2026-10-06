@@ -240,7 +240,7 @@
     "server-e2e": "node server-e2e/index.ts",
     "server-managed": "node server-managed/index.ts",
     "server-managed-test": "node server-managed/test-server.ts",
-    "test": "node --js-base-64 --import=./tests/_resource-loader.js --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js"
+    "test": "node --js-base-64 --require=./tests/_resource-loader.js --experimental-test-module-mocks --test-timeout=120000 --test ./tests/*.test.js"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.5",
