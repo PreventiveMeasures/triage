@@ -52,7 +52,7 @@ function setLandingModePending(pending) {
   if (pending) landing.dataset.serverModePending = 'true'
   else delete landing.dataset.serverModePending
 }
-import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
+import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, refreshManagedWorkspaceFileCount, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -2113,6 +2113,10 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
   }
   if (!managedNavigationPending && (state.currentWorkspace || previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name)) render({ animate: false })
   renderSidebar()
+  // Catalog invalidation above also evicts the cached team report response.
+  // Refresh list counts after every confirmed snapshot, including unchanged
+  // revisions on reconnect so a previous failed read can recover.
+  if (fresh !== null && !managedNavigationPending && !(await refreshManagedWorkspaceFileCount(signal))) return false
   return true
 }
 
