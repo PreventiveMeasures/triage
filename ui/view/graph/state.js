@@ -33,17 +33,7 @@ function createImpl() {
     // issue-bearing code. Toggled via the topbar's "All files"
     // button.
     showAll: false,
-    // Split own (non-dependency) source into per-directory groups.
-    // Off by default: every first-party file shares the single
-    // `__own__` group (labeled "own source") so the canvas's color +
-    // clustering axis is "which package", not "which top-level dir".
-    // On: own source buckets by its top-level directory (`src/...`,
-    // `lib/...` each become their own group/color). Bundle Graph tab
-    // only — toggled via the topbar's "Split dirs" pill; flipping it
-    // rebuilds the graph (different packages → different layout).
-    splitOwnDirs: false,
-    // Package-level view — one node per package (or per top-level
-    // dir under Split dirs) instead of one per file, edges
+    // Package-level view — one node per package instead of one per file, edges
     // aggregated from the cross-package imports. Bundle Graph tab
     // only, via the topbar's "Packages" pill; the pill (and the
     // mode) only engage when the bundle has 3+ packages — see

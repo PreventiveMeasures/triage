@@ -7,8 +7,7 @@
 // The mapping under test that's easiest to get wrong:
 // file edges store direction in lo/hi FILE-path order, while
 // package edges store it in lo/hi PACKAGE-name order, and the two
-// orders can disagree (an own-source dir sorting after a
-// node_modules path whose package name sorts before it).
+// orders can disagree when dependency paths use different prefixes.
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -32,11 +31,20 @@ if (!globalThis[slotKey]) {
 const { buildGraph, buildPackageGraph } = await import('../ui/view/graph/data.js')
 const { dependencyFilesOn, dependencyNetwork } = await import('../ui/view/graph/package-network.js')
 const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
+const { depsDirName } = await import('../ui/view/format.js')
 
-function graphFrom(treeData, { ownCounts = new Map(), severitySets = null, colorSets = null, splitOwnDirs = false } = {}) {
+it('the report graph also classifies all ordinary source files as one package', () => {
+  const dependency = `${depsDirName()}/dep/index.js`
+  const tree = Object.fromEntries(['src/main.js', 'lib/helper.js', 'index.js', dependency].map(file => [file, { imports: [] }]))
+  const graph = buildGraph(tree, Object.keys(tree), new Map())
+  assert.deepEqual(new Set(graph.packages), new Set(['__own__', 'dep']))
+  for (const file of ['src/main.js', 'lib/helper.js', 'index.js']) assert.equal(graph.nodeByFile.get(file).pkg, '__own__')
+})
+
+function graphFrom(treeData, { ownCounts = new Map(), severitySets = null, colorSets = null } = {}) {
   const files = Object.keys(treeData)
   return buildGraph(treeData, files, ownCounts, null, severitySets, colorSets, null, {
-    pkgOf: (p) => bundlePkgOf(p, { splitOwnDirs }),
+    pkgOf: bundlePkgOf,
   })
 }
 
@@ -89,7 +97,7 @@ describe('buildPackageGraph', () => {
       ['__own__', 'x', 'y'],
     )
     assert.equal(pg.byPkg.get('__own__').fileCount, 2)
-    assert.equal(pg.byPkg.get('__own__').label, 'own source')
+    assert.equal(pg.byPkg.get('__own__').label, 'Own source')
     assert.equal(pg.byPkg.get('__own__').size, 150)
     assert.equal(pg.byPkg.get('x').size, 1000)
     // y's files carry no `size` at all — null, not 0, so the
@@ -188,13 +196,13 @@ describe('buildPackageGraph', () => {
   })
 
   it('maps direction flags when package order disagrees with file order', () => {
-    // File order: 'b/x.js' < 'node_modules/a/x.js' (lo = the b-pkg
+    // File order: 'dependencies/b/x.js' < 'node_modules/a/x.js' (lo = the b-pkg
     // file), but package order: 'a' < 'b' (lo = a). The import
     // b → a must land as fromHi on the package edge, not fromLo.
     const pg = buildPackageGraph(graphFrom({
-      'b/x.js': { imports: ['node_modules/a/x.js'] },
+      'dependencies/b/x.js': { imports: ['node_modules/a/x.js'] },
       'node_modules/a/x.js': { imports: [] },
-    }, { splitOwnDirs: true }))
+    }))
     assert.equal(pg.edges.length, 1)
     const e = pg.edges[0]
     assert.equal(e.a, 'a')
@@ -223,7 +231,7 @@ describe('buildPackageGraph', () => {
     assert.equal(layers.depth.get('y'), 1)
   })
 
-  it('splits app directories within the top layer without changing dependency levels or byte totals', () => {
+  it('keeps own-source bytes in one top-layer node with correct dependency levels', () => {
     const sourceTree = {
       'src/main.js': { imports: ['lib/helper.js'], size: 100 },
       'lib/helper.js': { imports: ['node_modules/x/index.js'], size: 300 },
@@ -236,21 +244,14 @@ describe('buildPackageGraph', () => {
       entries: new Set(['src/main.js']),
       imports: new Map([['default', new Map(Object.entries(sourceTree).map(([p, file]) => [p, new Map(file.imports.map((target) => [target, target]))]))]]),
     } }
-    const layouts = [false, true].map((splitOwnDirs) => {
-      const pg = buildPackageGraph(graphFrom(sourceTree, { splitOwnDirs }))
-      const { roots } = bundleLayerRoots(details, paths, (p) => bundlePkgOf(p, { splitOwnDirs }))
-      return layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, roots)
-    })
-    for (const layers of layouts) {
-      assert.equal(layers.levels[0].size, 450)
-      assert.equal(layers.totalSize, 1650)
-      assert.equal(layers.levels[0].share, 450 / 1650)
-      assert.equal(layers.depth.get('x'), 1)
-      assert.equal(layers.depth.get('y'), 2)
-    }
-    assert.deepEqual(layouts[0].levels[0].ids, ['__own__'])
-    assert.deepEqual(new Set(layouts[1].levels[0].ids), new Set(['src', 'lib', '__own__']))
-    assert.equal(layouts[1].levels[0].ids[0], 'lib')
-    assert.equal(layouts[1].rects.get('lib').width, 3 * layouts[1].rects.get('src').width)
+    const pg = buildPackageGraph(graphFrom(sourceTree))
+    const { roots } = bundleLayerRoots(details, paths, bundlePkgOf)
+    const layers = layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, roots)
+    assert.equal(layers.levels[0].size, 450)
+    assert.equal(layers.totalSize, 1650)
+    assert.equal(layers.levels[0].share, 450 / 1650)
+    assert.equal(layers.depth.get('x'), 1)
+    assert.equal(layers.depth.get('y'), 2)
+    assert.deepEqual(layers.levels[0].ids, ['__own__'])
   })
 })

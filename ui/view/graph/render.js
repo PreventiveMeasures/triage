@@ -99,23 +99,10 @@ export function renderTopBar(graph, options, extraControls = null) {
     data-g2-show-all
   ></mode-switch>`
 
-  // "Split dirs" — bundle Graph tab only (gated by the caller's
-  // `showSplitOwnDirs`). Off: all own (non-dependency) source shares
-  // one "own source" group. On: own source fans out into a group per
-  // top-level directory. Like All files this reshapes the package set
-  // (colors + clustering + the Packages distribution), so flipping it
-  // rebuilds the graph rather than just re-styling it.
-  const showSplitOwnDirs = options.showSplitOwnDirs ?? false
-  const splitOwnBtn = showSplitOwnDirs ? html`<mode-switch
-    label="Split dirs" .checked=${graph2.splitOwnDirs}
-    data-g2-split-own
-  ></mode-switch>` : null
-
   // "Packages" — bundle Graph tab only (gated by the caller's
   // `showPackagesView`, which requires 3+ packages under the current
   // grouping). On: the canvas collapses to one node per package
-  // (per top-level dir under Split dirs) with aggregated import
-  // edges. Same rebuild-on-flip contract as the toggles above —
+  // with aggregated import edges. Same rebuild-on-flip contract as above —
   // the layout and hit-testing operate on a different node set.
   const showPackagesView = dependencies ? graph.nodes.length <= 100 : !layers && !matrix && (options.showPackagesView ?? false)
   const packagesViewBtn = showPackagesView ? html`<mode-switch
@@ -141,7 +128,6 @@ export function renderTopBar(graph, options, extraControls = null) {
     ${extraTopRow ? html`<div class="graph2-topbar-row graph2-topbar-row-extra toolbar-row">
       ${extraTopRow}
       ${allFilesBtn}
-      ${splitOwnBtn}
       ${packagesViewBtn}
       <div class="g2-spacer"></div>
       ${triageBtn}
@@ -149,7 +135,6 @@ export function renderTopBar(graph, options, extraControls = null) {
     <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
     ${layoutSelector}
     ${reasonFilter}
-    ${extraTopRow ? null : splitOwnBtn}
     ${hasAnyVisible ? html`<severity-chips
       .counts=${issueCounts}
       .selected=${[...graph2.selectedSeverities]}

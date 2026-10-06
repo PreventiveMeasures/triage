@@ -1,27 +1,20 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { bundleGraphPackageOf, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
+import { bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundlePackageDirs } from '../ui/view/bundle-sources.js'
 
-function inputs({ dirs, entries = [], imports = {}, splitOwnDirs = false }) {
+function inputs({ dirs, entries = [], imports = {} }) {
   const details = { kind: 'stasis', bundle: {
     entries: new Set(entries),
     imports: new Map([['node,import', new Map(Object.entries(imports).map(([p, targets]) => [p, new Map(Object.entries(targets))]))]]),
   } }
   const paths = new Map(Object.keys(dirs).map((p) => [p, p]))
   const packageDirs = new Map(Object.entries(dirs))
-  const pkgOf = (p) => bundlePkgOf(p, { splitOwnDirs, packageDir: packageDirs.get(p) })
+  const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs.get(p) })
   return bundleLayerRoots(details, paths, pkgOf, packageDirs)
 }
-
-it('classifies dependencies before display-prefix stripping and own directories afterwards', () => {
-  assert.equal(bundleGraphPackageOf('a/index.js', 'node_modules/a/index.js'), 'a')
-  assert.equal(bundleGraphPackageOf('index.js', 'node_modules/a/index.js'), 'a')
-  assert.equal(bundleGraphPackageOf('src/index.js', 'project/src/index.js', { splitOwnDirs: true }), 'src')
-  assert.equal(bundleGraphPackageOf('src/index.js', 'project/src/index.js'), '__own__')
-})
 
 it('uses Stasis module ownership for source files beneath dependencies directories', () => {
   const bundle = Bundle.parse(new Bundle({
@@ -36,10 +29,8 @@ it('uses Stasis module ownership for source files beneath dependencies directori
   }).serialize())
   const details = { kind: 'stasis', bundle }, dirs = bundlePackageDirs(details)
   const paths = new Map([...bundle.sources.keys()].map((p) => [p, p]))
-  const pkgOf = (p) => bundleGraphPackageOf(p, p, { packageDir: dirs.get(p) })
+  const pkgOf = (p) => bundlePkgOf(p, { packageDir: dirs.get(p) })
   assert.equal(pkgOf('subdir/dependencies/filename.js'), '__own__')
-  assert.equal(bundleGraphPackageOf('dependencies/filename.js', 'subdir/dependencies/filename.js', { packageDir: '.' }), '__own__')
-  assert.equal(bundleGraphPackageOf('dependencies/filename.js', 'subdir/dependencies/filename.js', { packageDir: '.', splitOwnDirs: true }), 'dependencies')
   assert.deepEqual(new Set([...paths.keys()].map(pkgOf)), new Set(['__own__', 'dep']))
   assert.deepEqual(bundleLayerRoots(details, paths, pkgOf, dirs), { roots: ['__own__'], appImports: [] })
 })
@@ -51,7 +42,7 @@ it('recognizes app/ as the root without explicit entry metadata', () => {
   }), { roots: ['app'], appImports: [] })
 })
 
-it('keeps every split app directory at the root, with or without entries or package metadata', () => {
+it('keeps own source at the root, with or without entries or package metadata', () => {
   for (const packageDir of ['.', undefined]) {
     for (const entries of [[], ['src/main.js']]) {
       const options = {
@@ -60,7 +51,6 @@ it('keeps every split app directory at the root, with or without entries or pack
         entries,
       }
       assert.deepEqual(inputs(options).roots, ['__own__'])
-      assert.deepEqual(inputs({ ...options, splitOwnDirs: true }).roots, ['src', 'lib', '__own__'])
     }
   }
 })
@@ -174,7 +164,7 @@ it('does not restore reason-excluded app imports as virtual connections', () => 
     imports: new Map([['default', imports]]),
     entries: new Set(['project/src/build.js']),
   } }
-  const pkgOf = (p) => bundlePkgOf(p, { splitOwnDirs: false })
+  const pkgOf = bundlePkgOf
   const reasons = new Map([
     ['run', new Set(['project/src/run.js', 'project/node_modules/dep/index.js'])],
     ['deps', new Set(['project/node_modules/dep/index.js'])],

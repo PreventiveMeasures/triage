@@ -30,7 +30,7 @@ export function storedScanBundle(entry, details) {
   const lineCounts = details.lineCounts ?? new Map([...bundleSourcesAsMap(details)]
     .map(([path, content]) => [path, bundleSourceLineCount(content)]))
   const files = [...bundleFileSizes(details)].filter(([, bytes]) => bytes != null)
-    .map(([path, bytes]) => ({ path, format: formats?.get(path) ?? null, bytes, lines: lineCounts.get(path) ?? 0, size: formatBytes(bytes), module: bundlePkgOf(path, { splitOwnDirs: false, packageDir: packages?.get(path) }) }))
+    .map(([path, bytes]) => ({ path, format: formats?.get(path) ?? null, bytes, lines: lineCounts.get(path) ?? 0, size: formatBytes(bytes), module: bundlePkgOf(path, { packageDir: packages?.get(path) }) }))
   const reasons = [{ id: 'all', label: 'All', filePaths: null }, ...[...bundleGraphReasons(details, files.map(file => file.path))]
     .map(([reason, paths]) => ({ id: `reason:${reason}`, label: reason, filePaths: [...paths] }))]
   return { ...entry, files, reasons, size: formatBytes(details.size) }

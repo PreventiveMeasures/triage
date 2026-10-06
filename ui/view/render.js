@@ -1857,10 +1857,6 @@ function renderImpl() {
               hideAllFiles: true,
               triageCounts,
               triageStates: ['inprogress', 'fixed', 'invalid', 'deleted'],
-              // Bundle-only "Split dirs" toggle — own source as one
-              // group (default) vs. a group per top-level directory.
-              // Hidden when own source can't be split (≤1 own bucket).
-              showSplitOwnDirs: prep.canSplitOwnDirs,
               // Bundle-only "Packages" toggle — per-file graph
               // (default) vs. one node per package. Hidden below 3
               // packages, where the package graph carries no signal.

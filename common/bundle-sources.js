@@ -233,10 +233,8 @@ export function bundleSourceSizes(details) {
 //
 // The package views (overview, treemap, graph) otherwise classify
 // paths with `bundlePkgOf`'s string heuristic, which only knows
-// `node_modules/`/`dependencies/` and buckets everything else by
-// top-level dir — collapsing sibling workspace packages under their
-// shared parent (`vendor/aws/aws-crt-php` + `vendor/aws/aws-sdk-php`
-// both fall under `vendor`). Feeding each path's dir into
+// `node_modules/`/`dependencies/` and treats everything else as own
+// source. Feeding each path's recorded module directory into
 // `bundlePkgOf` (`packageDir` option) keeps those packages separate.
 //
 // Returns null for sourcemap bundles (and anything without parsed
