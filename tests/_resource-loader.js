@@ -1,6 +1,8 @@
 // Component tests import the same SVG and CSS resources as the browser build.
 import { readFileSync } from 'node:fs'
 import { enableCompileCache, registerHooks } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { svgTemplateModule } from '../build-lit-svg.js'
 
 // Test files and spawned servers repeatedly load the same module graphs. Share
@@ -8,8 +10,11 @@ import { svgTemplateModule } from '../build-lit-svg.js'
 // runs need fresh compilation for precise V8 coverage; the Node disable flag
 // and an explicitly configured cache directory are also respected.
 if (!process.env.NODE_V8_COVERAGE && !process.execArgv.includes('--experimental-test-coverage')) {
-  const { directory } = enableCompileCache()
-  if (directory) process.env.NODE_COMPILE_CACHE = directory
+  const baseDirectory = resolve(process.env.NODE_COMPILE_CACHE || join(tmpdir(), 'node-compile-cache'))
+  const { directory } = enableCompileCache(baseDirectory)
+  // An already-enabled cache reports its versioned directory. Children need the
+  // original base so Node does not append another version directory on startup.
+  if (directory) process.env.NODE_COMPILE_CACHE = baseDirectory
 }
 
 registerHooks({
