@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test-shard:
+    name: Test shard ${{ matrix.shard }}/3
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -24,3 +29,21 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - run: pnpm i --frozen-lockfile
       - run: node --run test
+        env:
+          # Node options must precede the test script's file arguments.
+          NODE_OPTIONS: --test-shard=${{ matrix.shard }}/3
+          # Share compiled modules across test files and their child servers.
+          NODE_COMPILE_CACHE: ${{ runner.temp }}/node-compile-cache
+
+  # Keep the existing test check name, and fail it if any shard fails,
+  # is cancelled, or is skipped. Every shard must finish successfully.
+  test:
+    if: ${{ always() }}
+    needs: test-shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check all test shards passed
+        env:
+          RESULT: ${{ needs.test-shard.result }}
+        run: test "$RESULT" = success
