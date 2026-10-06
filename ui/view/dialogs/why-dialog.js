@@ -4,6 +4,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { autorun } from '@rray/frontend/state-management'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { bundleWhy, layoutWhy, traceWhy } from '../bundle-why.js'
+import { pkgLabel } from '../bundle-pkg-of.js'
 import { WHY_CARD_HEIGHT, WHY_CARD_WIDTH, WHY_DIALOG_GUTTER } from '../why-layout.js'
 import { pkgColor } from '../graph/utils.js'
 import styles from './dialog-why.css'
@@ -146,8 +147,9 @@ class WhyDialog extends AppDialog {
   render() {
     if (!this._current) return nothing
     const { nodes, targets } = this.graph
+    const name = this.packageGroup === undefined ? this.packageKey : pkgLabel(this.packageGroup)
     return html`<dialog aria-labelledby="why-title" style=${styleMap({ '--graph-dialog-width': `${Math.max(480, this.layout.width + WHY_DIALOG_GUTTER)}px` })} @close=${this._onClose} @click=${this._onBackdrop}>
-      <header><h3 id="why-title">${this.packageKey}${this.version === undefined ? nothing : html`<span class="heading-version">${this.version}</span>`}</h3>
+      <header><h3 id="why-title">${name}${this.version === undefined ? nothing : html`<span class="heading-version">${this.version}</span>`}</h3>
         <button type="button" aria-label="Close dependency chains" @click=${this._onClose}>×</button>
       </header>
       <div class="graph-caption">
