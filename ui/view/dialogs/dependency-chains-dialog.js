@@ -60,7 +60,9 @@ class DependencyChainsDialog extends AppDialog {
     this._resize = new ResizeObserver(() => {
       const maxWidth = graphViewportWidth()
       if (maxWidth !== this._maxWidth) { this.layoutForViewport(); return }
-      if (this._focused === null) scroller.scrollLeft = (this.layout.width - scroller.clientWidth) / 2
+      // Expansion also resizes the scroller. Keep focused side-branch toggles
+      // in view instead of undoing layoutForViewport's focus restoration.
+      if (!this.renderRoot.activeElement?.matches('.package, .cycle-toggle')) scroller.scrollLeft = (this.layout.width - scroller.clientWidth) / 2
     })
     this._resize.observe(scroller)
     this._resize.observe(document.documentElement)
