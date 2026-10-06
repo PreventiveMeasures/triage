@@ -315,7 +315,10 @@ test('external arrows retain exact package endpoints through cycle expansion wit
         if (from.collapsed || from.members.length === 1) {
           assert.equal(sy, from.y + from.height)
           assert.ok(sx > from.x && sx < from.x + from.width)
-        } else assert.deepEqual([sx, sy], [from.x + a.x + w, from.y + a.y + h / 2])
+        } else {
+          assert.equal(sx, from.x + a.x + w)
+          assert.ok(sy > from.y + a.y && sy < from.y + a.y + h)
+        }
         if (to.collapsed || to.members.length === 1) {
           assert.equal(ty, to.y - 5)
           assert.ok(tx > to.x && tx < to.x + to.width)
@@ -326,6 +329,65 @@ test('external arrows retain exact package endpoints through cycle expansion wit
         assertExternalPathClear(commands, cards, layout)
       }
     }
+  }
+})
+
+function arrowSegments(path) {
+  const commands = [...path.matchAll(/([MLQ])([\d.,-]+)/gu)].map(([, command, args]) => ({ command, values: args.split(',').map(Number) }))
+  const segments = []
+  let point = commands[0].values
+  for (const { command, values } of commands.slice(1)) {
+    const end = values.slice(-2), start = point
+    const steps = command === 'Q' ? 12 : 1
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps
+      const next = end.map((value, axis) => command === 'Q'
+        ? (1 - t) ** 2 * start[axis] + 2 * (1 - t) * t * values[axis] + t ** 2 * value
+        : value)
+      if (point[0] !== next[0] || point[1] !== next[1]) segments.push([point, next])
+      point = next
+    }
+  }
+  return segments
+}
+
+function segmentsCross([a, b], [c, d]) {
+  const turn = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+  return turn(a, b, c) * turn(a, b, d) < -1e-8 && turn(c, d, a) * turn(c, d, b) < -1e-8
+}
+
+test('fan-out and fan-in ports follow geometry without crossing sibling arrows or depending on import order', () => {
+  for (const [count, reverse] of [2, 3, 8, 40].flatMap(n => [false, true].map(r => [n, r]))) {
+    const children = Array.from({ length: count }, (_, i) => `child-${i}`)
+    const nodes = new Map(['parent', ...children].map(id => [id, { id }]))
+    let previous
+    for (const ordered of [children, children.toReversed()]) {
+      const imports = new Map(reverse ? ordered.map(id => [id, new Set(['parent'])]) : [['parent', new Set(ordered)]])
+      const layout = layoutWhy({ nodes, imports })
+      assert.equal(layout.edges.length, count)
+      const arrows = layout.edges.map(edge => arrowSegments(edge.path))
+      for (let i = 0; i < arrows.length; i++) {for (let j = i + 1; j < arrows.length; j++) {
+        assert.ok(!arrows[i].some(a => arrows[j].some(b => segmentsCross(a, b))), `no sibling crossings for ${count} ${reverse ? 'incoming' : 'outgoing'} arrows`)
+      }}
+      const paths = new Map(layout.edges.map(edge => [`${edge.fromPackage}:${edge.toPackage}`, edge.path]))
+      if (previous) assert.deepEqual(paths, previous, 'reordering recorded imports does not move ports or bends')
+      previous = paths
+    }
+  }
+})
+
+test('expanded cycle arrows enter a shared target in gutter order without crossing each other', () => {
+  const cycle = Array.from({ length: 7 }, (_, i) => `cycle-${i}`)
+  const imports = new Map([['app', new Set([cycle[0], 'target'])], ['target', new Set()],
+    ...cycle.map((id, i) => [id, new Set([cycle[(i + 1) % cycle.length], ...(i < 2 ? ['target'] : [])])])])
+  const nodes = new Map([...imports.keys()].map(id => [id, { id }]))
+  for (const maxWidth of [1280, 600, 375]) {
+    const layout = layoutWhy({ nodes, imports }, { maxWidth })
+    const arrows = layout.edges.filter(edge => edge.toPackage === 'target').map(edge => arrowSegments(edge.path))
+    assert.equal(arrows.length, 3)
+    for (let i = 0; i < arrows.length; i++) {for (let j = i + 1; j < arrows.length; j++) {
+      assert.ok(!arrows[i].some(a => arrows[j].some(b => segmentsCross(a, b))), 'cycle columns and bypasses approach the target without crossing')
+    }}
   }
 })
 

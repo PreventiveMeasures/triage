@@ -19,28 +19,86 @@ function roundedPath(points) {
 
 // Expanded cycles expose the actual importing/imported card. Follow a column
 // gutter out of the group so an edge never cuts through its other packages.
-function importPort(box, id, incoming, index) {
+const portOffset = ({ count, index }) => (index - (count - 1) / 2) * Math.min(8, 48 / Math.max(1, count - 1))
+function importPort(box, id, incoming, port) {
   const node = box.packages.find(card => card.id === id)
-  const track = index % 4
-  const offset = [0, 8, -8, 16][track]
-  const outerY = incoming ? box.y - 12 : box.rowBottom + 9 + track * 3
+  const offset = portOffset(port)
+  const outerY = incoming ? box.y - 12 : box.rowBottom
   if (box.members.length === 1 || box.collapsed) {
     const x = box.x + box.width / 2 + offset
     return [[x, incoming ? box.y - 5 : box.y + box.height], [x, outerY]]
   }
   const x = box.x + node.x + (incoming ? 0 : WHY_CARD_WIDTH)
-  const y = box.y + node.y + WHY_CARD_HEIGHT / 2 + (incoming ? offset / 2 : 0)
-  const lane = x + (incoming ? -7 - track * 2 : 3 + track * 2)
+  const y = box.y + node.y + WHY_CARD_HEIGHT / 2 + offset / 2
+  const lane = x + (incoming ? -7 - port.lane * 6 : 3 + port.lane * 6)
   return [[x + (incoming ? -4 : 0), y], [lane, y], [lane, outerY]]
 }
 
-export function whyImportPath(from, fromPackage, to, toPackage, { bypassLane, fromIndex, toIndex }) {
-  const end = importPort(to, toPackage, true, toIndex), start = importPort(from, fromPackage, false, fromIndex)
-  const [, y1] = start.at(-1), [x2, y2] = end.at(-1)
-  // Only turn after leaving the tallest group in the source row. Shortcuts
-  // also go around intervening rows before entering the destination gutter.
-  const middle = bypassLane === null ? [[x2, y1]] : [[bypassLane, y1], [bypassLane, y2]]
-  return roundedPath([...start, ...middle, ...end.toReversed()])
+export function routeWhyEdges(boxes, edges) {
+  const center = (edge, side) => {
+    const box = boxes.get(edge[side]), node = box.packages.find(card => card.id === edge[`${side}Package`])
+    return node ? [box.x + node.x + WHY_CARD_WIDTH / 2, box.y + node.y + WHY_CARD_HEIGHT / 2]
+      : [box.x + box.width / 2, box.y + box.height / 2]
+  }
+  const ranks = (side, other, opposite = edge => center(edge, other)) => {
+    const ports = new Map()
+    const shared = Map.groupBy(edges, edge => {
+      const box = boxes.get(edge[side])
+      return box.collapsed ? box : edge[`${side}Package`]
+    })
+    for (const group of shared.values()) {
+      // Ports follow the other cards' positions, not import insertion order.
+      const sorted = group.toSorted((a, b) => {
+        const [ax, ay] = opposite(a), [bx, by] = opposite(b)
+        return (a.bypassLane ?? ax) - (b.bypassLane ?? bx) || ay - by
+          || a[`${other}Package`].localeCompare(b[`${other}Package`]) || a[`${side}Package`].localeCompare(b[`${side}Package`])
+      })
+      sorted.forEach((edge, index) => ports.set(edge, { count: group.length, index }))
+    }
+    for (const group of Map.groupBy(edges, edge => edge[side]).values()) {
+      // Cycle cards in the same column share a gutter. Longer vertical stems
+      // go farther out so shorter stems do not cross them when leaving a card.
+      const sorted = group.toSorted((a, b) => {
+        const [ax, ay] = center(a, side), [bx, by] = center(b, side)
+        return ax - bx || ay - by || portOffset(ports.get(a)) - portOffset(ports.get(b))
+      })
+      sorted.forEach((edge, index) => {
+        const lane = index / Math.max(1, group.length - 1)
+        ports.get(edge).lane = side === 'from' ? 1 - lane : lane
+      })
+    }
+    return ports
+  }
+  const fromPorts = ranks('from', 'to')
+  const toPorts = ranks('to', 'from', edge => {
+    const port = importPort(boxes.get(edge.from), edge.fromPackage, false, fromPorts.get(edge))
+    // Expanded-cycle routes approach from their column gutters, which need
+    // not have the same left-to-right order as the source cards' centers.
+    return [port.at(-1)[0], port[0][1]]
+  })
+  const routes = edges.map(edge => {
+    const from = boxes.get(edge.from), to = boxes.get(edge.to)
+    const start = importPort(from, edge.fromPackage, false, fromPorts.get(edge))
+    const end = importPort(to, edge.toPackage, true, toPorts.get(edge))
+    return { edge, end, start, rowBottom: from.rowBottom, x1: start.at(-1)[0], x2: edge.bypassLane ?? end.at(-1)[0] }
+  })
+  for (const row of Map.groupBy(routes, route => route.rowBottom).values()) {
+    // Outer branches turn first. This keeps each fan's horizontal segments
+    // clear of the inner branches' vertical stems on both sides of a card.
+    for (const left of [true, false]) {
+      const fan = row.filter(route => (route.x2 < route.x1) === left)
+        .toSorted((a, b) => (left ? 1 : -1) * (a.x1 - b.x1 || a.x2 - b.x2))
+      fan.forEach((route, index) => { route.bendY = route.rowBottom + 9 + 12 * index / Math.max(1, fan.length - 1) })
+    }
+  }
+  return routes.map(({ edge, end, start, x1, x2, bendY }) => {
+    // Only turn below the tallest group. Shortcuts go around intervening rows
+    // before entering the destination gutter; cycle ports still name a card.
+    const middle = [[x1, bendY], [x2, bendY]]
+    const { bypassLane, ...connection } = edge
+    if (bypassLane !== null) middle.push([x2, end.at(-1)[1]])
+    return { ...connection, path: roundedPath([...start, ...middle, ...end.toReversed()]) }
+  })
 }
 
 function cycleImportPath(a, b) {

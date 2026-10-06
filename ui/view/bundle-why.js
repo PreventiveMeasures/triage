@@ -3,7 +3,7 @@ import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
 import { countsTowardsCycles } from './graph/cycle-imports.js'
-import { WHY_DIALOG_GUTTER, layoutWhyGroup, whyImportPath } from './why-layout.js'
+import { WHY_DIALOG_GUTTER, layoutWhyGroup, routeWhyEdges } from './why-layout.js'
 
 function packageNode(id, info = {}) {
   const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(id) ? 'npm' : '')
@@ -142,12 +142,10 @@ export function layoutWhy(graph, { maxWidth = 1280, expandedCycles = new Set() }
     y += height + 36
   }
   let bypasses = 0
-  const fromPorts = groups.map(() => 0), toPorts = groups.map(() => 0)
-  const edges = packageEdges.map(edge => {
+  const edges = routeWhyEdges(boxes, packageEdges.map(edge => {
     const bypassLane = depth[edge.to] === depth[edge.from] + 1 ? null : width + 8 + (bypasses++ % 4) * 10
-    const ports = { bypassLane, fromIndex: fromPorts[edge.from]++, toIndex: toPorts[edge.to]++ }
-    return { ...edge, path: whyImportPath(boxes.get(edge.from), edge.fromPackage, boxes.get(edge.to), edge.toPackage, ports) }
-  })
+    return { ...edge, bypassLane }
+  }))
   return { boxes: [...boxes.values()], componentOf, edges, width: width + (bypasses ? 56 : 0), height: Math.max(0, y - 24) }
 }
 
