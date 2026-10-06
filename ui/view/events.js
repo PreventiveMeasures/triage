@@ -14,6 +14,7 @@ import { focusCodeHistory, focusCodeLinkPosition, revealFocusCodeLines } from '.
 import { pushed, stepped } from './focus-code-history.js'
 import { bundleFileHistory, stepBundleFile, visitBundleFile } from './bundle-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
+import { startViewTransition } from './render-transition.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
@@ -1760,7 +1761,7 @@ function setKanbanPopoverGid(next) {
       updateKanbanClipVars()
     }
     showKanbanFinding(next)
-    const t = document.startViewTransition(() => {
+    const t = startViewTransition(() => {
       render()
       // Inside the callback, so the rail is already scrolled to the
       // open card when the NEW snapshot is captured — scrolling it
@@ -1787,7 +1788,7 @@ function setKanbanPopoverGid(next) {
   updateKanbanClipVars()
   showKanbanFinding(next)
   let closeCard = null
-  const t = document.startViewTransition(() => {
+  const t = startViewTransition(() => {
     render()
     closeCard = kanbanCardEl(prev)
     if (closeCard) {
