@@ -1998,7 +1998,9 @@ async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, de
   if (await readAdminSession(res, deps, cookie) == null) return
   await deps.db.setTeamMember(teamId, userId, permissions)
   if (!member || member.dependencies !== permissions.dependencies || member.security !== permissions.security) {
-    await activity(deps, s.user, 'access', `set ${user.login}'s membership in ${team.name} (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`)
+    const access = roleAtLeast(user.role, 'manage') ? ''
+      : ` (dependencies: ${permissions.dependencies ? 'on' : 'off'}, security: ${permissions.security ? 'on' : 'off'})`
+    await activity(deps, s.user, 'access', `set ${user.login}'s membership in ${team.name}${access}`)
   }
   sendJson(res, 200, { ok: true })
 }
