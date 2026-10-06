@@ -30,6 +30,7 @@ import { startManagedTeamFeed } from './managed-feed.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 import { managedTeamAppCache as teamAppCache } from './managed-team-app.js'
 import { workspaceFileCount } from './workspace-content.js'
+import { refreshManagedWorkspaceFiles } from './managed-workspace-files.js'
 import { beginViewNavigation, currentViewGeneration, currentViewSignal } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
@@ -720,6 +721,16 @@ export function switchToManagedDeduplication(id) {
   return switchToManagedTeam({ id: null, reports: [{ id }] }, id, { history: false, deduplication: true })
 }
 
+export function refreshManagedWorkspaceFileCount(signal = currentViewSignal()) {
+  const view = currentViewSignal()
+  return refreshManagedWorkspaceFiles(state, {
+    fetchReports: fetchTeamReports,
+    signal: AbortSignal.any([signal, view]),
+    isCurrent: () => isManagedUiMode() && currentViewSignal() === view,
+    render: () => render({ animate: false }),
+  })
+}
+
 export async function switchToWorkspaceContent(id, kind, { history = true } = {}) {
   if (kind !== 'reports' && kind !== 'bundles') return false
   const view = `workspace-${kind}`
@@ -754,15 +765,17 @@ export async function switchToWorkspaceContent(id, kind, { history = true } = {}
   // Lists need the same union of source files as Findings/Files, including on
   // direct entry. Read report data without hydrating findings or annotations;
   // the normal workspace/team loader runs when the Files button is pressed.
-  const reports = managed
-    ? (await fetchTeamReports(id, { signal: currentViewSignal() }).catch(() => null))?.map(entry => entry.data)
-    : await Promise.all((parent.reports ?? []).map(async name => {
+  if (managed) {
+    await refreshManagedWorkspaceFileCount()
+  } else {
+    const reports = await Promise.all((parent.reports ?? []).map(async name => {
       try { return readReport(await readFile(name)).data } catch { return null }
     }))
-  if (isStaleLoad(gen)) return false
-  if (reports) state.workspaceContentFileCount = workspaceFileCount(reports)
-  render({ animate: false })
-  return true
+    if (isStaleLoad(gen)) return false
+    state.workspaceContentFileCount = workspaceFileCount(reports)
+    render({ animate: false })
+  }
+  return !isStaleLoad(gen)
 }
 
 export async function switchToManagedTeam(team, reportId = null, { history = true, deduplication = false } = {}) {
