@@ -185,6 +185,25 @@ It verifies public visibility without user credentials and stores GitHub's
 canonical metadata. The allowlist bypasses only the public involvement safeguard;
 it never grants server permission to add repositories or access private repos.
 
+# Repository aliases
+
+Admins can add, edit, and delete aliases in **Manage → Repositories → Aliases**.
+Rows contain an old repository (GitHub slug or URL), old path, connected target
+repository, and new path. Empty paths mean the repository root. Repository names
+match case-insensitively; directories match case-sensitively at path boundaries.
+The longest matching old path wins, its suffix is retained, and mappings apply
+once without chaining. For example, `org/a` with an empty old path can map to
+`org/b` at `projects/a`; `org/c` at `a` can map to that same location, and an import
+declaring `org/c` at `a/src` is assigned to `org/b` at `projects/a/src`.
+
+Aliases are stored in `managed_repository_alias` and affect only the detected
+repository and directory of new reports and Stasis bundles. Original bytes,
+individual findings, relative file paths, and content hashes are unchanged.
+Explicit bundle locations override detection. Editing an alias or connecting a
+repository does not move existing content; identical reuploads reuse its stored
+assignment. Bundle location editors resolve their metadata suggestions using
+the current repositories and aliases, and only Save changes the assignment.
+
 # Report repository metadata
 
 Managed report headers use the repository assignment stored on the server,

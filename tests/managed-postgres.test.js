@@ -1,4 +1,5 @@
 import { checkLinkReports } from './_managed-link-reports.js'
+import { checkRepositoryAliases } from './_managed-repository-aliases.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
@@ -92,6 +93,30 @@ async function database(t, options = {}) {
   return { db, connect, queries, faults }
 }
 const identity = i => ({ githubUserId: i, login: `user${i}`, name: null, avatarUrl: null })
+
+test('Postgres repository aliases share matching, validation and authorization semantics', async t => {
+  const { db } = await database(t)
+  await checkRepositoryAliases(db)
+})
+
+test('Postgres migrates repository aliases and retains rows across restart', async t => {
+  const { db, connect } = await database(t)
+  await setup(db)
+  const old = await connect()
+  try { await old.query('DROP TABLE managed_repository_alias; DELETE FROM managed_schema_version WHERE version = 17;') }
+  finally { await old.release() }
+  await db.close()
+  const reopened = await openPostgresManagedDb(connect)
+  t.after(() => reopened.close())
+  assert.deepEqual(await reopened.listRepositoryAliases(), [])
+  const connection = await connect()
+  try {
+    await connection.query("INSERT INTO managed_repository_alias VALUES ('alias', 'org/old', 'a', 2, 'projects/a')")
+  } finally { await connection.release() }
+  const restarted = await openPostgresManagedDb(connect)
+  t.after(() => restarted.close())
+  assert.deepEqual(await restarted.getRepositoryImportLocation('org/old', 'a/src'), { repoId: 2, directory: 'projects/a/src' })
+})
 
 test('Postgres fixtures isolate rows, sequences, revision counters and schema changes', async t => {
   const first = await database(t)

@@ -905,23 +905,26 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   const requestedDirectory = repoEmbedded ? parsed.data?.repo?.directory : headerDirectory
   const normalizedDirectory = normalizeTeamPath(requestedDirectory)
   if (!normalizedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
-  const directory = normalizedDirectory.path ?? ''
+  let directory = normalizedDirectory.path ?? ''
   const analyzer = typeof parsed.data.source === 'string' ? parsed.data.source : null
-  const selected = await deps.db.listSelectedRepos()
-  let matchedRepo = repoGithub == null ? null : selected.find((repo) => repo.fullName.toLocaleLowerCase() === repoGithub.toLocaleLowerCase())
-  if (repoGithub != null && matchedRepo == null) { sendJson(res, 400, { error: 'repo-not-connected', repo: repoGithub }); return }
+  const sha256 = createHash('sha256').update(bytes).digest('base64url')
+  // Reuploads retain their stored location, including after an alias changes.
+  const existing = await deps.db.getReportByHash(sha256, analyzer)
+  let repoId: number | null = null
+  if (repoGithub != null) {
+    const location = existing ? { repoId: existing.repoId, directory: existing.repoDirectory }
+      : await deps.db.getRepositoryImportLocation(repoGithub, directory)
+    repoId = location.repoId; directory = location.directory
+    if (!existing && repoId == null) { sendJson(res, 400, { error: 'repo-not-connected', repo: repoGithub }); return }
+  }
   // When the report has no repository header, X-Repo-Id lets the managed uploader
   // assign it at upload time. Clients may omit it and attach the report later.
   if (repoGithub == null) {
     const legacyRepo = await resolveUploadRepoId(req, res, deps)
     if (!legacyRepo.ok) return
-    matchedRepo = legacyRepo.repoId == null ? null : selected.find((repo) => repo.repoId === legacyRepo.repoId) ?? null
+    repoId = legacyRepo.repoId
   }
-  if (matchedRepo && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, matchedRepo.repoId, directory))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
-  const sha256 = createHash('sha256').update(bytes).digest('base64url')
-  // The analyzer also distinguishes a CSV from the same bytes previously
-  // uploaded under a filename that did not identify it as a report.
-  const existing = await deps.db.getReportByHash(sha256, analyzer)
+  if (repoId != null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repoId, directory))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   if (existing) { await sendUploadedReport(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
@@ -931,7 +934,7 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   try {
     report = await deps.db.insertOrReuseReport({
       id, filename, contentType, byteSize: bytes.length, sha256, dataKey,
-      uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId: matchedRepo?.repoId ?? null,
+      uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId,
       repoDirectory: directory, repoEmbedded, analyzer, visible: false, bundleId, bundleIntegrity: integrity,
     }, Date.now(), s.session.id)
   } catch (err) {
@@ -1300,12 +1303,13 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   if (!existing && repo.repoId == null && kind === 'stasis') {
     const embedded = await bundleRepo(bytes)
     const github = reportRepoGithub({ repo: embedded })
-    const selected = github == null ? null : (await deps.db.listSelectedRepos())
-      .find(candidate => candidate.fullName.toLowerCase() === github.toLowerCase())
-    if (selected) {
-      repo.repoId = selected.repoId
+    const embeddedDirectory = normalizeTeamPath(embedded?.directory)
+    if (!embeddedDirectory.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
+    const location = github == null ? null : await deps.db.getRepositoryImportLocation(github, embeddedDirectory.path ?? '')
+    if (location?.repoId != null) {
+      repo.repoId = location.repoId
       if (req.headers['x-repo-directory'] == null) {
-        rawDirectory = embedded?.directory ?? ''
+        rawDirectory = location.directory
         inferredLocation = true
       }
     }
@@ -1522,6 +1526,43 @@ async function handleDeduplication(req: IncomingMessage, res: ServerResponse, de
   const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.link.json')
   const result = await deps.db.importLinkReport(s.session.id, filename, bytes.toString('utf8'))
   sendJson(res, result.reused ? 200 : 201, { ...result.report, deduped: result.reused })
+}
+
+async function handleRepositoryAliases(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id?: string): Promise<void> {
+  const method = req.method ?? 'GET'
+  if (!(id ? ['PATCH', 'DELETE'] : ['GET', 'POST']).includes(method)) { send405(res, id ? 'PATCH, DELETE' : 'GET, POST'); return }
+  const s = method === 'GET' ? await readAdminSession(res, deps, cookie) : await checkMutation(req, res, deps, cookie)
+  if (!s) return
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
+  if (method === 'GET') {
+    sendJson(res, 200, { aliases: await deps.db.listRepositoryAliases(), repos: await deps.db.listAllRepos() }); return
+  }
+  if (method === 'DELETE') {
+    await deps.db.deleteRepositoryAlias(s.session.id, id!)
+    sendJson(res, 200, { ok: true }); return
+  }
+  let body
+  try { body = await readJsonBody(req, 8192) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const alias = await deps.db.saveRepositoryAlias(s.session.id, id ?? null, body)
+  sendJson(res, id ? 200 : 201, alias)
+}
+
+// Live suggestions do not mutate archived content or its stored assignment.
+// Managers can resolve only destinations their current repository grants cover.
+async function handleRepositorySuggestion(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if (req.method !== 'GET') { send405(res, 'GET'); return }
+  if (!await readManageSession(res, deps, cookie)) return
+  const params = new URL(req.url!, 'http://localhost').searchParams
+  const github = reportRepoGithub({ repo: { github: params.get('repo') } })
+  const directory = normalizeTeamPath(params.get('directory'))
+  if (!github || !directory.ok) { sendJson(res, 400, { error: 'bad-location' }); return }
+  const location = await deps.db.getRepositoryImportLocation(github, directory.path ?? '')
+  const repo = location.repoId == null ? null : (await deps.db.listSelectedRepos()).find(row => row.repoId === location.repoId)
+  const s = await readManageSession(res, deps, cookie)
+  if (!s) return
+  const allowed = repo && (s.user.role === 'admin' || await deps.db.userCanReadRepoPath(s.user.id, repo.repoId, location.directory))
+  sendJson(res, 200, { location: allowed ? { repoId: repo.repoId, github: repo.fullName, directory: location.directory,
+    mapped: github.toLowerCase() !== repo.fullName.toLowerCase() || (directory.path ?? '') !== location.directory } : null })
 }
 
 // GET /api/reports/<id> — admin/manager preview, within management access.
@@ -2178,6 +2219,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     const deduplication = /^\/api\/admin\/deduplication(?:\/([a-f\d-]{36}))?$/iu.exec(path)
     if (deduplication) { await handleDeduplication(req, res, deps, cookie, deduplication[1]); return }
+    const repositoryAliases = /^\/api\/admin\/repositories\/aliases(?:\/([a-f\d-]{36}))?$/iu.exec(path)
+    if (repositoryAliases) { await handleRepositoryAliases(req, res, deps, cookie, repositoryAliases[1]); return }
+    if (path === '/api/admin/repositories/resolve') { await handleRepositorySuggestion(req, res, deps, cookie); return }
     if (path === '/api/admin/links') {
       if (!config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
       if (method !== 'GET') { send405(res, 'GET'); return }

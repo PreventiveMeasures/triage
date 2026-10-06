@@ -1,4 +1,5 @@
 import { type LinkReportStore, linkReportMethods, linkRevision } from './link-reports.ts'
+import { type RepositoryAliasStore, repositoryAliasMethods } from './repository-aliases.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { type Role, roleAtLeast } from '../common/managed/roles.ts'
@@ -327,7 +328,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, BundleBuildLeaseStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, BundleBuildLeaseStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -1453,6 +1454,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
     ...storageMethods(db, key),
     ...linkReportMethods(db, key),
+    ...repositoryAliasMethods(db),
     ...bundleBuildLeaseMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {
       return !!await db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
