@@ -91,7 +91,7 @@ function shareQueries(db: ManagedSql) {
     b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.uploaded_at AS uploadedAt, sr.full_name AS repoFullName
     FROM managed_team_repo tr JOIN managed_bundle b ON b.repo_id = tr.repo_id
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
-    WHERE tr.team_id = ? AND (tr.path = '' OR b.repo_directory = tr.path
+    WHERE tr.team_id = ? AND b.visible = 1 AND (tr.path = '' OR b.repo_directory = tr.path
       OR substr(b.repo_directory, 1, length(tr.path) + 1) = tr.path || '/') ORDER BY b.id`)
   return { manager, insert, remove, update, list, session, all, share, feed, repositories, reports, bundles }
 }
@@ -150,12 +150,12 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
         reports: rows.map(row => ({ id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
           repo: { github: row.github, directory: row.directory }, permissions })),
         team: { ...team, permissions,
-          reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, analyzer: row.analyzer, repoFullName: row.github, repoDirectory: row.directory,
+          reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, visible: true, analyzer: row.analyzer, repoFullName: row.github, repoDirectory: row.directory,
             cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions]) })),
           bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
-            filename: row.filename, kind: row.kind, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName })),
+            filename: row.filename, visible: true, kind: row.kind, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName })),
         },
-        bundles: bundleRows,
+        bundles: bundleRows.map(row => ({ ...row, visible: true })),
       }
     },
   }

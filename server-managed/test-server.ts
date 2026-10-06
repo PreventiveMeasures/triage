@@ -165,22 +165,22 @@ const bundles = [
   {
     id: 'fixture-bundle-1', slug: 'fixture-bundle-1', filename: 'managed-fixtures.stasis', kind: 'stasis',
     repoDirectory: '', integrity: 'sha512-fixture-managed-1', byteSize: 4_827_136, repoId: 101,
-    uploadedByLogin: 'alex-security', uploadedAt: 1_757_900_000_000,
+    visible: true, uploadedByLogin: 'alex-security', uploadedAt: 1_757_900_000_000,
   },
   {
     id: 'fixture-bundle-2', slug: 'fixture-bundle-2', filename: 'worker-sourcemaps.zip', kind: 'sourcemaps',
     repoDirectory: 'services/worker', integrity: 'sha512-fixture-managed-2', byteSize: 1_204_288, repoId: 102,
-    uploadedByLogin: 'riley-reviewer', uploadedAt: 1_757_700_000_000,
+    visible: false, uploadedByLogin: 'riley-reviewer', uploadedAt: 1_757_700_000_000,
   },
   {
     id: 'fixture-bundle-3', slug: 'fixture-bundle-3', filename: 'detached-preview.stasis', kind: 'stasis',
     repoDirectory: '', integrity: 'sha512-fixture-managed-3', byteSize: 786_432, repoId: null,
-    uploadedByLogin: 'sam-observer', uploadedAt: 1_757_500_000_000,
+    visible: false, uploadedByLogin: 'sam-observer', uploadedAt: 1_757_500_000_000,
   },
   {
     id: 'fixture-bundle-4', slug: 'fixture-bundle-4', filename: 'managed-fixtures-sourcemaps.zip', kind: 'sourcemaps',
     repoDirectory: 'packages/api', integrity: 'sha512-fixture-managed-4', byteSize: 512_000, repoId: 101,
-    uploadedByLogin: 'alex-security', uploadedAt: 1_757_300_000_000,
+    visible: true, uploadedByLogin: 'alex-security', uploadedAt: 1_757_300_000_000,
   },
 ]
 
@@ -214,16 +214,17 @@ function teamReportRefs(team: (typeof teamFixtures)[number]) {
   return team.reportIds
     .map((id) => reportMetadata.find((report) => report.id === id))
     .filter((report): report is (typeof reportMetadata)[number] => report != null)
-    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, analyzer: report.analyzer, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory }))
+    .filter(report => report.visible || role === 'admin' || role === 'manage')
+    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, visible: report.visible, analyzer: report.analyzer, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory }))
 }
 
-const teams = teamFixtures.map((team) => ({
+const currentTeams = () => teamFixtures.map((team) => ({
   id: team.id,
   slug: team.slug,
   name: team.name,
   permissions: { dependencies: true, security: true },
   reports: teamReportRefs(team),
-  bundles: bundles.filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId && (!link.path || bundle.repoDirectory === link.path || bundle.repoDirectory.startsWith(link.path + '/')))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
+  bundles: bundles.filter(bundle => bundle.visible || role === 'admin' || role === 'manage').filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId && (!link.path || bundle.repoDirectory === link.path || bundle.repoDirectory.startsWith(link.path + '/')))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, visible: bundle.visible, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
 }))
 
 function adminTeams() {
@@ -367,10 +368,21 @@ async function createBundleFixture(req: IncomingMessage, res: ServerResponse, me
     const id = randomUUID()
     const bundle = { id, slug: id, filename: githubBundleFilename(repo.fullName, input.directory, input.commit), kind: 'stasis',
       repoDirectory: input.directory, integrity: `sha512-fixture-${id}`, byteSize: 1024, repoId: input.repoId,
-      uploadedByLogin: 'managed-preview', uploadedAt: Date.now() }
+      visible: true, uploadedByLogin: 'managed-preview', uploadedAt: Date.now() }
     bundles.unshift(bundle)
     sendJson(res, 201, bundle)
   } catch (error) { sendJson(res, 400, { error: error instanceof BundleBuildError ? error.code : 'bad-body' }) }
+}
+
+async function setFixtureVisible(req: IncomingMessage, res: ServerResponse, bundle: boolean): Promise<void> {
+  let raw = ''
+  for await (const chunk of req) raw += String(chunk)
+  const body = JSON.parse(raw) as { bundleId?: string; reportId?: string; visible?: boolean }
+  const item = bundle ? bundles.find(candidate => candidate.id === body.bundleId) : reportMetadata.find(candidate => candidate.id === body.reportId)
+  if (!item || typeof body.visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  item.visible = body.visible
+  for (const client of fixtureFeeds) client.write(`event: teams\ndata: ${JSON.stringify({ revision: teamCatalogRevision(currentTeams()) })}\n\n`)
+  sendJson(res, 200, { ok: true, visible: body.visible })
 }
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
@@ -383,8 +395,8 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
   if (repositoryBrowser) { handleRepositoryBrowserFixture(url, method, res); return }
   if (url.pathname === '/api/admin/bundles/create') { await createBundleFixture(req, res, method); return }
   if (url.pathname === '/api/admin/repositories/connect-app' && method === 'POST') { await connectAppFixture(req, res); return }
-  if (url.pathname === '/api/admin/reports/set-visible' && method === 'POST') {
-    sendJson(res, 200, { ok: true })
+  if (['/api/admin/reports/set-visible', '/api/admin/bundles/set-visible'].includes(url.pathname) && method === 'POST') {
+    await setFixtureVisible(req, res, url.pathname.includes('/bundles/'))
     return
   }
   if (url.pathname.startsWith('/api/admin/reports/')) {
@@ -575,7 +587,7 @@ async function handleReportQuery(req: IncomingMessage, res: ServerResponse): Pro
 function serveTeamReports(path: string, res: ServerResponse): boolean {
   const match = /^\/api\/teams\/([^/]+)\/reports$/u.exec(path)
   if (!match) return false
-  const team = teams.find(entry => entry.id === match[1])
+  const team = currentTeams().find(entry => entry.id === match[1])
   if (!team) { sendJson(res, 404, { error: 'no-team' }); return true }
   sendJson(res, 200, { reports: team.reports.map(entry => {
     const report = reportFixtures.find(item => item.id === entry.id)!
@@ -585,14 +597,17 @@ function serveTeamReports(path: string, res: ServerResponse): boolean {
   return true
 }
 
-// Keep the idle fixture feed open; a 404 tells the client its access was revoked.
+const fixtureFeeds = new Set<ServerResponse>()
+
+// Keep the fixture feed open and publish catalog changes after visibility edits.
 function serveFixtureFeed(path: string, res: ServerResponse): boolean {
   if (!/^\/api\/teams(?:\/[^/]+)?\/feed$/u.test(path)) return false
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
+  fixtureFeeds.add(res)
   res.write(': fixture\n\n')
   const heartbeat = setInterval(() => { res.write(': fixture\n\n') }, 20_000)
   heartbeat.unref()
-  res.on('close', () => { clearInterval(heartbeat) })
+  res.on('close', () => { clearInterval(heartbeat); fixtureFeeds.delete(res) })
   return true
 }
 
@@ -620,8 +635,8 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   }
   if (url.pathname === '/api/teams') {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-    sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) })
-    return
+    const teams = currentTeams()
+    sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) }); return
   }
   if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url.pathname, res)) return
   if (url.pathname === '/api/reports/query') {

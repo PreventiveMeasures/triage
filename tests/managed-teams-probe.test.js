@@ -232,3 +232,13 @@ changedContexts.forEach(context => {
     assert.deepEqual(await changed, [])
   })
 })
+
+test('team probes preserve hidden and visible flags for report and bundle names', async t => {
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [{ ...teams[0],
+    reports: [false, true].map(visible => ({ id: `report-${visible}`, filename: 'scan.json', visible })),
+    bundles: [false, true].map(visible => ({ id: `bundle-${visible}`, filename: 'app.map', visible })),
+  }] })))
+  const [team] = await probeTeams()
+  assert.deepEqual(team.reports.map(item => item.visible), [false, true])
+  assert.deepEqual(team.bundles.map(item => item.visible), [false, true])
+})

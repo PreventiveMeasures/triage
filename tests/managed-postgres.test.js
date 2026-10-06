@@ -6,7 +6,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
-import { checkBundleAccessSnapshots, checkBundleLocations } from './_managed-bundle-location.js'
+import { checkBundleAccessSnapshots, checkBundleLocations, checkBundleVisibility } from './_managed-bundle-location.js'
 import { checkBundleBuildLeases } from './_managed-bundle-build-leases.js'
 import { checkManagementCatalog } from './_managed-catalog.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
@@ -1114,4 +1114,26 @@ test('HTTP feeds release their request connection before polling sleeps', async 
     assert.equal(active, 0, 'no connection remains leased during the three-second wait')
   } finally { res.destroy(); await done }
   assert.equal(active, 0)
+})
+
+
+test('Postgres bundle visibility controls catalogs, access, public links and feed revisions', async t => {
+  const { db } = await database(t)
+  await checkBundleVisibility(db)
+})
+
+test('Postgres visibility migration preserves existing bundles and later visibility edits', async t => {
+  const { db, connect } = await database(t)
+  await db.insertBundle({ id: 'bundle', integrity: 'hash', filename: 'app.map', kind: 'sourcemap', byteSize: 1, repoId: null, uploadedBy: null }, 1)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_bundle DROP COLUMN visible; DELETE FROM managed_schema_version WHERE version = 15;') }
+  finally { await legacy.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  try {
+    assert.equal((await upgraded.getBundle('bundle')).visible, true)
+    await upgraded.setBundleVisible('bundle', false)
+  } finally { await upgraded.close() }
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.equal((await reopened.getBundle('bundle')).visible, false) }
+  finally { await reopened.close() }
 })

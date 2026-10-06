@@ -206,6 +206,11 @@ export async function deleteBundle(id, csrfToken) {
   await deleteItem('bundles', id, csrfToken)
 }
 
+export async function setBundleVisible(id, visible, csrfToken) {
+  const res = await postJson('/api/admin/bundles/set-visible', csrfToken, { bundleId: id, visible })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
 // Set a stored bundle's repository and directory, or detach it (null). CSRF token.
 export async function setBundleRepo(id, repoId, directory, csrfToken) {
   const res = await postJson('/api/admin/bundles/set-repo', csrfToken, { bundleId: id, repoId, directory })

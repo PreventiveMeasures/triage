@@ -73,7 +73,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
       reports: Array.isArray(t.reports)
         ? t.reports
           .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')
-          .map((r) => ({ id: r.id, slug: r.slug, filename: r.filename,
+          .map((r) => ({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible !== false,
             ...(r.analyzer === null || typeof r.analyzer === 'string' ? { analyzer: r.analyzer } : {}),
             repoFullName: typeof r.repoFullName === 'string' ? r.repoFullName : '',
             repoDirectory: typeof r.repoDirectory === 'string' ? r.repoDirectory : '',
@@ -91,6 +91,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
             repoId: b.repoId,
             filename: b.filename,
             kind: b.kind,
+            visible: b.visible !== false,
             summary: b.summary ?? null,
             summaryRetryAt: Number.isSafeInteger(b.summaryRetryAt) && b.summaryRetryAt > 0 ? b.summaryRetryAt : null,
             repoDirectory: typeof b.repoDirectory === 'string' ? b.repoDirectory : '',

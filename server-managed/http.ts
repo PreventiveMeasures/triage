@@ -119,6 +119,7 @@ const REPORT_PREFIX = '/api/admin/reports/'
 const ADMIN_BUNDLES_PATH = '/api/admin/bundles'
 const BUNDLE_CREATE_PATH = '/api/admin/bundles/create'
 const BUNDLE_SET_REPO_PATH = '/api/admin/bundles/set-repo'
+const BUNDLE_SET_VISIBLE_PATH = '/api/admin/bundles/set-visible'
 const BUNDLE_PREFIX = '/api/admin/bundles/'
 const MY_TEAMS_PATH = '/api/teams'
 const MY_REPORT_PREFIX = '/api/reports/'
@@ -787,6 +788,19 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true, visible })
 }
 
+async function handleSetBundleVisible(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await manageMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const bundleId = (body as { bundleId?: unknown } | null)?.bundleId
+  const visible = (body as { visible?: unknown } | null)?.visible
+  if (typeof bundleId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const { bundle, user } = await deps.db.mutateBundle(s.session.id, bundleId, { type: 'visibility', visible })
+  if (bundle.visible !== visible) await activity(deps, user, 'visibility', visible ? 'published a bundle' : 'hid a bundle', { bundleId, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
+  sendJson(res, 200, { ok: true, visible })
+}
+
 // POST /api/admin/bundles/set-repo — attach / detach a stored bundle's repo link
 // and directory (same shape as reports). Body { bundleId, repoId, directory }.
 async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
@@ -977,7 +991,7 @@ async function canAccessBundle(deps: ManagedHttpDeps, user: StoredUser, id: stri
   if (!rec) return false
   if (user.role === 'admin') return true
   if (user.role === 'manage') return deps.db.userCanReadBundle(user.id, id)
-  return rec.repoId !== null && deps.db.userCanReadRepoPath(user.id, rec.repoId, rec.repoDirectory)
+  return rec.visible && rec.repoId !== null && deps.db.userCanReadRepoPath(user.id, rec.repoId, rec.repoDirectory)
 }
 
 async function bundleRepos(deps: ManagedHttpDeps, user: StoredUser) {
@@ -2241,6 +2255,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === BUNDLE_SET_REPO_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetBundleRepo(req, res, deps, cookie); return
+    }
+    if (path === BUNDLE_SET_VISIBLE_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleSetBundleVisible(req, res, deps, cookie); return
     }
     if (path.startsWith(BUNDLE_PREFIX)) {
       const id = path.slice(BUNDLE_PREFIX.length)

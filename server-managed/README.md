@@ -430,7 +430,7 @@ without durable target IDs, remain admin-only.
 The client retains history only in memory; responses are never HTTP-cached.
 
 Uploads and triage changes already stored in the database appear automatically.
-New uploads are recorded atomically with their metadata. Report publication,
+New uploads are recorded atomically with their metadata. Report/bundle publication,
 repository assignments and connections, content deletion, roles, teams, and
 team access changes are recorded after successful management requests.
 Repeated edits that change nothing, failed requests, and deduplicated uploads
@@ -695,10 +695,10 @@ builders recheck references after publishing to reconcile concurrent deletion
 on another instance. Authorization is checked again before streaming sources.
 
 Admins can read/manage every bundle. Managers can read/manage bundles they own
-or can access through their teams. View/triage users need team access; the none
+or can access through their teams. View/triage users need a visible bundle and team access; the none
 role has no bundle access. Ownership survives repository attachment. Adding a
 repository location requires bundle management access and access to the destination
-repository and directory; detaching or deleting a bundle requires access to its
+repository and directory; changing visibility, detaching or deleting a bundle requires access to its
 current location, even for its owner.
 Manage lists and repository pickers enforce these rules on the server.
 
@@ -718,7 +718,16 @@ and directory grants apply. Root is stored as an empty directory; existing
 bundles migrate to root. Detaching clears the directory, and deduplicated uploads
 preserve the stored location.
 
-A team granted `/` sees all bundles in that repository. A team granted `/foo`
+Manage → Bundles includes show/hide controls and a visibility filter. Bundles remain
+visible by default, including existing bundles after upgrading. Hiding removes a
+bundle from view/triage catalogs, direct reads, downloads, advisories, and public
+workspace links. Managers and admins retain their existing access; hidden bundle
+and report names appear muted in management lists and the team sidebar.
+`POST /api/admin/bundles/set-visible` accepts `{ bundleId, visible }` with CSRF
+protection and rechecks management access in the write transaction. Visibility
+changes update live catalogs and leave linked reports' publication state unchanged.
+
+A team granted `/` sees visible bundles in that repository. A team granted `/foo`
 sees bundles at `/foo` and `/foo/*`, excluding root and `/foobar`. This applies
 to team catalogs, public workspace links, direct bundle access, advisories and
 manager activity. Directory edits also refresh open clients' catalogs.

@@ -143,7 +143,7 @@ test('background team refresh preserves the sidebar during an outage and clears 
 
 
 test('the team catalogue preserves report locations, analyzer metadata, server slugs, and cache versions alongside UUIDs', async t => {
-  const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json', repoFullName: 'org/repo', repoDirectory: 'packages/app', cacheKey: 'access-and-assignment-v1' }], bundles: [] }]
+  const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json', visible: true, repoFullName: 'org/repo', repoDirectory: 'packages/app', cacheKey: 'access-and-assignment-v1' }], bundles: [] }]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams })))
   for (const analyzer of ['claude-security', 'codex-security', 'deepsec', 'piolium', 'links', null, undefined]) {
     if (analyzer === undefined) delete teams[0].reports[0].analyzer

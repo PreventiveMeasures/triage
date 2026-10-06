@@ -103,6 +103,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     if (addedVisible) db.prepare('UPDATE managed_report SET visible = 1 WHERE visible = 0').run()
     ensureColumn(db, 'managed_bundle', 'uploaded_by_login', 'TEXT')
     ensureColumn(db, 'managed_bundle', 'repo_directory', "TEXT NOT NULL DEFAULT ''")
+    ensureColumn(db, 'managed_bundle', 'visible', 'INTEGER NOT NULL DEFAULT 1')
     ensureColumn(db, 'managed_selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')
     ensureColumn(db, 'managed_finding_triage_event', 'report_id', 'TEXT')
     ensureColumn(db, 'managed_finding_triage_event', 'report', 'TEXT')

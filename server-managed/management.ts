@@ -6,8 +6,8 @@ export class ManagedMutationError extends Error {
   constructor(status: number, message: string) { super(message); this.status = status }
 }
 
-export type ContentMutation = { type: 'delete' } | { type: 'repo'; repoId: number | null; directory: string }
-export type ReportMutation = ContentMutation | { type: 'visibility'; visible: boolean }
+export type ContentMutation = { type: 'delete' } | { type: 'repo'; repoId: number | null; directory: string } | { type: 'visibility'; visible: boolean }
+export type ReportMutation = ContentMutation
 type RemovalRepo = Pick<ManagedRepo, 'repoId' | 'fullName' | 'addedAt'>
 type RemovalAnnotations = { reports: string; ids: string[] }
 export interface ManagementStore {
@@ -19,7 +19,7 @@ export interface ManagementStore {
 }
 type ManagementDb = Pick<ManagedDb, 'sessionWithUser' | 'getReport' | 'getBundle' | 'listReports' | 'listReportsForRepo'
   | 'listBundlesForRepo' | 'listAllRepos' | 'listSelectedRepos' | 'userCanReadReport' | 'userCanReadBundle' | 'userCanReadRepoPath'
-  | 'deleteReport' | 'setReportRepo' | 'setReportVisible' | 'deleteBundle' | 'setBundleRepo'
+  | 'deleteReport' | 'setReportRepo' | 'setReportVisible' | 'deleteBundle' | 'setBundleRepo' | 'setBundleVisible'
   | 'deleteReportsForRepo' | 'deleteBundlesForRepo' | 'deleteRepo' | 'deleteTriage' | 'recordActivity'>
 
 // Only immutable bytes/format and repository membership affect the overlap
@@ -63,6 +63,7 @@ export function managementMethods(db: ManagementDb): ManagementStore {
       if (user.role !== 'admin' && bundle.repoId !== null && !await db.userCanReadRepoPath(user.id, bundle.repoId, bundle.repoDirectory)) throw new ManagedMutationError(403, 'repo-forbidden')
       await destination(user, change)
       if (change.type === 'delete') await db.deleteBundle(id)
+      else if (change.type === 'visibility') await db.setBundleVisible(id, change.visible)
       else await db.setBundleRepo(id, change.repoId, change.directory)
       return { bundle, user }
     },
