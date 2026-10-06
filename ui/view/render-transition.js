@@ -13,18 +13,18 @@ export function startViewTransition(update) {
   return transition
 }
 
-// Bundle entry paints a loading shell and then its metadata while the sidebar
-// reveals the selected workspace row. A document-wide crossfade snapshots
-// these independently timed updates and flashes the surrounding app chrome.
+// Navigation into and out of bundles updates the main content and sidebar
+// independently. Keep both directions synchronous so a document-wide
+// crossfade cannot flash the surrounding app chrome during those updates.
 export function createViewRenderer(paint) {
   let previousView = null
   return (view, { animate = true } = {}) => {
     const changed = previousView !== null && previousView !== view
-    previousView = view
-    if (view === 'bundles') {
+    if (view === 'bundles' || previousView === 'bundles') {
       activeTransition?.skipTransition()
       animate = false
     }
+    previousView = view
     if (!animate || !changed || typeof document.startViewTransition !== 'function'
         || matchMedia('(prefers-reduced-motion: reduce)').matches) {
       paint()

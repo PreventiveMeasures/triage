@@ -1608,7 +1608,7 @@ function mountBundleSourceOverlay() {
   if (slot) litRender(renderBundleSourceModal(), slot)
 }
 
-// In-place updates, initial paints and bundle entry stay synchronous. Other
+// In-place updates, initial paints and bundle navigation stay synchronous. Other
 // view switches retain their crossfade when supported and motion is enabled.
 const renderView = createViewRenderer(renderImpl)
 

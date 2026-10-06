@@ -41,6 +41,18 @@ for (const from of ['workspace-bundles', 'findings']) {
   })
 }
 
+for (const to of ['findings', 'files', 'workspace-reports', 'workspace-bundles']) {
+  test(`returning from a bundle to ${to} paints immediately without a document transition`, t => {
+    const { paints, show, transitions } = fixture(t)
+    show('bundles', true)
+    show(to)
+    assert.deepEqual(paints.at(-1), { view: to, ready: false })
+    show(to, true)
+    assert.deepEqual(paints.at(-1), { view: to, ready: true })
+    assert.equal(transitions.length, 0)
+  })
+}
+
 test('bundle entry skips an earlier pending crossfade and its late callback paints current content', async t => {
   const { paints, show, transitions } = fixture(t)
   show('findings')
@@ -87,7 +99,7 @@ test('a completed view transition does not lose a newer detail transition', asyn
 
 test('other view switches still animate; completed transitions do not replace newer transitions', async t => {
   const { paints, show, transitions } = fixture(t)
-  show('bundles', true)
+  show('workspace-bundles', true)
   show('findings')
   transitions[0].update()
   show('files')
