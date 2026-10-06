@@ -3,9 +3,8 @@ import { test } from 'node:test'
 import { createViewRenderer, startViewTransition } from '../ui/view/render-transition.js'
 
 globalThis.document = {}
-globalThis.matchMedia = () => ({ matches: false })
 
-function fixture(t, { reduced = false, supported = true } = {}) {
+function fixture(t, { supported = true } = {}) {
   const paints = [], transitions = []
   let current
   const startNativeTransition = update => {
@@ -18,97 +17,69 @@ function fixture(t, { reduced = false, supported = true } = {}) {
     return transition
   }
   t.mock.property(globalThis, 'document', supported ? { startViewTransition: startNativeTransition } : {})
-  t.mock.property(globalThis, 'matchMedia', () => ({ matches: reduced }))
   t.after(async () => {
     for (const transition of transitions) transition.finish()
     await Promise.all(transitions.map(transition => transition.finished))
   })
   const render = createViewRenderer(() => paints.push({ ...current }))
   const repaint = () => render(current.view)
-  const show = (view, ready = false, options) => { current = { view, ready }; render(view, options) }
+  const show = (view, ready = false) => { current = { view, ready }; render(view) }
   return { paints, repaint, show, transitions }
 }
 
-for (const from of ['workspace-bundles', 'findings']) {
-  test(`opening a bundle from ${from} paints its shell and metadata without a document transition`, t => {
-    const { paints, show, transitions } = fixture(t)
-    show(from)
-    show('bundles')
-    assert.deepEqual(paints.at(-1), { view: 'bundles', ready: false }, 'loading shell is painted synchronously')
-    show('bundles', true)
-    assert.deepEqual(paints.at(-1), { view: 'bundles', ready: true }, 'metadata replaces the shell without being hidden by a snapshot')
+for (const supported of [true, false]) {
+  test(`navigation always paints synchronously without a crossfade (API supported: ${supported})`, t => {
+    const { paints, show, transitions } = fixture(t, { supported })
+    for (const view of ['findings', 'workspace-bundles', 'bundles', 'findings', 'bundles', 'files',
+      'workspace-reports', 'packages', 'repositories', 'findings']) {
+      show(view)
+      assert.deepEqual(paints.at(-1), { view, ready: false })
+      show(view, true)
+      assert.deepEqual(paints.at(-1), { view, ready: true })
+    }
     assert.equal(transitions.length, 0)
   })
 }
-
-test('bundle entry skips an earlier pending crossfade and its late callback paints current content', async t => {
-  const { paints, show, transitions } = fixture(t)
-  show('findings')
-  show('files')
-  assert.equal(transitions.length, 1)
-  show('bundles', true)
-  assert.equal(transitions[0].skipped, true)
-  transitions[0].update()
-  assert.deepEqual(paints.slice(1), [{ view: 'bundles', ready: true }, { view: 'bundles', ready: true }])
-  transitions[0].finish()
-  await transitions[0].finished
-})
 
 for (const phase of ['pending', 'animating']) {
-  test(`bundle entry skips an outside detail transition in its ${phase} phase`, async t => {
-    const { paints, repaint, show, transitions } = fixture(t)
-    show('findings')
-    const transition = startViewTransition(repaint)
-    if (phase === 'animating') transition.update()
-    assert.equal(transition.skipped, false, 'the detail animation runs while findings remains active')
-    show('bundles', true)
-    assert.equal(transition.skipped, true, 'the detail snapshot is removed on bundle entry')
-    assert.deepEqual(paints.at(-1), { view: 'bundles', ready: true }, 'the bundle paints immediately')
-    assert.equal(transitions.length, 1, 'bundle entry does not start a replacement animation')
-    if (phase === 'pending') transition.update()
-    assert.deepEqual(paints.at(-1), { view: 'bundles', ready: true }, 'a late detail callback keeps the bundle visible')
-    transition.finish()
-    await transition.finished
-  })
+  for (const to of ['bundles', 'files', 'workspace-bundles']) {
+    test(`navigation to ${to} skips a detail transition in its ${phase} phase`, t => {
+      const { paints, repaint, show, transitions } = fixture(t)
+      show('findings')
+      const transition = startViewTransition(repaint)
+      if (phase === 'animating') transition.update()
+      show('findings', true)
+      assert.equal(transition.skipped, false, 'same-view updates preserve the detail animation')
+      show(to, true)
+      assert.equal(transition.skipped, true, 'the detail snapshot is removed on navigation')
+      assert.deepEqual(paints.at(-1), { view: to, ready: true }, 'the destination paints immediately')
+      assert.equal(transitions.length, 1, 'navigation does not start a replacement animation')
+      if (phase === 'pending') transition.update()
+      assert.deepEqual(paints.at(-1), { view: to, ready: true }, 'a late callback keeps the destination visible')
+    })
+  }
 }
 
-test('a completed view transition does not lose a newer detail transition', async t => {
-  const { repaint, show, transitions } = fixture(t)
-  show('files')
+test('an older completion cannot clear a newer detail transition', async t => {
+  const { repaint, show } = fixture(t)
   show('findings')
-  transitions[0].update()
-  const detail = startViewTransition(repaint)
-  transitions[0].finish()
-  await transitions[0].finished
+  const older = startViewTransition(repaint)
+  older.update()
+  const newer = startViewTransition(repaint)
+  older.finish()
+  await older.finished
   show('bundles')
-  assert.equal(detail.skipped, true)
-  detail.update()
+  assert.equal(newer.skipped, true)
+  newer.update()
 })
 
-test('other view switches still animate; completed transitions do not replace newer transitions', async t => {
-  const { paints, show, transitions } = fixture(t)
-  show('bundles', true)
+test('a completed detail transition is no longer cancelled on navigation', async t => {
+  const { repaint, show } = fixture(t)
   show('findings')
-  transitions[0].update()
+  const transition = startViewTransition(repaint)
+  transition.update()
+  transition.finish()
+  await transition.finished
   show('files')
-  transitions[0].finish()
-  await transitions[0].finished
-  show('bundles')
-  assert.equal(transitions[1].skipped, true, 'the older completion cannot lose the pending transition')
-  assert.equal(transitions[0].skipped, false)
-  transitions[1].update()
-  transitions[1].finish()
-  assert.equal(paints.at(-1).view, 'bundles')
+  assert.equal(transition.skipped, false)
 })
-
-for (const options of [{ reduced: true }, { supported: false }, {}]) {
-  test(`initial, same-view, and explicit non-animated paints remain immediate: ${JSON.stringify(options)}`, t => {
-    const { paints, show, transitions } = fixture(t, options)
-    show('findings')
-    show('findings', true)
-    show('workspace-bundles', false, { animate: false })
-    if (options.reduced || options.supported === false) show('files')
-    assert.equal(transitions.length, 0)
-    assert.equal(paints.length, options.reduced || options.supported === false ? 4 : 3)
-  })
-}

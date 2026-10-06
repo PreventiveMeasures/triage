@@ -1,5 +1,5 @@
-// Track every document transition, including Kanban detail animations, so
-// synchronous bundle navigation can remove snapshots started by any caller.
+// Track explicit animations so navigation can remove their snapshots before
+// painting the destination. View changes themselves do not animate.
 let activeTransition = null
 
 export function startViewTransition(update) {
@@ -13,23 +13,15 @@ export function startViewTransition(update) {
   return transition
 }
 
-// Bundle entry paints a loading shell and then its metadata while the sidebar
-// reveals the selected workspace row. A document-wide crossfade snapshots
-// these independently timed updates and flashes the surrounding app chrome.
+// Navigation always paints immediately. Same-view renders inside a Kanban
+// animation's update callback must leave that animation running.
 export function createViewRenderer(paint) {
   let previousView = null
-  return (view, { animate = true } = {}) => {
-    const changed = previousView !== null && previousView !== view
-    previousView = view
-    if (view === 'bundles') {
+  return view => {
+    if (previousView !== null && previousView !== view) {
       activeTransition?.skipTransition()
-      animate = false
     }
-    if (!animate || !changed || typeof document.startViewTransition !== 'function'
-        || matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      paint()
-      return
-    }
-    startViewTransition(paint)
+    previousView = view
+    paint()
   }
 }
