@@ -15,13 +15,25 @@ Description A.
 
 ### Root Cause
 
+Cause A.
+
+Code references:
+
 https://github.com/a/a/blob/abcdef0/c/d/e.js#L100-L110
+
+### Attack Scenario
+
+Foo \`code\` --> something happens --> something else happens
 
 ### Steps to Reproduce in the browser
 
 1. Step 1
 2. Step 2 text
    continuation of step 2.
+
+### Impact
+
+Impact A.
 
 ### Patch
 
@@ -33,8 +45,32 @@ Fix A.
 
 [Product B] Long title B.
 
+### Description
+
+Description B.
+
 ### Root Cause
+
+Cause B.
+
+#### Code references:
 
 https://github.com/a/b/blob/abcdef0/c/d/e.js#L100-L110
 https://github.com/a/b/blob/abcdef0/f/g/h.js#L10-L20
+
+### Attack Scenario
+
+Scenario B.
+
+### Steps to Reproduce in the browser
+
+1. Reproduce B.
+
+### Impact
+
+Impact B.
+
+### Patch
+
+Fix B.
 `

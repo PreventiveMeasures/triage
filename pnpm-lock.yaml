@@ -15,11 +15,11 @@ importers:
         specifier: 1.0.0-beta.5
         version: 1.0.0-beta.5
       '@preventive/report':
-        specifier: 1.0.0-alpha.6
-        version: 1.0.0-alpha.6
+        specifier: 1.0.0-alpha.7
+        version: 1.0.0-alpha.7
       '@preventive/upstream':
-        specifier: 1.0.0-alpha.9
-        version: 1.0.0-alpha.9
+        specifier: 1.0.0-alpha.10
+        version: 1.0.0-alpha.10
       ws:
         specifier: ^8.20.1
         version: 8.21.0
@@ -31,11 +31,11 @@ importers:
         specifier: ^2.3.0
         version: 2.3.0
       '@preventive/diff':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: ^1.0.1
+        version: 1.0.1
       '@preventive/lockfile':
-        specifier: 1.0.0-alpha.5
-        version: 1.0.0-alpha.5
+        specifier: 1.0.0-alpha.7
+        version: 1.0.0-alpha.7
       '@preventive/terminal':
         specifier: 2.0.0-beta.1
         version: 2.0.0-beta.1
@@ -605,33 +605,37 @@ packages:
     resolution: {integrity: sha512-y/78ovoxKkvuKN0wtDiDWiXBDm2doTrSOXqFu7Y1/jwAUktyOeXSxuGSB+8YsV4YqVO4daUJ0qqISA6ix838Gg==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.0-alpha.6.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/diff@1.0.0':
-    resolution: {integrity: sha512-voZPhZLUkbM1R8N4TxZ1LjHYmAoy8/4cohXYq5gL5DXYag3MQ/XehTSGa+871V6ffsNptixV9iURVtqqMHLOHg==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.0.tgz}
+  '@preventive/diff@1.0.1':
+    resolution: {integrity: sha512-e4c673eQKCuEPHP8IZdirOXdOYONAkIjb9FdLLKGZ4xkDZNLF19w9V9ETzQAR5Z3iOu/N5tgZBGuBCLZzNTz2A==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.1.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/lockfile@1.0.0-alpha.5':
     resolution: {integrity: sha512-yMeHF6Wy6U2L+jcu+YWEtDmxQcDE0ptJmYMG5f8+N1ObzBOgl97I643MZOhH6YDSFG7DQyW9YmQxto+FJvHgmQ==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.5.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/report@1.0.0-alpha.6':
-    resolution: {integrity: sha512-51U3zfAHgQ/v1B3tDNf8Ts7xtUf6l9NGo3ifLV1oaoGcLpUB4pi1cU03PQSu+GDZFd5UlkzcsPLQWSB4MjgwmQ==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.6.tgz}
+  '@preventive/lockfile@1.0.0-alpha.7':
+    resolution: {integrity: sha512-Dfr/iHIUfsMQqbC9sJ10LaHdKL+Buf7D1ZAqZXcFpgU2N13uDsgA77qmjlmD7o7IWTi9suOC6LclAZyFNLPzRA==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.7.tgz}
+    engines: {node: '>=24.14.0'}
+
+  '@preventive/report@1.0.0-alpha.7':
+    resolution: {integrity: sha512-eGQlraZ1ulnY5QPqZKupte5ntMY3XtptVcTVBtZ7OnI9Sh+J/vhWj6PFdGfydhaeiNlcVyuah/TZ9tW0pSPgew==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.7.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/terminal@2.0.0-beta.1':
     resolution: {integrity: sha512-BBvLkWrjwYryQze4ceY0JnAGwRgIIxpnkOxBF7JaH2oILR0TZNwub+SmUE9pufOS+puoTHPmVlyf8ewU4jRzPA==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.1.tgz}
 
-  '@preventive/upstream@1.0.0-alpha.4':
-    resolution: {integrity: sha512-Dr5fB7NHri6YWAoA8O5owm0+ZslqIXqNZmrvFTh4JKW8trKjeGsgoBMYcqEHha5NdEKa9D3HNpWGx6mMKKO3wQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.4.tgz}
-    engines: {node: '>=24.14.0'}
-
-  '@preventive/upstream@1.0.0-alpha.9':
-    resolution: {integrity: sha512-V4nQgsM4XReZgK2lHx5iffh+8yhm2q2KF41ko8IOPgdFgWTsrOgUOp6iwL9hZ6xiquAqCftKf80+YU0ShH7jpA==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.9.tgz}
+  '@preventive/upstream@1.0.0-alpha.10':
+    resolution: {integrity: sha512-PF8XLDtxk3af5bnVI653FAnqszT4AETjjidEHFQeO4SmTcsEoucvGwxYQoSD9ZCInIZRZyVIwSBPonAewPsDvA==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.10.tgz}
     engines: {node: '>=24.14.0'}
     peerDependencies:
       semver: ^7.5.2
     peerDependenciesMeta:
       semver:
         optional: true
+
+  '@preventive/upstream@1.0.0-alpha.4':
+    resolution: {integrity: sha512-Dr5fB7NHri6YWAoA8O5owm0+ZslqIXqNZmrvFTh4JKW8trKjeGsgoBMYcqEHha5NdEKa9D3HNpWGx6mMKKO3wQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.4.tgz}
+    engines: {node: '>=24.14.0'}
 
   '@preventive/vfs@1.0.0-beta.3':
     resolution: {integrity: sha512-tuDr8A5IMZCXIwG1VPy1BCmFSnLGBX+WXeLUYc0EWUvVsGxARphajjkA+lzRokXQglPHgE7HqepX0g49zjcFGw==, tarball: https://registry.npmjs.org/@preventive/vfs/-/vfs-1.0.0-beta.3.tgz}
@@ -1716,14 +1720,14 @@ snapshots:
     dependencies:
       '@chalker/queue': 1.0.1
       '@preventive/archive': 1.0.0-beta.3
-      '@preventive/diff': 1.0.0
+      '@preventive/diff': 1.0.1
       '@preventive/lockfile': 1.0.0-alpha.5
       '@preventive/upstream': 1.0.0-alpha.4
       '@preventive/vfs': 1.0.0-beta.3
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/diff@1.0.0': {}
+  '@preventive/diff@1.0.1': {}
 
   '@preventive/lockfile@1.0.0-alpha.5':
     dependencies:
@@ -1731,18 +1735,24 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/report@1.0.0-alpha.6': {}
+  '@preventive/lockfile@1.0.0-alpha.7':
+    dependencies:
+      '@exodus/bytes': 1.16.0
+    transitivePeerDependencies:
+      - '@noble/hashes'
+
+  '@preventive/report@1.0.0-alpha.7': {}
 
   '@preventive/terminal@2.0.0-beta.1':
     dependencies:
       '@exodus/bytes': 1.16.0
-      '@preventive/diff': 1.0.0
+      '@preventive/diff': 1.0.1
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/upstream@1.0.0-alpha.4': {}
+  '@preventive/upstream@1.0.0-alpha.10': {}
 
-  '@preventive/upstream@1.0.0-alpha.9': {}
+  '@preventive/upstream@1.0.0-alpha.4': {}
 
   '@preventive/vfs@1.0.0-beta.3': {}
 

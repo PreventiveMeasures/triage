@@ -20,6 +20,7 @@ test('generic imports produce independent JSON reports with repository metadata 
     assert.match(loaded.findings[0].id, /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/u)
     assert.equal(loaded.findings[0].id, (await loadManagedFindings(genericMarkdown, 'audit.md')).findings[index].id)
   }
+  assert.ok(JSON.parse(reports[0].content).findings[0].description.includes('Foo `code` --> something happens --> something else happens'))
 })
 
 test('derived names preserve distinct products containing filename separators and escape-like text', () => {
@@ -50,8 +51,8 @@ test('repository and prefix errors reject the complete import, while other forma
 })
 
 test('unsupported generic Markdown aborts both local and managed imports', async () => {
-  const text = genericMarkdown.replace('### Title', '<!-- hidden -->\n\n### Title')
-  assert.throws(() => splitMarkdownImport(text, 'bad.md'), /unsupported Markdown syntax/u)
+  const text = genericMarkdown.replace('### Attack Scenario', '### Other')
+  assert.throws(() => splitMarkdownImport(text, 'bad.md'), /unsupported.*missing required headers/u)
   assert.equal(readManagedReport(text, 'bad.md').data, null)
   assert.equal(await loadManagedFindings(text, 'bad.md'), null)
 })
