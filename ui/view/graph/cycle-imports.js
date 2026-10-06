@@ -8,6 +8,9 @@ export function countsTowardsCycles(from, to, ownSource) {
     && /(?:^|\/)(?:package\.json|react-native\.config\.js)$/u.test(to)) return false
   if (/(?:^|\/)node_modules\/@react-native-community\/cli-tools\/build\/releaseChecker\/index\.js$/u.test(from)
     && /(?:^|\/)node_modules\/react-native\/package\.json$/u.test(to)) return false
+  // React Native's config loads platform CLIs supplied by the host project.
+  if (/(?:^|\/)node_modules\/react-native\/react-native\.config\.js$/u.test(from)
+    && /(?:^|\/)node_modules\/@react-native-community\/cli-platform-(?:android|ios)\/build\/index\.js$/u.test(to)) return false
   if (/(?:^|\/)node_modules\/@babel\/core\/lib\/config\//u.test(from)
     && /(?:^|\/)babel\.config\.js$/u.test(to)) return false
   // Bundles do not distinguish literal imports from computed loads. Match
