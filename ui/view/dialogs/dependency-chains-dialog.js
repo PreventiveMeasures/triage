@@ -74,7 +74,7 @@ class DependencyChainsDialog extends AppDialog {
     const parents = [...this.graph.importedBy.get(id)].map(parent => this.graph.nodes.get(parent))
     const version = `${node.version || 'Source'}${node.ecosystem && node.ecosystem !== 'npm' ? ` · ${node.ecosystem}` : ''}`
     const description = parents.length > 0 ? `Imported by ${parents.map(parent => `${parent.name}${parent.version ? `@${parent.version}` : ''}`).join(', ')}.`
-      : node.root ? 'Bundle entry point or app source.' : 'No importer is recorded in this scope.'
+      : node.root ? 'Bundle entry point or app source.' : node.traceBoundary ? 'Advisory tracing stops here.' : 'No importer is recorded in this scope.'
     return html`<div class=${`package${node.target ? ' selected' : ''}${neighbors && !neighbors.has(id) ? ' package-subdued' : ''}`} tabindex="0" role="group"
       @pointerenter=${() => { this._hovered = id }} @pointerleave=${() => { this._hovered = null }}
       @focus=${() => { this._focused = id }} @blur=${() => { this._focused = null }}
@@ -96,7 +96,10 @@ class DependencyChainsDialog extends AppDialog {
     const highlighted = traceDependencyChains(this.layout, activeGroup)
     const neighbors = activePackage === null ? null : new Set([activePackage, ...this.graph.imports.get(activePackage), ...this.graph.importedBy.get(activePackage)])
     const hasImporter = new Set(edges.map(edge => edge.to))
-    const unrecorded = boxes.filter(box => !hasImporter.has(box.id) && !box.members.some(id => this.graph.nodes.get(id).root))
+    const unrecorded = boxes.filter(box => !hasImporter.has(box.id) && !box.members.some(id => {
+      const node = this.graph.nodes.get(id)
+      return node.root || node.traceBoundary
+    }))
     return html`<div class="graph-scroll" tabindex="0" aria-label="Package dependency chains. Arrows point from importer to dependency.">
       <div class="graph" style=${styleMap({ width: `${width}px`, height: `${height}px`, '--package-width': `${DEPENDENCY_CARD_WIDTH}px`, '--package-height': `${DEPENDENCY_CARD_HEIGHT}px` })}>
         <svg class="connections" width=${width} height=${height} aria-hidden="true">

@@ -131,18 +131,20 @@ for (const packageName of ['react-native', '@babel/core']) {
     }}
   })
 
-  test(`${packageName} tracing stays complete without a direct own-source import in the current scope`, () => {
+  test(`${packageName} uses its advisory boundary rule without a direct own-source import in the current scope`, () => {
     const addon = 'node_modules/addon', framework = `node_modules/${packageName}`, target = 'node_modules/dep'
     const modules = { '.': {}, [framework]: dep(packageName), [addon]: dep('addon'), [target]: dep('dep') }
     const links = [['.', addon], [addon, framework], [framework, target]]
     const indirect = bundleDependencyChains(fixture({ modules, links }), query)
-    assert.deepEqual(indirect.importedBy.get(framework), new Set([addon]))
-    assert.deepEqual(new Set(indirect.nodes.keys()), new Set(['.', addon, framework, target]))
+    const stop = packageName === '@babel/core'
+    assert.deepEqual(indirect.importedBy.get(framework), new Set(stop ? [] : [addon]))
+    assert.deepEqual(new Set(indirect.nodes.keys()), new Set(stop ? [framework, target] : ['.', addon, framework, target]))
+    assert.equal(indirect.nodes.get(framework).traceBoundary ?? false, stop)
     const scoped = fixture({ modules, links: [...links, ['.', framework]], reason: { run: [addon, framework, target].map(file), add: ['index.js'] } })
     const graph = bundleDependencyChains(scoped, { ...query, reason: 'run' })
     assert.equal(graph.nodes.has('.'), false)
-    assert.deepEqual(graph.importedBy.get(framework), new Set([addon]), 'a filtered-out app import must not stop traversal')
-    assert.deepEqual(new Set(graph.nodes.keys()), new Set([addon, framework, target]))
+    assert.deepEqual(graph.importedBy.get(framework), new Set(stop ? [] : [addon]))
+    assert.deepEqual(new Set(graph.nodes.keys()), new Set(stop ? [framework, target] : [addon, framework, target]))
   })
 
   test(`the ${packageName} boundary applies per installation and only to the npm package`, () => {
@@ -152,12 +154,33 @@ for (const packageName of ['react-native', '@babel/core']) {
       '.': {}, [framework]: dep(packageName), [nested]: dep(packageName), [vendor]: dep(packageName, '1.0.0', 'cargo'), [addon]: dep('addon'), [target]: dep('dep'),
     }, links: [['.', framework], ['.', addon], ['.', vendor], [addon, framework], [addon, nested], [addon, vendor], [framework, target], [nested, target], [vendor, target]] }), query)
     assert.deepEqual(graph.importedBy.get(framework), new Set(['.']))
-    assert.deepEqual(graph.importedBy.get(nested), new Set([addon]))
+    assert.deepEqual(graph.importedBy.get(nested), new Set(packageName === '@babel/core' ? [] : [addon]))
     assert.deepEqual(graph.importedBy.get(vendor), new Set(['.', addon]))
-    assert.deepEqual(graph.imports.get(addon), new Set([nested, vendor]))
+    assert.deepEqual(graph.imports.get(addon), new Set(packageName === '@babel/core' ? [vendor] : [nested, vendor]))
     assert.deepEqual(new Set(graph.nodes.keys()), new Set(['.', framework, nested, vendor, addon, target]))
   })
 }
+
+test('Babel stops advisory traversal without own source, including cycles and cached metadata', async () => {
+  const addon = 'node_modules/addon', core = 'node_modules/@babel/core', target = 'node_modules/dep'
+  for (const independent of [false, true]) {
+    const details = fixture({ modules: { [addon]: dep('addon'), [core]: dep('@babel/core'), [target]: dep('dep') },
+      links: [[addon, core], [core, addon], [core, target], ...(independent ? [[addon, target]] : [])] })
+    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+    for (const input of [details, metadata]) {
+      const originalImports = structuredClone(input.bundle.imports)
+      const graph = bundleDependencyChains(input, query)
+      assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? [core, addon, target] : [core, target]))
+      assert.deepEqual(graph.importedBy.get(core), new Set())
+      assert.equal(graph.nodes.get(core).root, false, 'do not invent a bundle entry point')
+      assert.equal(graph.nodes.get(core).traceBoundary, true, 'the missing incoming chain is intentional')
+      assert.ok(layoutDependencyChains(graph).boxes.every(box => box.members.length === 1), 'do not restore the return edge through an independent branch')
+      const selectedGraph = bundleDependencyChains(input, { packageKey: '@babel/core', version: '1.0.0' })
+      assert.deepEqual([...selectedGraph.nodes.keys()], [core])
+      assert.deepEqual(input.bundle.imports, originalImports)
+    }
+  }
+})
 
 test('cycles remain visible in finite groups with their incoming and outgoing chains', () => {
   const details = fixture({ modules: { '.': {}, 'node_modules/a': dep('a'), 'node_modules/b': dep('b'), 'node_modules/dep': dep('dep') },
@@ -344,13 +367,13 @@ test('only cycles larger than ten start collapsed, and expansion preserves their
 
 test('discovery-only branches are neither followed nor drawn, while ordinary imports between the same packages remain', async () => {
   for (const [count, ordinary] of [7, 11, 190].flatMap(size => [false, true].map(include => [size, include]))) {
-    const core = 'node_modules/@babel/core/lib/config/files/plugins.js'
+    const core = 'node_modules/react-native/scripts/codegen/generate-artifacts-executor.js'
     const paths = [core, ...Array.from({ length: count - 1 }, (_, i) => `node_modules/helper-${i}/index.js`)]
     const modules = new Map([
       ['.', { name: 'app', files: { 'index.js': 'app' } }],
-      ['node_modules/bridge', { ...dep('bridge'), files: { 'index.js': 'bridge', 'babel.config.js': 'config' } }],
-      ['node_modules/dep', { ...dep('dep'), files: { 'index.js': 'dep', 'babel.config.js': 'config' } }],
-      ['node_modules/@babel/core', { ...dep('@babel/core'), files: { 'lib/config/files/plugins.js': 'loader' } }],
+      ['node_modules/bridge', { ...dep('bridge'), files: { 'index.js': 'bridge', 'package.json': 'config' } }],
+      ['node_modules/dep', { ...dep('dep'), files: { 'index.js': 'dep', 'package.json': 'config' } }],
+      ['node_modules/react-native', { ...dep('react-native'), files: { 'scripts/codegen/generate-artifacts-executor.js': 'loader' } }],
       ...paths.slice(1).map((path, i) => [path.slice(0, -'/index.js'.length), { ...dep(`helper-${i}`), files: { 'index.js': 'helper' } }]),
     ])
     const imports = new Map([
@@ -358,19 +381,19 @@ test('discovery-only branches are neither followed nor drawn, while ordinary imp
       ['node_modules/bridge/index.js', new Map([['core', core]])],
       ...paths.map((path, i) => [path, new Map([['next', paths[(i + 1) % count]]])]),
     ])
-    imports.get(core).set('config', 'node_modules/dep/babel.config.js')
-    imports.get(core).set('return', 'node_modules/bridge/babel.config.js')
+    imports.get(core).set('config', 'node_modules/dep/package.json')
+    imports.get(core).set('return', 'node_modules/bridge/package.json')
     if (ordinary) imports.get(core).set('dep', 'node_modules/dep/index.js')
     const details = { kind: 'stasis', integrity: `discovery-${count}-${ordinary}`, size: 1, bundle: new Bundle({ config: { scope: 'full' }, modules, imports: new Map([['node,import', imports]]) }) }
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
       const graph = bundleDependencyChains(input, query)
       assert.equal(graph.imports.get('node_modules/dep').size, 0)
-      assert.equal(graph.nodes.has('node_modules/@babel/core'), ordinary, 'do not follow discovery-only importers')
+      assert.equal(graph.nodes.has('node_modules/react-native'), ordinary, 'do not follow discovery-only importers')
       assert.equal(graph.nodes.has('node_modules/bridge'), ordinary, 'do not follow their ancestors either')
-      assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(ordinary ? ['.', 'node_modules/@babel/core'] : ['.']))
+      assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(ordinary ? ['.', 'node_modules/react-native'] : ['.']))
       const initial = layoutDependencyChains(graph)
-      const groupId = initial.componentOf.get('node_modules/@babel/core')
+      const groupId = initial.componentOf.get('node_modules/react-native')
       for (const maxWidth of [1280, 600, 375]) {for (const expandedCycles of [new Set(), new Set([groupId])]) {
         const result = layoutDependencyChains(graph, { maxWidth, expandedCycles })
         assert.equal(result.edges.length, ordinary ? 4 : 1)
