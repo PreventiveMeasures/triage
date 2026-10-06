@@ -108,7 +108,7 @@ test('Babel dynamic plugin exclusions match exact loader and entry-point paths',
     }
     for (const target of [
       ...targets.flatMap(path => [`${path}.bak`, `${path}/other.js`, path.replace('node_modules/', 'my_node_modules/')]),
-      'node_modules/@babel/preset-typescript/lib/index.js', 'node_modules/@babel/plugin-syntax-typescript/lib/index.js',
+      'node_modules/@babel/preset-env/lib/index.js', 'node_modules/@babel/plugin-syntax-typescript/lib/index.js',
       'node_modules/@other/plugin-transform-template-literals/lib/index.js', 'node_modules/@babel/plugin-transform-/lib/index.js',
       'node_modules/@babel/plugin-transform-template-literals/lib/helpers.js',
       'node_modules/react-native-reanimated/index.js', 'node_modules/react-native-reanimated/plugin/helper.js',
@@ -124,10 +124,38 @@ test('Babel dynamic plugin exclusions match exact loader and entry-point paths',
   }
 })
 
-test('grid, dependency and advisory cycles exclude config plugin loads but retain literal imports and TypeScript presets', async () => {
-  for (const source of [...pluginLoaders, 'node_modules/@babel/core/lib/config/files/index.js']) {
-    for (const [name, file] of [...dynamicPlugins, ['@babel/preset-typescript', 'lib/index.js']]) {
-      const expectedCycles = name === '@babel/preset-typescript' || !pluginLoaders.includes(source) ? 1 : 0, target = `node_modules/${name}/${file}`
+test('TypeScript preset config loads match the whole config subtree and exact installed package', () => {
+  const target = 'node_modules/@babel/preset-typescript/lib/index.js'
+  for (const source of [...pluginLoaders, 'node_modules/@babel/core/lib/config/index.js', 'node_modules/@babel/core/lib/config/helpers/deep.js']) {
+    for (const prefix of ['', '/project/', 'node_modules/outer/', 'node_modules/.pnpm/@babel+core@7.0.0/']) {
+      for (const file of ['lib/index.js', 'index.js', 'lib/helpers.js', 'package.json']) {
+        const path = `node_modules/@babel/preset-typescript/${file}`
+        assert.equal(countsTowardsCycles(prefix + source, path), false, `${prefix + source} -> ${path}`)
+        assert.equal(countsTowardsCycles(source, prefix + path), false, `${source} -> ${prefix + path}`)
+      }
+    }
+  }
+  for (const source of ['node_modules/@babel/core/lib/index.js', 'node_modules/@babel/core/lib/config.js',
+    loader.replace('/config/', '/config-other/'), loader.replace('/core/', '/core-other/'),
+    loader.replace('node_modules/', 'my_node_modules/'), loader.slice('node_modules/'.length),
+    'node_modules/@babel/core/lib/config/node_modules/other/index.js']) {
+    assert.equal(countsTowardsCycles(source, target), true, source)
+  }
+  for (const path of [target.replace('/preset-typescript/', '/preset-typescript-other/'), target.replace('/@babel/', '/@other/'),
+    target.replace('node_modules/', 'my_node_modules/'), target.slice('node_modules/'.length),
+    'node_modules/@babel/preset-typescript/node_modules/other/index.js', 'node_modules/@babel/preset-env/lib/index.js']) {
+    assert.equal(countsTowardsCycles(loader, path), true, path)
+  }
+  assert.equal(countsTowardsCycles(target, loader), true, 'reverse imports still count')
+})
+
+test('grid, dependency and advisory cycles exclude config loads and retain imports from outside their matching loaders', async () => {
+  for (const source of [...pluginLoaders, 'node_modules/@babel/core/lib/config/files/index.js',
+    'node_modules/@babel/core/lib/config/index.js', 'node_modules/@babel/core/lib/index.js']) {
+    for (const [name, file] of [...dynamicPlugins, ['@babel/preset-typescript', 'lib/index.js'], ['@babel/preset-typescript', 'lib/helpers.js'], ['@babel/preset-env', 'lib/index.js']]) {
+      const excluded = name === '@babel/preset-typescript' ? source !== 'node_modules/@babel/core/lib/index.js'
+        : name !== '@babel/preset-env' && pluginLoaders.includes(source)
+      const expectedCycles = excluded ? 0 : 1, target = `node_modules/${name}/${file}`
       const edges = new Map([['index.js', [target]], [source, [target]], [target, [source]]])
       for (const shortened of [false, true]) {
         const original = new Map([...edges.keys()].map(path => [shortened ? path.replace('node_modules/', '') : path, path]))
