@@ -24,7 +24,7 @@ header button:hover { color: var(--text); }
 }
 .graph { position: relative; margin-inline: auto; }
 .connections { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
-.connections > path { fill: none; stroke: var(--muted); stroke-width: 1.5; opacity: .65; }
+.connections > path { fill: none; stroke: var(--connection-color, var(--muted)); stroke-width: 1.5; opacity: .65; }
 .package-group { position: absolute; }
 .package {
   position: absolute; width: var(--package-width); height: var(--package-height);
@@ -62,7 +62,7 @@ header button:hover { color: var(--text); }
 .cycle-connections > path { stroke: var(--connection-color); stroke-width: 1.25; opacity: .8; }
 .large-cycle .cycle-connections > path { stroke: var(--muted); opacity: .18; }
 .cycle-connections > path.subdued { opacity: .04; }
-.cycle-connections > path.traced { stroke: var(--connection-color); stroke-width: 1.75; opacity: 1; }
+.connections > path.traced { stroke: var(--connection-color); stroke-width: 1.75; opacity: 1; }
 .package-subdued { opacity: .35; }
 .dimmed, .connections > path.dimmed { opacity: .18; }
 .note, .empty { padding: 1rem; color: var(--muted); font-size: .78rem; line-height: 1.5; }

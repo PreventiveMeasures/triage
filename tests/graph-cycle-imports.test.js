@@ -118,7 +118,7 @@ test('ordinary imports between the same packages still form cycles, while manife
 })
 
 for (const filename of ['package.json', 'react-native.config.js']) {
-  test(`advisory chains retain codegen ${filename} reads without collapsing their packages into a cycle`, async () => {
+  test(`advisory chains exclude codegen ${filename} reads from traversal and rendering`, async () => {
     for (const ordinaryImport of [false, true]) {
       const details = { kind: 'stasis', integrity: 'codegen', size: 1, bundle: new Bundle({
         modules: new Map([
@@ -135,17 +135,13 @@ for (const filename of ['package.json', 'react-native.config.js']) {
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
         const graph = bundleDependencyChains(input, { packageKey: 'dep', version: '1.0.0' })
-        assert.ok(graph.imports.get('node_modules/react-native').has('node_modules/dep'))
+        assert.equal(graph.imports.get('node_modules/react-native')?.has('node_modules/dep') ?? false, ordinaryImport)
         const result = layoutDependencyChains(graph)
         assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinaryImport ? 1 : 0)
         if (!ordinaryImport) {
-          assert.equal(result.boxes.length, 3)
-          assert.equal(result.edges.length, 3, 'retain the codegen read in the displayed chains')
-          const depBox = result.boxes.find(box => box.members.includes('node_modules/dep'))
-          const codegenBox = result.boxes.find(box => box.members.includes('node_modules/react-native'))
-          assert.ok(codegenBox.y > depBox.y, 'rank packages by ordinary imports')
-          assert.match(result.edges.find(edge => edge.from === codegenBox.id && edge.to === depBox.id).path, / L/u,
-            'route the backward codegen read around the cards')
+          assert.equal(result.boxes.length, 2)
+          assert.equal(result.edges.length, 1, 'only the app import remains')
+          assert.equal(graph.nodes.has('node_modules/react-native'), false, 'do not follow codegen-only importers')
         }
       }
     }
