@@ -88,10 +88,10 @@ test('advisory popup cycles exclude Babel config reads in full bundles and cache
     const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
     for (const input of [details, metadata]) {
       const graph = bundleDependencyChains(input, { packageKey: 'plugin', version: '1.0.0' })
-      assert.ok(graph.imports.get('node_modules/@babel/core').has('.'))
+      assert.equal(graph.imports.get('node_modules/@babel/core')?.has('.') ?? false, false, 'advisory traversal stops at own source even for ordinary imports')
       const result = layoutDependencyChains(graph)
-      assert.equal(result.boxes.filter(box => box.members.length > 1).length, ordinaryImport ? 1 : 0)
-      assert.equal(result.boxes.length, ordinaryImport ? 1 : 4)
+      assert.equal(result.boxes.filter(box => box.members.length > 1).length, 0)
+      assert.equal(result.boxes.length, 2, 'the advisory graph stops at App instead of following its importers')
     }
   }
 })
@@ -189,10 +189,10 @@ test('grid, dependency and advisory cycles exclude config loads and retain impor
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
         const graph = bundleDependencyChains(input, { packageKey: name, version: '1.0.0' })
-        assert.ok(graph.imports.get('node_modules/@babel/core').has(`node_modules/${name}`))
+        assert.equal(graph.imports.get('node_modules/@babel/core')?.has(`node_modules/${name}`) ?? false, expectedCycles === 1)
         const result = layoutDependencyChains(graph)
-        assert.equal(result.boxes.filter(box => box.members.length > 1).length, expectedCycles)
-        assert.equal(result.boxes.length, expectedCycles ? 2 : 3)
+        assert.equal(result.boxes.filter(box => box.members.length > 1).length, 0, 'advisory tracing always stops at Babel')
+        assert.equal(result.boxes.length, expectedCycles ? 3 : 2)
       }
     }
   }

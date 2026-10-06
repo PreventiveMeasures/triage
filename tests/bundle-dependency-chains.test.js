@@ -106,6 +106,115 @@ test('retains imports from omitted app source and distinguishes direct entry pac
   assert.equal(graph.importedBy.get('node_modules/dep').size, 0)
 })
 
+test('advisory traversal stops at own source without restoring incoming edges through other paths', async () => {
+  const ancestor = 'node_modules/ancestor', loader = 'node_modules/loader', target = 'node_modules/dep', tool = 'node_modules/tool'
+  for (const independent of [false, true]) {
+    const details = fixture({ modules: { '.': {}, [ancestor]: dep('ancestor'), [loader]: dep('loader'), [tool]: dep('tool'), [target]: dep('dep') },
+      links: [['.', target], ['.', loader], [loader, '.'], [tool, '.'], [ancestor, tool], [target, '.'], ...(independent ? [[loader, target]] : [])] })
+    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+    for (const input of [details, metadata]) {
+      const originalImports = structuredClone(input.bundle.imports)
+      const graph = bundleDependencyChains(input, query)
+      assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? ['.', loader, target] : ['.', target]))
+      assert.deepEqual(graph.importedBy.get('.'), new Set())
+      assert.deepEqual(graph.imports.get('.'), new Set(independent ? [target, loader] : [target]), 'keep outgoing own-source imports')
+      assert.equal(graph.nodes.get('.').root, true)
+      assert.equal(graph.nodes.get('.').traceBoundary, true)
+      assert.ok([...graph.imports.values()].every(targets => !targets.has('.')), 'retained dependencies cannot restore incoming own-source edges')
+      const layout = layoutDependencyChains(graph)
+      assert.ok(layout.boxes.every(box => box.members.length === 1), 'own source does not form a cycle with its importers')
+      assert.equal(layout.edges.length, independent ? 3 : 1)
+      assert.deepEqual(input.bundle.imports, originalImports, 'other graphs retain the full import data')
+    }
+  }
+})
+
+test('a dependency marked as a bundle entry point is not an own-source tracing stop', () => {
+  const entry = 'node_modules/entry', importer = 'node_modules/importer', target = 'node_modules/dep'
+  const graph = bundleDependencyChains(fixture({ modules: { [entry]: dep('entry'), [importer]: dep('importer'), [target]: dep('dep') },
+    links: [[importer, entry], [entry, target]], entries: [entry] }), query)
+  assert.equal(graph.nodes.get(entry).root, true)
+  assert.equal(graph.nodes.get(entry).own, false)
+  assert.deepEqual(graph.importedBy.get(entry), new Set([importer]))
+  assert.deepEqual(new Set(graph.nodes.keys()), new Set([entry, importer, target]))
+})
+
+for (const packageName of ['react-native', '@babel/core']) {
+  test(`direct own-source imports stop reverse tracing at ${packageName} in full and cached bundles`, async () => {
+    const addon = 'node_modules/addon', bridge = 'node_modules/bridge', framework = `node_modules/${packageName}`, target = 'node_modules/dep'
+    for (const bundledApp of [false, true]) {for (const independent of [false, true]) {
+      const details = fixture({ modules: {
+        ...(bundledApp ? { '.': {} } : {}), [framework]: dep(packageName), [addon]: dep('addon'), [bridge]: dep('bridge'), [target]: dep('dep'),
+      }, links: [['.', framework], ['.', bridge], [bridge, addon], [addon, framework], [framework, target], ...(independent ? [[addon, target]] : [])] })
+      const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+      for (const input of [details, metadata]) {
+        const originalImports = structuredClone(input.bundle.imports)
+        const graph = bundleDependencyChains(input, query)
+        assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? ['.', framework, addon, bridge, target] : ['.', framework, target]))
+        assert.deepEqual(graph.importedBy.get(framework), new Set(['.']))
+        assert.equal(graph.imports.get(addon)?.has(framework) ?? false, false, 'independent paths do not restore the stopped edge')
+        assert.deepEqual(graph.importedBy.get(target), new Set(independent ? [framework, addon] : [framework]))
+        const layout = layoutDependencyChains(graph)
+        assert.equal(layout.edges.length, independent ? 5 : 2)
+        assert.ok(layout.edges.every(edge => edge.toPackage !== framework || edge.fromPackage === '.'))
+        const selectedGraph = bundleDependencyChains(input, { packageKey: packageName, version: '1.0.0' })
+        assert.deepEqual(new Set(selectedGraph.nodes.keys()), new Set(['.', framework]), 'the same boundary applies when the framework is selected')
+        assert.deepEqual(input.bundle.imports, originalImports, 'the imports used by other graphs remain unchanged')
+      }
+    }}
+  })
+
+  test(`${packageName} uses its advisory boundary rule without a direct own-source import in the current scope`, () => {
+    const addon = 'node_modules/addon', framework = `node_modules/${packageName}`, target = 'node_modules/dep'
+    const modules = { '.': {}, [framework]: dep(packageName), [addon]: dep('addon'), [target]: dep('dep') }
+    const links = [['.', addon], [addon, framework], [framework, target]]
+    const indirect = bundleDependencyChains(fixture({ modules, links }), query)
+    const stop = packageName === '@babel/core'
+    assert.deepEqual(indirect.importedBy.get(framework), new Set(stop ? [] : [addon]))
+    assert.deepEqual(new Set(indirect.nodes.keys()), new Set(stop ? [framework, target] : ['.', addon, framework, target]))
+    assert.equal(indirect.nodes.get(framework).traceBoundary ?? false, stop)
+    const scoped = fixture({ modules, links: [...links, ['.', framework]], reason: { run: [addon, framework, target].map(file), add: ['index.js'] } })
+    const graph = bundleDependencyChains(scoped, { ...query, reason: 'run' })
+    assert.equal(graph.nodes.has('.'), false)
+    assert.deepEqual(graph.importedBy.get(framework), new Set(stop ? [] : [addon]))
+    assert.deepEqual(new Set(graph.nodes.keys()), new Set(stop ? [framework, target] : [addon, framework, target]))
+  })
+
+  test(`the ${packageName} boundary applies per installation and only to the npm package`, () => {
+    const framework = `node_modules/${packageName}`, nested = `node_modules/addon/node_modules/${packageName}`
+    const addon = 'node_modules/addon', target = 'node_modules/dep', vendor = `vendor/${packageName}`
+    const graph = bundleDependencyChains(fixture({ modules: {
+      '.': {}, [framework]: dep(packageName), [nested]: dep(packageName), [vendor]: dep(packageName, '1.0.0', 'cargo'), [addon]: dep('addon'), [target]: dep('dep'),
+    }, links: [['.', framework], ['.', addon], ['.', vendor], [addon, framework], [addon, nested], [addon, vendor], [framework, target], [nested, target], [vendor, target]] }), query)
+    assert.deepEqual(graph.importedBy.get(framework), new Set(['.']))
+    assert.deepEqual(graph.importedBy.get(nested), new Set(packageName === '@babel/core' ? [] : [addon]))
+    assert.deepEqual(graph.importedBy.get(vendor), new Set(['.', addon]))
+    assert.deepEqual(graph.imports.get(addon), new Set(packageName === '@babel/core' ? [vendor] : [nested, vendor]))
+    assert.deepEqual(new Set(graph.nodes.keys()), new Set(['.', framework, nested, vendor, addon, target]))
+  })
+}
+
+test('Babel stops advisory traversal without own source, including cycles and cached metadata', async () => {
+  const addon = 'node_modules/addon', core = 'node_modules/@babel/core', target = 'node_modules/dep'
+  for (const independent of [false, true]) {
+    const details = fixture({ modules: { [addon]: dep('addon'), [core]: dep('@babel/core'), [target]: dep('dep') },
+      links: [[addon, core], [core, addon], [core, target], ...(independent ? [[addon, target]] : [])] })
+    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+    for (const input of [details, metadata]) {
+      const originalImports = structuredClone(input.bundle.imports)
+      const graph = bundleDependencyChains(input, query)
+      assert.deepEqual(new Set(graph.nodes.keys()), new Set(independent ? [core, addon, target] : [core, target]))
+      assert.deepEqual(graph.importedBy.get(core), new Set())
+      assert.equal(graph.nodes.get(core).root, false, 'do not invent a bundle entry point')
+      assert.equal(graph.nodes.get(core).traceBoundary, true, 'the missing incoming chain is intentional')
+      assert.ok(layoutDependencyChains(graph).boxes.every(box => box.members.length === 1), 'do not restore the return edge through an independent branch')
+      const selectedGraph = bundleDependencyChains(input, { packageKey: '@babel/core', version: '1.0.0' })
+      assert.deepEqual([...selectedGraph.nodes.keys()], [core])
+      assert.deepEqual(input.bundle.imports, originalImports)
+    }
+  }
+})
+
 test('cycles remain visible in finite groups with their incoming and outgoing chains', () => {
   const details = fixture({ modules: { '.': {}, 'node_modules/a': dep('a'), 'node_modules/b': dep('b'), 'node_modules/dep': dep('dep') },
     links: [['.', 'node_modules/a'], ['node_modules/a', 'node_modules/b'], ['node_modules/b', 'node_modules/a'], ['node_modules/b', 'node_modules/dep']] })
@@ -120,6 +229,66 @@ test('cycles remain visible in finite groups with their incoming and outgoing ch
   for (const edge of layout.edges) {
     const from = layout.boxes.find(box => box.id === edge.from), to = layout.boxes.find(box => box.id === edge.to)
     assert.ok(from.y + from.height < to.y)
+  }
+})
+
+function assertExternalPathClear(commands, cards, layout) {
+  let point = commands[0].values
+  for (const { command, values } of commands.slice(1)) {
+    const end = values.slice(-2), start = point
+    for (let step = 0; step <= 12; step++) {
+      const t = step / 12
+      const [x, y] = end.map((value, axis) => command === 'Q'
+        ? (1 - t) ** 2 * start[axis] + 2 * (1 - t) * t * values[axis] + t ** 2 * value
+        : start[axis] + t * (value - start[axis]))
+      assert.ok(x >= 0 && x <= layout.width && y >= 0 && y <= layout.height)
+      assert.ok(cards.every(card => x <= card.x || x >= card.x + card.w || y <= card.y || y >= card.y + card.h), 'external arrows stay outside every card')
+    }
+    point = end
+  }
+}
+
+test('external arrows retain exact package endpoints through cycle expansion without crossing cards', () => {
+  const h = DEPENDENCY_CARD_HEIGHT, w = DEPENDENCY_CARD_WIDTH
+  for (const count of [7, 11, 190]) {
+    const ids = Array.from({ length: count }, (_, i) => `source-${i}`), targets = ['dest-a', 'dest-b', 'dest-c']
+    const imports = new Map([
+      ['app', new Set([ids[0], 'short'])], ['short', new Set(['target'])], ['target', new Set()],
+      ...[ids, targets].flatMap(group => group.map((id, i) => [id, new Set([group[(i + 1) % group.length]])])),
+    ])
+    imports.get(ids[0]).add(targets[0]).add(targets[1])
+    imports.get(ids[1]).add(targets[0])
+    imports.get(targets[2]).add('target')
+    const graph = { nodes: new Map([...imports.keys()].map(id => [id, { id }])), imports }
+    const initial = layoutDependencyChains(graph)
+    for (const [maxWidth, expand] of [1280, 600, 375].flatMap(width => [false, true].map(open => [width, open]))) {
+      const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles: new Set(expand ? initial.boxes.map(box => box.id) : []) })
+      assert.equal(layout.edges.length, 7, 'separate imports between the same two cycles are never merged')
+      const sharedTarget = layout.edges.filter(edge => edge.toPackage === targets[0])
+      assert.notEqual(sharedTarget[0].path.split(' L').at(-1), sharedTarget[1].path.split(' L').at(-1), 'direct importers get distinct arrowheads')
+      assert.deepEqual(layout.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]), initial.edges.map(({ fromPackage, toPackage }) => [fromPackage, toPackage]))
+      const boxes = new Map(layout.boxes.map(box => [box.id, box]))
+      const cards = layout.boxes.flatMap(box => box.collapsed ? [{ x: box.x, y: box.y, w: box.width, h: box.height }]
+        : box.packages.map(node => ({ x: box.x + node.x, y: box.y + node.y, w, h })))
+      for (const edge of layout.edges) {
+        const from = boxes.get(edge.from), to = boxes.get(edge.to)
+        const a = from.packages.find(node => node.id === edge.fromPackage), b = to.packages.find(node => node.id === edge.toPackage)
+        const commands = [...edge.path.matchAll(/([MLQ])([\d.,-]+)/gu)].map(([, command, args]) => ({ command, values: args.split(',').map(Number) }))
+        const [sx, sy] = commands[0].values, [tx, ty] = commands.at(-1).values
+        if (from.collapsed || from.members.length === 1) {
+          assert.equal(sy, from.y + from.height)
+          assert.ok(sx > from.x && sx < from.x + from.width)
+        } else assert.deepEqual([sx, sy], [from.x + a.x + w, from.y + a.y + h / 2])
+        if (to.collapsed || to.members.length === 1) {
+          assert.equal(ty, to.y - 5)
+          assert.ok(tx > to.x && tx < to.x + to.width)
+        } else {
+          assert.equal(tx, to.x + b.x - 4)
+          assert.ok(ty > to.y + b.y && ty < to.y + b.y + h)
+        }
+        assertExternalPathClear(commands, cards, layout)
+      }
+    }
   }
 })
 
@@ -204,24 +373,6 @@ test('a 190-package cycle at the top regroups to fit desktop, tablet and phone w
   }
 })
 
-test('large cycles reserve space for excluded manifest reads pointing to earlier rows', () => {
-  const { ids, imports } = clusteredCycle(190)
-  imports.get(ids[0]).add('codegen')
-  const cycleImports = new Map([...imports].map(([id, targets]) => [id, new Set(targets)]))
-  imports.set('codegen', new Set([ids[0]]))
-  const graph = { nodes: new Map([...ids, 'codegen'].map(id => [id, { id }])), imports, cycleImports }
-  const expandedCycles = new Set(layoutDependencyChains(graph).boxes.map(box => box.id))
-  for (const maxWidth of [1280, 900, 600, 375]) {
-    const layout = layoutDependencyChains(graph, { maxWidth, expandedCycles })
-    const cycle = layout.boxes.find(box => box.members.length === 190)
-    const codegen = layout.boxes.find(box => box.members.includes('codegen'))
-    assert.equal(layout.boxes.length, 2, 'the excluded read does not enlarge the cycle')
-    assert.ok(codegen.y > cycle.y, 'ordinary imports determine the row order')
-    assert.ok(layout.edges.some(edge => edge.from === codegen.id && edge.to === cycle.id), 'retain the backward read')
-    assert.ok(layout.width + DEPENDENCY_DIALOG_GUTTER <= maxWidth, 'the cycle and backward route fit together')
-  }
-})
-
 test('only cycles larger than ten start collapsed, and expansion preserves their chains', () => {
   for (const count of [2, 8, 10, 11, 40, 190]) {
     const ids = Array.from({ length: count }, (_, i) => `package-${i}`)
@@ -244,6 +395,48 @@ test('only cycles larger than ten start collapsed, and expansion preserves their
       assert.ok(initial.boxes.find(box => box.members.includes('target')).y < expanded.boxes.find(box => box.members.includes('target')).y)
     }
     assert.deepEqual(layoutDependencyChains(graph), initial, 'collapsing restores the compact layout')
+  }
+})
+
+test('discovery-only branches are neither followed nor drawn, while ordinary imports between the same packages remain', async () => {
+  for (const [count, ordinary] of [7, 11, 190].flatMap(size => [false, true].map(include => [size, include]))) {
+    const core = 'node_modules/react-native/scripts/codegen/generate-artifacts-executor.js'
+    const paths = [core, ...Array.from({ length: count - 1 }, (_, i) => `node_modules/helper-${i}/index.js`)]
+    const modules = new Map([
+      ['.', { name: 'app', files: { 'index.js': 'app' } }],
+      ['node_modules/bridge', { ...dep('bridge'), files: { 'index.js': 'bridge', 'package.json': 'config' } }],
+      ['node_modules/dep', { ...dep('dep'), files: { 'index.js': 'dep', 'package.json': 'config' } }],
+      ['node_modules/react-native', { ...dep('react-native'), files: { 'scripts/codegen/generate-artifacts-executor.js': 'loader' } }],
+      ...paths.slice(1).map((path, i) => [path.slice(0, -'/index.js'.length), { ...dep(`helper-${i}`), files: { 'index.js': 'helper' } }]),
+    ])
+    const imports = new Map([
+      ['index.js', new Map([['dep', 'node_modules/dep/index.js'], ['bridge', 'node_modules/bridge/index.js']])],
+      ['node_modules/bridge/index.js', new Map([['core', core]])],
+      ...paths.map((path, i) => [path, new Map([['next', paths[(i + 1) % count]]])]),
+    ])
+    imports.get(core).set('config', 'node_modules/dep/package.json')
+    imports.get(core).set('return', 'node_modules/bridge/package.json')
+    if (ordinary) imports.get(core).set('dep', 'node_modules/dep/index.js')
+    const details = { kind: 'stasis', integrity: `discovery-${count}-${ordinary}`, size: 1, bundle: new Bundle({ config: { scope: 'full' }, modules, imports: new Map([['node,import', imports]]) }) }
+    const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
+    for (const input of [details, metadata]) {
+      const graph = bundleDependencyChains(input, query)
+      assert.equal(graph.imports.get('node_modules/dep').size, 0)
+      assert.equal(graph.nodes.has('node_modules/react-native'), ordinary, 'do not follow discovery-only importers')
+      assert.equal(graph.nodes.has('node_modules/bridge'), ordinary, 'do not follow their ancestors either')
+      assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(ordinary ? ['.', 'node_modules/react-native'] : ['.']))
+      const initial = layoutDependencyChains(graph)
+      const groupId = initial.componentOf.get('node_modules/react-native')
+      for (const maxWidth of [1280, 600, 375]) {for (const expandedCycles of [new Set(), new Set([groupId])]) {
+        const result = layoutDependencyChains(graph, { maxWidth, expandedCycles })
+        assert.equal(result.edges.length, ordinary ? 4 : 1)
+        assert.equal(result.boxes.length, ordinary ? 4 : 2)
+        assert.ok(result.edges.every(edge => {
+          const from = result.boxes.find(box => box.id === edge.from), to = result.boxes.find(box => box.id === edge.to)
+          return from.y + from.height < to.y
+        }), 'external imports always point to a later row, including expanded cycles')
+      }}
+    }
   }
 })
 

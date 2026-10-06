@@ -1,7 +1,31 @@
 // Component tests import the same SVG and CSS resources as the browser build.
 import { readFileSync } from 'node:fs'
-import { registerHooks } from 'node:module'
+import { enableCompileCache, registerHooks } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { svgTemplateModule } from '../build-lit-svg.js'
+
+// Test files and spawned servers repeatedly load the same module graphs. Share
+// their compiled code while keeping each test file in its own process. Coverage
+// runs need fresh compilation for precise V8 coverage; the Node disable flag
+// and an explicitly configured cache directory are also respected.
+// Use --require so this also runs in the test runner before it spawns workers;
+// --import only runs in the workers when Node uses process isolation.
+// Node permits underscores and ignores boolean =values; the last flag wins.
+const coverageOption = process.execArgv.findLast(arg => /^--(?:no[-_])?experimental[-_]test[-_]coverage(?:=|$)/u.test(arg))
+const testCoverage = coverageOption !== undefined && !/^--no[-_]/u.test(coverageOption)
+if (process.env.NODE_V8_COVERAGE || testCoverage) {
+  // Node may already have enabled the runner's cache at startup. Disable it for
+  // test workers and their servers before those processes load any test code.
+  delete process.env.NODE_COMPILE_CACHE
+  process.env.NODE_DISABLE_COMPILE_CACHE = '1'
+} else {
+  const baseDirectory = resolve(process.env.NODE_COMPILE_CACHE || join(tmpdir(), 'node-compile-cache'))
+  const { directory } = enableCompileCache(baseDirectory)
+  // An already-enabled cache reports its versioned directory. Children need the
+  // original base so Node does not append another version directory on startup.
+  if (directory) process.env.NODE_COMPILE_CACHE = baseDirectory
+}
 
 registerHooks({
   load(url, context, nextLoad) {

@@ -5,10 +5,10 @@
 // is the only place production code reads the constant from, so
 // password-crypto.js picks up the override transparently.
 //
-// Import this BEFORE any module that (transitively) imports
-// password-crypto, so the mock is registered before the import map
-// resolves. Static imports are hoisted in source order, so the
-// import line for this helper must precede everything else.
+// Import this statically, then use await import() for every module
+// that (transitively) imports password-crypto. Static imports are
+// linked before this helper runs, regardless of source order, so
+// they can capture the real iteration count before it is mocked.
 //
 // Requires `--experimental-test-module-mocks`. Without the flag,
 // `mock.module` is undefined; the helper no-ops so per-file runs

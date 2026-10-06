@@ -103,7 +103,7 @@ test('config discovery ownership agrees across the grid, inspector, dependency g
       const metadata = parseBundleMetadata(await createBundleMetadata(details), details.integrity)
       for (const input of [details, metadata]) {
         const graph = bundleDependencyChains(input, { packageKey: name, version: '1.0.0' })
-        assert.ok(graph.imports.get(sourceDir).has(targetDir))
+        assert.equal(graph.imports.get(sourceDir).has(targetDir), !excluded)
         const result = layoutDependencyChains(graph)
         assert.equal(result.boxes.filter(box => box.members.length > 1).length, expectedCycles)
         assert.equal(result.boxes.length, expectedCycles ? 1 : 2)
