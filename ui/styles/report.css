@@ -2029,6 +2029,7 @@ bundle-search {
     & .bundles-report-chip .brand-claude   { & .bg { fill: #d97757; } & .fg { fill: #fff; } }
     & .bundles-report-chip .brand-codex    { & .bg { fill: #fff; stroke: #000; stroke-width: .5; } & .fg { fill: #000; } }
     & .bundles-report-chip .brand-vercel   { & .bg { fill: #000; stroke: #fff; stroke-width: .5; } & .fg { fill: #fff; } }
+    & .bundles-report-chip .brand-markdown { & .bg { fill: #374151; } & .fg { fill: #fff; } }
     & .bundles-report-chip .brand-piolium  { & .bg { fill: #fbb829; } & .fg { fill: #1c1b19; } }
   }
 

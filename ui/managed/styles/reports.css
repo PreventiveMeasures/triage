@@ -18,6 +18,11 @@
   --brand-fg:#fff;
   background: var(--brand-bg);
 }
+.report-logo.brand-markdown {
+  --brand-bg:#374151;
+  --brand-fg:#fff;
+  background: var(--brand-bg);
+}
 .report-logo.brand-piolium {
   --brand-bg:#fbb829;
   --brand-fg:#1c1b19;

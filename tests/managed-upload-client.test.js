@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { managedFetch, setPreviewRole } from '../client/managed/request.js'
 import { uploadReport } from '../ui/managed/admin-api.js'
+import { genericMarkdown } from './_generic-markdown.js'
 
 const CHUNK = 3 * 1024 * 1024
 
@@ -121,4 +122,31 @@ test('failed chunks, finalization, network errors and cancellation discard all a
     assert.equal(calls.filter(call => call.options.method === 'DELETE').length, 1)
     fetch.mock.restore()
   }
+})
+
+
+test('managed generic Markdown upload splits by product before sending bytes', async t => {
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url === '/api/config') return Response.json({ managed: {} })
+    calls.push({ url, headers: new Headers(options.headers), data: JSON.parse(await options.body.text()) })
+    return Response.json({ id: calls.length })
+  })
+  await uploadReport(new File([genericMarkdown], 'audit.md'), 'csrf')
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls.map(call => call.data.repo.github), ['a/a', 'a/b'])
+  assert.deepEqual(calls.map(call => call.data.findings.map(finding => finding.sourceId)), [['AAA-02'], ['BBB-05']])
+  for (const call of calls) {
+    assert.equal(call.url, '/api/admin/reports')
+    assert.equal(call.data.source, 'markdown-generic')
+    assert.equal(call.headers.get('x-csrf-token'), 'csrf')
+    assert.match(decodeURIComponent(call.headers.get('x-report-filename')), /audit: Product%20[AB]\.generic-md$/u)
+  }
+})
+
+test('invalid generic Markdown uploads reject before sending any product', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('unexpected upload') })
+  const invalid = genericMarkdown.replace('a/b/blob/abcdef0/f/g/h.js', 'a/other/blob/abcdef0/f/g/h.js')
+  await assert.rejects(uploadReport(new File([invalid], 'bad.md'), 'csrf'), /exactly one repository/u)
+  assert.equal(fetch.mock.callCount(), 0)
 })

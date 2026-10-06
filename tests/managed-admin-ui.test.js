@@ -454,6 +454,7 @@ test('upload batches preserve arrival order, use the current token without locat
     const page = createPage(customElements.get(`managed-admin-${kind}s`))
     page.session = adminSession
     const first = Promise.withResolvers()
+    const firstStarted = Promise.withResolvers()
     const requests = []
     let refreshes = 0
     const fetch = t.mock.method(globalThis, 'fetch', (url, options) => {
@@ -463,6 +464,7 @@ test('upload batches preserve arrival order, use the current token without locat
         return Promise.resolve(Response.json({ [`${kind}s`]: [], repos: [] }))
       }
       requests.push({ name: options.body.name, headers: options.headers })
+      firstStarted.resolve()
       return requests.length === 1 ? first.promise : Promise.resolve(new Response('', { status: 500 }))
     })
     try {
@@ -470,6 +472,7 @@ test('upload batches preserve arrival order, use the current token without locat
       assert.equal(refreshes, 0, 'an empty selection must not reload the page')
       const pending = page._upload([new File(['{}'], 'first.json'), new File(['{}'], 'second.json')])
       await page._upload([new File(['{}'], 'dropped.json')])
+      await firstStarted.promise // report uploads may read and split Markdown before sending
       assert.equal(page._busy, true)
       assert.equal(requests.length, 1, 'only one upload runs at a time')
       page.session = { ...adminSession, csrfToken: 'rotated' }

@@ -1,3 +1,4 @@
+import { splitMarkdownImport } from '../../common/markdown-import.js'
 import { managedFetch } from '../../client/managed/request.js'
 
 // Keep transport setup shared while endpoint-specific validation and messages
@@ -146,6 +147,16 @@ export async function createBundle(input, csrfToken, signal) {
 // the bytes + records the metadata/attribution + auto-links the bundle. Throws
 // with the status word the row surfaces (e.g. 413 → too large).
 export async function uploadReport(file, csrfToken, repoId = null, directory = '') {
+  const products = splitMarkdownImport(await file.text(), file.name)
+  if (!products) return uploadSingleReport(file, csrfToken, repoId, directory)
+  const results = []
+  for (const { name, content } of products) {
+    results.push(await uploadSingleReport(new File([content], name, { type: 'application/json' }), csrfToken, repoId, directory))
+  }
+  return results.at(-1)
+}
+
+async function uploadSingleReport(file, csrfToken, repoId, directory) {
   const headers = { 'content-type': file.type || 'application/json', 'x-report-filename': encodeURIComponent(file.name) }
   if (csrfToken) headers['x-csrf-token'] = csrfToken
   if (repoId != null) headers['x-repo-id'] = String(repoId)

@@ -161,6 +161,7 @@ const GROUP_LABELS = {
   'codex-security': 'Codex Security',
   'deepsec': 'DeepSec',
   'piolium': 'Piolium',
+  'markdown-generic': 'Markdown (generic)',
   [LINKS_KIND]: 'Links',
 }
 
@@ -168,7 +169,7 @@ const GROUP_LABELS = {
 // named sources in alphabetical-ish reading order, and Links last:
 // it's about the reports above it, so it reads as their footnote
 // rather than as another one of them.
-const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium', LINKS_KIND]
+const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium', 'markdown-generic', LINKS_KIND]
 
 
 // Live module state — the search-box query, applied as a

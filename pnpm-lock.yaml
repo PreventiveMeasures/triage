@@ -15,8 +15,8 @@ importers:
         specifier: 1.0.0-beta.5
         version: 1.0.0-beta.5
       '@preventive/report':
-        specifier: 1.0.0-alpha.5
-        version: 1.0.0-alpha.5
+        specifier: github:PreventiveMeasures/libraries#122b91b42455f2a1eabcfdfa28125ada46fe303d&path:/report
+        version: https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/122b91b42455f2a1eabcfdfa28125ada46fe303d#path:/report
       '@preventive/upstream':
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
@@ -613,8 +613,9 @@ packages:
     resolution: {integrity: sha512-yMeHF6Wy6U2L+jcu+YWEtDmxQcDE0ptJmYMG5f8+N1ObzBOgl97I643MZOhH6YDSFG7DQyW9YmQxto+FJvHgmQ==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.5.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/report@1.0.0-alpha.5':
-    resolution: {integrity: sha512-uGIWb7nBJvHPXT7TrOsqNnpXKDSMm+KdLIxdj3IK5BFp/hh0+JqJQl5oBtRgvcxCETeGws3MPCRMgWTudTuxTA==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.5.tgz}
+  '@preventive/report@https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/122b91b42455f2a1eabcfdfa28125ada46fe303d#path:/report':
+    resolution: {gitHosted: true, integrity: sha512-c8RXJV8/5MQUDBqGdLrmrnGOfL5Hsc81+l4vqB/GtRc0tiZbtgTkmjQudhDtjcJ2tZeGaoeJpaSE3RzXz5oJ4A==, tarball: https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/122b91b42455f2a1eabcfdfa28125ada46fe303d}
+    version: 1.0.0-alpha.5
     engines: {node: '>=24.14.0'}
 
   '@preventive/terminal@2.0.0-beta.1':
@@ -1731,7 +1732,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/report@1.0.0-alpha.5': {}
+  '@preventive/report@https://codeload.github.com/PreventiveMeasures/libraries/tar.gz/122b91b42455f2a1eabcfdfa28125ada46fe303d#path:/report': {}
 
   '@preventive/terminal@2.0.0-beta.1':
     dependencies:

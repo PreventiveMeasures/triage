@@ -262,3 +262,16 @@ describe('displayName — the label a file row shows', () => {
     assert.equal(displayName('dump.json'), 'dump.json')
   })
 })
+
+
+it('shows generic Markdown with its source label, Markdown icon and decoded product name', () => {
+  const name = 'audit: Product%20A.generic-md'
+  setCount(name, 1, 'markdown-generic')
+  assert.equal(groupOf(name), 'markdown-generic')
+  assert.equal(reportGroup(name, 'markdown-generic'), 'markdown-generic')
+  assert.equal(PRODUCER_LABELS['markdown-generic'], 'Markdown (generic)')
+  assert.match(FILE_ICONS['markdown-generic'], /brand-markdown/u)
+  assert.equal(displayName(name), 'audit: Product A')
+  assert.equal(displayName('audit: %invalid.generic-md'), 'audit: %invalid')
+  assert.equal(findingBrand({ source: 'markdown-generic' }), 'markdown-generic')
+})

@@ -31,16 +31,16 @@ export const FILE_ICONS = {
 }
 
 // The named buckets, by the `source` marker a report carries
-// (@preventive/report/src/labels.js SOURCE_LABELS names the same four). A report
+// (@preventive/report/src/labels.js SOURCE_LABELS names them). A report
 // naming none — the analyzer's own dump — belongs to `default`.
-const SOURCE_GROUPS = new Set(['claude-security', 'codex-security', 'deepsec', 'piolium'])
+const SOURCE_GROUPS = new Set(Object.keys(SOURCE_LABELS))
 
 // Who PRODUCED a report in this bucket — the word to put beside its
 // sticker when the sticker alone is the signal, as in the finding
 // card's "Duplicates:" row (a mark with no text beside it says
 // nothing to a reader who can't see it).
 //
-// The four named producers come straight from the report library so
+// The named producers come straight from the report library so
 // its word and this one can't drift. `default` is the exception, and
 // it says DeepView rather than the sidebar's "Reports": that section
 // header groups analyzer-native dumps without naming the pipeline,
@@ -152,6 +152,7 @@ export function reportGroup(name, kind) {
   if (kind === LINKS_KIND) return LINKS_KIND
   if (kind !== undefined) return SOURCE_GROUPS.has(kind) ? kind : 'default'
   const lower = name.toLowerCase()
+  if (lower.endsWith('.generic-md')) return 'markdown-generic'
   if (lower.endsWith('.codex')) return 'codex-security'
   if (lower.endsWith('.md')) return 'claude-security'
   return 'default'
@@ -176,6 +177,10 @@ export function isLinksFile(name) {
 // `.md` extension and need no transform.
 export function displayName(name) {
   const lower = name.toLowerCase()
+  if (lower.endsWith('.generic-md')) {
+    const stem = name.slice(0, -'.generic-md'.length)
+    try { return decodeURIComponent(stem) } catch { return stem }
+  }
   if (lower.endsWith('.codex')) return name.slice(0, -'.codex'.length).replaceAll('__', '/')
   return name
 }
