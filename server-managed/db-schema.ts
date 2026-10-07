@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS managed_bundle (
   repo_id      INTEGER REFERENCES managed_selected_repo(repo_id) ON DELETE SET NULL,
   repo_directory  TEXT NOT NULL DEFAULT '',
   visible      INTEGER NOT NULL DEFAULT 1,
-  uploaded_at  INTEGER NOT NULL
+  uploaded_at  INTEGER NOT NULL,
+  -- 'upload' or 'build' (generated on this server). A server build of bytes
+  -- already stored promotes the row to 'build'; NULL predates the column.
+  provenance   TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS managed_bundle_uploaded_at_idx ON managed_bundle(uploaded_at);

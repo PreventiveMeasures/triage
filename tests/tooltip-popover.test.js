@@ -57,6 +57,10 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     delete target.dataset.tooltipStats
     showTooltip(target)
     assert.equal(node.children[1].children[1].textContent, 'Stasis', 'missing counts do not appear as zero')
+    target.dataset.tooltipBuilt = 'true'
+    showTooltip(target)
+    assert.equal(node.children[1].children[1].textContent, 'Stasis · Built on server', 'a visible tooltip follows the build label')
+    delete target.dataset.tooltipBuilt
     for (const length of [40, 64]) {
       target.dataset.tooltipCommit = '0123456789abcdef'.repeat(4).slice(0, length)
       showTooltip(target)

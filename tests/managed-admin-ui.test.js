@@ -41,6 +41,23 @@ test('managed report labels, actions and search use decoded product names', (t) 
   assert.equal(report.filename, 'Audit%20notes: Product%20A%2FB%20100%25.generic-md')
 })
 
+test('managed bundle rows label server builds, which search can find', (t) => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  // Static template text as well as interpolated values.
+  function markup(value) {
+    if (Array.isArray(value)) return value.map(markup).join('')
+    return value?.strings ? value.strings.map((part, i) => part + (i < value.values.length ? markup(value.values[i]) : '')).join('') : String(value ?? '')
+  }
+  const bundle = { id: 'b', filename: 'org-repo.aaaaaaa.stasis.code.br', kind: 'stasis', byteSize: 1, visible: true }
+  assert.match(markup(page._row({ ...bundle, provenance: 'build' })), /class="bundle-provenance"[^>]*>Built</u)
+  for (const provenance of ['upload', null]) assert.doesNotMatch(markup(page._row({ ...bundle, provenance })), /bundle-provenance/u)
+  page._data = { bundles: [{ ...bundle, provenance: 'build' }, { ...bundle, id: 'u', provenance: 'upload' }] }
+  const row = t.mock.method(page, '_row', () => null)
+  page._query = 'built'
+  page._body()
+  assert.deepEqual(row.mock.calls.map(call => call.arguments[0].id), ['b'])
+})
+
 test('repository removal requires valid impact and confirmation, including after a failed load', async (t) => {
   const page = createPage(Repositories)
   let response = new Response('unavailable', { status: 503 })

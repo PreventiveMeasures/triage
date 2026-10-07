@@ -10,7 +10,7 @@ import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-met
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { BUNDLE_BUILD_LEASE_SCHEMA } from './bundle-build-leases.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
-import { ACTIVITY_SCHEMA } from './activity.ts'
+import { ACTIVITY_SCHEMA, uploadAction } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
 import { managedTableRenames } from './db-table-names.ts'
@@ -33,7 +33,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 19 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 20 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -83,6 +83,14 @@ async function migrateIssueFixes(db: PgConnection): Promise<void> {
   await db.query('ALTER TABLE managed_finding_issue ADD COLUMN IF NOT EXISTS auto_fix_url TEXT, ADD COLUMN IF NOT EXISTS auto_fix_checked_at BIGINT')
   await db.query(postgresSchema(revisionSchema(true)))
   await db.query('INSERT INTO managed_schema_version VALUES (19)')
+}
+
+// Existing rows stay NULL (unknown): some may have been built on the server.
+async function migrateBundleProvenance(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 20')).rows.length > 0) return
+  await db.query('ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS provenance TEXT')
+  await createUploadTrigger(db, 'bundle', false)
+  await db.query('INSERT INTO managed_schema_version VALUES (20)')
 }
 
 async function initialize(db: PgConnection): Promise<void> {
@@ -158,7 +166,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')
@@ -172,7 +180,7 @@ async function createUploadTrigger(db: PgConnection, type: string, createTrigger
       INSERT INTO managed_activity (id, kind, actor, action, repo, report_id, report, at, bundle_id, actor_id)
       VALUES ('${type}-upload:' || NEW.id, 'upload',
         COALESCE(NEW.uploaded_by_login, (SELECT login FROM managed_user WHERE id = NEW.uploaded_by)),
-        'uploaded a ${type}', (SELECT full_name FROM managed_selected_repo WHERE repo_id = NEW.repo_id),
+        ${uploadAction(type, 'NEW')}, (SELECT full_name FROM managed_selected_repo WHERE repo_id = NEW.repo_id),
         ${type === 'report' ? 'NEW.id' : 'NULL'}, NEW.filename, NEW.uploaded_at,
         ${type === 'bundle' ? 'NEW.id' : 'NULL'}, NEW.uploaded_by);
       RETURN NEW;
