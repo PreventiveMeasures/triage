@@ -17,7 +17,7 @@ export interface BundleBuildInput {
   commit: string
   entries: string[]
   directory: string
-  options: { conditions?: string[]; mainFields?: string[]; metro?: boolean; platforms?: string[]; typescript?: boolean; jsx?: boolean }
+  options: { conditions?: string[]; mainFields?: string[]; metro?: boolean; platforms?: string[]; jsx?: boolean }
   // What the stored bundle records; null for Solidity, which takes no conditions.
   conditions: BundleBuildConditions | null
 }
@@ -54,13 +54,13 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
       if (names.length !== 1 || names[0] !== 'react-native') return fail('metro-conditions')
       if (!Array.isArray(platforms) || platforms.length === 0 || platforms.length > 2
         || !platforms.every(platform => ['ios', 'android'].includes(platform))) return fail('bad-conditions')
-      Object.assign(options, { metro: true, platforms: [...new Set(platforms)] })
+      // React Native's convention puts JSX in .js files, which Stasis parses as
+      // JSX only on request. TypeScript is left to Stasis to detect.
+      Object.assign(options, { metro: true, platforms: [...new Set(platforms)], jsx: true })
     } else {
       options.conditions = [...new Set(names)]
       if (preset === 'browser') options.mainFields = ['browser', 'module', 'main']
     }
-    options.typescript = true
-    options.jsx = true
     recorded = { preset: preset as BundleBuildConditions['preset'], conditions: [...new Set(names as string[])],
       platforms: options.platforms ?? [] }
   }
