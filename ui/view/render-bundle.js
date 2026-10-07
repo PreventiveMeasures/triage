@@ -949,7 +949,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
             data-tooltip-version=${info?.version ?? nothing}
             data-tooltip-files=${info?.fileCount ?? nothing}
             data-tooltip-repo=${info?.github ? info.github + (info.directory ? `/${info.directory}` : '') : nothing}
-            data-tooltip=${hasDetails ? tooltip : nothing}>
+            data-tooltip=${hasDetails ? tooltip : nothing}
+            data-tooltip-placement=${hasDetails ? 'right-start' : nothing}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
             ${pkg ? packageIcon : nothing}
             <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored })}
