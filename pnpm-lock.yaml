@@ -15,8 +15,8 @@ importers:
         specifier: 1.0.0-beta.5
         version: 1.0.0-beta.5
       '@preventive/report':
-        specifier: 1.0.0-alpha.7
-        version: 1.0.0-alpha.7
+        specifier: 1.0.0-alpha.8
+        version: 1.0.0-alpha.8
       '@preventive/upstream':
         specifier: 1.0.0-alpha.10
         version: 1.0.0-alpha.10
@@ -617,8 +617,8 @@ packages:
     resolution: {integrity: sha512-Dfr/iHIUfsMQqbC9sJ10LaHdKL+Buf7D1ZAqZXcFpgU2N13uDsgA77qmjlmD7o7IWTi9suOC6LclAZyFNLPzRA==, tarball: https://registry.npmjs.org/@preventive/lockfile/-/lockfile-1.0.0-alpha.7.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/report@1.0.0-alpha.7':
-    resolution: {integrity: sha512-eGQlraZ1ulnY5QPqZKupte5ntMY3XtptVcTVBtZ7OnI9Sh+J/vhWj6PFdGfydhaeiNlcVyuah/TZ9tW0pSPgew==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.7.tgz}
+  '@preventive/report@1.0.0-alpha.8':
+    resolution: {integrity: sha512-MsUUV09UBcKc5ihaqdbSQHUegg9pXUk7Y7oMibZitdH/ScXjDpaL58Cswtm8URzp1Wmj6gH70wyWxvJdEqL5zQ==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.8.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/terminal@2.0.0-beta.1':
@@ -1741,7 +1741,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/report@1.0.0-alpha.7': {}
+  '@preventive/report@1.0.0-alpha.8': {}
 
   '@preventive/terminal@2.0.0-beta.1':
     dependencies:
