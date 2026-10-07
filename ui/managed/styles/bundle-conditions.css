@@ -41,6 +41,7 @@ li {
   display: inline-flex; align-items: center; gap: .35rem; min-width: 0; max-width: 100%; min-height: 1.5rem; padding: 0 .25rem 0 .5rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); background: var(--surface); color: var(--text); font-size: .73rem;
 }
+li.preset { padding-right: .5rem; }
 li code { overflow-wrap: anywhere; }
 li button {
   display: grid; place-items: center; flex: none; width: 1.3rem; height: 1.3rem; padding: 0;

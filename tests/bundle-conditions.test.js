@@ -70,7 +70,7 @@ test('Metro hides manual conditions and keeps its react-native condition unchang
   assert.equal(hidden('<div id="manual-conditions" ?hidden='), false, 'leaving Metro restores the open editor')
 })
 
-test('custom conditions support adding, deduplicating, removing, and restoring a preset', () => {
+test('custom conditions support adding, deduplicating, and removing', () => {
   const control = new BundleConditions()
   control._draft = ' development, custom:condition node development '
   const form = templates(control.render()).find(template => template.strings.some(string => string.includes('class="condition-editor"')))
@@ -83,11 +83,58 @@ test('custom conditions support adding, deduplicating, removing, and restoring a
   const remove = templates(control.render()).find(template => template.values.includes('Remove condition development'))
   remove.values.find(value => typeof value === 'function')()
   assert.deepEqual(control.value.conditions, ['node', 'custom:condition'])
-  control.selectPreset('node')
-  assert.deepEqual(control.value, defaultBundleConditions())
   const snapshot = control.value
   snapshot.conditions.push('external mutation')
-  assert.deepEqual(control.value.conditions, ['node'])
+  assert.deepEqual(control.value.conditions, ['node', 'custom:condition'])
+})
+
+test('switching presets replaces only the preset condition and keeps manual conditions', () => {
+  const control = new BundleConditions()
+  const changes = []
+  control.addEventListener('conditions-change', event => changes.push(event.detail.conditions))
+  control._draft = 'development browser'
+  control.addConditions()
+  control.selectPreset('browser')
+  control.selectPreset('metro')
+  control.selectPreset('node')
+  assert.deepEqual(changes, [
+    ['node', 'development', 'browser'],
+    ['browser', 'development'],
+    ['react-native'],
+    ['node', 'development', 'browser'],
+  ], 'Metro sets its own conditions; a manual browser merges into the Browser preset')
+  control.selectPreset('browser')
+  control.removeCondition('browser')
+  assert.deepEqual(control.value.conditions, ['browser', 'development'])
+  control.selectPreset('node')
+  control.removeCondition('browser')
+  control._draft = Array.from({ length: 15 }, (_, i) => `condition-${i}`).join(' ')
+  control.addConditions()
+  assert.ok(control._error, 'the preset condition counts toward the limit of 16')
+  control._draft = Array.from({ length: 14 }, (_, i) => `condition-${i}`).join(' ')
+  control.addConditions()
+  assert.equal(control.value.conditions.length, 16)
+})
+
+test('the Node.js and Browser preset conditions stay first and cannot be removed', () => {
+  const control = new BundleConditions()
+  const removable = name => templates(control.render()).some(template => template.values.includes(`Remove condition ${name}`))
+  for (const [preset, condition] of [['node', 'node'], ['browser', 'browser']]) {
+    control.selectPreset(preset)
+    control._draft = `development ${condition}`
+    control.addConditions()
+    assert.deepEqual(control.value.conditions, [condition, 'development'], 'retyping the preset condition is a no-op')
+    assert.equal(removable(condition), false)
+    assert.equal(removable('development'), true)
+    control.removeCondition(condition)
+    assert.deepEqual(control.value.conditions, [condition, 'development'])
+    control.removeCondition('development')
+    assert.deepEqual(control.value.conditions, [condition])
+  }
+  control._draft = 'node'
+  control.addConditions()
+  assert.deepEqual(control.value.conditions, ['browser'], 'Browser builds resolve with node already')
+  assert.match(control._error, /node.*automatically/u)
 })
 
 test('typed conditions are accepted on space and when the field loses focus, without an add button', () => {
@@ -123,7 +170,7 @@ test('invalid or excessive custom conditions do not partially apply or change th
   const control = new BundleConditions()
   const changes = []
   control.addEventListener('conditions-change', event => changes.push(event.detail))
-  for (const draft of ['import', 'require', 'default', 'valid .invalid', '123', 'x'.repeat(65), Array.from({ length: 16 }, (_, i) => `condition-${i}`).join(' ')]) {
+  for (const draft of ['import', 'require', 'default', 'node-addons', 'module-sync', 'valid .invalid', '123', 'x'.repeat(65), Array.from({ length: 16 }, (_, i) => `condition-${i}`).join(' ')]) {
     control._draft = draft
     control.addConditions()
     assert.deepEqual(control.value, defaultBundleConditions())
