@@ -18,8 +18,8 @@ importers:
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
       '@preventive/upstream':
-        specifier: 1.0.0-alpha.10
-        version: 1.0.0-alpha.10
+        specifier: 1.0.0-alpha.11
+        version: 1.0.0-alpha.11
       ws:
         specifier: ^8.20.1
         version: 8.21.0
@@ -645,6 +645,15 @@ packages:
 
   '@preventive/upstream@1.0.0-alpha.10':
     resolution: {integrity: sha512-PF8XLDtxk3af5bnVI653FAnqszT4AETjjidEHFQeO4SmTcsEoucvGwxYQoSD9ZCInIZRZyVIwSBPonAewPsDvA==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.10.tgz}
+    engines: {node: '>=24.14.0'}
+    peerDependencies:
+      semver: ^7.5.2
+    peerDependenciesMeta:
+      semver:
+        optional: true
+
+  '@preventive/upstream@1.0.0-alpha.11':
+    resolution: {integrity: sha512-6twGUJhvrEuhHZ0BuK7SFcTS5Y2MdDaJq1TBtL4SXwEKAUz+N+8YmxbQgR8LGvr6KyvF9t8QOM9q1lrAmAKKHQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.11.tgz}
     engines: {node: '>=24.14.0'}
     peerDependencies:
       semver: ^7.5.2
@@ -1756,6 +1765,8 @@ snapshots:
       - '@noble/hashes'
 
   '@preventive/upstream@1.0.0-alpha.10': {}
+
+  '@preventive/upstream@1.0.0-alpha.11': {}
 
   '@preventive/vfs@1.0.0-beta.4': {}
 
