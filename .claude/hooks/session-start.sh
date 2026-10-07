@@ -71,15 +71,30 @@ setup_node() {
     nvm use || abort "nvm use failed after install (.nvmrc=$(cat .nvmrc 2>/dev/null || echo '<missing>'))"
     NODE_BIN="$(dirname "$(nvm which current)")" || abort "nvm which current failed"
   else
-    # Without nvm, carry on with the Node on PATH when it is new enough,
-    # so the session still gets its dependencies installed. .nvmrc pins
-    # the engines floor, which pnpm only warns about, so refuse anything
-    # older here.
-    node -e '
-      const [have, want] = [process.version, process.argv[1]].map((v) => v.replace(/^v/, "").split(".").map(Number))
-      process.exitCode = have.reduce((d, n, i) => d || n - want[i], 0) < 0 ? 1 : 0
-    ' "$(cat .nvmrc)" ||
-      abort "node $(node --version 2>/dev/null || echo 'none') on PATH is older than $(cat .nvmrc 2>/dev/null || echo '<missing>') from .nvmrc"
+    # Without nvm, carry on with the Node on PATH when it satisfies
+    # package.json's engines.node, so the session still gets its
+    # dependencies installed. pnpm only warns on an engines mismatch, so
+    # refuse it here. .nvmrc pins the preferred version, not the floor,
+    # so it only stands in when engines.node is missing or uses more
+    # than `>=` and `<` comparators, joined by spaces and `||`.
+    local wanted
+    if ! wanted="$(node -e '
+      let range = ""
+      try { range = require("./package.json").engines?.node ?? "" } catch {}
+      const parse = (v) => v.replace(/^v/, "").split(".").map(Number)
+      const cmp = (a, b) => [0, 1, 2].reduce((d, i) => d || (a[i] || 0) - (b[i] || 0), 0)
+      const have = parse(process.version)
+      const sets = range.split("||").map((set) => set.trim().split(/\s+/).map((c) => /^(>=|<)v?(\d+(?:\.\d+){0,2})$/.exec(c)))
+      if (range.trim() && sets.flat().every(Boolean)) {
+        console.log(`engines.node ${range} from package.json`)
+        process.exitCode = sets.some((set) => set.every(([, op, v]) => (cmp(have, parse(v)) >= 0) === (op === ">="))) ? 0 : 1
+      } else {
+        console.log(`${process.argv[1] || "<missing>"} from .nvmrc`)
+        process.exitCode = cmp(have, parse(process.argv[1])) < 0 ? 1 : 0
+      }
+    ' "$(cat .nvmrc 2>/dev/null)")"; then
+      abort "node $(node --version 2>/dev/null || echo 'none') on PATH doesn't satisfy ${wanted:-the required version}"
+    fi
     NODE_BIN="$(dirname "$(command -v node)")"
   fi
 }
@@ -123,8 +138,26 @@ fi
 # without corepack (Node 25+ no longer bundles it), or a corepack that
 # can't write its shims next to a root-owned Node, get that same version
 # from npm instead, in a prefix of the hook's own: npm's global prefix
-# may be root-owned too, or have its bin dir off PATH. Non-fatal — a
-# stale system pnpm still mostly works.
+# may be root-owned too, or have its bin dir off PATH. Each pinned
+# version gets its own prefix, left alone once installed, since sessions
+# sharing $HOME may pin different versions and each keeps the one its
+# persisted PATH points at. Non-fatal — a stale system pnpm still mostly
+# works.
+#
+# Installs $1 into the prefix $2 unless it is already there. npm writes
+# into a temporary prefix renamed into place, so concurrent hooks never
+# share a half-written one; when another hook's rename wins, it is used.
+install_pnpm() {
+  local tmp
+  [ -x "$2/bin/pnpm" ] && return 0
+  mkdir -p "$(dirname "$2")" && tmp="$(mktemp -d "$2.XXXXXX")" || return 1
+  if npm install -g --prefix "$tmp" "$1"; then
+    mv -T "$tmp" "$2" 2>/dev/null || rm -rf "$tmp"
+  else
+    rm -rf "$tmp"
+  fi
+  [ -x "$2/bin/pnpm" ]
+}
 pnpm_ready=0
 if command -v corepack >/dev/null 2>&1; then
   if corepack enable --install-directory "$NODE_BIN"; then
@@ -134,12 +167,13 @@ if command -v corepack >/dev/null 2>&1; then
   fi
 fi
 if [ "$pnpm_ready" -ne 1 ]; then
-  pnpm_prefix="${XDG_CACHE_HOME:-$HOME/.cache}/session-start/npm-global"
+  pnpm_prefix=""
   if pnpm_spec="$(node -p 'require("./package.json").packageManager.split("+")[0]')" &&
-    npm install -g --prefix "$pnpm_prefix" "$pnpm_spec"; then
+    pnpm_prefix="${XDG_CACHE_HOME:-$HOME/.cache}/session-start/$pnpm_spec" &&
+    install_pnpm "$pnpm_spec" "$pnpm_prefix"; then
     prepend_path "$pnpm_prefix/bin"
   else
-    warn "npm install -g --prefix $pnpm_prefix ${pnpm_spec:-pnpm} failed; pnpm pinning may not apply"
+    warn "npm install -g --prefix ${pnpm_prefix:-<none>} ${pnpm_spec:-pnpm} failed; pnpm pinning may not apply"
   fi
 fi
 
