@@ -50,7 +50,11 @@ test('dependency files link into their own repository and name their package, ne
   assert.equal(bundleFileGithub(bundle, 'node_modules/at-root/index.js').href, 'https://github.com/org/at-root/blob/HEAD/index.js')
   assert.equal(bundleFileGithub(bundle, 'node_modules/from-manifest/index.js').path, 'packages/m/index.js')
   assert.equal(bundleFileGithub(bundle, 'node_modules/at-root/node_modules/nested/index.js').href, 'https://github.com/org/nested/blob/HEAD/pkg/index.js', 'the nearest package places a file')
-  for (const path of ['node_modules/unplaced/index.js', 'node_modules/no-repo/index.js', 'vendor/org/php/src/A.php']) {
-    assert.equal(bundleFileGithub(bundle, path), null, path)
-  }
+  // Best effort: a dependency whose directory is unknown links at its repository's root.
+  assert.equal(bundleFileGithub(bundle, 'node_modules/unplaced/index.js').href, `https://github.com/org/unplaced/blob/${commit}/index.js`)
+  assert.deepEqual(bundleFileGithub(bundle, 'vendor/org/php/src/A.php'), {
+    href: 'https://github.com/org/php/blob/HEAD/src/A.php', github: 'org/php', path: 'src/A.php', commit: null,
+    package: { name: 'org/php', version: '1.0.0', ecosystem: 'composer' },
+  })
+  assert.equal(bundleFileGithub(bundle, 'node_modules/no-repo/index.js'), null, 'a dependency naming no repository never takes the app')
 })

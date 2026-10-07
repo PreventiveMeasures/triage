@@ -15,11 +15,10 @@ function fileLink(github, directory, file, commit, pkg) {
 
 // Where a stasis bundle file sits on GitHub, and the package it ships in,
 // from the nearest module that records it, at the recorded commit if any.
-// Own source follows the bundle's stamp, an unrecorded directory being the
-// repository root as in the Overview's origin link. A dependency follows its
-// own repository (recorded, or its captured package.json's, as the package
-// tooltips read it), and only where the directory in it is known too; it
-// never borrows the application's.
+// Own source follows the bundle's stamp; a dependency its own repository
+// (recorded, or its captured package.json's, as the package tooltips read
+// it), never the application's. Best effort: a directory neither records is
+// taken for the repository root, as the Overview's origin link takes it.
 export function bundleFileGithub(details, path) {
   if (details?.kind !== 'stasis' || typeof path !== 'string') return null
   const bundle = details.bundle
@@ -36,6 +35,6 @@ export function bundleFileGithub(details, path) {
     return github ? fileLink(github, repoDirectory(bundle.repo), path, bundle.repo?.commit, null) : null
   }
   const pkg = bundleSourcePackageInfo({ name: info.name, ecosystem }, info, 0)
-  if (!pkg.github || typeof pkg.directory !== 'string') return null
-  return fileLink(pkg.github, pkg.directory, rel, reportRepoGithub(info) ? info.repo.commit : undefined, pkg)
+  if (!pkg.github) return null
+  return fileLink(pkg.github, pkg.directory ?? '', rel, reportRepoGithub(info) ? info.repo.commit : undefined, pkg)
 }
