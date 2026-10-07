@@ -44,10 +44,18 @@ test('repository and prefix errors reject the complete import, while other forma
   const invalidRepo = genericMarkdown.replace('a/b/blob/abcdef0/f/g/h.js', 'a/other/blob/abcdef0/f/g/h.js')
   assert.throws(() => splitMarkdownImport(invalidRepo, 'bad.md'), /exactly one repository/u)
   assert.equal(readManagedReport(invalidRepo, 'bad.md').data, null)
-  assert.throws(() => splitMarkdownImport(genericMarkdown.replaceAll('BBB-05', 'AAA-05'), 'bad.md'), /unsupported product ID prefixes/u)
+  const invalidPrefix = genericMarkdown.replaceAll('https://github.com/a/b/', 'https://github.com/a/a/')
+  assert.throws(() => splitMarkdownImport(invalidPrefix, 'bad.md'), /unsupported repository ID prefixes/u)
+  assert.equal(readManagedReport(invalidPrefix, 'bad.md').data, null)
   for (const content of ['{"findings":[]}', '# Claude report\n\n## Details\n\nText', 'finding_url,repository\na,b']) {
     assert.equal(splitMarkdownImport(content, 'existing.csv'), null)
   }
+})
+
+test('different repositories can share finding ID prefixes', () => {
+  const reports = splitMarkdownImport(genericMarkdown.replaceAll('BBB-05', 'AAA-05'), 'audit.md')
+  assert.deepEqual(reports.map((report) => JSON.parse(report.content).repo.github), ['a/a', 'a/b'])
+  assert.deepEqual(reports.map((report) => JSON.parse(report.content).findings[0].sourceId), ['AAA-02', 'AAA-05'])
 })
 
 test('unsupported generic Markdown aborts both local and managed imports', async () => {
