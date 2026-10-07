@@ -1842,6 +1842,12 @@ export function setBusyRetryDelay(ms: number): void {
   if (typeof ms === 'number' && ms >= 0) busyRetryDelayMs = ms
 }
 
+// Test-only: resolves once every message received so far has been handled,
+// including an ack's persistence and its follow-up save of later edits.
+export function messagesHandled(): Promise<void> {
+  return messageQueue
+}
+
 // Per-session reset helpers shared by the setServerUrl / setEnabled /
 // setForcedOff toggles below.
 

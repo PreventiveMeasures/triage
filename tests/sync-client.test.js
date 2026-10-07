@@ -32,7 +32,7 @@ const { awaitListening, bootServer, closeWebSocketServer } = await import('./_he
 
 // ─────────── client modules ───────────
 
-const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval, setBusyRetryDelay } = await import('../client/sync/triage-sync.ts')
+const { triageSync, mutateAllSessions, setHeartbeatTimings, setKeyframeInterval, setBusyRetryDelay, messagesHandled } = await import('../client/sync/triage-sync.ts')
 const { state } = await import('../client/state.ts')
 const { saveTriage } = await import('../client/triage.js')
 const { upsertWorkspace, deleteWorkspace, addReportToWorkspace, setReportWorkspace } = await import('../client/workspaces.js')
@@ -84,6 +84,14 @@ function settledAfterAck(workspaceId) {
     && info.baseRevision != null
     && info.pending == null
     && !info.encrypting
+}
+
+// settledAfterAck turns true as soon as an ack clears `pending`, while the
+// ack handler is still persisting; it then saves any edit made meanwhile.
+// A test whose next local edit must stay unsynced waits for the handler.
+async function settleAfterAck(workspaceId, label) {
+  await waitFor(() => settledAfterAck(workspaceId), label)
+  await messagesHandled()
 }
 
 // ─────────── server fixture + per-test workspace ───────────
@@ -268,7 +276,7 @@ describe('triage-sync client', () => {
     const wsId = await startSession(['finding-A'])
     patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
-    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    await settleAfterAck(wsId, 'baseline ack')
 
     // User edits to amber WITHOUT calling saveTriage — simulates a
     // rapid in-flight UI edit between two ticks of the sync loop.
@@ -309,7 +317,7 @@ describe('triage-sync client', () => {
     const wsId = await startSession(['finding-A'])
     patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
-    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    await settleAfterAck(wsId, 'baseline ack')
 
     // User locally re-marks to amber WITHOUT saving — this is the
     // "unsynced overlay" the chain-receive code path captures.
@@ -364,7 +372,7 @@ describe('triage-sync client', () => {
     const wsId = await startSession(['finding-A'])
     patchEntry(state.triage, 'finding-A', { color: 'red' })
     await saveTriage()
-    await waitFor(() => settledAfterAck(wsId), 'baseline ack')
+    await settleAfterAck(wsId, 'baseline ack')
 
     patchEntry(state.triage, 'finding-A', { color: 'amber' })
 
