@@ -103,9 +103,8 @@ export class BundleConditions extends LitElement {
       <div id="manual-conditions" ?hidden=${!this.showConditions || !manual || !this._manualOpen}>
         <form class="condition-editor" @submit=${event => { event.preventDefault(); this.addConditions() }}>
         <ul aria-label="Export conditions">${this._conditions.map(name => html`<li><code>${name}</code><button type="button" aria-label=${`Remove condition ${name}`} @click=${() => this.removeCondition(name)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>
-        <div class="condition-input"><input type="text" aria-label="Add conditions" aria-describedby="conditions-help" aria-invalid=${Boolean(this._error)} aria-errormessage="condition-error" placeholder="Add condition…" autocomplete="off" maxlength="1040" .value=${this._draft} @input=${event => { this._draft = event.target.value; this._error = '' }}>
-          <button type="submit" class="add-condition" aria-label="Add conditions" ?disabled=${!this._draft.trim()}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>
-        </div>
+        <div class="condition-input"><input type="text" aria-label="Add conditions" aria-describedby="conditions-help" aria-invalid=${Boolean(this._error)} aria-errormessage="condition-error" placeholder="Add condition…" autocomplete="off" maxlength="1040" .value=${this._draft} @input=${event => { this._draft = event.target.value; this._error = '' }}
+          @keydown=${event => { if (event.key === ' ' && !event.isComposing) { event.preventDefault(); this.addConditions() } }} @blur=${() => this.addConditions()}></div>
         </form>
         <p id="conditions-help">Package export conditions. <code>import</code> / <code>require</code> and <code>default</code> are automatic.</p>
         ${this._error ? html`<p id="condition-error" class="error" role="alert">${this._error}</p>` : nothing}

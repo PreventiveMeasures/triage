@@ -90,6 +90,35 @@ test('custom conditions support adding, deduplicating, removing, and restoring a
   assert.deepEqual(control.value.conditions, ['node'])
 })
 
+test('typed conditions are accepted on space and when the field loses focus, without an add button', () => {
+  const control = new BundleConditions()
+  const changes = []
+  control.addEventListener('conditions-change', event => changes.push(event.detail))
+  const input = () => templates(control.render()).find(template => template.strings.some(string => string.includes('class="condition-input"')))
+  const handler = name => input().values[input().strings.findIndex(string => string.endsWith(`${name}=`))]
+  assert.equal(input().strings.some(string => string.includes('type="submit"')), false)
+  let prevented = false
+  control._draft = 'development'
+  handler('@keydown')({ key: ' ', isComposing: false, preventDefault() { prevented = true } })
+  assert.equal(prevented, true, 'the separator space is not typed into the next condition')
+  assert.deepEqual(control.value.conditions, ['node', 'development'])
+  assert.equal(control._draft, '')
+  control._draft = 'prod'
+  handler('@keydown')({ key: 'd', isComposing: false, preventDefault() { assert.fail('only space accepts') } })
+  handler('@keydown')({ key: ' ', isComposing: true, preventDefault() { assert.fail('IME composition is left alone') } })
+  assert.equal(control._draft, 'prod')
+  handler('@blur')()
+  assert.deepEqual(control.value.conditions, ['node', 'development', 'prod'])
+  assert.equal(control._draft, '')
+  handler('@blur')()
+  assert.equal(changes.length, 2, 'an empty field accepts nothing on blur')
+  control._draft = 'import'
+  handler('@blur')()
+  assert.equal(control._draft, 'import', 'an invalid draft stays for correction')
+  assert.ok(control._error)
+  assert.equal(changes.length, 2)
+})
+
 test('invalid or excessive custom conditions do not partially apply or change the configuration', () => {
   const control = new BundleConditions()
   const changes = []
