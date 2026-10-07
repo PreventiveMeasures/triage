@@ -276,6 +276,21 @@ test('Code file header links a file to GitHub after copy where its package or bu
   assert.ok(!header('node_modules/no-repo/index.js').includes('bundle-code-github-link'), 'no repository shows no link')
 })
 
+test('Code own files in a managed bundle without a stamp link to its stored repository and directory', () => {
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/index.js': 'app' } }]]) }).serialize())
+  const stored = { repoId: 7, repoFullName: 'org/app', repoDirectory: 'apps/web' }
+  const header = entry => {
+    Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry], bundleSourceFile: 'src/index.js',
+      bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+    return renderText(renderBundlesList([entry])).match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
+  }
+  const managed = header({ name: 'managed.stasis', integrity: 'sha512-managed-github', managedId: 'b1', ...stored })
+  assert.ok(managed.includes('href=https://github.com/org/app/blob/HEAD/apps/web/src/index.js'), 'the stored location fills in the missing stamp')
+  assert.ok(managed.includes('data-tooltip=apps/web/src/index.js'))
+  assert.ok(!header({ name: 'unattached.stasis', integrity: 'sha512-unattached-github', managedId: 'b2', ...stored, repoId: null }).includes('bundle-code-github-link'), 'an unattached bundle has no stored repository')
+  assert.ok(!header({ name: 'local.stasis', integrity: 'sha512-local-github', ...stored }).includes('bundle-code-github-link'), 'only managed bundles have one')
+})
+
 test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
   const commit = '0123456789abcdef'.repeat(3).slice(0, 40)

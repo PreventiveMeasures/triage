@@ -1221,7 +1221,7 @@ function pickDefaultBundleCodeFile(details, sources, issueIndex) {
 // state.bundleSourceFile; on a fresh visit (tab switch nulls the
 // pointer) a default file is auto-opened via
 // pickDefaultBundleCodeFile.
-function renderBundleCodeView(details) {
+function renderBundleCodeView(details, entry = null) {
   const sources = bundleSourcesAsMap(details)
   if (sources.size === 0) {
     return html`<div class="bundle-code-empty">This bundle doesn't carry any source content.</div>`
@@ -1347,7 +1347,7 @@ function renderBundleCodeView(details) {
     ></bundle-code-splitter>
     <div class=${classMap({ 'bundle-code-main': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${path
-        ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings)
+        ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings, entry)
         : html`<div class="bundle-code-placeholder">Pick a file from the tree to view its source.</div>`}
     </div>
   </div>`
@@ -1372,14 +1372,15 @@ function renderBundleCodeFileNav(history) {
 // findings in line order; its (idx, line) pairs ride in a JSON
 // attribute so the events.js delegate steps without re-deriving
 // the per-file findings.
-function renderBundleCodeMain(details, path, content, fileFindings, lineFindings) {
+function renderBundleCodeMain(details, path, content, fileFindings, lineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
   const lineCount = typeof content === 'string' ? content.split('\n').length : 0
   const byteSize = typeof content === 'string' ? utf8ByteLength(content) : 0
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
-  const github = bundleFileGithub(details, path)
+  // A managed bundle's stored repository fills in what its own stamp leaves out.
+  const github = bundleFileGithub(details, path, entry?.managedId && entry.repoId != null ? { github: entry.repoFullName, directory: entry.repoDirectory } : null)
   return html`<header class="bundle-code-main-bar">
       ${renderBundleCodeFileNav(history)}
       ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
@@ -1896,7 +1897,7 @@ function renderBundleSlide(entry) {
               ['terminal', () => html`<div id="bundle-terminal-slot" class="bundle-terminal-slot"></div>`],
               ['graph', () => html`<div id="bundle-graph-slot" class="bundle-graph-slot"></div>`],
               ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
-              ['code', () => renderBundleCodeView(details)],
+              ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details)],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],

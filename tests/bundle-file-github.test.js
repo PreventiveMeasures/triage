@@ -58,3 +58,29 @@ test('dependency files link into their own repository and name their package, ne
   })
   assert.equal(bundleFileGithub(bundle, 'node_modules/no-repo/index.js'), null, 'a dependency naming no repository never takes the app')
 })
+
+test("a managed bundle's stored repository and directory fill in what its stamp leaves out of own files", () => {
+  const stored = { github: 'Org/App', directory: 'apps/web' }
+  const at = (repo, path = 'src/index.js', assigned = stored) => bundleFileGithub(details([app, ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'd' } }]], repo), path, assigned)
+  assert.deepEqual(at(undefined), { href: 'https://github.com/Org/App/blob/HEAD/apps/web/src/index.js', github: 'Org/App', path: 'apps/web/src/index.js', commit: null, package: null })
+  // The stamp wins wherever it records a field; its commit stays with its own repository.
+  assert.equal(at({ github: 'org/app', commit }).href, `https://github.com/org/app/blob/${commit}/apps/web/src/index.js`)
+  assert.equal(at({ github: 'org/app', directory: '' }).path, 'src/index.js')
+  assert.equal(at({ github: 'org/app', directory: 'other' }).path, 'other/src/index.js')
+  // A stored directory never places another repository's files.
+  assert.equal(at({ github: 'org/moved' }).href, 'https://github.com/org/moved/blob/HEAD/src/index.js')
+  assert.equal(at(undefined, 'src/index.js', { github: '', directory: 'apps/web' }), null)
+  assert.equal(at(undefined, 'src/index.js', null), null)
+  assert.equal(at(undefined, 'node_modules/dep/index.js'), null, 'dependencies never take the stored repository')
+})
+
+test('a root module recording an ecosystem is own source, stamped or stored', () => {
+  for (const ecosystem of ['npm', 'composer']) {
+    const root = ['.', { ecosystem, name: ecosystem === 'composer' ? 'org/app' : 'app', version: '1.0.0', files: { 'src/index.js': 'app', 'package.json': JSON.stringify({ repository: 'org/manifest' }) } }]
+    assert.deepEqual(bundleFileGithub(details([root]), 'src/index.js', { github: 'org/app', directory: 'apps/web' }), {
+      href: 'https://github.com/org/app/blob/HEAD/apps/web/src/index.js', github: 'org/app', path: 'apps/web/src/index.js', commit: null, package: null,
+    }, ecosystem)
+    assert.equal(bundleFileGithub(details([root], { github: 'org/app', directory: '', commit }), 'src/index.js').href, `https://github.com/org/app/blob/${commit}/src/index.js`, ecosystem)
+    assert.equal(bundleFileGithub(details([root]), 'src/index.js'), null, `${ecosystem}: the root never reads its manifest as a dependency's`)
+  }
+})
