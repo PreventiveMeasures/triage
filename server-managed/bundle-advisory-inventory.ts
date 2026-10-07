@@ -1,3 +1,4 @@
+import { packageRepo } from '@exodus/stasis-core/bundle-util'
 import type { Package } from '@preventive/upstream/advisories.js'
 import { satisfies, valid } from '@preventive/upstream/semver.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
@@ -28,6 +29,14 @@ function isEvidence(ecosystem: string, name: string, version: string, file: stri
   if (manifests.get(ecosystem)?.includes(file.slice(file.lastIndexOf('/') + 1))) return false
   const stubRange = ecosystem === 'npm' && file === 'browser.js' ? browserStubRanges.get(name) : undefined
   return !stubRange || !valid(version) || !satisfies(version, stubRange)
+}
+
+// The GitHub repository a bundled package.json's text names, read as Stasis
+// records a dependency's (packageRepo) and as Node reads the file, past a byte
+// order mark the bundle keeps. Undefined where it names none or doesn't parse.
+function manifestRepo(text: unknown): Package['github'] {
+  if (typeof text !== 'string') return undefined
+  try { return packageRepo(JSON.parse(text.replace(/^\uFEFF/u, '')))?.github } catch { return undefined }
 }
 
 function supported(ecosystem: string): ecosystem is Package['ecosystem'] {
@@ -67,7 +76,10 @@ export function bundleAdvisoryInventory(details: BundleDetails, paths: Iterable<
     if (!packages.has(key)) packages.set(key, { ecosystem, name, versions: new Set() })
     const pkg = packages.get(key)!
     pkg.versions.add(auditedVersion)
-    const github = ecosystem === 'github' ? undefined : info.repo?.github
+    // A bundle from before Stasis recorded `repo` may still carry the npm
+    // package's package.json; ask the repository it names, as Stasis does.
+    let github = ecosystem === 'github' ? undefined : info.repo?.github
+    if (github === undefined && ecosystem === 'npm') github = manifestRepo(info.files['package.json'])
     if (github !== undefined) {
       // Upstream accepts one repository per package. Conflicting hints (for
       // example, versions from before and after a move) use registry discovery.
