@@ -6,6 +6,7 @@ import { reportRepoGithub } from '@preventive/report'
 import { normalizeEntry } from '../triage-entry.ts'
 import { MAX_FINDING_ID, parseTriageEntryPatch } from '../../common/managed/triage.ts'
 import { importTriageEntries } from './triage-import.js'
+import { RETRY_HINT, importFailure, stopsImport } from './import-failures.js'
 import { normalizeTeamPath } from '../../server-managed/repo-path.ts'
 import { matchRepositoryAlias } from '../../common/managed/repository-alias.ts'
 
@@ -73,7 +74,13 @@ export function workspaceImportApi(request, session, signal) {
       headers: { ...(body instanceof File ? {} : { 'content-type': 'application/json' }), 'x-csrf-token': session.csrfToken, ...extra } })
     signal?.throwIfAborted()
     if (response.status === 409) return { conflict: true }
-    if (!response.ok) throw new Error(`Import request failed (HTTP ${response.status}). You can retry the remaining steps.`)
+    if (!response.ok) {
+      // The server's error code says which check refused the request.
+      const code = await response.json().then(data => typeof data?.error === 'string' ? data.error : '', () => '')
+      signal?.throwIfAborted()
+      const detail = `Import request failed (HTTP ${response.status}${code ? `: ${code}` : ''}).`
+      throw Object.assign(new Error(`${detail} ${RETRY_HINT}`), { detail })
+    }
     const data = await response.json()
     signal?.throwIfAborted()
     return data
@@ -115,6 +122,40 @@ async function refreshReportLocations(plan, api) {
     for (const report of reports) Object.assign(report, reportLocation(report.declaredGithub, report.declaredDirectory, repos, aliases, report.filePrefix))
   }
   return new Set(repos.map(repo => repo.repoId))
+}
+
+// One report's upload, location, team grant, triage and publication. Each
+// step is recorded on the plan, so a retry repeats only what did not finish.
+async function importWorkspaceReport(report, { plan, api, step, activeRepos, defaultRepo, includeTriage, resolveConflicts, signal }) {
+  if (report.links) { await importLinks(report, api); return }
+  const repoId = activeRepos.has(report.repoId) ? report.repoId : defaultRepo
+  if (!report.uploaded) {
+    const uploaded = await api.send('/api/admin/reports', new File([report.content], report.name), {
+      'x-report-filename': encodeURIComponent(report.name), 'x-repo-id': String(repoId), 'x-repo-directory': encodeURIComponent(report.directory),
+    })
+    if (uploaded.conflict) throw new Error(`Could not reuse the stored report ${report.name}. Retry the import.`)
+    report.uploaded = uploaded
+  }
+  // Reused reports keep their stored location, just like source bundles.
+  // Unattached reports and inactive assignments use the import's active repo.
+  const stored = report.uploaded
+  if (!activeRepos.has(stored.repoId)) {
+    await step(`report-repo:${stored.id}:${repoId}:${report.directory}`, async () => {
+      const assigned = await api.send('/api/admin/reports/set-repo', { reportId: stored.id, repoId, directory: report.directory })
+      if (assigned.conflict) throw new Error(`Could not assign the stored report ${report.name} to its repository.`)
+      stored.repoId = repoId
+      stored.repoDirectory = report.directory
+    })
+  }
+  const path = stored.repoDirectory ?? ''
+  await step(`repo:${stored.repoId}:${path}`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId: stored.repoId, path }))
+  if (includeTriage) {
+    await importTriageEntries(plan.triage, {
+      api, resolveConflicts, signal, ids: report.ids, importedIds: plan.importedIds, lookup: plan.lookup,
+      path: `/api/admin/reports/${encodeURIComponent(report.uploaded.id)}/import-triage`,
+    })
+  }
+  await step(`publish:${report.uploaded.id}`, () => api.send('/api/admin/reports/set-visible', { reportId: report.uploaded.id, visible: true }))
 }
 
 export async function runWorkspaceImport(plan, { api, session, defaultRepo, includeTriage, resolveConflicts, signal, progress = () => {} }) {
@@ -170,37 +211,19 @@ export async function runWorkspaceImport(plan, { api, session, defaultRepo, incl
     }
   }
   await grantWorkspaceBundles(plan, defaultRepo, api, step, knownBundles, activeRepos)
+  // One failed report does not stop the others. Completed steps and uploads
+  // are kept on the plan, so a retry resumes only the failed reports.
+  const failures = []
   for (const report of plan.reports) {
     check(); progress(`Importing ${report.name}…`)
-    if (report.links) { await importLinks(report, api); continue }
-    const repoId = activeRepos.has(report.repoId) ? report.repoId : defaultRepo
-    if (!report.uploaded) {
-      const uploaded = await api.send('/api/admin/reports', new File([report.content], report.name), {
-        'x-report-filename': encodeURIComponent(report.name), 'x-repo-id': String(repoId), 'x-repo-directory': encodeURIComponent(report.directory),
-      })
-      if (uploaded.conflict) throw new Error(`Could not reuse the stored report ${report.name}. Retry the import.`)
-      report.uploaded = uploaded
+    try { await importWorkspaceReport(report, { plan, api, step, activeRepos, defaultRepo, includeTriage, resolveConflicts, signal }) }
+    catch (err) {
+      if (stopsImport(err, signal)) throw err
+      failures.push(`${report.name}: ${importFailure(err)}`)
     }
-    // Reused reports keep their stored location, just like source bundles.
-    // Unattached reports and inactive assignments use the import's active repo.
-    const stored = report.uploaded
-    if (!activeRepos.has(stored.repoId)) {
-      await step(`report-repo:${stored.id}:${repoId}:${report.directory}`, async () => {
-        const assigned = await api.send('/api/admin/reports/set-repo', { reportId: stored.id, repoId, directory: report.directory })
-        if (assigned.conflict) throw new Error(`Could not assign the stored report ${report.name} to its repository.`)
-        stored.repoId = repoId
-        stored.repoDirectory = report.directory
-      })
-    }
-    const path = stored.repoDirectory ?? ''
-    await step(`repo:${stored.repoId}:${path}`, () => api.send('/api/admin/teams/set-repo', { teamId: plan.team.id, repoId: stored.repoId, path }))
-    if (includeTriage) {
-      await importTriageEntries(plan.triage, {
-        api, resolveConflicts, signal, ids: report.ids, importedIds: plan.importedIds, lookup: plan.lookup,
-        path: `/api/admin/reports/${encodeURIComponent(report.uploaded.id)}/import-triage`,
-      })
-    }
-    await step(`publish:${report.uploaded.id}`, () => api.send('/api/admin/reports/set-visible', { reportId: report.uploaded.id, visible: true }))
+  }
+  if (failures.length > 0) {
+    throw new Error(`Could not import ${failures.length} of ${plan.reports.length} files: ${failures.join('; ')}. ${RETRY_HINT}`)
   }
   return plan.team
 }

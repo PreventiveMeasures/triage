@@ -584,7 +584,7 @@ test('a local import completes independently of a later dropped file', async (t)
       await setImmediate()
       // This is the same upload path used by the page's active drop handler.
       await page._upload([new File(['later file'], 'later.json')])
-      local.resolve(Response.json(success ? { ok: true } : { error: 'denied' }, { status: success ? 200 : 403 }))
+      local.resolve(Response.json(success ? { ok: true } : { error: 'repo-forbidden' }, { status: success ? 200 : 403 }))
       await importing
       const expectedSuccess = success ? `Imported ${kind === 'report' ? 'report.md' : 'source.map'}.` : ''
       const expectedError = success ? '' : 'choose a repository and directory within your team access'

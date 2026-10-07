@@ -311,7 +311,7 @@ test('bundle location editing retains the collection and directory on failure, t
     if (options.method === 'POST') {
       assert.equal(options.headers['x-csrf-token'], token)
       assert.deepEqual(JSON.parse(options.body), { bundleId: 'b', repoId: 7, directory: '/foo/sub' })
-      return Promise.resolve(new Response('', { status }))
+      return Promise.resolve(status === 403 ? Response.json({ error: 'repo-forbidden' }, { status }) : new Response('', { status }))
     }
     return Promise.resolve(Response.json({ bundles: [bundle], repos: [] }))
   })
@@ -927,4 +927,26 @@ test('report location suggestions load per open editor, apply connected destinat
   await setImmediate()
   assert.equal(page._locationOrigin, null)
   assert.equal(page._locationReport, null)
+})
+
+test('upload and location refusals name team access only when the server reports it', async t => {
+  const { setBundleRepo, setReportRepo, uploadBundle, uploadReport } = await import('../ui/managed/admin-api.js')
+  let refusal
+  t.mock.method(globalThis, 'fetch', url => Promise.resolve(url === '/api/config' ? Response.json({ managed: {} }) : refusal()))
+  const calls = [
+    () => uploadReport(new File(['{}'], 'report.json'), 'csrf'),
+    () => uploadBundle(new File(['x'], 'bundle.br'), 'csrf'),
+    () => setReportRepo('report', 7, '', 'csrf'),
+    () => setBundleRepo('bundle', 7, '', 'csrf'),
+  ]
+  for (const [response, message] of [
+    [() => Response.json({ error: 'repo-forbidden' }, { status: 403 }), 'choose a repository and directory within your team access'],
+    [() => Response.json({ error: 'forbidden' }, { status: 403 }), 'choose a repository and directory within your team access'],
+    [() => Response.json({ error: 'csrf-mismatch' }, { status: 403 }), 'HTTP 403: csrf-mismatch'],
+    [() => Response.json({ error: 'origin-denied' }, { status: 403 }), 'HTTP 403: origin-denied'],
+    [() => new Response('<html>Forbidden</html>', { status: 403 }), 'HTTP 403'],
+  ]) {
+    refusal = response
+    for (const call of calls) await assert.rejects(call(), { message })
+  }
 })

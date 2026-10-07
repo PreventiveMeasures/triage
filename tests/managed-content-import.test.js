@@ -123,3 +123,41 @@ test('last-known cloud status requires matching report bytes and supports immuta
     assert.equal(localContentSyncStatus('unknown-workspace', 'report', 'report.json', 'original-bytes').synced, false)
   } finally { localStorage.removeItem(key) }
 })
+
+const forbidden = () => Object.assign(new Error('Import request failed (HTTP 403: csrf-mismatch). You can retry the remaining steps.'),
+  { detail: 'Import request failed (HTTP 403: csrf-mismatch).' })
+
+test('a failed report does not stop the rest, every failure is named, and importing again retries only failures', async () => {
+  const files = new Map(['one', 'two', 'three', 'four'].map(name => [`${name}.json`, new File([report(name)], `${name}.json`)]))
+  const f = fixture('report', files)
+  const plan = await prepareLocalContentImport('report', f)
+  const send = f.api.send
+  let fail = true
+  f.api.send = (path, body, headers) => {
+    if (fail && body?.name === 'two.json') throw forbidden()
+    if (fail && body?.name === 'four.json') throw new Error('temporary failure')
+    return send(path, body, headers)
+  }
+  const imported = new Set()
+  await assert.rejects(runLocalContentImport(plan, [...files.keys()], { ...f, imported }), {
+    message: 'Imported 2 of 4 reports. Could not import two.json: Import request failed (HTTP 403: csrf-mismatch); four.json: temporary failure. Import again to retry them.',
+  })
+  assert.deepEqual([...imported], ['one.json', 'three.json'])
+  fail = false
+  assert.equal(await runLocalContentImport(plan, [...files.keys()], { ...f, imported }), 4)
+  assert.deepEqual(f.requests.filter(request => request.body).map(request => request.body.name), ['one.json', 'three.json', 'two.json', 'four.json'])
+})
+
+test('cancellation still ends a local import', async () => {
+  const files = new Map(['one', 'two', 'three'].map(name => [`${name}.json`, new File([report(name)], `${name}.json`)]))
+  const f = fixture('report', files)
+  const plan = await prepareLocalContentImport('report', f)
+  const controller = new AbortController()
+  const send = f.api.send
+  f.api.send = (path, body, headers) => {
+    if (body?.name === 'two.json') { controller.abort(); throw new DOMException('Managed session changed', 'AbortError') }
+    return send(path, body, headers)
+  }
+  await assert.rejects(runLocalContentImport(plan, [...files.keys()], { ...f, signal: controller.signal }), { name: 'AbortError' })
+  assert.deepEqual(f.requests.filter(request => request.body).map(request => request.body.name), ['one.json'])
+})

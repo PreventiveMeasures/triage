@@ -230,6 +230,54 @@ test('typed and finding repositories follow aliases, refreshed before upload', a
     .map(call => [call.headers['x-repo-id'], decodeURIComponent(call.headers['x-repo-directory'])]), [['7', 'projects'], ['7', 'moved/old'], ['9', ''], ['7', 'projects'], ['7', 'projects']])
 })
 
+const forbidden = () => Object.assign(new Error('Import request failed (HTTP 403: csrf-mismatch). You can retry the remaining steps.'),
+  { detail: 'Import request failed (HTTP 403: csrf-mismatch).' })
+
+test('a failed report does not stop the workspace import, and a retry resumes only the failed reports', async () => {
+  const reports = ['a', 'b', 'c'].map(name => ({ name: `${name}.json`, content: JSON.stringify({ repo: { github: 'org/repo', directory: 'src' }, findings: [{ id: name, file: 'a.js' }] }) }))
+  const plan = await prepareWorkspaceImport({ ...exported(), reports }, repos)
+  const mock = serverMock(), send = mock.api.send
+  let fail = true
+  mock.api.send = (path, body, headers) => {
+    if (fail && path === '/api/admin/reports' && body?.name === 'b.json') throw forbidden()
+    return send(path, body, headers)
+  }
+  await assert.rejects(runWorkspaceImport(plan, { api: mock.api, session, includeTriage: false }), {
+    message: 'Could not import 1 of 3 files: b.json: Import request failed (HTTP 403: csrf-mismatch). You can retry the remaining steps.',
+  })
+  const uploads = () => mock.calls.filter(call => call.path === '/api/admin/reports').map(call => call.body.name)
+  const published = () => mock.calls.filter(call => call.path.endsWith('/set-visible')).map(call => call.body.reportId)
+  assert.deepEqual(uploads(), ['a.json', 'c.json'], 'reports after the failure are still imported')
+  assert.deepEqual(published(), [plan.reports[0].uploaded.id, plan.reports[2].uploaded.id])
+  assert.equal(plan.reports[1].uploaded, null)
+  fail = false
+  assert.equal(await runWorkspaceImport(plan, { api: mock.api, session, includeTriage: false }), plan.team)
+  assert.deepEqual(uploads(), ['a.json', 'c.json', 'b.json'], 'a retry uploads only the failed report')
+  assert.deepEqual(published(), [plan.reports[0].uploaded.id, plan.reports[2].uploaded.id, plan.reports[1].uploaded.id])
+  assert.equal(mock.calls.filter(call => call.path === '/api/admin/teams').length, 1, 'the retry reuses the created team')
+})
+
+test('cancelling triage conflict resolution ends the workspace import', async () => {
+  const data = exported()
+  data.reports.push({ name: 'second.json', content: JSON.stringify({ repo: { github: 'org/repo', directory: 'src' }, findings: [{ id: 'g', file: 'b.js' }] }) })
+  const plan = await prepareWorkspaceImport(data, repos)
+  const mock = serverMock()
+  mock.onTriage = body => body.findingIds ? { snapshots: Object.fromEntries(body.findingIds.map(id => [id, snapshot({ color: 'blue' })])) } : { ok: true }
+  await assert.rejects(runWorkspaceImport(plan, { api: mock.api, session, includeTriage: true, resolveConflicts: () => null }), /cancelled/u)
+  assert.deepEqual(mock.calls.filter(call => call.path === '/api/admin/reports').map(call => call.body.name), ['report.json'])
+  assert.equal(mock.calls.some(call => call.path.endsWith('/set-visible')), false)
+})
+
+test('request failures name the server error code when the server sends one', async () => {
+  for (const [response, detail] of [
+    [Response.json({ error: 'csrf-mismatch' }, { status: 403 }), 'Import request failed (HTTP 403: csrf-mismatch).'],
+    [new Response('<html>Forbidden</html>', { status: 403 }), 'Import request failed (HTTP 403).'],
+  ]) {
+    const api = workspaceImportApi(() => Promise.resolve(response), session, new AbortController().signal)
+    await assert.rejects(api.send('/api/admin/reports', new File(['{}'], 'r.json')), { message: `${detail} You can retry the remaining steps.`, detail })
+  }
+})
+
 test('session cancellation while resolving prevents triage writes and publication', async () => {
   const plan = await prepareWorkspaceImport(exported(), repos)
   const mock = serverMock()
