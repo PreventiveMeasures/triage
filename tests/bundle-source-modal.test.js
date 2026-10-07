@@ -249,12 +249,13 @@ test('Code package tooltips include recorded identities and counts even while fi
   }
 })
 
-test('Code file header links a file to GitHub after copy only where its location is known', () => {
+test('Code file header links a file to GitHub after copy where its package or bundle names a repository', () => {
   const entry = { name: 'github.stasis', integrity: 'sha512-file-github' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([
     ['.', { name: 'app', version: '1.0.0', files: { 'src/index.js': 'app' } }],
     ['node_modules/dep', { name: 'dep', version: '1.2.3', repo: { github: 'org/mono', directory: 'packages/dep' }, files: { 'index.js': 'dep' } }],
     ['node_modules/unplaced', { name: 'unplaced', version: '1.0.0', repo: { github: 'org/unplaced' }, files: { 'index.js': 'unplaced' } }],
+    ['node_modules/no-repo', { name: 'no-repo', version: '1.0.0', files: { 'index.js': 'no-repo' } }],
   ]) }).serialize())
   bundle.repo = { github: 'org/app', directory: '' }
   Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
@@ -271,7 +272,8 @@ test('Code file header links a file to GitHub after copy only where its location
   const own = header('src/index.js')
   assert.ok(own.includes('href=https://github.com/org/app/blob/HEAD/src/index.js'))
   assert.doesNotMatch(own, /data-tooltip-package=\S|data-tooltip-package-icon/u, 'own files name no package')
-  assert.ok(!header('node_modules/unplaced/index.js').includes('bundle-code-github-link'), 'an unknown directory shows no link')
+  assert.ok(header('node_modules/unplaced/index.js').includes('href=https://github.com/org/unplaced/blob/HEAD/index.js'), 'an unknown directory is the root')
+  assert.ok(!header('node_modules/no-repo/index.js').includes('bundle-code-github-link'), 'no repository shows no link')
 })
 
 test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
