@@ -1,6 +1,6 @@
 import { linkRevision } from './link-reports.ts'
 import type { ManagedSql } from './sql.ts'
-import type { ManagedBundle, TeamReportAccessSnapshot, UserTeam } from './db.ts'
+import type { BundleBuildConditions, ManagedBundle, TeamReportAccessSnapshot, UserTeam } from './db.ts'
 import { type TeamUserPermissions, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 
 export const WORKSPACE_SHARE_SCHEMA = `
@@ -89,7 +89,7 @@ function shareQueries(db: ManagedSql) {
   // A raw bundle is visible only when its declared root is inside the team scope.
   // Root bundles remain hidden from directory-only grants.
   const bundles = db.prepare(`SELECT DISTINCT b.id, b.slug, b.integrity, b.filename, b.kind, b.byte_size AS byteSize,
-    b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.uploaded_at AS uploadedAt, b.provenance, sr.full_name AS repoFullName
+    b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.uploaded_at AS uploadedAt, b.provenance, b.build_conditions AS buildConditions, sr.full_name AS repoFullName
     FROM managed_team_repo tr JOIN managed_bundle b ON b.repo_id = tr.repo_id
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
     WHERE tr.team_id = ? AND b.visible = 1 AND (tr.path = '' OR b.repo_directory = tr.path
@@ -143,7 +143,8 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       const permissions = { dependencies: dependencies === 1, security: security === 1 }
       const rows = await q.reports.all(team.id) as { id: string; slug: string; filename: string; analyzer: string | null; byteSize: number; sha256: string; directory: string; github: string }[]
       const links = await linkRevision(db)
-      const bundleRows = await q.bundles.all(team.id) as (ManagedBundle & { repoFullName: string })[]
+      const bundleRows = (await q.bundles.all(team.id) as (Omit<ManagedBundle, 'buildConditions'> & { buildConditions: string | null; repoFullName: string })[])
+        .map(row => ({ ...row, buildConditions: row.buildConditions == null ? null : JSON.parse(row.buildConditions) as BundleBuildConditions }))
       return {
         user: { id: `share:${tokenHash}`, login: 'public', name: 'Public workspace', avatarUrl: null, role: 'view' },
         teamId: team.id,

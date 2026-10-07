@@ -4,6 +4,7 @@ import { posix } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { BUNDLE_BUILD_TIMEOUT_MS, type BundleBuildLeaseStore } from './bundle-build-leases.ts'
 import { type BundleBuildDiagnostic, type BundleBuildStage, bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
+import type { BundleBuildConditions } from './db-methods.ts'
 
 export class BundleBuildError extends Error {
   status: number
@@ -17,6 +18,8 @@ export interface BundleBuildInput {
   entries: string[]
   directory: string
   options: { conditions?: string[]; mainFields?: string[]; metro?: boolean; platforms?: string[]; typescript?: boolean; jsx?: boolean }
+  // What the stored bundle records; null for Solidity, which takes no conditions.
+  conditions: BundleBuildConditions | null
 }
 
 function path(value: unknown): value is string {
@@ -40,6 +43,7 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
     while (parts.some((part, i) => parent[i] !== part)) parts.pop()
   }
   const options: BundleBuildInput['options'] = {}
+  let recorded: BundleBuildConditions | null = null
   if (scripts) {
     if (conditions == null || typeof conditions !== 'object' || Array.isArray(conditions)) return fail('bad-conditions')
     const { preset, conditions: names, platforms } = conditions as Record<string, unknown>
@@ -57,8 +61,10 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
     }
     options.typescript = true
     options.jsx = true
+    recorded = { preset: preset as BundleBuildConditions['preset'], conditions: [...new Set(names as string[])],
+      platforms: options.platforms ?? [] }
   }
-  return { repoId, commit, entries: selected, directory: parts.join('/'), options }
+  return { repoId, commit, entries: selected, directory: parts.join('/'), options, conditions: recorded }
 }
 
 // A package name as a filename base: `@scope/name` as `scope-name`, or as

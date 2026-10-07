@@ -65,7 +65,7 @@ import type { BlobStore } from './blob-store.ts'
 import { bundleFilePrefix, bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
 import { resolveRepositoryImportLocation } from './repository-aliases.ts'
 import type { ManagedConfig } from './config.ts'
-import type { BundleProvenance, BundleReuse, ManagedBundle, ManagedDb, ManagedSession, ReportRecord, SelectedRepo, StoredUser, TriageEventRow } from './db.ts'
+import type { BundleBuildConditions, BundleProvenance, BundleReuse, ManagedBundle, ManagedDb, ManagedSession, ReportRecord, SelectedRepo, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -1279,7 +1279,9 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
         throw new BundleBuildError(409, 'repository-changed')
       }
       signal.throwIfAborted()
-      await storeUploadedBundle(req, res, deps, cookie, current, Buffer.from(built.bytes), input.repoId, built.directory, built.filename, 'build')
+      const bytes = Buffer.from(built.bytes)
+      await storeUploadedBundle(req, res, deps, cookie, current, bytes, input.repoId, built.directory, built.filename, 'build',
+        bundleIntegrity(bytes), input.conditions)
     })
   } catch (error) {
     if (res.destroyed || controller.signal.aborted) return
@@ -1365,16 +1367,16 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
 
 async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined,
   s: { session: ManagedSession; user: StoredUser }, bytes: Buffer, repoId: number | null, directory: string, filename: string,
-  provenance: BundleProvenance, integrity = bundleIntegrity(bytes)): Promise<void> {
+  provenance: BundleProvenance, integrity = bundleIntegrity(bytes), buildConditions: BundleBuildConditions | null = null): Promise<void> {
   const kind = bundleKind(filename)
-  const reuse = { provenance, filename, kind }
+  const reuse = { provenance, filename, kind, buildConditions }
   const existing = await deps.db.getBundleByIntegrity(integrity)
   if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, reuse); return }
   const id = randomUUID()
   const dataKey = await deps.bundleStore.put(id, bytes, kind)
   try {
     await deps.db.insertBundle({
-      id, integrity, filename, kind, dataKey, provenance,
+      id, integrity, filename, kind, dataKey, provenance, buildConditions,
       byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId, repoDirectory: directory,
     }, Date.now(), s.session.id)
   } catch (err) {
