@@ -73,3 +73,14 @@ test("a managed bundle's stored repository and directory fill in what its stamp 
   assert.equal(at(undefined, 'src/index.js', null), null)
   assert.equal(at(undefined, 'node_modules/dep/index.js'), null, 'dependencies never take the stored repository')
 })
+
+test('a root module recording an ecosystem is own source, stamped or stored', () => {
+  for (const ecosystem of ['npm', 'composer']) {
+    const root = ['.', { ecosystem, name: ecosystem === 'composer' ? 'org/app' : 'app', version: '1.0.0', files: { 'src/index.js': 'app', 'package.json': JSON.stringify({ repository: 'org/manifest' }) } }]
+    assert.deepEqual(bundleFileGithub(details([root]), 'src/index.js', { github: 'org/app', directory: 'apps/web' }), {
+      href: 'https://github.com/org/app/blob/HEAD/apps/web/src/index.js', github: 'org/app', path: 'apps/web/src/index.js', commit: null, package: null,
+    }, ecosystem)
+    assert.equal(bundleFileGithub(details([root], { github: 'org/app', directory: '', commit }), 'src/index.js').href, `https://github.com/org/app/blob/${commit}/src/index.js`, ecosystem)
+    assert.equal(bundleFileGithub(details([root]), 'src/index.js'), null, `${ecosystem}: the root never reads its manifest as a dependency's`)
+  }
+})

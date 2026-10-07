@@ -31,7 +31,9 @@ export function bundleFileGithub(details, path, assigned = null) {
   }
   if (!owner) return null
   const { dir, info, rel } = owner
-  const ecosystem = moduleEcosystem(dir, info, null) ?? (dir.split('/').includes('node_modules') ? 'npm' : undefined)
+  // The root module is own source whatever ecosystem it records, as the
+  // file tree and advisory inventory read it.
+  const ecosystem = dir === '.' ? undefined : moduleEcosystem(dir, info, null) ?? (dir.split('/').includes('node_modules') ? 'npm' : undefined)
   if (ecosystem === undefined) {
     const stamped = reportRepoGithub(bundle)
     const stored = reportRepoGithub({ repo: { github: assigned?.github } })
