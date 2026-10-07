@@ -83,7 +83,8 @@ async function resolveImportBatch(incoming, snapshots, lookup, resolveConflicts,
     importedSideLabel: 'Apply imported',
   })
   signal?.throwIfAborted()
-  if (!decisions) throw new Error('Triage conflict resolution was cancelled.')
+  // Cancelling the dialog ends a multi-report import, not just this report.
+  if (!decisions) throw Object.assign(new Error('Triage conflict resolution was cancelled.'), { cancelled: true })
   for (const conflict of conflicts) {
     const decision = decisions[`${conflict.id}:${conflict.property}`]
     if (!['local', 'imported'].includes(decision)) throw new Error('Resolve every triage conflict before importing.')

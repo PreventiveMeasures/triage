@@ -1,5 +1,6 @@
 import { readManagedReport } from '../../common/managed/report-content.ts'
 import { computeSha512Integrity } from '../../common/integrity.js'
+import { importFailure, stopsImport } from './import-failures.js'
 
 const collection = kind => kind === 'bundle' ? 'bundles' : 'reports'
 const reportKey = (hash, analyzer) => JSON.stringify([hash, analyzer || ''])
@@ -48,25 +49,40 @@ export async function prepareLocalContentImport(kind, { source, deps, api, signa
   return { kind, items, groups: [...groups, ungrouped].filter(group => group.items.length > 0) }
 }
 
+// One failed item does not stop the others: every failure is named once the
+// rest are imported. Imported items are marked present, so importing again
+// retries only the failures. Cancellation ends the import.
 export async function runLocalContentImport(plan, selected, { source, api, signal, progress = () => {}, imported = new Set() }) {
   const { kind } = plan
   const known = storedKeys(kind, (await api.send(`/api/admin/${collection(kind)}`))[collection(kind)])
   const chosen = new Set(selected)
+  const failures = []
+  let attempted = 0
   for (const item of plan.items) {
     signal.throwIfAborted()
     if (!chosen.has(item.value) || item.error || item.present) continue
     if (known.has(item.key)) { item.present = true; continue }
     progress(`Importing ${item.name}…`)
-    await source.importItem(kind, item.value, async file => {
-      const key = kind === 'report' ? (await reportIdentity(file)).key : await computeSha512Integrity(new Uint8Array(await file.arrayBuffer()))
-      signal.throwIfAborted()
-      if (key !== item.key) throw new Error(`${item.name} changed. Choose files again before importing.`)
-      // No location override, workspace, team, triage or visibility mutations.
-      // The ordinary upload endpoint applies only the file's embedded defaults.
-      const result = await api.send(`/api/admin/${collection(kind)}`, file, { [`x-${kind}-filename`]: encodeURIComponent(file.name) })
-      if (result.conflict) throw new Error(`Could not import ${item.name}. Try again.`)
-    }, { signal })
+    attempted++
+    try {
+      await source.importItem(kind, item.value, async file => {
+        const key = kind === 'report' ? (await reportIdentity(file)).key : await computeSha512Integrity(new Uint8Array(await file.arrayBuffer()))
+        signal.throwIfAborted()
+        if (key !== item.key) throw new Error(`${item.name} changed. Choose files again before importing.`)
+        // No location override, workspace, team, triage or visibility mutations.
+        // The ordinary upload endpoint applies only the file's embedded defaults.
+        const result = await api.send(`/api/admin/${collection(kind)}`, file, { [`x-${kind}-filename`]: encodeURIComponent(file.name) })
+        if (result.conflict) throw new Error(`Could not import ${item.name}. Try again.`)
+      }, { signal })
+    } catch (err) {
+      if (stopsImport(err, signal)) throw err
+      failures.push(`${item.name}: ${importFailure(err)}`)
+      continue
+    }
     known.add(item.key); item.present = true; imported.add(item.value)
+  }
+  if (failures.length > 0) {
+    throw new Error(`Imported ${attempted - failures.length} of ${attempted} ${kind}s. Could not import ${failures.join('; ')}. Import again to retry them.`)
   }
   return imported.size
 }

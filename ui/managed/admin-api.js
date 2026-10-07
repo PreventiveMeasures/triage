@@ -15,6 +15,14 @@ function postJson(path, csrfToken, body) {
   return managedFetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) })
 }
 
+// A 403 means the team access check refused the location only when the
+// server says so. CSRF and origin refusals keep their code, and a 403 without
+// one did not come from the managed server's own checks.
+async function refusal(res) {
+  const code = await res.json().then(body => typeof body?.error === 'string' ? body.error : '', () => '')
+  return ['repo-forbidden', 'forbidden'].includes(code) ? 'choose a repository and directory within your team access' : `HTTP 403${code ? `: ${code}` : ''}`
+}
+
 async function deleteItem(collection, id, csrfToken) {
   const headers = csrfToken ? { 'x-csrf-token': csrfToken } : {}
   const res = await managedFetch(`/api/admin/${collection}/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', headers })
@@ -174,7 +182,7 @@ async function uploadSingleReport(file, csrfToken, repoId, directory) {
   const res = await managedFetch('/api/admin/reports', { method: 'POST', credentials: 'same-origin', headers, body: file })
   if (!res.ok) {
     if (res.status === 413) throw new Error('too large')
-    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
+    if (res.status === 403) throw new Error(await refusal(res))
     const body = await res.json().catch(() => null)
     if (body?.error === 'storage-encryption-required') throw new Error('Link reports require managed storage encryption. Configure MANAGED_STORAGE_ENCRYPTION_KEY.')
     if (body?.error === 'invalid-report') {
@@ -196,7 +204,7 @@ export async function setReportRepo(id, repoId, directory, csrfToken) {
   const res = await postJson('/api/admin/reports/set-repo', csrfToken, { reportId: id, repoId, directory })
   if (!res.ok) {
     if (res.status === 409) throw new Error('this report already defines its repository')
-    if (res.status === 403) throw new Error('choose a repository and directory within your team access')
+    if (res.status === 403) throw new Error(await refusal(res))
     throw new Error(res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
   }
   return res.json()
@@ -227,7 +235,7 @@ export async function uploadBundle(file, csrfToken, repoId, directory = '') {
   if (repoId != null) headers['x-repo-id'] = String(repoId)
   if (directory) headers['x-repo-directory'] = encodeURIComponent(directory)
   const res = await managedFetch('/api/admin/bundles', { method: 'POST', credentials: 'same-origin', headers, body: file })
-  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? 'choose a repository and directory within your team access' : `HTTP ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 413 ? 'too large' : res.status === 403 ? await refusal(res) : `HTTP ${res.status}`)
   return res.json()
 }
 
@@ -243,7 +251,7 @@ export async function setBundleVisible(id, visible, csrfToken) {
 // Set a stored bundle's repository and directory, or detach it (null). CSRF token.
 export async function setBundleRepo(id, repoId, directory, csrfToken) {
   const res = await postJson('/api/admin/bundles/set-repo', csrfToken, { bundleId: id, repoId, directory })
-  if (!res.ok) throw new Error(res.status === 403 ? 'choose a repository and directory within your team access' : res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 403 ? await refusal(res) : res.status === 400 ? 'invalid repository or directory' : `HTTP ${res.status}`)
 }
 
 export async function fetchTeams(signal) {
