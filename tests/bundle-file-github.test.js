@@ -58,3 +58,18 @@ test('dependency files link into their own repository and name their package, ne
   })
   assert.equal(bundleFileGithub(bundle, 'node_modules/no-repo/index.js'), null, 'a dependency naming no repository never takes the app')
 })
+
+test("a managed bundle's stored repository and directory fill in what its stamp leaves out of own files", () => {
+  const stored = { github: 'Org/App', directory: 'apps/web' }
+  const at = (repo, path = 'src/index.js', assigned = stored) => bundleFileGithub(details([app, ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'd' } }]], repo), path, assigned)
+  assert.deepEqual(at(undefined), { href: 'https://github.com/Org/App/blob/HEAD/apps/web/src/index.js', github: 'Org/App', path: 'apps/web/src/index.js', commit: null, package: null })
+  // The stamp wins wherever it records a field; its commit stays with its own repository.
+  assert.equal(at({ github: 'org/app', commit }).href, `https://github.com/org/app/blob/${commit}/apps/web/src/index.js`)
+  assert.equal(at({ github: 'org/app', directory: '' }).path, 'src/index.js')
+  assert.equal(at({ github: 'org/app', directory: 'other' }).path, 'other/src/index.js')
+  // A stored directory never places another repository's files.
+  assert.equal(at({ github: 'org/moved' }).href, 'https://github.com/org/moved/blob/HEAD/src/index.js')
+  assert.equal(at(undefined, 'src/index.js', { github: '', directory: 'apps/web' }), null)
+  assert.equal(at(undefined, 'src/index.js', null), null)
+  assert.equal(at(undefined, 'node_modules/dep/index.js'), null, 'dependencies never take the stored repository')
+})
