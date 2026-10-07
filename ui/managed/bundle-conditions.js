@@ -4,9 +4,12 @@ import styles from './styles/bundle-conditions.css'
 
 const PRESETS = [
   { id: 'node', label: 'Node.js', conditions: ['node'], icon: svg`<path d="m8 1.5 5.5 3.2v6.6L8 14.5l-5.5-3.2V4.7Z"/><path d="M6 10V6l4 4V6"/>` },
-  { id: 'browser', label: 'Browser', conditions: ['browser'], icon: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6h13M4 4.3h.1m2 0h.1"/>` },
+  { id: 'browser', label: 'Browser', conditions: ['browser', 'module'], icon: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6h13M4 4.3h.1m2 0h.1"/>` },
   { id: 'metro', label: 'Metro', conditions: ['react-native'], icon: svg`<rect x="4" y="1.5" width="8" height="13" rx="2"/><path d="M6.5 3.5h3M7 12.5h2"/>` },
 ]
+// Manual conditions follow every preset, so they must fit beside the longest
+// one within the server's limit of 16.
+const MANUAL_LIMIT = 16 - Math.max(...PRESETS.map(preset => preset.conditions.length))
 const PLATFORMS = [{ id: 'ios', label: 'iOS' }, { id: 'android', label: 'Android' }]
 // Stasis resolves with these whatever the preset, as Node does.
 const automaticConditions = new Set(['default', 'import', 'require', 'node', 'node-addons', 'module-sync'])
@@ -82,8 +85,8 @@ export class BundleConditions extends LitElement {
       return
     }
     const manual = [...new Set([...this._manual, ...names.filter(name => !this.presetConditions.includes(name))])]
-    if (this.presetConditions.length + manual.length > 16) {
-      this._error = 'Use up to 16 conditions.'
+    if (manual.length > MANUAL_LIMIT) {
+      this._error = `Use up to ${MANUAL_LIMIT} manual conditions.`
       return
     }
     this._manual = manual
