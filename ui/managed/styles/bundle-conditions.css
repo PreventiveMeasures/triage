@@ -38,7 +38,7 @@ svg { width: 1rem; height: 1rem; flex: none; }
 .condition-editor:focus-within { border-color: var(--accent); }
 ul { display: flex; flex-wrap: wrap; gap: .35rem; max-width: 100%; margin: 0; padding: 0; list-style: none; }
 li {
-  display: inline-flex; align-items: center; gap: .35rem; min-width: 0; max-width: 100%; padding: .1rem .25rem .1rem .5rem;
+  display: inline-flex; align-items: center; gap: .35rem; min-width: 0; max-width: 100%; min-height: 1.5rem; padding: 0 .25rem 0 .5rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); background: var(--surface); color: var(--text); font-size: .73rem;
 }
 li code { overflow-wrap: anywhere; }
