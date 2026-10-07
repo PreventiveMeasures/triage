@@ -14,10 +14,11 @@ test('build requests pin commits, reject unsafe inputs, and apply presets', () =
   assert.equal(input(['packages/app/src/a.ts', 'packages/app/bin/b.js']).directory, 'packages/app')
   assert.deepEqual(input(['a.js', 'a.js']).entries, ['a.js'])
   assert.deepEqual(input(['A.sol']).options, {})
+  assert.deepEqual(input(['a.ts']).options, { conditions: ['node'] }, 'Stasis detects TypeScript itself')
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'browser', conditions: ['browser', 'development'], platforms: [] } }).options,
-    { conditions: ['browser', 'development'], mainFields: ['browser', 'module', 'main'], typescript: true, jsx: true })
+    { conditions: ['browser', 'development'], mainFields: ['browser', 'module', 'main'] })
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'metro', conditions: ['react-native'], platforms: ['ios', 'android'] } }).options,
-    { metro: true, platforms: ['ios', 'android'], typescript: true, jsx: true })
+    { metro: true, platforms: ['ios', 'android'], jsx: true })
   for (const entries of [[], ['../a.js'], ['/a.js'], ['a/./b.js'], ['a\\b.js'], ['a.js\n'], ['a.js', 'a.sol'], ['a.tsx', 'a.sol'],
     ['file.json'], ['main.rs'], ['component.tsx.map'], ['dir.jsx/source.sol', 'component.jsx'], Array.from({ length: 101 }, () => 'a.js')]) {
     assert.throws(() => input(entries), { status: 400 })
