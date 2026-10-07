@@ -725,7 +725,7 @@ the audit uses anonymous GitHub access. Other failures do not trigger this fallb
 Ordinary npm-only audits contact only npm; GitHub requests are added by the
 repository recheck.
 Each repository's published advisory listing (repository rechecks, and Soldeer
-and GitHub dependencies) is kept in `managed_upstream_cache` for an hour, as
+and GitHub dependencies) is kept in `managed_upstream_cache` for 90 minutes, as
 upstream's disk cache would keep it, and shared by every viewer, public shares
 and instance: only public repositories publish advisories. Upstream stamps,
 checks and expires the entries; refreshes replace the repository's single row.

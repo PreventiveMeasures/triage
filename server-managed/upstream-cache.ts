@@ -4,7 +4,7 @@ import type { ManagedSql } from './sql.ts'
 // Records @preventive/upstream would otherwise keep in its disk cache, shared
 // by every instance: currently each repository's published advisory listing,
 // written by dependency audits that ask repositories. Upstream stamps,
-// validates and expires each value (an hour for a listing); a refresh replaces
+// validates and expires each value (90 minutes for a listing); a refresh replaces
 // the row, and there is one row per repository, so rows are not evicted.
 // Only public repositories publish advisories: rows are shared across viewers.
 export const UPSTREAM_CACHE_SCHEMA = `

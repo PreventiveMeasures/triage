@@ -56,7 +56,7 @@ test('repository listings are shared across audits, viewers and details through 
   assert.equal(stored.name, 'org/dep')
   assert.deepEqual(stored.advisories.map(entry => entry.ghsa), ['GHSA-2345-6789-cfgh'])
   assert.ok(!JSON.stringify(stored).includes('maintainer'), 'only what upstream builds rows from is stored')
-  // Without the store, or with a listing older than upstream's hour, GitHub is asked again.
+  // Without the store, or with a listing older than upstream's 90 minutes, GitHub is asked again.
   await fetchBundleAdvisories(packages, signal())
   await db.setUpstreamCacheEntry('github/advisories/org/dep', JSON.stringify({ ...stored, at: Date.now() - 2 * 60 * 60 * 1000 }), Date.now() + 1)
   await fetchBundleAdvisories(packages, signal(), { cache: upstreamCache(db, signal()) })
