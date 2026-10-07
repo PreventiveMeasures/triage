@@ -4,7 +4,7 @@ import { mock, test } from 'node:test'
 import { parseBundleBuild } from '../server-managed/bundle-build.ts'
 
 let build
-mock.module('@exodus/stasis/vfs-bundle', { namedExports: { buildGitHubBundle: options => build(options) } })
+mock.module('@exodus/stasis/vfs-bundle', { namedExports: { buildGitHubBundle: options => build(options), setCacheDir: () => {} } })
 const { buildStasisBundle } = await import('../server-managed/bundle-build-worker.js')
 
 const commit = 'a'.repeat(40)

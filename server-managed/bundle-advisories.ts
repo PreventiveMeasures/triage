@@ -29,7 +29,7 @@ function advisoryGithubClient(token: string | null, signal: AbortSignal): Client
 // `cache` keeps each repository's listing (upstream-cache.ts) across audits.
 export async function fetchBundleAdvisories(packages: Package[], signal: AbortSignal,
   { debug = false, repoAdvisories = false, details = false, githubToken = null, cache }: {
-    debug?: boolean; repoAdvisories?: boolean; details?: boolean; githubToken?: string | null; cache?: CacheStore
+    debug?: boolean; repoAdvisories?: boolean; details?: boolean; githubToken?: string | null; cache?: CacheStore | undefined
   } = {}): Promise<
   { status: 200; body: Advisory[] } | { status: 502; body: { error: string } }
 > {
@@ -43,6 +43,8 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
       onAbort = () => reject(signal.reason)
       signal.addEventListener('abort', onAbort, { once: true })
     })
+    // Kept in the caller's store, or without one in upstream's disk cache,
+    // where the server set one (auditCache).
     const result = await Promise.race([
       advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories, details, ...(cache && { cache }) }), deadline,
     ])

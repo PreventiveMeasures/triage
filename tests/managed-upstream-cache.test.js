@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { fetchBundleAdvisories } from '../server-managed/bundle-advisories.ts'
-import { upstreamCache } from '../server-managed/upstream-cache.ts'
+import { setCacheDir } from '@preventive/upstream/npm.js'
+import { auditCache, upstreamCache } from '../server-managed/upstream-cache.ts'
 import { checkUpstreamCacheStore } from './_managed-upstream-cache.js'
 
 const signal = () => new AbortController().signal
@@ -93,6 +95,74 @@ test('database failures are cache misses, never failed audits', async t => {
   assert.equal(calls.length, 3)
 })
 
+test('only repository listings are kept, never npm version documents', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const integrity = `sha512-${createHash('sha512').update('dep').digest('base64')}`
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(url)
+    const { hostname, pathname } = new URL(url)
+    if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (hostname === 'registry.npmjs.org') {
+      assert.equal(pathname, '/dep/2.0.0')
+      // Keepable as upstream's disk cache would keep it: its dist is the registry's.
+      return Promise.resolve(Response.json({ name: 'dep', version: '2.0.0', repository: 'https://github.com/org/dep',
+        dist: { tarball: 'https://registry.npmjs.org/dep/-/dep-2.0.0.tgz', integrity } }))
+    }
+    assert.equal(url, listing)
+    return Promise.resolve(Response.json([advisory]))
+  })
+  const recheck = () => fetchBundleAdvisories([{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0', '2.0.0'] }], signal(),
+    { repoAdvisories: true, cache: upstreamCache(db, signal()) })
+  assert.equal((await recheck()).status, 200)
+  assert.equal(await db.getUpstreamCacheEntry('npm/versions/dep@2.0.0'), null)
+  assert.notEqual(await db.getUpstreamCacheEntry('github/advisories/org/dep'), null)
+  assert.equal((await recheck()).status, 200)
+  assert.equal(calls.filter(url => url.startsWith('https://registry.npmjs.org/dep/')).length, 2, 'npm is asked each time')
+  assert.equal(calls.filter(url => url === listing).length, 1, 'the listing is answered from the database')
+
+  const used = []
+  const store = upstreamCache({
+    getUpstreamCacheEntry: key => { used.push(key); return Promise.resolve(null) },
+    setUpstreamCacheEntry: key => { used.push(key); return Promise.resolve() },
+  }, signal())
+  for (const type of ['npm/versions', 'npm/tarballs', 'cargo/repos', 'composer/repos', 'soldeer/repos']) {
+    assert.equal(await store.read(type, 'dep@2.0.0'), null)
+    await store.write(type, 'dep@2.0.0', { name: 'dep' })
+  }
+  assert.deepEqual(used, [])
+})
+
+test('with a cache directory, audits keep listings and npm version documents on disk, not in the database', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const dir = await mkdtemp(join(tmpdir(), 'triage-upstream-disk-'))
+  setCacheDir(dir)
+  t.after(async () => { setCacheDir(false); db.close(); await rm(dir, { recursive: true, force: true }) })
+  const integrity = `sha512-${createHash('sha512').update('dep').digest('base64')}`
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(url)
+    const { hostname, pathname } = new URL(url)
+    if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (hostname === 'registry.npmjs.org') {
+      return Promise.resolve(Response.json({ name: 'dep', version: '2.0.0', repository: 'https://github.com/org/dep',
+        dist: { tarball: 'https://registry.npmjs.org/dep/-/dep-2.0.0.tgz', integrity } }))
+    }
+    assert.equal(url, listing)
+    return Promise.resolve(Response.json([advisory]))
+  })
+  const recheck = () => fetchBundleAdvisories([{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'] }], signal(),
+    { repoAdvisories: true, cache: auditCache(dir, db, signal()) })
+  assert.equal((await recheck()).status, 200)
+  assert.deepEqual(await readdir(join(dir, 'npm/versions')), ['dep@2.0.0.json.gz'])
+  assert.equal((await readdir(join(dir, 'github/advisories'))).length, 1)
+  assert.equal(await db.getUpstreamCacheEntry('github/advisories/org/dep'), null)
+  calls.length = 0
+  assert.equal((await recheck()).status, 200)
+  assert.deepEqual(calls, ['https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'], 'neither npm nor GitHub is asked again')
+})
+
 test('an abandoned audit leaves the database alone', async () => {
   const used = []
   const db = {
@@ -100,7 +170,7 @@ test('an abandoned audit leaves the database alone', async () => {
     setUpstreamCacheEntry: key => { used.push(key); return Promise.resolve() },
   }
   const store = upstreamCache(db, AbortSignal.abort())
-  assert.equal(await store.read('github/advisories/org/dep'), null)
-  await store.write('github/advisories/org/dep', { at: 1 })
+  assert.equal(await store.read('github/advisories', 'org/dep'), null)
+  await store.write('github/advisories', 'org/dep', { at: 1 })
   assert.deepEqual(used, [])
 })

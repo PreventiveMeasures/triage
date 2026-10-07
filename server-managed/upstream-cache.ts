@@ -2,11 +2,12 @@ import type { CacheStore } from '@preventive/upstream/advisories.js'
 import type { ManagedSql } from './sql.ts'
 
 // Records @preventive/upstream would otherwise keep in its disk cache, shared
-// by every instance: currently each repository's published advisory listing,
-// written by dependency audits that ask repositories. Upstream stamps,
-// validates and expires each value (90 minutes for a listing); a refresh replaces
-// the row, and there is one row per repository, so rows are not evicted.
-// Only public repositories publish advisories: rows are shared across viewers.
+// by every instance: each repository's published advisory listing, written by
+// dependency audits that ask repositories, keyed `github/advisories/owner/name`.
+// Upstream stamps, validates and expires each value (90 minutes for a listing);
+// a refresh replaces the row, and there is one row per repository, so rows are
+// not evicted. Only public repositories publish advisories: rows are shared
+// across viewers.
 export const UPSTREAM_CACHE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_upstream_cache (
   cache_key TEXT PRIMARY KEY,
@@ -37,24 +38,34 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
   }
 }
 
+// An audit's `cache`: where the server has an upstream disk cache (off Vercel,
+// set at startup), that keeps everything; else this store keeps listings.
+export function auditCache(cacheDir: string | null | undefined, db: UpstreamCacheStore, signal: AbortSignal, debug = false): CacheStore | undefined {
+  return cacheDir ? undefined : upstreamCache(db, signal, debug)
+}
+
+// Only listings are kept: upstream's other records (npm version documents,
+// registries' repository lookups) read as misses and are not written.
+const CACHED_TYPE = 'github/advisories'
+
 // The cache is an optimization: a database failure is a miss, never a failed
 // audit. Upstream keeps listing after an abandoned audit; once `signal` aborts,
 // the request's database work is over and the store is left alone.
 export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug = false): CacheStore {
   return {
-    async read(key) {
-      if (signal.aborted) return null
+    async read(type, key) {
+      if (type !== CACHED_TYPE || signal.aborted) return null
       try {
-        const value = await db.getUpstreamCacheEntry(key)
+        const value = await db.getUpstreamCacheEntry(`${type}/${key}`)
         return value === null ? null : JSON.parse(value) as unknown
       } catch (error) {
         if (debug) console.warn('managed: upstream cache read failed:', error)
         return null
       }
     },
-    async write(key, value) {
-      if (signal.aborted) return
-      try { await db.setUpstreamCacheEntry(key, JSON.stringify(value), Date.now()) } catch (error) {
+    async write(type, key, value) {
+      if (type !== CACHED_TYPE || signal.aborted) return
+      try { await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), Date.now()) } catch (error) {
         if (debug) console.warn('managed: upstream cache write failed:', error)
       }
     },

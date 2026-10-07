@@ -12,6 +12,7 @@ import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { loadManagedStatic } from './static.ts'
 import { openManagedStorage } from './storage.ts'
+import { setCacheDir } from '@preventive/upstream/npm.js'
 
 // Housekeeping runs on ordinary traffic too, including serverless instances
 // without a timer or cron. Failed sweeps retry on later traffic after a minute.
@@ -21,6 +22,9 @@ const REAP_RETRY_MS = 60_000
 type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown'>>
 
 export async function createManagedApp(config: ManagedConfig, options: ManagedAppOptions = {}) {
+  // Audits keep upstream's records on disk where the config has a cache
+  // directory; bundle builds set it in their own worker.
+  setCacheDir(config.upstreamCacheDir ?? false)
   // Load the optional peer only for serverless managed deployments. Embedding
   // hosts can discard listener promises, so retain maintenance inside the app.
   const waitUntil = config.serverless ? (await import('@vercel/functions')).waitUntil : undefined

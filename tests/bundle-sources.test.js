@@ -240,10 +240,10 @@ describe('bundleFilesAsMap — the filesystem, not just the source', () => {
     assert.deepEqual([...bundleSourcesAsMap(details()).keys()], ['index.js'])
   })
 
-  it('passes a corrupt base64 spelling along for the terminal to report', async () => {
-    // Decoding here could only drop the file silently. Left spelt as it
-    // is, the file exists, and the command that reads it says why it
-    // cannot — on stderr and on the diagnostic channel.
+  it('passes a corrupt base64 spelling along, which the terminal refuses', () => {
+    // Stasis never writes one. Decoding here could only drop the file
+    // silently, so it is passed on as spelt and the terminal, which decodes
+    // its sources as it is made, refuses the tree rather than mounting it.
     const broken = { kind: 'stasis', bundle: new Bundle({
       config: { scope: 'full' },
       modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'index.js': 'x\n', 'bad.png': '!!!not base64!!!' } }]]),
@@ -251,11 +251,9 @@ describe('bundleFilesAsMap — the filesystem, not just the source', () => {
     }) }
     const files = bundleFilesAsMap(broken)
     assert.deepEqual([...files.keys()].toSorted(), ['bad.png', 'index.js'], 'the file is still there')
-    const t = createTerminal(files, { mount: '/sources', home: '/', writable: '/tmp/' })
-    assert.equal((await t.run('ls')).stdout, 'bad.png\nindex.js\n')
-    const r = await t.run('cat bad.png')
-    assert.match(r.stderr, /base64 that does not decode/u)
-    assert.deepEqual(r.unsupported.map((u) => u.detail), ['base64 source'])
+    assert.throws(() => createTerminal(files, { mount: '/sources', home: '/', writable: '/tmp/' }), {
+      name: 'TypeError', message: /"bad\.png" declares base64 that does not decode/u,
+    })
   })
 })
 
@@ -397,12 +395,21 @@ describe('bundleFileSizes — a base64 spelling the terminal cannot read has no 
     formats: new Map(Object.keys(spellings).map((path) => [path, 'resource:base64'])),
   }) })
 
-  it('agrees with `wc -c` wherever the terminal reads the file, and gives no size where it cannot', async () => {
+  it('agrees with `wc -c` wherever the terminal takes the file, and gives no size where it refuses it', async () => {
     const sizes = bundleFileSizes(details())
-    const t = createTerminal(bundleFilesAsMap(details()), { mount: '/sources', home: '/', writable: '/tmp/' })
+    const files = bundleFilesAsMap(details())
     for (const path of Object.keys(spellings)) {
-      const r = await t.run(`wc -c ${path}`)
-      const expected = r.exitCode === 0 ? Number(r.stdout.trim().split(/\s+/u)[0]) : null
+      // The terminal decodes its sources as it is made, so each spelling
+      // gets a terminal of its own: one it refuses leaves no size.
+      let expected = null
+      try {
+        const t = createTerminal(new Map([[path, files.get(path)]]), { mount: '/sources', home: '/', writable: '/tmp/' })
+        const r = await t.run(`wc -c ${path}`)
+        assert.equal(r.exitCode, 0, r.stderr)
+        expected = Number(r.stdout.trim().split(/\s+/u)[0])
+      } catch (error) {
+        if (!(error instanceof TypeError) || !/declares base64 that does not decode/u.test(error.message)) throw error
+      }
       assert.equal(sizes.get(path), expected, `${path} (${JSON.stringify(spellings[path])})`)
     }
     // And the cases are not all one kind.
