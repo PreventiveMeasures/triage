@@ -17,7 +17,7 @@ export interface BundleBuildInput {
   commit: string
   entries: string[]
   directory: string
-  options: { conditions?: string[]; mainFields?: string[]; metro?: boolean; platforms?: string[]; jsx?: boolean }
+  options: { conditions?: string[]; mainFields?: string[]; metro?: boolean; platforms?: string[]; jsx?: boolean; packageManager?: 'soldeer' }
   // What the stored bundle records; null for Solidity, which takes no conditions.
   conditions: BundleBuildConditions | null
 }
@@ -42,7 +42,9 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
     const parent = posix.dirname(entry).split('/')
     while (parts.some((part, i) => parent[i] !== part)) parts.pop()
   }
-  const options: BundleBuildInput['options'] = {}
+  // Stasis builds Solidity with Soldeer alone. Named, a JS lockfile beside or
+  // above the project no longer leaves it unable to tell which one installs it.
+  const options: BundleBuildInput['options'] = scripts ? {} : { packageManager: 'soldeer' }
   let recorded: BundleBuildConditions | null = null
   if (scripts) {
     if (conditions == null || typeof conditions !== 'object' || Array.isArray(conditions)) return fail('bad-conditions')

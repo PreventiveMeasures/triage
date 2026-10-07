@@ -68,6 +68,15 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   return { bytes, directory, filename: githubBundleFilename(github, project, input.commit, name) }
 }
 
+// The code a failed build answers with. Never upstream bodies or paths outside
+// the caller's grants: those stay in the diagnostic. A missing or ambiguous
+// lockfile, or the named one missing, is the lockfile's.
+export function buildErrorCode(error, message) {
+  if (['build-scope', 'too-large'].includes(message)) return message
+  if (error instanceof HttpError) return error.status === 429 ? 'github-rate-limited' : 'github-build-failed'
+  return /no packageManager given|lockfile installs|no (?:pnpm-lock\.yaml|yarn\.lock|package-lock\.json|soldeer\.lock) found in /u.test(message) ? 'build-lockfile' : 'build-failed'
+}
+
 if (parentPort && workerData?.type === 'managed-bundle-build') {
   // Send diagnostics to the request's parent thread, which writes them before
   // returning the HTTP response. Worker stdout can be lost on termination.
@@ -80,11 +89,7 @@ if (parentPort && workerData?.type === 'managed-bundle-build') {
     send(await buildStasisBundle(workerData, undefined, stage => send({ type: 'progress', stage })))
   } catch (error) {
     const diagnostic = bundleBuildDiagnostic(error, workerData.token)
-    // Do not return upstream bodies or paths outside the caller's grants.
-    const code = ['build-scope', 'too-large'].includes(diagnostic.message) ? diagnostic.message
-      : error instanceof HttpError ? (error.status === 429 ? 'github-rate-limited' : 'github-build-failed')
-        : /no packageManager given|lockfile installs/u.test(diagnostic.message) ? 'build-lockfile'
-          : 'build-failed'
+    const code = buildErrorCode(error, diagnostic.message)
     send({ error: code, status: code === 'too-large' ? 413 : code === 'build-scope' ? 403 : 422, diagnostic })
   }
 }
