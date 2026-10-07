@@ -57,3 +57,10 @@ test('non-GitHub and malformed manifest URLs never become GitHub repositories', 
   const files = { 'package.json': JSON.stringify({ homepage: 'org/not-a-homepage', bugs: { url: 'https://github.com/org/actual/issues' } }) }
   assert.equal(bundleSourcePackageInfo({ name: 'pkg' }, { files }, 1).github, 'org/actual')
 })
+
+test('recorded dependency repositories link packages without a captured manifest', () => {
+  assert.equal(bundleSourcePackageInfo({ name: 'dep' }, { name: 'dep', version: '1.0.0', repo: { github: 'org/dep', directory: 'packages/dep' }, files: { 'index.js': '' } }, 1).github, 'org/dep')
+  const files = { 'package.json': JSON.stringify({ repository: 'org/manifest' }) }
+  assert.equal(bundleSourcePackageInfo({ name: 'dep' }, { repo: { github: 'org/recorded' }, files }, 1).github, 'org/recorded')
+  assert.equal(bundleSourcePackageInfo({ name: 'dep' }, { repo: { github: 'not a repo' }, files }, 1).github, 'org/manifest')
+})

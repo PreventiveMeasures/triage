@@ -21,7 +21,9 @@ function githubRepository(value, shorthand = false) {
 }
 
 // Read only captured package metadata; never fetch a registry on hover or
-// borrow the application's repository for one of its dependencies.
+// borrow the application's repository for one of its dependencies. Stasis
+// records a dependency's own repository on its module, so bundles without
+// the manifest still link it.
 export function bundleSourcePackageInfo(pkg, info, fileCount) {
   const ecosystem = info?.ecosystem ?? pkg.ecosystem ?? 'npm'
   const manifest = ecosystem === 'composer'
@@ -31,7 +33,8 @@ export function bundleSourcePackageInfo(pkg, info, fileCount) {
       : readManifest(info?.files, 'package.json')
   const name = info?.name ?? pkg.name
   const version = info?.version ?? pkg.version ?? manifest?.version
-  const github = githubRepository(manifest?.repository, ecosystem === 'npm' || ecosystem === 'soldeer')
+  const github = reportRepoGithub(info)
+    ?? githubRepository(manifest?.repository, ecosystem === 'npm' || ecosystem === 'soldeer')
     ?? [manifest?.support?.source, manifest?.source?.url, manifest?.homepage, manifest?.bugs]
       .map(value => githubRepository(value)).find(Boolean) ?? null
   return { ecosystem, name, version: typeof version === 'string' ? version : undefined, github, fileCount }
