@@ -586,6 +586,9 @@ and directory, assign unattached content when needed, and publish the reports.
 Non-embedded reports and bundles assigned to inactive repositories are moved to
 the import's selected active repository, preserving their IDs and stored bytes.
 Reports with embedded repository metadata still require that repository to be active.
+Other reports use the repository typed for them in local mode, else the one their
+findings name; like embedded repositories, these follow the current aliases at
+import time, and fall back to the selected repository when not connected.
 Triage remains shared by finding ID and follows the usual import conflict dialog.
 Existing duplicate report rows are preserved; subsequent imports reuse the oldest
 matching record without creating another copy.
