@@ -15,7 +15,7 @@ test('presets default to Node.js, replace conditions, and expose platforms only 
   const platforms = () => templates(control.render()).find(template => template.strings[0].includes('class="platforms"'))
   assert.equal(platforms(), undefined)
   for (const [label, expected] of [
-    ['Browser', { preset: 'browser', conditions: ['browser'], platforms: [] }],
+    ['Browser', { preset: 'browser', conditions: ['browser', 'module'], platforms: [] }],
     ['Metro', { preset: 'metro', conditions: ['react-native'], platforms: ['ios', 'android'] }],
     ['Node.js', defaultBundleConditions()],
   ]) {
@@ -99,41 +99,45 @@ test('switching presets replaces only the preset condition and keeps manual cond
   control.selectPreset('node')
   assert.deepEqual(changes, [
     ['node', 'development', 'browser'],
-    ['browser', 'development'],
+    ['browser', 'module', 'development'],
     ['react-native'],
     ['node', 'development', 'browser'],
   ], 'Metro sets its own conditions; a manual browser merges into the Browser preset')
   control.selectPreset('browser')
   control.removeCondition('browser')
-  assert.deepEqual(control.value.conditions, ['browser', 'development'])
+  assert.deepEqual(control.value.conditions, ['browser', 'module', 'development'])
   control.selectPreset('node')
   control.removeCondition('browser')
-  control._draft = Array.from({ length: 15 }, (_, i) => `condition-${i}`).join(' ')
-  control.addConditions()
-  assert.ok(control._error, 'the preset condition counts toward the limit of 16')
   control._draft = Array.from({ length: 14 }, (_, i) => `condition-${i}`).join(' ')
   control.addConditions()
-  assert.equal(control.value.conditions.length, 16)
+  assert.match(control._error, /14 manual/u, 'manual conditions must fit beside both Browser conditions')
+  control._draft = Array.from({ length: 13 }, (_, i) => `condition-${i}`).join(' ')
+  control.addConditions()
+  assert.equal(control.value.conditions.length, 15)
+  control.selectPreset('browser')
+  assert.equal(control.value.conditions.length, 16, 'switching presets stays within the limit of 16')
 })
 
 test('the Node.js and Browser preset conditions stay first and cannot be removed', () => {
   const control = new BundleConditions()
   const removable = name => templates(control.render()).some(template => template.values.includes(`Remove condition ${name}`))
-  for (const [preset, condition] of [['node', 'node'], ['browser', 'browser']]) {
+  for (const [preset, locked] of [['node', ['node']], ['browser', ['browser', 'module']]]) {
     control.selectPreset(preset)
-    control._draft = `development ${condition}`
+    control._draft = `development ${locked.join(' ')}`
     control.addConditions()
-    assert.deepEqual(control.value.conditions, [condition, 'development'], 'retyping the preset condition is a no-op')
-    assert.equal(removable(condition), false)
+    assert.deepEqual(control.value.conditions, [...locked, 'development'], 'retyping a preset condition is a no-op')
+    for (const condition of locked) {
+      assert.equal(removable(condition), false)
+      control.removeCondition(condition)
+    }
     assert.equal(removable('development'), true)
-    control.removeCondition(condition)
-    assert.deepEqual(control.value.conditions, [condition, 'development'])
+    assert.deepEqual(control.value.conditions, [...locked, 'development'])
     control.removeCondition('development')
-    assert.deepEqual(control.value.conditions, [condition])
+    assert.deepEqual(control.value.conditions, locked)
   }
   control._draft = 'node'
   control.addConditions()
-  assert.deepEqual(control.value.conditions, ['browser'], 'Browser builds resolve with node already')
+  assert.deepEqual(control.value.conditions, ['browser', 'module'], 'Browser builds resolve with node already')
   assert.match(control._error, /node.*automatically/u)
 })
 
