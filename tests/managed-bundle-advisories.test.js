@@ -91,7 +91,8 @@ test('audit presence and reason scopes require code evidence, including version-
   const modules = [
     ['node_modules/ws', { name: 'ws', version: '8.21.1', files: { 'package.json': '{}', 'browser.js': 'stub', 'lib/websocket.js': 'code' } }],
     ['node_modules/node-fetch', { name: 'node-fetch', version: '2.7.0', files: { 'nested/package.json': '{}', 'browser.js': 'stub' } }],
-    ['node_modules/future/node_modules/ws', { name: 'ws', version: '8.21.2', files: { 'browser.js': 'unverified' } }],
+    ['node_modules/latest/node_modules/ws', { name: 'ws', version: '8.22.0', files: { 'browser.js': 'stub' } }],
+    ['node_modules/future/node_modules/ws', { name: 'ws', version: '8.22.1', files: { 'browser.js': 'unverified' } }],
     ['node_modules/future/node_modules/node-fetch', { name: 'node-fetch', version: '2.7.1', files: { 'browser.js': 'unverified' } }],
     ['node_modules/unknown/node_modules/ws', { name: 'ws', version: 'unknown', files: { 'browser.js': 'unverified' } }],
     ['vendor/ws', { ecosystem: 'cargo', name: 'ws', version: '1.0.0', files: { 'browser.js': 'not an npm correction' } }],
@@ -107,7 +108,7 @@ test('audit presence and reason scopes require code evidence, including version-
     { ecosystem: 'cargo', name: 'ws', versions: ['1.0.0'] },
     { ecosystem: 'npm', name: 'added', versions: ['1.0.0'] },
     { ecosystem: 'npm', name: 'node-fetch', versions: ['2.7.1'] },
-    { ecosystem: 'npm', name: 'ws', versions: ['8.21.1', '8.21.2', 'unknown'] },
+    { ecosystem: 'npm', name: 'ws', versions: ['8.21.1', '8.22.1', 'unknown'] },
   ], skipped: [] })
   assert.deepEqual(inventoryOf(modules, ['node_modules/ws/package.json', 'node_modules/ws/browser.js']), { packages: [], skipped: [] })
   assert.deepEqual(inventoryOf(modules, ['node_modules/ws/lib/websocket.js']), { packages: [{ ecosystem: 'npm', name: 'ws', versions: ['8.21.1'] }], skipped: [] })
