@@ -24,6 +24,9 @@ test('build requests pin commits, reject unsafe inputs, and apply presets', () =
   }
   for (const value of ['main', 'a'.repeat(39), null]) assert.throws(() => input(['a.js'], { commit: value }))
   assert.throws(() => input(['a.js'], { conditions: { preset: 'metro', conditions: ['development'], platforms: ['ios'] } }), { code: 'metro-conditions' })
+  for (const preset of [['metro'], ['browser']]) {
+    assert.throws(() => input(['a.js'], { conditions: { preset, conditions: ['react-native'], platforms: ['ios'] } }), { code: 'bad-conditions' })
+  }
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'node', conditions: ['node', 'production', 'node'], platforms: ['ios'] } }).conditions,
     { preset: 'node', conditions: ['node', 'production'], platforms: [] }, 'records what the build resolves with')
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'metro', conditions: ['react-native'], platforms: ['android', 'android'] } }).conditions,

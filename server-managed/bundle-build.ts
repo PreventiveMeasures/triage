@@ -47,7 +47,7 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
   if (scripts) {
     if (conditions == null || typeof conditions !== 'object' || Array.isArray(conditions)) return fail('bad-conditions')
     const { preset, conditions: names, platforms } = conditions as Record<string, unknown>
-    if (!['node', 'browser', 'metro'].includes(String(preset)) || !Array.isArray(names) || names.length > 16
+    if (typeof preset !== 'string' || !['node', 'browser', 'metro'].includes(preset) || !Array.isArray(names) || names.length > 16
       || !names.every(name => typeof name === 'string' && name.length > 0 && name.length <= 64
         && !/^\.|^\d+$|[\s,/\\\p{Cc}]/u.test(name) && !['default', 'import', 'require'].includes(name))) return fail('bad-conditions')
     if (preset === 'metro') {
