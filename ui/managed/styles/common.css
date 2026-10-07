@@ -69,10 +69,14 @@ code,
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
+/* Opaque so the page scrolls beneath the tabs instead of through them.
+   The fixed page gradient lines up with the body's, so the bar has no seam. */
 .manage-header {
   position: sticky;
   top: 0;
   z-index: 2;
+  background: var(--page-background, var(--bg));
+  background-attachment: fixed;
 }
 /* One bounded pane owns each complete collection, including group titles.
    Headers, upload controls, filters, and history pagination stay in place. */

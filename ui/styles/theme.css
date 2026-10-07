@@ -503,12 +503,16 @@ body {
      blur has something to refract. background-attachment: fixed pins
      the gradient to the viewport — as #main-content scrolls, the same
      gradient blurs through every card, which is what sells the
-     glass-floating-over-page effect. */
-  background:
+     glass-floating-over-page effect. Declared as a token on body so it
+     resolves against the active theme's stops; sticky chrome inside
+     shadow roots paints the same token, also fixed, to cover content
+     scrolling beneath it without a visible seam. */
+  --page-background:
     radial-gradient(ellipse 90% 60% at 0% 0%, var(--gradient-stop-a), transparent 60%),
     radial-gradient(ellipse 70% 50% at 100% 0%, var(--gradient-stop-b), transparent 60%),
     radial-gradient(ellipse 80% 60% at 50% 110%, var(--gradient-stop-c), transparent 60%),
     var(--bg);
+  background: var(--page-background);
   background-attachment: fixed;
   color: var(--text); line-height: 1.5;
   display: flex; height: 100vh; height: 100dvh; margin: 0; overflow: hidden;
