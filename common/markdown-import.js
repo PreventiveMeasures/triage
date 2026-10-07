@@ -8,8 +8,8 @@ export function splitMarkdownImport(content, filename) {
   const stem = filename.replace(/\.(?:md|markdown)$/iu, '')
   const names = new Set()
   return reports.map(({ displayName, data }) => {
-    // Keep readable names; only characters forbidden in storage need replacing.
-    const name = `${stem}: ${displayName}`.replaceAll(/[\\/\p{Cc}]/gu, '_')
+    // Keep spaces readable; escape literal percent signs for display decoding.
+    const name = `${stem}: ${displayName}`.replaceAll('%', '%25').replaceAll(/[\\/\p{Cc}]/gu, '_') + '.generic-md'
     if (names.has(name)) throw new Error(`Markdown (generic): products produce the same report name: ${name}`)
     names.add(name)
     return { name, content: JSON.stringify(data) }

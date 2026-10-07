@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { splitMarkdownImport } from '../common/markdown-import.js'
+import { displayName } from '../common/report-display-name.js'
 import { loadManagedFindings, readManagedReport } from '../common/managed/report-content.ts'
 import { filterReportContent } from '../common/managed/report-filter.ts'
 import { genericMarkdown } from './_generic-markdown.js'
 
 test('generic imports produce independent JSON reports with repository metadata and normalized severities', async () => {
   const reports = splitMarkdownImport(genericMarkdown, 'audit.md')
-  assert.deepEqual(reports.map((report) => report.name), ['audit: Product A', 'audit: Product B'])
+  assert.deepEqual(reports.map((report) => report.name), ['audit: Product A.generic-md', 'audit: Product B.generic-md'])
   for (const [index, report] of reports.entries()) {
     const { data } = readManagedReport(report.content, report.name)
     assert.equal(data.source, 'markdown-generic')
@@ -27,13 +28,22 @@ test('derived names preserve distinct products containing filename separators an
   const reports = splitMarkdownImport(genericMarkdown.replaceAll('Product A', 'A/B').replaceAll('Product B', 'A%2FB'), 'audit.MARKDOWN')
   assert.equal(new Set(reports.map((report) => report.name)).size, 2)
   assert.ok(reports.every((report) => !report.name.includes('/')))
-  assert.deepEqual(reports.map((report) => report.name), ['audit: A_B', 'audit: A%2FB'])
+  assert.deepEqual(reports.map((report) => report.name), ['audit: A_B.generic-md', 'audit: A%252FB.generic-md'])
+  assert.deepEqual(reports.map((report) => displayName(report.name)), ['audit: A_B', 'audit: A%2FB'])
   assert.deepEqual(reports.map((report) => JSON.parse(report.content).product), ['A/B', 'A%2FB'])
 })
 
-test('derived names preserve spaces, Unicode and literal percent text without a format suffix', () => {
+test('derived names keep spaces and Unicode readable with the generic suffix', () => {
   const reports = splitMarkdownImport(genericMarkdown.replaceAll('Product A', 'A Project').replaceAll('Product B', 'Café 100% & %20'), 'Audit notes.md')
-  assert.deepEqual(reports.map(report => report.name), ['Audit notes: A Project', 'Audit notes: Café 100% & %20'])
+  assert.deepEqual(reports.map(report => report.name), ['Audit notes: A Project.generic-md', 'Audit notes: Café 100%25 & %2520.generic-md'])
+  assert.deepEqual(reports.map(report => displayName(report.name)), ['Audit notes: A Project', 'Audit notes: Café 100% & %20'])
+})
+
+test('the generic suffix preserves product names ending in reserved display suffixes', () => {
+  for (const product of ['SDK.codex', 'archive.generic-md', 'literal%20.generic-md']) {
+    const [report] = splitMarkdownImport(genericMarkdown.replaceAll('Product A', product), 'audit.md')
+    assert.equal(displayName(report.name), `audit: ${product}`)
+  }
 })
 
 test('sanitized product-name collisions reject the complete split before any writes', () => {
@@ -60,7 +70,7 @@ test('repository and prefix errors reject the complete import, while other forma
   const invalidPrefix = genericMarkdown.replaceAll('https://github.com/a/b/', 'https://github.com/a/a/')
   assert.throws(() => splitMarkdownImport(invalidPrefix, 'bad.md'), /unsupported repository ID prefixes/u)
   assert.equal(readManagedReport(invalidPrefix, 'bad.md').data, null)
-  assert.deepEqual(splitMarkdownImport(genericMarkdown.replaceAll('BBB-05', 'AAA-05'), 'audit.md').map(report => report.name), ['audit: Product A', 'audit: Product B'])
+  assert.deepEqual(splitMarkdownImport(genericMarkdown.replaceAll('BBB-05', 'AAA-05'), 'audit.md').map(report => report.name), ['audit: Product A.generic-md', 'audit: Product B.generic-md'])
   for (const content of ['{"findings":[]}', '# Claude report\n\n## Details\n\nText', 'finding_url,repository\na,b']) {
     assert.equal(splitMarkdownImport(content, 'existing.csv'), null)
   }

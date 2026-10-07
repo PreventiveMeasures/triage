@@ -140,7 +140,7 @@ test('managed generic Markdown upload splits by product before sending bytes', a
     assert.equal(call.url, '/api/admin/reports')
     assert.equal(call.data.source, 'markdown-generic')
     assert.equal(call.headers.get('x-csrf-token'), 'csrf')
-    assert.match(decodeURIComponent(call.headers.get('x-report-filename')), /^audit: Product [AB]$/u)
+    assert.match(decodeURIComponent(call.headers.get('x-report-filename')), /^audit: Product [AB]\.generic-md$/u)
   }
 })
 
