@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { buildStasisBundle } from '../server-managed/bundle-build-worker.js'
+import { buildErrorCode, buildStasisBundle } from '../server-managed/bundle-build-worker.js'
 import { buildRepositoryBundle, githubBundleFilename, parseBundleBuild } from '../server-managed/bundle-build.ts'
 
 const commit = 'a'.repeat(40)
@@ -13,7 +13,7 @@ const input = (entries = ['index.ts'], extra = {}) => parseBundleBuild({ repoId:
 test('build requests pin commits, reject unsafe inputs, and apply presets', () => {
   assert.equal(input(['packages/app/src/a.ts', 'packages/app/bin/b.js']).directory, 'packages/app')
   assert.deepEqual(input(['a.js', 'a.js']).entries, ['a.js'])
-  assert.deepEqual(input(['A.sol']).options, {})
+  assert.deepEqual(input(['A.sol']).options, { packageManager: 'soldeer' }, 'Stasis builds Solidity with Soldeer alone')
   assert.deepEqual(input(['a.ts']).options, { conditions: ['node'] }, 'Stasis detects TypeScript itself')
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'browser', conditions: ['browser', 'development'], platforms: [] } }).options,
     { conditions: ['browser', 'development'], mainFields: ['browser', 'module', 'main'] })
@@ -241,6 +241,39 @@ test('real Stasis builds Solidity with Soldeer and follows local imports', async
   const bundle = Bundle.parse(brotliDecompressSync(built.bytes).toString())
   assert.deepEqual([...bundle.entries], ['Token.sol'])
   assert.equal(bundle.formats.get('Base.sol'), 'solidity')
+})
+
+test('real Stasis builds a Soldeer project beside or below a JS lockfile', async () => {
+  const foundry = '[profile.default]\nsrc = "src"\nlibs = ["dependencies"]\n[dependencies]\n'
+  const contracts = {
+    'foundry.toml': foundry, 'soldeer.lock': 'version = 2\ndependencies = []\n',
+    'src/Token.sol': 'pragma solidity ^0.8.0; import "./Base.sol"; contract Token is Base {}',
+    'src/Base.sol': 'pragma solidity ^0.8.0; contract Base {}',
+  }
+  const pnpm = { 'package.json': '{"name":"app","version":"1.0.0"}', 'pnpm-lock.yaml': "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n" }
+  const npm = { 'package.json': '{"name":"app","version":"1.0.0"}', 'package-lock.json': files['package-lock.json'] }
+  const nested = Object.fromEntries(Object.entries(contracts).map(([path, text]) => [`contracts/${path}`, text]))
+  for (const [project, entry, directory] of [
+    [{ ...pnpm, ...nested }, 'contracts/src/Token.sol', 'contracts'],
+    [{ ...pnpm, ...contracts }, 'src/Token.sol', ''],
+    [{ ...npm, ...contracts }, 'src/Token.sol', ''],
+  ]) {
+    const result = await buildStasisBundle({ input: input([entry]), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+    const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
+    assert.equal(result.directory, directory, entry)
+    assert.deepEqual([...bundle.entries], ['src/Token.sol'])
+    assert.equal(bundle.formats.get('src/Base.sol'), 'solidity')
+  }
+})
+
+test('missing, ambiguous and named-but-missing lockfiles are reported as the lockfile', () => {
+  for (const message of [
+    'buildGitHubBundle: org/repo@a: no packageManager given, and more than one lockfile installs /: /pnpm-lock.yaml (pnpm), /soldeer.lock (soldeer)',
+    'buildGitHubBundle: org/repo@a: no packageManager given, and none of pnpm-lock.yaml, yarn.lock, package-lock.json, soldeer.lock installs /',
+    'no soldeer.lock found in /, where / is installed from',
+  ]) assert.equal(buildErrorCode(new Error(message), message), 'build-lockfile', message)
+  assert.equal(buildErrorCode(new Error('x'), 'something else'), 'build-failed')
+  assert.equal(buildErrorCode(new Error('too-large'), 'too-large'), 'too-large')
 })
 
 test('real Stasis builds nested Solidity from its dependency files despite a closer package.json', async () => {
