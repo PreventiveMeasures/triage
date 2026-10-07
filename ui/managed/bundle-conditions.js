@@ -19,7 +19,7 @@ export class BundleConditions extends LitElement {
   static styles = [unsafeCSS(commonStyles), unsafeCSS(styles)]
   static properties = {
     showConditions: { attribute: false },
-    _preset: { state: true }, _conditions: { state: true }, _platforms: { state: true },
+    _preset: { state: true }, _manual: { state: true }, _platforms: { state: true },
     _draft: { state: true }, _error: { state: true }, _manualOpen: { state: true },
   }
 
@@ -27,7 +27,7 @@ export class BundleConditions extends LitElement {
     super()
     this.showConditions = true
     this._preset = 'node'
-    this._conditions = ['node']
+    this._manual = []
     this._platforms = ['ios', 'android']
     this._draft = ''
     this._error = ''
@@ -35,12 +35,17 @@ export class BundleConditions extends LitElement {
   }
 
   get value() {
-    return { preset: this._preset, conditions: [...this._conditions], platforms: this._preset === 'metro' ? [...this._platforms] : [] }
+    return { preset: this._preset, conditions: this.conditions, platforms: this._preset === 'metro' ? [...this._platforms] : [] }
   }
 
-  // The preset's own conditions stay first and cannot be removed.
   get presetConditions() {
     return PRESETS.find(item => item.id === this._preset).conditions
+  }
+
+  // The preset's condition leads and cannot be removed. Manual conditions follow
+  // it and survive preset switches, except under Metro, which sets its own.
+  get conditions() {
+    return [...new Set([...this.presetConditions, ...(this._preset === 'metro' ? [] : this._manual)])]
   }
 
   notifyChange() {
@@ -51,7 +56,6 @@ export class BundleConditions extends LitElement {
     const preset = PRESETS.find(item => item.id === id)
     if (!preset) return
     this._preset = id
-    this._conditions = [...preset.conditions]
     this._draft = ''
     this._error = ''
     this.notifyChange()
@@ -77,12 +81,12 @@ export class BundleConditions extends LitElement {
       this._error = 'Use condition names of up to 64 characters, without a leading dot or an all-numeric name.'
       return
     }
-    const conditions = [...new Set([...this._conditions, ...names])]
-    if (conditions.length > 16) {
+    const manual = [...new Set([...this._manual, ...names.filter(name => !this.presetConditions.includes(name))])]
+    if (this.presetConditions.length + manual.length > 16) {
       this._error = 'Use up to 16 conditions.'
       return
     }
-    this._conditions = conditions
+    this._manual = manual
     this._draft = ''
     this._error = ''
     this.notifyChange()
@@ -90,7 +94,7 @@ export class BundleConditions extends LitElement {
 
   removeCondition(name) {
     if (this.presetConditions.includes(name)) return
-    this._conditions = this._conditions.filter(condition => condition !== name)
+    this._manual = this._manual.filter(condition => condition !== name)
     this._error = ''
     this.notifyChange()
   }
@@ -108,7 +112,7 @@ export class BundleConditions extends LitElement {
       </div>
       <div id="manual-conditions" ?hidden=${!this.showConditions || !manual || !this._manualOpen}>
         <form class="condition-editor" @submit=${event => { event.preventDefault(); this.addConditions() }}>
-        <ul aria-label="Export conditions">${this._conditions.map(name => this.presetConditions.includes(name) ? html`<li class="preset"><code>${name}</code></li>` : html`<li><code>${name}</code><button type="button" aria-label=${`Remove condition ${name}`} @click=${() => this.removeCondition(name)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>
+        <ul aria-label="Export conditions">${this.conditions.map(name => this.presetConditions.includes(name) ? html`<li class="preset"><code>${name}</code></li>` : html`<li><code>${name}</code><button type="button" aria-label=${`Remove condition ${name}`} @click=${() => this.removeCondition(name)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>
         <div class="condition-input"><input type="text" aria-label="Add conditions" aria-describedby="conditions-help" aria-invalid=${Boolean(this._error)} aria-errormessage="condition-error" placeholder="Add condition…" autocomplete="off" maxlength="1040" .value=${this._draft} @input=${event => { this._draft = event.target.value; this._error = '' }}
           @keydown=${event => { if (event.key === ' ' && !event.isComposing) { event.preventDefault(); this.addConditions() } }} @blur=${() => this.addConditions()}></div>
         </form>

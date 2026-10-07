@@ -70,7 +70,7 @@ test('Metro hides manual conditions and keeps its react-native condition unchang
   assert.equal(hidden('<div id="manual-conditions" ?hidden='), false, 'leaving Metro restores the open editor')
 })
 
-test('custom conditions support adding, deduplicating, removing, and restoring a preset', () => {
+test('custom conditions support adding, deduplicating, and removing', () => {
   const control = new BundleConditions()
   control._draft = ' development, custom:condition node development '
   const form = templates(control.render()).find(template => template.strings.some(string => string.includes('class="condition-editor"')))
@@ -83,11 +83,37 @@ test('custom conditions support adding, deduplicating, removing, and restoring a
   const remove = templates(control.render()).find(template => template.values.includes('Remove condition development'))
   remove.values.find(value => typeof value === 'function')()
   assert.deepEqual(control.value.conditions, ['node', 'custom:condition'])
-  control.selectPreset('node')
-  assert.deepEqual(control.value, defaultBundleConditions())
   const snapshot = control.value
   snapshot.conditions.push('external mutation')
-  assert.deepEqual(control.value.conditions, ['node'])
+  assert.deepEqual(control.value.conditions, ['node', 'custom:condition'])
+})
+
+test('switching presets replaces only the preset condition and keeps manual conditions', () => {
+  const control = new BundleConditions()
+  const changes = []
+  control.addEventListener('conditions-change', event => changes.push(event.detail.conditions))
+  control._draft = 'development browser'
+  control.addConditions()
+  control.selectPreset('browser')
+  control.selectPreset('metro')
+  control.selectPreset('node')
+  assert.deepEqual(changes, [
+    ['node', 'development', 'browser'],
+    ['browser', 'development'],
+    ['react-native'],
+    ['node', 'development', 'browser'],
+  ], 'Metro sets its own conditions; a manual browser merges into the Browser preset')
+  control.selectPreset('browser')
+  control.removeCondition('browser')
+  assert.deepEqual(control.value.conditions, ['browser', 'development'])
+  control.selectPreset('node')
+  control.removeCondition('browser')
+  control._draft = Array.from({ length: 15 }, (_, i) => `condition-${i}`).join(' ')
+  control.addConditions()
+  assert.ok(control._error, 'the preset condition counts toward the limit of 16')
+  control._draft = Array.from({ length: 14 }, (_, i) => `condition-${i}`).join(' ')
+  control.addConditions()
+  assert.equal(control.value.conditions.length, 16)
 })
 
 test('the Node.js and Browser preset conditions stay first and cannot be removed', () => {
