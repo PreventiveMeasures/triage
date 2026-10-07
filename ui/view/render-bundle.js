@@ -948,7 +948,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
             data-tooltip-ecosystem=${info?.ecosystem ?? nothing}
             data-tooltip-version=${info?.version ?? nothing}
             data-tooltip-files=${info?.fileCount ?? nothing}
-            data-tooltip-repo=${info?.github ?? nothing}
+            data-tooltip-repo=${info?.github ? info.github + (info.directory ? `/${info.directory}` : '') : nothing}
             data-tooltip=${hasDetails ? tooltip : nothing}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
             ${pkg ? packageIcon : nothing}
