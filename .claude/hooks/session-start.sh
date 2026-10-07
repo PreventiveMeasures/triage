@@ -88,29 +88,39 @@ else
   NODE_BIN="$(dirname "$(command -v node)")"
 fi
 
-# Persist Node on PATH for the rest of the session so subsequent
-# tool calls (npm test, tsc, etc.) don't fall back to system Node.
-# The Claude Code harness sources $CLAUDE_ENV_FILE before every tool
-# call; without it set, the export below only lives inside this
+# Put a directory first on PATH, here and for the rest of the session,
+# so subsequent tool calls (npm test, tsc, etc.) don't fall back to
+# system Node. The Claude Code harness sources $CLAUDE_ENV_FILE before
+# every tool call; without it set, the export only lives inside this
 # script's own shell and the next Bash tool call resets to system
 # Node — log loudly so the regression is visible rather than silent.
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-  echo "export PATH=\"$NODE_BIN:\$PATH\"" >> "$CLAUDE_ENV_FILE"
-else
+prepend_path() {
+  export PATH="$1:$PATH"
+  if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+    echo "export PATH=\"$1:\$PATH\"" >> "$CLAUDE_ENV_FILE"
+  fi
+}
+prepend_path "$NODE_BIN"
+if [ -z "${CLAUDE_ENV_FILE:-}" ]; then
   warn "CLAUDE_ENV_FILE unset; node $(node --version) will not persist across tool calls"
 fi
-export PATH="$NODE_BIN:$PATH"
 
 # Enable corepack so the pnpm version pinned in package.json's
 # `packageManager` field is the one that actually runs. Node builds
 # without corepack (Node 25+ no longer bundles it) get that same version
-# from npm instead. Non-fatal — a stale system pnpm still mostly works.
+# from npm instead, in a prefix of the hook's own: npm's global prefix
+# may be root-owned, or have its bin dir off PATH. Non-fatal — a stale
+# system pnpm still mostly works.
 if command -v corepack >/dev/null 2>&1; then
   corepack enable --install-directory "$NODE_BIN" || warn "corepack enable failed; pnpm pinning may not apply"
 else
-  pnpm_spec="$(node -p 'require("./package.json").packageManager.split("+")[0]')" &&
-    npm install -g "$pnpm_spec" ||
-    warn "corepack not found and npm install -g ${pnpm_spec:-pnpm} failed; pnpm pinning may not apply"
+  pnpm_prefix="${XDG_CACHE_HOME:-$HOME/.cache}/session-start/npm-global"
+  if pnpm_spec="$(node -p 'require("./package.json").packageManager.split("+")[0]')" &&
+    npm install -g --prefix "$pnpm_prefix" "$pnpm_spec"; then
+    prepend_path "$pnpm_prefix/bin"
+  else
+    warn "corepack not found and npm install -g --prefix $pnpm_prefix ${pnpm_spec:-pnpm} failed; pnpm pinning may not apply"
+  fi
 fi
 
 # `pnpm ci` semantics: install exactly what's in pnpm-lock.yaml, fail
