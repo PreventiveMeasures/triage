@@ -66,6 +66,27 @@ test('conflicting repository hints fall back to discovery without affecting reas
     [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'], github: 'org/moved' }])
 })
 
+test('npm packages without a recorded repository use the one their bundled package.json names', () => {
+  // Records from before Stasis recorded `repo`, carrying their package.json.
+  const withManifest = (name, repository, text = JSON.stringify({ name, version: '1.0.0', repository })) =>
+    [`node_modules/${name}`, { name, version: '1.0.0', files: { 'index.js': 'source', 'package.json': text } }]
+  const modules = [
+    withManifest('from-manifest', { type: 'git', url: 'git+https://github.com/org/from-manifest.git' }),
+    withManifest('recorded', 'github:other/recorded'),
+    withManifest('not-github', 'https://gitlab.com/org/not-github'),
+    withManifest('bad-json', undefined, '{'),
+    withManifest('bom', undefined, `\uFEFF${JSON.stringify({ name: 'bom', version: '1.0.0', repository: 'github:org/bom' })}`),
+    ['vendor/org/php', { ecosystem: 'composer', name: 'org/php', version: '1.0.0', files: { 'a.php': 'source', 'package.json': JSON.stringify({ repository: 'org/js' }) } }],
+  ]
+  modules[1][1].repo = { github: 'org/recorded' }
+  assert.deepEqual(inventoryOf(modules).packages.map(pkg => [pkg.name, pkg.github]), [
+    ['org/php', undefined], ['bad-json', undefined], ['bom', 'org/bom'], ['from-manifest', 'org/from-manifest'], ['not-github', undefined], ['recorded', 'org/recorded'],
+  ])
+  // A manifest's hint conflicts with a recorded one like any other.
+  const split = [withManifest('dep', 'github:org/old'), ['node_modules/a/node_modules/dep', { name: 'dep', version: '2.0.0', repo: { github: 'org/new' }, files: { 'index.js': 'source' } }]]
+  assert.equal(inventoryOf(split).packages[0].github, undefined)
+})
+
 test('audit presence and reason scopes require code evidence, including version-bounded browser corrections', () => {
   const modules = [
     ['node_modules/ws', { name: 'ws', version: '8.21.1', files: { 'package.json': '{}', 'browser.js': 'stub', 'lib/websocket.js': 'code' } }],
