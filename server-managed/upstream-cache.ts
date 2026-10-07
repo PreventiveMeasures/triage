@@ -38,6 +38,12 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
   }
 }
 
+// An audit's `cache`: where the server has an upstream disk cache (off Vercel,
+// set at startup), that keeps everything; else this store keeps listings.
+export function auditCache(cacheDir: string | null | undefined, db: UpstreamCacheStore, signal: AbortSignal, debug = false): CacheStore | undefined {
+  return cacheDir ? undefined : upstreamCache(db, signal, debug)
+}
+
 // Only listings are kept: upstream's other records (npm version documents,
 // registries' repository lookups) read as misses and are not written.
 const CACHED_TYPE = 'github/advisories'

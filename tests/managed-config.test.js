@@ -4,6 +4,7 @@ import { Buffer } from 'node:buffer'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { defaultCacheDir } from '@preventive/upstream/npm.js'
 import { loadManagedConfig } from '../server-managed/config.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { openManagedStorage } from '../server-managed/storage.ts'
@@ -33,6 +34,13 @@ test('public workspace sharing requires exactly DEEPVIEW_ALLOW_SHARE=1', t => {
     process.env.DEEPVIEW_ALLOW_SHARE = value
     for (const combined of [false, true]) assert.equal(loadManagedConfig({ combined }).allowShare, value === '1')
   }
+})
+
+test('upstream keeps its records on disk at its default location, but nowhere on Vercel', t => {
+  useEnv(t, {})
+  assert.equal(loadManagedConfig().upstreamCacheDir, defaultCacheDir ?? null)
+  Object.assign(process.env, { VERCEL: '1', DATABASE_URL: 'postgres://fixture', BLOB_READ_WRITE_TOKEN: 'fixture' })
+  assert.equal(loadManagedConfig().upstreamCacheDir, null)
 })
 
 test('managed storage encryption is opt-in and validates its key before opening storage', t => {

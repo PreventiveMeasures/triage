@@ -625,8 +625,11 @@ GitHub requests. The three-minute budget starts before admission; disconnects
 cancel builds and slots are released only after worker termination. Leases
 expire after four minutes using the database clock to recover from crashes;
 only the claiming request can release its slot. Each worker has a 512 MiB heap
-limit, and no persistent Stasis cache is enabled. Output is bounded by 200 MiB
-decoded and the configured bundle upload size limit.
+limit. Off Vercel, what a build downloads (npm tarballs and version documents,
+the repository's tree) is kept in upstream's disk cache at its default location,
+`$XDG_CACHE_HOME/PreventiveMeasures` or else `~/.cache/PreventiveMeasures`; on
+Vercel nothing is kept. Output is bounded by 200 MiB decoded and the configured
+bundle upload size limit.
 
 Builds write `managed-bundle-build:` JSON records from the HTTP thread, including
 a build ID, repository/commit, worker URL, elapsed time, and stage (`worker-start`,
@@ -724,14 +727,16 @@ the token with 401, that repository lookup is retried anonymously and the rest o
 the audit uses anonymous GitHub access. Other failures do not trigger this fallback.
 Ordinary npm-only audits contact only npm; GitHub requests are added by the
 repository recheck.
-Each repository's published advisory listing (repository rechecks, and Soldeer
-and GitHub dependencies) is kept in `managed_upstream_cache` for 90 minutes, as
-upstream's disk cache would keep it, and shared by every viewer, public shares
-and instance: only public repositories publish advisories. Upstream's other
-records, such as the npm version documents and registry lookups that find a
-package's repository, are not kept there. Upstream stamps, checks and expires
-the entries; refreshes replace the repository's single row. A cache read or
-write failure is treated as a miss and never fails the audit.
+Off Vercel, an audit's records are kept in upstream's disk cache at its default
+location, as builds' are: each repository's published advisory listing
+(repository rechecks, and Soldeer and GitHub dependencies) for 90 minutes, and
+the npm version documents and registry lookups that find a package's repository.
+On Vercel, only the listings are kept, in `managed_upstream_cache` and for the
+same 90 minutes, shared by every viewer, public share and instance: only public
+repositories publish advisories. Nothing else is kept there or on disk. Upstream
+stamps, checks and expires the entries; refreshes replace the repository's
+single row. A cache read or write failure is treated as a miss and never fails
+the audit.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.

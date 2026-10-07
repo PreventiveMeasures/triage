@@ -94,7 +94,12 @@ export function githubBundleFilename(github: string, directory: string, commit: 
 }
 
 export interface BuiltBundle { bytes: Uint8Array; directory: string; filename: string }
-export interface BuildRequest { input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[] }
+export interface BuildRequest {
+  input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[]
+  // Upstream's disk cache for what a build fetches (setCacheDir), or null for
+  // none, as on Vercel. Resolved here: the worker runs with an empty env.
+  cacheDir: string | null
+}
 // An extra per-process ceiling; admission must also hold the shared DB lease.
 const active = new Set<string>()
 

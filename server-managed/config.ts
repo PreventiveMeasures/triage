@@ -5,6 +5,7 @@ import { env } from 'node:process'
 import { databaseUrls } from '../server-common/database-config.ts'
 import { MAX_UPLOAD_BYTES } from './uploads.ts'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
+import { defaultCacheDir } from '@preventive/upstream/npm.js'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
@@ -19,6 +20,9 @@ export interface ManagedConfig {
   storageEncryptionMigrateMaxMs?: number
   vercelPreview?: boolean
   serverless?: boolean
+  // Upstream's disk cache (setCacheDir) for audits and bundle builds: its default
+  // location, or null for none, as on Vercel, where the database keeps listings.
+  upstreamCacheDir?: string | null
   debug: boolean
   allowShare: boolean
   trustProxyEnv: string | undefined
@@ -117,6 +121,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     neonUrl, blobToken, serverless, storageEncryptionKey, storageEncryptionMigrate,
     storageEncryptionMigrateMaxMs: intEnv('MANAGED_STORAGE_ENCRYPTION_MIGRATE_MAX_MS', 150_000, 1, serverless ? 240_000 : 3_600_000),
     vercelPreview: env['VERCEL_ENV'] === 'preview',
+    upstreamCacheDir: serverless ? null : defaultCacheDir ?? null,
     port: intEnv('PORT', 8765, 0, 65535),
     host,
     // DB_PATH belongs to e2e in a combined process. Keep the two stores apart.

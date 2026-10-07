@@ -2,7 +2,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { Buffer } from 'node:buffer'
 import { posix } from 'node:path'
 import { brotliCompressSync } from 'node:zlib'
-import { buildGitHubBundle } from '@exodus/stasis/vfs-bundle'
+import { buildGitHubBundle, setCacheDir } from '@exodus/stasis/vfs-bundle'
 import { brotliOptions } from '@exodus/stasis-core/brotli'
 import { HttpError, createClient } from '@preventive/upstream/github.js'
 import { githubBundleFilename } from './bundle-build.ts'
@@ -32,7 +32,7 @@ async function packageName(input, github, project, bundle, client) {
   return typeof name === 'string' ? name : null
 }
 
-export async function buildStasisBundle({ input, github, token, maxBytes, scopes }, client = createClient({ token }), progress = () => {}) {
+export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}) {
   const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
   // Reuse these immutable listings when Stasis discovers the lockfile root.
   const listings = new Map()
@@ -41,16 +41,17 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
     if (!listings.has(key)) listings.set(key, client.listRepoDir(options))
     return listings.get(key)
   } }
-  // No disk cache: npm tarballs and version documents are kept nowhere
-  // (`cache: false`), and the repo's tree only where setCacheDir says, which
-  // nothing here sets. This fresh worker inherits no application credentials.
+  // Upstream's disk cache keeps the npm tarballs and version documents, and
+  // the repo's tree, in `cacheDir`; without one (Vercel), nothing is kept on
+  // disk. This fresh worker inherits no application credentials.
+  setCacheDir(cacheDir ?? false)
   progress('build')
   const project = await projectDirectory(input, github, buildClient)
   if (!allowed(project)) throw new Error('build-scope')
   const { bundle } = await buildGitHubBundle({
     github, sha: input.commit, directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
-    ...input.options, client: buildClient, cache: false,
+    ...input.options, client: buildClient, ...(cacheDir === null && { cache: false }),
   })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')
