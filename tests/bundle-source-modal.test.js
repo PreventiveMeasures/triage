@@ -194,15 +194,15 @@ test('Code renders Composer and Soldeer package rows with physical tooltips alon
   const soldeerRows = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).filter(row => row.includes('class="bundle-code-tree-soldeer"'))
   assert.equal(soldeerRows.length, 1)
   assert.match(soldeerRows[0], /class="bundle-code-tree-package-name">@openzeppelin-contracts<\/span><span class="bundle-code-tree-package-version">- 5\.2\.0<\/span>/u)
-  assert.match(soldeerRows[0], /data-tooltip=dependencies\/@openzeppelin-contracts-5\.2\.0>/u)
+  assert.match(soldeerRows[0], /data-tooltip=dependencies\/@openzeppelin-contracts-5\.2\.0\s+data-tooltip-placement=right-start>/u)
   assert.match(rail, /data-bundle-view-source=dependencies\/@openzeppelin-contracts-5\.2\.0\/contracts\/Token\.sol/u)
   const composerRows = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).filter(row => row.includes('class="bundle-code-tree-composer"')).join('')
   assert.match(composerRows, /class="bundle-code-tree-package-name">org\/package<\/span><span class="bundle-code-tree-package-version">- 1\.2\.3<\/span>/u)
   assert.match(composerRows, /class="bundle-code-tree-package-name">org\/dirs<\/span><span class="bundle-code-tree-package-version">- dev-main<\/span>/u)
-  assert.match(composerRows, /data-tooltip=vendor\/org\/package\/src>/u)
-  assert.match(composerRows, /data-tooltip=vendor\/org\/dirs>/u)
-  assert.match(composerRows, /data-tooltip=vendor\/org\/root>/u)
-  assert.doesNotMatch(composerRows, /data-tooltip=vendor\/org\/(?:dirs|root)\/src>/u)
+  assert.match(composerRows, /data-tooltip=vendor\/org\/package\/src\s+data-tooltip-placement=right-start>/u)
+  assert.match(composerRows, /data-tooltip=vendor\/org\/dirs\s+data-tooltip-placement=right-start>/u)
+  assert.match(composerRows, /data-tooltip=vendor\/org\/root\s+data-tooltip-placement=right-start>/u)
+  assert.doesNotMatch(composerRows, /data-tooltip=vendor\/org\/(?:dirs|root)\/src[\s>]/u)
   assert.equal(rail.match(/data-file-type=php/gu).length, 6)
   assert.match(rail, /data-bundle-view-source=vendor\/org\/package\/src\/main\.php/u)
 })
@@ -244,7 +244,8 @@ test('Code package tooltips include recorded identities and counts even while fi
     state.bundleCodeSearchQuery = query
     const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
     const pkg = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).find(row => row.includes('class="bundle-code-tree-npm"'))
-    for (const attr of ['data-tooltip-package=actual-package', 'data-tooltip-version=1.2.3', 'data-tooltip-files=3', 'data-tooltip-repo=org/actual-package', 'data-tooltip=node_modules/alias>']) assert.ok(pkg.includes(attr), attr)
+    for (const attr of ['data-tooltip-package=actual-package', 'data-tooltip-version=1.2.3', 'data-tooltip-files=3', 'data-tooltip-repo=org/actual-package']) assert.ok(pkg.includes(attr), attr)
+    assert.match(pkg, /data-tooltip=node_modules\/alias\s+data-tooltip-placement=right-start>/u)
   }
 })
 
