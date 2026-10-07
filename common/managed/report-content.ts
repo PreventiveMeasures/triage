@@ -1,6 +1,6 @@
 import { parseLinkedFindings } from '../../client/linked-findings.js'
 import { dependencyDirectory, isDependencyFile } from '../../client/dependency-paths.js'
-import { detectFormat, loadFindings, parseCodexCsvToScans, readReport, reportRepoGithub } from '@preventive/report'
+import { detectFormat, loadFindings, parseCodexCsvToScans, readReport, reportEntries, reportRepoGithub } from '@preventive/report'
 import { commonFileDirectory } from './repository-alias.ts'
 
 // A managed blob retains one server identity even when a CSV contains several
@@ -43,20 +43,21 @@ export function managedFindingSourcePaths(findings: unknown[]): Set<string> {
   return paths
 }
 
-// The report's own findings, outside the dependency directory the local report
-// view would choose: node_modules, else vendor, else dependencies.
-function ownFindings(findings: unknown[], tree: unknown) {
-  const objects = findings.filter((finding): finding is { file?: unknown } => finding != null && typeof finding === 'object')
-  const directory = dependencyDirectory([{ groups: [objects], tree }])
+// The report's own findings, in either entry shape, outside the dependency
+// directory the local report view would choose: node_modules, else vendor,
+// else dependencies.
+function ownFindings(data: unknown) {
+  const objects = (reportEntries(data) ?? []).flat().filter((finding): finding is { file?: unknown } => finding != null && typeof finding === 'object')
+  const directory = dependencyDirectory([{ groups: [objects], tree: (data as { tree?: unknown } | null)?.tree }])
   return { directory, own: objects.filter(finding => !isDependencyFile(finding.file, directory)) }
 }
 
 // Findings name the repository of their own file. Like the local report view,
 // a report without its own repository belongs to the one repository named by
 // its own findings (Claude Security and Codex exports name one on every finding).
-export function findingsRepository(findings: unknown[], tree?: unknown): string | null {
+export function findingsRepository(data: unknown): string | null {
   const repos = new Map<string, string>()
-  for (const finding of ownFindings(findings, tree).own) {
+  for (const finding of ownFindings(data).own) {
     const github = reportRepoGithub(finding)
     if (github) repos.set(github.toLowerCase(), github)
   }
@@ -65,7 +66,7 @@ export function findingsRepository(findings: unknown[], tree?: unknown): string 
 
 // The directory shared by the files the report's own findings cite, for alias
 // matching. Dependency paths, including cited evidence, cannot hide it.
-export function ownFileDirectory(findings: unknown[], tree?: unknown): string {
-  const { directory, own } = ownFindings(findings, tree)
+export function ownFileDirectory(data: unknown): string {
+  const { directory, own } = ownFindings(data)
   return commonFileDirectory([...managedFindingSourcePaths(own)].filter(path => !isDependencyFile(path, directory)))
 }

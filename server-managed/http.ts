@@ -1624,14 +1624,13 @@ async function handleRepositorySuggestion(req: IncomingMessage, res: ServerRespo
 // set only for an active destination within the user's grants; the named
 // repository itself is part of the report. `directory` is null when neither
 // the report nor an alias specifies one.
-async function suggestReportLocation(deps: ManagedHttpDeps, user: StoredUser, data: { repo?: { directory?: unknown }; findings?: unknown; tree?: unknown } | null | undefined) {
-  const findings: unknown[] = Array.isArray(data?.findings) ? data.findings : []
-  const github = findingsRepository(findings, data?.tree)
+async function suggestReportLocation(deps: ManagedHttpDeps, user: StoredUser, data: { repo?: { directory?: unknown } } | null | undefined) {
+  const github = findingsRepository(data)
   if (github == null) return null
   // An invalid optional directory is ignored, as for bundle metadata.
   const declared = normalizeTeamPath(data?.repo?.directory)
   const directory = declared.ok ? declared.path : null
-  const location = await deps.db.getRepositoryImportLocation(github, directory ?? '', ownFileDirectory(findings, data?.tree))
+  const location = await deps.db.getRepositoryImportLocation(github, directory ?? '', ownFileDirectory(data))
   const repo = location.repoId == null ? null : (await deps.db.listSelectedRepos()).find(row => row.repoId === location.repoId)
   const allowed = repo && (user.role === 'admin' || await deps.db.userCanReadRepoPath(user.id, repo.repoId, location.directory))
   if (!allowed) return { repoId: null, github, directory }
