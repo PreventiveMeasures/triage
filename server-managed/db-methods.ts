@@ -12,6 +12,7 @@ import { type GithubMetadataStore, githubMetadataMethods } from './github-metada
 import { type ManagedIssueStore, managedIssueMethods } from './managed-issues.ts'
 import type { IssueFixUpdate } from './github-issue-links.ts'
 import { type BundleBuildLeaseStore, bundleBuildLeaseMethods } from './bundle-build-leases.ts'
+import { type UpstreamCacheStore, upstreamCacheMethods } from './upstream-cache.ts'
 import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
@@ -342,7 +343,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, BundleBuildLeaseStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -1527,6 +1528,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...linkReportMethods(db, key),
     ...repositoryAliasMethods(db),
     ...bundleBuildLeaseMethods(db),
+    ...upstreamCacheMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {
       return !!await db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at

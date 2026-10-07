@@ -1,4 +1,4 @@
-import { type Advisory, type Package, advisories } from '@preventive/upstream/advisories.js'
+import { type Advisory, type CacheStore, type Package, advisories } from '@preventive/upstream/advisories.js'
 import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
 
 export const ADVISORIES_TIMEOUT_MS = 30_000
@@ -26,8 +26,11 @@ function advisoryGithubClient(token: string | null, signal: AbortSignal): Client
 // The managed caller supplies its user's token when available; public shares
 // remain anonymous. Upstream sends this credential only to GitHub and returns
 // published advisories, matching versions across npm, OSV and repository rows.
+// `cache` keeps each repository's listing (upstream-cache.ts) across audits.
 export async function fetchBundleAdvisories(packages: Package[], signal: AbortSignal,
-  { debug = false, repoAdvisories = false, details = false, githubToken = null }: { debug?: boolean; repoAdvisories?: boolean; details?: boolean; githubToken?: string | null } = {}): Promise<
+  { debug = false, repoAdvisories = false, details = false, githubToken = null, cache }: {
+    debug?: boolean; repoAdvisories?: boolean; details?: boolean; githubToken?: string | null; cache?: CacheStore
+  } = {}): Promise<
   { status: 200; body: Advisory[] } | { status: 502; body: { error: string } }
 > {
   let onAbort: (() => void) | undefined
@@ -41,7 +44,7 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
       signal.addEventListener('abort', onAbort, { once: true })
     })
     const result = await Promise.race([
-      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories, details }), deadline,
+      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories, details, ...(cache && { cache }) }), deadline,
     ])
     return { status: 200, body: result }
   } catch (error) {

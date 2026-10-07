@@ -724,6 +724,12 @@ the token with 401, that repository lookup is retried anonymously and the rest o
 the audit uses anonymous GitHub access. Other failures do not trigger this fallback.
 Ordinary npm-only audits contact only npm; GitHub requests are added by the
 repository recheck.
+Each repository's published advisory listing (repository rechecks, and Soldeer
+and GitHub dependencies) is kept in `managed_upstream_cache` for an hour, as
+upstream's disk cache would keep it, and shared by every viewer, public shares
+and instance: only public repositories publish advisories. Upstream stamps,
+checks and expires the entries; refreshes replace the repository's single row.
+A cache read or write failure is treated as a miss and never fails the audit.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.
