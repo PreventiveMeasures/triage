@@ -211,6 +211,8 @@
     "common/scan-server.ts",
     "common/utf8.d.ts",
     "common/utf8.js",
+    "client/dependency-paths.d.ts",
+    "client/dependency-paths.js",
     "client/finding-link.js",
     "client/linked-findings.d.ts",
     "client/linked-findings.js",

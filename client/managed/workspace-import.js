@@ -1,7 +1,7 @@
 import { migrateStoredIgnores } from '../ignored-triage.js'
 import { parseWorkspaceBundleBytes, parseWorkspaceJson } from '../workspace-format.js'
 import { isEncryptedBundle } from '../workspace-bundle-crypto.js'
-import { loadManagedFindings, readManagedReport } from '../../common/managed/report-content.ts'
+import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../../common/managed/report-content.ts'
 import { reportRepoGithub } from '@preventive/report'
 import { normalizeEntry } from '../triage-entry.ts'
 import { MAX_FINDING_ID, parseTriageEntryPatch } from '../../common/managed/triage.ts'
@@ -15,8 +15,10 @@ export async function decodeWorkspaceFile(file, promptPassword) {
   return bytes[0] === 0x1f && bytes[1] === 0x8b ? parseWorkspaceBundleBytes(bytes) : parseWorkspaceJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
 }
 
-function reportLocation(github, directory, repos, aliases) {
-  const mapped = github ? matchRepositoryAlias(github, directory, aliases) : null
+// Every declared repository follows aliases, as on upload. A repository named
+// by findings may also use their shared file directory, like the server.
+function reportLocation(github, directory, repos, aliases, filePrefix = '') {
+  const mapped = github ? matchRepositoryAlias(github, directory, aliases, filePrefix) : null
   const repo = repos.find(item => mapped ? item.repoId === mapped.repoId : item.fullName.toLowerCase() === github?.toLowerCase())
   return { repoId: repo?.repoId ?? null, directory: mapped?.directory ?? directory, github: repo?.fullName ?? github }
 }
@@ -28,14 +30,19 @@ export async function prepareWorkspaceImport(data, repos, aliases = []) {
     const parsed = readManagedReport(item.content, item.name)
     if (!parsed.data) throw new Error(`${item.name}: ${parsed.reason ?? 'Unsupported report'}`)
     const embedded = reportRepoGithub(parsed.data)
-    const github = embedded ?? reportRepoGithub(item) ?? reportRepoGithub({ repo: { github: data.repoUrls?.[item.name] } })
+    // The repository local mode shows: embedded, typed for the report, or the
+    // one its findings name.
+    const parsedFindings = Array.isArray(parsed.data.findings) ? parsed.data.findings : []
+    const typed = embedded ?? reportRepoGithub(item) ?? reportRepoGithub({ repo: { github: data.repoUrls?.[item.name] } })
+    const declaredGithub = typed ?? findingsRepository(parsedFindings, parsed.data.tree)
+    const filePrefix = embedded ? '' : ownFileDirectory(parsedFindings, parsed.data.tree)
     const directory = normalizeTeamPath(parsed.data.repo?.directory)
     if (!directory.ok) throw new Error(`${item.name}: invalid repository directory`)
     const findings = parsed.format === 'links' ? [] : (await loadManagedFindings(item.content, item.name))?.findings ?? []
     for (const finding of findings) if (finding.id) lookup.set(finding.id, finding)
     const declaredDirectory = directory.path ?? ''
-    reports.push({ ...item, links: parsed.format === 'links', ...reportLocation(github, declaredDirectory, repos, embedded ? aliases : []),
-      declaredDirectory, embedded, ids: [...new Set(findings.map(f => f.id).filter(Boolean))], uploaded: null })
+    reports.push({ ...item, links: parsed.format === 'links', ...reportLocation(declaredGithub, declaredDirectory, repos, aliases, filePrefix),
+      declaredGithub, declaredDirectory, filePrefix, embedded, ids: [...new Set(findings.map(f => f.id).filter(Boolean))], uploaded: null })
   }
   const triage = Object.create(null)
   if (data.triage != null && (typeof data.triage !== 'object' || Array.isArray(data.triage))) throw new Error('Invalid workspace triage.')
@@ -103,10 +110,10 @@ async function importLinks(report, api) {
 
 async function refreshReportLocations(plan, api) {
   const repos = (await api.send('/api/admin/repositories/browsable')).repos
-  const reports = plan.reports.filter(item => !item.links && item.embedded && !item.uploaded)
+  const reports = plan.reports.filter(item => !item.links && item.declaredGithub && !item.uploaded)
   if (reports.length > 0) {
     const { aliases = [] } = await api.send('/api/admin/repositories/aliases')
-    for (const report of reports) Object.assign(report, reportLocation(report.embedded, report.declaredDirectory, repos, aliases))
+    for (const report of reports) Object.assign(report, reportLocation(report.declaredGithub, report.declaredDirectory, repos, aliases, report.filePrefix))
   }
   return new Set(repos.map(repo => repo.repoId))
 }

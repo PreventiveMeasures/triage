@@ -30,6 +30,7 @@
 //   GET  /api/admin/reports/<id> → admin|manage downloads a stored report | 401/403/404
 //   DELETE /api/admin/reports/<id> → admin|manage deletes a report | 401/403/404
 //   POST /api/admin/reports/set-repo → admin|manage attaches/detaches a report's repo | 401/403/404
+//   GET  /api/admin/reports/<id>/location → admin|manage live location suggestion | 401/403/404/503
 //   GET  /api/bundles/<id>/{metadata,contents} → authorized encoded bytes | 401/404/422
 //   GET  /api/bundles/<id>/advisories → published dependency advisories (security access) | 401/403/404
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
@@ -73,7 +74,7 @@ import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '@preventive/report'
-import { loadManagedFindings, readManagedReport } from '../common/managed/report-content.ts'
+import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../common/managed/report-content.ts'
 import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
@@ -877,7 +878,8 @@ async function sendUploadedReport(req: IncomingMessage, res: ServerResponse, dep
 // markdown / CSV — archived as-is, like the e2e objstore; the server parses them
 // downstream). Display name rides X-Report-Filename; the repository and
 // directory come from the report header, or from optional repository/directory
-// headers when the report has no repository metadata. The bundle link is
+// headers when the report has no repository metadata, else from the repository
+// its findings name when that resolves within the uploader's access. The bundle link is
 // auto-resolved from the report's bundleHashes. New reports start hidden until
 // published. Identical content reuses its stored identity and metadata. Bytes
 // are written first (keyed by a fresh uuid) then the metadata row. A definite
@@ -944,6 +946,19 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
     const legacyRepo = await resolveUploadRepoId(req, res, deps)
     if (!legacyRepo.ok) return
     repoId = legacyRepo.repoId
+    // Otherwise the repository its findings name assigns a new report, like
+    // embedded metadata, when it resolves to a connected destination within
+    // the uploader's access. X-Repo-Directory still overrides the directory.
+    if (repoId == null && !existing) {
+      const suggestion = await suggestReportLocation(deps, s.user, parsed.data)
+      if (suggestion?.repoId != null) {
+        const inferred = req.headers['x-repo-directory'] == null ? suggestion.directory ?? '' : directory
+        if (s.user.role === 'admin' || await deps.db.userCanReadRepoPath(s.user.id, suggestion.repoId, inferred)) {
+          repoId = suggestion.repoId
+          directory = inferred
+        }
+      }
+    }
   }
   if (repoId != null && s.user.role !== 'admin' && !(await deps.db.userCanReadRepoPath(s.user.id, repoId, directory))) { sendJson(res, 403, { error: 'repo-forbidden' }); return }
   if (existing) { await sendUploadedReport(req, res, deps, cookie, existing, true); return }
@@ -1602,6 +1617,45 @@ async function handleRepositorySuggestion(req: IncomingMessage, res: ServerRespo
   const allowed = repo && (s.user.role === 'admin' || await deps.db.userCanReadRepoPath(s.user.id, repo.repoId, location.directory))
   sendJson(res, 200, { location: allowed ? { repoId: repo.repoId, github: repo.fullName, directory: location.directory,
     mapped: github.toLowerCase() !== repo.fullName.toLowerCase() || (directory.path ?? '') !== location.directory } : null })
+}
+
+// Where a report without an embedded repository suggests it belongs, resolved
+// through current connections and aliases like bundle metadata. `repoId` is
+// set only for an active destination within the user's grants; the named
+// repository itself is part of the report. `directory` is null when neither
+// the report nor an alias specifies one.
+async function suggestReportLocation(deps: ManagedHttpDeps, user: StoredUser, data: { repo?: { directory?: unknown }; findings?: unknown; tree?: unknown } | null | undefined) {
+  const findings: unknown[] = Array.isArray(data?.findings) ? data.findings : []
+  const github = findingsRepository(findings, data?.tree)
+  if (github == null) return null
+  // An invalid optional directory is ignored, as for bundle metadata.
+  const declared = normalizeTeamPath(data?.repo?.directory)
+  const directory = declared.ok ? declared.path : null
+  const location = await deps.db.getRepositoryImportLocation(github, directory ?? '', ownFileDirectory(findings, data?.tree))
+  const repo = location.repoId == null ? null : (await deps.db.listSelectedRepos()).find(row => row.repoId === location.repoId)
+  const allowed = repo && (user.role === 'admin' || await deps.db.userCanReadRepoPath(user.id, repo.repoId, location.directory))
+  if (!allowed) return { repoId: null, github, directory }
+  const mapped = github.toLowerCase() !== repo.fullName.toLowerCase() || (directory ?? '') !== location.directory
+  return { repoId: repo.repoId, github: repo.fullName, directory: mapped ? location.directory : directory }
+}
+
+// GET /api/admin/reports/<id>/location — the live suggestion for a report's
+// location editor. It never changes the stored assignment.
+async function handleReportLocationSuggestion(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  if (req.method !== 'GET') { send405(res, 'GET'); return }
+  const s = await readManageSession(res, deps, cookie)
+  if (!s) return
+  const report = await deps.db.getReport(id)
+  if (!report || !(await canViewReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  if (report.repoEmbedded) { sendJson(res, 200, { location: null }); return }
+  const bytes = await deps.reportStore.get(id)
+  if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
+  const { data } = readManagedReport(bytes.toString('utf8'), report.filename)
+  // Storage reads can outlast a session, role or grant change.
+  const current = await readManageSession(res, deps, cookie)
+  if (!current) return
+  if (!(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
+  sendJson(res, 200, { location: await suggestReportLocation(deps, current.user, data) })
 }
 
 // GET /api/reports/<id> — admin/manager preview, within management access.
@@ -2365,6 +2419,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleImportTriage(req, res, deps, cookie, importTriage[1]!); return
     }
+    const reportLocation = /^\/api\/admin\/reports\/([a-f\d-]{36})\/location$/iu.exec(path)
+    if (reportLocation) { await handleReportLocationSuggestion(req, res, deps, cookie, reportLocation[1]!); return }
     if (path.startsWith(REPORT_PREFIX)) {
       const id = path.slice(REPORT_PREFIX.length)
       if (method === 'GET') { await handleGetReport(res, deps, cookie, id); return }

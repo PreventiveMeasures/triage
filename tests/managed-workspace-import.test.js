@@ -206,6 +206,29 @@ test('workspace import previews aliases and refreshes them before assigning the 
   assert.equal(await mock.calls.find(call => call.path === '/api/admin/reports').body.text(), content)
 })
 
+test('typed and finding repositories follow aliases, refreshed before upload', async () => {
+  const markdown = ['# Finding', '', '## Details', 'Body.', '', '## Location', '[a/src/x.js](https://example.test/a/src/x.js#L1)',
+    '', '---', '**Severity:** high', '**Repository:** org/old'].join('\n')
+  const data = { ...exported(), repoUrls: { 'typed.json': 'https://github.com/org/old' }, reports: [
+    { name: 'claude.md', content: markdown },
+    { name: 'typed.json', content: JSON.stringify({ findings: [{ id: 't', file: 'b.js' }] }) },
+    { name: 'missing.json', content: JSON.stringify({ findings: [{ id: 'm', file: 'c.js', repo: { github: 'org/missing' } }] }) },
+    { name: 'dependency.json', content: JSON.stringify({ findings: [{ id: 'own', file: 'a/src/y.js', repo: { github: 'org/old' } },
+      { id: 'dep', file: 'node_modules/lodash/x.js', repo: { github: 'lodash/lodash' } }] }) },
+  ] }
+  const aliases = [{ oldRepo: 'org/old', oldPath: '', repoId: 7, newPath: 'projects/old' }, { oldRepo: 'org/old', oldPath: 'a', repoId: 7, newPath: 'projects/a' }]
+  const plan = await prepareWorkspaceImport(data, repos, aliases)
+  assert.deepEqual(plan.reports.map(item => [item.repoId, item.directory, item.github]), [
+    [7, 'projects', 'org/repo'], [7, 'projects/old', 'org/repo'], [null, '', 'org/missing'], [7, 'projects', 'org/repo'],
+  ], 'shared own finding paths select the directory alias; typed repositories use the repository alias')
+  const mock = serverMock(), send = mock.api.send
+  aliases[0].newPath = 'moved/old'
+  mock.api.send = (url, body, headers) => url === '/api/admin/repositories/aliases' ? { aliases } : send(url, body, headers)
+  await runWorkspaceImport(plan, { api: mock.api, session, defaultRepo: 9, includeTriage: false })
+  assert.deepEqual(mock.calls.filter(call => call.path === '/api/admin/reports')
+    .map(call => [call.headers['x-repo-id'], decodeURIComponent(call.headers['x-repo-directory'])]), [['7', 'projects'], ['7', 'moved/old'], ['9', ''], ['7', 'projects']])
+})
+
 test('session cancellation while resolving prevents triage writes and publication', async () => {
   const plan = await prepareWorkspaceImport(exported(), repos)
   const mock = serverMock()

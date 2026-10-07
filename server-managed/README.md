@@ -208,10 +208,11 @@ existing file inventory, including resources.
 Aliases are stored in `managed_repository_alias` and affect only the detected
 repository and directory of new reports and Stasis bundles. Original bytes,
 individual findings, relative file paths, and content hashes are unchanged.
-Explicit bundle locations override detection. Editing an alias or connecting a
-repository does not move existing content; identical reuploads reuse its stored
-assignment. Bundle location editors resolve their metadata suggestions using
-the current repositories and aliases, and only Save changes the assignment.
+Explicit bundle and report locations override detection. Editing an alias or
+connecting a repository does not move existing content; identical reuploads
+reuse its stored assignment. Bundle and report location editors resolve their
+suggestions using the current repositories and aliases, and only Save changes
+the assignment.
 
 # Report repository metadata
 
@@ -220,6 +221,20 @@ including its directory, even when the report embeds a different repository.
 They do not offer the local “Set repo” editor. Findings retain their own upstream
 repository metadata (for example, a dependency's repository); source links that
 need a report fallback use the server assignment.
+
+Reports without a report-level repository, such as Claude Security Markdown and
+Codex CSV exports, name one on their findings. As in the local report view, the
+single repository named by findings outside the report's dependency directory
+(`node_modules/`, else `vendor/`, else `dependencies/`) stands for the report,
+with any report-level `repo.directory`. A new upload without
+`X-Repo-Id` is assigned there when it resolves, through connections and aliases
+like embedded metadata, to an active repository within the uploader's access;
+`X-Repo-Directory` still overrides the directory. Otherwise the report stays
+unattached. Such reports remain reassignable, and
+`GET /api/admin/reports/:id/location` returns
+`{ location: { repoId, github, directory } | null }` for their location editor:
+`repoId` is null unless the destination is connected and within the caller's
+access, and `directory` is null when neither the report nor an alias names one.
 
 `GET /api/teams/:id/reports` returns the complete **published** workspace as separate
 `{ id, filename, data, repo: { github, directory } }` envelopes in `{ reports }`.
@@ -572,6 +587,9 @@ and directory, assign unattached content when needed, and publish the reports.
 Non-embedded reports and bundles assigned to inactive repositories are moved to
 the import's selected active repository, preserving their IDs and stored bytes.
 Reports with embedded repository metadata still require that repository to be active.
+Other reports use the repository typed for them in local mode, else the one their
+findings name; like embedded repositories, these follow the current aliases at
+import time, and fall back to the selected repository when not connected.
 Triage remains shared by finding ID and follows the usual import conflict dialog.
 Existing duplicate report rows are preserved; subsequent imports reuse the oldest
 matching record without creating another copy.

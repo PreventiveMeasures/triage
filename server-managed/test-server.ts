@@ -15,7 +15,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { readManagedReport } from '../common/managed/report-content.ts'
+import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { randomUUID } from 'node:crypto'
 import { reportEntries } from '@preventive/report'
@@ -145,6 +145,7 @@ const reportFixtures = [
         id: 'managed-fixture-4', severity: 'medium', confidence: 7,
         title: 'Unattached preview finding', file: 'src/preview.js', line: 8,
         description: 'An unattached report used to preview assigning a repository later.',
+        repo: { github: 'example/worker-service' },
       }],
     }),
   },
@@ -386,6 +387,20 @@ async function setFixtureVisible(req: IncomingMessage, res: ServerResponse, bund
   sendJson(res, 200, { ok: true, visible: body.visible })
 }
 
+// The report location editor's suggestion: the selected fixture repository
+// named by the report's findings, as the managed server resolves it.
+function serveReportLocation(url: URL, res: ServerResponse): boolean {
+  const match = /^\/api\/admin\/reports\/([^/]+)\/location$/u.exec(url.pathname)
+  if (!match) return false
+  const report = reportFixtures.find(candidate => candidate.id === decodeURIComponent(match[1]!))
+  if (report == null) { sendJson(res, 404, { error: 'not-found' }); return true }
+  const data = readManagedReport(report.content, report.filename).data
+  const github = report.repoEmbedded ? null : findingsRepository(data?.findings ?? [], data?.tree)
+  const repo = github == null ? null : repositories.find(candidate => candidate.selected && candidate.fullName.toLowerCase() === github.toLowerCase())
+  sendJson(res, 200, { location: github == null ? null : { repoId: repo?.id ?? null, github: repo?.fullName ?? github, directory: null } })
+  return true
+}
+
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
   const repositoryBrowser = ['/api/admin/repositories/browsable', '/api/admin/repositories/refs', '/api/admin/repositories/contents'].includes(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
@@ -400,6 +415,7 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
     await setFixtureVisible(req, res, url.pathname.includes('/bundles/'))
     return
   }
+  if (serveReportLocation(url, res)) return
   if (url.pathname.startsWith('/api/admin/reports/')) {
     if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     const id = decodeURIComponent(url.pathname.slice('/api/admin/reports/'.length))
