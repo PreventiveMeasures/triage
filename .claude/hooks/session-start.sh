@@ -16,6 +16,11 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# SessionStart stdout is added to Claude's context, so the nvm, corepack
+# and pnpm logs (a full install lists every package) go to stderr. Only
+# the closing summary line is written to the original stdout, kept on fd 3.
+exec 3>&1 1>&2
+
 # Load nvm into this non-login shell.
 export NVM_DIR="${NVM_DIR:-/opt/nvm}"
 # shellcheck disable=SC1091
@@ -30,7 +35,26 @@ else
   abort "nvm not found (checked \$NVM_DIR=$NVM_DIR, \$HOME/.nvm, /etc/profile.d/nvm.sh)"
 fi
 
-cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+
+# CLAUDE_PROJECT_DIR stays at the checkout the session started in, while
+# the hook input's cwd follows Claude into a worktree. Set that worktree
+# up instead when it belongs to the same repository, so it doesn't come
+# up without node_modules and nvm reads its .nvmrc. There may be no node
+# to parse the input with yet, so cwd is matched with a regex; one
+# holding `"` or `\`, like another repo, a non-git cwd or no input, keeps
+# the project dir.
+cwd_re='"cwd"[[:space:]]*:[[:space:]]*"([^"\]*)"'
+if [ ! -t 0 ] && [[ "$(cat)" =~ $cwd_re ]]; then
+  HOOK_CWD="${BASH_REMATCH[1]}"
+  git_common_dir() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }
+  if WORKTREE="$(git -C "$HOOK_CWD" rev-parse --show-toplevel 2>/dev/null)" &&
+    [ "$(git_common_dir "$WORKTREE")" = "$(git_common_dir "$PROJECT_DIR")" ]; then
+    PROJECT_DIR="$WORKTREE"
+  fi
+fi
+
+cd "$PROJECT_DIR" || abort "cannot cd to $PROJECT_DIR"
 
 # `nvm install` (no args) reads .nvmrc from the project root. The
 # download hits nodejs.org and is the most likely failure point at
@@ -74,4 +98,4 @@ corepack enable || warn "corepack enable failed; pnpm pinning may not apply"
 # if it would need to be updated.
 pnpm install --frozen-lockfile || abort "pnpm install --frozen-lockfile failed"
 
-log "ready: node $(node --version), pnpm $(pnpm --version)"
+echo "session-start: ready in $PROJECT_DIR: node $(node --version), pnpm $(pnpm --version)" >&3
