@@ -47,6 +47,9 @@ test('reports without their own repository are assigned the connected repository
   assert.equal(vendored.repoId, 2, 'with node_modules present, vendor/ is own source as in the local view')
   const malformed = await upload(json([null, 'text', finding('object', 'org/repo1')]))
   assert.equal(malformed.repoId, 1, 'non-object findings are ignored')
+  const grouped = await upload(Buffer.from(JSON.stringify({ source: 'deepview', groups: [[finding('g1', 'org/repo2', 'src/g.js'), finding('g1', 'org/repo2', 'src/g.js')],
+    [finding('g2', 'lodash/lodash', 'node_modules/lodash/x.js')]] })))
+  assert.equal(grouped.repoId, 2, 'grouped (deduplicated) reports are read like flat ones')
   const directory = await upload(json([finding('dir', 'org/repo2')], { repo: { directory: 'packages/a' } }))
   assert.deepEqual([directory.repoId, directory.repoDirectory, directory.repoEmbedded], [2, 'packages/a', false])
   const header = await upload(json([finding('header', 'org/repo2')]), 'report.json', { 'x-repo-directory': 'chosen' })

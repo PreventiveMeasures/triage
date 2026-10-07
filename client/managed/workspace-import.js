@@ -32,10 +32,9 @@ export async function prepareWorkspaceImport(data, repos, aliases = []) {
     const embedded = reportRepoGithub(parsed.data)
     // The repository local mode shows: embedded, typed for the report, or the
     // one its findings name.
-    const parsedFindings = Array.isArray(parsed.data.findings) ? parsed.data.findings : []
     const typed = embedded ?? reportRepoGithub(item) ?? reportRepoGithub({ repo: { github: data.repoUrls?.[item.name] } })
-    const declaredGithub = typed ?? findingsRepository(parsedFindings, parsed.data.tree)
-    const filePrefix = embedded ? '' : ownFileDirectory(parsedFindings, parsed.data.tree)
+    const declaredGithub = typed ?? findingsRepository(parsed.data)
+    const filePrefix = embedded ? '' : ownFileDirectory(parsed.data)
     const directory = normalizeTeamPath(parsed.data.repo?.directory)
     if (!directory.ok) throw new Error(`${item.name}: invalid repository directory`)
     const findings = parsed.format === 'links' ? [] : (await loadManagedFindings(item.content, item.name))?.findings ?? []

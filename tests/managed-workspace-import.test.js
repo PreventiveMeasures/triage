@@ -215,18 +215,19 @@ test('typed and finding repositories follow aliases, refreshed before upload', a
     { name: 'missing.json', content: JSON.stringify({ findings: [{ id: 'm', file: 'c.js', repo: { github: 'org/missing' } }] }) },
     { name: 'dependency.json', content: JSON.stringify({ findings: [{ id: 'own', file: 'a/src/y.js', repo: { github: 'org/old' } },
       { id: 'dep', file: 'node_modules/lodash/x.js', repo: { github: 'lodash/lodash' } }] }) },
+    { name: 'grouped.json', content: JSON.stringify({ groups: [[{ id: 'g', file: 'a/src/z.js', repo: { github: 'org/old' } }]] }) },
   ] }
   const aliases = [{ oldRepo: 'org/old', oldPath: '', repoId: 7, newPath: 'projects/old' }, { oldRepo: 'org/old', oldPath: 'a', repoId: 7, newPath: 'projects/a' }]
   const plan = await prepareWorkspaceImport(data, repos, aliases)
   assert.deepEqual(plan.reports.map(item => [item.repoId, item.directory, item.github]), [
-    [7, 'projects', 'org/repo'], [7, 'projects/old', 'org/repo'], [null, '', 'org/missing'], [7, 'projects', 'org/repo'],
-  ], 'shared own finding paths select the directory alias; typed repositories use the repository alias')
+    [7, 'projects', 'org/repo'], [7, 'projects/old', 'org/repo'], [null, '', 'org/missing'], [7, 'projects', 'org/repo'], [7, 'projects', 'org/repo'],
+  ], 'shared own finding paths select the directory alias, in either entry shape; typed repositories use the repository alias')
   const mock = serverMock(), send = mock.api.send
   aliases[0].newPath = 'moved/old'
   mock.api.send = (url, body, headers) => url === '/api/admin/repositories/aliases' ? { aliases } : send(url, body, headers)
   await runWorkspaceImport(plan, { api: mock.api, session, defaultRepo: 9, includeTriage: false })
   assert.deepEqual(mock.calls.filter(call => call.path === '/api/admin/reports')
-    .map(call => [call.headers['x-repo-id'], decodeURIComponent(call.headers['x-repo-directory'])]), [['7', 'projects'], ['7', 'moved/old'], ['9', ''], ['7', 'projects']])
+    .map(call => [call.headers['x-repo-id'], decodeURIComponent(call.headers['x-repo-directory'])]), [['7', 'projects'], ['7', 'moved/old'], ['9', ''], ['7', 'projects'], ['7', 'projects']])
 })
 
 test('session cancellation while resolving prevents triage writes and publication', async () => {
