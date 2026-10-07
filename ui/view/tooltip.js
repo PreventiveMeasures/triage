@@ -99,7 +99,8 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   if (packageName) {
     const row = document.createElement('div')
     row.className = 'tooltip-package'
-    const icon = el.querySelector('svg')?.cloneNode(true)
+    // A target whose first icon is not its package's marks the one to show.
+    const icon = (el.querySelector('[data-tooltip-package-icon] svg') ?? el.querySelector('svg'))?.cloneNode(true)
     if (icon) row.append(icon)
     const label = document.createElement('span')
     label.className = 'tooltip-package-details'

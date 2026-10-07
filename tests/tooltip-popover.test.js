@@ -153,6 +153,10 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       showTooltip(packageTarget)
       assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '12 files'])
       assert.equal(node.children.length, 1)
+      const githubIcon = { tagName: 'svg', className: 'github' }, npmIcon = { tagName: 'svg', className: 'bundle-code-tree-npm' }
+      showTooltip({ dataset: { tooltip: 'packages/dep/index.js', tooltipPackage: 'dep', tooltipRepo: 'org/mono' },
+        querySelector: selector => ({ cloneNode: () => selector === '[data-tooltip-package-icon] svg' ? npmIcon : githubIcon }) })
+      assert.equal(node.children[0].children[0], npmIcon, "a marked package icon wins over the target's own first icon")
       showTooltip({ dataset: { tooltip: 'ordinary/file.sol' } })
       assert.equal(node.children.length, 0, 'ordinary tooltips do not inherit dependency details')
       hideTooltip()

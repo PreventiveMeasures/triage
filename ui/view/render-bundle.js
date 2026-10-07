@@ -24,6 +24,7 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { sourceCargoIcon, sourceComposerIcon, sourceFileIcon, sourceNpmIcon, sourceSoldeerIcon } from './source-file-icon.js'
+import { bundleFileGithub } from './bundle-file-github.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
@@ -587,6 +588,9 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
 const _bundleHighlightCache = new Map()
 const _bundleHighlightPending = new Set()
 
+// A package's icon in the Code slide, by its ecosystem.
+const packageIconFor = ecosystem => ecosystem === 'composer' ? sourceComposerIcon : ecosystem === 'cargo' ? sourceCargoIcon : ecosystem === 'soldeer' ? sourceSoldeerIcon : sourceNpmIcon
+
 // Copy glyph for the Code slide's copy-path button — same two-rect
 // shape and stroke weight as the finding card's copy action.
 const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
@@ -932,7 +936,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const compact = compactSourceDirectory(name, child, depth)
       const pkg = child.package
       const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer' || pkg?.ecosystem === 'soldeer'
-      const packageIcon = pkg?.ecosystem === 'composer' ? sourceComposerIcon : pkg?.ecosystem === 'cargo' ? sourceCargoIcon : pkg?.ecosystem === 'soldeer' ? sourceSoldeerIcon : sourceNpmIcon
+      const packageIcon = packageIconFor(pkg?.ecosystem)
       const tooltip = pkg?.variant ? `${compact.node.sourcePath}\nVariant ${pkg.variant}` : compact.node.sourcePath
       const info = child.packageInfo
       const hasDetails = !!info || !!pkg?.variant
@@ -1362,8 +1366,8 @@ function renderBundleCodeFileNav(history) {
   </span>`
 }
 
-// Main pane of the Code slide — header bar (path + copy button +
-// file stats + issue stepper) over the shared source-viewer body.
+// Main pane of the Code slide — header bar (path + copy button + GitHub
+// link where the file's location is known + file stats + issue stepper) over the shared source-viewer body.
 // The stepper cycles the side panel through the open file's
 // findings in line order; its (idx, line) pairs ride in a JSON
 // attribute so the events.js delegate steps without re-deriving
@@ -1375,6 +1379,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
+  const github = bundleFileGithub(details, path)
   return html`<header class="bundle-code-main-bar">
       ${renderBundleCodeFileNav(history)}
       ${sourceFileIcon(path, details.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined)}
@@ -1385,6 +1390,19 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
         data-copy-path=${path}
         aria-label="Copy file path"
       >${COPY_PATH_ICON}</button>
+      ${github ? html`<a
+        class="bundle-code-github-link"
+        href=${github.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open on GitHub"
+        data-tooltip=${github.path}
+        data-tooltip-repo=${github.github}
+        data-tooltip-commit=${github.commit ?? nothing}
+        data-tooltip-package=${github.package?.name ?? nothing}
+        data-tooltip-ecosystem=${github.package?.ecosystem ?? nothing}
+        data-tooltip-version=${github.package?.version ?? nothing}
+      >${unsafeHTML(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${packageIconFor(github.package.ecosystem)}</span>` : nothing}</a>` : nothing}
       <span class="bundle-code-main-spacer"></span>
       ${typeof content === 'string'
         ? html`<span class="bundle-code-main-stats">${lineCount.toLocaleString()} ${lineCount === 1 ? 'line' : 'lines'} · ${formatBytes(byteSize)}</span>`
