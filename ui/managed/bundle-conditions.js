@@ -60,6 +60,7 @@ export class BundleConditions extends LitElement {
   }
 
   addConditions() {
+    if (this._preset === 'metro') return
     const names = this._draft.trim().split(/[\s,]+/u).filter(Boolean)
     if (names.length === 0) return
     if (names.some(name => automaticConditions.has(name))) {
@@ -82,26 +83,28 @@ export class BundleConditions extends LitElement {
   }
 
   removeCondition(name) {
+    if (this._preset === 'metro') return
     this._conditions = this._conditions.filter(condition => condition !== name)
     this._error = ''
     this.notifyChange()
   }
 
   render() {
+    // Stasis's Metro preset sets its own conditions, so they are not editable.
+    const manual = this._preset !== 'metro'
     return html`<section aria-label=${this.showConditions ? 'Conditions' : 'Bundle actions'}>
       <div class="conditions-head" ?data-conditions-hidden=${!this.showConditions}>
         <h2 id="conditions-heading">Conditions</h2>
         <div class="presets" role="group" aria-label="Condition preset">${PRESETS.map(preset => html`<button type="button" aria-pressed=${this._preset === preset.id} @click=${() => this.selectPreset(preset.id)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${preset.icon}</svg>${preset.label}</button>`)}</div>
         ${this._preset === 'metro' ? html`<div class="platforms" role="group" aria-label="Metro platforms"><span>Platforms</span>${PLATFORMS.map(({ id, label }) => html`<label><input type="checkbox" .checked=${this._platforms.includes(id)} ?disabled=${this._platforms.includes(id) && this._platforms.length === 1} @change=${() => this.togglePlatform(id)}>${label}</label>`)}</div>` : nothing}
-        <button type="button" class="manual-toggle" aria-expanded=${this._manualOpen} aria-controls="manual-conditions" @click=${() => { this._manualOpen = !this._manualOpen }}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>Manual conditions</button>
+        <button type="button" class="manual-toggle" ?hidden=${!manual} aria-expanded=${this._manualOpen} aria-controls="manual-conditions" @click=${() => { this._manualOpen = !this._manualOpen }}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>Manual conditions</button>
         <slot name="actions"></slot>
       </div>
-      <div id="manual-conditions" ?hidden=${!this.showConditions || !this._manualOpen}>
+      <div id="manual-conditions" ?hidden=${!this.showConditions || !manual || !this._manualOpen}>
         <form class="condition-editor" @submit=${event => { event.preventDefault(); this.addConditions() }}>
         <ul aria-label="Export conditions">${this._conditions.map(name => html`<li><code>${name}</code><button type="button" aria-label=${`Remove condition ${name}`} @click=${() => this.removeCondition(name)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>
-        <div class="condition-input"><input type="text" aria-label="Add conditions" aria-describedby="conditions-help" aria-invalid=${Boolean(this._error)} aria-errormessage="condition-error" placeholder="Add condition…" autocomplete="off" maxlength="1040" .value=${this._draft} @input=${event => { this._draft = event.target.value; this._error = '' }}>
-          <button type="submit" class="add-condition" aria-label="Add conditions" ?disabled=${!this._draft.trim()}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>
-        </div>
+        <div class="condition-input"><input type="text" aria-label="Add conditions" aria-describedby="conditions-help" aria-invalid=${Boolean(this._error)} aria-errormessage="condition-error" placeholder="Add condition…" autocomplete="off" maxlength="1040" .value=${this._draft} @input=${event => { this._draft = event.target.value; this._error = '' }}
+          @keydown=${event => { if (event.key === ' ' && !event.isComposing) { event.preventDefault(); this.addConditions() } }} @blur=${() => this.addConditions()}></div>
         </form>
         <p id="conditions-help">Package export conditions. <code>import</code> / <code>require</code> and <code>default</code> are automatic.</p>
         ${this._error ? html`<p id="condition-error" class="error" role="alert">${this._error}</p>` : nothing}
