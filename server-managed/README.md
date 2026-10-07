@@ -690,8 +690,8 @@ Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
 repository advisories. Modules without an
 ecosystem retain the legacy npm lookup when installed under `node_modules`;
 the root module is excluded. As in `stasis audit`, a dependency must have a recorded
-evidence file: manifests and the verified browser stubs of `ws` (through 8.21.1)
-and `node-fetch` (through 2.7.0) do not count. Entry and manually added code count
+evidence file: manifests and the verified browser stubs of `ws` and `node-fetch`
+do not count. Entry and manually added code count
 without an import edge. Composer dev versions, git or unknown-source crates, and
 unsupported ecosystems are returned as `skipped`, with a reason, without being
 sent upstream. GitHub branch `.` is normalized to the unknown-version placeholder

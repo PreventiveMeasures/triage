@@ -14,6 +14,7 @@ interface BundleModule { ecosystem?: string; name?: string; version?: string; re
 
 // Match Stasis's audit evidence rules, including their verified version bounds:
 // https://github.com/PreventiveMeasures/stasis/blob/2bd4c14354da9888c00ab45fa89740413099b5dc/stasis/src/audit-corrections.js
+// ws's bound runs past Stasis's 8.21.1: browser.js is byte-identical in 8.21.2 through 8.22.0.
 // Keep this on the server: upstream's semver implementation uses Node's npm.
 const cargoManifests = ['Cargo.toml', 'Cargo.lock', '.cargo-checksum.json']
 const solidityManifests = ['package.json', 'foundry.toml', 'remappings.txt', 'soldeer.toml']
@@ -23,7 +24,7 @@ const manifests = new Map([
   ['composer', ['composer.json', 'composer.lock']],
   ['soldeer', solidityManifests], ['github', solidityManifests],
 ])
-const browserStubRanges = new Map([['ws', '<=8.21.1'], ['node-fetch', '<=2.7.0']])
+const browserStubRanges = new Map([['ws', '<=8.22.0'], ['node-fetch', '<=2.7.0']])
 
 function isEvidence(ecosystem: string, name: string, version: string, file: string): boolean {
   if (manifests.get(ecosystem)?.includes(file.slice(file.lastIndexOf('/') + 1))) return false
