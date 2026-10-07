@@ -47,6 +47,29 @@ test('Metro platforms are independent from export conditions, retain one target,
   assert.equal(control.value.preset, 'metro')
 })
 
+test('Metro hides manual conditions and keeps its react-native condition unchanged', () => {
+  const control = new BundleConditions()
+  const hidden = marker => {
+    const template = templates(control.render()).find(item => item.strings.some(string => string.endsWith(marker)))
+    return template.values[template.strings.findIndex(string => string.endsWith(marker))]
+  }
+  control._manualOpen = true
+  assert.equal(hidden('class="manual-toggle" ?hidden='), false)
+  assert.equal(hidden('<div id="manual-conditions" ?hidden='), false)
+  control.selectPreset('metro')
+  assert.equal(hidden('class="manual-toggle" ?hidden='), true)
+  assert.equal(hidden('<div id="manual-conditions" ?hidden='), true)
+  const changes = []
+  control.addEventListener('conditions-change', event => changes.push(event.detail))
+  control._draft = 'development'
+  control.addConditions()
+  control.removeCondition('react-native')
+  assert.deepEqual(control.value.conditions, ['react-native'])
+  assert.equal(changes.length, 0)
+  control.selectPreset('node')
+  assert.equal(hidden('<div id="manual-conditions" ?hidden='), false, 'leaving Metro restores the open editor')
+})
+
 test('custom conditions support adding, deduplicating, removing, and restoring a preset', () => {
   const control = new BundleConditions()
   control._draft = ' development, custom:condition node development '

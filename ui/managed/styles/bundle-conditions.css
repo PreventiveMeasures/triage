@@ -28,6 +28,7 @@ svg { width: 1rem; height: 1rem; flex: none; }
   border: 0; border-radius: var(--ui-radius, 2px); background: transparent; color: var(--muted); font-size: .75rem; white-space: nowrap;
 }
 .manual-toggle:hover { color: var(--text); }
+.manual-toggle[hidden] { visibility: hidden; }
 .manual-toggle[aria-expanded=true] svg { transform: rotate(90deg); }
 #manual-conditions { margin-top: .75rem; }
 .condition-editor {
