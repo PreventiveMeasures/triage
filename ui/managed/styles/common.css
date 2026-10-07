@@ -75,18 +75,23 @@ code,
   z-index: 2;
 }
 /* One bounded pane owns each complete collection, including group titles.
-   Headers, upload controls, filters, and history pagination stay in place. */
+   Headers, upload controls, filters, and history pagination stay in place.
+   A window too short to leave the pane usable scrolls the whole page
+   instead, tabs included, so nothing is out of reach or passes beneath them. */
 .wrap:has(> .manage-list) {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: hidden auto;
   scrollbar-gutter: auto;
 }
-.wrap:has(> .manage-list) > :not(.manage-list) { flex-shrink: 0; }
+/* Content height, whatever basis a sibling carries for row layouts: the
+   breadcrumb's 100% basis would otherwise take the whole column. */
+.wrap:has(> .manage-list) > :not(.manage-list) { flex: none; }
+.wrap:has(> .manage-list) > .manage-header { position: static; }
 .manage-list {
   position: relative;
   flex: 1;
-  min-height: 0;
+  min-height: 8rem;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
