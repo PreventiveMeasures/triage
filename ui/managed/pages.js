@@ -211,10 +211,10 @@ class ManagedAdminHistory extends ManagedPage {
     const start = (page - 1) * 100
     return html`<div class="wrap">${adminNavigation('manage-history', this._role, this.allowShare)}
       <h1 class="sr-only">History</h1>
-      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
+      <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, builds, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
       <div class="toolbar" role="search">
         <input type="search" maxlength="500" aria-label="Search history" placeholder="Search history…" .value=${this._query} @input=${(event) => this._search(event.target.value)}>
-        <select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads</option><option value="repository">${this._role === 'admin' ? 'Repositories' : 'Assignments'}</option>${this._role === 'admin' ? html`<option value="access">Access</option>` : nothing}<option value="delete">Deletions</option></select>
+        <select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads and builds</option><option value="repository">${this._role === 'admin' ? 'Repositories' : 'Assignments'}</option>${this._role === 'admin' ? html`<option value="access">Access</option>` : nothing}<option value="delete">Deletions</option></select>
         ${this._contextFilters()}
         <button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button>
       </div>
@@ -1092,7 +1092,7 @@ class ManagedAdminBundles extends ManagedPage {
   _body() {
     const bundles = Array.isArray(this._data?.bundles) ? this._data.bundles : []
     const query = this._query.trim().toLocaleLowerCase()
-    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
+    const filtered = bundles.filter(bundle => [bundle.filename, bundle.repoFullName, bundle.repoDirectory, bundle.kind, bundle.provenance === 'build' ? 'built' : null, bundle.uploadedByLogin].filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
       && (this._visibility === 'all' || (bundle.visible !== false) === (this._visibility === 'visible')))
     const unassigned = filtered.filter(bundle => bundle.repoId == null).length
     const bytes = filtered.reduce((sum, bundle) => sum + (Number.isFinite(bundle.byteSize) ? bundle.byteSize : 0), 0)
@@ -1116,6 +1116,7 @@ class ManagedAdminBundles extends ManagedPage {
     return html`<li class=${`bundle-row${visible ? '' : ' content-hidden'}`}>
       <span class="identity"><span class="bundle-icon" aria-hidden="true">${b.kind === 'stasis' ? html`<img src="./stasis.svg" width="16" height="16" alt="">` : BUNDLE_ICON}</span>
         <button type="button" class="filename bundle-open" data-tooltip-truncated data-tooltip=${b.filename} @click=${() => this.dispatchEvent(new CustomEvent('managed-bundle-open', { detail: b, bubbles: true, composed: true }))}>${b.filename}</button>
+        ${b.provenance === 'build' ? html`<span class="bundle-provenance" data-tooltip="Generated on this server from the repository">Built</span>` : nothing}
       </span>
       <span class="meta bundle-uploader" data-tooltip-truncated data-tooltip=${b.uploadedByLogin ? `@${b.uploadedByLogin}` : ''}>${b.uploadedByLogin ? `@${b.uploadedByLogin}` : ''}</span>
       <span class="meta bundle-date">${when}</span>

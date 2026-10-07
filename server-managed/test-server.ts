@@ -68,7 +68,7 @@ const users = [
 const history = [
   { id: 'history-1', kind: 'triage', actor: 'riley-reviewer', action: 'marked a finding In progress', reportId: 'fixture-report-1', report: 'managed-fixture.json', repo: 'example/managed-fixtures', finding: 'managed-fixture-1', at: 1_758_000_000_000 },
   { id: 'history-2', kind: 'visibility', actor: 'alex-security', action: 'made a report visible', reportId: 'fixture-report-3', report: 'managed-api.json', repo: 'example/managed-fixtures', finding: '', at: 1_757_999_000_000 },
-  { id: 'history-3', bundleId: 'fixture-bundle-1', kind: 'upload', actor: 'alex-security', action: 'uploaded a bundle', reportId: '', report: 'managed-fixtures.stasis', repo: 'example/managed-fixtures', finding: '', at: 1_757_998_000_000 },
+  { id: 'history-3', bundleId: 'fixture-bundle-1', kind: 'upload', actor: 'alex-security', action: 'built a bundle', reportId: '', report: 'managed-fixtures.stasis', repo: 'example/managed-fixtures', finding: '', at: 1_757_998_000_000 },
   { id: 'history-4', kind: 'triage', actor: 'sam-observer', action: 'added a comment', reportId: 'fixture-report-2', report: 'managed-worker.json', repo: 'example/worker-service', finding: 'managed-fixture-2', at: 1_757_910_000_000 },
 ]
 
@@ -166,22 +166,22 @@ const bundles = [
   {
     id: 'fixture-bundle-1', slug: 'fixture-bundle-1', filename: 'managed-fixtures.stasis', kind: 'stasis',
     repoDirectory: '', integrity: 'sha512-fixture-managed-1', byteSize: 4_827_136, repoId: 101,
-    visible: true, uploadedByLogin: 'alex-security', uploadedAt: 1_757_900_000_000,
+    visible: true, uploadedByLogin: 'alex-security', uploadedAt: 1_757_900_000_000, provenance: 'build',
   },
   {
     id: 'fixture-bundle-2', slug: 'fixture-bundle-2', filename: 'worker-sourcemaps.zip', kind: 'sourcemaps',
     repoDirectory: 'services/worker', integrity: 'sha512-fixture-managed-2', byteSize: 1_204_288, repoId: 102,
-    visible: false, uploadedByLogin: 'riley-reviewer', uploadedAt: 1_757_700_000_000,
+    visible: false, uploadedByLogin: 'riley-reviewer', uploadedAt: 1_757_700_000_000, provenance: 'upload',
   },
   {
     id: 'fixture-bundle-3', slug: 'fixture-bundle-3', filename: 'detached-preview.stasis', kind: 'stasis',
     repoDirectory: '', integrity: 'sha512-fixture-managed-3', byteSize: 786_432, repoId: null,
-    visible: false, uploadedByLogin: 'sam-observer', uploadedAt: 1_757_500_000_000,
+    visible: false, uploadedByLogin: 'sam-observer', uploadedAt: 1_757_500_000_000, provenance: 'upload',
   },
   {
     id: 'fixture-bundle-4', slug: 'fixture-bundle-4', filename: 'managed-fixtures-sourcemaps.zip', kind: 'sourcemaps',
     repoDirectory: 'packages/api', integrity: 'sha512-fixture-managed-4', byteSize: 512_000, repoId: 101,
-    visible: true, uploadedByLogin: 'alex-security', uploadedAt: 1_757_300_000_000,
+    visible: true, uploadedByLogin: 'alex-security', uploadedAt: 1_757_300_000_000, provenance: null,
   },
 ]
 
@@ -369,7 +369,7 @@ async function createBundleFixture(req: IncomingMessage, res: ServerResponse, me
     const id = randomUUID()
     const bundle = { id, slug: id, filename: githubBundleFilename(repo.fullName, input.directory, input.commit), kind: 'stasis',
       repoDirectory: input.directory, integrity: `sha512-fixture-${id}`, byteSize: 1024, repoId: input.repoId,
-      visible: true, uploadedByLogin: 'managed-preview', uploadedAt: Date.now() }
+      visible: true, uploadedByLogin: 'managed-preview', uploadedAt: Date.now(), provenance: 'build' }
     bundles.unshift(bundle)
     sendJson(res, 201, bundle)
   } catch (error) { sendJson(res, 400, { error: error instanceof BundleBuildError ? error.code : 'bad-body' }) }

@@ -2,6 +2,7 @@ import { checkLinkReports } from './_managed-link-reports.js'
 import { checkRepositoryAliases } from './_managed-repository-aliases.js'
 import { checkManagedIssueFixes } from './_managed-issue-fixes.js'
 import { checkHiddenTeams } from './_managed-hidden-teams.js'
+import { checkBundleProvenance } from './_managed-bundle-provenance.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
@@ -115,6 +116,36 @@ test('Postgres migrates existing teams as visible and preserves hidden teams acr
   const reopened = await openPostgresManagedDb(connect)
   t.after(() => reopened.close())
   assert.equal((await reopened.getTeam('team')).hidden, true)
+})
+
+test('Postgres bundle provenance labels builds and keeps them from upload renames', async t => {
+  const { db } = await database(t)
+  await checkBundleProvenance(db)
+})
+
+test('Postgres adds unknown provenance to existing bundles and records later builds as builds', async t => {
+  const { db, connect } = await database(t)
+  const bundle = { kind: 'stasis', byteSize: 1, uploadedBy: null, uploadedByLogin: 'alice', repoId: null }
+  await db.insertBundle({ ...bundle, id: 'old', integrity: 'old', filename: 'old.stasis.code.br' }, 1)
+  const legacy = await connect()
+  try {
+    await legacy.query(`ALTER TABLE managed_bundle DROP COLUMN provenance; DELETE FROM managed_schema_version WHERE version = 20;
+      CREATE OR REPLACE FUNCTION managed_bundle_activity_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO managed_activity (id, kind, actor, action, repo, report_id, report, at, bundle_id, actor_id)
+        VALUES ('bundle-upload:' || NEW.id, 'upload', NEW.uploaded_by_login, 'uploaded a bundle', NULL, NULL, NEW.filename, NEW.uploaded_at, NEW.id, NEW.uploaded_by);
+        RETURN NEW;
+      END $$;`)
+  } finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.equal((await upgraded.getBundle('old')).provenance, null)
+  await upgraded.insertBundle({ ...bundle, id: 'new', integrity: 'new', filename: 'new.stasis.code.br', provenance: 'build' }, 2)
+  const { history } = await upgraded.listActivity({ page: 1, limit: 100, kind: 'upload', query: '', contexts: null })
+  assert.deepEqual(history.map(entry => [entry.report, entry.action]), [
+    ['new.stasis.code.br', 'built a bundle'], ['old.stasis.code.br', 'uploaded a bundle'],
+  ])
 })
 
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {

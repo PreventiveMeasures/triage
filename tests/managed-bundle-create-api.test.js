@@ -4,6 +4,7 @@ import { mock, test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession, endSession, readSession } from '../server-managed/session.ts'
 import * as builder from '../server-managed/bundle-build.ts'
+import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { managedBundleEntry, managedBundleRoute } from '../ui/view/managed-bundle-navigation.js'
 import { managedRoutePath } from '../common/managed/routes.js'
 import { refreshManagedBundleView } from '../ui/view/managed-bundle-refresh.js'
@@ -41,18 +42,22 @@ async function fixture(t, { role = 'admin', member = true, scope = null } = {}) 
   })
   const builds = []
   build = (...args) => { builds.push(args); return Promise.resolve(result) }
-  const send = async (input = body, { method = 'POST', csrf = session.csrfToken, origin, beforeBody } = {}) => {
+  const send = async (input = body, { method = 'POST', csrf = session.csrfToken, origin, beforeBody, url = '/api/admin/bundles/create', extraHeaders = {} } = {}) => {
     // ServerResponse uses Node's EventEmitter close lifecycle.
     // oxlint-disable-next-line unicorn/prefer-event-target
     const res = Object.assign(new EventEmitter(), { status: 0, body: '', headers: {},
       writeHead(status, headers) { this.status = status; this.headers = headers }, end(value) { this.body = value ?? '' } })
-    const req = { method, url: '/api/admin/bundles/create', headers: { cookie: session.setCookie.split(';')[0], 'x-csrf-token': csrf, ...(origin ? { origin } : {}) },
-      async *[Symbol.asyncIterator]() { await beforeBody?.(); yield Buffer.from(JSON.stringify(input)) } }
+    const req = { method, url, headers: { cookie: session.setCookie.split(';')[0], 'x-csrf-token': csrf, ...(origin ? { origin } : {}), ...extraHeaders },
+      async *[Symbol.asyncIterator]() { await beforeBody?.(); yield Buffer.isBuffer(input) ? input : Buffer.from(JSON.stringify(input)) } }
     await handler(req, res)
     return { status: res.status, body: JSON.parse(res.body) }
   }
-  return { db, session, blobs, builds, send, metadata, reads: () => reads, bundleStore }
+  // A manual upload of the bytes the mocked builder returns.
+  const upload = filename => send(result.bytes, { url: '/api/admin/bundles', extraHeaders: { 'x-bundle-filename': filename, 'x-repo-id': '1' } })
+  return { db, session, blobs, builds, send, upload, metadata, reads: () => reads, bundleStore }
 }
+
+const uploads = { page: 1, limit: 100, kind: 'upload', query: '', contexts: null }
 
 test('creation stores a Stasis bundle with a routable slug and deduplicates retries', async t => {
   const f = await fixture(t, { role: 'manage' })
@@ -77,6 +82,62 @@ test('creation stores a Stasis bundle with a routable slug and deduplicates retr
     const route = managedBundleRoute([], managedBundleEntry(created), null)
     assert.equal(managedRoutePath(route), `/manage/bundle/${stored.slug}`)
   }
+})
+
+test('server builds are labelled as built in catalogues and activity', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  const response = await f.send()
+  assert.equal((await f.db.getBundle(response.body.id)).provenance, 'build')
+  assert.equal((await f.db.listBundles(f.session.userId))[0].provenance, 'build')
+  assert.equal((await f.db.listTeamsForUser(f.session.userId))[0].bundles[0].provenance, 'build')
+  assert.deepEqual((await f.db.listActivity(uploads)).history.map(entry => [entry.actor, entry.action, entry.report]),
+    [['builder', 'built a bundle', result.filename]])
+})
+
+test('uploads and builds rename uploaded bytes; a build takes over and later uploads change nothing', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  const uploaded = await f.upload('manual.stasis.code.br')
+  assert.equal(uploaded.status, 201)
+  const original = await f.db.getBundle(uploaded.body.id)
+  assert.equal(original.provenance, 'upload')
+  const renamed = await f.upload('renamed.stasis.code.br')
+  assert.deepEqual([renamed.status, renamed.body.id, renamed.body.filename], [200, uploaded.body.id, 'renamed.stasis.code.br'])
+  const built = await f.send()
+  assert.deepEqual([built.status, built.body.id, built.body.filename, built.body.deduped], [200, uploaded.body.id, result.filename, true])
+  const takenOver = await f.db.getBundle(uploaded.body.id)
+  assert.deepEqual(takenOver, { ...original, filename: result.filename, provenance: 'build' }, 'only the name and label change')
+  const again = await f.upload('manual-again.stasis.code.br')
+  assert.deepEqual([again.status, again.body.id, again.body.filename], [200, uploaded.body.id, result.filename])
+  assert.deepEqual(await f.db.getBundle(uploaded.body.id), takenOver)
+  assert.equal(f.blobs.size, 1)
+  assert.deepEqual((await f.db.listActivity(uploads)).history.map(entry => [entry.action, entry.report]),
+    [['uploaded a bundle', 'manual.stasis.code.br']], 'repeated bytes add no history')
+})
+
+test('a build labels identical bytes the builder cannot see, without renaming them', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  await f.db.insertBundle({ id: 'elsewhere', integrity: bundleIntegrity(result.bytes), filename: 'private.stasis.code.br', kind: 'stasis',
+    byteSize: result.bytes.length, uploadedBy: null, uploadedByLogin: 'someone', repoId: null, provenance: 'upload' }, 1)
+  assert.deepEqual(await f.send(), { status: 409, body: { error: 'bundle-conflict' } })
+  const stored = await f.db.getBundle('elsewhere')
+  assert.deepEqual([stored.filename, stored.provenance], ['private.stasis.code.br', 'build'])
+  assert.equal(f.blobs.size, 0)
+})
+
+test('repeated bytes are renamed only with access held in the renaming transaction', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  await f.db.insertBundle({ id: 'team-bundle', integrity: bundleIntegrity(result.bytes), filename: 'team.stasis.code.br', kind: 'stasis',
+    byteSize: result.bytes.length, uploadedBy: null, uploadedByLogin: 'someone', repoId: 1, provenance: 'upload' }, 1)
+  const reuse = f.db.reuseBundleUpload.bind(f.db)
+  // Revoke after the request's earlier access checks, just before the rename.
+  t.mock.method(f.db, 'reuseBundleUpload', async (...args) => { await f.db.removeTeamMember('team', f.session.userId); return reuse(...args) })
+  assert.deepEqual(await f.upload('renamed.stasis.code.br'), { status: 409, body: { error: 'bundle-conflict' } })
+  const stored = await f.db.getBundle('team-bundle')
+  assert.deepEqual([stored.filename, stored.provenance], ['team.stasis.code.br', 'upload'])
+  const { session } = await readSession(config, f.db, f.session.setCookie, Date.now())
+  await f.db.setUserRole(f.session.userId, 'view')
+  await assert.rejects(reuse(session.id, 'team-bundle', { provenance: 'build', filename: result.filename, kind: 'stasis' }), { status: 403 })
+  assert.equal((await f.db.getBundle('team-bundle')).provenance, 'upload', 'a revoked role cannot even label the row')
 })
 
 test('creation accepts JSX and TSX entry points and forwards their conditions to the builder', async t => {

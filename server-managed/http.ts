@@ -64,7 +64,7 @@ import type { BlobStore } from './blob-store.ts'
 import { bundleFilePrefix, bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
 import { resolveRepositoryImportLocation } from './repository-aliases.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedBundle, ManagedDb, ManagedSession, ReportRecord, SelectedRepo, StoredUser, TriageEventRow } from './db.ts'
+import type { BundleProvenance, BundleReuse, ManagedBundle, ManagedDb, ManagedSession, ReportRecord, SelectedRepo, StoredUser, TriageEventRow } from './db.ts'
 import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
@@ -1221,10 +1221,18 @@ async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, ses
 }
 
 type UploadedBundle = Pick<ManagedBundle, 'id' | 'slug' | 'integrity' | 'filename' | 'byteSize' | 'repoId' | 'repoDirectory'>
-async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, bundle: UploadedBundle, deduped: boolean): Promise<void> {
+// `reuse` describes a repeated upload/build of an existing row (see reuseBundle).
+async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined,
+  bundle: UploadedBundle, reuse?: Omit<BundleReuse, 'rename'>): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie)
   if (!s) return
-  if (deduped && !(await canAccessBundle(deps, s.user, bundle.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+  const deduped = reuse != null
+  if (deduped) {
+    // Authorized in the same transaction as the rename. A server build labels
+    // even a row the caller cannot see: the bytes are this server's own output.
+    if (await deps.db.reuseBundleUpload(s.session.id, bundle.id, reuse)) bundle = await deps.db.getBundle(bundle.id) ?? bundle
+    if (!(await canAccessBundle(deps, s.user, bundle.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+  }
   const { id, slug, integrity, filename, byteSize, repoId, repoDirectory } = bundle
   // Re-uploading also repairs reports uploaded while the bundle was inaccessible.
   await deps.db.linkReportsToBundle(integrity, id, s.user.role === 'admin' ? undefined : s.user.id)
@@ -1268,7 +1276,7 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
         throw new BundleBuildError(409, 'repository-changed')
       }
       signal.throwIfAborted()
-      await storeUploadedBundle(req, res, deps, cookie, current, Buffer.from(built.bytes), input.repoId, built.directory, built.filename)
+      await storeUploadedBundle(req, res, deps, cookie, current, Buffer.from(built.bytes), input.repoId, built.directory, built.filename, 'build')
     })
   } catch (error) {
     if (res.destroyed || controller.signal.aborted) return
@@ -1286,7 +1294,8 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
 // X-Repo-Directory assign a repository location; Stasis repo headers default
 // to a matching connected repository within the uploader's access, otherwise
 // the bundle stays unattached. Its identity is its content hash (sha512), UNIQUE — a
-// re-upload of identical bytes dedupes to the existing row (no second copy).
+// re-upload of identical bytes dedupes to the existing row (no second copy) and
+// renames it, unless the row was built on this server.
 // After storing, any reports that declared this integrity but weren't linked yet
 // get attached (auto-link). 413 over the cap, 400 on empty.
 async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
@@ -1348,19 +1357,21 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     repo.repoId = null
     directory = ''
   }
-  await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename, integrity)
+  await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename, 'upload', integrity)
 }
 
 async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined,
-  s: { session: ManagedSession; user: StoredUser }, bytes: Buffer, repoId: number | null, directory: string, filename: string, integrity = bundleIntegrity(bytes)): Promise<void> {
-  const existing = await deps.db.getBundleByIntegrity(integrity)
-  if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, true); return }
-  const id = randomUUID()
+  s: { session: ManagedSession; user: StoredUser }, bytes: Buffer, repoId: number | null, directory: string, filename: string,
+  provenance: BundleProvenance, integrity = bundleIntegrity(bytes)): Promise<void> {
   const kind = bundleKind(filename)
+  const reuse = { provenance, filename, kind }
+  const existing = await deps.db.getBundleByIntegrity(integrity)
+  if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, reuse); return }
+  const id = randomUUID()
   const dataKey = await deps.bundleStore.put(id, bytes, kind)
   try {
     await deps.db.insertBundle({
-      id, integrity, filename, kind, dataKey,
+      id, integrity, filename, kind, dataKey, provenance,
       byteSize: bytes.length, uploadedBy: s.user.id, uploadedByLogin: s.user.login, repoId, repoDirectory: directory,
     }, Date.now(), s.session.id)
   } catch (err) {
@@ -1375,12 +1386,12 @@ async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, de
     if (raced?.id !== id) await deps.bundleStore.delete(id).catch(() => {})
     if (err instanceof ManagedMutationError) throw err
     if (!raced) throw err
-    if (raced.id !== id) { await sendUploadedBundle(req, res, deps, cookie, raced, true); return }
+    if (raced.id !== id) { await sendUploadedBundle(req, res, deps, cookie, raced, reuse); return }
     // Our insert committed: continue with the ordinary creation response.
   }
   const stored = await deps.db.getBundle(id)
   if (!stored) { sendJson(res, 404, { error: 'no-bundle' }); return }
-  await sendUploadedBundle(req, res, deps, cookie, stored, false)
+  await sendUploadedBundle(req, res, deps, cookie, stored)
 }
 
 // GET /api/admin/bundles/<id> — download a stored bundle (admin|manage). Bytes

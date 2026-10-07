@@ -181,6 +181,17 @@ select:focus-visible {
   padding-right: .65rem;
   text-align: right;
 }
+.bundle-provenance {
+  flex-shrink: 0;
+  margin-left: -.35rem;
+  padding: .05rem .35rem;
+  border: 1px solid rgb(from var(--accent) r g b / .25);
+  border-radius: 5px;
+  background: rgb(from var(--accent) r g b / .07);
+  color: var(--accent);
+  font-size: .62rem;
+  font-weight: 500;
+}
 
 .bundle-actions { display: flex; align-items: center; gap: .5rem; }
 .bundle-open { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; }

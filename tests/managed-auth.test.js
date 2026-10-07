@@ -1266,7 +1266,7 @@ test('reimporting a workspace reuses reports and bundles, including renamed copi
   assert.equal((await f.db.listBundles()).length, 1)
   assert.equal(sourcemapStore.map.size, 1)
   assert.equal(archiveStore.map.size, 0)
-  assert.equal((await f.db.getBundle(firstBundle)).filename, 'source-0.map')
+  assert.equal((await f.db.getBundle(firstBundle)).filename, 'renamed-1.map', 'the latest upload names an uploaded bundle')
   assert.deepEqual((await f.db.listTriage(['workspace-finding'])).map(row => [row.findingId, row.color]), [['workspace-finding', 'red']])
   const catalog = await f.db.listTeamsForUser(f.admin.id)
   for (const team of teams) {

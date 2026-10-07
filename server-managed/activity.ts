@@ -128,10 +128,14 @@ export function initActivityMethods(db: DatabaseSync): void {
   db.exec('CREATE INDEX IF NOT EXISTS managed_activity_actor_at_idx ON managed_activity(actor_id, at)')
   // Stable upload IDs make backfill idempotent, including after restarts.
   // Snapshots deliberately have no cascading FKs: deletion is itself activity.
+  // CREATE TRIGGER IF NOT EXISTS keeps an older body; replace the one that
+  // predates server-built bundles so builds are not recorded as uploads.
+  const bundleTrigger = db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = 'managed_bundle_activity'").get() as { sql: string } | undefined
+  if (bundleTrigger && !bundleTrigger.sql.includes('provenance')) db.exec('DROP TRIGGER managed_bundle_activity')
   for (const type of ['report', 'bundle']) {
     const columns = `id, kind, actor, action, repo, report_id, report, at, bundle_id, actor_id`
     const values = (alias: string) => `'${type}-upload:' || ${alias}.id, 'upload',
-      COALESCE(${alias}.uploaded_by_login, (SELECT login FROM managed_user WHERE id = ${alias}.uploaded_by)), 'uploaded a ${type}',
+      COALESCE(${alias}.uploaded_by_login, (SELECT login FROM managed_user WHERE id = ${alias}.uploaded_by)), ${uploadAction(type, alias)},
       (SELECT full_name FROM managed_selected_repo WHERE repo_id = ${alias}.repo_id),
       ${type === 'report' ? `${alias}.id` : 'NULL'}, ${alias}.filename, ${alias}.uploaded_at,
       ${type === 'bundle' ? `${alias}.id` : 'NULL'}, ${alias}.uploaded_by`
@@ -141,6 +145,12 @@ export function initActivityMethods(db: DatabaseSync): void {
       INSERT OR IGNORE INTO managed_activity (${columns}) SELECT ${values('source')} FROM managed_${type} source;
     `)
   }
+}
+
+// The creation entry for a stored report or bundle. Shared with the Postgres
+// trigger function; `alias` is the trigger row (NEW) or a backfill alias.
+export function uploadAction(type: string, alias: string): string {
+  return type === 'bundle' ? `CASE WHEN ${alias}.provenance = 'build' THEN 'built a bundle' ELSE 'uploaded a bundle' END` : `'uploaded a ${type}'`
 }
 
 export function activityMethods(db: ManagedSql): ActivityStore {

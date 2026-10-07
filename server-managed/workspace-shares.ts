@@ -89,7 +89,7 @@ function shareQueries(db: ManagedSql) {
   // A raw bundle is visible only when its declared root is inside the team scope.
   // Root bundles remain hidden from directory-only grants.
   const bundles = db.prepare(`SELECT DISTINCT b.id, b.slug, b.integrity, b.filename, b.kind, b.byte_size AS byteSize,
-    b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.uploaded_at AS uploadedAt, sr.full_name AS repoFullName
+    b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.uploaded_at AS uploadedAt, b.provenance, sr.full_name AS repoFullName
     FROM managed_team_repo tr JOIN managed_bundle b ON b.repo_id = tr.repo_id
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
     WHERE tr.team_id = ? AND b.visible = 1 AND (tr.path = '' OR b.repo_directory = tr.path
@@ -156,7 +156,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
           reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, visible: true, analyzer: row.analyzer, repoFullName: row.github, repoDirectory: row.directory,
             cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions, links]) })),
           bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
-            filename: row.filename, visible: true, kind: row.kind, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName })),
+            filename: row.filename, visible: true, kind: row.kind, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName, provenance: row.provenance })),
         },
         bundles: bundleRows.map(row => ({ ...row, visible: true })),
       }

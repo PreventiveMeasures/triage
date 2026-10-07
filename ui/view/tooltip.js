@@ -83,11 +83,12 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const commit = bundleCommitHash(el.dataset.tooltipCommit)
   const bundle = ['stasis', 'sourcemap'].includes(el.dataset.tooltipBundle) ? el.dataset.tooltipBundle : ''
   const stats = el.dataset.tooltipStats ?? ''
+  const built = el.dataset.tooltipBuilt === 'true'
   const packageName = el.dataset.tooltipPackage ?? ''
   const ecosystem = el.dataset.tooltipEcosystem ?? ''
   const version = el.dataset.tooltipVersion ?? ''
   const files = el.dataset.tooltipFiles ?? ''
-  const content = JSON.stringify([text, repo, commit, bundle, stats, packageName, ecosystem, version, files])
+  const content = JSON.stringify([text, repo, commit, bundle, stats, built, packageName, ecosystem, version, files])
   if (!text) return
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
@@ -131,7 +132,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     }
     node.append(row)
   }
-  if (bundle || stats) {
+  if (bundle || stats || built) {
     const row = document.createElement('div')
     row.className = 'tooltip-bundle'
     if (bundle === 'stasis') {
@@ -142,7 +143,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     } else row.innerHTML = BUNDLE_ICON_SVG
     const label = document.createElement('span')
     const type = bundle === 'stasis' ? 'Stasis' : bundle === 'sourcemap' ? 'Sourcemap' : ''
-    label.textContent = [type, stats].filter(Boolean).join(' · ')
+    label.textContent = [type, built ? 'Built on server' : '', stats].filter(Boolean).join(' · ')
     row.append(label)
     node.append(row)
   }
