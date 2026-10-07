@@ -224,8 +224,9 @@ need a report fallback use the server assignment.
 
 Reports without a report-level repository, such as Claude Security Markdown and
 Codex CSV exports, name one on their findings. As in the local report view, the
-single repository named by findings outside `node_modules/` and `vendor/` stands
-for the report, with any report-level `repo.directory`. A new upload without
+single repository named by findings outside the report's dependency directory
+(`node_modules/`, else `vendor/`, else `dependencies/`) stands for the report,
+with any report-level `repo.directory`. A new upload without
 `X-Repo-Id` is assigned there when it resolves, through connections and aliases
 like embedded metadata, to an active repository within the uploader's access;
 `X-Repo-Directory` still overrides the directory. Otherwise the report stays

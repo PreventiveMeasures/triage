@@ -34,7 +34,7 @@ export async function prepareWorkspaceImport(data, repos, aliases = []) {
     // one its findings name.
     const parsedFindings = Array.isArray(parsed.data.findings) ? parsed.data.findings : []
     const typed = embedded ?? reportRepoGithub(item) ?? reportRepoGithub({ repo: { github: data.repoUrls?.[item.name] } })
-    const declaredGithub = typed ?? findingsRepository(parsedFindings)
+    const declaredGithub = typed ?? findingsRepository(parsedFindings, parsed.data.tree)
     const filePrefix = embedded ? '' : commonFileDirectory(managedFindingSourcePaths(parsedFindings))
     const directory = normalizeTeamPath(parsed.data.repo?.directory)
     if (!directory.ok) throw new Error(`${item.name}: invalid repository directory`)

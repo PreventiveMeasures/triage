@@ -394,7 +394,8 @@ function serveReportLocation(url: URL, res: ServerResponse): boolean {
   if (!match) return false
   const report = reportFixtures.find(candidate => candidate.id === decodeURIComponent(match[1]!))
   if (report == null) { sendJson(res, 404, { error: 'not-found' }); return true }
-  const github = report.repoEmbedded ? null : findingsRepository(readManagedReport(report.content, report.filename).data?.findings ?? [])
+  const data = readManagedReport(report.content, report.filename).data
+  const github = report.repoEmbedded ? null : findingsRepository(data?.findings ?? [], data?.tree)
   const repo = github == null ? null : repositories.find(candidate => candidate.selected && candidate.fullName.toLowerCase() === github.toLowerCase())
   sendJson(res, 200, { location: github == null ? null : { repoId: repo?.id ?? null, github: repo?.fullName ?? github, directory: null } })
   return true
