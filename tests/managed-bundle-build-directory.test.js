@@ -10,9 +10,9 @@ const { buildStasisBundle } = await import('../server-managed/bundle-build-worke
 const commit = 'a'.repeat(40)
 const file = (path, mode = '100644') => ({ path, mode, type: 'blob', sha: 'b'.repeat(40) })
 
-function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {} } = {}) {
+function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {}, contents = {} } = {}) {
   const input = parseBundleBuild({ repoId: 1, commit, entries, conditions: { preset: 'node', conditions: ['node'], platforms: [] } })
-  const builds = [], reads = []
+  const builds = [], fileReads = [], reads = []
   const client = { listRepoDir({ repo, sha, directory }) {
     assert.equal(repo, 'org/repo')
     assert.equal(sha, commit)
@@ -20,6 +20,11 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, mod
     if (failAt !== undefined && directory === failAt) throw new Error('GitHub unavailable')
     return Promise.resolve(files.filter(entry => posix.dirname(entry.path) === (directory || '.'))
       .map(entry => ({ ...entry, path: posix.basename(entry.path) })))
+  }, getRepoFile({ repo, path, ref }) {
+    assert.equal(repo, 'org/repo')
+    assert.equal(ref, commit)
+    fileReads.push(path)
+    return Promise.resolve(contents[path] ?? '{}')
   } }
   build = async options => {
     builds.push(options)
@@ -29,7 +34,7 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, mod
     return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize: () => '{}' } }
   }
   const run = () => buildStasisBundle({ input, github: 'org/repo', token: null, maxBytes: 1000, scopes }, client)
-  return { run, reads, builds }
+  return { run, reads, builds, fileReads }
 }
 
 for (const extension of ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'jsx', 'mjsx', 'cjsx', 'tsx', 'mtsx', 'ctsx', 'JSX', 'TSX']) {
@@ -142,4 +147,29 @@ test('a workspace lockfile widening the bundle beyond the project still needs ac
   const f = await fixture(['app/src/main.ts'], [file('app/package.json')], { scopes: ['app'], bundleDirectory: '' })
   await assert.rejects(f.run(), /build-scope/u)
   assert.equal(f.builds.length, 1)
+})
+
+test('a project whose package.json depends on a @prisma/ package has Stasis generate Prisma Client', async () => {
+  const files = [file('package.json'), file('packages/app/package.json')]
+  for (const [manifest, generate] of [
+    [{ dependencies: { '@prisma/client': '7.10.0' } }, ['prisma']],
+    [{ devDependencies: { '@prisma/adapter-pg': '7.10.0' } }, ['prisma']],
+    [{ dependencies: { prisma: '7.10.0', 'left-pad': '1.3.0' } }, undefined],
+    [{ dependencies: ['@prisma/client'] }, undefined],
+    ['{not json', undefined],
+  ]) {
+    const contents = { 'packages/app/package.json': typeof manifest === 'string' ? manifest : JSON.stringify(manifest), 'package.json': '{"dependencies":{"@prisma/client":"7.10.0"}}' }
+    const f = await fixture(['packages/app/src/main.ts'], files, { contents })
+    await f.run()
+    assert.deepEqual(f.builds[0].generate, generate, JSON.stringify(manifest))
+    assert.deepEqual(f.fileReads, ['packages/app/package.json'], 'only the project’s own package.json is read')
+  }
+})
+
+test('Solidity builds never read package.json for Prisma', async () => {
+  const f = await fixture(['contracts/src/Token.sol'], [file('contracts/foundry.toml'), file('contracts/package.json')],
+    { contents: { 'contracts/package.json': '{"dependencies":{"@prisma/client":"7.10.0"}}' } })
+  await f.run()
+  assert.equal(f.builds[0].generate, undefined)
+  assert.deepEqual(f.fileReads, [])
 })
