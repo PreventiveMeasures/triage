@@ -379,9 +379,10 @@ test('public repository rechecks retain skipped dependencies and enforce securit
     calls++
     assert.equal(new Headers(init.headers).get('authorization'), null, 'public shares never borrow the owner credential')
     if (url.endsWith('/advisories/bulk')) return Response.json({})
+    // Revoke mid-audit: the repository's listing is answered from the cache.
+    if (revoke) await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
     if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
-    if (revoke) await h.request(`/api/teams/whole/share/${id}`, { role: 'manage', method: 'PATCH', body: { security: false } })
     return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability', description: '# Impact\n\nFull advisory text.',
       vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<2.0.0' }] }])
   })
@@ -402,6 +403,7 @@ test('public repository rechecks retain skipped dependencies and enforce securit
   assert.equal(denied.status, 404)
   assert.equal(denied.body.advisories, undefined)
   assert.equal(denied.body.skipped, undefined)
+  assert.equal(calls, 6, 'the cached listing is withheld without asking GitHub again')
 })
 
 for (const focused of [false, true]) {

@@ -1040,7 +1040,7 @@ test('cached bundle repositories bypass npm metadata discovery after upgrading o
     assert.deepEqual(response.json().packages, [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'], github: 'org/dep' }])
     assert.equal(response.json().advisories[0].title, 'Maintainer vulnerability')
   }
-  assert.equal(calls.length, 4, 'only the advisory bulk API and known GitHub repo are queried')
+  assert.equal(calls.length, 3, 'only the advisory bulk API and known GitHub repo are queried, the repo once')
   assert.equal(reads.mock.callCount(), 1, 'the upgraded inventory is reused for the scoped request')
   const metadata = (await h.send(`/api/bundles/${record.id}/metadata`, 'viewer')).json()
   const cached = parseBundleMetadata(metadata, record.integrity)
@@ -1060,9 +1060,10 @@ test('managed repository rechecks enrich advisories and recheck security before 
     calls.push(url)
     assert.equal(new Headers(init.headers).get('authorization'), new URL(url).hostname === 'api.github.com' ? 'Bearer viewer-token' : null)
     if (url.endsWith('/advisories/bulk')) return Response.json({})
+    // Revoke mid-audit: the repository's listing is answered from the cache.
+    if (revoke) await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
     if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
-    if (revoke) await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
     return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability', description: '# Impact\n\nFull advisory text.',
       vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<3.0.0' }] }])
   })
@@ -1079,6 +1080,7 @@ test('managed repository rechecks enrich advisories and recheck security before 
   const denied = await h.send(recheck, 'viewer')
   assert.equal(denied.status, 403)
   assert.deepEqual(denied.json(), { error: 'security-access-required' })
+  assert.equal(calls.length, 6, 'the cached listing is withheld without asking GitHub again')
 })
 
 for (const mode of ['refresh', 'expired', 'revoked', 'rejected']) {

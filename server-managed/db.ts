@@ -12,6 +12,7 @@ import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { BUNDLE_BUILD_LEASE_SCHEMA } from './bundle-build-leases.ts'
+import { UPSTREAM_CACHE_SCHEMA } from './upstream-cache.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
 import { createSqliteDriver, scopeManagedMethods } from './sql.ts'
@@ -68,7 +69,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec('PRAGMA synchronous = FULL;')
     db.exec('PRAGMA foreign_keys = ON;')
     migrateManagedTableNames(db)
-    db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA + BUNDLE_BUILD_LEASE_SCHEMA)
+    db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA + BUNDLE_BUILD_LEASE_SCHEMA + UPSTREAM_CACHE_SCHEMA)
     ensureColumn(db, 'managed_selected_repo', 'cached_default_branch', 'TEXT')
     for (const table of ['managed_report', 'managed_bundle']) {
       ensureColumn(db, table, 'data_key', 'TEXT')

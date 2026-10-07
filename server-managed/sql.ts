@@ -18,10 +18,11 @@ export interface ManagedSqlDriver extends ManagedSql {
 
 // These operations execute exactly one SQL statement. Postgres already gives
 // that statement an atomic snapshot; an explicit BEGIN/COMMIT adds only trips.
-// Lease writes coordinate through their conditional UPSERT/UPDATE alone.
+// Lease and cache writes coordinate through their conditional UPSERT/UPDATE alone.
 const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
-  'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease'])
+  'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
+  'getUpstreamCacheEntry', 'setUpstreamCacheEntry'])
 
 export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver): ManagedDb {
   const entries = Object.entries(methods).map(([name, method]) => {

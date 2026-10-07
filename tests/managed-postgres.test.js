@@ -822,6 +822,20 @@ test('Postgres upgrades existing databases and retains GitHub metadata across re
   finally { await reopened.close() }
 })
 
+test('Postgres adds the upstream cache to existing databases and retains it across restarts', async t => {
+  const { connect, db } = await database(t)
+  await db.close()
+  const connection = await connect()
+  try { await connection.query('DROP TABLE managed_upstream_cache; DELETE FROM managed_schema_version WHERE version = 21;') } finally { await connection.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  const { checkUpstreamCacheStore } = await import('./_managed-upstream-cache.js')
+  const { key, value } = await checkUpstreamCacheStore(upgraded)
+  await upgraded.close()
+  const reopened = await openPostgresManagedDb(connect)
+  try { assert.equal(await reopened.getUpstreamCacheEntry(key), value) }
+  finally { await reopened.close() }
+})
+
 test('Postgres adds closure reasons and attempts to an existing metadata table without discarding its cache', async t => {
   const { connect, db } = await database(t)
   const cached = { key: '7:issue:9', title: 'Legacy issue', description: 'Retained body', status: 'closed', stateReason: null, fetchedAt: 1, attemptedAt: null }
