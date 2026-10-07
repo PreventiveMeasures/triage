@@ -135,10 +135,25 @@ test('the Node.js and Browser preset conditions stay first and cannot be removed
     control.removeCondition('development')
     assert.deepEqual(control.value.conditions, locked)
   }
-  control._draft = 'node'
+  control._draft = 'import'
   control.addConditions()
-  assert.deepEqual(control.value.conditions, ['browser', 'module'], 'Browser builds resolve with node already')
-  assert.match(control._error, /node.*automatically/u)
+  assert.equal(control._error, 'import, require, and default are handled automatically.')
+  control._draft = 'node module-sync'
+  control.addConditions()
+  assert.deepEqual(control.value.conditions, ['browser', 'module', 'node', 'module-sync'], 'Browser builds resolve without Node\'s own conditions')
+})
+
+test('the help line names the conditions each preset resolves with automatically', () => {
+  const control = new BundleConditions()
+  const flatten = value => typeof value === 'string' ? value : Array.isArray(value) ? value.map(flatten).join('')
+    : value?.strings ? value.strings.reduce((text, string, i) => text + string + (i < value.values.length ? flatten(value.values[i]) : ''), '') : ''
+  const help = () => {
+    const template = templates(control.render()).find(item => item.strings.some(string => string.includes('<p id="conditions-help">')))
+    return flatten(template).match(/<p id="conditions-help">(.*?)<\/p>/su)[1].replaceAll(/<[^>]+>/gu, '')
+  }
+  assert.equal(help(), 'Package export conditions. import / require, default, node, node-addons, and module-sync are automatic.')
+  control.selectPreset('browser')
+  assert.equal(help(), 'Package export conditions. import / require and default are automatic.', 'module shows as a preset chip instead')
 })
 
 test('typed conditions are accepted on space and when the field loses focus, without an add button', () => {

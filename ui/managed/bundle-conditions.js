@@ -2,17 +2,20 @@ import { LitElement, html, nothing, svg, unsafeCSS } from 'lit'
 import commonStyles from './styles/common.css'
 import styles from './styles/bundle-conditions.css'
 
+// The conditions Stasis always resolves with: Node's own for Node.js builds, and
+// a bundler's (as esbuild, webpack and Metro assert) for Browser and Metro.
+const BUNDLER_AUTOMATIC = ['import', 'require', 'default']
+const NODE_AUTOMATIC = [...BUNDLER_AUTOMATIC, 'node', 'node-addons', 'module-sync']
 const PRESETS = [
-  { id: 'node', label: 'Node.js', conditions: ['node'], icon: svg`<path d="m8 1.5 5.5 3.2v6.6L8 14.5l-5.5-3.2V4.7Z"/><path d="M6 10V6l4 4V6"/>` },
-  { id: 'browser', label: 'Browser', conditions: ['browser', 'module'], icon: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6h13M4 4.3h.1m2 0h.1"/>` },
-  { id: 'metro', label: 'Metro', conditions: ['react-native'], icon: svg`<rect x="4" y="1.5" width="8" height="13" rx="2"/><path d="M6.5 3.5h3M7 12.5h2"/>` },
+  { id: 'node', label: 'Node.js', conditions: ['node'], automatic: NODE_AUTOMATIC, icon: svg`<path d="m8 1.5 5.5 3.2v6.6L8 14.5l-5.5-3.2V4.7Z"/><path d="M6 10V6l4 4V6"/>` },
+  { id: 'browser', label: 'Browser', conditions: ['browser', 'module'], automatic: BUNDLER_AUTOMATIC, icon: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6h13M4 4.3h.1m2 0h.1"/>` },
+  { id: 'metro', label: 'Metro', conditions: ['react-native'], automatic: BUNDLER_AUTOMATIC, icon: svg`<rect x="4" y="1.5" width="8" height="13" rx="2"/><path d="M6.5 3.5h3M7 12.5h2"/>` },
 ]
 // Manual conditions follow every preset, so they must fit beside the longest
 // one within the server's limit of 16.
 const MANUAL_LIMIT = 16 - Math.max(...PRESETS.map(preset => preset.conditions.length))
 const PLATFORMS = [{ id: 'ios', label: 'iOS' }, { id: 'android', label: 'Android' }]
-// Stasis resolves with these whatever the preset, as Node does.
-const automaticConditions = new Set(['default', 'import', 'require', 'node', 'node-addons', 'module-sync'])
+const conjunction = new Intl.ListFormat('en', { type: 'conjunction' })
 
 export function defaultBundleConditions() {
   return { preset: 'node', conditions: ['node'], platforms: [] }
@@ -43,6 +46,10 @@ export class BundleConditions extends LitElement {
 
   get presetConditions() {
     return PRESETS.find(item => item.id === this._preset).conditions
+  }
+
+  get automaticConditions() {
+    return PRESETS.find(item => item.id === this._preset).automatic
   }
 
   // The preset's condition leads and cannot be removed. Manual conditions follow
@@ -76,8 +83,8 @@ export class BundleConditions extends LitElement {
     if (this._preset === 'metro') return
     const names = this._draft.trim().split(/[\s,]+/u).filter(Boolean)
     if (names.length === 0) return
-    if (names.some(name => automaticConditions.has(name) && !this.presetConditions.includes(name))) {
-      this._error = 'import, require, default, node, node-addons, and module-sync are handled automatically.'
+    if (names.some(name => this.automaticConditions.includes(name) && !this.presetConditions.includes(name))) {
+      this._error = `${conjunction.format(this.automaticConditions)} are handled automatically.`
       return
     }
     if (names.some(name => name.length > 64 || name.startsWith('.') || /^\d+$/u.test(name))) {
@@ -105,6 +112,8 @@ export class BundleConditions extends LitElement {
   render() {
     // Stasis's Metro preset sets its own conditions, so they are not editable.
     const manual = this._preset !== 'metro'
+    // The help line names import / require together, then the rest.
+    const others = this.automaticConditions.filter(name => name !== 'import' && name !== 'require')
     return html`<section aria-label=${this.showConditions ? 'Conditions' : 'Bundle actions'}>
       <div class="conditions-head" ?data-conditions-hidden=${!this.showConditions}>
         <h2 id="conditions-heading">Conditions</h2>
@@ -119,7 +128,7 @@ export class BundleConditions extends LitElement {
         <div class="condition-input"><input type="text" aria-label="Add conditions" aria-describedby="conditions-help" aria-invalid=${Boolean(this._error)} aria-errormessage="condition-error" placeholder="Add condition…" autocomplete="off" maxlength="1040" .value=${this._draft} @input=${event => { this._draft = event.target.value; this._error = '' }}
           @keydown=${event => { if (event.key === ' ' && !event.isComposing) { event.preventDefault(); this.addConditions() } }} @blur=${() => this.addConditions()}></div>
         </form>
-        <p id="conditions-help">Package export conditions. <code>import</code> / <code>require</code>, <code>default</code>, <code>node</code>, <code>node-addons</code>, and <code>module-sync</code> are automatic.</p>
+        <p id="conditions-help">Package export conditions. <code>import</code> / <code>require</code>${others.map((name, i) => html`${i < others.length - 1 ? ', ' : others.length > 1 ? ', and ' : ' and '}<code>${name}</code>`)} are automatic.</p>
         ${this._error ? html`<p id="condition-error" class="error" role="alert">${this._error}</p>` : nothing}
       </div>
     </section>`
