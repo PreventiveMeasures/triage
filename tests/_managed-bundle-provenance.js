@@ -60,3 +60,34 @@ export async function checkBundleProvenance(db) {
   assert.equal(actions.get('legacy.stasis.code.br'), 'uploaded a bundle', 'unknown rows keep the upload wording')
   assert.equal(actions.get('uploaded.stasis.code.br'), 'uploaded a bundle', 'history keeps what happened at insert time')
 }
+
+// Exercise the same build-condition rules on SQLite and PostgreSQL.
+export async function checkBundleBuildConditions(db) {
+  const node = { preset: 'node', conditions: ['node', 'production'], platforms: [] }
+  const metro = { preset: 'metro', conditions: ['react-native'], platforms: ['ios'] }
+  const insert = (id, provenance, buildConditions) => db.insertBundle({ id, integrity: id, filename: `${id}.stasis.code.br`, kind: 'stasis',
+    byteSize: 1, uploadedBy: null, uploadedByLogin: 'alice', repoId: null, provenance, buildConditions }, 1)
+  const reuse = (id, provenance, buildConditions) => db.reuseBundle(id, { provenance, filename: `${id}.stasis.code.br`, kind: 'stasis', rename: true, buildConditions })
+  const recorded = async id => (await db.getBundle(id)).buildConditions
+  await insert('js', 'build', node)
+  await insert('solidity', 'build', null)
+  await insert('uploaded', 'upload')
+  await insert('legacy', 'build')
+  assert.deepEqual(await recorded('js'), node)
+  assert.equal(await recorded('solidity'), null)
+  assert.equal(await recorded('uploaded'), null)
+  assert.equal((await db.getBundleByIntegrity('js')).buildConditions.preset, 'node')
+
+  // Other conditions that rebuild the same bytes describe them equally: keep the first.
+  assert.equal(await reuse('js', 'build', metro), false)
+  assert.deepEqual(await recorded('js'), node)
+  assert.equal(await reuse('js', 'build', null), false)
+  assert.equal(await reuse('uploaded', 'upload', metro), false, 'uploads record no conditions')
+  assert.equal(await recorded('uploaded'), null)
+  // A build records its conditions on uploaded rows and on builds predating the column.
+  assert.equal(await reuse('uploaded', 'build', metro), true)
+  assert.deepEqual(await recorded('uploaded'), metro)
+  assert.equal(await reuse('legacy', 'build', node), true)
+  assert.deepEqual(await recorded('legacy'), node)
+  assert.equal(await reuse('legacy', 'build', node), false, 'identical retries change nothing')
+}

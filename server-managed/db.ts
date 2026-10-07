@@ -107,6 +107,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ensureColumn(db, 'managed_bundle', 'visible', 'INTEGER NOT NULL DEFAULT 1')
     // Existing rows stay NULL (unknown): some may have been built on the server.
     ensureColumn(db, 'managed_bundle', 'provenance', 'TEXT')
+    ensureColumn(db, 'managed_bundle', 'build_conditions', 'TEXT')
     ensureColumn(db, 'managed_team', 'hidden', 'INTEGER NOT NULL DEFAULT 0')
     ensureColumn(db, 'managed_finding_issue', 'auto_fix_url', 'TEXT')
     ensureColumn(db, 'managed_finding_issue', 'auto_fix_checked_at', 'INTEGER')

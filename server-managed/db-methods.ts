@@ -229,6 +229,10 @@ export interface TriageEventRow {
 // repository. null predates the distinction (possibly built).
 export type BundleProvenance = 'upload' | 'build'
 
+// The preset, export conditions and Metro platforms a server build of a JS/TS
+// bundle resolved with, as the build request named them. Stored as JSON.
+export interface BundleBuildConditions { preset: 'node' | 'browser' | 'metro'; conditions: string[]; platforms: string[] }
+
 // A stored bundle's metadata. Bytes live in the blob-store keyed by `id`;
 // `integrity` (sha512-<base64>) is the content-addressed identity (UNIQUE),
 // matched against a report's bundleHashes to auto-link.
@@ -245,16 +249,19 @@ export interface ManagedBundle {
   repoId: number | null
   uploadedAt: number
   provenance: BundleProvenance | null
+  // null for uploads, Solidity builds, and builds predating the column.
+  buildConditions: BundleBuildConditions | null
 }
 
 // What the upload handler supplies to record a bundle; the store stamps
 // uploaded_at. `uploadedByLogin` is the durable uploader-login snapshot.
-export type BundleInput = Omit<ManagedBundle, 'uploadedAt' | 'slug' | 'repoDirectory' | 'visible' | 'provenance'> & {
+export type BundleInput = Omit<ManagedBundle, 'uploadedAt' | 'slug' | 'repoDirectory' | 'visible' | 'provenance' | 'buildConditions'> & {
   visible?: boolean; uploadedByLogin: string | null; repoDirectory?: string; dataKey?: string | null; provenance?: BundleProvenance | null
+  buildConditions?: BundleBuildConditions | null
 }
 
 // A repeated upload or build of stored bytes (see reuseBundle).
-export interface BundleReuse { provenance: BundleProvenance; filename: string; kind: string | null; rename: boolean }
+export interface BundleReuse { provenance: BundleProvenance; filename: string; kind: string | null; rename: boolean; buildConditions?: BundleBuildConditions | null }
 
 // A bundle row for the "Manage bundles" list — adds the uploader login + repo
 // full name display joins (null when absent / since removed).
@@ -433,9 +440,10 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // (referencing reports' bundle_id null out via the FK). linkReportsToBundle
   // attaches a freshly-stored bundle to the (still-unlinked) reports that
   // declared its integrity. reuseBundle records a repeated upload or build of
-  // stored bytes: a build always marks the row built, and with `rename` an
-  // uploaded row takes the new filename/kind. A built row never changes; one
-  // predating provenance is renamed only by a build. Resolves true iff changed.
+  // stored bytes: a build always marks the row built and records its conditions
+  // where the row has none, and with `rename` an uploaded row takes the new
+  // filename/kind. A built row is never renamed; one predating provenance is
+  // renamed only by a build. Resolves true iff changed.
   // The caller authorizes `rename` (see reuseBundleUpload).
   insertBundle(bundle: BundleInput, now: number, sessionId?: string): Promise<void>
   reuseBundle(id: string, reuse: BundleReuse): Promise<boolean>
@@ -752,27 +760,32 @@ function prepareStatements(db: ManagedSql) {
       WHERE finding_id IN (SELECT value FROM json_each(?)) ORDER BY id`),
     insertBundleStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
-       INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, repo_directory, visible, uploaded_at, data_key, storage_encrypted, provenance)
+       INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, repo_directory, visible, uploaded_at, data_key, storage_encrypted, provenance, build_conditions)
        SELECT id, CASE WHEN EXISTS (SELECT 1 FROM managed_bundle WHERE slug = candidate.slug) THEN id ELSE slug END,
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM candidate`,
     ),
     // SET reads the pre-update row. Unchanged rows match nothing, so identical
-    // retries do not bump the catalog revision.
+    // retries do not bump the catalog revision. Conditions that rebuild the same
+    // bytes describe them equally, so the first recorded ones stay.
     reuseBundleStmt: db.prepare(
       `UPDATE managed_bundle SET
          filename = CASE WHEN ${BUNDLE_RENAMED_SQL} THEN :filename ELSE filename END,
          kind = CASE WHEN ${BUNDLE_RENAMED_SQL} THEN :kind ELSE kind END,
-         provenance = CASE WHEN :provenance = 'build' THEN 'build' ELSE provenance END
-       WHERE id = :id AND (${BUNDLE_RENAMED_SQL} OR (:provenance = 'build' AND provenance IS DISTINCT FROM 'build'))`,
+         provenance = CASE WHEN :provenance = 'build' THEN 'build' ELSE provenance END,
+         build_conditions = CASE WHEN :provenance = 'build' THEN COALESCE(build_conditions, :buildConditions) ELSE build_conditions END
+       WHERE id = :id AND (${BUNDLE_RENAMED_SQL} OR (:provenance = 'build' AND (provenance IS DISTINCT FROM 'build'
+         OR build_conditions IS DISTINCT FROM COALESCE(build_conditions, :buildConditions))))`,
     ),
     selectBundleByIntegrityStmt: db.prepare(
       `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
-              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance
+              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance,
+              build_conditions AS buildConditions
          FROM managed_bundle WHERE integrity = ?`,
     ),
     selectBundleStmt: db.prepare(
       `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
-              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance
+              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance,
+              build_conditions AS buildConditions
          FROM managed_bundle WHERE id = ?`,
     ),
     selectBundlesStmt: db.prepare(
@@ -1263,6 +1276,7 @@ type BundleRow = {
   visible: number
   id: string; slug: string; integrity: string; filename: string; kind: string | null; byteSize: number
   uploadedBy: string | null; repoId: number | null; repoDirectory: string; uploadedAt: number; provenance: BundleProvenance | null
+  buildConditions: string | null
 }
 type BundleListRow = {
   visible: number
@@ -1275,7 +1289,7 @@ function mapBundle(r: BundleRow): ManagedBundle {
   return {
     id: r.id, slug: r.slug, integrity: r.integrity, filename: r.filename, kind: r.kind,
     byteSize: r.byteSize, uploadedBy: r.uploadedBy, repoId: r.repoId, repoDirectory: r.repoDirectory, uploadedAt: r.uploadedAt, visible: r.visible === 1,
-    provenance: r.provenance,
+    provenance: r.provenance, buildConditions: r.buildConditions == null ? null : JSON.parse(r.buildConditions) as BundleBuildConditions,
   }
 }
 
@@ -1296,11 +1310,12 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       await insertBundleStmt.run(
         bundle.id, preferredSlug(bundle.id), bundle.integrity, bundle.filename, bundle.kind,
         bundle.byteSize, bundle.uploadedBy, bundle.uploadedByLogin ?? null, bundle.repoId, bundle.repoId == null ? '' : bundle.repoDirectory ?? '', bundle.visible === false ? 0 : 1, now, bundle.dataKey ?? null, bundle.dataKey ? 1 : 0,
-        bundle.provenance ?? null,
+        bundle.provenance ?? null, bundle.buildConditions == null ? null : JSON.stringify(bundle.buildConditions),
       )
     },
-    async reuseBundle(id: string, { provenance, filename, kind, rename }: BundleReuse): Promise<boolean> {
-      return Number((await stmts.reuseBundleStmt.run({ id, provenance, filename, kind, rename: rename ? 1 : 0 })).changes) > 0
+    async reuseBundle(id: string, { provenance, filename, kind, rename, buildConditions }: BundleReuse): Promise<boolean> {
+      return Number((await stmts.reuseBundleStmt.run({ id, provenance, filename, kind, rename: rename ? 1 : 0,
+        buildConditions: buildConditions == null ? null : JSON.stringify(buildConditions) })).changes) > 0
     },
     getBundleByIntegrity,
     // The distinct method name selects a writer-locked reconciliation scope.

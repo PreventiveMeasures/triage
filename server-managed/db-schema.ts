@@ -82,7 +82,9 @@ CREATE TABLE IF NOT EXISTS managed_bundle (
   uploaded_at  INTEGER NOT NULL,
   -- 'upload' or 'build' (generated on this server). A server build of bytes
   -- already stored promotes the row to 'build'; NULL predates the column.
-  provenance   TEXT
+  provenance   TEXT,
+  -- JSON {preset, conditions, platforms} of a JS/TS server build; NULL otherwise.
+  build_conditions TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS managed_bundle_uploaded_at_idx ON managed_bundle(uploaded_at);

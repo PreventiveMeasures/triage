@@ -90,6 +90,7 @@ test('server builds are labelled as built in catalogues and activity', async t =
   assert.equal((await f.db.getBundle(response.body.id)).provenance, 'build')
   assert.equal((await f.db.listBundles(f.session.userId))[0].provenance, 'build')
   assert.equal((await f.db.listTeamsForUser(f.session.userId))[0].bundles[0].provenance, 'build')
+  assert.deepEqual((await f.db.getBundle(response.body.id)).buildConditions, body.conditions)
   assert.deepEqual((await f.db.listActivity(uploads)).history.map(entry => [entry.actor, entry.action, entry.report]),
     [['builder', 'built a bundle', result.filename]])
 })
@@ -105,7 +106,8 @@ test('uploads and builds rename uploaded bytes; a build takes over and later upl
   const built = await f.send()
   assert.deepEqual([built.status, built.body.id, built.body.filename, built.body.deduped], [200, uploaded.body.id, result.filename, true])
   const takenOver = await f.db.getBundle(uploaded.body.id)
-  assert.deepEqual(takenOver, { ...original, filename: result.filename, provenance: 'build' }, 'only the name and label change')
+  assert.deepEqual(takenOver, { ...original, filename: result.filename, provenance: 'build', buildConditions: body.conditions },
+    'only the name, label and build conditions change')
   const again = await f.upload('manual-again.stasis.code.br')
   assert.deepEqual([again.status, again.body.id, again.body.filename], [200, uploaded.body.id, result.filename])
   assert.deepEqual(await f.db.getBundle(uploaded.body.id), takenOver)
@@ -138,6 +140,21 @@ test('repeated bytes are renamed only with access held in the renaming transacti
   await f.db.setUserRole(f.session.userId, 'view')
   await assert.rejects(reuse(session.id, 'team-bundle', { provenance: 'build', filename: result.filename, kind: 'stasis' }), { status: 403 })
   assert.equal((await f.db.getBundle('team-bundle')).provenance, 'upload', 'a revoked role cannot even label the row')
+})
+
+test('creation records the build conditions, and a rebuild of the same bytes keeps the first', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  const conditions = { preset: 'metro', conditions: ['react-native'], platforms: ['ios', 'ios'] }
+  const response = await f.send({ ...body, conditions })
+  assert.equal(response.status, 201)
+  const recorded = { preset: 'metro', conditions: ['react-native'], platforms: ['ios'] }
+  assert.deepEqual((await f.db.getBundle(response.body.id)).buildConditions, recorded)
+  assert.equal((await f.send()).status, 200)
+  assert.deepEqual((await f.db.getBundle(response.body.id)).buildConditions, recorded)
+  build = () => Promise.resolve({ ...result, bytes: Buffer.from('solidity bundle') })
+  const solidity = await f.send({ ...body, entries: ['src/Token.sol'] })
+  assert.equal(solidity.status, 201)
+  assert.equal((await f.db.getBundle(solidity.body.id)).buildConditions, null, 'Solidity takes no conditions')
 })
 
 test('creation accepts JSX and TSX entry points and forwards their conditions to the builder', async t => {
