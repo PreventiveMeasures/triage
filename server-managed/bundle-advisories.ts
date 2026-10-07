@@ -43,8 +43,10 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
       onAbort = () => reject(signal.reason)
       signal.addEventListener('abort', onAbort, { once: true })
     })
+    // Kept in the caller's store, which holds listings alone, or nowhere: never
+    // in upstream's disk cache.
     const result = await Promise.race([
-      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories, details, ...(cache && { cache }) }), deadline,
+      advisories(packages, { github: advisoryGithubClient(githubToken, signal), repoAdvisories, details, cache: cache ?? false }), deadline,
     ])
     return { status: 200, body: result }
   } catch (error) {

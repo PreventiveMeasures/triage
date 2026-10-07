@@ -41,15 +41,16 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
     if (!listings.has(key)) listings.set(key, client.listRepoDir(options))
     return listings.get(key)
   } }
-  // Stasis/upstream cache writes are disabled by default; this fresh worker
-  // never enables a cache directory or inherits application credentials.
+  // No disk cache: npm tarballs and version documents are kept nowhere
+  // (`cache: false`), and the repo's tree only where setCacheDir says, which
+  // nothing here sets. This fresh worker inherits no application credentials.
   progress('build')
   const project = await projectDirectory(input, github, buildClient)
   if (!allowed(project)) throw new Error('build-scope')
   const { bundle } = await buildGitHubBundle({
     github, sha: input.commit, directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
-    ...input.options, client: buildClient,
+    ...input.options, client: buildClient, cache: false,
   })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')
