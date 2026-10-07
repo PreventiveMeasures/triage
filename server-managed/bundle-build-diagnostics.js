@@ -1,10 +1,11 @@
 // Whitelist diagnostic fields; never inspect/serialize an entire upstream
 // error, request, response, or workerData (which contains the GitHub token).
+// The worker's env holds the parent's NPM_TOKEN, redacted here on either side.
 export function bundleBuildDiagnostic(error, token, depth = 0) {
   const redact = value => {
     let text = String(value)
-    if (token) text = text.replaceAll(token, '[redacted]')
-    return text.replaceAll(/\b(?:github_pat_|gh[pousr]_)[\w]+/gu, '[redacted]')
+    for (const secret of [token, process.env['NPM_TOKEN']]) if (secret) text = text.replaceAll(secret, '[redacted]')
+    return text.replaceAll(/\b(?:github_pat_|gh[pousr]_|npm_)[\w]+/gu, '[redacted]')
       .replaceAll(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$1[redacted]@')
       .replaceAll(/([?&](?:access_token|token|key)=)[^\s&#]*/giu, '$1[redacted]')
   }

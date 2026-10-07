@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mock, test } from 'node:test'
 import { bundleBuildDiagnostic } from '../server-managed/bundle-build-diagnostics.js'
@@ -120,4 +121,15 @@ test('diagnostics redact credentials, omit upstream response bodies, and bound c
   for (const secret of [token, 'ghp_someToken', 'password', 'secret']) assert.ok(!text.includes(secret))
   assert.equal(bundleBuildDiagnostic('thrown string', null).message, 'thrown string')
   assert.ok(bundleBuildDiagnostic(new Error('x'.repeat(20_000)), null).stack.length <= 8192)
+})
+
+test('diagnostics redact the NPM_TOKEN the worker is given, and npm-shaped tokens', t => {
+  t.after(() => { delete process.env.NPM_TOKEN })
+  process.env.NPM_TOKEN = randomUUID()
+  const error = new Error(`Bearer ${process.env.NPM_TOKEN} npm_someToken`, { cause: new Error(process.env.NPM_TOKEN) })
+  for (const given of [token, null]) {
+    const text = JSON.stringify(bundleBuildDiagnostic(error, given))
+    for (const secret of [process.env.NPM_TOKEN, 'npm_someToken']) assert.ok(!text.includes(secret), secret)
+    assert.match(text, /Bearer \[redacted\] \[redacted\]/u)
+  }
 })
