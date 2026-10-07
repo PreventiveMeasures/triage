@@ -6,10 +6,11 @@ import { bundleBuildDiagnostic } from '../server-managed/bundle-build-diagnostic
 // oxlint-disable-next-line unicorn/prefer-event-target
 class Worker extends EventEmitter {
   static start
+  static env
   constructor(url, options) {
     super()
     assert.ok(url.href.endsWith('/bundle-build-worker.js'))
-    assert.deepEqual(options.env, {})
+    Worker.env = options.env
     assert.deepEqual(options.execArgv, [])
     Worker.start(this)
   }
@@ -31,6 +32,18 @@ function capture(t) {
   }
   return records
 }
+
+test('the worker env holds NPM_TOKEN alone, when set', async t => {
+  t.after(() => { delete process.env.NPM_TOKEN; delete process.env.TRIAGE_TEST_SECRET })
+  process.env.TRIAGE_TEST_SECRET = 'not for the worker'
+  for (const npmToken of [undefined, 'npm_testToken']) {
+    if (npmToken === undefined) delete process.env.NPM_TOKEN
+    else process.env.NPM_TOKEN = npmToken
+    Worker.start = worker => queueMicrotask(() => worker.emit('message', { bytes: new Uint8Array(), directory: '', filename: 'bundle.br' }))
+    await buildRepositoryBundle('user', request, new AbortController().signal)
+    assert.deepEqual(Worker.env, npmToken === undefined ? {} : { NPM_TOKEN: npmToken })
+  }
+})
 
 test('progress messages do not settle a build; success and termination log one outcome', async t => {
   const logs = capture(t)

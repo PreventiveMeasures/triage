@@ -99,7 +99,7 @@ export interface BuiltBundle { bytes: Uint8Array; directory: string; filename: s
 export interface BuildRequest {
   input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[]
   // Upstream's disk cache for what a build fetches (setCacheDir), or null for
-  // none, as on Vercel. Resolved here: the worker runs with an empty env.
+  // none, as on Vercel. Resolved here: the worker's env holds NPM_TOKEN alone.
   cacheDir: string | null
 }
 // An extra per-process ceiling; admission must also hold the shared DB lease.
@@ -152,8 +152,12 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
   try {
     workerUrl = new URL('./bundle-build-worker.js', import.meta.url)
     log('started')
+    // Upstream reads NPM_TOKEN from the env for scoped packages, which npm
+    // answers with 404 when private and asked without it. Nothing else passes.
+    const npmToken = process.env['NPM_TOKEN']
+    const env = npmToken ? { NPM_TOKEN: npmToken } : {}
     worker = new Worker(workerUrl, {
-      workerData: { ...request, type: 'managed-bundle-build' }, env: {}, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 512 },
+      workerData: { ...request, type: 'managed-bundle-build' }, env, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 512 },
     })
     const running = worker
     return await new Promise((resolve, reject) => {

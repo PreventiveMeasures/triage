@@ -58,7 +58,7 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   } }
   // Upstream's disk cache keeps the npm tarballs and version documents, and
   // the repo's tree, in `cacheDir`; without one (Vercel), nothing is kept on
-  // disk. This fresh worker inherits no application credentials.
+  // disk. This fresh worker inherits no application credentials but NPM_TOKEN.
   setCacheDir(cacheDir ?? false)
   progress('build')
   const project = await projectDirectory(input, github, buildClient)
