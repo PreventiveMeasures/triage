@@ -2,14 +2,12 @@ import type { CacheStore } from '@preventive/upstream/advisories.js'
 import type { ManagedSql } from './sql.ts'
 
 // Records @preventive/upstream would otherwise keep in its disk cache, shared
-// by every instance, keyed `<type>/<key>`: written by dependency audits that
-// ask repositories, each repository's published advisory listing
-// (`github/advisories/owner/name`), each package's repository as crates.io,
-// Packagist or Soldeer names it, and the npm version document naming an npm
-// package's. Upstream stamps, validates and expires each value (90 minutes for
-// a listing, a month for a repository, never for a version document); a refresh
-// replaces the row, and rows are not evicted. All of it is public, from public
-// registries and repositories: rows are shared across viewers.
+// by every instance: each repository's published advisory listing, written by
+// dependency audits that ask repositories, keyed `github/advisories/owner/name`.
+// Upstream stamps, validates and expires each value (90 minutes for a listing);
+// a refresh replaces the row, and there is one row per repository, so rows are
+// not evicted. Only public repositories publish advisories: rows are shared
+// across viewers.
 export const UPSTREAM_CACHE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_upstream_cache (
   cache_key TEXT PRIMARY KEY,
@@ -40,13 +38,17 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
   }
 }
 
+// Only listings are kept: upstream's other records (npm version documents,
+// registries' repository lookups) read as misses and are not written.
+const CACHED_TYPE = 'github/advisories'
+
 // The cache is an optimization: a database failure is a miss, never a failed
 // audit. Upstream keeps listing after an abandoned audit; once `signal` aborts,
 // the request's database work is over and the store is left alone.
 export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug = false): CacheStore {
   return {
     async read(type, key) {
-      if (signal.aborted) return null
+      if (type !== CACHED_TYPE || signal.aborted) return null
       try {
         const value = await db.getUpstreamCacheEntry(`${type}/${key}`)
         return value === null ? null : JSON.parse(value) as unknown
@@ -56,7 +58,7 @@ export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug
       }
     },
     async write(type, key, value) {
-      if (signal.aborted) return
+      if (type !== CACHED_TYPE || signal.aborted) return
       try { await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), Date.now()) } catch (error) {
         if (debug) console.warn('managed: upstream cache write failed:', error)
       }

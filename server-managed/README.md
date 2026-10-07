@@ -726,14 +726,12 @@ Ordinary npm-only audits contact only npm; GitHub requests are added by the
 repository recheck.
 Each repository's published advisory listing (repository rechecks, and Soldeer
 and GitHub dependencies) is kept in `managed_upstream_cache` for 90 minutes, as
-upstream's disk cache would keep it. A recheck's repository lookups are kept
-there too: a crate's, Composer package's or Soldeer dependency's repository for
-a month, and for an npm package the document of its newest version asked, which
-names its repository, for good. Entries are shared by every viewer, public share
-and instance: all of it comes from public registries, and only public
-repositories publish advisories. Upstream stamps, checks and expires the
-entries; a refresh replaces the entry's single row. A cache read or write
-failure is treated as a miss and never fails the audit.
+upstream's disk cache would keep it, and shared by every viewer, public shares
+and instance: only public repositories publish advisories. Upstream's other
+records, such as the npm version documents and registry lookups that find a
+package's repository, are not kept there. Upstream stamps, checks and expires
+the entries; refreshes replace the repository's single row. A cache read or
+write failure is treated as a miss and never fails the audit.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -91,6 +92,45 @@ test('database failures are cache misses, never failed audits', async t => {
   const malformed = { getUpstreamCacheEntry: () => Promise.resolve('{not json'), setUpstreamCacheEntry: () => Promise.resolve() }
   assert.equal((await fetchBundleAdvisories(packages, signal(), { cache: upstreamCache(malformed, signal()) })).status, 200)
   assert.equal(calls.length, 3)
+})
+
+test('only repository listings are kept, never npm version documents', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const integrity = `sha512-${createHash('sha512').update('dep').digest('base64')}`
+  const calls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    calls.push(url)
+    const { hostname, pathname } = new URL(url)
+    if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (hostname === 'registry.npmjs.org') {
+      assert.equal(pathname, '/dep/2.0.0')
+      // Keepable as upstream's disk cache would keep it: its dist is the registry's.
+      return Promise.resolve(Response.json({ name: 'dep', version: '2.0.0', repository: 'https://github.com/org/dep',
+        dist: { tarball: 'https://registry.npmjs.org/dep/-/dep-2.0.0.tgz', integrity } }))
+    }
+    assert.equal(url, listing)
+    return Promise.resolve(Response.json([advisory]))
+  })
+  const recheck = () => fetchBundleAdvisories([{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0', '2.0.0'] }], signal(),
+    { repoAdvisories: true, cache: upstreamCache(db, signal()) })
+  assert.equal((await recheck()).status, 200)
+  assert.equal(await db.getUpstreamCacheEntry('npm/versions/dep@2.0.0'), null)
+  assert.notEqual(await db.getUpstreamCacheEntry('github/advisories/org/dep'), null)
+  assert.equal((await recheck()).status, 200)
+  assert.equal(calls.filter(url => url.startsWith('https://registry.npmjs.org/dep/')).length, 2, 'npm is asked each time')
+  assert.equal(calls.filter(url => url === listing).length, 1, 'the listing is answered from the database')
+
+  const used = []
+  const store = upstreamCache({
+    getUpstreamCacheEntry: key => { used.push(key); return Promise.resolve(null) },
+    setUpstreamCacheEntry: key => { used.push(key); return Promise.resolve() },
+  }, signal())
+  for (const type of ['npm/versions', 'npm/tarballs', 'cargo/repos', 'composer/repos', 'soldeer/repos']) {
+    assert.equal(await store.read(type, 'dep@2.0.0'), null)
+    await store.write(type, 'dep@2.0.0', { name: 'dep' })
+  }
+  assert.deepEqual(used, [])
 })
 
 test('an abandoned audit leaves the database alone', async () => {
