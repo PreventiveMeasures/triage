@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@exodus/stasis':
-        specifier: 1.0.0-beta.7
-        version: 1.0.0-beta.7(esbuild@0.28.2)
+        specifier: 1.0.0-beta.8
+        version: 1.0.0-beta.8(esbuild@0.28.2)
       '@exodus/stasis-core':
-        specifier: 1.0.0-beta.7
-        version: 1.0.0-beta.7
+        specifier: 1.0.0-beta.8
+        version: 1.0.0-beta.8
       '@preventive/report':
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
@@ -313,17 +313,17 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@exodus/stasis-core@1.0.0-beta.7':
-    resolution: {integrity: sha512-NmHTjnVD6HkclWvUQPgDJC9ZG6ks212okl7fvvn+7opEWlzaiig33p2AqU++5WUtnSyzY5PjluWIQvQuUS0ezg==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.7.tgz}
+  '@exodus/stasis-core@1.0.0-beta.8':
+    resolution: {integrity: sha512-bPR/LvqofJcs8p6VDliqMVfAEmkljc8xvxhzeSCWNBul8VH5H8nBSTndNk6/cjI/wM7fOBmR/DWpjQevHkmQxQ==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.8.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
 
-  '@exodus/stasis-plugins@1.0.0-beta.7':
-    resolution: {integrity: sha512-WsPxBuHOmOXYGNXVAzt9kFPwRBGgubGOfK0LI8bowiCvSxrSqmwA+uo/VKiKUWBxVHSjbTbVd1hWUEkfIpPotg==, tarball: https://registry.npmjs.org/@exodus/stasis-plugins/-/stasis-plugins-1.0.0-beta.7.tgz}
+  '@exodus/stasis-plugins@1.0.0-beta.8':
+    resolution: {integrity: sha512-vdkq0w4m1dlEuuKP/eyL0W2RkxgR5eP1f08qaW8Kspk8GjA6oQtJmsijkO6zdqk95r4XQmMWPTurluY4ivd3Bg==, tarball: https://registry.npmjs.org/@exodus/stasis-plugins/-/stasis-plugins-1.0.0-beta.8.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@exodus/stasis@1.0.0-beta.7':
-    resolution: {integrity: sha512-ibAbn4HCA1HBv6yGgONQ+cvT/njFWju3nWKzkmBX67LouBzMeIwj09oOXBisO8Z5D4jLwoinaYHw3pFPvh0CUA==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-beta.7.tgz}
+  '@exodus/stasis@1.0.0-beta.8':
+    resolution: {integrity: sha512-jrlY+xaES80ZXZ6ujKbAX8jQZupad33dxsSByzD5Safvm6+fr0D/auCkvXpqc8cPIS1/1VLgCnJ4ImVl82iocw==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-beta.8.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
     peerDependencies:
@@ -624,8 +624,8 @@ packages:
     resolution: {integrity: sha512-lJN3Wdt1pdsYXjAKJatYFn97N1l+0Kge6ixHIvHR1bdk5Zy/zDxigPbc3Rv1F13zObgV6X1TK7IvvHEaqFCvIA==, tarball: https://registry.npmjs.org/@preventive/archive/-/archive-1.0.0-beta.4.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/deptree@1.0.0-alpha.8':
-    resolution: {integrity: sha512-xc7Qtnx3WTyxpfcDCP0y+/lQWWM48zMH2pF7Pa4YIaiOr4ZrI9Ex5rVfzp5IAjGONSPmQiokloZfPXAZ+IMd/g==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.0-alpha.8.tgz}
+  '@preventive/deptree@1.0.0-alpha.9':
+    resolution: {integrity: sha512-CSdEgAspMjikMV80dwwLtNIQ2QtQcIi9Vwb3/APmnUY+vMj+Go7mJNTMdtQ/OyzOqKRh7df+Ppez0rU6FxeL1A==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.0-alpha.9.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/diff@1.0.1':
@@ -642,15 +642,6 @@ packages:
 
   '@preventive/terminal@2.0.0-beta.1':
     resolution: {integrity: sha512-BBvLkWrjwYryQze4ceY0JnAGwRgIIxpnkOxBF7JaH2oILR0TZNwub+SmUE9pufOS+puoTHPmVlyf8ewU4jRzPA==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.1.tgz}
-
-  '@preventive/upstream@1.0.0-alpha.10':
-    resolution: {integrity: sha512-PF8XLDtxk3af5bnVI653FAnqszT4AETjjidEHFQeO4SmTcsEoucvGwxYQoSD9ZCInIZRZyVIwSBPonAewPsDvA==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.10.tgz}
-    engines: {node: '>=24.14.0'}
-    peerDependencies:
-      semver: ^7.5.2
-    peerDependenciesMeta:
-      semver:
-        optional: true
 
   '@preventive/upstream@1.0.0-alpha.11':
     resolution: {integrity: sha512-6twGUJhvrEuhHZ0BuK7SFcTS5Y2MdDaJq1TBtL4SXwEKAUz+N+8YmxbQgR8LGvr6KyvF9t8QOM9q1lrAmAKKHQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.11.tgz}
@@ -1560,21 +1551,21 @@ snapshots:
 
   '@exodus/bytes@1.16.0': {}
 
-  '@exodus/stasis-core@1.0.0-beta.7': {}
+  '@exodus/stasis-core@1.0.0-beta.8': {}
 
-  '@exodus/stasis-plugins@1.0.0-beta.7':
+  '@exodus/stasis-plugins@1.0.0-beta.8':
     dependencies:
-      '@exodus/stasis-core': 1.0.0-beta.7
+      '@exodus/stasis-core': 1.0.0-beta.8
 
-  '@exodus/stasis@1.0.0-beta.7(esbuild@0.28.2)':
+  '@exodus/stasis@1.0.0-beta.8(esbuild@0.28.2)':
     dependencies:
       '@exodus/bytes': 1.16.0
-      '@exodus/stasis-core': 1.0.0-beta.7
-      '@exodus/stasis-plugins': 1.0.0-beta.7
+      '@exodus/stasis-core': 1.0.0-beta.8
+      '@exodus/stasis-plugins': 1.0.0-beta.8
       '@preventive/archive': 1.0.0-beta.4
-      '@preventive/deptree': 1.0.0-alpha.8
+      '@preventive/deptree': 1.0.0-alpha.9
       '@preventive/lockfile': 1.0.0-alpha.7
-      '@preventive/upstream': 1.0.0-alpha.10
+      '@preventive/upstream': 1.0.0-alpha.11
       '@preventive/vfs': 1.0.0-beta.4
       oxc-parser: 0.152.0
     optionalDependencies:
@@ -1735,13 +1726,13 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/deptree@1.0.0-alpha.8':
+  '@preventive/deptree@1.0.0-alpha.9':
     dependencies:
       '@chalker/queue': 1.0.1
       '@preventive/archive': 1.0.0-beta.4
       '@preventive/diff': 1.0.1
       '@preventive/lockfile': 1.0.0-alpha.7
-      '@preventive/upstream': 1.0.0-alpha.10
+      '@preventive/upstream': 1.0.0-alpha.11
       '@preventive/vfs': 1.0.0-beta.4
     transitivePeerDependencies:
       - '@noble/hashes'
@@ -1763,8 +1754,6 @@ snapshots:
       '@preventive/diff': 1.0.1
     transitivePeerDependencies:
       - '@noble/hashes'
-
-  '@preventive/upstream@1.0.0-alpha.10': {}
 
   '@preventive/upstream@1.0.0-alpha.11': {}
 

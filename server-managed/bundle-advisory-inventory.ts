@@ -1,6 +1,6 @@
+import { isEvidenceFile } from '@exodus/stasis/audit-corrections'
 import { packageRepo } from '@exodus/stasis-core/bundle-util'
 import type { Package } from '@preventive/upstream/advisories.js'
-import { satisfies, valid } from '@preventive/upstream/semver.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
 
 export interface SkippedAdvisoryPackage {
@@ -11,26 +11,6 @@ export interface SkippedAdvisoryPackage {
 }
 export interface BundleAdvisoryInventory { packages: Package[]; skipped: SkippedAdvisoryPackage[] }
 interface BundleModule { ecosystem?: string; name?: string; version?: string; repo?: { github?: Package['github'] }; files: Record<string, unknown> }
-
-// Match Stasis's audit evidence rules, including their verified version bounds:
-// https://github.com/PreventiveMeasures/stasis/blob/2bd4c14354da9888c00ab45fa89740413099b5dc/stasis/src/audit-corrections.js
-// ws's bound runs past Stasis's 8.21.1: browser.js is byte-identical in 8.21.2 through 8.22.0.
-// Keep this on the server: upstream's semver implementation uses Node's npm.
-const cargoManifests = ['Cargo.toml', 'Cargo.lock', '.cargo-checksum.json']
-const solidityManifests = ['package.json', 'foundry.toml', 'remappings.txt', 'soldeer.toml']
-const manifests = new Map([
-  ['npm', ['package.json']],
-  ['cargo', cargoManifests], ['cargo-git', cargoManifests], ['cargo-unknown', cargoManifests],
-  ['composer', ['composer.json', 'composer.lock']],
-  ['soldeer', solidityManifests], ['github', solidityManifests],
-])
-const browserStubRanges = new Map([['ws', '<=8.22.0'], ['node-fetch', '<=2.7.0']])
-
-function isEvidence(ecosystem: string, name: string, version: string, file: string): boolean {
-  if (manifests.get(ecosystem)?.includes(file.slice(file.lastIndexOf('/') + 1))) return false
-  const stubRange = ecosystem === 'npm' && file === 'browser.js' ? browserStubRanges.get(name) : undefined
-  return !stubRange || !valid(version) || !satisfies(version, stubRange)
-}
 
 // The GitHub repository a bundled package.json's text names, read as Stasis
 // records a dependency's (packageRepo) and as Node reads the file, past a byte
@@ -51,8 +31,9 @@ function skipReason(ecosystem: string, version: string): string | undefined {
   return undefined
 }
 
-// Package and reason presence both require a recorded evidence file. Entry and
-// manually added files count even when they have no incoming import edge.
+// Package and reason presence both require a recorded evidence file, by Stasis's
+// audit rule (server-only, as its semver uses Node's npm). Entry and manually
+// added files count even when they have no incoming import edge.
 export function bundleAdvisoryInventory(details: BundleDetails, paths: Iterable<string> | null = null): BundleAdvisoryInventory {
   const modules = (details.bundle as { modules?: ReadonlyMap<string, BundleModule> } | undefined)?.modules
   if (details.kind !== 'stasis' || !modules) return { packages: [], skipped: [] }
@@ -64,7 +45,7 @@ export function bundleAdvisoryInventory(details: BundleDetails, paths: Iterable<
     const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(dir) ? 'npm' : undefined)
     const { name, version } = info
     if (ecosystem === undefined || typeof name !== 'string' || !name || typeof version !== 'string' || !version) continue
-    if (!Object.keys(info.files).some(file => (!selected || selected.has(`${dir}/${file}`)) && isEvidence(ecosystem, name, version, file))) continue
+    if (!Object.keys(info.files).some(file => (!selected || selected.has(`${dir}/${file}`)) && isEvidenceFile(name, version, file, ecosystem))) continue
     const because = skipReason(ecosystem, version)
     if (!supported(ecosystem) || because !== undefined) {
       skipped.set(JSON.stringify([ecosystem, name, version]), { ecosystem, name, version, because: because ?? `No advisory source is supported for ${ecosystem}.` })
