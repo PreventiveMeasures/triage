@@ -837,3 +837,66 @@ test('bundle visibility changes use CSRF, refresh catalogs and retain state on f
   assert.match(page._error, /Couldn't change bundle visibility/u)
   assert.equal(page._visibilityBusy, null)
 })
+
+test('report location suggestions load per open editor, apply connected destinations and retry failures', async t => {
+  const page = createPage(Reports)
+  page._data = { reports: [], repos: [{ repoId: 7, fullName: 'org/repo' }] }
+  const requests = []
+  const notices = []
+  t.mock.method(managedAppState, 'notify', message => notices.push(message))
+  t.mock.method(globalThis, 'fetch', url => {
+    const pending = Promise.withResolvers()
+    requests.push({ url, ...pending })
+    return pending.promise
+  })
+  function templates(value) {
+    if (Array.isArray(value)) return value.flatMap(templates)
+    return value?.strings ? [value, ...value.values.flatMap(templates)] : []
+  }
+  const shortcut = (field, value) => templates(page._locationEditor({ id: 'second' }))
+    .find(template => template.values.includes(`Use ${field} from report: ${value}`))
+  page._openLocation({ id: 'first', canChangeRepo: false })
+  assert.equal(requests.length, 0)
+  page._openLocation({ id: 'first', repoId: null, repoDirectory: '' })
+  assert.equal(requests[0].url, '/api/admin/reports/first/location')
+  assert.equal(page._locationOrigin, undefined)
+  page._openLocation({ id: 'second', repoId: 7, repoDirectory: 'assigned' })
+  page._locationDirectory = 'user edit'
+  requests[1].resolve(Response.json({ location: { repoId: 8, github: 'org/new', directory: '' } }))
+  await setImmediate()
+  assert.deepEqual(page._locationOrigin, { github: 'org/new', repoId: 8, directory: '/' })
+  assert.deepEqual(page._data.repos.map(item => item.repoId), [7, 8], 'newly connected destinations become selectable')
+  assert.equal(page._locationRepo, 7, 'suggestions never replace the editor values')
+  assert.equal(page._locationDirectory, 'user edit')
+  requests[0].resolve(Response.json({ location: { repoId: 7, github: 'org/repo', directory: 'stale' } }))
+  await setImmediate()
+  assert.equal(page._locationOrigin.github, 'org/new', 'late suggestions cannot replace the current row')
+  shortcut('repository', 'org/new').values.find(value => typeof value === 'function')()
+  assert.equal(page._locationRepo, 8)
+  assert.equal(page._locationDirectory, '/', 'a resolved root clears the old path')
+
+  page._locationDirectory = 'user edit'
+  page._locationOrigin = { github: 'org/missing', repoId: null, directory: null }
+  assert.equal(shortcut('repository', 'org/missing'), undefined, 'unconnected repositories are shown without a shortcut')
+  assert.ok(templates(page._locationEditor({ id: 'second' })).some(template => template.values.includes('Directory not specified')))
+  page._locationOrigin = { github: 'org/repo', repoId: 7, directory: null }
+  shortcut('repository', 'org/repo').values.find(value => typeof value === 'function')()
+  assert.deepEqual([page._locationRepo, page._locationDirectory], [7, 'user edit'], 'an unspecified directory keeps the edited path')
+
+  page._openLocation({ id: 'retry' })
+  requests[2].resolve(new Response('', { status: 503 }))
+  await setImmediate()
+  assert.match(page._locationOriginError, /suggested location/u)
+  assert.deepEqual(notices, [], 'editor failures stay inline')
+  const retry = page._loadLocationOrigin({ id: 'retry' })
+  requests[3].resolve(Response.json({ location: null }))
+  await retry
+  assert.equal(page._locationOriginError, null)
+  assert.equal(page._locationOrigin, null)
+  page._openLocation({ id: 'cancelled' })
+  page.disconnectedCallback()
+  requests[4].resolve(Response.json({ location: { repoId: 7, github: 'org/repo', directory: 'late' } }))
+  await setImmediate()
+  assert.equal(page._locationOrigin, null)
+  assert.equal(page._locationReport, null)
+})

@@ -1,5 +1,5 @@
 import { parseLinkedFindings } from '../../client/linked-findings.js'
-import { detectFormat, loadFindings, parseCodexCsvToScans, readReport } from '@preventive/report'
+import { detectFormat, loadFindings, parseCodexCsvToScans, readReport, reportRepoGithub } from '@preventive/report'
 
 // A managed blob retains one server identity even when a CSV contains several
 // scans. Keep all their findings (and upstream ids) under that identity. CSV
@@ -39,4 +39,19 @@ export function managedFindingSourcePaths(findings: unknown[]): Set<string> {
     }
   }
   return paths
+}
+
+// Findings name the repository of their own file. Like the local report view,
+// a report without its own repository belongs to the one repository named by
+// its findings outside dependency directories (Claude Security and Codex
+// exports name one on every finding).
+const DEPENDENCY_PATH_RE = /(?:^|\/)(?:node_modules|vendor)\//u
+export function findingsRepository(findings: unknown[]): string | null {
+  const repos = new Map<string, string>()
+  for (const finding of findings) {
+    const github = reportRepoGithub(finding)
+    const file = (finding as { file?: unknown } | null)?.file
+    if (github && !(typeof file === 'string' && DEPENDENCY_PATH_RE.test(file))) repos.set(github.toLowerCase(), github)
+  }
+  return repos.size === 1 ? [...repos.values()][0]! : null
 }

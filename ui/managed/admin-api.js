@@ -199,6 +199,13 @@ export async function setReportRepo(id, repoId, directory, csrfToken) {
   return res.json()
 }
 
+// A live suggestion for the location editor; only Save assigns a location.
+export async function fetchReportLocation(id, signal) {
+  const res = await managedFetch(`/api/admin/reports/${encodeURIComponent(id)}/location`, { signal, credentials: 'same-origin' })
+  if (!res.ok) throw new Error(`Report location suggestion request failed (${res.status})`)
+  return (await res.json())?.location ?? null
+}
+
 export async function deleteReport(id, csrfToken) {
   await deleteItem('reports', id, csrfToken)
 }

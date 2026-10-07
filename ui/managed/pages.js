@@ -14,7 +14,7 @@ import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
-import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import localImportStyles from './styles/local-import.css'
 import commonStyles from './styles/common.css'
@@ -775,9 +775,19 @@ function repoOptions(repos) {
   return [{ value: null, label: 'No repository', special: true }, ...repos.map(repo => ({ value: repo.repoId, label: repo.fullName }))]
 }
 
-// Reports are uploaded with their own repository metadata. New reports remain
-// hidden until an admin previews and publishes them; the list never asks the
-// uploader to repeat a repo or directory already present in the report header.
+// A location editor's suggested value, named by its source. Only a connected
+// destination can be applied, and only Save changes the assignment.
+function locationHint(source, value, field, apply, disabled) {
+  const content = html`<span class="ui-hint">${source}: </span><span class="location-metadata-value" data-tooltip-truncated data-tooltip=${value}>${value}</span>`
+  return apply
+    ? html`<button type="button" class="location-metadata" aria-label=${`Use ${field} from ${source}: ${value}`} ?disabled=${disabled} @click=${apply}>${content}</button>`
+    : html`<span class="location-metadata">${content}</span>`
+}
+
+// Reports are uploaded with their own repository metadata, or assigned to the
+// connected repository their findings name. New reports remain hidden until an
+// admin previews and publishes them; the list never asks the uploader to repeat
+// a repo or directory already present in the report header.
 class ManagedAdminReports extends ManagedPage {
   static properties = {
     localImportSource: { attribute: false },
@@ -790,6 +800,8 @@ class ManagedAdminReports extends ManagedPage {
     _preview: { state: true },
     _previewLoading: { state: true },
     _locationReport: { state: true },
+    _locationOrigin: { state: true },
+    _locationOriginError: { state: true },
     _locationRepo: { state: true },
     _locationDirectory: { state: true },
     _locationBusy: { state: true },
@@ -809,6 +821,9 @@ class ManagedAdminReports extends ManagedPage {
     this._previewLoading = null
     this._previewRequest = null
     this._locationReport = null
+    this._locationOrigin = null
+    this._locationOriginError = null
+    this._locationOriginRequest = null
     this._locationRepo = null
     this._locationDirectory = ''
     this._locationBusy = false
@@ -828,6 +843,7 @@ class ManagedAdminReports extends ManagedPage {
     super.disconnectedCallback()
     this._teardownDrop?.()
     this._cancelPreview()
+    this._closeLocation()
   }
 
   async _load({ preserveError = false } = {}) {
@@ -835,6 +851,7 @@ class ManagedAdminReports extends ManagedPage {
     await this._loadCollection('reports', 'reports', fetchReports, data => {
       this._data = data
       if (this._preview && !data.reports?.some(report => report.id === this._preview)) this._cancelPreview()
+      if (this._locationReport && !data.reports?.some(report => report.id === this._locationReport)) this._closeLocation()
     })
   }
 
@@ -894,15 +911,66 @@ class ManagedAdminReports extends ManagedPage {
 
   _openLocation(report) {
     if (report.canChangeRepo === false) return
+    this._closeLocation()
     this._locationReport = report.id
     this._locationRepo = report.repoId ?? null
     this._locationDirectory = report.repoDirectory ?? ''
     this._error = null
+    void this._loadLocationOrigin(report)
+  }
+
+  _closeLocation() {
+    this._locationOriginRequest?.abort()
+    this._locationOriginRequest = null
+    this._locationReport = null
+    this._locationOrigin = null
+    this._locationOriginError = null
+  }
+
+  // The repository named by the report's findings, resolved by the server
+  // through current connections and aliases. It never replaces the editor's values.
+  async _loadLocationOrigin(report) {
+    this._locationOriginRequest?.abort()
+    const request = new AbortController()
+    this._locationOriginRequest = request
+    this._locationOrigin = undefined
+    this._locationOriginError = null
+    try {
+      const origin = await fetchReportLocation(report.id, AbortSignal.any([request.signal, this.appState.sessionController.signal]))
+      if (this._locationOriginRequest !== request) return
+      // A repository may have been connected after this catalogue was loaded.
+      if (origin?.repoId != null && this._data) {
+        this._data = { ...this._data, repos: [...(this._data.repos ?? []).filter(item => item.repoId !== origin.repoId), { repoId: origin.repoId, fullName: origin.github }] }
+      }
+      this._locationOrigin = typeof origin?.github === 'string' && origin.github
+        ? { github: origin.github, repoId: origin.repoId ?? null, directory: typeof origin.directory === 'string' ? origin.directory || '/' : null } : null
+    } catch (err) {
+      if (this._locationOriginRequest !== request) return
+      this._locationOrigin = null
+      if (err?.name !== 'AbortError') this._locationOriginError = "Couldn't load the report’s suggested location."
+    }
   }
 
   _locationEditor(report) {
     const repos = Array.isArray(this._data?.repos) ? this._data.repos : []
-    return html`<div class="location-editor"><div class="location-field"><span>Repository</span><repository-selector label="Repository for report" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector></div><div class="location-field"><label for=${`report-dir-${report.id}`}>Directory (optional)</label><input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} @input=${(e) => { this._locationDirectory = e.target.value }}></div><div class="location-actions"><button type="button" class="action" @click=${() => { this._locationReport = null }}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(report)}>Save</button></div></div>`
+    const origin = this._locationOrigin
+    const originRepo = origin?.repoId != null && repos.find(repo => repo.repoId === origin.repoId)
+    const reportHint = (value, field, apply) => locationHint('report', value, field, apply, this._locationBusy)
+    return html`<div class="location-editor">
+      <div class="location-field">
+        <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? reportHint(origin.github, 'repository', originRepo ? () => {
+          this._locationRepo = originRepo.repoId
+          if (origin.directory != null) this._locationDirectory = origin.directory
+        } : null) : nothing}</div>
+        <repository-selector label="Repository for report" .options=${repoOptions(repos)} .value=${this._locationRepo} ?disabled=${this._locationBusy} @repository-change=${event => { this._locationRepo = event.detail.value }}></repository-selector>
+      </div>
+      <div class="location-field">
+        <div class="location-field-header"><label for=${`report-dir-${report.id}`}>Directory (optional)</label>${origin ? reportHint(origin.directory ?? 'Directory not specified', 'directory', origin.directory == null ? null : () => { this._locationDirectory = origin.directory }) : nothing}</div>
+        <input id=${`report-dir-${report.id}`} type="text" placeholder="Repository root" .value=${this._locationDirectory} ?disabled=${this._locationBusy} @input=${event => { this._locationDirectory = event.target.value }}>
+      </div>
+      <div class="location-actions"><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => this._closeLocation()}>Cancel</button><button type="button" class="action" ?disabled=${this._locationBusy} @click=${() => void this._saveLocation(report)}>Save</button></div>
+      ${this._locationOriginError ? html`<p class="location-origin" role="status">${this._locationOriginError} <button type="button" class="origin-retry" @click=${() => void this._loadLocationOrigin(report)}>Retry</button></p>` : nothing}
+    </div>`
   }
 
   async _saveLocation(report) {
@@ -911,7 +979,7 @@ class ManagedAdminReports extends ManagedPage {
     this._error = null
     try {
       await this.appState.mutate(() => setReportRepo(report.id, this._locationRepo, this._locationDirectory.trim(), this._csrf), ['reports', 'repo-impact', 'history', 'scan-sources'])
-      this._locationReport = null
+      this._closeLocation()
       await this._load({ preserveError: true })
     } catch (err) { this._error = `Couldn't set report location: ${String(err?.message ?? err)}` }
     finally { this._locationBusy = false }
@@ -1191,12 +1259,7 @@ class ManagedAdminBundles extends ManagedPage {
     const origin = this._locationOrigin
     const originGithub = reportRepoGithub({ repo: origin })?.toLowerCase()
     const originRepo = originGithub && repos.find(repo => repo.fullName.toLowerCase() === originGithub)
-    const metadataHint = (value, field, apply) => {
-      const content = html`<span class="ui-hint">metadata: </span><span class="location-metadata-value" data-tooltip-truncated data-tooltip=${value}>${value}</span>`
-      return apply
-        ? html`<button type="button" class="location-metadata" aria-label=${`Use ${field} from metadata: ${value}`} ?disabled=${this._locationBusy} @click=${apply}>${content}</button>`
-        : html`<span class="location-metadata">${content}</span>`
-    }
+    const metadataHint = (value, field, apply) => locationHint('metadata', value, field, apply, this._locationBusy)
     return html`<div class="location-editor">
       <div class="location-field">
         <div class="location-field-header"><span class="ui-hint">Repository</span>${origin ? metadataHint(origin.github, 'repository', originRepo ? () => {
