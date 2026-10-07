@@ -389,6 +389,7 @@ class ManagedAdminRepos extends ManagedPage {
     _busy: { state: true },
     _connectingApp: { state: true },
     _detail: { state: true },
+    _aliases: { state: true },
     _impact: { state: true },
     _impactLoading: { state: true },
     _removeOpen: { state: true },
@@ -416,6 +417,7 @@ class ManagedAdminRepos extends ManagedPage {
     this._busy = null
     this._connectingApp = false
     this._detail = null
+    this._aliases = false
     this._impact = null
     this._impactLoading = false
     this._impactFresh = false
@@ -455,6 +457,7 @@ class ManagedAdminRepos extends ManagedPage {
     this._query = ''
     this._organization = null
     this._detail = null
+    this._aliases = false
     this._impact = null
     this._removeOpen = false
     this._acknowledge = false
@@ -489,6 +492,7 @@ class ManagedAdminRepos extends ManagedPage {
       <span class="breadcrumb-separator" aria-hidden="true">›</span>
       <button type="button" class="breadcrumb-manage" aria-label="Back to repositories" @click=${() => {
         if (this._detail) { this._impactRequest?.abort(); this._detail = null; this._actionError = null }
+        else if (this._aliases) this._aliases = false
         else this._open('connected')
       }}>Repositories</button>
       <span class="breadcrumb-separator" aria-hidden="true">›</span>
@@ -520,6 +524,7 @@ class ManagedAdminRepos extends ManagedPage {
 
   render() {
     if (this._detail) return this._detailPage(this._detail)
+    if (this._aliases) return this._aliasesPage()
     const connected = this._scope === 'connected'
     const title = connected ? 'Repositories' : `Add ${this._scope} repository`
     const choices = this._repositoryChoices()
@@ -548,8 +553,17 @@ class ManagedAdminRepos extends ManagedPage {
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
       ${this._error ? html`<p class="msg error" role="alert">Couldn't load repositories: ${this._error}</p><button type="button" class="btn" @click=${() => { void this._load() }}>Try again</button>` : nothing}
       ${!connected && this._data ? html`<p class="repository-count" role="status">${choices.count}${choices.count === choices.total ? '' : ` of ${choices.total}`} ${choices.total === 1 ? 'repository' : 'repositories'}</p>` : nothing}
-      <div aria-busy=${this._loading}>${this._body(choices)}</div>
-      ${connected && this._role === 'admin' ? html`<managed-repository-aliases .session=${this.session} .repositories=${this._data?.repositories}></managed-repository-aliases>` : nothing}
+      <div class="manage-list"><div aria-busy=${this._loading}>${this._body(choices)}</div>
+        ${connected && this._role === 'admin' ? html`<div class="aliases-link"><button type="button" class="btn" @click=${() => { this._publicRepoOpen = false; this._actionError = null; this._aliases = true }}>Aliases</button></div>` : nothing}
+      </div>
+    </div>`
+  }
+
+  // Aliases open in place of the repository list; the breadcrumb returns to it.
+  _aliasesPage() {
+    return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
+      ${this._back('Aliases')}
+      <div class="manage-list"><managed-repository-aliases .session=${this.session} .repositories=${this._data?.repositories}></managed-repository-aliases></div>
     </div>`
   }
 
