@@ -4,7 +4,7 @@ import { bundleSourcePackageInfo } from './bundle-source-package.js'
 
 const vendoredEcosystems = new Set(['cargo', 'composer', 'soldeer'])
 
-function moduleEcosystem(dir, info, sourcePaths) {
+export function moduleEcosystem(dir, info, sourcePaths) {
   if (info?.ecosystem !== undefined) return info.ecosystem
   // Older PHP bundles omit the ecosystem. Infer Composer only for a matching
   // vendor/name/package identity containing at least one source, all PHP.

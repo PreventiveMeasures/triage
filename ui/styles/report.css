@@ -1170,7 +1170,8 @@ body:is(.theme-light, .theme-pink, .theme-paper)
   min-width: 0;
 }
 .bundle-code-file-nav { display: flex; align-items: center; gap: .2rem; flex: none; }
-.bundle-code-copy-path {
+.bundle-code-copy-path,
+.bundle-code-github-link {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.35rem; height: 1.35rem;
@@ -1180,7 +1181,8 @@ body:is(.theme-light, .theme-pink, .theme-paper)
   color: var(--muted);
   cursor: default;
 }
-.bundle-code-copy-path:hover { background: var(--bg); color: var(--text); }
+.bundle-code-copy-path:hover,
+.bundle-code-github-link:hover { background: var(--bg); color: var(--text); }
 .bundle-code-copy-path.copied { color: var(--green); }
 .bundle-code-main-spacer { flex: 1; }
 .bundle-code-main-stats {

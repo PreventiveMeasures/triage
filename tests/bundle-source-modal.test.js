@@ -249,6 +249,31 @@ test('Code package tooltips include recorded identities and counts even while fi
   }
 })
 
+test('Code file header links a file to GitHub after copy only where its location is known', () => {
+  const entry = { name: 'github.stasis', integrity: 'sha512-file-github' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/index.js': 'app' } }],
+    ['node_modules/dep', { name: 'dep', version: '1.2.3', repo: { github: 'org/mono', directory: 'packages/dep' }, files: { 'index.js': 'dep' } }],
+    ['node_modules/unplaced', { name: 'unplaced', version: '1.0.0', repo: { github: 'org/unplaced' }, files: { 'index.js': 'unplaced' } }],
+  ]) }).serialize())
+  bundle.repo = { github: 'org/app', directory: '' }
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const header = file => {
+    state.bundleSourceFile = file
+    return renderText(renderBundlesList([entry])).match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
+  }
+  const dep = header('node_modules/dep/index.js')
+  assert.match(dep, /data-copy-path=node_modules\/dep\/index\.js[^>]*>.*?<\/button>\s*<a\s+class="bundle-code-github-link"/su, 'the link follows the copy button')
+  for (const attr of ['href=https://github.com/org/mono/blob/HEAD/packages/dep/index.js', 'aria-label="Open on GitHub"', 'data-tooltip=packages/dep/index.js',
+    'data-tooltip-repo=org/mono', 'data-tooltip-package=dep', 'data-tooltip-ecosystem=npm', 'data-tooltip-version=1.2.3']) assert.ok(dep.includes(attr), attr)
+  assert.match(dep, /<span hidden data-tooltip-package-icon><svg class="bundle-code-tree-npm"/u, 'the tooltip shows the package icon, not GitHub')
+  const own = header('src/index.js')
+  assert.ok(own.includes('href=https://github.com/org/app/blob/HEAD/src/index.js'))
+  assert.doesNotMatch(own, /data-tooltip-package=\S|data-tooltip-package-icon/u, 'own files name no package')
+  assert.ok(!header('node_modules/unplaced/index.js').includes('bundle-code-github-link'), 'an unknown directory shows no link')
+})
+
 test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
   const commit = '0123456789abcdef'.repeat(3).slice(0, 40)
