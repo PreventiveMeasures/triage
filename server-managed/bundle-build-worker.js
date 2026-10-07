@@ -32,6 +32,21 @@ async function packageName(input, github, project, bundle, client) {
   return typeof name === 'string' ? name : null
 }
 
+// Prisma Client is what `prisma generate` writes, not what the repo holds: for
+// a JS project whose package.json depends on a @prisma/ package, Stasis
+// generates it before the scan (generate: ['prisma']).
+async function prismaGenerate(input, github, project, client) {
+  if (input.entries[0].endsWith('.sol')) return []
+  const listing = await client.listRepoDir({ repo: github, sha: input.commit, directory: project || undefined })
+  if (!listing.some(entry => entry.path === 'package.json' && regularFile(entry))) return []
+  const text = await client.getRepoFile({ repo: github, path: posix.join(project, 'package.json'), ref: input.commit })
+  let manifest
+  try { manifest = JSON.parse(text) } catch { return [] }
+  const named = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
+    .flatMap(field => manifest?.[field] !== null && typeof manifest?.[field] === 'object' ? Object.keys(manifest[field]) : [])
+  return named.some(name => name.startsWith('@prisma/')) ? ['prisma'] : []
+}
+
 export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}) {
   const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
   // Reuse these immutable listings when Stasis discovers the lockfile root.
@@ -48,10 +63,11 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   progress('build')
   const project = await projectDirectory(input, github, buildClient)
   if (!allowed(project)) throw new Error('build-scope')
+  const generate = await prismaGenerate(input, github, project, buildClient)
   const { bundle } = await buildGitHubBundle({
     github, sha: input.commit, directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
-    ...input.options, client: buildClient, ...(cacheDir === null && { cache: false }),
+    ...input.options, client: buildClient, ...(cacheDir === null && { cache: false }), ...(generate.length > 0 && { generate }),
   })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')

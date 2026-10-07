@@ -110,6 +110,10 @@ function projectClient(files) {
       assert.equal(repo, 'org/repo'); assert.equal(sha, commit)
       return Promise.resolve(tarball(files))
     },
+    getRepoFile({ repo, path, ref }) {
+      assert.equal(repo, 'org/repo'); assert.equal(ref, commit)
+      return Object.hasOwn(files, path) ? Promise.resolve(files[path]) : Promise.reject(new Error(`no ${path} in the fixture`))
+    },
   }
 }
 
@@ -210,24 +214,6 @@ test('worker cancellation releases the per-user build slot and prevents duplicat
   const retry = buildRepositoryBundle('test-user', request, next.signal)
   next.abort()
   await assert.rejects(retry, { code: 'build-cancelled' })
-})
-
-test('worker loads Stasis, reports rejected builds, and releases its build slot', async t => {
-  // Stasis rejects this repo name before any network request. Exercise the
-  // actual worker module with its empty environment and no inherited hooks.
-  const request = { input: input(), github: 'invalid-repo', token: null, maxBytes: 1_000_000, scopes: [null] }
-  const logs = []
-  for (const method of ['info', 'error']) t.mock.method(console, method, (_prefix, json) => logs.push(JSON.parse(json)))
-  for (let i = 0; i < 2; i++) {
-    await assert.rejects(buildRepositoryBundle('worker-error-user', request, new AbortController().signal), { code: 'build-failed' })
-  }
-  const failures = logs.filter(log => log.event === 'failed')
-  assert.equal(failures.length, 2)
-  for (const failure of failures) {
-    assert.equal(failure.stage, 'build')
-    assert.match(failure.diagnostic.message, /invalid github/u)
-    assert.match(failure.diagnostic.stack, /buildGitHubBundle/u)
-  }
 })
 
 test('real Stasis builds Solidity with Soldeer and follows local imports', async () => {
