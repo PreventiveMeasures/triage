@@ -8,15 +8,28 @@ import { HttpError, createClient } from '@preventive/upstream/github.js'
 import { githubBundleFilename } from './bundle-build.ts'
 import { bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
 
+const regularFile = entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode)
+
 async function projectDirectory(input, github, client) {
   // Input validation permits either JS/TS entries or Solidity entries, never a mix.
   const manifests = input.entries[0].endsWith('.sol') ? ['foundry.toml', 'soldeer.toml', 'soldeer.lock'] : ['package.json']
   if (!input.directory) return ''
   for (let directory = input.directory; ; directory = posix.dirname(directory).replace(/^\.$/u, '')) {
     const entries = await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
-    if (entries.some(entry => manifests.includes(entry.path) && entry.type === 'blob' && ['100644', '100755'].includes(entry.mode))) return directory
+    if (entries.some(entry => manifests.includes(entry.path) && regularFile(entry))) return directory
     if (!directory) return input.directory
   }
+}
+
+// The name Stasis read from the package.json in the project directory we
+// provide, where its module holds bundled files. JS builds only: a Solidity
+// build records `solidity-bundle` for a package.json without name and version.
+async function packageName(input, github, project, bundle, client) {
+  if (!project || input.entries[0].endsWith('.sol')) return null
+  const entries = await client.listRepoDir({ repo: github, sha: input.commit, directory: project })
+  if (!entries.some(entry => entry.path === 'package.json' && regularFile(entry))) return null
+  const name = bundle.modules.get(posix.relative(bundle.repo?.directory ?? '', project) || '.')?.name
+  return typeof name === 'string' ? name : null
 }
 
 export async function buildStasisBundle({ input, github, token, maxBytes, scopes }, client = createClient({ token }), progress = () => {}) {
@@ -49,7 +62,8 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   progress('compress')
   const bytes = brotliCompressSync(serialized, brotliOptions())
   if (bytes.length > maxBytes) throw new Error('too-large')
-  return { bytes, directory, filename: githubBundleFilename(github, project, input.commit) }
+  const name = await packageName(input, github, project, bundle, buildClient)
+  return { bytes, directory, filename: githubBundleFilename(github, project, input.commit, name) }
 }
 
 if (parentPort && workerData?.type === 'managed-bundle-build') {

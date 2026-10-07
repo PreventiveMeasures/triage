@@ -61,12 +61,25 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
   return { repoId, commit, entries: selected, directory: parts.join('/'), options }
 }
 
+// A package name as a filename base: `@scope/name` as `scope-name`, or as
+// `name` alone where it is `scope` or already starts with `scope-`. Null for
+// a name npm could not publish by its length or leading dot.
+function packageBase(name: string): string | null {
+  const match = name.length <= 214 ? /^(?:@([^/.][^/]*)\/)?([^/.][^/]*)$/u.exec(name) : null
+  if (!match) return null
+  const base = match[2]!, scope = match[1]
+  return scope === undefined || base === scope || base.startsWith(`${scope}-`) ? base : `${scope}-${base}`
+}
+
 // Same portable name and 255-character limit as Stasis's githubBundleFile
-// (src/cmd/github-bundle.js), which is not a public package export.
-export function githubBundleFilename(github: string, directory: string, commit: string): string {
+// (src/cmd/github-bundle.js), which is not a public package export, except
+// that a usable `packageName` replaces both the repo and the directory.
+export function githubBundleFilename(github: string, directory: string, commit: string, packageName: string | null = null): string {
   const portable = (value: string) => value.replaceAll(/[^\w.-]/gu, '_')
-  const repo = portable(github.replace('/', '-'))
   const tail = `.${portable(commit.slice(0, 7))}.stasis.code.br`
+  const named = packageName === null ? null : packageBase(packageName)
+  if (named !== null) return `${portable(named)}${tail}`
+  const repo = portable(github.replace('/', '-'))
   if (!directory) return `${repo}${tail}`
   const room = 255 - `${repo}.${tail}`.length
   let dir = portable(directory.replaceAll('/', '-'))

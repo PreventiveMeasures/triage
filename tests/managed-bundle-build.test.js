@@ -45,6 +45,9 @@ test('filenames follow Stasis github-bundle defaults and portable truncation', (
   assert.equal(name.length, 255)
   assert.match(name, /_[a-f\d]{8}\.aaaaaaa\.stasis\.code\.br$/u)
   assert.notEqual(name, githubBundleFilename('owner/repo', long + 'x', commit))
+  assert.equal(githubBundleFilename('owner/repo', 'packages/app', commit, '@owner/owner-app'), 'owner-app.aaaaaaa.stasis.code.br')
+  assert.equal(githubBundleFilename('owner/repo', 'packages/app', commit, '@scope/app'), 'scope-app.aaaaaaa.stasis.code.br')
+  assert.equal(githubBundleFilename('owner/repo', 'packages/app', commit, '.app'), 'owner-repo.packages-app.aaaaaaa.stasis.code.br')
 })
 
 // Minimal regular-file tar fixture; GitHub client verification is upstream's
@@ -158,7 +161,7 @@ test('real Stasis uses the innermost package root and checks access when imports
   const request = { input: input(['app/src/index.ts']), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: ['app'] }
   const result = await buildStasisBundle(request, projectClient(project))
   const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
-  assert.equal(result.filename, 'org-repo.app.aaaaaaa.stasis.code.br')
+  assert.equal(result.filename, 'app.aaaaaaa.stasis.code.br')
   assert.equal(result.directory, 'app')
   assert.deepEqual([...bundle.entries], ['src/index.ts'])
   assert.ok(bundle.sources.has('src/value.ts'))
@@ -167,9 +170,24 @@ test('real Stasis uses the innermost package root and checks access when imports
   await assert.rejects(buildStasisBundle(request, projectClient(project)), /build-scope/u)
   const wider = await buildStasisBundle({ ...request, scopes: [null] }, projectClient(project))
   const widerBundle = Bundle.parse(brotliDecompressSync(wider.bytes).toString())
+  assert.equal(wider.filename, 'app.aaaaaaa.stasis.code.br')
   assert.equal(wider.directory, '')
   assert.deepEqual([...widerBundle.entries], ['app/src/index.ts'])
   assert.ok(widerBundle.sources.has('shared.ts'))
+})
+
+test('real Stasis names a standalone package’s bundle for its package.json', async () => {
+  const app = { name: '@org/org-app', version: '1.0.0', type: 'module' }
+  const project = {
+    'app/package.json': JSON.stringify(app),
+    'app/package-lock.json': JSON.stringify({ name: app.name, version: app.version, lockfileVersion: 3, requires: true,
+      packages: { '': { name: app.name, version: app.version } } }, null, 2) + '\n',
+    'app/src/index.ts': files['index.ts'], 'app/src/value.ts': files['value.ts'],
+  }
+  const result = await buildStasisBundle({ input: input(['app/src/index.ts']), github: 'org/repo', token: null,
+    maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+  assert.equal(result.filename, 'org-app.aaaaaaa.stasis.code.br')
+  assert.equal(result.directory, 'app')
 })
 
 test('worker cancellation releases the per-user build slot and prevents duplicate builds', async () => {
@@ -220,6 +238,7 @@ test('real Stasis builds nested Solidity from its dependency files despite a clo
   const project = {
     'contracts/foundry.toml': '[profile.default]\nsrc = "src"\nlibs = ["dependencies"]\n[dependencies]\n',
     'contracts/soldeer.lock': 'version = 2\ndependencies = []\n',
+    'contracts/package.json': '{"name":"@org/contracts","version":"1.0.0"}',
     'contracts/src/package.json': '{"name":"unrelated"}',
     'contracts/src/Token.sol': 'pragma solidity ^0.8.0; import "./Base.sol"; contract Token is Base {}',
     'contracts/src/Base.sol': 'pragma solidity ^0.8.0; contract Base {}',

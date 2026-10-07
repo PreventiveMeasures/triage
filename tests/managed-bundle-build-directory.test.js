@@ -10,7 +10,7 @@ const { buildStasisBundle } = await import('../server-managed/bundle-build-worke
 const commit = 'a'.repeat(40)
 const file = (path, mode = '100644') => ({ path, mode, type: 'blob', sha: 'b'.repeat(40) })
 
-function fixture(entries, files, { scopes = [null], failAt, bundleDirectory } = {}) {
+function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {} } = {}) {
   const input = parseBundleBuild({ repoId: 1, commit, entries, conditions: { preset: 'node', conditions: ['node'], platforms: [] } })
   const builds = [], reads = []
   const client = { listRepoDir({ repo, sha, directory }) {
@@ -26,7 +26,7 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory } = 
     // Exercise the same repeated directory reads as Stasis's lockfile discovery.
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
-    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, serialize: () => '{}' } }
+    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize: () => '{}' } }
   }
   const run = () => buildStasisBundle({ input, github: 'org/repo', token: null, maxBytes: 1000, scopes }, client)
   return { run, reads, builds }
@@ -73,6 +73,38 @@ test('a manifest in the common entry directory keeps that directory', async () =
   assert.equal(f.builds[0].directory, 'app')
   assert.deepEqual(f.builds[0].entries, ['main.ts', 'worker.js'])
   assert.deepEqual(f.reads, ['app'])
+})
+
+for (const [name, filename] of [['app', 'app'], ['@org/app', 'org-app'], ['@org/org-app', 'org-app'], ['@org/org', 'org'],
+  ['@org/my app', 'org-my_app'], ['@org/organizer', 'org-organizer']]) {
+  test(`a project package named ${name} names the bundle without the repo or directory`, async () => {
+    const f = await fixture(['packages/app/src/main.ts'], [file('package.json'), file('packages/app/package.json')],
+      { modules: { '.': { name } } })
+    assert.equal((await f.run()).filename, `${filename}.aaaaaaa.stasis.code.br`)
+    assert.deepEqual(f.reads, ['packages/app/src', 'packages/app'], 'the name reuses the build’s listings')
+  })
+}
+
+test('a workspace root wider than the project still names the bundle for the project’s package', async () => {
+  const f = await fixture(['packages/app/src/main.ts'], [file('package.json'), file('packages/app/package.json')],
+    { bundleDirectory: '', modules: { '.': { name: 'root' }, 'packages/app': { name: '@org/org-app' } } })
+  assert.equal((await f.run()).filename, 'org-app.aaaaaaa.stasis.code.br')
+})
+
+test('bundles keep repository names without a usable package name of the provided directory', async () => {
+  const named = { modules: { '.': { name: 'named' } } }
+  // The repository root is never a provided directory.
+  assert.equal((await fixture(['src/main.ts'], [file('package.json')], named).run()).filename, 'org-repo.aaaaaaa.stasis.code.br')
+  // Without a package.json there, Stasis's module name is an ancestor's or a Solidity placeholder.
+  assert.equal((await fixture(['app/src/main.ts'], [], named).run()).filename, 'org-repo.app-src.aaaaaaa.stasis.code.br')
+  assert.equal((await fixture(['app/src/Token.sol'], [file('app/foundry.toml'), file('app/package.json')], { modules: { '.': { name: 'solidity-bundle' } } }).run()).filename,
+    'org-repo.app.aaaaaaa.stasis.code.br')
+  assert.equal((await fixture(['app/main.ts'], [file('app/package.json')], { modules: { 'app/lib': { name: 'lib' } } }).run()).filename,
+    'org-repo.app.aaaaaaa.stasis.code.br')
+  for (const name of ['', '.hidden', '@org/', '@.org/app', 'a/b', 'x'.repeat(215), undefined]) {
+    assert.equal((await fixture(['app/main.ts'], [file('app/package.json')], { modules: { '.': { name } } }).run()).filename,
+      'org-repo.app.aaaaaaa.stasis.code.br', `package name ${name}`)
+  }
 })
 
 for (const entry of ['app/src/main.ts', 'app/src/Token.sol']) {
