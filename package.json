@@ -269,8 +269,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@exodus/stasis": "1.0.0-beta.7",
-    "@exodus/stasis-core": "1.0.0-beta.7",
+    "@exodus/stasis": "1.0.0-beta.8",
+    "@exodus/stasis-core": "1.0.0-beta.8",
     "@preventive/report": "1.0.0-alpha.9",
     "@preventive/upstream": "1.0.0-alpha.11",
     "ws": "^8.22.0"
