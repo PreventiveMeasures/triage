@@ -8,7 +8,8 @@ const PRESETS = [
   { id: 'metro', label: 'Metro', conditions: ['react-native'], icon: svg`<rect x="4" y="1.5" width="8" height="13" rx="2"/><path d="M6.5 3.5h3M7 12.5h2"/>` },
 ]
 const PLATFORMS = [{ id: 'ios', label: 'iOS' }, { id: 'android', label: 'Android' }]
-const automaticConditions = new Set(['default', 'import', 'require'])
+// Stasis resolves with these whatever the preset, as Node does.
+const automaticConditions = new Set(['default', 'import', 'require', 'node', 'node-addons', 'module-sync'])
 
 export function defaultBundleConditions() {
   return { preset: 'node', conditions: ['node'], platforms: [] }
@@ -37,6 +38,11 @@ export class BundleConditions extends LitElement {
     return { preset: this._preset, conditions: [...this._conditions], platforms: this._preset === 'metro' ? [...this._platforms] : [] }
   }
 
+  // The preset's own conditions stay first and cannot be removed.
+  get presetConditions() {
+    return PRESETS.find(item => item.id === this._preset).conditions
+  }
+
   notifyChange() {
     this.dispatchEvent(new CustomEvent('conditions-change', { detail: this.value, bubbles: true, composed: true }))
   }
@@ -63,8 +69,8 @@ export class BundleConditions extends LitElement {
     if (this._preset === 'metro') return
     const names = this._draft.trim().split(/[\s,]+/u).filter(Boolean)
     if (names.length === 0) return
-    if (names.some(name => automaticConditions.has(name))) {
-      this._error = 'import, require, and default are handled automatically.'
+    if (names.some(name => automaticConditions.has(name) && !this.presetConditions.includes(name))) {
+      this._error = 'import, require, default, node, node-addons, and module-sync are handled automatically.'
       return
     }
     if (names.some(name => name.length > 64 || name.startsWith('.') || /^\d+$/u.test(name))) {
@@ -83,7 +89,7 @@ export class BundleConditions extends LitElement {
   }
 
   removeCondition(name) {
-    if (this._preset === 'metro') return
+    if (this.presetConditions.includes(name)) return
     this._conditions = this._conditions.filter(condition => condition !== name)
     this._error = ''
     this.notifyChange()
@@ -102,11 +108,11 @@ export class BundleConditions extends LitElement {
       </div>
       <div id="manual-conditions" ?hidden=${!this.showConditions || !manual || !this._manualOpen}>
         <form class="condition-editor" @submit=${event => { event.preventDefault(); this.addConditions() }}>
-        <ul aria-label="Export conditions">${this._conditions.map(name => html`<li><code>${name}</code><button type="button" aria-label=${`Remove condition ${name}`} @click=${() => this.removeCondition(name)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>
+        <ul aria-label="Export conditions">${this._conditions.map(name => this.presetConditions.includes(name) ? html`<li class="preset"><code>${name}</code></li>` : html`<li><code>${name}</code><button type="button" aria-label=${`Remove condition ${name}`} @click=${() => this.removeCondition(name)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8"/></svg></button></li>`)}</ul>
         <div class="condition-input"><input type="text" aria-label="Add conditions" aria-describedby="conditions-help" aria-invalid=${Boolean(this._error)} aria-errormessage="condition-error" placeholder="Add condition…" autocomplete="off" maxlength="1040" .value=${this._draft} @input=${event => { this._draft = event.target.value; this._error = '' }}
           @keydown=${event => { if (event.key === ' ' && !event.isComposing) { event.preventDefault(); this.addConditions() } }} @blur=${() => this.addConditions()}></div>
         </form>
-        <p id="conditions-help">Package export conditions. <code>import</code> / <code>require</code> and <code>default</code> are automatic.</p>
+        <p id="conditions-help">Package export conditions. <code>import</code> / <code>require</code>, <code>default</code>, <code>node</code>, <code>node-addons</code>, and <code>module-sync</code> are automatic.</p>
         ${this._error ? html`<p id="condition-error" class="error" role="alert">${this._error}</p>` : nothing}
       </div>
     </section>`

@@ -90,6 +90,27 @@ test('custom conditions support adding, deduplicating, removing, and restoring a
   assert.deepEqual(control.value.conditions, ['node'])
 })
 
+test('the Node.js and Browser preset conditions stay first and cannot be removed', () => {
+  const control = new BundleConditions()
+  const removable = name => templates(control.render()).some(template => template.values.includes(`Remove condition ${name}`))
+  for (const [preset, condition] of [['node', 'node'], ['browser', 'browser']]) {
+    control.selectPreset(preset)
+    control._draft = `development ${condition}`
+    control.addConditions()
+    assert.deepEqual(control.value.conditions, [condition, 'development'], 'retyping the preset condition is a no-op')
+    assert.equal(removable(condition), false)
+    assert.equal(removable('development'), true)
+    control.removeCondition(condition)
+    assert.deepEqual(control.value.conditions, [condition, 'development'])
+    control.removeCondition('development')
+    assert.deepEqual(control.value.conditions, [condition])
+  }
+  control._draft = 'node'
+  control.addConditions()
+  assert.deepEqual(control.value.conditions, ['browser'], 'Browser builds resolve with node already')
+  assert.match(control._error, /node.*automatically/u)
+})
+
 test('typed conditions are accepted on space and when the field loses focus, without an add button', () => {
   const control = new BundleConditions()
   const changes = []
@@ -123,7 +144,7 @@ test('invalid or excessive custom conditions do not partially apply or change th
   const control = new BundleConditions()
   const changes = []
   control.addEventListener('conditions-change', event => changes.push(event.detail))
-  for (const draft of ['import', 'require', 'default', 'valid .invalid', '123', 'x'.repeat(65), Array.from({ length: 16 }, (_, i) => `condition-${i}`).join(' ')]) {
+  for (const draft of ['import', 'require', 'default', 'node-addons', 'module-sync', 'valid .invalid', '123', 'x'.repeat(65), Array.from({ length: 16 }, (_, i) => `condition-${i}`).join(' ')]) {
     control._draft = draft
     control.addConditions()
     assert.deepEqual(control.value, defaultBundleConditions())
