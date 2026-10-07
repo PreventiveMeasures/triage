@@ -382,8 +382,12 @@ input[type=checkbox] {
    strip below the controls and horizontally scrollable on narrow windows. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
+  /* The bar sits above body::after's titlebar halo; repaint it so the
+     fade behind the window controls carries on through the bar. */
   .manage-header {
     display: flow-root;
+    background: var(--titlebar-halo, none), var(--page-background, var(--bg));
+    background-attachment: fixed;
   }
   .manage-header::before {
     content: '';
