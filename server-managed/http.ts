@@ -74,8 +74,7 @@ import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub } from '@preventive/report'
-import { findingsRepository, loadManagedFindings, managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
-import { commonFileDirectory } from '../common/managed/repository-alias.ts'
+import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../common/managed/report-content.ts'
 import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
@@ -1632,7 +1631,7 @@ async function suggestReportLocation(deps: ManagedHttpDeps, user: StoredUser, da
   // An invalid optional directory is ignored, as for bundle metadata.
   const declared = normalizeTeamPath(data?.repo?.directory)
   const directory = declared.ok ? declared.path : null
-  const location = await deps.db.getRepositoryImportLocation(github, directory ?? '', commonFileDirectory(managedFindingSourcePaths(findings)))
+  const location = await deps.db.getRepositoryImportLocation(github, directory ?? '', ownFileDirectory(findings, data?.tree))
   const repo = location.repoId == null ? null : (await deps.db.listSelectedRepos()).find(row => row.repoId === location.repoId)
   const allowed = repo && (user.role === 'admin' || await deps.db.userCanReadRepoPath(user.id, repo.repoId, location.directory))
   if (!allowed) return { repoId: null, github, directory }

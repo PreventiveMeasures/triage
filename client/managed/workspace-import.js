@@ -1,13 +1,13 @@
 import { migrateStoredIgnores } from '../ignored-triage.js'
 import { parseWorkspaceBundleBytes, parseWorkspaceJson } from '../workspace-format.js'
 import { isEncryptedBundle } from '../workspace-bundle-crypto.js'
-import { findingsRepository, loadManagedFindings, managedFindingSourcePaths, readManagedReport } from '../../common/managed/report-content.ts'
+import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../../common/managed/report-content.ts'
 import { reportRepoGithub } from '@preventive/report'
 import { normalizeEntry } from '../triage-entry.ts'
 import { MAX_FINDING_ID, parseTriageEntryPatch } from '../../common/managed/triage.ts'
 import { importTriageEntries } from './triage-import.js'
 import { normalizeTeamPath } from '../../server-managed/repo-path.ts'
-import { commonFileDirectory, matchRepositoryAlias } from '../../common/managed/repository-alias.ts'
+import { matchRepositoryAlias } from '../../common/managed/repository-alias.ts'
 
 export async function decodeWorkspaceFile(file, promptPassword) {
   const bytes = new Uint8Array(await file.arrayBuffer())
@@ -35,7 +35,7 @@ export async function prepareWorkspaceImport(data, repos, aliases = []) {
     const parsedFindings = Array.isArray(parsed.data.findings) ? parsed.data.findings : []
     const typed = embedded ?? reportRepoGithub(item) ?? reportRepoGithub({ repo: { github: data.repoUrls?.[item.name] } })
     const declaredGithub = typed ?? findingsRepository(parsedFindings, parsed.data.tree)
-    const filePrefix = embedded ? '' : commonFileDirectory(managedFindingSourcePaths(parsedFindings))
+    const filePrefix = embedded ? '' : ownFileDirectory(parsedFindings, parsed.data.tree)
     const directory = normalizeTeamPath(parsed.data.repo?.directory)
     if (!directory.ok) throw new Error(`${item.name}: invalid repository directory`)
     const findings = parsed.format === 'links' ? [] : (await loadManagedFindings(item.content, item.name))?.findings ?? []

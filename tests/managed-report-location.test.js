@@ -72,6 +72,10 @@ test('report location suggestions resolve current connections and aliases withou
   assert.equal((await db.getReport(missing.id)).repoId, null, 'suggestions never assign')
   const aliased = await upload(json([finding('aliased', 'org/missing', 'a/src/x.js')]))
   assert.deepEqual([aliased.repoId, aliased.repoDirectory], [2, 'projects'], 'shared finding paths can select a directory alias')
+  const withDependency = await upload(json([finding('own-aliased', 'org/missing', 'a/src/y.js'),
+    { ...finding('dep-aliased', 'lodash/lodash', 'node_modules/lodash/x.js'), evidence: [{ file: 'node_modules/lodash/y.js' }] }]))
+  assert.deepEqual([withDependency.repoId, withDependency.repoDirectory], [2, 'projects'], 'dependency paths do not hide a directory alias')
+  assert.deepEqual((await suggest(withDependency.id)).location, { repoId: 2, github: 'org/repo2', directory: 'projects' })
   const unnamed = await upload(json([finding('unnamed')]))
   assert.deepEqual(await suggest(unnamed.id), { status: 200, location: null })
   const embedded = await upload(json([finding('embedded', 'org/repo2')], { repo: { github: 'org/repo1' } }))
