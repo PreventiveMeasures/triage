@@ -6,7 +6,7 @@ test('package tooltip metadata prefers recorded identities and reads GitHub from
   for (const repository of ['org/repo', 'github:org/repo', 'git+https://github.com/org/repo.git#main', 'git@github.com:org/repo.git', 'ssh://git@github.com/org/repo.git', { url: 'https://github.com/org/repo', directory: 'packages/dep' }]) {
     const info = { name: 'actual-package', version: '2.0.0', files: { 'package.json': JSON.stringify({ name: 'stale-name', version: '1.0.0', repository }) } }
     assert.deepEqual(bundleSourcePackageInfo({ name: 'installed-alias' }, info, 12), {
-      ecosystem: 'npm', name: 'actual-package', version: '2.0.0', github: 'org/repo', fileCount: 12,
+      ecosystem: 'npm', name: 'actual-package', version: '2.0.0', github: 'org/repo', ...(repository.directory ? { directory: repository.directory } : {}), fileCount: 12,
     })
   }
 })
@@ -54,8 +54,12 @@ test('non-GitHub and malformed manifest URLs never become GitHub repositories', 
       assert.equal(bundleSourcePackageInfo({ name: 'pkg' }, { files }, 1).github, null)
     }
   }
-  const files = { 'package.json': JSON.stringify({ homepage: 'org/not-a-homepage', bugs: { url: 'https://github.com/org/actual/issues' } }) }
-  assert.equal(bundleSourcePackageInfo({ name: 'pkg' }, { files }, 1).github, 'org/actual')
+  // As Stasis records it, only a package.json's `repository` names the
+  // repository; `bugs` and `homepage` often keep an old name. Composer
+  // manifests name theirs in those fields.
+  const fields = { homepage: 'org/not-a-homepage', bugs: { url: 'https://github.com/org/actual/issues' } }
+  assert.equal(bundleSourcePackageInfo({ name: 'pkg' }, { files: { 'package.json': JSON.stringify(fields) } }, 1).github, null)
+  assert.equal(bundleSourcePackageInfo({ name: 'org/pkg' }, { ecosystem: 'composer', files: { 'composer.json': JSON.stringify(fields) } }, 1).github, 'org/actual')
 })
 
 test('recorded dependency repositories link packages without a captured manifest', () => {
@@ -63,4 +67,23 @@ test('recorded dependency repositories link packages without a captured manifest
   const files = { 'package.json': JSON.stringify({ repository: 'org/manifest' }) }
   assert.equal(bundleSourcePackageInfo({ name: 'dep' }, { repo: { github: 'org/recorded' }, files }, 1).github, 'org/recorded')
   assert.equal(bundleSourcePackageInfo({ name: 'dep' }, { repo: { github: 'not a repo' }, files }, 1).github, 'org/manifest')
+})
+
+test('package tooltips carry the repository directory a record or captured package.json places them in', () => {
+  const at = info => {
+    const { github, directory } = bundleSourcePackageInfo({ name: 'dep' }, info, 1)
+    return [github, directory]
+  }
+  assert.deepEqual(at({ repo: { github: 'org/dep', directory: 'packages/dep' }, files: {} }), ['org/dep', 'packages/dep'])
+  assert.deepEqual(at({ repo: { github: 'org/dep', directory: '' }, files: {} }), ['org/dep', ''])
+  assert.deepEqual(at({ repo: { github: 'org/dep' }, files: {} }), ['org/dep', undefined])
+  const manifest = (json, text = JSON.stringify(json)) => ({ files: { 'package.json': text } })
+  assert.deepEqual(at(manifest({ repository: { url: 'git+https://github.com/org/mono.git', directory: './packages\\dep/' } })), ['org/mono', 'packages/dep'])
+  assert.deepEqual(at(manifest({ repository: { url: 'https://github.com/org/mono', directory: './' } })), ['org/mono', ''])
+  assert.deepEqual(at(manifest({ repository: { url: 'https://github.com/org/mono', directory: 'a/../b' } })), ['org/mono', undefined])
+  assert.deepEqual(at(manifest({ repository: 'org/mono', homepage: 'https://github.com/org/mono/tree/main/packages/dep#readme' })), ['org/mono', 'packages/dep'])
+  assert.deepEqual(at(manifest({ repository: 'org/mono', homepage: 'https://github.com/org/mono/tree/main/.' })), ['org/mono', undefined])
+  assert.deepEqual(at(manifest(null, `\uFEFF${JSON.stringify({ repository: { url: 'github:org/bom', directory: 'lib' } })}`)), ['org/bom', 'lib'])
+  // A recorded repository wins over the manifest, directory included.
+  assert.deepEqual(at({ repo: { github: 'org/recorded' }, ...manifest({ repository: { url: 'org/manifest', directory: 'lib' } }) }), ['org/recorded', undefined])
 })
