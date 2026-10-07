@@ -235,7 +235,10 @@ test('repository rechecks enrich npm, Cargo and Composer with matching maintaine
         url: `https://github.com/advisories/${ghsa}`, vulnerable_versions: '<2.0.0' }] }))
     }
     if (pathname === '/v1/querybatch') return Promise.resolve(Response.json({ results: [{}] }))
-    if (hostname === 'registry.npmjs.org') return Promise.resolve(Response.json({ name: 'log', repository: 'https://github.com/org/npm-log' }))
+    if (hostname === 'registry.npmjs.org') {
+      assert.equal(pathname, '/log/2.0.0', 'the newest version asked names the repository')
+      return Promise.resolve(Response.json({ name: 'log', version: '2.0.0', repository: 'https://github.com/org/npm-log' }))
+    }
     if (hostname === 'crates.io') return Promise.resolve(Response.json({ crates: [{ id: 'log', repository: 'https://github.com/org/cargo-log' }] }))
     if (hostname === 'repo.packagist.org') return Promise.resolve(Response.json({ packages: { 'vendor/pkg': [{ source: { url: 'https://github.com/org/composer-pkg' } }] } }))
     assert.equal(hostname, 'api.github.com')
@@ -266,7 +269,7 @@ test('repository rechecks retry a rejected GitHub token anonymously without repe
     calls.push({ url, authorization })
     if (new URL(url).hostname !== 'api.github.com') {
       assert.equal(authorization, null)
-      return Promise.resolve(Response.json(url.endsWith('/advisories/bulk') ? {} : { name: 'dep', repository: 'https://github.com/org/dep' }))
+      return Promise.resolve(Response.json(url.endsWith('/advisories/bulk') ? {} : { name: 'dep', version: '1.0.0', repository: 'https://github.com/org/dep' }))
     }
     if (authorization) return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
     return Promise.resolve(Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Public advisory',

@@ -9,17 +9,17 @@ importers:
   .:
     dependencies:
       '@exodus/stasis':
-        specifier: 1.0.0-beta.8
-        version: 1.0.0-beta.8(esbuild@0.28.2)
+        specifier: 1.0.0-beta.9
+        version: 1.0.0-beta.9(esbuild@0.28.2)
       '@exodus/stasis-core':
-        specifier: 1.0.0-beta.8
-        version: 1.0.0-beta.8
+        specifier: 1.0.0-beta.9
+        version: 1.0.0-beta.9
       '@preventive/report':
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
       '@preventive/upstream':
-        specifier: 1.0.0-alpha.11
-        version: 1.0.0-alpha.11
+        specifier: 1.0.0-alpha.12
+        version: 1.0.0-alpha.12
       ws:
         specifier: ^8.22.0
         version: 8.22.0
@@ -37,8 +37,8 @@ importers:
         specifier: 1.0.0-alpha.7
         version: 1.0.0-alpha.7
       '@preventive/terminal':
-        specifier: 2.0.0-beta.1
-        version: 2.0.0-beta.1
+        specifier: 2.0.0-beta.2
+        version: 2.0.0-beta.2
       '@rray/frontend':
         specifier: ^1.0.0
         version: 1.0.0
@@ -313,17 +313,17 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@exodus/stasis-core@1.0.0-beta.8':
-    resolution: {integrity: sha512-bPR/LvqofJcs8p6VDliqMVfAEmkljc8xvxhzeSCWNBul8VH5H8nBSTndNk6/cjI/wM7fOBmR/DWpjQevHkmQxQ==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.8.tgz}
+  '@exodus/stasis-core@1.0.0-beta.9':
+    resolution: {integrity: sha512-842BZbgHaClFM77EkFdVsHF4h4WlYrPHueiUEuQ+9x5+VdDsBNDoHf2PHqwAg0BdRToakx1jlJiokWSnyCqcwA==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.9.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
 
-  '@exodus/stasis-plugins@1.0.0-beta.8':
-    resolution: {integrity: sha512-vdkq0w4m1dlEuuKP/eyL0W2RkxgR5eP1f08qaW8Kspk8GjA6oQtJmsijkO6zdqk95r4XQmMWPTurluY4ivd3Bg==, tarball: https://registry.npmjs.org/@exodus/stasis-plugins/-/stasis-plugins-1.0.0-beta.8.tgz}
+  '@exodus/stasis-plugins@1.0.0-beta.9':
+    resolution: {integrity: sha512-fdWv4owVx+zCYhECmaedXvHVg7T0ku8gPx25kcN0G5/h4BZsYyp+8KShPHaaBuBdrxbeR7Zq8TFD8rePfM3oqQ==, tarball: https://registry.npmjs.org/@exodus/stasis-plugins/-/stasis-plugins-1.0.0-beta.9.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@exodus/stasis@1.0.0-beta.8':
-    resolution: {integrity: sha512-jrlY+xaES80ZXZ6ujKbAX8jQZupad33dxsSByzD5Safvm6+fr0D/auCkvXpqc8cPIS1/1VLgCnJ4ImVl82iocw==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-beta.8.tgz}
+  '@exodus/stasis@1.0.0-beta.9':
+    resolution: {integrity: sha512-zfjb7cnbFYyJyBxt/cuHWIgxZoMVgmIemUciZdmvLDubo+ek9fjOtazkBWcomjRaf9Mm0NjR85fO4qVN5G4gnA==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-beta.9.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
     peerDependencies:
@@ -624,9 +624,10 @@ packages:
     resolution: {integrity: sha512-lJN3Wdt1pdsYXjAKJatYFn97N1l+0Kge6ixHIvHR1bdk5Zy/zDxigPbc3Rv1F13zObgV6X1TK7IvvHEaqFCvIA==, tarball: https://registry.npmjs.org/@preventive/archive/-/archive-1.0.0-beta.4.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/deptree@1.0.0-alpha.9':
-    resolution: {integrity: sha512-CSdEgAspMjikMV80dwwLtNIQ2QtQcIi9Vwb3/APmnUY+vMj+Go7mJNTMdtQ/OyzOqKRh7df+Ppez0rU6FxeL1A==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.0-alpha.9.tgz}
+  '@preventive/deptree@1.0.0-alpha.11':
+    resolution: {integrity: sha512-OJd4JpogvomvbmwyIc3MHc1gskpg/fm3odkY8iLsui3ZBhtqXMb8dU3JaC52NUKZVzhfTuLHgiHSuV/Ep5zIyg==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.0-alpha.11.tgz}
     engines: {node: '>=24.14.0'}
+    hasBin: true
 
   '@preventive/diff@1.0.1':
     resolution: {integrity: sha512-e4c673eQKCuEPHP8IZdirOXdOYONAkIjb9FdLLKGZ4xkDZNLF19w9V9ETzQAR5Z3iOu/N5tgZBGuBCLZzNTz2A==, tarball: https://registry.npmjs.org/@preventive/diff/-/diff-1.0.1.tgz}
@@ -640,11 +641,11 @@ packages:
     resolution: {integrity: sha512-uY3H2rPbuU24IBkeGyFUXhRgP0TdH452Z5/f9YTTYneBLtE+HIwHWqGxR31nF0mgr1KQj5H+a1YwCSQkLuZXgw==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.9.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/terminal@2.0.0-beta.1':
-    resolution: {integrity: sha512-BBvLkWrjwYryQze4ceY0JnAGwRgIIxpnkOxBF7JaH2oILR0TZNwub+SmUE9pufOS+puoTHPmVlyf8ewU4jRzPA==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.1.tgz}
+  '@preventive/terminal@2.0.0-beta.2':
+    resolution: {integrity: sha512-8PkPux4GaGS602z5qwJ/G+XidG+pZohz6ZDAYOQi+xzRwEGQx2ODYtLnknDgcKzIyuaTYYvoTLKdoAGdtRyT5A==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.2.tgz}
 
-  '@preventive/upstream@1.0.0-alpha.11':
-    resolution: {integrity: sha512-6twGUJhvrEuhHZ0BuK7SFcTS5Y2MdDaJq1TBtL4SXwEKAUz+N+8YmxbQgR8LGvr6KyvF9t8QOM9q1lrAmAKKHQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.11.tgz}
+  '@preventive/upstream@1.0.0-alpha.12':
+    resolution: {integrity: sha512-0g2f5PzIxI7czs67G9hM2uvJ7M7uzhVWuHprtxHzr1RmTCR910px1InZPVutH/IaQ0MKNY9znBmxS4BrUFoq8A==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.0.0-alpha.12.tgz}
     engines: {node: '>=24.14.0'}
     peerDependencies:
       semver: ^7.5.2
@@ -1551,21 +1552,21 @@ snapshots:
 
   '@exodus/bytes@1.16.0': {}
 
-  '@exodus/stasis-core@1.0.0-beta.8': {}
+  '@exodus/stasis-core@1.0.0-beta.9': {}
 
-  '@exodus/stasis-plugins@1.0.0-beta.8':
+  '@exodus/stasis-plugins@1.0.0-beta.9':
     dependencies:
-      '@exodus/stasis-core': 1.0.0-beta.8
+      '@exodus/stasis-core': 1.0.0-beta.9
 
-  '@exodus/stasis@1.0.0-beta.8(esbuild@0.28.2)':
+  '@exodus/stasis@1.0.0-beta.9(esbuild@0.28.2)':
     dependencies:
       '@exodus/bytes': 1.16.0
-      '@exodus/stasis-core': 1.0.0-beta.8
-      '@exodus/stasis-plugins': 1.0.0-beta.8
+      '@exodus/stasis-core': 1.0.0-beta.9
+      '@exodus/stasis-plugins': 1.0.0-beta.9
       '@preventive/archive': 1.0.0-beta.4
-      '@preventive/deptree': 1.0.0-alpha.9
+      '@preventive/deptree': 1.0.0-alpha.11
       '@preventive/lockfile': 1.0.0-alpha.7
-      '@preventive/upstream': 1.0.0-alpha.11
+      '@preventive/upstream': 1.0.0-alpha.12
       '@preventive/vfs': 1.0.0-beta.4
       oxc-parser: 0.152.0
     optionalDependencies:
@@ -1726,13 +1727,14 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/deptree@1.0.0-alpha.9':
+  '@preventive/deptree@1.0.0-alpha.11':
     dependencies:
       '@chalker/queue': 1.0.1
+      '@exodus/bytes': 1.16.0
       '@preventive/archive': 1.0.0-beta.4
       '@preventive/diff': 1.0.1
       '@preventive/lockfile': 1.0.0-alpha.7
-      '@preventive/upstream': 1.0.0-alpha.11
+      '@preventive/upstream': 1.0.0-alpha.12
       '@preventive/vfs': 1.0.0-beta.4
     transitivePeerDependencies:
       - '@noble/hashes'
@@ -1748,14 +1750,16 @@ snapshots:
 
   '@preventive/report@1.0.0-alpha.9': {}
 
-  '@preventive/terminal@2.0.0-beta.1':
+  '@preventive/terminal@2.0.0-beta.2':
     dependencies:
       '@exodus/bytes': 1.16.0
+      '@preventive/archive': 1.0.0-beta.4
       '@preventive/diff': 1.0.1
+      '@preventive/vfs': 1.0.0-beta.4
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/upstream@1.0.0-alpha.11': {}
+  '@preventive/upstream@1.0.0-alpha.12': {}
 
   '@preventive/vfs@1.0.0-beta.4': {}
 

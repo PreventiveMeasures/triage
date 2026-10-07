@@ -100,7 +100,7 @@ test('an abandoned audit leaves the database alone', async () => {
     setUpstreamCacheEntry: key => { used.push(key); return Promise.resolve() },
   }
   const store = upstreamCache(db, AbortSignal.abort())
-  assert.equal(await store.read('github/advisories/org/dep'), null)
-  await store.write('github/advisories/org/dep', { at: 1 })
+  assert.equal(await store.read('github/advisories', 'org/dep'), null)
+  await store.write('github/advisories', 'org/dep', { at: 1 })
   assert.deepEqual(used, [])
 })

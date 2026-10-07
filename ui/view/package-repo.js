@@ -8,7 +8,7 @@ import { isValidRepoField } from '@exodus/stasis-core/bundle'
 // `owner/name` from a `repository` URL or shorthand, else null.
 function parseGithubRepository(url) {
   if (typeof url !== 'string') return null
-  const match = /^(?:github:|(?:git\+)?(?:(?:https?|ssh|git):\/\/(?:[\w.~%!$&'()*+,;=:-]*@)?github\.com(?::\d+)?\/|ssh:\/\/(?:[\w.~%!$&'()*+,;=-]*@)?github\.com:|(?:[^@/:]+@)?github\.com:))?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/iu.exec(url.trim().replace(/#.*$/su, ''))
+  const match = /^(?:github:|(?:git\+)?(?:(?:https?|ssh|git):\/\/(?:[\w.~%!$&'()*+,;=:-]*@)?(?:www\.)?github\.com(?::\d+)?\/|ssh:\/\/(?:[\w.~%!$&'()*+,;=-]*@)?(?:www\.)?github\.com:|(?:[^@/:]+@)?(?:www\.)?github\.com:))?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/iu.exec(url.trim().replace(/#.*$/su, ''))
   const github = match && `${match[1]}/${match[2]}`
   return github && isValidRepoField('github', github) ? github : null
 }

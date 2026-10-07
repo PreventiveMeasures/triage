@@ -252,7 +252,7 @@
     "@noble/ciphers": "^2.4.0",
     "@preventive/diff": "^1.0.1",
     "@preventive/lockfile": "1.0.0-alpha.7",
-    "@preventive/terminal": "2.0.0-beta.1",
+    "@preventive/terminal": "2.0.0-beta.2",
     "@rray/frontend": "^1.0.0",
     "@stylistic/stylelint-plugin": "^5.3.1",
     "@types/node": "^26.6.4",
@@ -269,10 +269,10 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@exodus/stasis": "1.0.0-beta.8",
-    "@exodus/stasis-core": "1.0.0-beta.8",
+    "@exodus/stasis": "1.0.0-beta.9",
+    "@exodus/stasis-core": "1.0.0-beta.9",
     "@preventive/report": "1.0.0-alpha.9",
-    "@preventive/upstream": "1.0.0-alpha.11",
+    "@preventive/upstream": "1.0.0-alpha.12",
     "ws": "^8.22.0"
   },
   "peerDependencies": {

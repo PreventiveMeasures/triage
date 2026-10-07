@@ -1062,7 +1062,7 @@ test('managed repository rechecks enrich advisories and recheck security before 
     if (url.endsWith('/advisories/bulk')) return Response.json({})
     // Revoke mid-audit: the repository's listing is answered from the cache.
     if (revoke) await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
-    if (url.endsWith('/dep/latest')) return Response.json({ name: 'dep', repository: 'https://github.com/org/dep' })
+    if (url.endsWith('/dep/2.0.0')) return Response.json({ name: 'dep', version: '2.0.0', repository: 'https://github.com/org/dep' })
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
     return Response.json([{ ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Maintainer vulnerability', description: '# Impact\n\nFull advisory text.',
       vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<3.0.0' }] }])
