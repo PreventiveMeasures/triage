@@ -73,9 +73,8 @@ class ManagedRepositoryAliases extends ManagedPage {
   }
   render() {
     const aliases = this._data?.aliases ?? [], repos = this._data?.repos ?? []
-    return html`<section aria-labelledby="aliases-heading"><div class="heading"><h2 id="aliases-heading">Aliases</h2>
+    return html`<section aria-label="Repository aliases"><div class="page-intro"><p class="intro">Map repository locations when importing new reports and bundles.</p>
       <button type="button" class="btn" ?disabled=${this._busy || this._edit != null || !this._data} @click=${() => this._start()}>Add alias</button></div>
-      <p class="intro">Map repository locations when importing new reports and bundles.</p>
       ${this._error ? html`<p class="msg error" role="alert">${this._error}</p>` : nothing}
       <div aria-busy=${this._loading}>${this._data === null ? (this._error ? html`<button type="button" class="btn" @click=${() => void this._load()}>Try again</button>` : loadingRows('Loading repository aliases…')) : html`
         <div class="alias-table"><table><thead><tr><th>Old repository</th><th>Old path</th><th>New repository</th><th>New path</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>

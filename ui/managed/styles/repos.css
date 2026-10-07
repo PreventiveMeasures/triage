@@ -60,6 +60,14 @@
   gap: .65rem;
   margin: 1.5rem 0 1.65rem;
 }
+/* A compact way into the aliases view, just beneath the repository list. */
+.aliases-link {
+  margin-top: .75rem;
+}
+.aliases-link .btn {
+  min-height: 1.75rem;
+  padding: .2rem .55rem;
+}
 .repository-actions {
   display: flex;
   flex-wrap: wrap;

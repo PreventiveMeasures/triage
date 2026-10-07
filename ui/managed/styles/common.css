@@ -66,7 +66,8 @@ code,
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  /* No bounce at the ends either: the tabs ride on this scroller. */
+  overscroll-behavior: none;
   scrollbar-gutter: stable;
 }
 .manage-header {
@@ -75,23 +76,20 @@ code,
   z-index: 2;
 }
 /* One bounded pane owns each complete collection, including group titles.
-   Headers, upload controls, filters, and history pagination stay in place.
-   A window too short to leave the pane usable scrolls the whole page
-   instead, tabs included, so nothing is out of reach or passes beneath them. */
+   Headers, upload controls, filters, and history pagination stay in place. */
 .wrap:has(> .manage-list) {
   display: flex;
   flex-direction: column;
-  overflow: hidden auto;
+  overflow: hidden;
   scrollbar-gutter: auto;
 }
 /* Content height, whatever basis a sibling carries for row layouts: the
    breadcrumb's 100% basis would otherwise take the whole column. */
 .wrap:has(> .manage-list) > :not(.manage-list) { flex: none; }
-.wrap:has(> .manage-list) > .manage-header { position: static; }
 .manage-list {
   position: relative;
   flex: 1;
-  min-height: 8rem;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
