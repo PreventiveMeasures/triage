@@ -435,6 +435,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // stored bytes: a build always marks the row built, and with `rename` an
   // uploaded row takes the new filename/kind. A built row never changes; one
   // predating provenance is renamed only by a build. Resolves true iff changed.
+  // The caller authorizes `rename` (see reuseBundleUpload).
   insertBundle(bundle: BundleInput, now: number, sessionId?: string): Promise<void>
   reuseBundle(id: string, reuse: BundleReuse): Promise<boolean>
   getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null>

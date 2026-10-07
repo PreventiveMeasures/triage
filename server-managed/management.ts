@@ -1,4 +1,4 @@
-import type { AdminReport, ManagedBundle, ManagedDb, ManagedRepo, RepoDataItem, RepoReportItem, ReportRecord, StoredUser } from './db-methods.ts'
+import type { AdminReport, BundleReuse, ManagedBundle, ManagedDb, ManagedRepo, RepoDataItem, RepoReportItem, ReportRecord, StoredUser } from './db-methods.ts'
 import { roleAtLeast } from '../common/managed/roles.ts'
 
 export class ManagedMutationError extends Error {
@@ -13,13 +13,16 @@ type RemovalAnnotations = { reports: string; ids: string[] }
 export interface ManagementStore {
   mutateReport(sessionId: string, id: string, change: ReportMutation): Promise<{ report: ReportRecord; user: StoredUser }>
   mutateBundle(sessionId: string, id: string, change: ContentMutation): Promise<{ bundle: ManagedBundle; user: StoredUser }>
+  // A repeated upload/build of stored bytes (see reuseBundle). Renames need the
+  // access other bundle mutations need; a server build labels the row anyway.
+  reuseBundleUpload(sessionId: string, id: string, reuse: Omit<BundleReuse, 'rename'>): Promise<boolean>
   removeRepository(sessionId: string, expected: RemovalRepo, annotations: RemovalAnnotations | null): Promise<{
     reports: RepoReportItem[]; bundles: RepoDataItem[]; deletedReports: number; deletedBundles: number; deletedTriage: number
   }>
 }
 type ManagementDb = Pick<ManagedDb, 'sessionWithUser' | 'getReport' | 'getBundle' | 'listReports' | 'listReportsForRepo'
   | 'listBundlesForRepo' | 'listAllRepos' | 'listSelectedRepos' | 'userCanReadReport' | 'userCanReadBundle' | 'userCanReadRepoPath'
-  | 'deleteReport' | 'setReportRepo' | 'setReportVisible' | 'deleteBundle' | 'setBundleRepo' | 'setBundleVisible'
+  | 'deleteReport' | 'setReportRepo' | 'setReportVisible' | 'deleteBundle' | 'setBundleRepo' | 'setBundleVisible' | 'reuseBundle'
   | 'deleteReportsForRepo' | 'deleteBundlesForRepo' | 'deleteRepo' | 'deleteTriage' | 'recordActivity'>
 
 // Only immutable bytes/format and repository membership affect the overlap
@@ -66,6 +69,15 @@ export function managementMethods(db: ManagementDb): ManagementStore {
       else if (change.type === 'visibility') await db.setBundleVisible(id, change.visible)
       else await db.setBundleRepo(id, change.repoId, change.directory)
       return { bundle, user }
+    },
+    async reuseBundleUpload(sessionId: string, id: string, reuse: Omit<BundleReuse, 'rename'>) {
+      const user = await authorize(sessionId, 'manage')
+      const bundle = await db.getBundle(id)
+      if (!bundle) return false
+      const rename = user.role === 'admin' || (await db.userCanReadBundle(user.id, id)
+        && (bundle.repoId === null || await db.userCanReadRepoPath(user.id, bundle.repoId, bundle.repoDirectory)))
+      if (!rename && reuse.provenance !== 'build') return false
+      return db.reuseBundle(id, { ...reuse, rename })
     },
     async removeRepository(sessionId: string, expected: RemovalRepo, annotations: RemovalAnnotations | null) {
       const user = await authorize(sessionId, 'admin')

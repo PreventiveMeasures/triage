@@ -1231,13 +1231,10 @@ async function sendUploadedBundle(req: IncomingMessage, res: ServerResponse, dep
   if (!s) return
   const deduped = reuse != null
   if (deduped) {
-    const accessible = await canAccessBundle(deps, s.user, bundle.id)
-    // Only callers who can see the row may rename it. A server build still
-    // labels it: the stored bytes are this server's own output either way.
-    if ((accessible || reuse.provenance === 'build') && await deps.db.reuseBundle(bundle.id, { ...reuse, rename: accessible })) {
-      bundle = await deps.db.getBundle(bundle.id) ?? bundle
-    }
-    if (!accessible) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
+    // Authorized in the same transaction as the rename. A server build labels
+    // even a row the caller cannot see: the bytes are this server's own output.
+    if (await deps.db.reuseBundleUpload(s.session.id, bundle.id, reuse)) bundle = await deps.db.getBundle(bundle.id) ?? bundle
+    if (!(await canAccessBundle(deps, s.user, bundle.id))) { sendJson(res, 409, { error: 'bundle-conflict' }); return }
   }
   const { id, slug, integrity, filename, byteSize, repoId, repoDirectory } = bundle
   // Re-uploading also repairs reports uploaded while the bundle was inaccessible.

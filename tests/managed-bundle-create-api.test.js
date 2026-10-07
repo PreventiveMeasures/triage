@@ -124,6 +124,22 @@ test('a build labels identical bytes the builder cannot see, without renaming th
   assert.equal(f.blobs.size, 0)
 })
 
+test('repeated bytes are renamed only with access held in the renaming transaction', async t => {
+  const f = await fixture(t, { role: 'manage' })
+  await f.db.insertBundle({ id: 'team-bundle', integrity: bundleIntegrity(result.bytes), filename: 'team.stasis.code.br', kind: 'stasis',
+    byteSize: result.bytes.length, uploadedBy: null, uploadedByLogin: 'someone', repoId: 1, provenance: 'upload' }, 1)
+  const reuse = f.db.reuseBundleUpload.bind(f.db)
+  // Revoke after the request's earlier access checks, just before the rename.
+  t.mock.method(f.db, 'reuseBundleUpload', async (...args) => { await f.db.removeTeamMember('team', f.session.userId); return reuse(...args) })
+  assert.deepEqual(await f.upload('renamed.stasis.code.br'), { status: 409, body: { error: 'bundle-conflict' } })
+  const stored = await f.db.getBundle('team-bundle')
+  assert.deepEqual([stored.filename, stored.provenance], ['team.stasis.code.br', 'upload'])
+  const { session } = await readSession(config, f.db, f.session.setCookie, Date.now())
+  await f.db.setUserRole(f.session.userId, 'view')
+  await assert.rejects(reuse(session.id, 'team-bundle', { provenance: 'build', filename: result.filename, kind: 'stasis' }), { status: 403 })
+  assert.equal((await f.db.getBundle('team-bundle')).provenance, 'upload', 'a revoked role cannot even label the row')
+})
+
 test('creation accepts JSX and TSX entry points and forwards their conditions to the builder', async t => {
   const f = await fixture(t)
   const entries = ['app/component.jsx', 'app/view.tsx']
