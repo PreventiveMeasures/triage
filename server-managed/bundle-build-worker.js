@@ -21,15 +21,16 @@ async function projectDirectory(input, github, client) {
   }
 }
 
-// The name Stasis read from the package.json in the project directory we
-// provide, where its module holds bundled files. JS builds only: a Solidity
-// build records `solidity-bundle` for a package.json without name and version.
-async function packageName(input, github, project, bundle, client) {
-  if (!project || input.entries[0].endsWith('.sol')) return null
-  const entries = await client.listRepoDir({ repo: github, sha: input.commit, directory: project })
+// The name in the project directory's own package.json, the repo root's
+// included. Read here: Stasis's module records name a package.json without
+// one `workspace` or `solidity-bundle`, and omit packages with no bundled files.
+async function packageName(github, commit, project, client) {
+  const entries = await client.listRepoDir({ repo: github, sha: commit, directory: project || undefined })
   if (!entries.some(entry => entry.path === 'package.json' && regularFile(entry))) return null
-  const name = bundle.modules.get(posix.relative(bundle.repo?.directory ?? '', project) || '.')?.name
-  return typeof name === 'string' ? name : null
+  const text = await client.getRepoFile({ repo: github, path: posix.join(project, 'package.json'), ref: commit })
+  let manifest
+  try { manifest = JSON.parse(text) } catch { return null }
+  return typeof manifest?.name === 'string' ? manifest.name : null
 }
 
 export async function buildStasisBundle({ input, github, token, maxBytes, scopes }, client = createClient({ token }), progress = () => {}) {
@@ -56,13 +57,13 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   // Imports outside the selected package may widen the root. Never publish it under a
   // narrower team grant: the storage location must cover the actual bundle.
   if (!allowed(directory)) throw new Error('build-scope')
+  const name = await packageName(github, input.commit, project, buildClient)
   progress('serialize')
   const serialized = bundle.serialize()
   if (Buffer.byteLength(serialized) > 200 * 1024 * 1024) throw new Error('too-large')
   progress('compress')
   const bytes = brotliCompressSync(serialized, brotliOptions())
   if (bytes.length > maxBytes) throw new Error('too-large')
-  const name = await packageName(input, github, project, bundle, buildClient)
   return { bytes, directory, filename: githubBundleFilename(github, project, input.commit, name) }
 }
 

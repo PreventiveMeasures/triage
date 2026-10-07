@@ -608,11 +608,11 @@ Builds use the common parent directory of the selected entry points. Filenames
 follow `stasis github-bundle`: `owner-repo.<short-commit>.stasis.code.br`, or
 `owner-repo.<directory-with-dashes>.<short-commit>.stasis.code.br`. Nonportable
 characters become underscores; long directories are truncated with a hash to
-fit 255 characters. A JavaScript/TypeScript project in a subdirectory with its
-own named `package.json` is instead `<package>.<short-commit>.stasis.code.br`,
-the name Stasis read from it: `@scope/name` becomes `scope-name`, or just `name`
-when that already starts with `scope-`. The stored directory comes from
-Stasis's actual build root.
+fit 255 characters. A project whose directory, the repository root included,
+has a `package.json` with a name is instead `<package>.<short-commit>.stasis.code.br`:
+`@scope/name` becomes `scope-name`, or just `name` when that is the scope or
+already starts with `scope-`. The stored directory comes from Stasis's actual
+build root.
 
 Creation requires same-origin, CSRF, manager/admin and live GitHub read access.
 The caller must have a managed grant covering the resulting project root, which

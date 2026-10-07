@@ -10,9 +10,9 @@ const { buildStasisBundle } = await import('../server-managed/bundle-build-worke
 const commit = 'a'.repeat(40)
 const file = (path, mode = '100644') => ({ path, mode, type: 'blob', sha: 'b'.repeat(40) })
 
-function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {} } = {}) {
+function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, manifests = {} } = {}) {
   const input = parseBundleBuild({ repoId: 1, commit, entries, conditions: { preset: 'node', conditions: ['node'], platforms: [] } })
-  const builds = [], reads = []
+  const builds = [], fileReads = [], reads = []
   const client = { listRepoDir({ repo, sha, directory }) {
     assert.equal(repo, 'org/repo')
     assert.equal(sha, commit)
@@ -20,16 +20,24 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, mod
     if (failAt !== undefined && directory === failAt) throw new Error('GitHub unavailable')
     return Promise.resolve(files.filter(entry => posix.dirname(entry.path) === (directory || '.'))
       .map(entry => ({ ...entry, path: posix.basename(entry.path) })))
+  }, getRepoFile({ repo, path, ref }) {
+    assert.equal(repo, 'org/repo')
+    assert.equal(ref, commit)
+    assert.ok(files.some(entry => entry.path === path))
+    fileReads.push(path)
+    if (path === failAt) throw new Error('GitHub unavailable')
+    const manifest = manifests[path] ?? {}
+    return Promise.resolve(typeof manifest === 'string' ? manifest : JSON.stringify(manifest))
   } }
   build = async options => {
     builds.push(options)
     // Exercise the same repeated directory reads as Stasis's lockfile discovery.
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
-    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize: () => '{}' } }
+    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, serialize: () => '{}' } }
   }
   const run = () => buildStasisBundle({ input, github: 'org/repo', token: null, maxBytes: 1000, scopes }, client)
-  return { run, reads, builds }
+  return { run, reads, fileReads, builds }
 }
 
 for (const extension of ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'jsx', 'mjsx', 'cjsx', 'tsx', 'mtsx', 'ctsx', 'JSX', 'TSX']) {
@@ -79,32 +87,46 @@ for (const [name, filename] of [['app', 'app'], ['@org/app', 'org-app'], ['@org/
   ['@org/my app', 'org-my_app'], ['@org/organizer', 'org-organizer']]) {
   test(`a project package named ${name} names the bundle without the repo or directory`, async () => {
     const f = await fixture(['packages/app/src/main.ts'], [file('package.json'), file('packages/app/package.json')],
-      { modules: { '.': { name } } })
+      { manifests: { 'package.json': { name: 'root' }, 'packages/app/package.json': { name } } })
     assert.equal((await f.run()).filename, `${filename}.aaaaaaa.stasis.code.br`)
     assert.deepEqual(f.reads, ['packages/app/src', 'packages/app'], 'the name reuses the build’s listings')
+    assert.deepEqual(f.fileReads, ['packages/app/package.json'])
   })
 }
 
-test('a workspace root wider than the project still names the bundle for the project’s package', async () => {
-  const f = await fixture(['packages/app/src/main.ts'], [file('package.json'), file('packages/app/package.json')],
-    { bundleDirectory: '', modules: { '.': { name: 'root' }, 'packages/app': { name: '@org/org-app' } } })
-  assert.equal((await f.run()).filename, 'org-app.aaaaaaa.stasis.code.br')
+test('the repository root’s package names a bundle built from the root', async () => {
+  const files = [file('package.json'), file('packages/a/package.json'), file('packages/b/package.json')]
+  for (const entries of [['main.ts'], ['src/main.ts'], ['packages/a/src/a.ts', 'packages/b/src/b.js']]) {
+    const f = await fixture(entries, files, { manifests: { 'package.json': { name: '@org/org-app' } } })
+    assert.equal((await f.run()).filename, 'org-app.aaaaaaa.stasis.code.br', entries.join())
+    assert.deepEqual(f.fileReads, ['package.json'])
+  }
 })
 
-test('bundles keep repository names without a usable package name of the provided directory', async () => {
-  const named = { modules: { '.': { name: 'named' } } }
-  // The repository root is never a provided directory.
-  assert.equal((await fixture(['src/main.ts'], [file('package.json')], named).run()).filename, 'org-repo.aaaaaaa.stasis.code.br')
-  // Without a package.json there, Stasis's module name is an ancestor's or a Solidity placeholder.
-  assert.equal((await fixture(['app/src/main.ts'], [], named).run()).filename, 'org-repo.app-src.aaaaaaa.stasis.code.br')
-  assert.equal((await fixture(['app/src/Token.sol'], [file('app/foundry.toml'), file('app/package.json')], { modules: { '.': { name: 'solidity-bundle' } } }).run()).filename,
-    'org-repo.app.aaaaaaa.stasis.code.br')
-  assert.equal((await fixture(['app/main.ts'], [file('app/package.json')], { modules: { 'app/lib': { name: 'lib' } } }).run()).filename,
-    'org-repo.app.aaaaaaa.stasis.code.br')
-  for (const name of ['', '.hidden', '@org/', '@.org/app', 'a/b', 'x'.repeat(215), undefined]) {
-    assert.equal((await fixture(['app/main.ts'], [file('app/package.json')], { modules: { '.': { name } } }).run()).filename,
-      'org-repo.app.aaaaaaa.stasis.code.br', `package name ${name}`)
+test('a Solidity project is named for a package.json beside its dependency files', async () => {
+  const f = await fixture(['contracts/src/Token.sol'], [file('contracts/foundry.toml'), file('contracts/package.json'), file('contracts/src/package.json')],
+    { manifests: { 'contracts/package.json': { name: '@org/contracts' }, 'contracts/src/package.json': { name: 'unrelated' } } })
+  assert.equal((await f.run()).filename, 'org-contracts.aaaaaaa.stasis.code.br')
+  assert.deepEqual(f.fileReads, ['contracts/package.json'])
+})
+
+test('bundles keep repository names without a usable package.json name in the project directory', async () => {
+  const name = async (entries, files, manifests) => {
+    const f = await fixture(entries, files, { manifests })
+    return [(await f.run()).filename, f.fileReads]
   }
+  assert.deepEqual(await name(['app/src/main.ts'], []), ['org-repo.app-src.aaaaaaa.stasis.code.br', []])
+  assert.deepEqual(await name(['main.ts'], [file('package.json', '120000')]), ['org-repo.aaaaaaa.stasis.code.br', []])
+  assert.deepEqual(await name(['app/src/Token.sol'], [file('app/foundry.toml'), file('app/src/package.json')]), ['org-repo.app.aaaaaaa.stasis.code.br', []])
+  for (const manifest of ['{', 'null', '[]', { private: true }, { name: 1 }, ...['', '.hidden', '@org/', '@.org/app', 'a/b', 'x'.repeat(215)].map(value => ({ name: value }))]) {
+    assert.deepEqual(await name(['app/main.ts'], [file('app/package.json')], { 'app/package.json': manifest }),
+      ['org-repo.app.aaaaaaa.stasis.code.br', ['app/package.json']], JSON.stringify(manifest))
+  }
+})
+
+test('a failed package.json read fails the build instead of changing its name', async () => {
+  const f = await fixture(['app/main.ts'], [file('app/package.json')], { failAt: 'app/package.json' })
+  await assert.rejects(f.run(), /GitHub unavailable/u)
 })
 
 for (const entry of ['app/src/main.ts', 'app/src/Token.sol']) {

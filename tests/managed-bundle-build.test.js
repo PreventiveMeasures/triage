@@ -97,6 +97,11 @@ function projectClient(files) {
       return Promise.resolve(tarball(Object.fromEntries(Object.entries(files)
         .filter(([path]) => path.startsWith(prefix)).map(([path, text]) => [path.slice(prefix.length), text]))))
     },
+    getRepoFile({ repo, path, ref }) {
+      assert.equal(repo, 'org/repo'); assert.equal(ref, commit)
+      assert.ok(Object.hasOwn(files, path))
+      return Promise.resolve(files[path])
+    },
     getRepoTarball({ repo, sha }) {
       assert.equal(repo, 'org/repo'); assert.equal(sha, commit)
       return Promise.resolve(tarball(files))
@@ -116,7 +121,7 @@ test('real Stasis builds a commit-pinned TypeScript import graph and produces re
   const result = await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, projectClient(files), stage => stages.push(stage))
   assert.deepEqual(stages, ['build', 'scope', 'serialize', 'compress'])
   const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
-  assert.equal(result.filename, 'org-repo.aaaaaaa.stasis.code.br')
+  assert.equal(result.filename, 'fixture.aaaaaaa.stasis.code.br')
   assert.equal(result.directory, '')
   assert.deepEqual({ ...bundle.repo }, { github: 'org/repo', commit, directory: '' })
   assert.ok(bundle.sources.has('index.ts'))
@@ -188,6 +193,12 @@ test('real Stasis names a standalone package’s bundle for its package.json', a
     maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
   assert.equal(result.filename, 'org-app.aaaaaaa.stasis.code.br')
   assert.equal(result.directory, 'app')
+  // Stasis records a package.json without a name as `workspace` for Browser builds.
+  project['app/package.json'] = JSON.stringify({ private: true, version: app.version, type: 'module' })
+  const browser = await buildStasisBundle({ input: input(['app/src/index.ts'], { conditions: { preset: 'browser', conditions: ['browser'], platforms: [] } }),
+    github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+  assert.equal(Bundle.parse(brotliDecompressSync(browser.bytes).toString()).modules.get('.').name, 'workspace')
+  assert.equal(browser.filename, 'org-repo.app.aaaaaaa.stasis.code.br')
 })
 
 test('worker cancellation releases the per-user build slot and prevents duplicate builds', async () => {
@@ -246,7 +257,7 @@ test('real Stasis builds nested Solidity from its dependency files despite a clo
   const result = await buildStasisBundle({ input: input(['contracts/src/Token.sol']), github: 'org/repo', token: null,
     maxBytes: 1_000_000, scopes: ['contracts'] }, projectClient(project))
   const bundle = Bundle.parse(brotliDecompressSync(result.bytes).toString())
-  assert.equal(result.filename, 'org-repo.contracts.aaaaaaa.stasis.code.br')
+  assert.equal(result.filename, 'org-contracts.aaaaaaa.stasis.code.br')
   assert.equal(result.directory, 'contracts')
   assert.deepEqual([...bundle.entries], ['src/Token.sol'])
   assert.equal(bundle.formats.get('src/Base.sol'), 'solidity')
