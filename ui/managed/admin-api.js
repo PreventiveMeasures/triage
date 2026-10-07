@@ -156,10 +156,13 @@ export async function uploadReport(file, csrfToken, repoId = null, directory = '
   }
   const products = splitMarkdownImport(await file.text(), file.name)
   if (!products) return uploadSingleReport(file, csrfToken, repoId, directory)
-  const results = []
+  // One failed product does not stop the others; name every failure after all were tried.
+  const failures = [], results = []
   for (const { name, content } of products) {
-    results.push(await uploadSingleReport(new File([content], name, { type: 'application/json' }), csrfToken, repoId, directory))
+    try { results.push(await uploadSingleReport(new File([content], name, { type: 'application/json' }), csrfToken, repoId, directory)) }
+    catch (err) { failures.push(`${name}: ${String(err?.message ?? err)}`) }
   }
+  if (failures.length > 0) throw new Error(`${failures.length} of ${products.length} products failed (${failures.join('; ')})`)
   return results.at(-1)
 }
 

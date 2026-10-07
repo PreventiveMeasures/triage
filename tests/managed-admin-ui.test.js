@@ -488,7 +488,7 @@ for (const abandon of ['close', 'switch', 'disconnect']) {
   })
 }
 
-test('upload batches preserve arrival order, use the current token without location overrides, and discard the rest on failure', async t => {
+test('upload batches preserve arrival order, use the current token without location overrides, and continue past failures', async t => {
   for (const kind of ['report', 'bundle']) {
     const page = createPage(customElements.get(`managed-admin-${kind}s`))
     page.session = adminSession
@@ -505,7 +505,8 @@ test('upload batches preserve arrival order, use the current token without locat
       }
       requests.push({ name: options.body.name, headers: options.headers })
       firstStarted.resolve()
-      return requests.length === 1 ? first.promise : Promise.resolve(new Response('', { status: 500 }))
+      if (requests.length === 1) return first.promise
+      return Promise.resolve(options.body.name === 'second.json' ? new Response('', { status: 500 }) : Response.json({ ok: true }))
     })
     try {
       await page._upload([])
@@ -518,18 +519,45 @@ test('upload batches preserve arrival order, use the current token without locat
       page.session = { ...adminSession, csrfToken: 'rotated' }
       first.resolve(Response.json({ ok: true }))
       await pending
-      assert.deepEqual(requests.map(request => request.name), ['first.json', 'second.json'])
+      assert.deepEqual(requests.map(request => request.name), ['first.json', 'second.json', 'dropped.json'], 'a failed file does not stop the batch')
       for (const request of requests) {
         assert.equal(request.headers['x-repo-id'], undefined)
         assert.equal(request.headers['x-repo-directory'], undefined)
       }
-      assert.equal(requests[1].headers['x-csrf-token'], 'rotated')
+      assert.equal(requests[2].headers['x-csrf-token'], 'rotated')
       assert.deepEqual(page._queue, [])
       assert.equal(page._busy, false)
-      assert.equal(page._error, 'Upload failed: HTTP 500')
-      assert.equal(refreshes, 1, 'the failed batch still refreshes once')
+      assert.equal(page._error, 'Upload failed for 1 of 3 files: second.json: HTTP 500')
+      assert.equal(refreshes, 1, 'the batch refreshes once')
+
+      fetch.mock.mockImplementation((url, options) => {
+        if (url === '/api/config') return Promise.resolve(Response.json({ managed: {} }))
+        if (options.method !== 'POST') return Promise.resolve(Response.json({ [`${kind}s`]: [], repos: [] }))
+        return Promise.resolve(options.body.name === 'ok.json' ? Response.json({ ok: true }) : new Response('', { status: 503 }))
+      })
+      await page._upload([new File(['{}'], 'one.json')])
+      assert.equal(page._error, 'Upload failed: one.json: HTTP 503')
+      await page._upload([new File(['{}'], 'ok.json')])
+      assert.equal(page._error, null, 'a successful batch clears the previous failure')
+      await page._upload([new File(['{}'], 'a.json'), new File(['{}'], 'ok.json'), new File(['{}'], 'b.json')])
+      assert.equal(page._error, 'Upload failed for 2 of 3 files: a.json: HTTP 503; b.json: HTTP 503')
     } finally { fetch.mock.restore() }
   }
+})
+
+test('split Markdown imports upload every product and name the ones that failed', async t => {
+  const { genericMarkdown } = await import('./_generic-markdown.js')
+  const { uploadReport } = await import('../ui/managed/admin-api.js')
+  const names = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url === '/api/config') return Promise.resolve(Response.json({ managed: {} }))
+    const name = decodeURIComponent(options.headers['x-report-filename'])
+    names.push(name)
+    return Promise.resolve(name.endsWith('Product A.generic-md') ? new Response('', { status: 500 }) : Response.json({ id: name }))
+  })
+  await assert.rejects(uploadReport(new File([genericMarkdown], 'audit.md'), 'csrf'),
+    { message: '1 of 2 products failed (audit: Product A.generic-md: HTTP 500)' })
+  assert.deepEqual(names, ['audit: Product A.generic-md', 'audit: Product B.generic-md'], 'the product after a failure is still uploaded')
 })
 
 test('cached repository details remain visible but cannot authorize removal after a failed refresh', async (t) => {
