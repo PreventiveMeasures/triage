@@ -6,8 +6,12 @@ export function splitMarkdownImport(content, filename) {
   const reports = parseGenericMarkdownToReports(content)
   if (reports === null) return null
   const stem = filename.replace(/\.(?:md|markdown)$/iu, '')
-  return reports.map(({ displayName, data }) => ({
-    name: `${encodeURIComponent(stem)}: ${encodeURIComponent(displayName)}.generic-md`,
-    content: JSON.stringify(data),
-  }))
+  const names = new Set()
+  return reports.map(({ displayName, data }) => {
+    // Keep readable names; only characters forbidden in storage need replacing.
+    const name = `${stem}: ${displayName}`.replaceAll(/[\\/\p{Cc}]/gu, '_')
+    if (names.has(name)) throw new Error(`Markdown (generic): products produce the same report name: ${name}`)
+    names.add(name)
+    return { name, content: JSON.stringify(data) }
+  })
 }

@@ -275,3 +275,12 @@ it('shows generic Markdown with its source label, Markdown icon and decoded prod
   assert.equal(displayName('audit: %invalid.generic-md'), 'audit: %invalid')
   assert.equal(findingBrand({ source: 'markdown-generic' }), 'markdown-generic')
 })
+
+it('groups plain generic report names using content metadata without decoding literal percent text', () => {
+  for (const name of ['audit: A Project', 'audit: Café 100% & %20']) {
+    setCount(name, 1, 'markdown-generic')
+    assert.equal(groupOf(name), 'markdown-generic')
+    assert.equal(reportGroup(name, 'markdown-generic'), 'markdown-generic')
+    assert.equal(displayName(name), name)
+  }
+})

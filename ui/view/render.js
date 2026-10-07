@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand } from './file-display.js'
+import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, findingBrand, displayName as reportDisplayName } from './file-display.js'
 import { FOCUS_SPLIT_MAX, FOCUS_SPLIT_MIN, createManagedLocalImportSource, getKind, isManagedUiMode, listBundles, listWorkspaces, managedWorkspaceImportDeps, migrateLoadedIgnores, saveTriage, state } from '#client/index.js'
 import { openWorkspaceUnlockBundleDialog } from './dialogs/workspace-unlock-bundle-dialog.js'
 import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
@@ -257,9 +257,10 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   if (context) {
     fileChip = workspaceContentButton(context, 'reports', state.currentView)
   } else if (fileNames.length === 1) {
-    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames[0]}>${singleSticker}<span>${fileNames[0]}</span></button>`
+    const name = reportDisplayName(fileNames[0])
+    fileChip = html`<button type="button" class="file-chip" data-copy-report=${name}>${singleSticker}<span>${name}</span></button>`
   } else if (fileNames.length > 1) {
-    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames.join('\n')}>${multiSticker}<span>${fileNames.length} reports</span></button>`
+    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames.map(reportDisplayName).join('\n')}>${multiSticker}<span>${fileNames.length} reports</span></button>`
   }
 
   const findings = state.reports.flatMap((r) => r.groups.flat())

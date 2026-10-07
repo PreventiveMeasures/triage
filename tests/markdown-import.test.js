@@ -7,7 +7,7 @@ import { genericMarkdown } from './_generic-markdown.js'
 
 test('generic imports produce independent JSON reports with repository metadata and normalized severities', async () => {
   const reports = splitMarkdownImport(genericMarkdown, 'audit.md')
-  assert.deepEqual(reports.map((report) => report.name), ['audit: Product%20A.generic-md', 'audit: Product%20B.generic-md'])
+  assert.deepEqual(reports.map((report) => report.name), ['audit: Product A', 'audit: Product B'])
   for (const [index, report] of reports.entries()) {
     const { data } = readManagedReport(report.content, report.name)
     assert.equal(data.source, 'markdown-generic')
@@ -27,7 +27,20 @@ test('derived names preserve distinct products containing filename separators an
   const reports = splitMarkdownImport(genericMarkdown.replaceAll('Product A', 'A/B').replaceAll('Product B', 'A%2FB'), 'audit.MARKDOWN')
   assert.equal(new Set(reports.map((report) => report.name)).size, 2)
   assert.ok(reports.every((report) => !report.name.includes('/')))
+  assert.deepEqual(reports.map((report) => report.name), ['audit: A_B', 'audit: A%2FB'])
   assert.deepEqual(reports.map((report) => JSON.parse(report.content).product), ['A/B', 'A%2FB'])
+})
+
+test('derived names preserve spaces, Unicode and literal percent text without a format suffix', () => {
+  const reports = splitMarkdownImport(genericMarkdown.replaceAll('Product A', 'A Project').replaceAll('Product B', 'Café 100% & %20'), 'Audit notes.md')
+  assert.deepEqual(reports.map(report => report.name), ['Audit notes: A Project', 'Audit notes: Café 100% & %20'])
+})
+
+test('sanitized product-name collisions reject the complete split before any writes', () => {
+  for (const product of ['A/B', 'A\\B', 'A\u0000B']) {
+    const text = genericMarkdown.replaceAll('Product A', product).replaceAll('Product B', 'A_B')
+    assert.throws(() => splitMarkdownImport(text, 'audit.md'), /same report name/u)
+  }
 })
 
 test('generic managed reads and security filtering include every product', async () => {
@@ -47,6 +60,7 @@ test('repository and prefix errors reject the complete import, while other forma
   const invalidPrefix = genericMarkdown.replaceAll('https://github.com/a/b/', 'https://github.com/a/a/')
   assert.throws(() => splitMarkdownImport(invalidPrefix, 'bad.md'), /unsupported repository ID prefixes/u)
   assert.equal(readManagedReport(invalidPrefix, 'bad.md').data, null)
+  assert.deepEqual(splitMarkdownImport(genericMarkdown.replaceAll('BBB-05', 'AAA-05'), 'audit.md').map(report => report.name), ['audit: Product A', 'audit: Product B'])
   for (const content of ['{"findings":[]}', '# Claude report\n\n## Details\n\nText', 'finding_url,repository\na,b']) {
     assert.equal(splitMarkdownImport(content, 'existing.csv'), null)
   }
