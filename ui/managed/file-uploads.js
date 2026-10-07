@@ -54,23 +54,29 @@ export async function uploadLocalFile(host, file, upload, families) {
   }
 }
 
-// Drain files in arrival order. A drop during an upload joins the same batch;
-// the first failure discards its remaining files and survives the list refresh.
+// Drain files in arrival order. A drop during an upload joins the same batch.
+// A failed file does not stop the rest: every failure is named in one message
+// that survives the list refresh.
 export async function uploadFiles(host, files, upload, families) {
   if (files.length === 0) return
   host._queue.push(...files)
   if (host._busy) return
   host._busy = true
   host._error = null
+  const failures = []
+  let attempted = 0
   try {
     while (host._queue.length > 0) {
       const file = host._queue.shift()
-      await host.appState.mutate(() => upload(file), families)
+      attempted++
+      try { await host.appState.mutate(() => upload(file), families) }
+      catch (err) { failures.push(`${file.name}: ${String(err?.message ?? err)}`) }
     }
-  } catch (err) {
-    host._queue = []
-    host._error = `Upload failed: ${String(err?.message ?? err)}`
   } finally {
+    if (failures.length > 0) {
+      host._error = attempted === 1 ? `Upload failed: ${failures[0]}`
+        : `Upload failed for ${failures.length} of ${attempted} files: ${failures.join('; ')}`
+    }
     host._busy = false
     await host._load({ preserveError: true })
   }
