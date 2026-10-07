@@ -93,7 +93,7 @@ import { lookupIssueLinks } from './github-issue-links.ts'
 import { visibleManagedIssues } from './managed-issues.ts'
 import { IssueError, MAX_ISSUE_BODY_BYTES, createGithubIssue, parseIssueContext, prepareGithubIssue } from './github-issues.ts'
 import { ISSUE_LOGIN_PATH, isIssueOAuthCallback, issueLoginRedirect, issueOAuthCallback } from './github-issue-oauth.ts'
-import { sendJson, writeResponse } from './http-response.ts'
+import { attachmentDisposition, sendJson, writeResponse } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
@@ -986,13 +986,10 @@ async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cooki
   if (bytes == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await readSession(deps.config, deps.db, cookie, Date.now())
   if (!current || !roleAtLeast(current.user.role, 'manage') || !(await canViewReport(deps, current.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  // The stored filename is already control-/path-stripped (sanitizeReportFilename
-  // at upload); only a double-quote could break the quoted Content-Disposition.
-  const dispoName = rec.filename.replaceAll('"', '')
   res.writeHead(200, {
     'content-type': rec.contentType,
     'content-length': String(bytes.length),
-    'content-disposition': `attachment; filename="${dispoName}"`,
+    'content-disposition': attachmentDisposition(rec.filename),
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
@@ -1402,12 +1399,11 @@ async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: 
     stored.stream.destroy()
     sendJson(res, current ? 404 : 401, { error: 'no-bundle' }); return
   }
-  const dispoName = rec.filename.replaceAll('"', '')
   res.writeHead(200, {
     'content-type': 'application/octet-stream',
     ...(rec.kind === 'sourcemap' ? { 'content-encoding': 'br' } : {}),
     ...(stored.size == null ? {} : { 'content-length': String(stored.size) }),
-    'content-disposition': `attachment; filename="${dispoName}"`,
+    'content-disposition': attachmentDisposition(rec.filename),
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
