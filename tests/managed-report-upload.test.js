@@ -127,6 +127,7 @@ test('managed API accepts split products and single-product Markdown under their
   for (const [i, product] of splitMarkdownImport(genericMarkdown, 'audit.md').entries()) {
     const result = await send(product.content, product.name)
     assert.equal(result.status, 201)
+    assert.equal((await db.getReport(result.id)).filename, ['audit: Product A.generic-md', 'audit: Product B.generic-md'][i])
     assert.equal((await db.getReport(result.id)).repoId, 11 + i)
     assert.equal((await db.getReport(result.id)).repoEmbedded, true)
   }

@@ -4,6 +4,7 @@
 // a live server can't easily prove (CSRF, token exchange, session lifecycle).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { validateHeaderValue } from 'node:http'
 import { Readable, Writable } from 'node:stream'
 import { createVerify, generateKeyPairSync, randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -1013,7 +1014,10 @@ function bundleHarness(db, cfg = config, reportStore = fakeBlobStore(), bundleSt
       body = ''
       bytes = Buffer.alloc(0)
       ended = false
-      writeHead(c, h) { this.statusCode = c; if (h) this.headers = h; return this }
+      writeHead(c, h) {
+        for (const [name, value] of Object.entries(h ?? {})) validateHeaderValue(name, value)
+        this.statusCode = c; if (h) this.headers = h; return this
+      }
       _write(chunk, _encoding, callback) {
         this.body += chunk; this.bytes = Buffer.concat([this.bytes, chunk]); callback()
       }
@@ -1052,6 +1056,34 @@ function bundleHarness(db, cfg = config, reportStore = fakeBlobStore(), bundleSt
     return res
   }
   return { upload, send }
+}
+
+for (const [kind, suffix, body] of [
+  ['report', '.generic-md', '{"source":"markdown-generic","findings":[]}'],
+  ['bundle', '.map', '{"version":3,"sources":[],"mappings":""}'],
+]) {
+  test(`${kind} downloads preserve Unicode filenames in safe response headers`, async t => {
+    const db = openSqliteManagedDb(':memory:')
+    t.after(() => db.close())
+    const admin = await createSession(config, db, { githubUserId: 1, login: 'admin', name: null, avatarUrl: null }, Date.now())
+    await db.setUserRole(admin.userId, 'admin')
+    const { upload, send } = bundleHarness(db)
+    const cookie = cookiePair(admin.setCookie), filename = `审计: 产品 🚀 "draft" (100%) 'v1' *${suffix}`
+    const path = `/api/admin/${kind}s`
+    const created = await upload(path, cookie, admin.csrfToken, body, { [`x-${kind}-filename`]: encodeURIComponent(filename) })
+    assert.equal(created.statusCode, 201)
+    const rec = JSON.parse(created.body)
+    assert.equal(rec.filename, filename, 'stored names remain readable')
+    const downloaded = await send('GET', `${path}/${rec.id}`, cookie)
+    assert.equal(downloaded.statusCode, 200)
+    assert.equal(kind === 'bundle' ? brotliDecompressSync(downloaded.bytes).toString() : downloaded.body, body)
+    const header = downloaded.headers['content-disposition']
+    assert.doesNotMatch(header, /[^\u0020-\u007E]/u, 'the entire header is ASCII')
+    assert.match(header, /^attachment; filename="[^"\\]*"; filename\*=UTF-8''/u)
+    const encoded = header.split("; filename*=UTF-8''")[1]
+    assert.doesNotMatch(encoded, /['()*]/u, 'reserved extended-parameter characters are encoded')
+    assert.equal(decodeURIComponent(encoded), filename)
+  })
 }
 
 for (const [label, filename] of [

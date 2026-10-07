@@ -6,6 +6,7 @@
 // `.md` extension and need no transform.
 export function displayName(name) {
   const lower = name.toLowerCase()
+  // New names keep spaces; older imports also encoded spaces and separators.
   if (lower.endsWith('.generic-md')) {
     const stem = name.slice(0, -'.generic-md'.length)
     try { return decodeURIComponent(stem) } catch { return stem }
