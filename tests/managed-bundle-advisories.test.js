@@ -43,6 +43,29 @@ function inventoryOf(modules, paths = null) {
   return bundleAdvisoryInventory({ kind: 'stasis', bundle }, paths)
 }
 
+test('advisory inventory retains dependency repository hints across ecosystems and versions', () => {
+  const modules = ['npm', 'cargo', 'composer', 'soldeer', 'github'].map(ecosystem => [
+    `dependencies/${ecosystem}`, { ecosystem, name: ecosystem === 'composer' || ecosystem === 'github' ? 'org/dep' : 'dep',
+      version: '1.0.0', repo: { github: `org/${ecosystem}` }, files: { 'code': 'source' } },
+  ])
+  modules.push(['node_modules/dep', { name: 'dep', version: '2.0.0', repo: { github: 'ORG/NPM' }, files: { 'index.js': 'source' } }])
+  modules.push(['node_modules/other/node_modules/dep', { name: 'dep', version: '3.0.0', files: { 'index.js': 'source' } }])
+  const { packages } = inventoryOf(modules)
+  assert.deepEqual(packages.map(pkg => [pkg.ecosystem, pkg.github]), [
+    ['cargo', 'org/cargo'], ['composer', 'org/composer'], ['github', undefined], ['npm', 'ORG/NPM'], ['soldeer', 'org/soldeer'],
+  ])
+  assert.deepEqual(packages.find(pkg => pkg.ecosystem === 'npm').versions, ['1.0.0', '2.0.0', '3.0.0'])
+})
+
+test('conflicting repository hints fall back to discovery without affecting reason-scoped hints', () => {
+  const modules = ['org/original', 'org/moved', 'org/original'].map((github, index) => [
+    `node_modules/copy${index}/node_modules/dep`, { name: 'dep', version: `${index + 1}.0.0`, repo: { github }, files: { 'index.js': 'source' } },
+  ])
+  assert.deepEqual(inventoryOf(modules).packages, [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0', '2.0.0', '3.0.0'] }])
+  assert.deepEqual(inventoryOf(modules, ['node_modules/copy1/node_modules/dep/index.js']).packages,
+    [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'], github: 'org/moved' }])
+})
+
 test('audit presence and reason scopes require code evidence, including version-bounded browser corrections', () => {
   const modules = [
     ['node_modules/ws', { name: 'ws', version: '8.21.1', files: { 'package.json': '{}', 'browser.js': 'stub', 'lib/websocket.js': 'code' } }],

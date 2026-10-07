@@ -9,7 +9,7 @@ export interface SkippedAdvisoryPackage {
   because: string
 }
 export interface BundleAdvisoryInventory { packages: Package[]; skipped: SkippedAdvisoryPackage[] }
-interface BundleModule { ecosystem?: string; name?: string; version?: string; files: Record<string, unknown> }
+interface BundleModule { ecosystem?: string; name?: string; version?: string; repo?: { github?: Package['github'] }; files: Record<string, unknown> }
 
 // Match Stasis's audit evidence rules, including their verified version bounds:
 // https://github.com/PreventiveMeasures/stasis/blob/2bd4c14354da9888c00ab45fa89740413099b5dc/stasis/src/audit-corrections.js
@@ -47,7 +47,7 @@ export function bundleAdvisoryInventory(details: BundleDetails, paths: Iterable<
   const modules = (details.bundle as { modules?: ReadonlyMap<string, BundleModule> } | undefined)?.modules
   if (details.kind !== 'stasis' || !modules) return { packages: [], skipped: [] }
   const selected = paths === null ? null : new Set(paths)
-  const packages = new Map<string, { ecosystem: Package['ecosystem']; name: string; versions: Set<string> }>()
+  const packages = new Map<string, { ecosystem: Package['ecosystem']; name: string; versions: Set<string>; github?: Package['github'] | null }>()
   const skipped = new Map<string, SkippedAdvisoryPackage>()
   for (const [dir, info] of modules) {
     if (dir === '.') continue
@@ -65,11 +65,19 @@ export function bundleAdvisoryInventory(details: BundleDetails, paths: Iterable<
     const auditedVersion = ecosystem === 'github' && version === '.' ? '0.0.0' : version
     const key = JSON.stringify([ecosystem, ecosystem === 'github' ? name.toLowerCase() : name])
     if (!packages.has(key)) packages.set(key, { ecosystem, name, versions: new Set() })
-    packages.get(key)!.versions.add(auditedVersion)
+    const pkg = packages.get(key)!
+    pkg.versions.add(auditedVersion)
+    const github = ecosystem === 'github' ? undefined : info.repo?.github
+    if (github !== undefined) {
+      // Upstream accepts one repository per package. Conflicting hints (for
+      // example, versions from before and after a move) use registry discovery.
+      if (pkg.github === undefined) pkg.github = github
+      else if (pkg.github !== null && pkg.github.toLowerCase() !== github.toLowerCase()) pkg.github = null
+    }
   }
   const byPackage = (a: { ecosystem: string; name: string }, b: { ecosystem: string; name: string }) => a.ecosystem.localeCompare(b.ecosystem) || a.name.localeCompare(b.name)
   return {
-    packages: [...packages.values()].map(pkg => ({ ...pkg, versions: [...pkg.versions].toSorted() })).toSorted(byPackage),
+    packages: [...packages.values()].map(({ github, ...pkg }) => ({ ...pkg, versions: [...pkg.versions].toSorted(), ...(github ? { github } : {}) })).toSorted(byPackage),
     skipped: [...skipped.values()].toSorted((a, b) => byPackage(a, b) || a.version.localeCompare(b.version)),
   }
 }

@@ -12,7 +12,8 @@ import { bundleFileSizes, bundleSourcesAsMap, bundleUnsizedFiles } from './bundl
 // out. Either way its sizes are not file sizes, so it is read for its
 // hashes alone and rebuilt on open.
 // Version 3 also retains the bundle's repository and package origin metadata.
-export const BUNDLE_METADATA_VERSION = 3
+// Version 4 retains dependency repositories as well.
+export const BUNDLE_METADATA_VERSION = 4
 const INDEX_VERSION = BUNDLE_METADATA_VERSION
 const hashJobs = new WeakMap()
 const SOURCE_TABS = new Set(['terminal', 'code', 'search', 'compare'])
@@ -86,7 +87,7 @@ export async function createBundleMetadata(details) {
       for (const [dir, info] of b.modules) {
         const target = dir.split('/').includes('node_modules') ? modules : sources
         Object.defineProperty(target, dir, { enumerable: true, value: {
-          name: info.name, version: info.version, ecosystem: info.ecosystem,
+          name: info.name, version: info.version, ecosystem: info.ecosystem, repo: info.repo,
           files: Object.fromEntries(Object.keys(info.files).map((path) => [path, null])),
         } })
       }
@@ -115,7 +116,7 @@ export function createBundleSummary(details, metadata) {
 // answer report lookups, but an open rebuilds it for current sizes, line
 // counts and origin metadata.
 export function parseBundleMetadata(data, integrity) {
-  if (![1, 2, INDEX_VERSION].includes(data?.version) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
+  if (![1, 2, 3, INDEX_VERSION].includes(data?.version) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
       || !Number.isSafeInteger(data.size) || data.size < 0 || !Array.isArray(data.files)) throw new Error('Invalid bundle metadata')
   const stale = data.version !== INDEX_VERSION
   const legacySizes = data.version === 1
