@@ -230,6 +230,26 @@ test('Code retains the dependencies row for bundles containing only multiple Sol
   }
 })
 
+test('Code search marks each match in its rail row and keeps far matches in view', t => {
+  t.after(() => Object.assign(state, { bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '' }))
+  const entry = { name: 'search.stasis', integrity: 'sha512-code-search-marks' }
+  const content = `const Needle = needle\n${'x'.repeat(50)} <needle>\n        indented(needle)\nnope`
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['node_modules/pkg', { name: 'pkg', version: '1.0.0', files: { 'index.js': content } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleSourceFile: 'node_modules/pkg/index.js', bundleCodeSearchMode: 'code', bundleCodeSearchQuery: 'needle',
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
+  const rows = [...rail.matchAll(/<span class="bundle-code-search-hit-text mono">(.*?)<\/span>\s*<\/button>/gsu)].map(m => m[1])
+  const mark = text => `<mark class="bundle-search-mark">${text}</mark>`
+  assert.deepEqual(rows, [
+    `const ${mark('Needle')} = ${mark('needle')}`,
+    `<span class="bundle-search-clip">…</span>${'x'.repeat(10)} <${mark('needle')}>`,
+    `        indented(${mark('needle')})`,
+  ])
+})
+
 test('Code package tooltips include recorded identities and counts even while filtering', () => {
   const entry = { name: 'npm.stasis', integrity: 'sha512-package-tooltip' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([

@@ -1028,18 +1028,37 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
   return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true, formats, sources)
 }
 
+// The Code rail's hit rows fit ~40 mono chars at the default rail
+// width before the CSS ellipsis, so a match further along would be
+// marked but off screen. When the first match sits past
+// RAIL_HIT_VISIBLE chars of text (indentation doesn't count — the row
+// collapses it), start the row RAIL_HIT_LEAD chars before the match
+// behind a `…`. RAIL_HIT_MAX caps the rendered text.
+const RAIL_HIT_MAX = 200
+const RAIL_HIT_VISIBLE = 28
+const RAIL_HIT_LEAD = 12
+
+function clipRailHit(text, ranges) {
+  const first = ranges.length > 0 ? ranges[0][0] : 0
+  const indent = text.length - text.trimStart().length
+  const from = first - indent > RAIL_HIT_VISIBLE ? first - RAIL_HIT_LEAD : 0
+  return sliceSearchLine(text, ranges, from, RAIL_HIT_MAX)
+}
+
 // Code-mode result pane — flat list of files, each with up to
 // `MAX_HITS_PER_FILE` matching lines underneath. Each hit is a
 // click target that selects the file AND scrolls the source
 // viewer to the matching line (via `data-bundle-view-line`,
 // which the events.js delegate forwards to the existing
-// scroll-to-line path). Line text is shown truncated. Strict
-// substring search; empty query shows a hint.
+// scroll-to-line path). Line text is shown truncated, with each match
+// marked as in the Search tab. Case-insensitive substring search (the
+// Search tab's matcher with both toggles off); empty query shows a
+// hint.
 function renderBundleCodeContentResults(sources, query, currentPath, prefix = '') {
   if (!query) {
     return html`<div class="bundle-code-search-hint">Type to search across every source in this bundle.</div>`
   }
-  const q = query.toLowerCase()
+  const matcher = buildSearchMatcher(query, false, false)
   const MAX_HITS_PER_FILE = 20
   const MAX_FILES = 100
   const results = []
@@ -1049,12 +1068,11 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
     const hits = []
     const lines = content.split('\n')
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      if (line.toLowerCase().includes(q)) {
-        hits.push({ ln: i + 1, text: line })
-        totalHits++
-        if (hits.length >= MAX_HITS_PER_FILE) break
-      }
+      const ranges = matcher.ranges(lines[i])
+      if (ranges.length === 0) continue
+      hits.push({ ln: i + 1, text: lines[i], ranges })
+      totalHits++
+      if (hits.length >= MAX_HITS_PER_FILE) break
     }
     if (hits.length > 0) results.push({ path, hits })
     if (results.length >= MAX_FILES) break
@@ -1074,7 +1092,9 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
         data-tooltip-truncated data-tooltip=${p}
       >${bare}</button>
       <ul class="bundle-code-search-hits">
-        ${hits.map((h) => html`<li class="bundle-code-search-hit">
+        ${hits.map((h) => {
+          const clip = clipRailHit(h.text, h.ranges)
+          return html`<li class="bundle-code-search-hit">
           <button
             type="button"
             class="bundle-code-search-hit-link"
@@ -1083,9 +1103,12 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
             data-bundle-view-scroll-block="start"
           >
             <span class="bundle-code-search-hit-ln">${h.ln}</span>
-            <span class="bundle-code-search-hit-text mono">${h.text.slice(0, 200)}</span>
+            <span class="bundle-code-search-hit-text mono">${clip.clipped
+              ? html`<span class="bundle-search-clip">…</span>`
+              : nothing}${renderSearchMarks(clip.text, clip.ranges)}</span>
           </button>
-        </li>`)}
+        </li>`
+        })}
       </ul>
     </div>`
     })}
@@ -1507,6 +1530,13 @@ function clipSearchLine(text, ranges, max) {
   if (text.length <= max) return { text, ranges, clipped: false }
   const firstStart = ranges.length > 0 ? ranges[0][0] : 0
   const from = firstStart > max - 60 ? Math.max(0, firstStart - 60) : 0
+  return sliceSearchLine(text, ranges, from, max)
+}
+
+// Cut `text` to `max` chars starting at `from`, shifting the match
+// ranges into the slice (spans cut by an edge are clamped, spans
+// outside it dropped). `clipped` reports a cut head.
+function sliceSearchLine(text, ranges, from, max) {
   const slice = text.slice(from, from + max)
   if (from === 0) return { text: slice, ranges, clipped: false }
   const shifted = []
