@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { layoutDependencyLayers } from '../ui/view/graph/layered-layout.js'
+import { layoutFilesVogel } from '../ui/view/graph/layout.js'
 import { bundleLayerRoots } from '../ui/view/bundle-graph-inputs.js'
 
 // data.js → utils.js → format.js → frontend-global.js throws at
@@ -47,6 +48,19 @@ function graphFrom(treeData, { ownCounts = new Map(), severitySets = null, color
     pkgOf: bundlePkgOf,
   })
 }
+
+it('the flat sunflower shortens drawn links between aggregated package nodes', () => {
+  const files = Array.from({ length: 120 }, (_, i) => `node_modules/pkg${i}/index.js`)
+  const graph = buildPackageGraph(graphFrom(Object.fromEntries(files.map((file, i) => [file, { imports: [files[(i + 1) % files.length]] }]))))
+  layoutFilesVogel(graph, 1000, 800)
+  const length = graph.edges.reduce((sum, edge) => {
+    const a = graph.nodeByFile.get(edge.a), b = graph.nodeByFile.get(edge.b)
+    return sum + Math.hypot(a.x - b.x, a.y - b.y)
+  }, 0)
+  assert.equal(graph.nodes.length, 120)
+  assert.equal(graph.edges.length, 120)
+  assert.ok(length / graph.edges.length < 140, 'linked packages occupy nearby sunflower slots')
+})
 
 describe('fourth dependency view files/packages switch', () => {
   it('defaults to files through 100 nodes and always aggregates beyond that', () => {

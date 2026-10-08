@@ -236,11 +236,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // Package-node layout — same split the package-focus mode makes
   // for files, at the same 50-node limit: force-directed while the
   // O(N²)-per-iteration solver stays interactive (clusters by
-  // import structure), degree-sorted Vogel sunflower past it
-  // (most-connected packages land at center). The package graph's
+  // import structure), fixed-slot Vogel sunflower past it with
+  // edge-length-optimized node assignment. The package graph's
   // `importsOf` already has the (ids, imports-map) shape the
-  // file-level solver consumes, and layoutFilesVogel only reads
-  // `.nodes` / `.deg`, which the package graph also carries.
+  // file-level solver consumes; layoutFilesVogel uses its nodes and
+  // drawn edges just as it does for the file graph.
   function layoutPackages(pg, w, h) {
     if (pg.nodes.length > 50) {
       layoutFilesVogel(pg, w, h)
@@ -304,9 +304,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         // structural-cluster look on small subgraphs (a few dozen
         // files), but it's O(N²) per iteration and locks up the UI
         // on packages with hundreds of files. Switch to a
-        // file-level Vogel sunflower past 50 files — instant,
-        // consistent with the spiral view, hubs still land at
-        // center via the degree-desc sort.
+        // file-level Vogel sunflower past 50 files, using a bounded
+        // assignment search to shorten edges on its fixed positions.
         if (graph.nodes.length > 50) {
           layoutFilesVogel(graph, layoutW, layoutH)
         } else {

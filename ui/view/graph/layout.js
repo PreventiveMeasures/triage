@@ -1,3 +1,5 @@
+import { optimizeSunflowerOrder } from './sunflower-order.js'
+
 // Spiral layout for the v2 graph. Each package becomes a disk
 // in a Vogel sunflower (golden-angle steps + sqrt-radius
 // growth, sorted by cross-package degree desc so the most
@@ -76,8 +78,8 @@ function findEntryPkg(graph) {
   return null
 }
 
-// Distribute files inside their per-package disks. Two-phase,
-// same approach as the package-level Spiral above at file scope:
+// Seed files inside their per-package disks, then improve the assignment
+// by edge length without moving any slot or exchanging files across disks:
 //
 //   1. Vogel slot positions. File index within the package's
 //      sorted list maps to a fixed (angle, radius) via the same
@@ -94,15 +96,16 @@ function findEntryPkg(graph) {
 //      files with no placed neighbours take the lowest unused index
 //      in their band, inheriting the golden-angle spread.
 //
-// Net effect: files with cross-package edges drift to the disk rim
+// This seeds files with cross-package edges toward the disk rim
 // facing the connected packages, so those edges run as short radial
 // chords instead of long diagonals.
 //
-// Hub-pull-to-center is gated on hub count: past 5 hubs (common on a
+// The seed's hub-pull-to-center is gated on hub count: past 5 hubs (common on a
 // large public-API package), pulling them all into the inner 30%
 // piles them into an unreadable blob. Above the limit, hubs share
 // the outer band with members and rely on their bigger radius +
-// halo + ring as the "this is a hub" cue.
+// halo + ring as the "this is a hub" cue. The final optimizer may exchange
+// hubs and members across these bands when that shortens the drawn edges.
 const HUB_PULL_LIMIT = 5
 function placeFilesInDisk(graph, pkgInfo) {
   // Files-per-package buckets, in priority order (hubs first by
@@ -232,6 +235,7 @@ function placeFilesInDisk(graph, pkgInfo) {
       placedY.set(f.file, f.y)
     }
   }
+  optimizeSunflowerOrder(graph, [...filesByPkg.values()])
 }
 
 // "Spiral" — Vogel sunflower positions ((i × 137.5°,
@@ -503,10 +507,9 @@ export function layoutSpiral(graph, w, h) {
 // when the package is too large for graph v1's force-directed
 // solver to finish in interactive time (>50 files). Treats each
 // file as its own seed in a sunflower spiral: golden-angle
-// steps + sqrt-radius growth, sorted by intra-package degree
-// desc so hubs land near the center and leaves drift to the
-// rim. Same per-area uniform density argument as layoutSpiral,
-// just operating on individual files instead of packages.
+// steps + sqrt-radius growth. Degree-desc order seeds the assignment;
+// swaps then shorten edges without changing any of those positions.
+// Also used for the flat package graph, whose edges join package nodes.
 export function layoutFilesVogel(graph, w, h) {
   const cx = w / 2, cy = h / 2
   const unitToPx = Math.min(w, h) / 2
@@ -520,4 +523,5 @@ export function layoutFilesVogel(graph, w, h) {
     n.x = cx + Math.cos(angle) * band * 0.85 * unitToPx
     n.y = cy + Math.sin(angle) * band * 0.85 * unitToPx
   }
+  optimizeSunflowerOrder(graph, [graph.nodes])
 }
