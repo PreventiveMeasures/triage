@@ -155,6 +155,9 @@ test('public advisory tabs use share permissions; managers retain access outside
   assert.equal(showAdvisoriesTab({ ...entry, managedId: undefined }, null), true, 'local bundles keep their existing visibility')
   state.managedSession = { role: 'admin' }
   assert.equal(showAdvisoriesTab({ ...entry, name: 'bundle.map' }, null), false)
+  assert.equal(showAdvisoriesTab({ ...entry, name: 'bundle.map' }, null, true), true, 'switching to a sourcemap keeps the open tab')
+  state.managedSession = null
+  assert.equal(showAdvisoriesTab(entry, null, true), false, 'access applies to the open tab too')
 })
 
 test('skipped dependencies remain visible when none of the bundle could be audited', async () => {
@@ -197,12 +200,14 @@ test('managed bundles without dependency packages hide the tab once their module
   const withModules = (...modules) => ({ managedId: entry.managedId, integrity: entry.integrity, kind: 'stasis', bundle: { modules: new Map([own, ...modules]) } })
   assert.equal(showAdvisoriesTab(entry, null), true, 'shown while the bundle loads')
   assert.equal(showAdvisoriesTab(entry, withModules()), false)
+  assert.equal(showAdvisoriesTab(entry, withModules(), true), true, 'the open tab stays')
   assert.equal(showAdvisoriesTab(entry, withModules(['packages/lib', { name: 'lib', version: '1.0.0', files: {} }])), false, 'a workspace package is no dependency')
   assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: null, files: {} }])), false, 'v0 modules carry no versions')
   assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: '1.0.0', files: {} }])), true)
   assert.equal(showAdvisoriesTab(entry, withModules(['vendor/log', { ecosystem: 'cargo', name: 'log', version: '0.4.22', files: {} }])), true)
   state.managedSession = { id: 'alice', role: 'none', csrfToken: 'session' }
   assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: '1.0.0', files: {} }])), false, 'access still applies')
+  assert.equal(showAdvisoriesTab(entry, withModules(), true), false, 'even to the open tab')
 })
 
 test('managed advisories show neither button for a bundle without dependency packages', async () => {

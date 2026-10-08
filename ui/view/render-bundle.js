@@ -1802,31 +1802,26 @@ function renderBundleSlide(entry) {
   // non-stasis bundles hide immediately, stasis bundles stay
   // optimistically visible across the parse window so a switch
   // between two stasis bundles doesn't flicker the tab away mid-
-  // load, and v0 stasis bundles hide post-parse once we've
-  // confirmed there's no version metadata. The tab is rendered as
+  // load, and v0 stasis bundles (or bundles without dependency
+  // packages) hide post-parse once we've confirmed there's nothing to
+  // audit — unless Advisories is the open tab, which a bundle switch or
+  // a link keeps open. The tab is rendered as
   // the LEFTMOST entry on purpose, so the post-parse stamp-in for
   // a fresh stasis bundle pushes the other tabs right rather than
   // landing in their middle — no in-flight click theft.
-  const showAdvisories = showAdvisoriesTab(entry, state.bundleDetails)
+  const showAdvisories = showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
   // Coerce a `state.bundleDetailsTab === 'advisories'` value back to
-  // 'overview' when the tab button is hidden (no security access, sourcemap bundle,
-  // post-parse v0 stasis, or a persisted state carried over from
-  // another bundle). `showAdvisoriesTab` returns true through the
-  // parse window for stasis-by-filename bundles, so this coercion
-  // doesn't fire prematurely on a stasis → stasis navigation.
+  // 'overview' only without security access. A sourcemap, or a bundle
+  // with nothing to audit, keeps the open tab.
   if (state.bundleDetailsTab === 'advisories' && !showAdvisories) {
     state.bundleDetailsTab = 'overview'
   }
   // Compare needs a second eligible bundle (the same repo in managed). With only
   // the open bundle present the picker would have nothing to offer, so
-  // the tab is hidden and a persisted 'compare' selection (carried
-  // over from when a second bundle existed, or from another bundle's
-  // state) coerces back to Overview — same pattern as the advisories
-  // coercion above.
-  const canCompare = bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).length > 0
-  if (state.bundleDetailsTab === 'compare' && !canCompare) {
-    state.bundleDetailsTab = 'overview'
-  }
+  // the tab is hidden — unless Compare is the open tab: a bundle switch or
+  // a link keeps it open, and its body says there is nothing to compare.
+  const canCompare = state.bundleDetailsTab === 'compare'
+    || bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).length > 0
   // Managed bundles have no Issues tab: Code shows each file's issues. A
   // persisted or routed 'issues' selection coerces back to Overview.
   const showIssues = !isManagedUiMode()
@@ -1852,8 +1847,9 @@ function renderBundleSlide(entry) {
   // module-scoped (keyed by integrity); a re-render with the entry
   // already cached is a no-op. Gated on `detailsParsed` so the parse
   // window of a bundle switch can't issue a query for the PREVIOUS
-  // bundle's (still-attached) module inventory.
-  if (tab === 'advisories' && showAdvisories && detailsParsed) {
+  // bundle's (still-attached) module inventory, and on a Stasis bundle:
+  // a sourcemap's open tab has nothing to audit.
+  if (tab === 'advisories' && showAdvisories && detailsParsed && details.kind === 'stasis') {
     ensureBundleAdvisories(details, render).catch(() => {})
   }
   // Outside managed mode, Issues is always in the tab strip — the body's

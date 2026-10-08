@@ -28,7 +28,7 @@ export async function refreshManagedBundleView(state, teams, { fetchCatalog, isC
   state.bundles = entries
   state.currentManagedTeam = team?.id ?? null
   render()
-  // Rendering can fall back from Compare when its last candidate disappears.
+  // Rendering can fall back from Advisories when security access is lost.
   replaceRoute(managedBundleRoute(teams, entry, state.currentManagedTeam, state.bundleDetailsTab))
   return true
 }

@@ -79,6 +79,47 @@ test('managed bundles have no Issues tab, and an Issues selection restores Overv
   }
 })
 
+test('a managed bundle without dependency packages keeps an open Advisories tab, as a link or bundle switch opens it', async t => {
+  const previous = { managedSession: state.managedSession, serverMode: state.serverMode, localMode: state.localMode }
+  t.after(() => Object.assign(state, previous))
+  const entry = { managedId: 'own-only', name: 'own-only.br', integrity: 'sha512-own-only' }
+  const full = { integrity: entry.integrity, kind: 'stasis', size: 3, bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'app' } }]]),
+  }) }
+  // Managed bundles open with their metadata already parsed: no load window keeps the tab.
+  // (The entry makes it managed; details without its id leave the audit unrequested.)
+  const details = parseBundleMetadata(await createBundleMetadata(full), entry.integrity)
+  Object.assign(state, { serverMode: 'managed', localMode: false, managedSession: { role: 'admin' },
+    selectedBundle: entry.integrity, bundles: [entry], bundleDetails: details })
+  for (const [tab, shown] of [['advisories', true], ['overview', false]]) {
+    state.bundleDetailsTab = tab
+    assert.equal(/data-bundle-tab="advisories"/u.test(renderText(renderBundlesList([entry]))), shown)
+    assert.equal(state.bundleDetailsTab, tab)
+  }
+})
+
+test('switching to a sourcemap keeps the open Advisories tab', t => {
+  const previous = { managedSession: state.managedSession }
+  t.after(() => Object.assign(state, previous))
+  const entry = { managedId: 'map-id', name: 'app.map', integrity: 'sha512-map' }
+  const details = { integrity: entry.integrity, kind: 'sourcemap', json: { version: 3, sources: [] }, sourceSizes: [] }
+  Object.assign(state, { managedSession: { role: 'admin' }, selectedBundle: entry.integrity, bundles: [entry], bundleDetails: details, bundleDetailsTab: 'advisories' })
+  const text = renderText(renderBundlesList([entry]))
+  assert.match(text, /data-bundle-tab="advisories"/u)
+  assert.match(text, /Advisories are only available for stasis bundles/u)
+  assert.equal(state.bundleDetailsTab, 'advisories')
+})
+
+test('without a second bundle, an open Compare tab stays rather than falling back to Overview', () => {
+  const entry = { name: 'only.map', integrity: 'sha512-only' }
+  Object.assign(state, { selectedBundle: entry.integrity, bundles: [entry] })
+  for (const [tab, shown] of [['compare', true], ['overview', false]]) {
+    state.bundleDetailsTab = tab
+    assert.equal(/data-bundle-tab="compare"/u.test(renderText(renderBundlesList([entry]))), shown)
+    assert.equal(state.bundleDetailsTab, tab)
+  }
+})
+
 test('unattached managed bundle headers return to Manage Bundles before the bundle identity', t => {
   const previous = { serverMode: state.serverMode, localMode: state.localMode }
   const previousDocument = globalThis.document

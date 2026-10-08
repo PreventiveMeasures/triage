@@ -120,11 +120,15 @@ function managedBundleHasNoDependencies(details) {
 //   * stasis filename, matching parsed details → defer to
 //     `bundleHasAdvisoryCandidates`, or for a managed bundle with module
 //     metadata `bundleHasDependencyPackages` (so v0 stasis, and bundles
-//     without dependency packages, correctly hide). The server audits a
-//     managed bundle without the viewer's metadata, so none keeps it.
-export function showAdvisoriesTab(entry, details) {
-  if (!entry || bundleKind(entry.name) !== 'stasis') return false
-  if (entry.managedId && !canReadManagedAdvisories(entry)) return false
+//     without dependency packages, hide). The server audits a managed
+//     bundle without the viewer's metadata, so none keeps it.
+// While it is the `selected` tab, any bundle the viewer may audit keeps it,
+// sourcemaps included: switching bundles, or a link, keeps Advisories open
+// rather than falling back to Overview, and its body says why it is empty.
+export function showAdvisoriesTab(entry, details, selected = false) {
+  if (!entry || (entry.managedId && !canReadManagedAdvisories(entry))) return false
+  if (selected) return true
+  if (bundleKind(entry.name) !== 'stasis') return false
   if (!details || details.integrity !== entry.integrity) return true
   if (entry.managedId) return !details.bundle || bundleHasDependencyPackages(details)
   return bundleHasAdvisoryCandidates(details)
