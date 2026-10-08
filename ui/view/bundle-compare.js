@@ -457,7 +457,7 @@ class BundleCompare extends LitElement {
     </div>`
   }
 
-  _renderPicker(others, hasTarget) {
+  _renderPicker(others, hasTarget, scopeSelector) {
     const baseName = this._nameFor(this.integrity)
     return html`<div class="bundle-compare-picker">
       <span class="bundle-compare-base" data-tooltip-truncated data-tooltip=${baseName}>${baseName}</span>
@@ -465,14 +465,15 @@ class BundleCompare extends LitElement {
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare with</span>
         <bundle-selector .bundles=${others} .value=${this._targetIntegrity} label="Bundle to compare with" placeholder="Choose a bundle…" @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
-        ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>` : nothing}
+        ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>
+          <button
+            type="button"
+            class="bundle-compare-swap"
+            @click=${() => this._swap()}
+            aria-label="Swap the two bundles"
+          ><span class="bundle-compare-swap-icon" aria-hidden="true">↔</span>Swap</button>` : nothing}
       </div>
-      ${hasTarget ? html`<button
-        type="button"
-        class="bundle-compare-swap"
-        @click=${() => this._swap()}
-        aria-label="Swap the two bundles"
-      ><span class="bundle-compare-swap-icon" aria-hidden="true">↔</span>Swap</button>` : nothing}
+      ${scopeSelector}
     </div>`
   }
 
@@ -501,11 +502,16 @@ class BundleCompare extends LitElement {
     // rendering a diff against a bundle the user can't see in the list.
     const hasTarget = Boolean(this._targetIntegrity)
       && others.some((o) => o.integrity === this._targetIntegrity)
+    const scopes = this._baseReady ? bundleCompareScopes(this.details, hasTarget ? this._otherDetails : null) : []
+    const scopeSelector = scopes.length > 0
+      ? html`<bundle-scope-selector .reasons=${scopes} .value=${this._scope} label="Compare scope" @scope-change=${event => { this._scope = event.detail.value }}></bundle-scope-selector>`
+      : nothing
     // Picker is always present (when there's anything to pick) so the
     // user can switch the compared bundle without leaving the tab; the
-    // swap button rides in it, shown only once a target is live.
-    const picker = others.length > 0 ? this._renderPicker(others, hasTarget) : nothing
-    const scopes = this._baseReady ? bundleCompareScopes(this.details, hasTarget ? this._otherDetails : null) : []
+    // swap button rides next to the clear button once a target is live,
+    // and the scope selector sits at the row's right end, so the head is
+    // one row before a pick and two (picker, summary) after.
+    const picker = others.length > 0 ? this._renderPicker(others, hasTarget, scopeSelector) : scopeSelector
     const ready = hasTarget
       && this._status === 'ready'
       && this._otherDetails
@@ -532,7 +538,6 @@ class BundleCompare extends LitElement {
     return html`<div class="bundle-compare">
       <header class="bundle-compare-head">
         ${picker}
-        ${scopes.length > 0 ? html`<bundle-scope-selector .reasons=${scopes} .value=${this._scope} label="Compare scope" @scope-change=${event => { this._scope = event.detail.value }}></bundle-scope-selector>` : nothing}
         ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
       </header>
       <div class="bundle-compare-body">${body}</div>
