@@ -4,7 +4,7 @@ import '../ui/view/frontend-install.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { buildSizeFlow, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
 import { SizeFlowCanvas, canvasSizeFlow } from '../ui/view/graph/size-flow-canvas.js'
-import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside } from '../ui/view/graph/size-flow-hit.js'
+import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside, flowVisibleRibbons } from '../ui/view/graph/size-flow-hit.js'
 
 test('flow hit index matches exhaustive bounds, preserving draw order and long crossings', () => {
   const entries = Array.from({ length: 15000 }, (_, order) => {
@@ -24,7 +24,25 @@ test('flow hit index matches exhaustive bounds, preserving draw order and long c
   }
 })
 
-function mounted(t) {
+test('live ribbon queries count only visible ribbons, preserving crossings and paint order', () => {
+  const entries = Array.from({ length: 15000 }, (_, order) => {
+    const left = (order * 137) % 12000, top = (order * 31) % 5000
+    return { order, left, right: left + 5 + order % 400, top, bottom: top + 26 + order % 300,
+      ...(order % 3 === 0 ? { node: {} } : { edge: {} }) }
+  })
+  entries.push({ order: entries.length, edge: {}, ...flowEdgeBounds({ x1: -100, x2: 100, width1: 10, width2: 20, y1: 100, y2: 0, returning: true }) })
+  const index = flowHitIndex(entries)
+  for (const view of [{ left: 0, right: 50, top: 110, bottom: 120 }, ...Array.from({ length: 20 }, (_, i) =>
+    ({ left: i * 277, right: i * 277 + 300, top: i * 101, bottom: i * 101 + 600 }))]) {
+    const expected = entries.filter(entry => entry.edge && !flowOutside(entry, view))
+    assert.deepEqual(flowVisibleRibbons(index, view, expected.length), expected, 'the cutoff is inclusive and paint order is retained')
+    assert.equal(flowVisibleRibbons(index, view, expected.length - 1), null, 'dense views use the complete cached image')
+  }
+  assert.deepEqual(flowVisibleRibbons(index, { left: -500, right: -400, top: -500, bottom: -400 }, 500), [])
+  assert.deepEqual(flowVisibleRibbons(null, {}, 500), [])
+})
+
+function mounted(t, { dense = false } = {}) {
   const saved = ['document', 'getComputedStyle', 'Path2D', 'requestAnimationFrame', 'cancelAnimationFrame', 'devicePixelRatio']
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)])
   const frames = new Map()
@@ -54,8 +72,10 @@ function mounted(t) {
   const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: () => 'app' })
   graph.flowEntries = [{ file: 'entry.js' }]
   const model = buildSizeFlow(graph)
+  const layout = layoutSizeFlow(model)
+  if (dense) layout.edges = Array.from({ length: 1000 }, (_, i) => layout.edges.map(edge => ({ ...edge, id: i ? `${edge.id}:${i}` : edge.id }))).flat()
   const host = { model, graph, width: 1100, height: 600, pan: { x: 0, y: 0 }, zoom: 1, minSize: 0,
-    layout: layoutSizeFlow(model), matches: () => true, renderRoot: root,
+    layout, matches: () => true, renderRoot: root,
     select(node, edge) { this.selection = node ? { node, edge } : null }, follow(node) { this.focus = node },
   }
   const chart = new SizeFlowCanvas(host)
@@ -139,9 +159,49 @@ test('keyboard navigation starts at the first bar without skipping and stays wit
   assert.equal(host.selection, null, 'empty graphs do not activate a nonexistent bar')
 })
 
+test('sparse views repaint ribbons at the current scale on every zoom frame', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { chart, host, base, bars, frame, frames, paths } = mounted(t)
+  const paintPath = t.mock.method(chart, 'paintPath'), paints = base.clears()
+  host.fitted = false
+  for (let i = 0; i < 10; i++) {
+    const before = paintPath.mock.callCount()
+    host.zoom *= 1.05; chart.viewportChanged(); frame(); t.mock.timers.tick(16)
+    assert.equal(chart.preview, false, 'a light view bypasses the cached preview immediately')
+    assert.equal(base.clears(), paints + i + 1)
+    assert.equal(chart.paintedViewport.zoom, host.zoom)
+    const visible = chart.paths.filter(entry => !flowOutside(entry, chart.view))
+    assert.deepEqual(paintPath.mock.calls.slice(before).map(call => call.arguments[1]), visible)
+  }
+  assert.equal(paths(), host.layout.edges.length, 'live repaint reuses parsed paths')
+  assert.equal(bars.copies(), 0, 'live ribbons do not require a raster preview')
+  t.mock.timers.tick(100)
+  assert.equal(frames.size, 0, 'live frames cancel the redundant idle repaint')
+})
+
+test('panning between dense and empty views switches modes without stale preview pixels', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { chart, host, base, bars, frame } = mounted(t, { dense: true })
+  host.fitted = false; host.zoom = 1.1; chart.viewportChanged(); frame()
+  assert.equal(chart.previewVisible, true)
+  const barPaints = bars.clears(), overview = chart.overview, paints = base.clears()
+  host.pan.y = -10000; chart.viewportChanged(); frame()
+  assert.equal(chart.previewVisible, false)
+  assert.equal(base.clears(), paints + 1, 'the newly empty viewport is painted immediately')
+  assert.equal(bars.clears(), barPaints + 1, 'cached ribbon pixels are cleared from the bars layer')
+  assert.deepEqual(chart.visiblePaths, [])
+  host.pan.y = 0; chart.viewportChanged(); frame()
+  assert.equal(chart.previewVisible, true, 'returning to dense ribbons restores the cached mode')
+  assert.equal(base.clears(), paints + 1)
+  assert.equal(bars.copyCalls.at(-1)[0], overview.canvas, 'the full overview covers the area absent from the empty raster')
+  t.mock.timers.tick(100); frame(); frame(); frame()
+  assert.equal(chart.previewVisible, false)
+  assert.equal(base.clears(), paints + 2, 'dense ribbons are refined when the gesture settles')
+})
+
 test('continuous zoom reprojects ribbons, redraws bars each frame, and refines ribbons after input settles', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { chart, host, base, bars, overlay, frame, frames } = mounted(t)
+  const { chart, host, base, bars, overlay, frame, frames } = mounted(t, { dense: true })
   assert.ok(chart.overview, 'a fitted overview covers newly exposed regions')
   const paints = base.clears(), snapshot = chart.paintedViewport
   const paintNode = t.mock.method(chart, 'paintNode')
@@ -180,7 +240,7 @@ test('continuous zoom reprojects ribbons, redraws bars each frame, and refines r
 
 test('bar labels become readable during zoom without waiting for the ribbon repaint', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { chart, host, base, bars, frame } = mounted(t)
+  const { chart, host, base, bars, frame } = mounted(t, { dense: true })
   const paints = base.clears(), texts = bars.texts.length
   host.fitted = false; host.zoom = .25; chart.viewportChanged(); frame()
   assert.equal(bars.texts.length, texts, 'unreadable subpixel text is omitted')
@@ -192,7 +252,7 @@ test('bar labels become readable during zoom without waiting for the ribbon repa
 
 test('fit, viewport resize, and changed graph filters bypass the zoom preview', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { chart, host, root, base, frame } = mounted(t)
+  const { chart, host, root, base, frame } = mounted(t, { dense: true })
   const startPreview = () => { host.fitted = false; host.zoom *= 1.1; chart.viewportChanged(); frame(); assert.equal(chart.preview, true) }
   startPreview()
   let paints = base.clears()

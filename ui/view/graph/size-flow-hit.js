@@ -39,3 +39,21 @@ export function flowHitCandidates(index, x, y) {
   // Bars cover ribbons; later ribbons cover earlier ribbons, as in the SVG.
   return candidates.toSorted((a, b) => b.order - a.order)
 }
+
+// Bound the work for live zoom redraws. A dense view uses its complete cached
+// image; null signals that fallback, never a truncated list of ribbons.
+export function flowVisibleRibbons(index, view, limit) {
+  const ribbons = [], stack = index ? [index] : []
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (flowOutside(node, view)) continue
+    if (node.entries) {
+      for (const entry of node.entries) {
+        if (!entry.edge || flowOutside(entry, view)) continue
+        ribbons.push(entry)
+        if (ribbons.length > limit) return null
+      }
+    } else stack.push(...node.children)
+  }
+  return ribbons.toSorted((a, b) => a.order - b.order)
+}

@@ -4,12 +4,13 @@ import { graphBackground, textOnPackage } from './colors.js'
 import { pkgColor } from './utils.js'
 import { flowRibbon } from './size-flow-model.js'
 import { SizeFlowChart, flowEdgeTooltip, flowNodeTooltip, shortSize } from './size-flow-chart.js'
-import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside } from './size-flow-hit.js'
+import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside, flowVisibleRibbons } from './size-flow-hit.js'
 
 // This switches renderers, never truncates the graph. Small graphs keep their
 // individual SVG controls; large graphs use the same model and full geometry.
 export const canvasSizeFlow = layout => layout.nodes.length + layout.edges.length > 1500 && typeof Path2D === 'function'
 const canvasLabel = 'Import paths. Use arrow keys to explore bars, Enter to select, or the sidebar search to find a file or package.'
+const liveRibbonLimit = 500
 
 export class SizeFlowCanvas extends SizeFlowChart {
   isCanvas = true
@@ -114,6 +115,8 @@ export class SizeFlowCanvas extends SizeFlowChart {
     const { pan, zoom, width, height } = this.host, dpr = globalThis.devicePixelRatio || 1
     const key = `${this.viewportKey}:${dpr}`
     this.view = { left: -pan.x / zoom, right: (width - pan.x) / zoom, top: -pan.y / zoom, bottom: (height - pan.y) / zoom }
+    const liveRibbons = this.preview ? flowVisibleRibbons(this.index, this.view, liveRibbonLimit) : null
+    if (liveRibbons) this.stopPreview()
     if (this.preview) {
       this.drawPreview(dpr)
       this.drawBars(dpr, key, true)
@@ -129,7 +132,7 @@ export class SizeFlowCanvas extends SizeFlowChart {
     if (redraw) {
       const ctx = this.context(this.base, dpr)
       ctx.globalAlpha = 1; ctx.fillStyle = this.background; ctx.fillRect(this.view.left, this.view.top, width / zoom, height / zoom)
-      this.visiblePaths = this.paths.filter(entry => !flowOutside(entry, this.view))
+      this.visiblePaths = liveRibbons ?? this.paths.filter(entry => !flowOutside(entry, this.view))
       for (const entry of this.visiblePaths) this.paintPath(ctx, entry, this.edgeAlpha(entry.edge))
       this.baseKey = key
       this.paintedViewport = { width, height, zoom, pan: { ...pan }, dpr }

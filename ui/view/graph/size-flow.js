@@ -275,7 +275,7 @@ class SizeFlow extends LitElement {
     const edge = this.model.edgeById.get(this.selection?.edge)
     if (!node) {return html`<h3>Size flow</h3><div class="flow-metrics"><b>${shortSize(this.model.total.size)}</b><span>unique reachable source</span></div>
       <p>Bar width shows how much source leaves the bundle when a file or package is removed.</p>
-      <p>Select a bar or ribbon for details. Double-click a bar to follow its imports.</p>
+      <p>Select a bar or ribbon for details.<br>Double-click a bar to follow its imports.</p>
       ${this.model.total.missing ? html`<p>${this.model.total.missing} files have unknown sizes; totals include known bytes only.</p>` : null}
       ${this.model.weakEdges ? html`<p>${this.model.weakEdges} weak config/metadata loads excluded.</p>` : null}
       ${this.model.omittedFiles ? html`<p>${this.model.omittedFiles} files are not reachable from these entry points.</p>` : null}
