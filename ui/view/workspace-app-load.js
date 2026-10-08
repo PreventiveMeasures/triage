@@ -1,5 +1,5 @@
 import { cacheWorkspaceAppMetadata, duplicatesOf, ensureLinkedFindingsIndexed, subscribeToLinkedFindings, workspaceAppCacheToken, workspaceAppReportsCurrent } from '#client/index.js'
-import { workspaceAppMetadata } from './workspace-app.js'
+import { workspaceAppMetadata } from '../../common/workspace-app.js'
 
 let loaded = null
 let linksRevision = 0

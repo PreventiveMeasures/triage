@@ -403,12 +403,15 @@ test('bulk authorization matches individual reads for every role, manager owners
   }
 })
 
-test('catalog report versions change with grants and repository assignments without reading blobs', async t => {
+test('catalog report versions change with grants and repository assignments, reading reports only to classify a changed workspace', async t => {
   const h = await setup(t)
   const catalog = async () => (await h.request({}, { role: 'view', method: 'GET', path: '/api/teams' })).body.teams
+  const reads = () => [...new Set(h.reads.splice(0))].toSorted()
   const original = await catalog()
   assert.equal(typeof original[0].reports[0].cacheKey, 'string')
+  assert.deepEqual(reads(), ['a', 'b'], 'the published team workspace is read once to classify it')
   assert.deepEqual(await catalog(), original)
+  assert.deepEqual(reads(), [], 'an unchanged catalog reads nothing')
   await h.db.setTeamMember('team', h.users.view.userId, { dependencies: true, security: false })
   const granted = await catalog()
   assert.notEqual(granted[0].reports[0].cacheKey, original[0].reports[0].cacheKey)
@@ -416,9 +419,10 @@ test('catalog report versions change with grants and repository assignments with
   const reassigned = await catalog()
   assert.notEqual(reassigned[0].reports.find(r => r.id === 'a').cacheKey, granted[0].reports.find(r => r.id === 'a').cacheKey)
   assert.equal(reassigned[0].reports.find(r => r.id === 'b').cacheKey, granted[0].reports.find(r => r.id === 'b').cacheKey)
+  assert.deepEqual(reads(), ['a', 'b'])
   await h.db.removeTeamMember('team', h.users.view.userId)
   assert.deepEqual(await catalog(), [])
-  assert.deepEqual(h.reads, [])
+  assert.deepEqual(reads(), [])
 })
 
 test('encoded output has its own bound and never returns a partial workspace', async t => {

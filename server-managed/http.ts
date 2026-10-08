@@ -104,6 +104,7 @@ import { attachmentDisposition, sendJson, writeResponse } from './http-response.
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
+import { teamAppKey, teamAppStates } from './team-app.ts'
 import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
@@ -1557,10 +1558,15 @@ async function adminMutation(req: IncomingMessage, res: ServerResponse, deps: Ma
 // GET /api/teams — the CURRENT user's teams, each with the reports and bundles
 // attached to the team's repos, for the sidebar's per-user Teams section. Any approved
 // user (not just admin|manage); a user only ever sees their own teams.
+// Each team carries `app`, its App classification (team-app.ts), so the
+// sidebar's first paint already shows App teams collapsed.
 async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession): Promise<void> {
   let snapshot = await deps.db.getUserTeamFeedSnapshot(session.id, Date.now())
   if (!snapshot) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const summaries = await bundleSummaries(snapshot.teams.flatMap(team => team.bundles), deps.bundleCache)
+  const [summaries, classified] = await Promise.all([
+    bundleSummaries(snapshot.teams.flatMap(team => team.bundles), deps.bundleCache),
+    teamAppStates(deps.db, deps.reportStore, session.id, snapshot.teams),
+  ])
   const current = await deps.db.getFeedState(session.id, Date.now())
   if (!current) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   // Keep the post-storage authorization fence, but reload the catalog only
@@ -1570,8 +1576,11 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session
     if (!snapshot) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   }
   const { teams, revision } = snapshot
+  // The revision sent is the reloaded catalog's, so classify what changed now.
+  const apps = await teamAppStates(deps.db, deps.reportStore, session.id, teams, classified)
   sendJson(res, 200, {
-    teams: teams.map(team => ({ ...team, bundles: team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })) })),
+    teams: teams.map(team => ({ ...team, app: apps.get(teamAppKey(team)) ?? null,
+      bundles: team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })) })),
     revision,
   })
   await backfillBundleSummaries(teams.flatMap(team => team.bundles), deps.bundleCache)

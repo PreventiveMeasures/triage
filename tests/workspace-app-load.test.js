@@ -22,7 +22,7 @@ mock.module('../client/index.js', { namedExports: {
     return Promise.resolve(true)
   },
 } })
-mock.module('../ui/view/workspace-app.js', { namedExports: {
+mock.module('../common/workspace-app.js', { namedExports: {
   workspaceAppMetadata: (loaded, duplicatesOf) => {
     assert.equal(loaded, reports)
     assert.deepEqual(duplicatesOf('A'), links)

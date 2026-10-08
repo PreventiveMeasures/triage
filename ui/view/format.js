@@ -8,6 +8,8 @@ import { html, nothing } from './frontend-global.js'
 // so pulling it in does not load client state.
 import { parseFindingUrl } from '../../client/finding-link.js'
 import { formatBytes as formatByteSize } from '../scan/metrics.js'
+import { REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
+export { PARTIAL_MODES, REVALIDATE_FILTERS, activeRevalidateKinds, hasRevalidateStamp, revalidateFilterKinds } from '../../common/finding-filters.js'
 // What a finding IS — the readers shared with the report library's
 // markdown writer — lives in that library; re-exported here unchanged so
 // the viewer's callers keep one import. `revalidateKindOf` and
@@ -100,16 +102,6 @@ export function hasRevalidateField(f) { return revalidateKindOf(f) !== '' }
 // done through a reader that has already stopped seeing them.
 export function isRevalidationRow(f) { return revalidateKindOf(f) === 'revalidation' }
 
-// Does this row carry a judgement the pass made ABOUT a finding —
-// any stamp but `revalidation`, which names the pass's own row and
-// judges nothing. Raw for the same reason as the two above: it gates
-// the switch, and a gate that stopped seeing the stamps the moment
-// the layer came off would take the way back with it.
-export function hasRevalidateStamp(f) {
-  const kind = revalidateKindOf(f)
-  return kind !== '' && kind !== 'revalidation'
-}
-
 // May the layer come off for the loaded set — i.e. is the "App"
 // switch offered at all (render.js)?
 //
@@ -162,66 +154,6 @@ export function isRuledOut(f) {
 // it as 0 rather than letting it speak for the group.
 export function voidsConfidence(f) {
   return RULED_OUT.has(revalidateKind(f))
-}
-
-// What the toolbar dropdown offers, in the order it lists them —
-// answers to "did the pass leave this standing", running from yes to
-// no. Fewer options than the field has values:
-//
-//   * the `revalidation` row rides CONFIRMED — it is the pass itself,
-//     re-examining a finding it did not knock down, which is the same
-//     answer to that question;
-//   * `partial` rides it too. A partial confirmation is a yes to
-//     "does this still stand" — the pass narrowed the finding rather
-//     than knocking it down — and an option of its own would slice
-//     the standing findings in two for a distinction the reader wants
-//     the STAMP for, not a filter. It keeps its own stamp on the card.
-//   * `unknown` gets no option — a pass that couldn't tell hasn't
-//     answered it at all, so there is nothing to filter to. Those rows
-//     stay visible with no filter on, like every other row.
-export const REVALIDATE_FILTERS = [
-  { value: 'confirmed', label: 'Confirmed', kinds: ['confirmed', 'partial', 'revalidation'] },
-  { value: 'unreachable', label: 'Unreachable', kinds: ['unreachable'] },
-  { value: 'refuted', label: 'Refuted', kinds: ['refuted'] },
-]
-
-// The kinds one dropdown value covers, or null when the value names no
-// option — filters.js reads that as "no filter" rather than hiding
-// every finding behind a value it can't interpret.
-export function revalidateFilterKinds(value) {
-  return REVALIDATE_FILTERS.find((o) => o.value === value)?.kinds ?? null
-}
-
-// How finely Confirmed is drawn, once it has taken the partial rows
-// in. The toolbar cycles a chip through these inside the Confirmed row
-// (revalidate-filter.js), because "did this survive" and "how
-// completely" are one question asked twice, not two filters — and the
-// second only has an answer once the first is Confirmed.
-export const PARTIAL_MODES = ['', 'exclude', 'only']
-
-// The kinds an outcome selection ACTUALLY matches, with that switch
-// applied. All three are the same shape as every other filter here —
-// a list of kinds, matched existentially over the group — so the chip
-// narrows what Confirmed reaches rather than subtracting from it:
-//
-//   ''         everything the pass left standing: the row that IS the
-//              pass, the full confirmations, the partial ones;
-//   'exclude'  the full confirmations only. NOT "everything but the
-//              partials": a group is shown for carrying a `confirmed`
-//              row, not for lacking a `partial` one, so the pass row
-//              on its own no longer stands in for a verdict;
-//   'only'     the partial ones.
-//
-// It bites only on an option that took the partial rows in —
-// Confirmed — so a mode left set from an earlier selection can't
-// silently narrow Refuted or Unreachable, and callers can pass it
-// through without checking which option is up.
-export function activeRevalidateKinds(value, partialMode) {
-  const kinds = revalidateFilterKinds(value)
-  if (!kinds?.includes('partial')) return kinds
-  if (partialMode === 'only') return ['partial']
-  if (partialMode === 'exclude') return ['confirmed']
-  return kinds
 }
 
 // The options worth offering for a given set of present kinds: the

@@ -14,6 +14,7 @@ import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
+import { sharedTeamApp } from './team-app.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   sendJson(res, status, body, { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' })
@@ -42,8 +43,8 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   }
   const send = async (body: unknown) => { await recheck(); json(res, 200, body) }
   const sendTeam = async () => {
-    const summaries = await bundleSummaries(snapshot.team.bundles, deps.bundleCache)
-    await send({ user: snapshot.user, team: { ...snapshot.team,
+    const [summaries, app] = await Promise.all([bundleSummaries(snapshot.team.bundles, deps.bundleCache), sharedTeamApp(deps.db, deps.reportStore, snapshot)])
+    await send({ user: snapshot.user, team: { ...snapshot.team, app,
       bundles: snapshot.team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }) })),
     } })
     await backfillBundleSummaries(snapshot.team.bundles, deps.bundleCache)

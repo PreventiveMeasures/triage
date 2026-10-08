@@ -9,10 +9,11 @@ import { SEVERITY_ORDER, canDropRevalidation, depsDirName, displayedSeverity, is
 // module evaluates first resolves the other's hoisted function
 // declarations by the time anything runs.
 import { matchesRunFilters } from './filters.js'
-import { mergeReportGroups } from './workspace-groups.js'
+import { mergeReportGroups } from '../../common/workspace-groups.js'
 import { getLinksPreview } from './links-preview.js'
-import { mergeLinkedWorkspaceGroups } from './linked-workspace-groups.js'
-import { splitRevalidationInputs } from './revalidation-input-groups.js'
+import { mergeLinkedWorkspaceGroups } from '../../common/linked-workspace-groups.js'
+import { splitRevalidationInputs } from '../../common/revalidation-input-groups.js'
+import { tabKey } from '../../common/finding-filters.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
@@ -20,7 +21,7 @@ import { splitRevalidationInputs } from './revalidation-input-groups.js'
 // an individual tab (= finding); `groupKey` identifies the group as a
 // whole — uses the first member, or the App identity of a separate workspace
 // row, so it survives tab-sort reordering without sharing a source-only key.
-export function tabKey(f) { return f.id ?? String(f._id) }
+export { tabKey }
 export function groupKey(group) { return group.workspaceKey ?? tabKey(group[0]) }
 export function toGroup(entry) { return Array.isArray(entry) ? entry : [entry] }
 
@@ -40,7 +41,7 @@ export function underlyingFindingsShown() {
   return state.revalidationDetailed === true
 }
 
-export { mergeDuplicateFields, mergeReportDuplicateFields } from './finding-duplicates.js'
+export { mergeDuplicateFields, mergeReportDuplicateFields } from '../../common/finding-duplicates.js'
 
 // Per-report ignore is keyed by the source report's filename so an
 // ignore in report A doesn't propagate to the same finding's

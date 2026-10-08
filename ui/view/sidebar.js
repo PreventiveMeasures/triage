@@ -28,7 +28,6 @@ import { initStorageStatus, scheduleStorageStatusRefresh } from './storage-statu
 import { render } from './render.js'
 import { renderLandingWorkspaces } from './landing-workspaces.js'
 import { getLoadedWorkspaceAppMetadata } from './workspace-app-load.js'
-import { managedTeamAppCache as teamAppCache } from './managed-team-app.js'
 import { updateManagedLanding } from './landing-managed.js'
 import { refreshScanNavigation } from './scan-navigation.js'
 
@@ -268,7 +267,7 @@ function teamsSectionTemplate() {
   return html`
     ${groupHeaderTemplate('Teams')}
     ${repeat(teams, ({ team }) => team.id, ({ team: t, reports, bundles }) => {
-      const app = teamAppCache.get(t.id)
+      const app = t.app
       const compact = app?.appMode === true
       const showReports = teamSections.shown(t.id, 'reports', compact, searchActive)
       const showBundles = teamSections.shown(t.id, 'bundles', compact, searchActive)
@@ -517,7 +516,6 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   refreshScanNavigation()
   if (isManagedUiMode()) {
     teamSections.sync(state, revealSelection)
-    teamAppCache.sync(state.managedSession, state.managedTeams)
     if (!managedSessionPending && !managedTeamsPending && !managedSessionRefresh && !managedNavigationPending) startManagedTeamFeed({ catalogOnly: true })
     state.bundles = (state.bundles ?? []).filter(entry => entry.managedId)
     state.storedFiles = []
@@ -530,7 +528,6 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     renderSyncStatus()
     return
   }
-  teamAppCache.sync(null, [])
   teamSections.sync({ managedTeams: [] })
   root?.querySelector('sidebar-view-button[kind="packages"]')?.removeAttribute('hidden')
   root?.querySelector('sidebar-view-button[kind="repositories"]')?.removeAttribute('hidden')
@@ -1870,7 +1867,6 @@ async function finishClientModeTransition({ forgetLastView = true, resetNavigati
   managedTeamsPending = true
   managedNavigationPending = false
   resetManagedAppState()
-  teamAppCache.sync(null, [])
   resetManagedFixes()
   stopManagedTeamFeed()
   resetManagedTriage()

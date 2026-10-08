@@ -65,11 +65,13 @@ test('public workspace catalogs preserve analyzer metadata without loading repor
   const h = await fixture(t)
   await h.seed('claude', { analyzer: 'claude-security' })
   const token = await h.mint()
+  // Unavailable content only leaves the workspace's App classification unknown.
+  h.store.get = id => { h.reads.push(id); return Promise.resolve(null) }
   const response = await h.request('/api/teams/team/shared', { token })
   assert.equal(response.status, 200)
   assert.equal(response.body.team.reports.find(report => report.id === 'claude').analyzer, 'claude-security')
   assert.equal(response.body.team.reports.find(report => report.id === 'visible').analyzer, null)
-  assert.deepEqual(h.reads, [])
+  assert.equal(response.body.team.app, null)
 })
 
 test('directory team links include bundles at or below their scope and immediately lose moved bundles', async t => {
@@ -113,6 +115,7 @@ test('public sharing is opt-in, requires team management and CSRF; the token is 
 test('disabling sharing blocks every public route even when valid links remain in the database', async t => {
   const h = await fixture(t), token = await h.mint('whole')
   assert.equal((await h.request('/api/teams/whole/shared', { token })).status, 200)
+  h.reads.length = 0
   const getShare = h.db.getWorkspaceShare
   h.db.getWorkspaceShare = () => { assert.fail('Disabled sharing looked up a stored token') }
   for (const enabled of [false, undefined]) {
@@ -149,9 +152,13 @@ test('link IDs bootstrap only the token workspace and legacy team prefixes still
   const bootstrap = await h.request(path, { token })
   assert.equal(bootstrap.status, 200)
   assert.equal(bootstrap.body.team.id, 'team')
+  assert.deepEqual([...new Set(h.reads)].toSorted(), ['child', 'visible'], 'a link classifies only its own published workspace')
+  h.reads.length = 0
   assert.deepEqual(bootstrap.body, (await h.request('/api/teams/team/shared', { token })).body)
   assert.deepEqual(bootstrap.body, (await h.request('/api/shares/team/workspace', { token })).body, 'legacy links keep working')
   assert.equal((await h.request(otherPath, { token: other })).body.team.id, 'other')
+  assert.deepEqual([...new Set(h.reads)], ['foreign'])
+  h.reads.length = 0
   for (const role of [undefined, 'admin']) {
     assert.equal((await h.request(path, { token: other, role })).status, 404)
     assert.equal((await h.request(otherPath, { token, role })).status, 404)
@@ -164,7 +171,7 @@ test('link IDs bootstrap only the token workspace and legacy team prefixes still
     assert.notEqual((await h.request(global, { token })).status, 200)
   }
   assert.equal((await h.request(`${path}?team=other`, { token })).status, 404)
-  assert.deepEqual(h.reads, [], 'bootstrap only exposes the token workspace catalogue')
+  assert.deepEqual(h.reads, [], 'refused and repeated bootstraps read nothing more')
 })
 
 test('an anonymous token sees one published workspace, its annotations and no global endpoints', async t => {

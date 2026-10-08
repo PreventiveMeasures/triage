@@ -116,12 +116,17 @@ const workspace = (h, team, role) => h.request(`/api/teams/${team}/reports`, rol
 test('managed catalogs identify Claude Markdown before loading it, and team navigation serves its findings', async t => {
   const h = await fixture(t)
   await h.seed('claude', '# Security finding\n\n---\n**Severity:** high\n', { filename: 'report.md', analyzer: 'claude-security' })
+  // Sidebar branding needs no report content: unavailable storage only leaves
+  // the team's App classification unknown.
+  const get = h.store.get
+  h.store.get = id => { h.reads.push(id); return Promise.resolve(null) }
   const catalog = await h.request('/api/teams')
+  h.store.get = get
   assert.equal(catalog.status, 200)
-  const reports = catalog.body.teams.find(team => team.id === 'broad').reports
-  assert.equal(reports.find(report => report.id === 'claude').analyzer, 'claude-security')
-  assert.equal(reports.find(report => report.id === 'a').analyzer, null)
-  assert.deepEqual(h.reads, [], 'sidebar branding needs no report content fetch')
+  const broad = catalog.body.teams.find(team => team.id === 'broad')
+  assert.equal(broad.reports.find(report => report.id === 'claude').analyzer, 'claude-security')
+  assert.equal(broad.reports.find(report => report.id === 'a').analyzer, null)
+  assert.equal(broad.app, null)
   const loaded = (await workspace(h, 'broad')).body.reports.find(report => report.id === 'claude')
   assert.equal(loaded.filename, 'report.md')
   assert.equal(loaded.data.source, 'claude-security')

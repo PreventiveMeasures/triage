@@ -7,8 +7,8 @@ if (!globalThis[slotKey]) {
     html: () => null, nothing: null, LitElement: class {}, StateElement: class {},
   }
 }
-const { mergeReportGroups } = await import('../ui/view/workspace-groups.js')
-const { revalidationDifferences } = await import('../ui/view/revalidation-conflicts.js')
+const { mergeReportGroups } = await import('../common/workspace-groups.js')
+const { revalidationDifferences } = await import('../common/revalidation-conflicts.js')
 const { state } = await import('../client/state.ts')
 const { canDropRevalidation, configureDepsDir, configureRevalidation, stampUpstreamFindings } = await import('../ui/view/format.js')
 const { applyFilters, applyOpeningFilters, shouldLockConfirmed } = await import('../ui/view/filters.js')

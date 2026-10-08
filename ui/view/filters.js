@@ -2,6 +2,8 @@ import { automaticFixFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { drawnTabs, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
+import { defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, canLockConfirmed as lockConfirmed } from '../../common/finding-filters.js'
+export { confidenceOnScale, rangeApplies } from '../../common/finding-filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
@@ -184,123 +186,6 @@ export function activeFilters() {
   return filterOverride ?? state
 }
 
-// Does the confidence floor leave this group on screen? The rule
-// matchesFilters applies below, with the upper bound at 10 so only the
-// floor bites, hoisted to the group because that is the unit the list
-// shows: a group is on screen when ANY of its rows clears the floor —
-// an unscored row only at floor 0 unless it is flagged `critical`, and
-// a row the pass knocked down reading as 0 whatever number it carries.
-// A finding's place on the 0—10 confidence scale, or undefined when it
-// has none. The one reader every confidence question goes through:
-// what the range matches, what the auto-tune counts, and whether the
-// control is offered at all (render.js hasAnyConfidence).
-//
-// Three ways to have a place:
-//
-//   * a `confidence` the analyzer scored it with;
-//   * `critical: true` — the boolean, NOT `severity: 'critical'` —
-//     which stands in for a top score;
-//   * coming from another producer at all. An import carries no
-//     confidence because its producer doesn't emit one (Claude
-//     Security's parser reads none), not because anyone was unsure —
-//     there is no doubt here for a floor to act on. Reading it as 10
-//     keeps it on screen under any floor and out only under a cap
-//     that excludes the top: `8—10` and `2—10` show it, `0—5` and
-//     `7—9` don't. It also stops one imported report from taking the
-//     range away from a workspace: an unscored finding DISABLES the
-//     control for everyone (render.js), which left the range filtering
-//     nothing and every low-confidence row on screen.
-//
-// A row the pass knocked down reads as 0 instead, where that matters
-// (voidsConfidence) — applied by the callers, since whether a finding
-// has a place at all is about the finding, not about the pass.
-export function confidenceOnScale(f) {
-  if (f.confidence !== undefined) return f.confidence
-  if (f.critical === true || f._source) return 10
-  return undefined
-}
-
-// Does this finding put itself on the scale, rather than ride the
-// stand-in confidenceOnScale hands a row that carries no score? A
-// number its producer wrote, or the `critical: true` that stands in
-// for one.
-const scoresItself = (f) => f.confidence !== undefined || f.critical === true
-
-// Is the confidence range a live control over these rows — offered,
-// and actually filtering? Two conditions, which the toolbar reads as
-// one (render.js hasAnyConfidence):
-//
-//   * every row has a place on the scale, or the first lift off 0
-//     would silently drop the ones that don't. A single analyzer
-//     finding with no confidence and no `critical: true` disables the
-//     control for the whole set;
-//   * something on screen puts ITSELF on that scale. A row riding the
-//     stand-in doesn't: a set of nothing but unscored imports is all
-//     10s by definition, and a range over one value says nothing.
-//     There the control isn't disabled, it isn't offered at all — the
-//     toolbar drops the whole block when the outcome dropdown beside
-//     it has nothing to offer either.
-//
-//     What answers this is the SCORE, not who wrote it. Asked as "not
-//     an import" it gave the same answer for every producer that emits
-//     no confidence — and the wrong one for DeepSec, which rates every
-//     finding it reports and whose words this app places on the scale
-//     itself (@preventive/report/src/parse-deepsec.js). A workspace of nothing but
-//     DeepSec reports is a real range over real numbers, and asking
-//     for a non-import took the slider, the confidence sort and the
-//     opening floor away from exactly the load whose producer had
-//     scored every row in it.
-//
-// Both halves are asked of the rows ON SCREEN by every caller, since
-// this is about a control in front of a reader.
-export function rangeApplies(groups) {
-  return groups.every((g) => g.every((f) => confidenceOnScale(f) !== undefined))
-    && groups.some((g) => g.some(scoresItself))
-}
-
-function showsAtConfidence(g, min, kindOf = revalidateKind) {
-  return g.some((f) => {
-    const conf = ['refuted', 'unreachable'].includes(kindOf(f)) ? 0 : confidenceOnScale(f)
-    return conf === undefined ? min === 0 : conf >= min
-  })
-}
-
-// The confidence floor a freshly-loaded set should OPEN on, tuned so
-// the initial view fits ~25 groups. Step up 6 → 7 → 8 until the
-// visible count is within budget; cap at 8 (the old static default).
-// Nothing carrying a confidence at all means no floor — without that
-// guard countAtMin(6) = 0 ≤ 25 lands it at 6, which then excludes
-// every finding; 0 lets the filter no-op instead, and the toolbar
-// hides the control anyway (see toolbarHtml in render.js).
-//
-// After picking the base, walk DOWN while each lower step surfaces no
-// new groups — i.e. there's a "gap" in the confidence distribution
-// below the chosen floor. Lowering for free puts the slider at the
-// natural break: e.g. picked 8, nothing at 7 or 6 but some at 5 →
-// settle at 6 (the lowest step revealing nothing new). Down to 0.
-//
-// Pure in its argument, and paired with defaultRevalidateFilter below:
-// together they are "what does this set open on", asked by ingest.js
-// on a first load and again by the App switch (events.js), which
-// reshapes the set and so has to ask again rather than keep an answer
-// that was about a different one.
-export function defaultConfidenceFloor(groups, tabs = drawnTabs) {
-  // App mode folds the source tabs a revalidation pass already answered
-  // under its App tab. Those hidden copies must not lower the opening floor
-  // for a workspace that otherwise has the same visible rows as its App
-  // report. Keep source-only rows intact; they are real rows in the App view.
-  const visible = groups.map(tabs).filter((g) => g.length > 0)
-  if (!visible.some((g) => g.some((f) => confidenceOnScale(f) !== undefined))) return 0
-  const countAtMin = (min) => visible.reduce((n, g) =>
-    n + (g.some((f) => (confidenceOnScale(f) ?? -1) >= min) ? 1 : 0), 0)
-  let base
-  if (countAtMin(6) <= 25) base = 6
-  else if (countAtMin(7) <= 25) base = 7
-  else base = 8
-  while (base > 0 && countAtMin(base - 1) === countAtMin(base)) base--
-  return base
-}
-
 // The outcome a row ANSWERS TO when the toolbar filters by one — the
 // pass's own reading where there is one, and `revalidation` (the value
 // naming the pass itself) for a row NO pass ever reached.
@@ -349,26 +234,6 @@ export function matchesConfirmed(group) {
   return group.some((f) => kinds.includes(filterRevalidateKind(f)))
 }
 
-// The floor the default view will REALLY apply. The range is a
-// whole-set control: one finding on screen with no confidence and no
-// `critical: true` and render.js disables it and resets the bounds to
-// 0—10 (hasAnyConfidence there), so the auto-tuned floor never bites
-// and every row is on screen — an unscored finding is not hidden by a
-// filter that isn't running. Measuring the comparison below against a
-// floor the view is about to throw away would be measuring a screen
-// nobody sees.
-//
-// `critical: true` rides the 10 bucket in place of a score
-// (matchesFilters), so it doesn't block the range any more than a
-// number does.
-//
-// render.js asks this of the on-screen bucket and we ask it of the
-// whole set; at open time, before anything is triaged away, they are
-// the same groups.
-function effectiveFloor(groups, confMin) {
-  return rangeApplies(groups) ? confMin : 0
-}
-
 // The revalidation outcome a freshly-loaded set should OPEN on, given
 // the confidence floor ingest.js just auto-tuned: `'confirmed'` for a
 // revalidation report, `''` (no outcome) for everything else.
@@ -409,57 +274,20 @@ function effectiveFloor(groups, confMin) {
 //     too), so opening it on an outcome would set a filter with no
 //     control on screen to clear it.
 //
-// Both the opening default and the dropdown lock use the same coverage:
-// findings represented by Confirmed rows, plus findings explicitly ruled out.
-// Read the original groups before drawnTabs folds away their source members.
-function confirmedCoverage(groups, tabs = drawnTabs, kindOf = revalidateKind) {
-  // A workspace may carry an un-stamped source copy from report A while
-  // report B explicitly ruled out the same id. The ruled-out copy is
-  // removed before workspace rows are merged, so it cannot vouch for its
-  // source copy during the coverage check below. Remember those ids before
-  // that projection disappears: Confirmed may hide the source copy too,
-  // even when the App finding that caused the ruling has no
-  // `revalidateInputs` list of its own.
-  const covered = new Set(groups.ruledOutIds ?? [])
-  for (const raw of groups) {
-    for (const f of raw) if (['refuted', 'unreachable'].includes(kindOf(f))) covered.add(tabKey(f))
-  }
-  for (const raw of groups) {
-    const g = tabs(raw)
-    if (g.length === 0) continue
-    if (!g.some((f) => activeRevalidateKinds('confirmed', '').includes(
-      kindOf(f) || (f._source && !f._sourcePass ? 'revalidation' : '')))) continue
-    // A folded source copy is not a cost of Confirmed, but its id is still
-    // represented by the App row. Keep all raw members in the coverage set
-    // so a duplicate source-only row from another report is recognized as
-    // the same issue rather than making Confirmed look lossy.
-    for (const f of raw) {
-      covered.add(tabKey(f))
-      // App reports can carry the source findings they represent only as
-      // `revalidateInputs`, rather than as members of the same physical row.
-      // Those inputs are still present in the App row's visible result, so a
-      // duplicate source-only row from another report must not keep the
-      // workspace on Confidence.
-      if (f.isApp && Array.isArray(f.revalidateInputs)) {
-        for (const id of f.revalidateInputs) if (id) covered.add(id)
-      }
-    }
-  }
-  return covered
-}
-
-function confirmedIsDefault(visible, confMin, covered, kindOf = revalidateKind) {
-  const floor = effectiveFloor(visible, confMin)
-  const shown = visible.filter((g) => showsAtConfidence(g, floor, kindOf))
-  if (shown.length === 0) return false
-  const kinds = new Set(activeRevalidateKinds('confirmed', ''))
-  if (!visible.some((g) => g.some((f) => kinds.has(kindOf(f))))) return false
-  return shown.every((g) => g.every((f) => covered.has(tabKey(f))))
-}
 
 export function defaultRevalidateFilter(groups, confMin) {
   const visible = groups.map(drawnTabs).filter((g) => g.length > 0)
-  return confirmedIsDefault(visible, confMin, confirmedCoverage(groups)) ? 'confirmed' : ''
+  return confirmedIsDefault(visible, confMin, confirmedCoverage(groups, drawnTabs, revalidateKind), revalidateKind) ? 'confirmed' : ''
+}
+
+// The rules themselves are in finding-filters.js; by default these ask them
+// through the reader's current lens.
+export function defaultConfidenceFloor(groups, tabs = drawnTabs) {
+  return confidenceFloor(groups, tabs)
+}
+
+export function canLockConfirmed(groups, { tabs = drawnTabs, kindOf = revalidateKind, severityMode = state.severityMode } = {}) {
+  return lockConfirmed(groups, { tabs, kindOf, severityMode })
 }
 
 // Basic App view can fix the outcome to Confirmed only when it is already
@@ -471,18 +299,6 @@ export function defaultRevalidateFilter(groups, confMin) {
 export function shouldLockConfirmed(groups) {
   if (state.showRevalidation === false || state.upstreamOnly || underlyingFindingsShown()) return false
   return canLockConfirmed(groups)
-}
-
-// The same coverage test can evaluate a workspace's basic App view without
-// changing the reader's current lens or the format module's revalidation flag.
-export function canLockConfirmed(groups, { tabs = drawnTabs, kindOf = revalidateKind, severityMode = state.severityMode } = {}) {
-  const visible = groups.map(tabs).filter((g) => g.length > 0)
-  const covered = confirmedCoverage(groups, tabs, kindOf)
-  if (!confirmedIsDefault(visible, defaultConfidenceFloor(groups, tabs), covered, kindOf)) return false
-  const floor = effectiveFloor(visible, 6)
-  return visible.every((g) => !showsAtConfidence(g, floor, kindOf)
-    || !g.some((f) => displayedSeverity(f, severityMode) !== 'low')
-    || g.every((f) => covered.has(tabKey(f))))
 }
 
 // Put the confidence block where a fresh load of `groups` would put
