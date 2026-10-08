@@ -45,7 +45,7 @@ import { bundleOriginLinks } from './bundle-origin-links.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
-import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
+import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './dialogs/why-dialog.js'
 import { bundleEntryPackages, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
@@ -652,9 +652,13 @@ function _topSeverityOf(findings) {
 // matches across both columns so the rows align with their lines.
 //
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
-// the gutter. Lines without findings render a plain number.
+// the gutter. Lines without findings render a plain number. The line
+// a clicked result opened (state.bundleSourceTargetLine) gets a band
+// across gutter and code (`.is-target`).
 function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null) {
   const lineCount = content.split('\n').length
+  const target = state.bundleSourceTargetLine
+  const targetLine = target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
   const digits = String(lineCount).length
   const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
   const cacheKey = `${details?.integrity ?? ''}\0${path}`
@@ -686,7 +690,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
         const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
         const isActive = entries && state.bundleSourceFindingIdx != null
           && entries.some((e) => e.idx === state.bundleSourceFindingIdx)
-        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false })} data-line=${ln}>
+        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false, 'is-target': ln === targetLine })} data-line=${ln}>
           ${entries
             ? html`<button
                 type="button"
@@ -1048,6 +1052,19 @@ function clipRailHit(text, ranges) {
   return sliceSearchLine(text, ranges, from, RAIL_HIT_MAX)
 }
 
+// Scan order shared by the Code rail's code search and the Search tab:
+// own source first, then dependencies, each in path order. Cached per
+// sources map, which bundleSourcesAsMap itself caches per bundle.
+const searchOrderCache = new WeakMap()
+function bundleSearchOrder(details, sources) {
+  let order = searchOrderCache.get(sources)
+  if (!order) {
+    order = ownSourceFirst([...sources.keys()].toSorted(), bundlePackageDirs(details))
+    searchOrderCache.set(sources, order)
+  }
+  return order
+}
+
 // Code-mode result pane — flat list of files, each with up to
 // `MAX_HITS_PER_FILE` matching lines underneath. Each hit is a
 // click target that selects the file AND scrolls the source
@@ -1055,9 +1072,9 @@ function clipRailHit(text, ranges) {
 // which the events.js delegate forwards to the existing
 // scroll-to-line path). Line text is shown truncated, with each match
 // marked as in the Search tab. Case-insensitive substring search (the
-// Search tab's matcher with both toggles off); empty query shows a
-// hint.
-function renderBundleCodeContentResults(sources, query, currentPath, prefix = '') {
+// Search tab's matcher with both toggles off), own source before
+// dependencies; empty query shows a hint.
+function renderBundleCodeContentResults(details, sources, query, currentPath, prefix = '') {
   if (!query) {
     return html`<div class="bundle-code-search-hint">Type to search across every source in this bundle.</div>`
   }
@@ -1066,7 +1083,8 @@ function renderBundleCodeContentResults(sources, query, currentPath, prefix = ''
   const MAX_FILES = 100
   const results = []
   let totalHits = 0
-  for (const [path, content] of sources) {
+  for (const path of bundleSearchOrder(details, sources)) {
+    const content = sources.get(path)
     if (typeof content !== 'string') continue
     const hits = []
     const lines = content.split('\n')
@@ -1377,7 +1395,7 @@ function renderBundleCodeView(details, entry = null) {
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
           ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix, details.kind === 'stasis' ? details.bundle.formats : null, sources)],
-          ['code', () => renderBundleCodeContentResults(sources, query, path, prefix)],
+          ['code', () => renderBundleCodeContentResults(details, sources, query, path, prefix)],
           ['issues', () => renderBundleCodeIssuesResults(details, query, path, prefix)],
         ])}
       </div>
@@ -1654,7 +1672,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
       </div>
     </div>`
   }
-  const result = runBundleSearch(details.integrity ?? '', sources, query, useRegex, caseSensitive)
+  const result = runBundleSearch(details.integrity ?? '', sources, query, useRegex, caseSensitive, bundleSearchOrder(details, sources))
   if (result.error) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-error">

@@ -27,11 +27,15 @@
 //
 // Callers key the history with the bundle's integrity, which
 // content-addresses the sources: a tag change wipes the history, and
-// within one tag the cached `lines` arrays can never go stale.
+// within one tag the cached `lines` arrays can never go stale. The
+// scan order is derived from the same bundle, so it is fixed per tag
+// too, and refinements keep their base's order.
 //
 // A result is `{ fileResults, totalHits, truncated }`, or
 // `{ error }` when a regex pattern doesn't compile. `fileResults` is
-// in sorted-path order, each entry `{ path, lines, hits }`: `lines`
+// in scan order — the caller's `order` (own source before
+// dependencies, see `ownSourceFirst`), else sorted paths — so the caps
+// cut the end of that order. Each entry is `{ path, lines, hits }`: `lines`
 // is the full content split (kept for context-window rendering and
 // for refinement re-checks — refined entries share the base's array)
 // and `hits` lists the matched lines as `{ ln, ranges }` with `ln`
@@ -120,12 +124,11 @@ export function buildSearchMatcher(query, useRegex, caseSensitive) {
   }
 }
 
-// Exhaustive scan: every line of every source, in sorted-path order,
+// Exhaustive scan: every line of every source, in scan order,
 // stopping at the caps. Non-string content (resource entries, omitted
 // sourcesContent slots) is skipped, mirroring bundleSourcesAsMap's
 // own filter — defensive against callers that didn't pre-filter.
-function fullSearch(sources, matcher) {
-  const allPaths = [...sources.keys()].toSorted()
+function fullSearch(sources, matcher, allPaths) {
   const fileResults = []
   let totalHits = 0
   let truncated = false
@@ -176,7 +179,7 @@ function refineSearch(base, matcher) {
 // modifier changes match semantics, so nothing cached is reusable).
 const history = { tag: null, useRegex: false, caseSensitive: false, entries: [] }
 
-export function runBundleSearch(tag, sources, query, useRegex, caseSensitive) {
+export function runBundleSearch(tag, sources, query, useRegex, caseSensitive, order = null) {
   // Empty queries never reach here from the UI (the hint panel
   // short-circuits first); guard anyway and DON'T cache — '' is
   // contained in every string, so a cached '' entry would qualify as
@@ -220,7 +223,7 @@ export function runBundleSearch(tag, sources, query, useRegex, caseSensitive) {
     base = entry.result
     baseLen = entryKey.length
   }
-  const result = base ? refineSearch(base, matcher) : fullSearch(sources, matcher)
+  const result = base ? refineSearch(base, matcher) : fullSearch(sources, matcher, order ?? [...sources.keys()].toSorted())
   history.entries.unshift({ query, result })
   if (history.entries.length > SEARCH_HISTORY_MAX) history.entries.pop()
   return result

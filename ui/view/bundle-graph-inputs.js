@@ -1,4 +1,4 @@
-import { bundlePkgOf } from './bundle-pkg-of.js'
+import { bundlePkgOf, isOwnSourcePath } from './bundle-pkg-of.js'
 
 export { bundleReasons as bundleGraphReasons } from '../../common/bundle-reasons.js'
 
@@ -8,9 +8,7 @@ export { bundleReasons as bundleGraphReasons } from '../../common/bundle-reasons
 export function bundleOwnSourcePackages(origToStripped, pkgOf, packageDirs) {
   const packages = new Set()
   for (const [orig, path] of origToStripped) {
-    const dir = packageDirs?.get(orig)
-    if (bundlePkgOf(orig, { packageDir: dir }) === '__own__'
-      || (dir && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(dir))) packages.add(pkgOf(path))
+    if (isOwnSourcePath(orig, packageDirs?.get(orig))) packages.add(pkgOf(path))
   }
   return packages
 }

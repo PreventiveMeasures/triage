@@ -2458,6 +2458,20 @@ body.report-fullscreen {
   color: var(--accent);
   font-weight: 600;
 }
+/* Line a clicked search result opened — a band across gutter and
+   code. The code is one <pre> with no per-line boxes, so the band is
+   the gutter row's own border-image pushed right by its outset: it
+   follows the row's line box (rows align with code lines, see
+   above), and outset is ink overflow, so it neither shifts layout nor
+   widens the scroll area. The sticky gutter paints above the code,
+   so the band is a translucent tint over the line's text. */
+.bundle-source-lineno-row.is-target {
+  border-image: linear-gradient(color-mix(in oklch, var(--accent) 18%, transparent) 0 0) fill 0 / 0 / 0 100vw 0 0;
+}
+.bundle-source-lineno-row.is-target .bundle-source-lineno-num {
+  color: var(--accent);
+  font-weight: 600;
+}
 /* Issue dot — colored by severity tier. Button so it's
    keyboard-focusable and click-handled by events.js. The
    placeholder span on dot-less rows reserves the same width so

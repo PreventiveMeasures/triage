@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundlePkgOf, pkgLabel } = await import('../ui/view/bundle-pkg-of.js')
+const { bundlePkgOf, ownSourceFirst, pkgLabel } = await import('../ui/view/bundle-pkg-of.js')
 
 describe('bundlePkgOf', () => {
   it('buckets node_modules files by package name', () => {
@@ -111,6 +111,19 @@ describe('bundlePkgOf', () => {
       assert.equal(bundlePkgOf('index.js', { packageDir: '.' }), '__own__')
       assert.equal(bundlePkgOf('src/foo/a.js', { packageDir: '.' }), '__own__')
     })
+  })
+})
+
+describe('ownSourceFirst', () => {
+  it('moves dependencies below own source, keeping each group in its given order', () => {
+    const paths = ['node_modules/a/x.js', 'lib/z.js', 'dependencies/b/y.js', 'app.js', 'node_modules/.pnpm/c@1/node_modules/c/i.js']
+    assert.deepEqual(ownSourceFirst(paths), ['lib/z.js', 'app.js', 'node_modules/a/x.js', 'dependencies/b/y.js', 'node_modules/.pnpm/c@1/node_modules/c/i.js'])
+  })
+
+  it('classifies by recorded package dirs when given, counting workspace modules as own code', () => {
+    const packageDirs = new Map([['vendor/log/lib.rs', 'vendor/log'], ['src/dependencies/own.js', '.'], ['packages/ui/index.js', 'packages/ui'], ['src/main.rs', '.']])
+    assert.deepEqual(ownSourceFirst(['vendor/log/lib.rs', 'src/dependencies/own.js', 'packages/ui/index.js', 'src/main.rs'], packageDirs),
+      ['src/dependencies/own.js', 'packages/ui/index.js', 'src/main.rs', 'vendor/log/lib.rs'])
   })
 })
 

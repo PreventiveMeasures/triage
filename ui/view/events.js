@@ -851,6 +851,11 @@ report.addEventListener('click', (e) => {
     selectBundleSourceFile(path)
     if (Number.isFinite(findingIdx)) state.bundleSourceFindingIdx = findingIdx
     else if (pathChanged) state.bundleSourceFindingIdx = null
+    // Mark the line a result opened; opening a file without a line
+    // clears the mark.
+    state.bundleSourceTargetLine = Number.isFinite(line)
+      ? { bundle: state.bundleDetails?.integrity ?? null, path, line }
+      : null
     // Preserve the scroll position of whichever list-style
     // container the click came from. Code rail (tree / search
     // results), Issues slide (file-grouped list), and Code source

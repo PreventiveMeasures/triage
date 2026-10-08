@@ -44,6 +44,28 @@ export function bundlePkgOf(path, { packageDir = null } = {}) {
   return '__own__'
 }
 
+// First-party code: own source, and named workspace modules (a recorded
+// package dir outside `node_modules/`, `dependencies/` and `vendor/`).
+// Workspace modules stay separate packages in `bundlePkgOf`, but are
+// own code even when another workspace imports them.
+export function isOwnSourcePath(path, packageDir = null) {
+  return bundlePkgOf(path, { packageDir }) === '__own__'
+    || Boolean(packageDir) && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(packageDir)
+}
+
+// Search order for the bundle Code rail and Search tab: own code
+// first, then dependencies, each keeping the order `paths` came in.
+// Matches in the bundle's own code are usually what a search is after,
+// and package code shouldn't push them past the result caps.
+// `packageDirs` is `bundlePackageDirs` output, or null for the path
+// heuristic alone.
+export function ownSourceFirst(paths, packageDirs = null) {
+  const own = []
+  const deps = []
+  for (const path of paths) (isOwnSourcePath(path, packageDirs?.get(path)) ? own : deps).push(path)
+  return [...own, ...deps]
+}
+
 // Display label for a package bucket: `__own__` is the sentinel for
 // own-source (non-dependency) files, spelled out as "Own source" in
 // package lists and tooltips.

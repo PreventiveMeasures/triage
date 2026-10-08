@@ -112,6 +112,27 @@ describe('runBundleSearch — full scan', () => {
     assert.equal(r.fileResults.length, SEARCH_MAX_FILES)
   })
 
+  it('scans in the caller\'s order, so the caps cut the end of it (dependencies, not own source)', () => {
+    const sources = new Map()
+    for (let i = 0; i < SEARCH_MAX_FILES; i++) sources.set(`node_modules/dep/f${String(i).padStart(4, '0')}.js`, 'match')
+    sources.set('src/own.js', 'match')
+    const order = ['src/own.js', ...[...sources.keys()].filter(path => path !== 'src/own.js')]
+    const r = runBundleSearch(freshTag(), sources, 'match', false, false, order)
+    assert.equal(r.truncated, true)
+    assert.equal(r.fileResults[0].path, 'src/own.js')
+    assert.equal(r.fileResults.length, SEARCH_MAX_FILES)
+    // Without an order, sorted paths put every dependency first and the
+    // own file past the cap.
+    assert.ok(!runBundleSearch(freshTag(), sources, 'match', false, false).fileResults.some(f => f.path === 'src/own.js'))
+  })
+
+  it('refinements keep the order of the scan they refine', () => {
+    const tag = freshTag()
+    const sources = srcs({ 'b.js': 'needles', 'a.js': 'needles' })
+    runBundleSearch(tag, sources, 'needle', false, false, ['b.js', 'a.js'])
+    assert.deepEqual(hitLines(runBundleSearch(tag, sources, 'needles', false, false, ['b.js', 'a.js'])), [['b.js', [1]], ['a.js', [1]]])
+  })
+
   it('returns an empty result for an empty query without caching it', () => {
     const r = runBundleSearch(freshTag(), srcs({ 'a.js': 'anything' }), '', false, false)
     assert.deepEqual(r, { fileResults: [], totalHits: 0, truncated: false })
