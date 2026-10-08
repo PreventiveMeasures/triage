@@ -16,6 +16,7 @@ export class SizeFlowCanvas extends SizeFlowChart {
 
   render() {
     return html`<canvas class="flow-canvas flow-base" aria-hidden="true"></canvas>
+      <canvas class="flow-canvas flow-bars" aria-hidden="true"></canvas>
       <canvas class="flow-canvas flow-overlay" tabindex="0" role="group"
         aria-label=${canvasLabel}
         @pointermove=${e => this.pointer(e)} @pointerleave=${() => this.clearHover()}
@@ -34,8 +35,8 @@ export class SizeFlowCanvas extends SizeFlowChart {
 
   update(root) {
     if (this.layout !== this.host.layout) this.prepare()
-    this.base = root.querySelector('.flow-base'); this.overlay = root.querySelector('.flow-overlay')
-    if (!this.base || !this.overlay) return
+    this.base = root.querySelector('.flow-base'); this.bars = root.querySelector('.flow-bars'); this.overlay = root.querySelector('.flow-overlay')
+    if (!this.base || !this.bars || !this.overlay) return
     const background = graphBackground(), matches = this.matchingNodes(), palette = pkgColor('__own__')
     if (matches !== this.paintedMatches || palette !== this.palette || background !== this.background) {
       this.paintedMatches = matches; this.palette = palette; this.background = background
@@ -55,7 +56,7 @@ export class SizeFlowCanvas extends SizeFlowChart {
     this.clearHover()
     if (this.frame != null) cancelAnimationFrame(this.frame)
     this.frame = null
-    this.base = null; this.overlay = null
+    this.base = null; this.bars = null; this.overlay = null
     this.invalidateRaster()
   }
 
@@ -68,7 +69,7 @@ export class SizeFlowCanvas extends SizeFlowChart {
 
   invalidateRaster() {
     this.stopPreview()
-    this.baseKey = null
+    this.baseKey = null; this.barsKey = null
     this.overview = null; this.paintedViewport = null
   }
 
@@ -111,17 +112,25 @@ export class SizeFlowCanvas extends SizeFlowChart {
   draw() {
     if (!this.overlay || !this.host.width || !this.host.height) return
     const { pan, zoom, width, height } = this.host, dpr = globalThis.devicePixelRatio || 1
-    if (this.preview) { this.drawPreview(dpr); return }
     const key = `${this.viewportKey}:${dpr}`
+    this.view = { left: -pan.x / zoom, right: (width - pan.x) / zoom, top: -pan.y / zoom, bottom: (height - pan.y) / zoom }
+    if (this.preview) {
+      this.drawPreview(dpr)
+      this.drawBars(dpr, key, true)
+      const ctx = this.context(this.overlay, dpr), selected = this.layout.byId.get(this.host.selection?.node)
+      if (selected) {
+        ctx.globalAlpha = 1; ctx.strokeStyle = this.foreground; ctx.lineWidth = Math.min(1.5 / zoom, selected.width / 2)
+        ctx.strokeRect(selected.x, selected.y, selected.width, 26)
+      }
+      this.previewVisible = true
+      return
+    }
     const redraw = this.baseKey !== key
     if (redraw) {
-      this.view = { left: -pan.x / zoom, right: (width - pan.x) / zoom, top: -pan.y / zoom, bottom: (height - pan.y) / zoom }
       const ctx = this.context(this.base, dpr)
       ctx.globalAlpha = 1; ctx.fillStyle = this.background; ctx.fillRect(this.view.left, this.view.top, width / zoom, height / zoom)
       this.visiblePaths = this.paths.filter(entry => !flowOutside(entry, this.view))
       for (const entry of this.visiblePaths) this.paintPath(ctx, entry, this.edgeAlpha(entry.edge))
-      this.visibleNodes = this.layout.nodes.filter(node => !flowOutside({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }, this.view))
-      for (const node of this.visibleNodes) this.paintNode(ctx, node)
       this.baseKey = key
       this.paintedViewport = { width, height, zoom, pan: { ...pan }, dpr }
       // Keep one full overview as a fallback for areas newly exposed by a
@@ -133,15 +142,16 @@ export class SizeFlowCanvas extends SizeFlowChart {
         this.overview = { ...this.paintedViewport, canvas }
       }
     }
+    this.drawBars(dpr, key)
     this.drawHighlight(dpr, redraw || this.previewVisible)
     this.previewVisible = false
   }
 
   drawPreview(dpr) {
-    // Reuse rendered pixels while input is arriving instead of repainting
-    // thousands of ribbons. Clip before scaling so even deep zoom copies at
-    // most the viewport's pixels. Redraw precisely after 100ms of no input.
-    const { width, height, pan, zoom } = this.host, ctx = this.context(this.overlay, dpr, false)
+    // The cached images contain ribbons only. Composite them underneath fresh
+    // bars while input arrives, then redraw the ribbons precisely when idle.
+    // Clip before scaling so even deep zoom copies at most viewport pixels.
+    const { width, height, pan, zoom } = this.host, ctx = this.context(this.bars, dpr, false)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = false
     const detail = { ...this.paintedViewport, canvas: this.base }, scale = zoom / detail.zoom
@@ -157,13 +167,20 @@ export class SizeFlowCanvas extends SizeFlowChart {
       ctx.drawImage(snapshot.canvas, (left - sx) * pixelScale, (top - sy) * pixelScale,
         (right - left) * pixelScale, (bottom - top) * pixelScale, left, top, right - left, bottom - top)
     }
-    const selected = this.layout.byId.get(this.host.selection?.node)
-    if (selected) {
-      ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * pan.x, dpr * pan.y)
-      ctx.strokeStyle = this.foreground; ctx.lineWidth = Math.min(1.5 / zoom, selected.width / 2)
-      ctx.strokeRect(selected.x, selected.y, selected.width, 26)
+  }
+
+  drawBars(dpr, key, preview = false) {
+    if (!preview && this.barsKey === key && !this.previewVisible) return
+    if (this.barsKey !== key) {
+      this.visibleNodes = this.layout.nodes.filter(node =>
+        !flowOutside({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }, this.view))
     }
-    this.previewVisible = true
+    // During a gesture the bars layer already contains the projected ribbons.
+    // Redraw bars at the current scale on every input frame, keeping labels
+    // sharp and borders thin. Hover alone never repaints this layer.
+    const ctx = this.context(this.bars, dpr, !preview)
+    for (const node of this.visibleNodes) this.paintNode(ctx, node)
+    this.barsKey = key
   }
 
   edgeAlpha(edge) { return !this.matches.has(edge.from) && !this.matches.has(edge.to) ? .04 : .22 }
@@ -227,15 +244,15 @@ export class SizeFlowCanvas extends SizeFlowChart {
     if (!redraw) ctx.clearRect(x, y, width, height)
     ctx.save(); ctx.beginPath(); ctx.rect(x, y, width, height); ctx.clip()
     for (const { entry, alpha } of highlights) this.paintPath(ctx, entry, alpha)
-    // Restore the original pixels over bars. This keeps ribbon highlights
-    // behind them, without repainting their text or doubling dimmed opacity.
+    // Reveal the separate bars layer through the highlighted ribbons. This
+    // keeps labels crisp and preserves the opacity of dimmed bars.
     if (highlights.length > 0) {
       ctx.save(); ctx.beginPath()
       const region = { left: x, right: x + width, top: y, bottom: y + height }
       for (const node of this.visibleNodes) {
         if (!flowOutside({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }, region)) ctx.rect(node.x, node.y, node.width, 26)
       }
-      ctx.clip(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.drawImage(this.base, 0, 0); ctx.restore()
+      ctx.clip(); ctx.clearRect(x, y, width, height); ctx.restore()
     }
     ctx.globalAlpha = 1; ctx.strokeStyle = this.foreground
     for (const node of outlines) {

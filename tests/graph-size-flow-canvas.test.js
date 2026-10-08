@@ -35,20 +35,21 @@ function mounted(t) {
   globalThis.devicePixelRatio = 2
   globalThis.getComputedStyle = () => ({ getPropertyValue: () => '#fff' })
   const canvas = () => {
-    const copyCalls = [], fills = [], strokes = []
+    const copyCalls = [], fills = [], strokes = [], texts = []
     let clears = 0, copies = 0
     const ctx = {
-      setTransform() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, setLineDash() {}, fillText() {}, stroke() {},
+      setTransform() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, setLineDash() {}, stroke() {},
+      fillText(...args) { texts.push(args) },
       fill(path) { fills.push(path) }, fillRect(...rect) { fills.push(rect) },
       strokeRect(...rect) { strokes.push({ rect, width: this.lineWidth }) },
       clearRect() { clears++ }, drawImage(...args) { copies++; copyCalls.push(args) }, isPointInPath: () => true,
     }
     return { width: 0, height: 0, style: {}, dataset: {}, getContext: () => ctx, getBoundingClientRect: () => ({ left: 5, top: 10 }),
-      setAttribute() {}, fills, strokes, copyCalls, clears: () => clears, copies: () => copies }
+      setAttribute() {}, fills, strokes, texts, copyCalls, clears: () => clears, copies: () => copies }
   }
   globalThis.document = { createElement: canvas }
-  const base = canvas(), overlay = canvas()
-  const root = { querySelector: selector => selector === '.flow-base' ? base : overlay, contains: () => false }
+  const bars = canvas(), base = canvas(), overlay = canvas()
+  const root = { querySelector: selector => ({ '.flow-base': base, '.flow-bars': bars, '.flow-overlay': overlay })[selector], contains: () => false }
   const tree = { 'entry.js': { size: 1, imports: ['a.js', 'b.js'] }, 'a.js': { size: 2, imports: ['b.js'] }, 'b.js': { size: 3, imports: [] } }
   const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: () => 'app' })
   graph.flowEntries = [{ file: 'entry.js' }]
@@ -65,21 +66,24 @@ function mounted(t) {
     chart.dispose()
     for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key] }
   })
-  return { chart, host, root, base, overlay, frame, frames, paths: () => paths }
+  return { chart, host, root, base, bars, overlay, frame, frames, paths: () => paths }
 }
 
 test('canvas zoom batches frames, caches paths, and hover/selection never repaint the base graph', t => {
-  const { chart, host, root, base, overlay, frame, frames, paths } = mounted(t)
+  const { chart, host, root, base, bars, overlay, frame, frames, paths } = mounted(t)
   assert.equal(canvasSizeFlow({ nodes: Array.from({ length: 1501 }), edges: [] }), true)
   assert.equal(canvasSizeFlow({ nodes: Array.from({ length: 1500 }), edges: [] }), false)
   assert.equal(paths(), host.layout.edges.length)
   assert.equal(base.width, host.width * 2)
-  const basePaints = base.clears(), overlayPaints = overlay.clears()
+  const barPaints = bars.clears(), basePaints = base.clears(), overlayPaints = overlay.clears()
   chart.setHover(host.model.edges[0].id); frame()
   host.select('f:b.js'); chart.update(root); frame()
   assert.equal(base.clears(), basePaints)
-  assert.equal(overlay.clears(), overlayPaints + 2)
-  assert.equal(overlay.copies(), 2, 'restore bar pixels above highlighted ribbons')
+  assert.equal(bars.clears(), barPaints, 'hover and selection leave bar pixels intact')
+  assert.ok(overlay.clears() > overlayPaints)
+  assert.equal(overlay.copies(), 0, 'highlights reveal the separate bars layer without copying its pixels')
+  assert.equal(base.texts.length, 0, 'ribbon rasters never contain labels')
+  assert.equal(base.strokes.length, 0, 'ribbon rasters never contain bar borders')
   for (let i = 0; i < 20; i++) { host.zoom *= 1.01; chart.viewportChanged() }
   assert.equal(frames.size, 1, 'coalesce input into one draw per animation frame')
   frame()
@@ -135,24 +139,31 @@ test('keyboard navigation starts at the first bar without skipping and stays wit
   assert.equal(host.selection, null, 'empty graphs do not activate a nonexistent bar')
 })
 
-test('continuous zoom reprojects cached bitmaps and redraws exact geometry once input settles', t => {
+test('continuous zoom reprojects ribbons, redraws bars each frame, and refines ribbons after input settles', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { chart, host, base, overlay, frame, frames } = mounted(t)
+  const { chart, host, base, bars, overlay, frame, frames } = mounted(t)
   assert.ok(chart.overview, 'a fitted overview covers newly exposed regions')
   const paints = base.clears(), snapshot = chart.paintedViewport
+  const paintNode = t.mock.method(chart, 'paintNode')
   host.fitted = false
   host.select('f:b.js')
   for (let i = 0; i < 20; i++) {
+    const barPaints = paintNode.mock.callCount()
     host.zoom *= 1.05; host.pan.x -= 5
     chart.viewportChanged(); frame(); t.mock.timers.tick(16)
+    assert.ok(paintNode.mock.callCount() > barPaints, 'bars repaint on each zoom frame')
+    for (const { arguments: [ctx, node] } of paintNode.mock.calls.slice(barPaints)) {
+      assert.equal(ctx, bars.getContext('2d'))
+      assert.ok(node.x + node.width >= chart.view.left && node.x <= chart.view.right, 'bar culling follows the current viewport')
+    }
   }
   assert.equal(base.clears(), paints, 'no ribbon redraw during continuous input')
   const scale = host.zoom / snapshot.zoom
-  const [source, ...rect] = overlay.copyCalls.at(-1)
+  const [source, ...rect] = bars.copyCalls.at(-1)
   assert.equal(source, base)
   const expected = [-host.pan.x / scale * snapshot.dpr, 0, host.width / scale * snapshot.dpr, host.height / scale * snapshot.dpr, 0, 0, host.width, host.height]
   rect.forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 1e-9))
-  assert.equal(overlay.copies(), 20, 'each zoom frame copies only the visible portion of the detailed raster')
+  assert.equal(bars.copies(), 20, 'each zoom frame copies only the visible portion of the ribbon raster')
   assert.ok(overlay.strokes.length > 0, 'the selected node remains outlined during zoom')
   t.mock.timers.tick(100); frame()
   host.zoom *= 1.01; chart.viewportChanged(); frame()
@@ -162,9 +173,21 @@ test('continuous zoom reprojects cached bitmaps and redraws exact geometry once 
   assert.equal(chart.previewVisible, false)
   assert.equal(chart.paintedViewport.zoom, host.zoom)
   host.zoom = .5; chart.viewportChanged(); frame()
-  assert.equal(overlay.copyCalls.at(-2)[0], chart.overview.canvas, 'zoom-out fills uncovered areas from the overview')
+  assert.equal(bars.copyCalls.at(-2)[0], chart.overview.canvas, 'zoom-out fills uncovered areas from the overview')
   chart.dispose(); t.mock.timers.tick(100)
   assert.equal(frames.size, 0, 'disconnect cancels delayed redraws')
+})
+
+test('bar labels become readable during zoom without waiting for the ribbon repaint', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { chart, host, base, bars, frame } = mounted(t)
+  const paints = base.clears(), texts = bars.texts.length
+  host.fitted = false; host.zoom = .25; chart.viewportChanged(); frame()
+  assert.equal(bars.texts.length, texts, 'unreadable subpixel text is omitted')
+  host.zoom = .5; chart.viewportChanged(); frame()
+  assert.equal(chart.preview, true, 'the gesture has not settled yet')
+  assert.ok(bars.texts.length > texts, 'labels are drawn immediately at their new scale')
+  assert.equal(base.clears(), paints, 'ribbons remain cached throughout')
 })
 
 test('fit, viewport resize, and changed graph filters bypass the zoom preview', t => {
@@ -186,15 +209,16 @@ test('fit, viewport resize, and changed graph filters bypass the zoom preview', 
   assert.equal(chart.overview, null, 'an outdated overview is never reused for new filter results')
 })
 
-test('canvas filters invalidate the base, and borders occupy at most half a bar at every zoom', t => {
-  const { chart, host, root, base, frame } = mounted(t)
+test('canvas filters invalidate both layers, and borders occupy at most half a bar at every zoom', t => {
+  const { chart, host, root, base, bars, frame } = mounted(t)
   for (const zoom of [.01, 1, 8]) {
     host.zoom = zoom; chart.viewportChanged(); frame()
-    for (const { rect, width } of base.strokes) assert.ok(width * 2 <= (rect[2] + width) / 2 + 1e-9)
+    for (const { rect, width } of bars.strokes) assert.ok(width * 2 <= (rect[2] + width) / 2 + 1e-9)
   }
-  const before = base.clears()
+  const barPaints = bars.clears(), before = base.clears()
   host.graph.issuesHidden = true; chart.update(root); frame()
   assert.equal(base.clears(), before + 1)
+  assert.equal(bars.clears(), barPaints + 1)
   host.layout = { ...host.layout, nodes: host.layout.nodes.slice(0, 1), edges: [] }
   chart.update(root); frame()
   assert.equal(chart.paths.length, 0)
