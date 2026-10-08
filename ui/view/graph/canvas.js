@@ -4,6 +4,7 @@ import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
 import { buildPackageGraph, pkgLabelOf, pkgRelative } from './data.js'
 import { pkgColor } from './utils.js'
+import { GRAPH_BACKGROUNDS } from './colors.js'
 import { forceLayout } from './force-layout.js'
 import { fitCompactGraph } from './fit.js'
 import { graphZoomMetrics } from './zoom.js'
@@ -46,7 +47,7 @@ const SEV_COLORS = {
 // currentTheme().
 const G2_THEMES = {
   dark: {
-    bg: '#0c0c0c',
+    bg: GRAPH_BACKGROUNDS.dark,
     grid: 'rgba(255, 255, 255, 0.022)',
     selectRing: '#ffffff',
     edgeIntra: (alpha) => `rgba(180, 195, 215, ${alpha})`,
@@ -61,7 +62,7 @@ const G2_THEMES = {
     labelSelected: '#fff',
   },
   light: {
-    bg: '#f6f8fa',
+    bg: GRAPH_BACKGROUNDS.light,
     grid: 'rgba(0, 0, 0, 0.04)',
     selectRing: '#0969da',
     edgeIntra: (alpha) => `rgba(50, 70, 100, ${alpha})`,
@@ -81,7 +82,7 @@ const G2_THEMES = {
   // lighter (97% vs the body's 96%) so the canvas reads as a
   // lifted panel sitting above the page.
   pink: {
-    bg: '#fff0f7',
+    bg: GRAPH_BACKGROUNDS.pink,
     grid: 'rgba(0, 0, 0, 0.04)',
     selectRing: '#0969da',
     edgeIntra: (alpha) => `rgba(50, 70, 100, ${alpha})`,
@@ -97,7 +98,7 @@ const G2_THEMES = {
 
 const G2_PAPER_THEME = {
   ...G2_THEMES.light,
-  bg: '#fff',
+  bg: GRAPH_BACKGROUNDS.paper,
   selectRing: '#000',
   edgeIntra: (alpha) => `rgba(0, 0, 0, ${alpha})`,
   labelFill: '#000',

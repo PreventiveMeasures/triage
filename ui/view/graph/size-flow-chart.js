@@ -2,6 +2,7 @@ import { svg } from 'lit'
 import { formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
+import { textOnPackage } from './colors.js'
 import { flowRibbon, sizeFlowConnector } from './size-flow-model.js'
 
 export const shortSize = formatBytes
@@ -26,10 +27,10 @@ export class SizeFlowChart {
   }
 
   renderNode(n) {
-    const tooltip = `${n.label}\n${formatBytes(n.removable)} removed if deleted · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${sizeFlowConnector(n, this.host.minSize) ? '\nKept by Large to preserve an entry-point path' : ''}`
+    const tooltip = `${n.label}\n${formatBytes(n.removable)} unique · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${sizeFlowConnector(n, this.host.minSize) ? '\nKept by Large to preserve an entry-point path' : ''}`
     const label = n.width >= 40 ? `${n.label.replace(/^node_modules\//u, '')} · ${shortSize(n.removable)}` : ''
-    return svg`<g class="flow-node" data-flow-node=${n.id} role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip} aria-pressed="false">
-      <rect x=${n.x} y=${n.y} width=${n.width} height="26" style=${`--flow-bar-width:${n.width}px`} fill=${pkgColor(n.pkg)} stroke="var(--graph-canvas-bg)"></rect>
+    return svg`<g class="flow-node" data-flow-node=${n.id} role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip} aria-pressed="false" fill=${textOnPackage(pkgColor(n.pkg))}>
+      <rect x=${n.x} y=${n.y} width=${n.width} height="26" style=${`--flow-bar-width:${n.width}px`} fill=${pkgColor(n.pkg)} stroke="var(--flow-background)"></rect>
       ${label ? svg`<svg x=${n.x + 5} y=${n.y} width=${Math.max(0, n.width - 10)} height="26"><text x="0" y="18">${label}</text></svg>` : null}
     </g>`
   }
@@ -83,6 +84,17 @@ export class SizeFlowChart {
       this.edges = new Map([...root.querySelectorAll('[data-flow-edge]')].map(el => [el.dataset.flowEdge, el]))
       this.outline = root.querySelector('.flow-selection')
       this.domLayout = this.layout
+    }
+    // Geometry stays cached on a theme change; repaint only its colors.
+    const palette = pkgColor('__own__')
+    if (fresh || palette !== this.palette) {
+      this.palette = palette
+      for (const [id, el] of this.nodes) {
+        const color = pkgColor(this.model.byId.get(id).pkg)
+        el.querySelector('rect').setAttribute('fill', color)
+        el.setAttribute('fill', textOnPackage(color))
+      }
+      for (const [id, el] of this.edges) el.setAttribute('fill', pkgColor(this.model.byId.get(this.model.edgeById.get(id).to).pkg))
     }
     const matches = this.matchingNodes()
     const all = fresh || matches !== this.paintedMatches

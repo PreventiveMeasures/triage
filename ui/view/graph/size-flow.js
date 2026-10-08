@@ -3,6 +3,7 @@ import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import { hideTooltip, installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
+import { graphBackground } from './colors.js'
 import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowConnector, sizeFlowFilterSize, sizeFlowLargeThreshold } from './size-flow-model.js'
 import { SizeFlowChart, shortSize } from './size-flow-chart.js'
 import { graphZoomMetrics } from './zoom.js'
@@ -94,6 +95,7 @@ class SizeFlow extends LitElement {
     window.addEventListener('pointermove', e => this.movePan(e), { signal })
     window.addEventListener('pointerup', e => this.endPan(e), { signal })
     window.addEventListener('pointercancel', e => this.endPan(e), { signal })
+    window.addEventListener('deepview-theme-changed', () => this.requestUpdate(), { signal })
     stage.addEventListener('click', e => {
       const dragged = this.suppressClick && e.detail > 0
       this.suppressClick = false
@@ -285,7 +287,7 @@ class SizeFlow extends LitElement {
   render() {
     if (!this.layout) return null
     const { nodes, width, height } = this.layout
-    return html`<section class="flow-stage" aria-label="Dependency size flow">
+    return html`<section class="flow-stage" aria-label="Dependency size flow" style=${`--flow-background:${graphBackground()}`}>
       <div class="flow-viewport"><svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()};--flow-zoom:${this.zoom}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import paths with bars weighted by bundle size removed if deleted">
         ${guard([this.layout], () => this.chart.render())}
       </svg>${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${shortSize(this.minSize)}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>

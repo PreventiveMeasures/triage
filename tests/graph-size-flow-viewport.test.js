@@ -175,3 +175,14 @@ test('a hidden flow waits for measurable dimensions and keeps enforcing bounds o
   resize(301, 2000)
   assert.equal(flow.zoom, zoom, 'cosmetic resizes retain a valid user zoom')
 })
+
+test('theme changes repaint Size flow without changing its geometry or viewport', t => {
+  const { flow } = mounted(t)
+  const updates = t.mock.method(flow, 'requestUpdate')
+  const layout = flow.layout, pan = { ...flow.pan }, zoom = flow.zoom
+  window.dispatchEvent(new Event('deepview-theme-changed'))
+  assert.equal(updates.mock.callCount(), 1)
+  assert.equal(flow.layout, layout)
+  assert.deepEqual(flow.pan, pan)
+  assert.equal(flow.zoom, zoom)
+})

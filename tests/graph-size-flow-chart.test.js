@@ -4,6 +4,8 @@ import '../ui/view/frontend-install.js'
 import '../ui/view/graph/size-flow.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { graph2 } from '../ui/view/graph/state.js'
+import { pkgColor } from '../ui/view/graph/utils.js'
+import { graphBackground, textOnPackage } from '../ui/view/graph/colors.js'
 
 function mounted(t) {
   const previousQuery = graph2.pathFilter
@@ -132,7 +134,31 @@ test('node descriptions and search order use removal impact rather than reachabl
   const { chart, host } = mounted(t)
   assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:entry.js', 'f:shared.js', 'f:b.js', 'f:a.js'])
   const template = chart.renderNode(host.layout.byId.get('f:a.js'))
-  assert.ok(template.values.includes('a.js\n20 B removed if deleted · 1020 B reachable · 20 B own'))
+  assert.ok(template.values.includes('a.js\n20 B unique · 1020 B reachable · 20 B own'))
+})
+
+test('theme changes repaint retained flow bars and labels with the Layers colors', t => {
+  const { chart, edges, host, nodes, root } = mounted(t)
+  const originalDocument = globalThis.document
+  let theme = ''
+  globalThis.document = { body: { classList: { contains: name => name === theme } } }
+  t.after(() => { if (originalDocument) globalThis.document = originalDocument; else delete globalThis.document })
+  const geometry = chart.render()
+  const backgrounds = [['', '#0c0c0c'], ['theme-light', '#f6f8fa'], ['theme-paper', '#fff'], ['theme-pink', '#fff0f7'], ['theme-green', '#0c0c0c']]
+  for (const [name, background] of backgrounds) {
+    theme = name
+    chart.update(root)
+    assert.equal(chart.render(), geometry, 'changing colors must not rebuild geometry')
+    assert.equal(graphBackground(), background)
+    for (const [id, el] of nodes) {
+      const color = pkgColor(host.model.byId.get(id).pkg)
+      assert.equal(el.attributes.get('rect:fill'), color)
+      assert.equal(el.attributes.get('fill'), textOnPackage(color))
+    }
+    for (const [id, el] of edges) assert.equal(el.attributes.get('fill'), pkgColor(host.model.byId.get(host.model.edgeById.get(id).to).pkg))
+  }
+  assert.equal(textOnPackage('#e15759'), '#000', 'the red bar in the reported dark-theme example needs dark text')
+  assert.equal(textOnPackage('#8a5d40'), '#fff', 'darker bars retain white text')
 })
 
 test('small retained connectors explain why they remain under Large', t => {

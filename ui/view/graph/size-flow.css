@@ -12,7 +12,10 @@ button {
 button:hover { background: var(--graph-hover-bg); }
 button:disabled { opacity: .4; cursor: default; }
 button:focus-visible { outline: 2px solid var(--accent); }
-.flow-stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.flow-stage {
+  grid-area: stage; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  background: var(--flow-background);
+}
 .flow-viewport {
   flex: 1; position: relative; overflow: hidden; min-height: 0;
   touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
@@ -48,7 +51,7 @@ button:focus-visible { outline: 2px solid var(--accent); }
 .flow-edge { stroke-width: calc(.7px / var(--flow-zoom, 1)); }
 .flow-edge:focus { stroke: var(--text); stroke-width: calc(1.5px / var(--flow-zoom, 1)); }
 .flow-node text {
-  fill: #fff; font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   pointer-events: none; stroke: none; text-shadow: none;
 }
 .flow-panel {

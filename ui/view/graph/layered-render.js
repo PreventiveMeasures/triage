@@ -1,13 +1,6 @@
 // Canvas drawing is separate from the generic shortest-path/weighted layout.
 // Coordinates remain in layout space; the caller owns pan, zoom and picking.
-function textOnPackage(color) {
-  const channels = [1, 3, 5].map((offset) => {
-    const c = parseInt(color.slice(offset, offset + 2), 16) / 255
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
-  })
-  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
-  return luminance > 0.18 ? '#000' : '#fff'
-}
+import { textOnPackage } from './colors.js'
 
 export function drawDependencyLayers(ctx, layout, { theme, scale, colorOf, labelOf, sizeLabel, dimmed, selected, hovered }) {
   const focus = hovered ?? selected
@@ -99,18 +92,29 @@ export function drawDependencyLayers(ctx, layout, { theme, scale, colorOf, label
     // Use the graph's exact theme-aware package fills at full opacity.
     ctx.fillStyle = color
     ctx.fillRect(x, y, width, height)
-    // A hairline separates adjacent packages without changing their area.
+    // Clip separators to their own bar so a wider neighbor cannot draw over
+    // a thin one. Omit verticals below 2 screen pixels: two half-strokes
+    // would otherwise cover more than half of the bar's width.
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(x, y, width, height)
+    ctx.clip()
     ctx.strokeStyle = theme.bg
     ctx.lineWidth = 1 / scale
-    ctx.strokeRect(x, y, width, height)
+    if (width * scale >= 2) ctx.strokeRect(x, y, width, height)
+    else {
+      ctx.beginPath()
+      ctx.moveTo(x, y); ctx.lineTo(x + width, y)
+      ctx.moveTo(x, y + height); ctx.lineTo(x + width, y + height)
+      ctx.stroke()
+    }
     if (id === selected || id === hovered) {
       ctx.strokeStyle = theme.selectRing
-      ctx.lineWidth = 1.5 / scale
-      const inset = Math.min(width / 2, 0.75 / scale)
+      ctx.lineWidth = Math.min(1.5 / scale, width / 4)
+      const inset = ctx.lineWidth / 2
       ctx.strokeRect(x + inset, y + inset, Math.max(0, width - inset * 2), height - inset * 2)
     }
-    if (width * scale < 28) continue
-    ctx.save()
+    if (width * scale < 28) { ctx.restore(); continue }
     ctx.beginPath()
     ctx.rect(x + 7, y + 4, Math.max(0, width - 14), height - 8)
     ctx.clip()
