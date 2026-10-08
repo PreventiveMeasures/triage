@@ -35,14 +35,16 @@ export function canScanBundle(entry) {
     : !entry.managedId && Boolean(currentScanServer())
 }
 
-export async function openScan(entry = null) {
+// `mode` preselects a bundle scan mode ('dependencies' from the Advisories
+// tab); omitted, scan setup opens on its default Code mode.
+export async function openScan(entry = null, { mode } = {}) {
   const workspaceId = state.selectedBundleWorkspace
   const initialGeneration = currentViewGeneration()
   await ensureClientMode()
   if (initialGeneration !== currentViewGeneration()) return
   if (entry && !canScanBundle(entry)) return
   if (isManagedUiMode()) {
-    if (entry) await navigateToAdminPage('manage-scans', { bundleId: entry.managedId })
+    if (entry) await navigateToAdminPage('manage-scans', { bundleId: entry.managedId, ...(mode ? { scanMode: mode } : {}) })
     return
   }
   if (!currentScanServer()) return
@@ -50,7 +52,7 @@ export async function openScan(entry = null) {
   const generation = currentViewGeneration()
   await home
   if (!currentScanServer() || generation !== currentViewGeneration()) return
-  state.scanSelection = entry ? { bundleId: entry.integrity, ...(workspaceId ? { repoId: workspaceId } : {}) } : null
+  state.scanSelection = entry ? { bundleId: entry.integrity, ...(workspaceId ? { repoId: workspaceId } : {}), ...(mode ? { mode } : {}) } : null
   state.currentView = 'scan'
   render()
   void renderSidebar()

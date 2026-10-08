@@ -2980,6 +2980,11 @@ body.report-fullscreen {
   container: bundle-advisories / inline-size;
 }
 .bundle-advisories-recheck:disabled { opacity: .6; }
+.bundle-advisories-scan {
+  display: inline-flex; align-items: center; gap: .3rem;
+
+  & > svg { display: block; flex-shrink: 0; width: 13px; height: 13px; }
+}
 .bundle-advisories-skipped {
   color: var(--muted);
   font-size: .78rem;

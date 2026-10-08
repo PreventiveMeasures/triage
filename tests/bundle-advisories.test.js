@@ -176,6 +176,19 @@ test('skipped dependencies remain visible when none of the bundle could be audit
   assert.equal(managedCalls.length, 1, 'no repository lookup when every dependency was skipped')
 })
 
+test('managed advisories offer Scan right of the recheck button only when the viewer can scan', async () => {
+  const details = { managedId: 'scan-bundle', integrity: 'scan-bundle', kind: 'stasis' }
+  await ensureBundleAdvisories(details, () => {})
+  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /bundle-advisories-scan/u)
+  let scans = 0
+  const tab = renderBundleAdvisoriesTab(details, () => {}, () => { scans++ })
+  assert.match(renderText(tab), /Recheck against repositories\s*<\/button>\s*<button type="button" class="bundle-advisories-retry bundle-advisories-scan"[^>]*>.*<span>Scan<\/span>/su)
+  templates(tab).find(part => part.strings[0].includes('bundle-advisories-scan')).values.find(value => typeof value === 'function')()
+  assert.equal(scans, 1)
+  const local = { integrity: 'local-scan', kind: 'stasis', bundle: { modules: new Map() } }
+  assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(local, () => {}, () => {})), /bundle-advisories-scan/u)
+})
+
 test('repository recheck button shows a busy state, prevents duplicate requests and replaces results on completion', async () => {
   const details = { managedId: 'recheck-bundle', integrity: 'recheck-bundle', kind: 'stasis' }
   let renders = 0

@@ -737,6 +737,8 @@ deduplication. Rechecks use the selected reason;
 GitHub rate limits and the 30-second caller deadline still apply. The button shows
 **Rechecking…** and is disabled during the request. Transient failures preserve
 the previous results; a denied or missing bundle discards them.
+For admins and managers, a **Scan** button right of it opens Scans on that bundle with
+Dependency alerts selected (`/manage/scans?bundle=<id>&mode=dependencies`).
 For both initial audits and repository rechecks, GitHub requests use the current
 viewer's stored access token, refreshing it within the audit deadline when needed.
 Public shares and viewers without a usable token use an anonymous client. Credentials

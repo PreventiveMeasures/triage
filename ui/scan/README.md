@@ -8,7 +8,7 @@ fetching a bundle catalogue. Its host supplies:
 - `loadModels(signal)`: model catalogue loader
 - `canRun`: host-controlled access gate (defaults to true for managed Scans)
 - `loadReportSources(signal)`: separate Merge bundle/results and Link scope/report catalogues
-- `selection`: initial `{ bundleId, repoId? }` selection, applied after the catalogue loads
+- `selection`: initial `{ bundleId, repoId?, mode? }` selection, applied after the catalogue loads; `mode: 'dependencies'` opens Dependency alerts instead of Code
 - `scopeLabel`: Repository by default; local/E2E hosts use Workspace
 - `hideHeading`: hides the visible page heading when the host already supplies navigation
 - `navigation` slot: the host’s breadcrumb or Home button
@@ -47,7 +47,9 @@ managed user has an admin/manage role. It opens scan setup with that bundle and
 its repository/workspace selected. For a bundle shared across workspaces, the
 workspace row clicked in the sidebar is retained. Managed scan links include the
 bundle ID so Back/Forward and reload retain the requested input. An unavailable
-selection never silently switches to another bundle.
+selection never silently switches to another bundle. The managed Advisories tab's
+Scan button opens the same setup in Dependency alerts mode, and its link keeps
+that mode too.
 
 ## Reports and Advanced Code scans
 

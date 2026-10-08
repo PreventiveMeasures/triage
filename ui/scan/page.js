@@ -109,7 +109,7 @@ export class ScanPage extends LitElement {
       this._reason = bundle?.reasons?.[0]?.id ?? ''
       if (requested) {
         this._tab = 'new'
-        this._mode = requested.mode === 'report' ? 'report' : 'code'
+        this._mode = ['report', 'dependencies'].includes(requested.mode) ? requested.mode : 'code'
         if (requested.mode === 'report') {
           this._reportMode = 'link'
           this._reportRestore = null

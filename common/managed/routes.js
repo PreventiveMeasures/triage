@@ -41,7 +41,9 @@ export function managedRoutePath(route) {
     if (route.view === 'manage-deduplication' && route.linkId) return `${path}?report=${encodeURIComponent(route.linkId)}`
     if (route.view === 'manage-bundles' && Number.isSafeInteger(route.createRepoId) && route.createRepoId > 0) return `${path}?createRepo=${route.createRepoId}`
     if (route.view === 'manage-scans' && route.scanMode === 'link') return `${path}?mode=link`
-    if (route.view === 'manage-scans' && route.bundleId) return `${path}?bundle=${encodeURIComponent(route.bundleId)}`
+    if (route.view === 'manage-scans' && route.bundleId) {
+      return `${path}?bundle=${encodeURIComponent(route.bundleId)}${route.scanMode === 'dependencies' ? '&mode=dependencies' : ''}`
+    }
     return route.view === 'manage-history' && route.actor ? `${path}?actor=${encodeURIComponent(route.actor)}` : path
   }
   if (!['findings', 'files'].includes(route.view) || !route.teamSlug
@@ -66,7 +68,8 @@ export function parseManagedRoute(url) {
       ...(view === 'manage-bundles' && Number.isSafeInteger(createRepoId) && createRepoId > 0 ? { createRepoId } : {}),
       ...(view === 'manage-history' && url.searchParams.get('actor') ? { actor: url.searchParams.get('actor') } : {}),
       ...(view === 'manage-scans' ? url.searchParams.get('mode') === 'link' ? { scanMode: 'link' }
-        : url.searchParams.get('bundle') ? { bundleId: url.searchParams.get('bundle') } : {} : {}),
+        : url.searchParams.get('bundle') ? { bundleId: url.searchParams.get('bundle'),
+          ...(url.searchParams.get('mode') === 'dependencies' ? { scanMode: 'dependencies' } : {}) } : {} : {}),
     }
   }
   const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+))?$/u.exec(path)

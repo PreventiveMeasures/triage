@@ -1948,7 +1948,8 @@ function renderBundleSlide(entry) {
               ['search', () => renderBundleSearchView(details)],
               ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],
-              ['advisories', () => renderBundleAdvisoriesTab(details, render)],
+              ['advisories', () => renderBundleAdvisoriesTab(details, render,
+                canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
             ])
           : detailsReady && details.sourceError
             ? html`<div class="bundles-slide-placeholder is-error">${details.sourceError} <button type="button" data-bundle-retry-sources>Retry</button></div>`

@@ -43,6 +43,20 @@ test('bundle navigation waits for the catalogue and selects the bundle and its r
   }
 })
 
+test('bundle navigation can preselect Dependency alerts, before and after the catalogue loads', () => {
+  const page = new Scans()
+  page.selection = { bundleId: 'bundle-worker', mode: 'dependencies' }
+  page.willUpdate(new Map([['selection', null]]))
+  assert.equal(page._mode, 'dependencies')
+  page.source = { bundles: cloneScanFixtures(), repositories: SCAN_REPOSITORY_FIXTURES }
+  page.willUpdate(new Map([['source', null]]))
+  assert.equal(page._bundle.id, 'bundle-worker')
+  assert.equal(page._mode, 'dependencies')
+  page.selection = { bundleId: 'bundle-worker' }
+  page.willUpdate(new Map([['selection', null]]))
+  assert.equal(page._mode, 'code', 'plain bundle navigation keeps opening Code')
+})
+
 test('a shared bundle keeps the clicked workspace through metadata loading and scan restart', async () => {
   const page = new Scans()
   page.source = storedScanSource([{ integrity: 'shared', name: 'shared.map' }], [
