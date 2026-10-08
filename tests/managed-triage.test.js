@@ -374,6 +374,23 @@ test('a batch the server refuses as sent does not wedge later pushes; an over-ca
   assert.equal(state.triage.get('v').fix.length, MAX_TRIAGE_TEXT + 1, 'kept locally')
 })
 
+test('an admin viewing as another user gets the server entries back in place of refused edits, never resent', async () => {
+  state.managedSession = { role: 'triage', csrfToken: 'tok', viewer: { id: 'admin', login: 'admin', name: null } }
+  serverEntries = { B: { y: { color: 'blue' } } }
+  await open('B', ['y', 'w'])
+  pushStatus = 403
+  await edit('y', { color: 'red' })
+  await edit('w', { flagged: true })
+  await drain()
+  await settle()
+  assert.deepEqual(pushes(), [push('B', { y: { color: 'red' }, w: { flagged: true } })])
+  assert.deepEqual(calls.filter(call => call.fetch === 'B').length, 2, 'the refusal re-reads the report')
+  assert.equal(state.triage.get('y').color, 'blue')
+  assert.equal(state.triage.get('w')?.flagged, undefined)
+  await drain()
+  assert.equal(pushes().length, 1, 'restoring the server entries pushes nothing')
+})
+
 test('a push is split by entry count and by body size', async () => {
   const ids = Array.from({ length: 230 }, (_, i) => `f${i}`)
   await open('B', ids)

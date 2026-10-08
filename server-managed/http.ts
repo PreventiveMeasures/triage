@@ -47,7 +47,9 @@
 //   POST /api/admin/teams/delete → admin deletes a team | 401/403/404
 //   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
-//   POST /api/auth/logout        → same-origin + CSRF, drops the session
+//   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
+//   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
+//   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
 import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -88,6 +90,7 @@ import { RepositoryDiscovery } from './repository-discovery.ts'
 import { type RepositoryEntry, createRepositoryBrowser, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
+import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
@@ -133,6 +136,7 @@ const BUNDLE_SET_VISIBLE_PATH = '/api/admin/bundles/set-visible'
 const BUNDLE_PREFIX = '/api/admin/bundles/'
 const MY_TEAMS_PATH = '/api/teams'
 const MY_REPORT_PREFIX = '/api/reports/'
+const REPORT_QUERY_PATH = '/api/reports/query'
 const MY_REPORT_TRIAGE_SUFFIX = '/triage'
 const MY_REPORT_TRIAGE_HISTORY_SUFFIX = '/triage/history'
 const ADMIN_TEAMS_PATH = '/api/admin/teams'
@@ -144,6 +148,12 @@ const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
 const MAX_TEAM_NAME = 100
+// Managed data routes, and with them the authentication routes, which an
+// admin's view as another user covers. Other paths fall through to a combined
+// e2e server, whose own authentication a view never touches.
+const MANAGED_DATA_PREFIXES = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
+const VIEW_PREFIXES = [...MANAGED_DATA_PREFIXES, '/api/auth', '/api/oauth']
+const underPrefix = (path: string, prefixes: readonly string[]) => prefixes.some(prefix => path === prefix || path.startsWith(prefix + '/'))
 
 async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string, reportId: string | null): Promise<void> {
   const s = await readWorkspaceSession(res, deps, cookie)
@@ -360,23 +370,70 @@ async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES
 
 // The router enforces same-origin for every request. A mutation also needs an
 // authenticated session whose CSRF token matches the X-CSRF-Token header.
-// Returns the session, or null after having already sent the 401/403.
-async function checkMutation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+// Returns the session, or null after having already sent the 401/403. An
+// admin's view as another user writes nothing; `view` admits only the
+// endpoints that end it.
+async function checkMutation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, { view = false } = {}): Promise<{ session: ManagedSession; user: StoredUser } | null> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
   const csrf = firstHeader(req.headers['x-csrf-token'])
   if (csrf == null) { sendJson(res, 403, { error: 'csrf-missing' }); return null }
   if (!safeEqual(csrf, s.session.csrfToken)) { sendJson(res, 403, { error: 'csrf-mismatch' }); return null }
+  if (s.session.viewer && !view) { sendViewOnly(res); return null }
   return s
 }
 
-// POST /api/auth/logout — drop the session (same-origin + CSRF).
+function sendViewOnly(res: ServerResponse): void {
+  sendJson(res, 403, { error: VIEW_ONLY_ERROR })
+}
+
+// Reads stay available while an admin views as another user. Everything else
+// is refused before dispatch, except ending the view or signing out, and the
+// batch report preview, a POST without effects. Issue authorization would
+// grant GitHub access on the viewed user's behalf.
+function viewAllows(method: string, path: string): boolean {
+  if (method === 'GET' || method === 'HEAD') return path !== ISSUE_LOGIN_PATH
+  return (method === 'DELETE' && path === VIEW_AS_PATH) || (method === 'POST' && (path === LOGOUT_PATH || path === REPORT_QUERY_PATH))
+}
+
+// POST /api/auth/logout — drop the session (same-origin + CSRF), which also
+// ends a view opened from it.
 async function handleLogout(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
-  const s = await checkMutation(req, res, deps, cookie)
+  const s = await checkMutation(req, res, deps, cookie, { view: true })
   if (s == null) return
   await endSession(deps.config, deps.db, cookie)
-  res.writeHead(204, { 'set-cookie': clearCookie(deps.config.sessionCookieName, deps.config.cookieSecure), 'cache-control': 'no-store' })
+  const cleared = clearCookie(deps.config.sessionCookieName, deps.config.cookieSecure)
+  res.writeHead(204, { 'set-cookie': s.session.viewer ? [cleared, clearViewCookie(deps.config)] : cleared, 'cache-control': 'no-store' })
+  res.end()
+}
+
+// POST /api/auth/view-as — an admin opens a read-only view as another user
+// (body { userId }); DELETE ends it. Viewing as oneself is refused.
+async function handleViewAs(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const method = req.method ?? 'GET'
+  if (method === 'DELETE') {
+    if (await checkMutation(req, res, deps, cookie, { view: true }) == null) return
+    await endViewSession(deps.config, deps.db, cookie)
+    res.writeHead(204, { 'set-cookie': clearViewCookie(deps.config), 'cache-control': 'no-store' })
+    res.end(); return
+  }
+  if (method !== 'POST') { send405(res, 'POST, DELETE'); return }
+  const s = await checkMutation(req, res, deps, cookie)
+  if (s == null) return
+  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const userId = (body as { userId?: unknown } | null)?.userId
+  if (typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (userId === s.user.id) { sendJson(res, 400, { error: 'cannot-view-as-self' }); return }
+  const target = (await deps.db.listUsers()).find(user => user.id === userId)
+  if (!target) { sendJson(res, 404, { error: 'not-found' }); return }
+  // The insert itself rechecks the admin session and role.
+  const setCookie = await startViewSession(deps.config, deps.db, s.session, userId, Date.now())
+  if (setCookie == null) { sendJson(res, 403, { error: 'forbidden' }); return }
+  await activity(deps, s.user, 'access', `viewed as ${target.login}`)
+  res.writeHead(204, { 'set-cookie': setCookie, 'cache-control': 'no-store' })
   res.end()
 }
 
@@ -2272,6 +2329,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const path = url.pathname
     const method = req.method ?? 'GET'
     const cookie = req.headers.cookie
+    const viewing = viewToken(config, cookie) != null
 
     if (req.headers['x-deepview-share'] !== undefined || path.startsWith('/api/shares/')) {
       await handlePublicWorkspace(req, res, deps, url); return
@@ -2287,6 +2345,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
         } : {}) } })
       return
     }
+    if (viewing && underPrefix(path, VIEW_PREFIXES) && !viewAllows(method, path)) { sendViewOnly(res); return }
     // OAuth: start → redirect to GitHub with the CSRF state cookie.
     if (path === LOGIN_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
@@ -2300,6 +2359,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       try {
         if (isIssueOAuthCallback(config, url.searchParams, cookie)) {
+          if (viewing) { sendViewOnly(res); return }
           const s = await readWorkspaceSession(res, deps, cookie)
           if (!s) return
           const result = await issueOAuthCallback(config, db, s.session, url.searchParams, cookie)
@@ -2307,7 +2367,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
           res.end(); return
         }
         const result = await handleCallback(url.searchParams, cookie, { config, db, avatarStore })
-        res.writeHead(302, { location: result.location, 'set-cookie': result.setCookies, 'cache-control': 'no-store' })
+        // A new sign-in never resumes an earlier view.
+        const setCookies = viewing ? [...result.setCookies, clearViewCookie(config)] : result.setCookies
+        res.writeHead(302, { location: result.location, 'set-cookie': setCookies, 'cache-control': 'no-store' })
         res.end()
       } catch (err) {
         if (err instanceof OAuthError) sendJson(res, err.status, { error: err.message })
@@ -2323,22 +2385,29 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
       res.end(); return
     }
-    // Who am I?
+    // Who am I? While an admin views as another user, that user, plus the
+    // admin as `viewer`. A view that has ended (with the admin's session or
+    // role, or the viewed account) is cleared, returning to the own session.
     if (path === SESSION_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      const s = await readSession(config, db, cookie, Date.now())
-      if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+      const now = Date.now()
+      let s = await readSession(config, db, cookie, now)
+      const ended = s == null && viewing
+      if (ended) s = await readSession(config, db, cookie, now, { own: true })
+      const headers: Record<string, string> = ended ? { 'set-cookie': clearViewCookie(config) } : {}
+      if (s == null) { sendJson(res, 401, { error: 'unauthenticated' }, headers); return }
       sendJson(res, 200, {
         user: { id: s.user.id, login: s.user.login, name: s.user.name, role: s.user.role },
         csrfToken: s.session.csrfToken,
-      })
+        ...(s.session.viewer ? { viewer: s.session.viewer } : {}),
+      }, headers)
       return
     }
+    if (path === VIEW_AS_PATH) { await handleViewAs(req, res, deps, cookie); return }
     // Authentication is not workspace access. Keep bootstrap/session/logout
     // available so blocked accounts can see their role and sign out, but deny
     // every managed data route before reading bodies or looking up resources.
-    const managedDataPath = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
-      .some(prefix => path === prefix || path.startsWith(prefix + '/'))
+    const managedDataPath = underPrefix(path, MANAGED_DATA_PREFIXES)
     const workspaceSession = managedDataPath ? await readWorkspaceSession(res, deps, cookie) : null
     if (managedDataPath && !workspaceSession) return
     const issueRoute = /^\/api\/teams\/([^/]+)\/issues$/u.exec(path)
@@ -2514,7 +2583,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleTeamReports(res, deps, workspaceSession!.session, teamReports[1]!, url.searchParams.get('reportId')); return
     }
-    if (path === '/api/reports/query') {
+    if (path === REPORT_QUERY_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleQueryReports(req, res, deps, cookie); return
     }
@@ -2582,7 +2651,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // Feeds lease a connection per poll, never across streaming sleeps. This
     // also covers capability-authenticated feeds handled by public-workspace.
     const feed = /^\/api\/teams(?:\/[^/?]+)?\/feed(?:\?|$)/u.test(req.url ?? '')
-    const work = (db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res)).catch((err) => {
+    const serve = () => db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res)
+    const work = runViewing(viewToken(config, req.headers.cookie) != null, serve).catch((err) => {
       if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError || err instanceof ManagedMutationError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)
       if (res.headersSent) { try { res.destroy() } catch {} }

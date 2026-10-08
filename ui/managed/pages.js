@@ -17,6 +17,7 @@ import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
 import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
+import { viewAs } from '../../client/managed/session.js'
 import localImportStyles from './styles/local-import.css'
 import commonStyles from './styles/common.css'
 import homeStyles from './styles/home.css'
@@ -310,7 +311,7 @@ class ManagedAdminUsers extends ManagedPage {
     if (this._users.length === 0) return html`<p class="msg">No users yet.</p>`
     if (users.length === 0) return html`<div class="empty"><strong>No matching users</strong><p>Try another name, username, or team.</p></div>`
     return html`<div class="directory">
-      <div class="list-head" aria-hidden="true"><span>Account</span><span>Team access</span><span>Last seen</span><span>Last activity</span><span>Role</span></div>
+      <div class="list-head" aria-hidden="true"><span>Account</span><span>Team access</span><span>Last seen</span><span>Last activity</span><span>Role</span><span></span></div>
       <ul class="users">${users.map((u) => this._row(u))}</ul>
     </div>${this._users.some((u) => u.id === this._me) ? html`<p class="self-note">Your own role can only be changed by another admin.</p>` : nothing}`
   }
@@ -344,7 +345,19 @@ class ManagedAdminUsers extends ManagedPage {
         ${ROLES.map((r) => html`<option value=${r} ?selected=${r === u.role}>${ADMIN_ROLE_LABELS[r]}</option>`)}
       </select>
       </span>
+      <span class="view-as">${isSelf ? nothing : html`<button type="button" class="btn view-as-btn"
+        aria-label=${`View as ${u.login}`} title="See the app as this user, without saving changes"
+        @click=${(e) => void this._viewAs(u, e.currentTarget)}>View as</button>`}</span>
     </li>`
+  }
+
+  // The page reloads into the view; a failure leaves this page as it was.
+  async _viewAs(u, button) {
+    button.disabled = true
+    try { await viewAs(u.id, this._csrf) } catch (err) {
+      button.disabled = false
+      this.appState.notify(`Couldn't view as @${u.login}: ${err?.message ?? err}`)
+    }
   }
 
   async _changeRole(u, role, selectEl) {

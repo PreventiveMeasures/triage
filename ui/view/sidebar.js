@@ -5,7 +5,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedModeLink, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
-import { clearPreviewRole, fetchManagedBundleCatalog, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './client-managed.js'
+import { clearPreviewRole, fetchManagedBundleCatalog, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog, stopViewing } from './client-managed.js'
 import { resetManagedFixes } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
@@ -1170,6 +1170,11 @@ async function onSidebarClick(e) {
       return
     }
   }
+  if (e.target.closest('[data-action="view-as-stop"]')) {
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void stopViewing(state.managedSession?.csrfToken)
+    return
+  }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
@@ -1275,6 +1280,7 @@ function renderAuthStatus() {
   const session = state.managedSession
   hostEl?.toggleAttribute('data-authenticated', session != null)
   hostEl?.toggleAttribute('data-workspace-access', session != null && session.role !== 'none')
+  renderViewAsStatus(session)
   authBtn.hidden = session == null
   if (session == null) {
     if (manageBtn) manageBtn.hidden = true
@@ -1315,11 +1321,28 @@ function renderAuthStatus() {
           ${session.name ? html`<span class="user-name">${session.name}</span>` : nothing}
         </span>
       </div>
+      ${session.viewer ? html`<button type="button" class="user-menu-row" data-action="view-as-stop">Return to @${session.viewer.login}</button>` : nothing}
       <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'e2e mode' : 'Local mode'}</button>
       <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
   }
 }
+
+// An admin viewing as another user sees that user's sidebar, plus this banner
+// for as long as the view lasts: every change is refused by the server.
+function renderViewAsStatus(session) {
+  const banner = root?.querySelector('#view-as-status')
+  if (!banner) return
+  banner.hidden = !session?.viewer
+  litRender(session?.viewer ? html`<span class="view-as-label"><span>Viewing as <strong>@${session.login}</strong></span>
+      <span class="view-as-note">Read only · changes are not saved</span></span>
+    <button type="button" class="view-as-stop" data-action="view-as-stop" aria-label=${`Stop viewing as ${session.login}`}>Stop</button>` : nothing, banner)
+}
+
+document.addEventListener('managed-view-only', () => {
+  const session = state.managedSession
+  if (session?.viewer) showToast(`Viewing as @${session.login} is read only: changes are not saved.`, { kind: 'error' })
+})
 
 // Avatar disc: the cached avatar (served same-origin from /api/avatar/<id>) over
 // a fallback initial that shows when there's no avatar (the img 404s). The id in
@@ -1375,6 +1398,7 @@ function applyCollapsibility() {
     root?.querySelector('#encryption-toggle')?.removeAttribute('hidden')
     root?.querySelector('#manage-status')?.setAttribute('hidden', '')
     root?.querySelector('#auth-status')?.setAttribute('hidden', '')
+    root?.querySelector('#view-as-status')?.setAttribute('hidden', '')
   }
   // Mode also drives the encryption toggle's visibility (managed data is
   // server-owned); refresh it here since mode isn't a vault-state event.
@@ -2473,6 +2497,7 @@ class AppSidebar extends LitElement {
         <span class="storage-dot" aria-hidden="true"></span>
         <span class="storage-label"></span>
       </button>
+      <div id="view-as-status" role="status" hidden></div>
       <div class="sidebar-actions">
         <sidebar-delete-current></sidebar-delete-current>
         <button id="sync-status" type="button" data-status="off">

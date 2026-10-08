@@ -166,6 +166,7 @@
     "server-managed/team-reports.ts",
     "server-managed/triage-response.ts",
     "server-managed/uploads.ts",
+    "server-managed/view-as.ts",
     "server-managed/upstream-cache.ts",
     "server-managed/workspace-shares.ts",
     "server-common/database-config.ts",

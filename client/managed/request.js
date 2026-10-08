@@ -130,6 +130,13 @@ async function uploadInParts(url, options, send, chunkBytes) {
   }
 }
 
+// While an admin views as another user, the server refuses writes. Announce
+// each refusal, whichever caller made the request, so the host can say why.
+async function announceViewOnly(response) {
+  const error = await response.json().then(body => body?.error, () => null)
+  if (error === 'view-only') globalThis.document?.dispatchEvent(new CustomEvent('managed-view-only'))
+}
+
 export async function managedFetch(url, options) {
   options?.signal?.throwIfAborted()
   if (preview) return previewResponse(url, options)
@@ -146,6 +153,7 @@ export async function managedFetch(url, options) {
     }
     const response = await fetch(target, { ...init, cache: 'no-store' })
     if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
+    if (response.status === 403 && !['GET', 'HEAD'].includes((init?.method ?? 'GET').toUpperCase())) void announceViewOnly(response.clone())
     return response
   }
   if (options?.method === 'POST' && UPLOAD_PATHS.has(url) && options.body instanceof Blob) return await uploadFile(url, options, send)

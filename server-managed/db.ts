@@ -7,7 +7,7 @@ import { migrateReportLocations } from './report-migration.ts'
 import { initCommentMethods } from './comments.ts'
 import { initActivityMethods } from './activity.ts'
 import { revisionSchema } from './revisions.ts'
-import { MANAGED_SCHEMA } from './db-schema.ts'
+import { MANAGED_SCHEMA, VIEW_SESSION_INDEX } from './db-schema.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
@@ -72,6 +72,8 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA + BUNDLE_BUILD_LEASE_SCHEMA + UPSTREAM_CACHE_SCHEMA)
     ensureColumn(db, 'managed_selected_repo', 'cached_default_branch', 'TEXT')
     ensureColumn(db, 'managed_session', 'upload_key', 'TEXT')
+    ensureColumn(db, 'managed_session', 'viewer_session', 'TEXT REFERENCES managed_session(id) ON DELETE CASCADE')
+    db.exec(VIEW_SESSION_INDEX)
     for (const table of ['managed_report', 'managed_bundle']) {
       ensureColumn(db, table, 'data_key', 'TEXT')
       ensureColumn(db, table, 'storage_encrypted', 'INTEGER NOT NULL DEFAULT 0')

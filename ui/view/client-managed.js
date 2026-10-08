@@ -128,6 +128,10 @@ export async function logout(csrfToken) {
   return (await loadManagedBundle()).logout(csrfToken)
 }
 
+export async function stopViewing(csrfToken) {
+  return (await loadManagedBundle()).stopViewing(csrfToken)
+}
+
 export async function fetchBundleMetadata(id, options) {
   return (await loadManagedBundle()).fetchBundleMetadata(id, options)
 }

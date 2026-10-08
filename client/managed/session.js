@@ -1,6 +1,7 @@
 import { managedFetch } from './request.js'
 import { getPublicShare, publicShareBootstrapPath } from './public-share.js'
 import { reportEntries } from '@preventive/report'
+import { MANAGED_PAGES } from '../../common/managed/routes.js'
 // Managed-mode client auth. Loaded lazily (see ui/view/client-managed.js) so
 // this managed-only code stays out of the main view bundle, mirroring
 // client/sync. For now it covers the session lifecycle against the managed
@@ -23,7 +24,8 @@ async function getJson(url, fallback = null, options = {}) {
 // request is unauthenticated. A known session can survive transient failures
 // during background revalidation. The returned shape is what the sidebar
 // keeps on `state.managedSession` (renderAuthStatus reads `.login`; logout
-// reads `.csrfToken`).
+// reads `.csrfToken`). While an admin views as another user, it is that
+// user's, with the admin as `viewer`.
 export async function probeSession({ fallback = null } = {}) {
   let body
   try {
@@ -45,6 +47,9 @@ export async function probeSession({ fallback = null } = {}) {
     role: typeof user.role === 'string' ? user.role : 'none',
     csrfToken: typeof body.csrfToken === 'string' ? body.csrfToken : null,
     ...(getPublicShare() ? { publicShare: true } : {}),
+    ...(typeof body.viewer?.login === 'string' ? { viewer: {
+      id: body.viewer.id, login: body.viewer.login, name: typeof body.viewer.name === 'string' ? body.viewer.name : null,
+    } } : {}),
   }
 }
 
@@ -287,6 +292,30 @@ export async function logout(csrfToken) {
     })
   } catch {}
   location.reload()
+}
+
+// Admins can view the app as another user to check that user's access; the
+// server refuses every write meanwhile. Both directions reload into the new
+// session so nothing loaded for one account is shown as the other.
+export async function viewAs(userId, csrfToken) {
+  const res = await managedFetch('/api/auth/view-as', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}) },
+    body: JSON.stringify({ userId }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  location.assign('/')
+}
+
+// An ended view (its admin session or role is gone) cannot be deleted; the
+// reload's session probe clears it instead.
+export async function stopViewing(csrfToken) {
+  try {
+    await managedFetch('/api/auth/view-as', {
+      method: 'DELETE', credentials: 'same-origin', headers: csrfToken ? { 'x-csrf-token': csrfToken } : {},
+    })
+  } catch {}
+  location.assign(MANAGED_PAGES['admin-users'])
 }
 
 export async function listWorkspaceShares(teamId) {

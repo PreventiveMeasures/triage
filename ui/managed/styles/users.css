@@ -142,12 +142,12 @@
 }
 .list-head,
 .users {
-  min-width: 49rem;
+  min-width: 54rem;
 }
 .list-head,
 .users li {
   display: grid;
-  grid-template-columns: minmax(11rem, 1fr) minmax(14rem, 1.2fr) 6.2rem 6.2rem 6.5rem;
+  grid-template-columns: minmax(11rem, 1fr) minmax(14rem, 1.2fr) 6.2rem 6.2rem 6.5rem 4.5rem;
   gap: .7rem;
   padding: .5rem .85rem;
   align-items: center;
@@ -217,4 +217,13 @@
   gap: .45rem;
   font-size: inherit;
   flex-shrink: 0;
+}
+.view-as {
+  display: flex;
+  justify-content: flex-end;
+}
+.view-as-btn {
+  min-height: 1.75rem;
+  padding: .25rem .55rem;
+  font-size: .72rem;
 }

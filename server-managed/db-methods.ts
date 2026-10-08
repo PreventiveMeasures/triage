@@ -67,6 +67,14 @@ export interface ManagedSession {
   expiresAt: number
   // Private JWK for sealed uploads; null until the session first asks for it.
   uploadKey?: string | null
+  // Set on an administrator's read-only view as `userId` (see view-as.ts).
+  viewer?: ManagedViewer
+}
+
+export interface ManagedViewer {
+  id: string
+  login: string
+  name: string | null
 }
 
 // A repository selected for the workspace to operate on, with the context to
@@ -363,7 +371,17 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // promotes a matching No access identity only while it is the sole user.
   upsertUser(user: ManagedUser, now: number, initialAdminGithubId?: number | null): Promise<string>
   createSession(session: ManagedSession, now: number): Promise<void>
+  // A sign-in session; never a view session, so a view token in the session
+  // cookie authenticates nothing.
   sessionWithUser(id: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
+  // Replace the view opened by an admin's session with a view as `userId`.
+  // False, keeping any earlier view, unless that session is current, its user
+  // is still an admin, and `userId` is another existing account. The view
+  // expires with that session.
+  createViewSession(view: { id: string; viewerSessionId: string; userId: string; csrfToken: string }, now: number): Promise<boolean>
+  // A view session opened by `viewerSessionId`, while that session is current
+  // and its user is still an admin. Presence is the admin's, not the viewed user's.
+  viewSessionWithUser(id: string, viewerSessionId: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
   // Store `candidate` unless the session already has an upload key; returns
   // the stored key, or null when the session no longer exists.
   ensureSessionUploadKey(id: string, candidate: string): Promise<string | null>
@@ -514,6 +532,7 @@ type SessionRow = {
   id: string; csrf: string; exp: number; uploadKey: string | null
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
+type ViewSessionRow = SessionRow & { viewerId: string; viewerLogin: string; viewerName: string | null }
 
 type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number | null; lastActivity: number | null }
 
@@ -562,6 +581,37 @@ function prepareStatements(db: ManagedSql) {
          FROM managed_session s
          JOIN managed_user u ON u.id = s.user_id
         WHERE s.id = ? AND s.expires_at > ?`,
+    ),
+    selectOwnSessionStmt: db.prepare(
+      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
+              u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
+         FROM managed_session s
+         JOIN managed_user u ON u.id = s.user_id
+        WHERE s.id = ? AND s.expires_at > ? AND s.viewer_session IS NULL`,
+    ),
+    selectViewSessionStmt: db.prepare(
+      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
+              u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role,
+              a.id AS viewerId, a.login AS viewerLogin, a.name AS viewerName
+         FROM managed_session s
+         JOIN managed_user u ON u.id = s.user_id
+         JOIN managed_session p ON p.id = s.viewer_session
+         JOIN managed_user a ON a.id = p.user_id
+        WHERE s.id = ? AND s.viewer_session = ? AND s.expires_at > ?
+          AND p.expires_at > ? AND p.viewer_session IS NULL AND a.role = 'admin'`,
+    ),
+    deleteOtherViewsStmt: db.prepare(`DELETE FROM managed_session WHERE viewer_session = ? AND id <> ?`),
+    insertViewSessionStmt: db.prepare(
+      `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at, viewer_session)
+       SELECT ?, u.id, ?, ?, p.expires_at, p.id
+         FROM managed_session p
+         JOIN managed_user a ON a.id = p.user_id
+         JOIN managed_user u ON u.id = ?
+        WHERE p.id = ? AND p.expires_at > ? AND p.viewer_session IS NULL AND a.role = 'admin' AND u.id <> a.id`,
+    ),
+    // A former admin's views end with the role, even if it is granted again.
+    deleteDemotedViewsStmt: db.prepare(
+      `DELETE FROM managed_session WHERE viewer_session IN (SELECT id FROM managed_session WHERE user_id = ?)`,
     ),
     selectUsersStmt: db.prepare(
       `SELECT u.id, u.login, u.name, u.role, u.created_at AS created, u.last_seen_at AS lastSeen,
@@ -1042,7 +1092,7 @@ type ReportRow = {
 async function authorizeUpload(stmts: ReturnType<typeof prepareStatements>, sessionId: string | undefined,
   item: { uploadedBy: string | null; repoId: number | null; repoDirectory?: string }) {
   if (sessionId === undefined) return // Trusted imports and fixtures use the raw store API.
-  const user = await stmts.selectSessionStmt.get(sessionId, Date.now()) as SessionRow | undefined
+  const user = await stmts.selectOwnSessionStmt.get(sessionId, Date.now()) as SessionRow | undefined
   if (!user) throw new ManagedMutationError(401, 'unauthenticated')
   if (user.uid !== item.uploadedBy || !roleAtLeast(user.role, 'manage')) throw new ManagedMutationError(403, 'forbidden')
   if (item.repoId === null) return
@@ -1543,8 +1593,9 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const reports = reportMethods(stmts, db, key)
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0, db)
   const {
-    upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
+    upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectOwnSessionStmt, selectUsersStmt,
     touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, ensureUploadKeyStmt, deleteSessionStmt, deleteExpiredStmt,
+    selectViewSessionStmt, deleteOtherViewsStmt, insertViewSessionStmt, deleteDemotedViewsStmt,
   } = stmts
 
   const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
@@ -1579,11 +1630,26 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       await touchUserSeenStmt.run(now, session.userId, now)
     },
     async sessionWithUser(id, now) {
-      const row = (await selectSessionStmt.get(id, now)) as SessionRow | undefined
+      const row = (await selectOwnSessionStmt.get(id, now)) as SessionRow | undefined
       if (row == null) return null
       await touchUserSeenStmt.run(now, row.uid, now)
       return {
         session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey },
+        user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
+      }
+    },
+    async createViewSession(view, now) {
+      if (Number((await insertViewSessionStmt.run(view.id, view.csrfToken, now, view.userId, view.viewerSessionId, now)).changes) === 0) return false
+      await deleteOtherViewsStmt.run(view.viewerSessionId, view.id)
+      return true
+    },
+    async viewSessionWithUser(id, viewerSessionId, now) {
+      const row = (await selectViewSessionStmt.get(id, viewerSessionId, now, now)) as ViewSessionRow | undefined
+      if (row == null) return null
+      await touchUserSeenStmt.run(now, row.viewerId, now)
+      return {
+        session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey,
+          viewer: { id: row.viewerId, login: row.viewerLogin, name: row.viewerName } },
         user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
       }
     },
@@ -1602,6 +1668,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       return rows.map((r) => ({ id: r.id, login: r.login, name: r.name, role: r.role, createdAt: r.created, lastSeenAt: r.lastSeen, lastActivityAt: r.lastActivity }))
     },
     async setUserRole(id, role) {
+      if (role !== 'admin') await deleteDemotedViewsStmt.run(id)
       return Number((await updateRoleStmt.run(role, Date.now(), id)).changes) > 0
     },
     async setUserTokens(id, tokens) {
