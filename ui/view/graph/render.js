@@ -1,5 +1,4 @@
 import { classMap, html, repeat, styleMap } from '../frontend-global.js'
-import { live } from 'lit/directives/live.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG } from '../icons.js'
 import { SEVERITIES, formatBytes } from '../format.js'
@@ -32,7 +31,10 @@ import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-
 // row above the main topbar. Used by the Findings-tab embed to host
 // the view-mode chooser inside the graph's own toolbar instead of
 // stacking a separate findings toolbar above the canvas.
-export function renderTopBar(graph, options, extraControls = null) {
+// `placement.issuesWrapped` (bundle graphs, measured by `<graph-layout>`)
+// moves the Issues switch from the end of the first row to the start of
+// the issue row when it would otherwise wrap onto a line of its own.
+export function renderTopBar(graph, options, extraControls = null, placement = {}) {
   const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
   const matrix = options.showBundleLayouts && graph2.bundleLayout === 'matrix'
   const dependencies = options.showBundleLayouts && graph2.bundleLayout === 'dependencies'
@@ -105,14 +107,86 @@ export function renderTopBar(graph, options, extraControls = null) {
     data-g2-packages-view
   ></mode-switch>` : null
 
-  const reasonFilter = graph.reasons?.length > 0 ? html`<label class="g2-reason-filter">
-    <select aria-label="Filter files" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
-      detail: { reason: e.currentTarget.value || null }, bubbles: true, composed: true,
-    }))}>
-      <option value="" ?selected=${graph2.bundleReason === null}>All</option>
-      ${graph.reasons.map((reason) => html`<option value=${reason} ?selected=${reason === graph2.bundleReason}>${reason}</option>`)}
-    </select>
-  </label>` : null
+  // Bundle scope (reason) filter — the full selector the Advisories,
+  // Treemap and Scan views use: one-click options with their description
+  // for recognized scopes, a select for custom ones. The element is
+  // defined by the main bundle (render-bundle-advisories.js imports it);
+  // importing it here would bundle a second Lit into this lazy chunk.
+  const reasonFilter = graph.reasons?.length > 0 ? html`<bundle-scope-selector class="g2-reason-scope"
+    .reasons=${graph.reasons.map((reason) => ({ id: `reason:${reason}`, label: reason }))}
+    .value=${graph2.bundleReason ? `reason:${graph2.bundleReason}` : ''} label="Filter files"
+    @scope-change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
+      detail: { reason: e.detail.value.replace(/^reason:/u, '') || null }, bubbles: true, composed: true,
+    }))}
+  ></bundle-scope-selector>` : null
+
+  const severityChips = hasAnyVisible ? html`<severity-chips
+    .counts=${issueCounts}
+    .selected=${[...graph2.selectedSeverities]}
+    kind="graph"
+  ></severity-chips>` : null
+  const markFilter = hasAnyColor ? html`<triage-filter
+    .counts=${colorCounts}
+    .selected=${[...graph2.selectedColors]}
+    kind="graph"
+  ></triage-filter>` : null
+  // Path / package substring filter — same .toolbar-search shell as the
+  // findings tab's "Search findings", wired to the canvas dim predicate
+  // instead of the row filter. Clear button always rendered, hidden via
+  // CSS when empty (:placeholder-shown sibling), so it stays live as the
+  // user types without re-rendering the topbar per keystroke — input
+  // redraws the canvas but not the chrome.
+  const pathFilter = html`<div class="toolbar-search g2-path-filter-wrap">
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"/>
+      <path d="m20 20-3.5-3.5"/>
+    </svg>
+    <input
+      type="text"
+      class="g2-path-filter"
+      id="g2-path-filter"
+      placeholder="filter path/package…"
+      .value=${graph2.pathFilter}>
+    <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" aria-label="Clear filter">✕</button>
+  </div>`
+  // Fullscreen — toggles body.report-fullscreen. The sidebar spans both
+  // grid rows, so the topbar covers only the stage column and this
+  // button's right edge lands at the stage / sidebar boundary.
+  const fullscreenBtn = html`<button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen">⛶</button>`
+
+  // Bundle graphs: the first row shapes the file set and view and ends
+  // with the Issues switch (offered when findings matched the bundle, off
+  // by default) and fullscreen, pinned to its top-right corner even when
+  // the controls wrap. While Issues is on, an issue row carries the issue
+  // controls: severity, mark and status filters. When the switch doesn't
+  // fit on the first row, it leads the issue row instead. Off, the graph
+  // carries no findings at all (see buildBundleGraphData).
+  if (options.showBundleLayouts) {
+    const issuesOn = (options.hasIssues ?? false) && graph2.bundleIssues
+    const issuesSwitch = options.hasIssues ? html`<mode-switch
+      class="g2-issues-switch"
+      label="Issues" .checked=${graph2.bundleIssues}
+      data-g2-bundle-issues
+    ></mode-switch>` : null
+    const switchInIssueRow = issuesSwitch && placement.issuesWrapped
+    return html`<div class="graph2-topbar">
+      <div class="graph2-topbar-row graph2-topbar-row-main graph2-topbar-row-pinned toolbar-row">
+        <div class="g2-topbar-controls">
+          ${layoutSelector}
+          ${pathFilter}
+          ${packagesViewBtn}
+          ${extraControls}
+          ${reasonFilter}
+          ${switchInIssueRow ? null : issuesSwitch}
+        </div>
+        ${fullscreenBtn}
+      </div>
+      ${issuesOn || switchInIssueRow ? html`<div class="graph2-topbar-row graph2-topbar-row-issues toolbar-row sev-row">
+        ${switchInIssueRow ? issuesSwitch : null}
+        ${issuesOn ? html`${severityChips}${markFilter}${triageBtn}` : null}
+      </div>` : null}
+    </div>`
+  }
 
   // When the topbar carries an extra row (Findings-tab embed), the
   // view-mode chooser + All files + Trash sit on the new top row,
@@ -130,46 +204,15 @@ export function renderTopBar(graph, options, extraControls = null) {
     <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
     ${layoutSelector}
     ${reasonFilter}
-    ${hasAnyVisible ? html`<severity-chips
-      .counts=${issueCounts}
-      .selected=${[...graph2.selectedSeverities]}
-      kind="graph"
-    ></severity-chips>` : null}
-    ${hasAnyColor ? html`<triage-filter
-      .counts=${colorCounts}
-      .selected=${[...graph2.selectedColors]}
-      kind="graph"
-    ></triage-filter>` : null}
-    <!-- Path / package substring filter — same .toolbar-search shell
-         as the findings tab's "Search findings", wired to the canvas
-         dim predicate instead of the row filter. Clear button always
-         rendered, hidden via CSS when empty (:placeholder-shown
-         sibling), so it stays live as the user types without re-
-         rendering the topbar per keystroke — input redraws the canvas
-         but not the chrome. -->
-    <div class="toolbar-search g2-path-filter-wrap">
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="11" cy="11" r="7"/>
-        <path d="m20 20-3.5-3.5"/>
-      </svg>
-      <input
-        type="text"
-        class="g2-path-filter"
-        id="g2-path-filter"
-        placeholder="filter path/package…"
-        .value=${graph2.pathFilter}>
-      <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" aria-label="Clear filter">✕</button>
-    </div>
+    ${severityChips}
+    ${markFilter}
+    ${pathFilter}
     ${extraTopRow ? null : allFilesBtn}
     ${extraTopRow ? null : packagesViewBtn}
     ${extraControls}
     <div class="g2-spacer"></div>
     ${extraTopRow ? null : triageBtn}
-    <!-- Fullscreen — toggles body.report-fullscreen. The sidebar
-         spans both grid rows, so the topbar covers only the stage
-         column and this button's right edge lands at the stage /
-         sidebar boundary. -->
-    <button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen">⛶</button>
+    ${fullscreenBtn}
     </div>
   </div>`
 }
@@ -293,7 +336,7 @@ export function renderStage(graph) {
       ${!network || network.fileLevel ? html`<span><b>${graph.nodes.length}</b> files</span>` : null}
       <span><b>${network && !network.fileLevel ? network.nodes.length : graph.packages.length}</b> packages</span>
       <span><b>${edgeCount}</b> ${network ? 'dependencies' : html`edges (${intra} intra · ${cross} cross)`}</span>
-      <span><b>${issues}</b> issues</span>
+      ${graph.issuesHidden ? null : html`<span><b>${issues}</b> issues</span>`}
       <span>avg degree <b>${avgDeg}</b></span>
     </div>
     <div class="g2-zoom-ctrl">
@@ -561,8 +604,8 @@ function renderDistribution(graph, activeTab) {
   // (the unfiltered count).
   const sevFilter = graph2.selectedSeverities
   const colorFilter = graph2.selectedColors
-  const useSev = sevFilter.size > 0
-  const useColor = colorFilter.size > 0
+  const useSev = !graph.issuesHidden && sevFilter.size > 0
+  const useColor = !graph.issuesHidden && colorFilter.size > 0
   const useFilter = useSev || useColor
   const issueByPkg = new Map()
   const sizeByPkg = new Map()
@@ -686,7 +729,7 @@ function renderDependencyList(pg, ids, counts = false) {
 
 function renderDependencyCard(pg, id) {
   const n = pg.byPkg.get(id)
-  if (!n) return html`<div class="g2-empty-state">Select a package to trace its importers and dependencies.</div>`
+  if (!n) return html`<div class="g2-empty-state">Select a package to trace its imports.</div>`
   const importers = pg.importedBy.get(id) ?? [], imports = pg.importsOf.get(id) ?? []
   return html`<div class="g2-selection-card">
     <div class="g2-sel-head">

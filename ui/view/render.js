@@ -1707,6 +1707,11 @@ export function configureReportRevalidation() {
   return canDropLayer
 }
 
+// The bundle Graph tab's live canvas attachment and what it was built
+// from — lets a re-render that can't change the canvas skip re-attaching
+// it (see the bundles branch of renderImpl).
+let bundleGraphAttachment = null
+
 function renderImpl() {
   if (!getLinksPreview()) closeLinksPreview()
   mountBundleSourceOverlay()
@@ -1814,6 +1819,9 @@ function renderImpl() {
               // packages, where the package graph carries no signal.
               showPackagesView: prep.canPackagesView,
               showBundleLayouts: true,
+              // Offers the topbar's Issues switch only when findings
+              // matched this bundle's files.
+              hasIssues: prep.hasIssues,
             }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow
@@ -1822,8 +1830,27 @@ function renderImpl() {
             // post-load sequence: render the host, await its first
             // shadow update, fire the refresh helpers + wire the
             // canvas interaction.
-            attachGraphLayout(graphSlot, prep, options,
-              refreshBundleGraphSidebar, refreshBundleGraphTopPkgs)
+            // With Issues off the canvas draws no findings, so a re-render
+            // from findings or file hashes arriving (or anything else that
+            // leaves this bundle's view alone) changes at most the topbar's
+            // Issues switch: keep the live canvas, without relayout or
+            // repaint, and hand the host its new options. View switches
+            // tear the attachment down (cleanupGraph2), so they still rebuild.
+            const attached = bundleGraphAttachment
+            const host = graphSlot.querySelector('graph-layout')
+            if (!prep.issuesShown && attached && !attached.issuesShown && host
+                && attached.state === graph2.graphState && attached.details === details && attached.reason === graph2.bundleReason) {
+              host.options = options
+            } else {
+              bundleGraphAttachment = null
+              void attachGraphLayout(graphSlot, prep, options,
+                refreshBundleGraphSidebar, refreshBundleGraphTopPkgs).then((attachedHost) => {
+                if (attachedHost && graph2.graphState) {
+                  bundleGraphAttachment = { state: graph2.graphState, details, reason: graph2.bundleReason, issuesShown: prep.issuesShown }
+                }
+                return null
+              })
+            }
           }
         }
       }

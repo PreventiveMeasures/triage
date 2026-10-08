@@ -14,6 +14,7 @@ import { layoutPackageDependencies } from './dependency-layout.js'
 import { drawPackageDependencies } from './dependency-render.js'
 import { dependencyFilesOn, dependencyNetwork } from './package-network.js'
 import { circleOutside, createRenderCache, edgeGradient, edgeOutside, edgePaints, haloGradient, updateRenderCache } from './render-cache.js'
+import { graphViewKey } from './view-key.js'
 import { createNodePicker } from './node-picker.js'
 import { outsideDamage, panDamage } from './pan-damage.js'
 
@@ -175,8 +176,15 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // unrelated re-render mid-graph would otherwise stack window
   // listeners + ResizeObserver + MutationObserver on top of the
   // previous set, leaking handlers. Tear down any prior attachment
-  // before re-wiring.
-  cleanupGraph2()
+  // before re-wiring, keeping its pan and zoom for the same view.
+  cleanupGraph2({ keepViewport: true })
+  // Re-attaching the view already on screen (an unrelated re-render, the
+  // bundle Issues switch) restores the user's pan and zoom, and lays out
+  // in the previous attachment's pixel space so positions match: layouts
+  // are deterministic in their inputs. Any other graph or view refits.
+  const viewKey = graphViewKey(graph)
+  let restore = graph2.keptViewport?.key === viewKey ? graph2.keptViewport : null
+  graph2.keptViewport = null
 
   const ctx = canvas.getContext('2d')
   let dpr = window.devicePixelRatio || 1
@@ -185,10 +193,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let statsSafeHeight = 0
   const viewport = { tx: 0, ty: 0, k: 1 }
   let hovered = null
-  let layoutH = 0
-  let layoutW = 0
+  let layoutH = restore?.layoutH ?? 0
+  let layoutW = restore?.layoutW ?? 0
   let needsLayout = true
-  let needsFit = true
+  let needsFit = !restore
   const renderCaches = new WeakMap()
   let nodePicker = null
   let paintedFrame = null
@@ -482,14 +490,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // All filters AND-combine — a node passes only when it satisfies
   // every active filter.
   function nodeIsDimmed(n) {
-    if (graph2.selectedSeverities.size > 0) {
+    if (!graph.issuesHidden && graph2.selectedSeverities.size > 0) {
       const sevs = n.severitySet
       if (!sevs) return true
       let hit = false
       for (const s of graph2.selectedSeverities) if (sevs.has(s)) { hit = true; break }
       if (!hit) return true
     }
-    if (graph2.selectedColors.size > 0) {
+    if (!graph.issuesHidden && graph2.selectedColors.size > 0) {
       const cols = n.colorSet
       if (!cols) return true
       let hit = false
@@ -556,7 +564,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // the graph. The 15% threshold avoids re-fitting on cosmetic
     // 1px reflows from sub-pixel rounding when DPR changes.
     const sizeChanged = prevW > 0 && (Math.abs(W - prevW) / prevW > 0.15 || Math.abs(H - prevH) / prevH > 0.15)
-    if (needsFit || sizeChanged) { fitToView(); needsFit = false }
+    if (restore) {
+      // Keep the view centered when the stage changed size between
+      // attachments (e.g. the bundle issue-controls row came or went).
+      viewport.k = restore.k
+      viewport.tx = restore.tx + (W - restore.W) / 2
+      viewport.ty = restore.ty + (H - restore.H) / 2
+      restore = null
+    } else if (needsFit || sizeChanged) { fitToView(); needsFit = false }
     // Always redraw on resize: the canvas pixel buffer was just
     // resized via canvas.width/.height, which clears it. Without
     // an explicit draw the canvas would render blank until the
@@ -1622,7 +1637,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
 
   graph2.graphState = {
     requestDraw,
-    _cleanup: () => {
+    _cleanup: ({ keepViewport = false } = {}) => {
+      // Keep only a viewport fitted to a laid-out stage: while the graph
+      // is being replaced its stage can collapse, and resize() then refits
+      // to the 80px floor, which would hand the next attach a near-zero zoom.
+      const stageBox = stage.getBoundingClientRect()
+      graph2.keptViewport = keepViewport && stageBox.width > 0 && stageBox.height > 0
+        ? { key: viewKey, k: viewport.k, tx: viewport.tx, ty: viewport.ty, W, H, layoutW, layoutH }
+        : null
       destroyed = true
       cancelAnimationFrame(rafId)
       ro.disconnect()

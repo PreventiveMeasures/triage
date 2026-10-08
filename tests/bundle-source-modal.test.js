@@ -26,6 +26,7 @@ mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, t
   return items.map(template)
 } } })
 const { state } = await import('../client/state.ts')
+const { graph2 } = await import('../ui/view/graph/state.js')
 const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
@@ -803,12 +804,34 @@ test('aggregate issue badges respect shared-ignore scope for the same finding id
   }
 })
 
+test('the bundle graph offers Issues when every matched finding sits outside the shown triage bucket', async t => {
+  const { saveFile, deleteFile } = await import('../client/storage.js')
+  const { ensureBundleFindingsIndexed } = await import('../client/bundle-finding-index.js')
+  const previous = state.shownTriage
+  t.after(() => { state.shownTriage = previous; graph2.bundleIssues = false })
+  const file = 'src/fixed.js', hash = 'hash-graph-fixed-only', id = 'graph-fixed-only'
+  const name = `${id}.json`
+  await saveFile(name, JSON.stringify({ findings: [{ id, file, fileHash: hash, severity: 'high', description: 'Fixed already' }] }))
+  t.after(async () => { await deleteFile(name); state.triage.delete(id) })
+  await ensureBundleFindingsIndexed()
+  state.triage.set(id, { triage: 'fixed' })
+  const details = { kind: 'sourcemap', integrity: id, fileHashes: new Map([[file, hash]]),
+    json: { version: 3, sources: [file], sourcesContent: ['source'] } }
+  graph2.bundleIssues = true
+  state.shownTriage = null
+  const live = buildBundleGraphData(details)
+  assert.equal(live.hasIssues, true, 'the Issues row (and its status filter) stays reachable')
+  assert.equal(live.fileFindings.size, 0, 'the live bucket has nothing to draw')
+  state.shownTriage = 'fixed'
+  assert.equal([...buildBundleGraphData(details).fileFindings.values()].flat().length, 1, 'the fixed bucket draws the finding')
+})
+
 test('same-ID App and dependency findings remain selectable in package and bundle triage views', async t => {
   const { saveFile, deleteFile } = await import('../client/storage.js')
   const { ensureBundleFindingsIndexed, findingsForFileHash } = await import('../client/bundle-finding-index.js')
   const { renderPackagesView } = await import('../ui/view/render-packages.js')
   const previous = { shownTriage: state.shownTriage, selectedPackage: state.selectedPackage }
-  t.after(() => Object.assign(state, previous))
+  t.after(() => { Object.assign(state, previous); graph2.bundleIssues = false })
   state.selectedPackage = null
   for (const reverse of [false, true]) {
     const pkg = `aggregate-scope-${reverse}`
@@ -826,6 +849,11 @@ test('same-ID App and dependency findings remain selectable in package and bundl
     for (const triage of [null, 'ignored']) {
       state.shownTriage = triage
       assert.ok(renderText(renderPackagesView()).includes(`data-select-package=${pkg}`), `package remains visible in ${triage ?? 'live'}`)
+      graph2.bundleIssues = false
+      const hidden = buildBundleGraphData(details)
+      assert.equal(hidden.hasIssues, true, 'matched findings offer the Issues switch')
+      assert.equal(hidden.fileFindings.size, 0, 'findings stay off the graph until Issues is on')
+      graph2.bundleIssues = true
       const graph = buildBundleGraphData(details)
       assert.equal([...graph.fileFindings.values()].flat().length, 1, `graph keeps the matching scope in ${triage ?? 'live'}`)
     }
