@@ -567,6 +567,25 @@ enabled, saves `reports/:id.br`, and removes the old copy. There is no separate
 compression migration job. Encryption maintenance also understands the stored
 Brotli representation and verifies its original upload hash after decompression.
 
+# Upload encryption in transit
+
+A CDN or proxy that terminates TLS in front of the server, such as Cloudflare,
+would otherwise read every uploaded report, bundle and link report. The browser
+seals these uploads before sending them. Each session has its own X25519 key
+pair, created on first use: `GET /api/admin/uploads/key` returns the public key,
+and the private key stays in the session row. For every file, the browser derives
+a fresh AES-256-GCM key by X25519 with a new ephemeral key, so the proxy sees only
+public keys and ciphertext. Text is gzipped before sealing and binary files are
+sealed as is. Large uploads are split into parts after sealing.
+
+Sealed bodies carry `X-Upload-Encryption: 1`. The server opens them with the
+session's key and rejects altered bodies, bodies sealed for another session,
+and content that exceeds the upload limit once decompressed. Requests without
+the header are still accepted unchanged, so scripts and older browser tabs keep
+working. This protects against a proxy that observes traffic. It cannot protect
+against one that modifies the page's JavaScript or substitutes the public key.
+Downloads and JSON requests, such as triage and comments, are not sealed.
+
 # Repeated imports
 
 Uploading identical report or bundle content reuses its stored ID, even when

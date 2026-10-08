@@ -169,6 +169,23 @@ test('Postgres adds build conditions to existing bundles as unrecorded', async t
   assert.deepEqual((await upgraded.getBundle('new')).buildConditions, conditions)
 })
 
+test('Postgres adds upload keys to existing sessions, keeping the first stored key', async t => {
+  const { db, connect } = await database(t)
+  const userId = await db.upsertUser(identity(1), 1)
+  await db.createSession({ id: 'session', userId, csrfToken: 'csrf', expiresAt: 100 }, 1)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_session DROP COLUMN upload_key; DELETE FROM managed_schema_version WHERE version = 23;') }
+  finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.equal((await upgraded.sessionWithUser('session', 2)).session.uploadKey, null)
+  assert.equal(await upgraded.ensureSessionUploadKey('session', 'first'), 'first')
+  assert.equal(await upgraded.ensureSessionUploadKey('session', 'second'), 'first')
+  assert.equal((await upgraded.sessionWithUser('session', 2)).session.uploadKey, 'first')
+  assert.equal(await upgraded.ensureSessionUploadKey('missing', 'third'), null)
+})
+
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {
   const { db } = await database(t)
   await checkRepositoryAliases(db)

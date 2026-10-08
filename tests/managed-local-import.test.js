@@ -522,6 +522,8 @@ test('both managed pages send selected local files through their authenticated u
     page.localImportSource = f.source
     const posts = []
     const fetch = t.mock.method(globalThis, 'fetch', (url, options = {}) => {
+      // A server without sealed uploads receives the file itself.
+      if (url === '/api/admin/uploads/key') return Promise.resolve(Response.json({ error: 'not-found' }, { status: 404 }))
       if (options.method === 'POST') {
         posts.push({ url, options })
         return Promise.resolve(Response.json({ ok: true }))
@@ -566,6 +568,7 @@ test('a local import completes independently of a later dropped file', async (t)
     const dropped = Promise.withResolvers()
     const requests = []
     const fetch = t.mock.method(globalThis, 'fetch', (url, options = {}) => {
+      if (url === '/api/admin/uploads/key') return Promise.resolve(Response.json({ error: 'not-found' }, { status: 404 }))
       if (options.method === 'POST') {
         requests.push(options.body.name)
         return requests.length === 1 ? local.promise : dropped.promise

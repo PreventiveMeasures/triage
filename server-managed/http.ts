@@ -39,6 +39,7 @@
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
 //   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
 //   POST /api/admin/bundles/set-repo → admin|manage attaches/detaches a bundle's repo | 401/403/404
+//   GET  /api/admin/uploads/key  → admin|manage public key for sealed upload bodies | 401/403
 //   GET  /api/admin/teams        → admin teams (+ members/repos) + pickers | 401/403
 //   POST /api/admin/teams        → admin creates a team | 401/403/409
 //   POST /api/admin/teams/rename → admin renames a team | 401/403/404/409
@@ -54,7 +55,8 @@ import { pipeline } from 'node:stream/promises'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
-import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, putUploadPart, readUpload, validUpload, validUploadPart } from './uploads.ts'
+import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
+import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { contentAccess } from './content-access.ts'
@@ -293,11 +295,28 @@ async function readBodyBytes(req: IncomingMessage, maxBytes: number): Promise<Bu
   return Buffer.concat(chunks)
 }
 
-function readUploadBody(req: IncomingMessage, deps: ManagedHttpDeps, session: string, kind: UploadKind) {
-  const maxBytes = kind === 'reports' ? deps.config.maxReportBytes : deps.config.maxBundleBytes
-  if (req.headers['x-upload-id'] == null) return readBodyBytes(req, maxBytes)
-  if (!deps.uploadStore) throw new Error('bad-upload')
-  return readUpload(deps.uploadStore, req, session, kind, maxBytes)
+// A file upload's content, opening a body the browser sealed to this session
+// (common/managed/upload-seal.ts). Link reports are never sent in parts.
+async function readUploadBody(req: IncomingMessage, deps: ManagedHttpDeps, session: ManagedSession, kind: UploadKind | 'links'): Promise<Buffer> {
+  const maxBytes = kind === 'bundles' ? deps.config.maxBundleBytes : deps.config.maxReportBytes
+  const sealed = req.headers[UPLOAD_SEAL_HEADER] !== undefined
+  const limit = sealed ? maxSealedBytes(maxBytes) : maxBytes
+  let bytes
+  if (kind === 'links' || req.headers['x-upload-id'] == null) bytes = await readBodyBytes(req, limit)
+  else if (deps.uploadStore) bytes = await readUpload(deps.uploadStore, req, session.id, kind, limit)
+  else throw new Error('bad-upload')
+  return sealed ? await openSessionUpload(session.uploadKey, bytes, maxBytes) : bytes
+}
+
+// GET /api/admin/uploads/key — the session's upload public key, created on
+// first use. Only this session's server-side private key opens what is sealed to it.
+async function handleUploadKey(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if (req.method !== 'GET') { send405(res, 'GET'); return }
+  const s = await readManageSession(res, deps, cookie)
+  if (!s) return
+  const key = s.session.uploadKey ?? await deps.db.ensureSessionUploadKey(s.session.id, newUploadKey())
+  if (!key) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  sendJson(res, 200, { key: uploadPublicKey(key) })
 }
 
 async function handleUploadPart(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string) {
@@ -324,7 +343,7 @@ async function handleUploadPart(req: IncomingMessage, res: ServerResponse, deps:
   }
   if (!validUploadPart(id, index, maxBytes)) { await discard(); sendJson(res, 400, { error: 'bad-upload' }); return }
   let bytes
-  try { bytes = await readBodyBytes(req, Math.min(UPLOAD_CHUNK_BYTES, maxBytes)) }
+  try { bytes = await readBodyBytes(req, Math.min(UPLOAD_CHUNK_BYTES, maxSealedBytes(maxBytes))) }
   catch { await discard(); sendJson(res, 413, { error: 'too-large' }); return }
   if (bytes.length === 0) { await discard(); sendJson(res, 400, { error: 'empty' }); return }
   if (await manageMutation(req, res, deps, cookie) == null) return
@@ -891,7 +910,7 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   if (!requireManageRole(res, s.user)) return
   let bytes: Buffer
   try {
-    bytes = await readUploadBody(req, deps, s.session.id, 'reports')
+    bytes = await readUploadBody(req, deps, s.session, 'reports')
   } catch (err) {
     const tooLarge = err instanceof Error && err.message === 'too-large'
     sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
@@ -1326,7 +1345,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
   if (!requireManageRole(res, s.user)) return
   let bytes: Buffer
   try {
-    bytes = await readUploadBody(req, deps, s.session.id, 'bundles')
+    bytes = await readUploadBody(req, deps, s.session, 'bundles')
   } catch (err) {
     const tooLarge = err instanceof Error && err.message === 'too-large'
     sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
@@ -1575,7 +1594,7 @@ async function handleDeduplication(req: IncomingMessage, res: ServerResponse, de
     sendJson(res, 200, { ok: true }); return
   }
   let bytes: Buffer
-  try { bytes = await readBodyBytes(req, deps.config.maxReportBytes) }
+  try { bytes = await readUploadBody(req, deps, s.session, 'links') }
   catch (error) { const large = error instanceof Error && error.message === 'too-large'; sendJson(res, large ? 413 : 400, { error: large ? 'too-large' : 'bad-body' }); return }
   const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.link.json')
   const result = await deps.db.importLinkReport(s.session.id, filename, bytes.toString('utf8'))
@@ -2344,6 +2363,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (shareRoute) {
       await handleWorkspaceShare(req, res, deps, cookie, shareRoute[1]!, shareRoute[2]); return
     }
+    if (path === '/api/admin/uploads/key') { await handleUploadKey(req, res, deps, cookie); return }
     if (path.startsWith('/api/admin/uploads/')) { await handleUploadPart(req, res, deps, cookie, path); return }
     // Cached avatar by user id, served same-origin (the page CSP forbids the
     // github CDN). The id in the path keys the browser cache per user, so a user

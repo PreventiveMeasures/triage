@@ -34,7 +34,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 22 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 23 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -105,6 +105,13 @@ async function migrateBundleBuildConditions(db: PgConnection): Promise<void> {
   if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 22')).rows.length > 0) return
   await db.query('ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS build_conditions TEXT')
   await db.query('INSERT INTO managed_schema_version VALUES (22)')
+}
+
+// Existing sessions create their upload key on first use.
+async function migrateSessionUploadKeys(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 23')).rows.length > 0) return
+  await db.query('ALTER TABLE managed_session ADD COLUMN IF NOT EXISTS upload_key TEXT')
+  await db.query('INSERT INTO managed_schema_version VALUES (23)')
 }
 
 async function initialize(db: PgConnection): Promise<void> {
@@ -180,7 +187,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

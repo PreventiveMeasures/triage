@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS managed_session (
   user_id    TEXT NOT NULL REFERENCES managed_user(id) ON DELETE CASCADE,
   csrf_token TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL
+  expires_at INTEGER NOT NULL,
+  -- Private X25519 JWK that this session's uploads are sealed to (see
+  -- common/managed/upload-seal.ts). Created on first use.
+  upload_key TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS managed_session_user_idx ON managed_session(user_id);
