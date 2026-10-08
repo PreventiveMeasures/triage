@@ -51,6 +51,29 @@ export function bundleImportsAsMap(details) {
   return result
 }
 
+// Keep actual entry files, including entries whose source was not bundled.
+// Reason-filtered bundled entries must not return as virtual roots.
+export function bundleFlowEntries(details, paths, fullPaths = paths, packageDirs) {
+  const imports = bundleImportsAsMap(details)
+  const entries = new Set(details?.bundle?.entries ?? []), result = [], seen = new Set()
+  const queue = [...entries]
+  for (const orig of queue) {
+    if (seen.has(orig)) continue
+    seen.add(orig)
+    if (paths.has(orig)) { if (entries.has(orig)) result.push({ file: paths.get(orig) }); continue }
+    if (fullPaths.has(orig)) continue
+    const targets = []
+    for (const target of imports.get(orig) ?? []) {
+      if (paths.has(target)) targets.push(paths.get(target))
+      else if (!fullPaths.has(target) && imports.has(target)) { targets.push(target); queue.push(target) }
+    }
+    result.push({ file: orig, origFile: orig, virtual: true,
+      ...(entries.has(orig) ? {} : { entry: false }),
+      pkg: bundlePkgOf(orig, { packageDir: packageDirs?.get(orig) }), imports: targets })
+  }
+  return result
+}
+
 // App identity comes from bundle entries, not a directory spelling. Some
 // bundles omit app source but retain imports from it; keep those connections
 // as a virtual App root instead of discarding them with out-of-bundle files.

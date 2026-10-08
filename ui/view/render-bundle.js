@@ -50,7 +50,7 @@ import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './dialogs/why-dialog.js'
-import { bundleEntryPackages, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts } from './file-counts.js'
@@ -252,9 +252,9 @@ export function buildBundleGraphData(details) {
     colorSets.set(file, cols)
     fileFindings.set(file, ff)
   }
-  // Matrix cells use direct imports and own findings. Computing reachability
-  // from every file is quadratic on large bundles and adds no matrix data.
-  const transitiveCounts = graph2.bundleLayout === 'matrix' || ownCounts.size === 0
+  // Matrix and flow highlight direct findings. The flow model computes byte
+  // reachability separately, without transitive finding counts.
+  const transitiveCounts = ['matrix', 'flow'].includes(graph2.bundleLayout) || ownCounts.size === 0
     ? null : computeTransitiveCounts(tree, ownCounts)
   // Stripped→original mapping the lazy `buildGraphFromPrep` applies
   // to each node's `origFile` field — the selection card's "View
@@ -318,6 +318,7 @@ export function buildBundleGraphData(details) {
     viewId: details.integrity ?? null,
     supportsLayers: true,
     layerRoots,
+    flowEntries: graph2.bundleLayout === 'flow' ? bundleFlowEntries(details, origToStripped, full.origToStripped, origPackageDirs) : undefined,
     // Entry packages are traversal roots too, but are not necessarily own source.
     ownSourcePackages: bundleOwnSourcePackages(origToStripped, pkgOf, origPackageDirs),
     entryPackages: bundleEntryPackages(details, origToStripped, pkgOf),

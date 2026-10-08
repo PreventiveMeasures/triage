@@ -39,6 +39,7 @@ import { renderRightPanel, renderStage, renderTopBar } from './render.js'
 import { installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import './dependency-matrix.js'
+import './size-flow.js'
 import '../mode-switch.js'
 
 class GraphLayout extends LitElement {
@@ -123,6 +124,12 @@ class GraphLayout extends LitElement {
 
   render() {
     if (!this.graph) return html``
+    if (this.options.showBundleLayouts && graph2.bundleLayout === 'flow') {
+      return html`<div class="graph2-layout">
+        ${renderTopBar(this.graph, this.options)}
+        <size-flow .graph=${this.graph} .packages=${graph2.flowPackagesView}></size-flow>
+      </div>`
+    }
     if (this.options.showBundleLayouts && graph2.bundleLayout === 'matrix') {
       return html`<div class="graph2-layout g2-matrix-layout">
         ${renderTopBar(this.graph, this.options, this.matrixControls, { issuesWrapped: this.issuesWrapped })}

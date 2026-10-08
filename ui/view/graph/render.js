@@ -38,11 +38,13 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
   const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
   const matrix = options.showBundleLayouts && graph2.bundleLayout === 'matrix'
   const dependencies = options.showBundleLayouts && graph2.bundleLayout === 'dependencies'
+  const flow = options.showBundleLayouts && graph2.bundleLayout === 'flow'
   const layoutSelector = options.showBundleLayouts ? html`<div class="g2-layout-tabs" role="group" aria-label="Bundle layout">
-    <button type="button" data-g2-layout="graph" aria-label="Graph" aria-pressed=${String(!layers && !matrix && !dependencies)}>${unsafeHTML(GRAPH_ICON_SVG)}</button>
+    <button type="button" data-g2-layout="graph" aria-label="Graph" aria-pressed=${String(!layers && !matrix && !dependencies && !flow)}>${unsafeHTML(GRAPH_ICON_SVG)}</button>
     <button type="button" data-g2-layout="layers" aria-label="Layers" aria-pressed=${String(!!layers)}>${unsafeHTML(LAYERS_ICON_SVG)}</button>
     <button type="button" data-g2-layout="matrix" aria-label="Matrix" aria-pressed=${String(!!matrix)}>${unsafeHTML(MATRIX_ICON_SVG)}</button>
     <button type="button" data-g2-layout="dependencies" aria-label="Dependencies" aria-pressed=${String(!!dependencies)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>
+    <button type="button" data-g2-layout="flow" aria-label="Size flow" data-tooltip="Size flow" aria-pressed=${String(!!flow)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h18M3 10h7m4 0h7M3 20h6m3 0h9M5 3v7m13-7v7M6 10c0 5 10 5 10 10m2-10c0 5-12 5-12 10"/></svg></button>
   </div>` : null
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
@@ -101,9 +103,9 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
   // grouping). On: the canvas collapses to one node per package
   // with aggregated import edges. Same rebuild-on-flip contract as above —
   // the layout and hit-testing operate on a different node set.
-  const showPackagesView = dependencies ? graph.nodes.length <= 100 : !layers && !matrix && (options.showPackagesView ?? false)
+  const showPackagesView = flow || (dependencies ? graph.nodes.length <= 100 : !layers && !matrix && (options.showPackagesView ?? false))
   const packagesViewBtn = showPackagesView ? html`<mode-switch
-    label="Packages" .checked=${dependencies ? graph2.dependencyPackagesView : graph2.packagesView}
+    label="Packages" .checked=${flow ? graph2.flowPackagesView : dependencies ? graph2.dependencyPackagesView : graph2.packagesView}
     data-g2-packages-view
   ></mode-switch>` : null
 

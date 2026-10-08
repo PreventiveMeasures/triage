@@ -1,9 +1,33 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { bundleEntryPackages, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundlePackageDirs } from '../ui/view/bundle-sources.js'
+
+it('size flow keeps entry files and virtual imports without reviving reason-filtered entries', () => {
+  const paths = new Map([['project/app.js', 'app.js'], ['project/dep.js', 'dep.js']])
+  const details = { kind: 'stasis', bundle: {
+    entries: new Set(['project/app.js', 'project/absent.js']),
+    imports: new Map([['default', new Map([
+      ['project/absent.js', new Map([['dep', 'project/dep.js'], ['app', 'project/app.js']])],
+    ])]]),
+  } }
+  assert.deepEqual(bundleFlowEntries(details, paths), [
+    { file: 'app.js' },
+    { file: 'project/absent.js', origFile: 'project/absent.js', virtual: true, pkg: '__own__', imports: ['dep.js', 'app.js'] },
+  ])
+  assert.deepEqual(bundleFlowEntries(details, new Map([['project/dep.js', 'dep.js']]), paths), [
+    { file: 'project/absent.js', origFile: 'project/absent.js', virtual: true, pkg: '__own__', imports: ['dep.js'] },
+  ])
+  details.bundle.imports.get('default').set('project/absent.js', new Map([['helper', 'project/helper.js']]))
+  details.bundle.imports.get('default').set('project/helper.js', new Map([['dep', 'project/dep.js'], ['cycle', 'project/absent.js']]))
+  assert.deepEqual(bundleFlowEntries(details, paths), [
+    { file: 'app.js' },
+    { file: 'project/absent.js', origFile: 'project/absent.js', virtual: true, pkg: '__own__', imports: ['project/helper.js'] },
+    { file: 'project/helper.js', origFile: 'project/helper.js', virtual: true, entry: false, pkg: '__own__', imports: ['dep.js', 'project/absent.js'] },
+  ])
+})
 
 function inputs({ dirs, entries = [], imports = {} }) {
   const details = { kind: 'stasis', bundle: {
