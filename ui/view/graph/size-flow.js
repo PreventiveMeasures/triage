@@ -5,6 +5,7 @@ import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { buildSizeFlow, flowRibbon, layoutSizeFlow } from './size-flow-model.js'
 import css from './size-flow.css'
+import sidebarListCSS from './sidebar-list.css'
 
 function shortSize(size) {
   if (size >= 1e6) return `${(size / 1e6).toFixed(1)} MB`
@@ -12,9 +13,16 @@ function shortSize(size) {
   return `${size} B`
 }
 
+function flowRow(node, size, onClick) {
+  return html`<button class="g2-dist-item flow-link" title=${node.label} @click=${onClick}>
+    <span class="g2-dist-dot" style=${`background:${pkgColor(node.pkg)}`}></span>
+    <span class="g2-dist-name">${node.label}</span><span class="g2-dist-count">${shortSize(size)}</span>
+  </button>`
+}
+
 class SizeFlow extends LitElement {
   static properties = { graph: { attribute: false }, packages: { type: Boolean } }
-  static styles = unsafeCSS(css)
+  static styles = [unsafeCSS(sidebarListCSS), unsafeCSS(css)]
 
   constructor() {
     super()
@@ -98,14 +106,14 @@ class SizeFlow extends LitElement {
   renderLinks(edges, incoming = false) {
     return edges.toSorted((a, b) => b.size - a.size).slice(0, 100).map(e => {
       const n = this.model.byId.get(incoming ? e.from : e.to)
-      return html`<button class="flow-link" title=${n.label} @click=${() => this.select(n.id, e.id)}><i style=${`background:${pkgColor(n.pkg)}`}></i><span>${n.label}</span><b>${shortSize(e.size)}</b></button>`
+      return flowRow(n, e.size, () => this.select(n.id, e.id))
     })
   }
 
   renderSearch() {
     if (!graph2.pathFilter.trim()) return null
     const matches = [...this.model.byId.values()].filter(n => this.matches(n)).toSorted((a, b) => b.size - a.size)
-    return html`<h4>Matches · ${matches.length}</h4>${matches.slice(0, 100).map(n => html`<button class="flow-link" title=${n.label} @click=${() => this.follow(n.id)}><span>${n.label}</span><b>${shortSize(n.size)}</b></button>`)}
+    return html`<h4>Matches · ${matches.length}</h4>${matches.slice(0, 100).map(n => flowRow(n, n.size, () => this.follow(n.id)))}
       ${matches.length > 100 ? html`<p>Showing the 100 largest matches. Refine the search to find any file or package, including those beyond the visible graph.</p>` : null}`
   }
 
@@ -120,7 +128,7 @@ class SizeFlow extends LitElement {
       ${this.model.weakEdges ? html`<p>${this.model.weakEdges} weak config/metadata loads excluded.</p>` : null}
       ${this.model.omittedFiles ? html`<p>${this.model.omittedFiles} files are not reachable from these entry points.</p>` : null}
       <h4>${this.model.inferred ? 'Inferred roots (no entry points in this view)' : 'Entry points'}</h4>
-      ${this.model.roots.slice(0, 100).map(id => { const n = this.model.byId.get(id); return html`<button class="flow-link" @click=${() => this.select(id)}><span>${n.label}</span><b>${shortSize(n.size)}</b></button>` })}
+      ${this.model.roots.slice(0, 100).map(id => { const n = this.model.byId.get(id); return flowRow(n, n.size, () => this.select(id)) })}
       ${this.model.roots.length > 100 ? html`<p>Showing the first 100 entry points. Search to find another.</p>` : null}`}
     return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button aria-label="Clear flow selection" @click=${() => { this.selection = null; this.requestUpdate() }}>×</button></div>
       ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
