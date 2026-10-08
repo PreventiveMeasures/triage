@@ -16,10 +16,11 @@ let canvas = null
 // Lit ref callback for `.bundle-source-lines`: called with each element as
 // it renders, and with undefined as one leaves.
 export function watchSourceWrap(lines) {
-  for (const [element, stop] of watched) {
-    if (!element.isConnected) { stop(); watched.delete(element) }
-  }
-  if (!lines || watched.has(lines)) return
+  // Lit clears the ref before it removes the element, so let go of the
+  // ones that have gone once it has.
+  if (!lines) { queueMicrotask(unwatchRemoved); return }
+  unwatchRemoved()
+  if (watched.has(lines)) return
   // Lit calls back before a new element's template joins the document,
   // when the code's scroller is not its parent yet.
   if (!lines.isConnected) {
@@ -29,12 +30,10 @@ export function watchSourceWrap(lines) {
   const pre = lines.querySelector(':scope > .bundle-source-code')
   if (!pre) return
   // A new file, its highlighting or the wrap mode can change the wrapping
-  // at any size. Otherwise only the code's width can: the code growing
-  // taller, as it does once lines wrap, needs just the toggle updated.
+  // at any size. Otherwise only the code's width can, not the code growing
+  // taller as it does once lines wrap.
   const resize = new ResizeObserver(() => {
-    const last = synced.get(lines)
-    if (!last || last.width !== pre.clientWidth) syncSourceWrap(lines)
-    else showWrapToggle(lines, last.differs)
+    if (synced.get(lines)?.width !== codeWidth(lines)) syncSourceWrap(lines)
   })
   resize.observe(pre)
   resize.observe(lines.parentElement)
@@ -44,12 +43,29 @@ export function watchSourceWrap(lines) {
   watched.set(lines, () => { resize.disconnect(); mutation.disconnect() })
 }
 
+function unwatchRemoved() {
+  for (const [element, stop] of watched) {
+    if (!element.isConnected) { stop(); watched.delete(element) }
+  }
+}
+
+// The width the code wraps at, in either mode: the scroller's, less the
+// gutter and the code's own padding.
+function codeWidth(lines) {
+  const pre = lines.querySelector(':scope > .bundle-source-code')
+  const gutter = lines.querySelector(':scope > .bundle-source-lineno-col')
+  if (!pre || !gutter) return 0
+  const style = getComputedStyle(pre)
+  return lines.parentElement.clientWidth - gutter.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+}
+
 function syncSourceWrap(lines) {
   const pre = lines.querySelector(':scope > .bundle-source-code')
   const gutter = lines.querySelector(':scope > .bundle-source-lineno-col')
-  if (!pre || !gutter || !lines.isConnected || pre.clientWidth === 0) return
+  const width = codeWidth(lines)
+  if (!pre || !gutter || !lines.isConnected || width <= 0) return
   const wrapped = lines.classList.contains('is-wrapped')
-  const rows = wrapped ? wrappedRows(pre) : new Map()
+  const { rows, overflows } = measureLines(pre, width, wrapped)
   const previous = synced.get(lines)?.rows ?? new Set()
   const current = new Set()
   for (const [line, count] of rows) {
@@ -62,33 +78,28 @@ function syncSourceWrap(lines) {
     current.add(row)
   }
   for (const row of previous) if (!current.has(row)) row.style.removeProperty('--wrap-breaks')
-  const differs = wrapped && rows.size > 0
-  synced.set(lines, { rows: current, width: pre.clientWidth, differs })
-  showWrapToggle(lines, differs)
-}
-
-// Wrapping makes a difference where lines wrap, or would: where unwrapped
-// code scrolls sideways.
-function showWrapToggle(lines, wrapsLines) {
+  synced.set(lines, { rows: current, width })
+  // Wrapping makes a difference only where a line needs it. A docs link's
+  // label or trailing spaces past the edge never wrap a line.
   const toggle = lines.closest(VIEWERS)?.querySelector('[data-bundle-source-wrap]')
-  const scroller = lines.parentElement
-  if (toggle) toggle.hidden = !(lines.classList.contains('is-wrapped') ? wrapsLines : scroller.scrollWidth > scroller.clientWidth)
+  if (toggle) toggle.hidden = !(wrapped ? rows.size > 0 : overflows)
 }
 
-// Rows each wrapped line takes, by its 0-based index. Only a line that
-// could be wider than the code is measured: no glyph is wider than 2ch,
-// tabs included at the viewer's tab size of 2.
-function wrappedRows(pre) {
+// Wrapped, the rows each wrapped line takes, by its 0-based index;
+// unwrapped, whether any line is wider than the code wraps at. Only a line
+// that could be is measured: no glyph is wider than 2ch, tabs included at
+// the viewer's tab size of 2. Trailing whitespace hangs, so a line ends at
+// its last other character.
+function measureLines(pre, width, wrapped) {
   const style = getComputedStyle(pre)
   const lineHeight = parseFloat(style.lineHeight)
-  const width = pre.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
   canvas ??= document.createElement('canvas').getContext('2d')
   canvas.font = `${style.fontSize} ${style.fontFamily}`
   const limit = width / (2 * canvas.measureText('0').width)
   const candidates = []
   let first = null, last = null, length = 0, line = 0
   const end = () => {
-    if (length > limit) candidates.push({ line, first, last })
+    if (length > limit && last) candidates.push({ line, first, last })
     line++
     length = 0
     first = last = null
@@ -102,7 +113,9 @@ function wrappedRows(pre) {
       if (stop > from) {
         // A surrogate pair is one character, for its rectangle.
         first ??= { node, from, to: from + (text.codePointAt(from) > 0xffff ? 2 : 1) }
-        last = { node, from: stop - (stop - 2 >= from && text.codePointAt(stop - 2) > 0xffff ? 2 : 1), to: stop }
+        let to = stop
+        while (to > from && (text[to - 1] === ' ' || text[to - 1] === '\t')) to--
+        if (to > from) last = { node, from: to - (to - 2 >= from && text.codePointAt(to - 2) > 0xffff ? 2 : 1), to }
         length += stop - from
       }
       if (at === -1) break
@@ -113,17 +126,22 @@ function wrappedRows(pre) {
   end()
   const rows = new Map()
   const range = document.createRange()
-  const top = ({ node, from, to }) => {
+  const rect = ({ node, from, to }) => {
     range.setStart(node, from)
     range.setEnd(node, to)
-    return range.getBoundingClientRect().top
+    return range.getBoundingClientRect()
+  }
+  if (!wrapped) {
+    const left = pre.getBoundingClientRect().left + pre.clientLeft + parseFloat(style.paddingLeft)
+    // Within half a pixel: the widths come rounded differently.
+    return { rows, overflows: candidates.some(({ last: finish }) => rect(finish).right - left > width + 0.5) }
   }
   // The first and last characters sit on the line's first and last rows.
   for (const { line: index, first: start, last: finish } of candidates) {
-    const count = Math.round((top(finish) - top(start)) / lineHeight) + 1
+    const count = Math.round((rect(finish).top - rect(start).top) / lineHeight) + 1
     if (count > 1) rows.set(index, count)
   }
-  return rows
+  return { rows, overflows: rows.size > 0 }
 }
 
 // The line at the top of a viewer's code, to put back in place once its
