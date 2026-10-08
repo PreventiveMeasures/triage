@@ -319,7 +319,7 @@ export function refreshBundleGraphSidebar() {
   if (!_currentBundlePrep) return
   const mod = loadedGraphMod()
   if (!mod) return
-  mod.refreshSidebar(_currentBundlePrep, { isBundleContext: true })
+  mod.refreshSidebar(_currentBundlePrep, { isBundleContext: true, findingsJump: !isManagedUiMode() })
 }
 
 export function refreshBundleGraphTopPkgs() {
@@ -1827,6 +1827,12 @@ function renderBundleSlide(entry) {
   if (state.bundleDetailsTab === 'compare' && !canCompare) {
     state.bundleDetailsTab = 'overview'
   }
+  // Managed bundles have no Issues tab: Code shows each file's issues. A
+  // persisted or routed 'issues' selection coerces back to Overview.
+  const showIssues = !isManagedUiMode()
+  if (state.bundleDetailsTab === 'issues' && !showIssues) {
+    state.bundleDetailsTab = 'overview'
+  }
   const tab = state.bundleDetailsTab
   const overviewActive = tab === 'overview'
   // Shared readiness gates for the non-Overview tab bodies. While the
@@ -1850,9 +1856,9 @@ function renderBundleSlide(entry) {
   if (tab === 'advisories' && showAdvisories && detailsParsed) {
     ensureBundleAdvisories(details, render).catch(() => {})
   }
-  // Issues is always in the tab strip — the body's empty state
-  // ("No issues match this bundle's files.") covers the no-match
-  // case, and keeping the button stable avoids two prior bugs:
+  // Outside managed mode, Issues is always in the tab strip — the body's
+  // empty state ("No issues match this bundle's files.") covers the
+  // no-match case, and keeping the button stable avoids two prior bugs:
   // (1) a layout shift mid-parse when `state.bundleDetails.fileHashes`
   // becomes non-null and the button stamps in as the leftmost tab,
   // pushing every other tab right (and stealing in-flight clicks);
@@ -1878,13 +1884,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'advisories')}
           role="tab"
         >Advisories</button>` : nothing}
-        <button
+        ${showIssues ? html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
           data-bundle-tab="issues"
           aria-selected=${String(tab === 'issues')}
           role="tab"
-        >Issues</button>
+        >Issues</button>` : nothing}
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'terminal' })}

@@ -159,7 +159,8 @@ export function refreshGraph2Sidebar() {
   if (!mod) return
   const prep = buildGraph2Data()
   if (!prep) return
-  mod.refreshSidebar(prep, { isBundleContext: state.currentView === 'bundles' })
+  const isBundleContext = state.currentView === 'bundles'
+  mod.refreshSidebar(prep, { isBundleContext, findingsJump: !(isBundleContext && isManagedUiMode()) })
 }
 
 export function refreshGraph2TopPkgs() {
