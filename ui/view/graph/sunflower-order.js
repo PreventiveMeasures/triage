@@ -1,7 +1,7 @@
 // Improve a sunflower's assignment, never its geometry. Every accepted swap
 // reduces the sum of Euclidean lengths of the drawn (undirected) edges. Groups
-// restrict swaps to one disk; edges to other disks still contribute to cost.
-// Degree/hub ordering is only a seed, not a constraint on the final assignment.
+// preserve disks, priority tiers and hub/member bands; edges to other groups
+// still contribute to cost. Degree ordering only seeds each group's assignment.
 //
 // Try slots near each node's neighbour centroid plus a deterministic spread of
 // other slots. The centroid proposes candidates; the acceptance test uses edge

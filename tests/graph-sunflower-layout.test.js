@@ -31,11 +31,11 @@ function edgeLength(graph) {
 const positions = nodes => nodes.map(node => [node.x, node.y])
 const slots = nodes => positions(nodes).toSorted(([ax, ay], [bx, by]) => ax - bx || ay - by)
 
-// The pre-optimization assignment, also specifying the unchanged flat grid.
+// The degree-ordered seed within priority groups, on the unchanged flat grid.
 function degreeLayout(graph, w = 1000, h = 800) {
   const ownRank = node => node.pkg === '__own__' || graph.ownSourcePackages?.has(node.pkg)
     ? graph.entryPackages?.has(node.pkg) ? 0 : 1 : 2
-  const sorted = graph.nodes.toSorted((a, b) => ownRank(a) - ownRank(b) || b.deg - a.deg)
+  const sorted = graph.nodes.toSorted((a, b) => ownRank(a) - ownRank(b) || Number(Boolean(b.isHub)) - Number(Boolean(a.isHub)) || b.deg - a.deg)
   const unitToPx = Math.min(w, h) / 2
   sorted.forEach((node, i) => {
     const angle = (i * 137.508 % 360) * Math.PI / 180
@@ -124,19 +124,41 @@ for (const [kind, ratio] of [['chain', 0.3], ['tree', 0.4], ['clusters', 0.4], [
   })
 }
 
-test('nested sunflower preserves the hub/member slot geometry and allows swaps between those bands', () => {
-  const graph = fixture('chain', 100)
-  // One entry package: the original disk is centered at (500, 400), radius
-  // 0.22 * 400 = 88, with one hub at its center and members in the outer band.
-  const expected = [[500, 400]]
-  for (let i = 1; i < 100; i++) {
-    const angle = i * 137.508 * Math.PI / 180
-    const radius = (0.4 + Math.sqrt((i - 1) / 98) * 0.6) * 88
-    expected.push([500 + Math.cos(angle) * radius, 400 + Math.sin(angle) * radius])
-  }
-  layoutSpiral(graph, 1000, 800)
-  assert.deepEqual(slots(graph.nodes), expected.toSorted(([ax, ay], [bx, by]) => ax - bx || ay - by))
-  assert.notDeepEqual([graph.nodes[0].x, graph.nodes[0].y], [500, 400], 'a low-degree hub is not pinned to the center')
+for (const hubCount of [0, 1, 3, 5, 6, 20, 100]) {
+  test(`nested sunflower keeps ${hubCount} hubs innermost on the original disk grid`, () => {
+    const graph = fixture('chain', 100)
+    for (const [i, node] of graph.nodes.entries()) node.isHub = i >= 100 - hubCount
+    // One entry package: the original disk is centered at (500, 400), radius
+    // 0.22 * 400 = 88. The existing grid has a separate inner band for 1–5 hubs.
+    const inner = hubCount <= 5 ? hubCount : 0, outer = 100 - inner
+    const expected = graph.nodes.map((_, i) => {
+      const angle = i * 137.508 * Math.PI / 180
+      const radius = i < inner
+        ? (inner <= 1 ? 0 : Math.sqrt(i / (inner - 1)) * 0.3 * 88)
+        : (0.4 + Math.sqrt((i - inner) / (outer - 1)) * 0.6) * 88
+      return { x: 500 + Math.cos(angle) * radius, y: 400 + Math.sin(angle) * radius }
+    })
+    layoutSpiral(graph, 1000, 800)
+    assert.deepEqual(slots(graph.nodes.filter(node => node.isHub)), slots(expected.slice(0, hubCount)))
+    assert.deepEqual(slots(graph.nodes.filter(node => !node.isHub)), slots(expected.slice(hubCount)))
+    if (hubCount === 1) assert.deepEqual(positions(graph.nodes.slice(-1)), [[500, 400]])
+    const first = positions(graph.nodes)
+    layoutSpiral(graph, 1000, 800)
+    assert.deepEqual(positions(graph.nodes), first)
+  })
+}
+
+test('focused file sunflower reserves the central slots for hubs without freezing their order', () => {
+  const graph = fixture('clusters', 1000)
+  for (const [i, node] of graph.nodes.entries()) node.isHub = i >= 980
+  degreeLayout(graph)
+  const before = edgeLength(graph), hubs = graph.nodes.slice(-20), members = graph.nodes.slice(0, -20)
+  const hubGrid = slots(hubs), memberGrid = slots(members), originalHubs = positions(hubs)
+  layoutFilesVogel(graph, 1000, 800)
+  assert.deepEqual(slots(hubs), hubGrid)
+  assert.deepEqual(slots(members), memberGrid)
+  assert.notDeepEqual(positions(hubs), originalHubs, 'hubs can still reorder within their central slots')
+  assert.ok(edgeLength(graph) < before * 0.4)
 })
 
 test('within-disk swaps account for external edges, including fixed singleton disks', () => {
