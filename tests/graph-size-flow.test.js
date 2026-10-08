@@ -118,16 +118,13 @@ test('missing entry metadata infers source components, including an all-cyclic g
   assert.deepEqual(buildSizeFlow(fixture({}, [])).total, { size: 0, missing: 0 })
 })
 
-test('depth and display limits never truncate sizes, and following a dependency reveals its descendants', () => {
+test('depth never truncates sizes, and following a dependency reveals its descendants', () => {
   const model = buildSizeFlow(fixture(diamond))
-  const layout = layoutSizeFlow(model, { depth: 1, limit: 2 })
-  assert.equal(layout.hidden, 2)
+  const layout = layoutSizeFlow(model, { depth: 1 })
+  assert.equal(layout.hidden, 1)
   assert.equal(layout.nodes[0].size, 1060)
   assert.equal(layoutSizeFlow(model, { focus: 'f:a/index.js', depth: 1 }).nodes.length, 2)
   const all = layoutSizeFlow(model, { depth: Infinity })
-  const limited = layoutSizeFlow(model, { depth: Infinity, edgeLimit: 2 })
-  assert.equal(limited.hiddenEdges, 2)
-  assert.equal(limited.nodes[0].size, 1060)
   const shared = all.edges.filter(e => e.to === 'f:large/index.js')
   assert.equal(shared[0].width, shared[1].width, 'shared target keeps equal ribbon widths on both paths')
   for (const e of all.edges) {
@@ -142,20 +139,40 @@ test('deep chains avoid recursion and zero-byte graphs keep finite geometry', ()
   const model = buildSizeFlow(fixture(tree, ['0.js']))
   assert.equal(model.total.size, 12000)
   assert.equal(model.byId.get('f:5000.js').size, 7000)
-  assert.equal(layoutSizeFlow(model, { depth: Infinity }).nodes.length, 800)
+  const all = layoutSizeFlow(model, { depth: Infinity })
+  assert.equal(all.nodes.length, 12000)
+  assert.equal(all.edges.length, 11999)
+  assert.equal(all.hidden, 0)
   const zero = layoutSizeFlow(buildSizeFlow(fixture({ 'entry.js': { size: 0, imports: ['zero.js'] }, 'zero.js': { size: 0 } })))
   assert.ok(zero.edges[0].width > 0)
   assert.ok(!/NaN|Infinity/u.test(flowRibbon(zero.edges[0])))
 })
 
-test('many independent entry points also respect the display limit without losing their totals', () => {
+test('all entry points remain visible beyond the former 800-node cap', () => {
   const tree = Object.fromEntries(Array.from({ length: 900 }, (_, i) => [`${i}.js`, { size: 1, imports: [] }]))
   const model = buildSizeFlow(fixture(tree, Object.keys(tree)))
   const layout = layoutSizeFlow(model)
-  assert.equal(layout.nodes.length, 800)
-  assert.equal(layout.hidden, 100)
+  assert.equal(layout.nodes.length, 900)
+  assert.equal(layout.hidden, 0)
   assert.equal(model.roots.length, 900)
   assert.equal(model.total.size, 900)
+})
+
+test('every ribbon remains visible beyond the former 2500-edge cap', () => {
+  const sources = Array.from({ length: 60 }, (_, i) => `from-${i}.js`)
+  const targets = Array.from({ length: 60 }, (_, i) => `to-${i}.js`)
+  const tree = Object.fromEntries([
+    ['entry.js', { size: 1, imports: sources }],
+    ...sources.map(file => [file, { size: 1, imports: targets }]),
+    ...targets.map(file => [file, { size: 10, imports: [] }]),
+  ])
+  const model = buildSizeFlow(fixture(tree))
+  const layout = layoutSizeFlow(model)
+  assert.equal(layout.nodes.length, 121)
+  assert.equal(layout.edges.length, 3660)
+  assert.deepEqual(new Set(layout.edges.map(e => e.id)), new Set(model.edges.map(e => e.id)))
+  assert.equal(model.total.size, 661)
+  assert.equal(layout.hidden, 0)
 })
 
 test('popup refreshes keep flow focus, selection, depth and zoom while updating totals', () => {

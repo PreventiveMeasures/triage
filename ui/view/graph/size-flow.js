@@ -136,7 +136,7 @@ class SizeFlow extends LitElement {
 
   render() {
     if (!this.layout) return null
-    const { nodes, edges, width, height, hidden, hiddenEdges } = this.layout
+    const { nodes, edges, width, height, hidden } = this.layout
     return html`<section class="flow-stage" aria-label="Dependency size flow">
       <div class="flow-controls"><button ?disabled=${!this.focus} @click=${() => this.follow(null)}>Entry points</button>
         <label>Depth <select aria-label="Flow depth" .value=${String(this.depth)} @change=${e => { this.depth = Number(e.target.value); this.requestUpdate() }}>
@@ -147,7 +147,7 @@ class SizeFlow extends LitElement {
         <button aria-label="Zoom in" @click=${() => { this.zoom = Math.min(12, this.zoom * 1.5); this.requestUpdate() }}>+</button>
         <span>${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}${hidden ? ` · ${hidden} beyond this view` : ''}</span>
       </div>
-      ${hidden || hiddenEdges ? html`<p class="flow-notice">Showing up to 800 nodes and 2,500 ribbons within the selected depth${hiddenEdges ? ` (${hiddenEdges} smaller ribbons hidden)` : ''}. Select a node and follow its imports to explore further. Sizes include dependencies beyond this view.</p>` : null}
+      ${hidden ? html`<p class="flow-notice">Select a deeper level or All to show more dependencies. Sizes include dependencies beyond the selected depth.</p>` : null}
       <div class="flow-scroll"><svg class="flow-chart" style=${`width:${this.zoom * 100}%;min-width:${this.zoom * 500}px`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import ribbons weighted by total reachable bytes">
         <text class="flow-level" x="24" y="24">${this.focus ? this.model.byId.get(this.focus).label : this.model.inferred ? 'Inferred roots' : 'Entry points'} ↓</text>
         ${edges.map(e => this.renderEdge(e))}${nodes.map(n => this.renderNode(n))}

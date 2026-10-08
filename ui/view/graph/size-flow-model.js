@@ -121,25 +121,25 @@ function flowLevels(model, roots) {
   return new Map(pending.map(id => [id, ranks[componentOf.get(id)]]))
 }
 
-export function layoutSizeFlow(model, { focus = null, depth = 4, limit = 800, edgeLimit = 2500, width = 1100 } = {}) {
+export function layoutSizeFlow(model, { focus = null, depth = 4, width = 1100 } = {}) {
   const roots = focus && model.byId.has(focus) ? [focus] : model.roots
   const levels = flowLevels(model, roots)
   const candidates = [...levels.keys()].filter(id => levels.get(id) <= depth)
     .toSorted((a, b) => levels.get(a) - levels.get(b) || model.byId.get(b).size - model.byId.get(a).size || a.localeCompare(b))
-  const visible = new Set(candidates.slice(0, limit))
-  const candidatesEdges = model.edges.filter(e => visible.has(e.from) && visible.has(e.to))
-  const edges = candidatesEdges.toSorted((a, b) => b.size - a.size || a.id.localeCompare(b.id)).slice(0, edgeLimit).map(e => ({ ...e }))
+  const visible = new Set(candidates)
+  const edges = model.edges.filter(e => visible.has(e.from) && visible.has(e.to))
+    .toSorted((a, b) => b.size - a.size || a.id.localeCompare(b.id)).map(e => ({ ...e }))
   const nodes = [...visible].map(id => ({ ...model.byId.get(id), level: levels.get(id) }))
   const bands = Map.groupBy(nodes, n => n.level), byId = new Map(nodes.map(n => [n.id, n]))
-  const maxSize = Math.max(1, ...nodes.map(n => n.size))
+  const maxSize = nodes.reduce((max, n) => Math.max(max, n.size), 1)
   // A port needs room for all incident ribbons because shared sizes are not
   // additive. Node labels show unique totals; widths encode edge flow only.
   const weight = n => Math.max(n, maxSize / 1000)
   const ports = new Map(nodes.map(n => [n.id, { incoming: 0, outgoing: 0 }]))
   for (const e of edges) { ports.get(e.to).incoming += weight(e.size); ports.get(e.from).outgoing += weight(e.size) }
   for (const node of nodes) node.capacity = Math.max(weight(node.size), ports.get(node.id).incoming, ports.get(node.id).outgoing)
-  const widest = Math.max(1, ...[...bands.values()].map(band => band.reduce((s, n) => s + n.capacity, 0)))
-  const maxCount = Math.max(1, ...[...bands.values()].map(band => band.length))
+  const widest = [...bands.values()].reduce((max, band) => Math.max(max, band.reduce((s, n) => s + n.capacity, 0)), 1)
+  const maxCount = [...bands.values()].reduce((max, band) => Math.max(max, band.length), 1)
   const gap = 12, padding = 24, scale = Math.max(200, width - padding * 2 - maxCount * gap) / widest
   let actualWidth = width
   for (const band of bands.values()) {
@@ -157,7 +157,7 @@ export function layoutSizeFlow(model, { focus = null, depth = 4, limit = 800, ed
     edge.returning = to.level <= from.level
   }
   return { nodes, byId, edges, roots, width: actualWidth, height: Math.max(260, 150 * bands.size + 40),
-    hidden: levels.size - nodes.length, hiddenEdges: candidatesEdges.length - edges.length, reachable: levels.size }
+    hidden: levels.size - nodes.length, reachable: levels.size }
 }
 
 export function flowRibbon(edge) {
