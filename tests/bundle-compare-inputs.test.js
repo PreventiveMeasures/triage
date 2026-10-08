@@ -25,6 +25,16 @@ test('Compare scopes include trees covering an entire side and trees unique to e
   assert.equal(diff.totals.otherFiles, 1)
   assert.equal(bundleCompareFiles(other).size, 3)
 })
+test('Compare hides scopes unless one changes the files compared on some side', () => {
+  const base = details({ 'cli.js': 'old', 'lib.js': 'lib' }, { run: ['cli.js', 'lib.js'] })
+  assert.deepEqual(bundleCompareScopes(base), [])
+  assert.deepEqual(bundleCompareScopes(base, null), [])
+  assert.deepEqual(bundleCompareScopes(base, details({ 'cli.js': 'new' }, { run: ['cli.js'] })), [])
+  const narrowed = details({ 'cli.js': 'new', 'extra.js': 'extra' }, { run: ['cli.js'] })
+  assert.deepEqual(bundleCompareScopes(base, narrowed).map(scope => scope.id), ['reason:run'])
+  const partial = details({ 'cli.js': 'old', 'lib.js': 'lib' }, { run: ['cli.js'] })
+  assert.deepEqual(bundleCompareScopes(partial).map(scope => scope.id), ['reason:run'])
+})
 test('custom trees retain their exact paths and sourcemaps have no named trees', () => {
   const bundle = details({ 'src/app.js': 'a', 'tool.js': 'b' }, { 'custom build': ['src/app.js'] })
   assert.deepEqual(bundleCompareScopes(bundle), [{ id: 'reason:custom build', label: 'custom build' }])

@@ -11,6 +11,15 @@ export function bundleCompareScopes(...details) {
       if (Array.isArray(paths) && paths.some(path => files.has(path))) names.add(name)
     }
   }
+  // A scope is only useful as a filter if it changes the files compared on
+  // some side. Keep every scope when at least one does, otherwise hide the
+  // selector, as single-bundle views do (see common/bundle-reasons.js).
+  const narrows = name => details.some(item => {
+    const files = bundleFilesAsMap(item)
+    const paths = item?.bundle?.reason?.[name]
+    return new Set(Array.isArray(paths) ? paths.filter(path => files.has(path)) : []).size < files.size
+  })
+  if (![...names].some(narrows)) return []
   return [...names].toSorted().map(name => ({ id: `reason:${name}`, label: name }))
 }
 
