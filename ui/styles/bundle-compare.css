@@ -53,6 +53,9 @@
   gap: .35rem;
   flex: 1 1 18rem; min-width: 0;
 }
+/* Room for the swap button too, so a narrow row wraps the scope selector
+   rather than squeezing the bundle selector. */
+.bundle-compare-select-wrap:has(.bundle-compare-swap) { flex-basis: 24rem; }
 .bundle-compare-select-hint {
   font-size: .64rem;
   text-transform: uppercase;
@@ -60,6 +63,8 @@
   color: var(--muted);
 }
 .bundle-compare-select-wrap bundle-selector { flex: 1; min-width: 0; max-width: 32rem; }
+/* Scope selector — at the right end of the picker row. */
+.bundle-compare-picker > bundle-scope-selector { margin-left: auto; }
 .bundle-compare-clear {
   flex-shrink: 0;
   border: 0;
@@ -71,13 +76,13 @@
   padding: .1rem .35rem;
   }
 .bundle-compare-clear:hover { background: var(--surface-active); color: var(--text); }
-/* Swap button — pinned to the top-right of the picker row (margin-left:
-   auto). Trades A and B and navigates to the other bundle. */
+/* Swap button — set a little apart from the clear button. Trades A and B
+   and navigates to the other bundle. */
 .bundle-compare-swap {
   display: inline-flex;
   align-items: center;
   gap: .3rem;
-  margin-left: auto;
+  margin-left: .65rem;
   flex-shrink: 0;
   padding: .2rem .55rem;
   font: inherit;
