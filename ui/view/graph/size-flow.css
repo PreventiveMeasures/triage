@@ -13,23 +13,21 @@ button:hover { background: var(--graph-hover-bg); }
 button:disabled { opacity: .4; cursor: default; }
 button:focus-visible { outline: 2px solid var(--accent); }
 .flow-stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.flow-controls {
-  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-}
-.flow-controls span { color: var(--muted); margin-left: auto; }
 .flow-scroll { flex: 1; overflow: auto; min-height: 0; }
-.flow-zoom {
+.flow-count {
   position: absolute;
-  bottom: 10px;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px;
+  bottom: 12px;
+  right: 50px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 11px;
   border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 5px);
+  border-radius: var(--ui-radius, 6px);
   background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-glass);
+  z-index: 3;
+  pointer-events: none;
 }
 .flow-chart { display: block; }
 .flow-edge, .flow-node { cursor: default; }

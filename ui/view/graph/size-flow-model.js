@@ -134,17 +134,16 @@ export function layoutSizeFlow(model, { focus = null, width = 1100 } = {}) {
   const maxSize = nodes.reduce((max, n) => Math.max(max, n.size), 1)
   // A port needs room for all incident ribbons because shared sizes are not
   // additive. Node labels show unique totals; widths encode edge flow only.
-  const weight = n => Math.max(n, maxSize / 1000)
+  const weight = n => Math.max(n, maxSize / 4000)
   const ports = new Map(nodes.map(n => [n.id, { incoming: 0, outgoing: 0 }]))
   for (const e of edges) { ports.get(e.to).incoming += weight(e.size); ports.get(e.from).outgoing += weight(e.size) }
   for (const node of nodes) node.capacity = Math.max(weight(node.size), ports.get(node.id).incoming, ports.get(node.id).outgoing)
   const widest = [...bands.values()].reduce((max, band) => Math.max(max, band.reduce((s, n) => s + n.capacity, 0)), 1)
-  const maxCount = [...bands.values()].reduce((max, band) => Math.max(max, band.length), 1)
-  const gap = 12, padding = 24, scale = Math.max(200, width - padding * 2 - maxCount * gap) / widest
+  const padding = 24, scale = Math.max(200, width - padding * 2) / widest
   let actualWidth = width
   for (const band of bands.values()) {
     let x = padding
-    for (const n of band) { n.x = x; n.y = 52 + n.level * 150; n.width = Math.max(6, n.capacity * scale); x += n.width + gap }
+    for (const n of band) { n.x = x; n.y = 52 + n.level * 150; n.width = Math.max(1.5, n.capacity * scale); x += n.width }
     actualWidth = Math.max(actualWidth, x + padding)
   }
   const offsets = new Map(nodes.map(n => [n.id, { from: 0, to: 0 }]))

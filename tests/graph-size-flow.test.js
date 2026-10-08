@@ -149,6 +149,30 @@ test('deep chains avoid recursion and zero-byte graphs keep finite geometry', ()
   assert.ok(!/NaN|Infinity/u.test(flowRibbon(zero.edges[0])))
 })
 
+test('wide rows pack small dependencies without gaps or obscuring the large flow', () => {
+  const small = Array.from({ length: 200 }, (_, i) => `small-${i}/index.js`)
+  const graph = fixture({
+    'entry.js': { size: 0, imports: ['large/index.js', ...small] },
+    'large/index.js': { size: 1e6, imports: [] },
+    ...Object.fromEntries(small.map(file => [file, { size: 1, imports: [] }])),
+  })
+  for (const packages of [false, true]) {
+    const layout = layoutSizeFlow(buildSizeFlow(graph, { packages }))
+    const row = layout.nodes.filter(n => n.level === 1).toSorted((a, b) => a.x - b.x)
+    assert.equal(row.length, 201)
+    for (let i = 1; i < row.length; i++) assert.equal(row[i].x, row[i - 1].x + row[i - 1].width)
+    assert.ok(row[0].width > .75 * row.reduce((sum, n) => sum + n.width, 0), 'the large dependency dominates despite hundreds of small neighbors')
+    assert.equal(row[1].width, 1.5, 'small nodes use a quarter of the former 6px floor')
+    const largeEdge = layout.edges.find(e => e.size === 1e6), smallEdge = layout.edges.find(e => e.size === 1)
+    assert.ok(smallEdge.width < largeEdge.width / 3900, 'minimum ribbon weight is also reduced fourfold')
+    for (const edge of layout.edges) {
+      const from = layout.byId.get(edge.from), to = layout.byId.get(edge.to)
+      assert.ok(edge.x1 + edge.width <= from.x + from.width + .001)
+      assert.ok(edge.x2 + edge.width <= to.x + to.width + .001)
+    }
+  }
+})
+
 test('all entry points remain visible beyond the former 800-node cap', () => {
   const tree = Object.fromEntries(Array.from({ length: 900 }, (_, i) => [`${i}.js`, { size: 1, imports: [] }]))
   const model = buildSizeFlow(fixture(tree, Object.keys(tree)))

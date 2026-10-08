@@ -6,6 +6,7 @@ import { pkgColor } from './utils.js'
 import { buildSizeFlow, flowRibbon, layoutSizeFlow } from './size-flow-model.js'
 import css from './size-flow.css'
 import sidebarListCSS from './sidebar-list.css'
+import zoomControlsCSS from './zoom-controls.css'
 
 function shortSize(size) {
   if (size >= 1e6) return `${(size / 1e6).toFixed(1)} MB`
@@ -22,7 +23,7 @@ function flowRow(node, size, onClick) {
 
 class SizeFlow extends LitElement {
   static properties = { graph: { attribute: false }, packages: { type: Boolean } }
-  static styles = [unsafeCSS(sidebarListCSS), unsafeCSS(css)]
+  static styles = [unsafeCSS(sidebarListCSS), unsafeCSS(css), unsafeCSS(zoomControlsCSS)]
 
   constructor() {
     super()
@@ -85,7 +86,7 @@ class SizeFlow extends LitElement {
       @click=${() => this.select(n.id)} @dblclick=${() => this.follow(n.id)}
       @keydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.select(n.id) } }}>
       <title>${title}</title>
-      <rect x=${n.x} y=${n.y} width=${n.width} height="26" rx="3" fill=${pkgColor(n.pkg)} stroke=${selected ? 'var(--text)' : 'var(--graph-canvas-bg)'} stroke-width=${selected ? 2 : 1}></rect>
+      <rect x=${n.x} y=${n.y} width=${n.width} height="26" fill=${pkgColor(n.pkg)} stroke=${selected ? 'var(--text)' : 'var(--graph-canvas-bg)'} stroke-width=${selected ? 2 : 1}></rect>
       <svg x=${n.x + 5} y=${n.y} width=${Math.max(0, n.width - 10)} height="26"><text x="0" y="18">${label}</text></svg>
     </g>`
   }
@@ -130,7 +131,7 @@ class SizeFlow extends LitElement {
       <h4>${this.model.inferred ? 'Inferred roots (no entry points in this view)' : 'Entry points'}</h4>
       ${this.model.roots.slice(0, 100).map(id => { const n = this.model.byId.get(id); return flowRow(n, n.size, () => this.select(id)) })}
       ${this.model.roots.length > 100 ? html`<p>Showing the first 100 entry points. Search to find another.</p>` : null}`}
-    return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button aria-label="Clear flow selection" @click=${() => { this.selection = null; this.requestUpdate() }}>×</button></div>
+    return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button aria-label="Clear flow selection" @click=${() => { if (this.focus) this.follow(null); else { this.selection = null; this.requestUpdate() } }}>×</button></div>
       ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
       <div class="flow-metrics"><b>${shortSize(node.size)}</b><span>unique reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
       ${node.missing ? html`<p>${node.missing} reachable file sizes are unknown.</p>` : null}
@@ -146,17 +147,16 @@ class SizeFlow extends LitElement {
     if (!this.layout) return null
     const { nodes, edges, width, height } = this.layout
     return html`<section class="flow-stage" aria-label="Dependency size flow">
-      <div class="flow-controls"><button ?disabled=${!this.focus} @click=${() => this.follow(null)}>Entry points</button>
-        <span>${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</span>
-      </div>
       <div class="flow-scroll"><svg class="flow-chart" style=${`width:${this.zoom * 100}%;min-width:${this.zoom * 500}px`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import ribbons weighted by total reachable bytes">
         <text class="flow-level" x="24" y="24">${this.focus ? this.model.byId.get(this.focus).label : this.model.inferred ? 'Inferred roots' : 'Entry points'} ↓</text>
         ${edges.map(e => this.renderEdge(e))}${nodes.map(n => this.renderNode(n))}
       </svg>${nodes.length > 0 ? null : html`<p>No recorded dependency paths in this view.</p>`}</div>
-      <div class="flow-zoom" role="group" aria-label="Flow zoom">
-        <button aria-label="Zoom out" @click=${() => { this.zoom = Math.max(.5, this.zoom / 1.5); this.requestUpdate() }}>−</button>
-        <button @click=${() => this.fit()}>Fit</button>
+      <div class="flow-count">${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</div>
+      <div class="g2-zoom-ctrl" role="group" aria-label="Flow zoom">
         <button aria-label="Zoom in" @click=${() => { this.zoom = Math.min(12, this.zoom * 1.5); this.requestUpdate() }}>+</button>
+        <div class="g2-zoom-pct">${Math.round(this.zoom * 100)}%</div>
+        <button aria-label="Zoom out" @click=${() => { this.zoom = Math.max(.5, this.zoom / 1.5); this.requestUpdate() }}>−</button>
+        <button class="g2-zoom-fit-btn" aria-label="Fit to view" @click=${() => this.fit()}>fit</button>
       </div>
     </section><aside class="flow-panel" aria-label="Size flow details" aria-live="polite">${this.renderSearch()}${this.renderPanel()}</aside>`
   }
