@@ -89,8 +89,8 @@ test('a detached upload stays open in Manage when its uploader still has access'
   assert.equal(f.browser.location.pathname, '/manage/bundle/bundle/code')
 })
 
-test('history records the final rendered tab when Compare loses its last candidate', async () => {
-  const f = await fixture({ tab: 'compare' })
+test('history records the final rendered tab when Advisories loses access', async () => {
+  const f = await fixture({ tab: 'advisories' })
   assert.equal(await f.refresh([], () => { f.state.bundleDetailsTab = 'overview' }), true)
   assert.equal(f.browser.location.pathname, '/manage/bundle/bundle')
   assert.equal(f.state.bundleDetails.managedId, bundle.id)

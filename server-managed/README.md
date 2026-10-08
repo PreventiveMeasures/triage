@@ -759,7 +759,10 @@ the previous results; a denied or missing bundle discards them.
 For admins and managers, a **Validate** button right of it opens Scans on that bundle with
 Dependency alerts selected (`/manage/scans?bundle=<id>&mode=dependencies`).
 Once a bundle's modules are loaded, the tab is hidden when none is a dependency
-package (a non-root module with an ecosystem, name and version). Neither button
+package (a non-root module with an ecosystem, name and version), unless it is the
+open tab: switching bundles (to a sourcemap too) or following a link keeps
+Advisories open, as it keeps Compare open without another bundle to compare.
+Only losing security access returns the viewer to Overview. Neither button
 is shown when the bundle's unscoped audit finds no packages, audited or skipped.
 Managed bundles have no Issues tab: the Code tab shows each file's issues.
 For both initial audits and repository rechecks, GitHub requests use the current
