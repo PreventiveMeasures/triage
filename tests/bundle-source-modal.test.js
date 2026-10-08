@@ -449,6 +449,9 @@ test('bundle Overview shows the unpacked total of every file beside Size for loc
     assert.match(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Size<\/dt><dd>50 B<\/dd>\s*<dt>Unpacked<\/dt><dd>8 B<\/dd>/u)
     state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 50, json: { ...json, sourcesContent: [] } }
     assert.doesNotMatch(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Unpacked<\/dt>/u)
+    // Larger sizes read in KiB and MiB, as the sidebar and scan page give them.
+    state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 4_827_136, json: { version: 3, sources: ['src/a.js'], sourcesContent: ['x'.repeat(2048)] } }
+    assert.match(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Size<\/dt><dd>4\.6 MiB<\/dd>\s*<dt>Unpacked<\/dt><dd>2\.0 KiB<\/dd>/u)
   }
 })
 

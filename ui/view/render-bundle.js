@@ -544,8 +544,8 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
         <dl class="bundles-detail-meta">
           ${extras}
           <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
-          ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
-          ${unpackedSize == null ? nothing : html`<dt>Unpacked</dt><dd>${formatBytes(unpackedSize)}</dd>`}
+          ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatByteSize(bundleSize)}</dd>`}
+          ${unpackedSize == null ? nothing : html`<dt>Unpacked</dt><dd>${formatByteSize(unpackedSize)}</dd>`}
           ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
         </dl>
         ${exportsCol ?? nothing}
@@ -953,7 +953,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       // passing over the row on its way somewhere else.
       const weigh = info && sources ? (el) => {
         const { bytes, loc } = bundlePackageSourceStats(sources, child.sourcePath)
-        // Sized like bundle rows in the sidebar and scan page: B, then KiB / MiB / GiB.
+        // Sized like bundles in the Overview, sidebar and scan page: B, then KiB / MiB / GiB.
         Object.assign(el.dataset, { tooltipLoc: String(loc), tooltipSize: formatByteSize(bytes) })
       } : undefined
       // Rollup chip — total findings under this dir, colored by the
@@ -2409,7 +2409,7 @@ function renderBundleDetails(entry, details) {
       ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${stripPathPrefix(file, prefix)}</button></li>`)}
     </ul></dd>` : nothing}
     ${includeSize && details && details.integrity === entry.integrity
-      ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
+      ? html`<dt>Size</dt><dd>${formatByteSize(details.size)}</dd>`
       : nothing}
   </dl>`
   // The bundle's bytes live on disk regardless of whether the parse
