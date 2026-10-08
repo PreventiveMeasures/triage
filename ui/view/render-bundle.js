@@ -942,11 +942,12 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const info = child.packageInfo
       const hasDetails = !!info || !!pkg?.variant
       // Size and LoC read every source in the package, so count them only
-      // when its tooltip is wanted; the tooltip shows after the hover delay.
-      const weigh = info && sources ? (e) => {
+      // when its tooltip shows: after the hover delay, not for a pointer
+      // passing over the row on its way somewhere else.
+      const weigh = info && sources ? (el) => {
         const { bytes, loc } = bundlePackageSourceStats(sources, child.sourcePath)
-        Object.assign(e.currentTarget.dataset, { tooltipLoc: String(loc), tooltipSize: formatBytes(bytes) })
-      } : nothing
+        Object.assign(el.dataset, { tooltipLoc: String(loc), tooltipSize: formatBytes(bytes) })
+      } : undefined
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
       // where the issues live (the per-file chips only help once
@@ -954,7 +955,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const stats = dirIssueStats(child, issueIndex)
       return html`<li class="bundle-code-tree-dir">
         <details .open=${live(computeOpen(childPath, child))}>
-          <summary @click=${onSummaryClick(childPath)} @mouseenter=${weigh}
+          <summary @click=${onSummaryClick(childPath)} .prepareTooltip=${weigh}
             data-tooltip-package=${info?.name ?? nothing}
             data-tooltip-ecosystem=${info?.ecosystem ?? nothing}
             data-tooltip-version=${info?.version ?? nothing}
@@ -2277,7 +2278,7 @@ function renderBundleLanguagesBar(details) {
       return html`<span
         class="bundles-languages-segment"
         style=${styleMap({ flexGrow: lineCount, background: bundleLanguageColor(key) })}
-        data-language-tooltip=${`${label} · ${pct < 1 ? pct.toFixed(1) : pct.toFixed(0)}% · ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`}
+        data-language-tooltip=${`${label} · ${pct < 1 ? pct.toFixed(1) : pct.toFixed(0)}% · ${lineCount.toLocaleString()} LoC`}
       ></span>`
     })}
   </div>`

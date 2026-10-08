@@ -188,6 +188,26 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(open, true, 'full hashes and explanatory hints remain available without clipping')
       hideTooltip()
     })
+    await t.test('costly details are prepared only when the tooltip shows, not for a hover that leaves first', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const prepared = []
+      const row = {
+        dataset: { tooltip: 'node_modules/dep', tooltipPackage: 'dep', tooltipFiles: '2' },
+        querySelector: () => null,
+        prepareTooltip: el => { prepared.push(el); Object.assign(el.dataset, { tooltipLoc: '42', tooltipSize: '1,024 B' }) },
+      }
+      scheduleTooltip(row)
+      nested.mock.timers.tick(50)
+      hideTooltip()
+      nested.mock.timers.tick(100)
+      assert.deepEqual(prepared, [], 'a pointer passing over the row computes nothing')
+      scheduleTooltip(row)
+      assert.deepEqual(prepared, [], 'nothing before the delay runs out')
+      nested.mock.timers.tick(100)
+      assert.deepEqual(prepared, [row])
+      assert.deepEqual([...node.children[0].children[0].children].map(field => field.textContent), ['dep', '2 files', '42 LoC', '1,024 B'], 'prepared before the details are read')
+      hideTooltip()
+    })
     await t.test('pickers register with the host tooltip and handle transitions within their own root', nested => {
       nested.mock.timers.enable({ apis: ['setTimeout'] })
       const outerListeners = {}

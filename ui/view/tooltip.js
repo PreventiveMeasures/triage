@@ -17,6 +17,10 @@
 // only shows when the row's label is actually truncated (skip when
 // the label fits) while the bundle view shows unconditionally.
 //
+// A target whose details cost too much to compute on every hover can carry
+// a `prepareTooltip(el)` function: the show calls it, once the hover delay
+// has run out, to fill in the target's `data-tooltip-*` attributes.
+//
 // Placement: 'cursor' (default) anchors below the cursor and clamps
 // horizontally to the viewport — natural for in-column rows where
 // right-of-element would overlap the next column. 'right' anchors to
@@ -76,6 +80,7 @@ const RIGHT_GAP_PX = 8
 const VIEWPORT_MARGIN_PX = 8
 
 export function showTooltip(el, { placement = 'cursor' } = {}) {
+  el.prepareTooltip?.(el)
   placement = el.dataset.tooltipPlacement ?? placement
   const node = ensureEl()
   const text = el.dataset.tooltip ?? ''
