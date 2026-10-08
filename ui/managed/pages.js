@@ -312,7 +312,7 @@ class ManagedAdminUsers extends ManagedPage {
     return html`<div class="directory">
       <div class="list-head" aria-hidden="true"><span>Account</span><span>Team access</span><span>Last seen</span><span>Last activity</span><span>Role</span></div>
       <ul class="users">${users.map((u) => this._row(u))}</ul>
-    </div>${this._users.some((u) => u.id === this._me) ? html`<p class="self-note">Your own role can only be changed by another admin.</p>` : nothing}`
+    </div>${this._users.some((u) => u.id === this._me) ? html`<p class="self-note ui-hint">Your own role can only be changed by another admin.</p>` : nothing}`
   }
 
   _row(u) {
@@ -541,7 +541,7 @@ class ManagedAdminRepos extends ManagedPage {
           ${this._role === 'admin' && this._data?.canAddAnyPublicRepository ? html`<button type="button" class="btn" aria-expanded=${this._publicRepoOpen} @click=${() => this._openPublicRepository()}>${this._accessIcon('public')} Add a public repository</button>` : nothing}
         </div>` : nothing}</div>
       ${!connected && this._scope === 'installed' ? html`<div class="access-note">
-        <p>Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
+        <p class="ui-hint">Installed repositories are readable through the GitHub App. Install it on a repository or organization to make it available here.</p>
         <span class="access-action">${this._data?.installUrl ? html`<a class="btn" href=${this._data.installUrl} target="_blank" rel="noopener noreferrer">Configure GitHub access</a>` : html`<button type="button" class="btn" disabled>Configure GitHub access</button>`}</span>
       </div>` : nothing}
       <div class="toolbar">
@@ -1419,7 +1419,7 @@ class ManagedAdminTeams extends ManagedPage {
         <input id="new-team-name" class="new-name" type="text" placeholder="Team name" maxlength="100" ?disabled=${this._busy}
           @keydown=${(e) => { if (e.key === 'Enter') this._create() }}>
         <button class="btn primary" ?disabled=${this._busy} @click=${() => this._create()}>${ADMIN_PLUS_ICON} Create team</button>
-        <p class="access-note">All members can view standard findings. Set dependencies and security access per member.</p>
+        <p class="access-note ui-hint">All members can view standard findings. Set dependencies and security access per member.</p>
       </div>
       <div class="manage-list" aria-busy=${this._loading}>${this._body()}</div>
     </div>`

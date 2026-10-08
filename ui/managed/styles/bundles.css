@@ -103,12 +103,15 @@ select:focus-visible {
 .bundles {
   min-width: 58rem;
 }
+/* Table cells, not text fields: no I-beam over them (still selectable).
+   The location editor's inputs keep their text cursor from common.css. */
 .bundle-row {
   display: grid;
   grid-template-columns: minmax(12rem, 1fr) 8rem 6.5rem 4.5rem minmax(8rem, 12rem) 4rem 8.6rem;
   align-items: center;
   gap: .85rem;
   padding: .35rem .85rem;
+  cursor: default;
 }
 .bundle-location {
   display: block;

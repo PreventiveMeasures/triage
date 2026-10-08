@@ -155,12 +155,15 @@
   margin: 0 0 .5rem;
   padding: 0;
 }
+/* Repository and member rows read as list items: no I-beam over the
+   names (still selectable, to copy one). */
 .links li {
   display: flex;
   align-items: center;
   gap: .5rem;
   min-height: 2.25rem;
   padding: .25rem 0;
+  cursor: default;
 }
 .links li + li {
   border-top: 1px solid var(--border);

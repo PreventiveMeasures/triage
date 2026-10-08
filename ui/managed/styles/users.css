@@ -152,9 +152,12 @@
   padding: .5rem .85rem;
   align-items: center;
 }
+/* Rows read as list items, not text fields: no I-beam over the account,
+   team access or last-seen text (still selectable, to copy a login). */
 .users li {
   padding-top: .6rem;
   padding-bottom: .6rem;
+  cursor: default;
 }
 .person {
   display: flex;
