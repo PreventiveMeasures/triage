@@ -1,4 +1,5 @@
 import { guard } from 'lit/directives/guard.js'
+import { keyed } from 'lit/directives/keyed.js'
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import { hideTooltip, installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
@@ -6,6 +7,7 @@ import { pkgColor } from './utils.js'
 import { graphBackground } from './colors.js'
 import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowConnector, sizeFlowFilterSize, sizeFlowLargeThreshold } from './size-flow-model.js'
 import { SizeFlowChart, shortSize } from './size-flow-chart.js'
+import { SizeFlowCanvas, canvasSizeFlow } from './size-flow-canvas.js'
 import { graphZoomMetrics } from './zoom.js'
 import css from './size-flow.css'
 import sidebarListCSS from './sidebar-list.css'
@@ -62,6 +64,11 @@ class SizeFlow extends LitElement {
       this.layoutMinSize = this.minSize
       if (this.selection && !this.layout.byId.has(this.selection.node)) this.selection = null
     }
+    if (canvasSizeFlow(this.layout) !== !!this.chart.isCanvas) {
+      this.chart.dispose?.()
+      this.chart = canvasSizeFlow(this.layout) ? new SizeFlowCanvas(this) : new SizeFlowChart(this)
+      this.viewportElements = null
+    }
   }
 
   get minSize() { return this.largeOnly ? this.largeThreshold : 0 }
@@ -103,6 +110,7 @@ class SizeFlow extends LitElement {
       const dragged = this.suppressClick && e.detail > 0
       this.suppressClick = false
       if (dragged) { e.preventDefault(); e.stopPropagation(); return }
+      if (e.target.closest?.('.flow-canvas')) return
       if (!e.target.closest?.('[data-flow-node], [data-flow-edge]')) this.select(null)
     }, { capture: true, signal })
     this.resizeObserver = new ResizeObserver(() => this.syncViewport())
@@ -115,6 +123,7 @@ class SizeFlow extends LitElement {
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
     this.events?.abort(); this.events = null
+    this.chart.dispose?.()
     this.viewportElements = null
     this.drag = null
     if (graph2.graphState === this.bridge) graph2.graphState = null
@@ -214,6 +223,7 @@ class SizeFlow extends LitElement {
   viewportTransform() { return `translate(${this.pan.x}px, ${this.pan.y}px) scale(${this.zoom})` }
 
   drawViewport() {
+    this.chart.viewportChanged?.()
     // Keep pointer/wheel updates independent of the potentially huge SVG
     // template: only its transform and the zoom controls need to change.
     this.viewportElements ??= {
@@ -273,12 +283,8 @@ class SizeFlow extends LitElement {
       ${this.model.roots.length > 100 ? html`<p>Showing the first 100 entry points. Search to find another.</p>` : null}`}
     return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => { if (this.focus) this.follow(null); else this.select(null) }}>×</button></div>
       ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
-      <div class="flow-metrics"><b>${shortSize(node.removable)}</b><span>removed if deleted · bar width</span><b>${shortSize(node.size)}</b><span>unique reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
-      ${node.instances?.length ? html`<h4>Versions · own source size</h4><ul class="flow-versions">${node.instances.map(instance => html`<li>
-        <div><span>${instance.version || 'Unknown version'}</span><span>${shortSize(instance.size)}${instance.missing ? '+' : ''}</span></div>
-        <small>${instance.directory}</small>
-        ${instance.missing ? html`<small>${instance.missing} files have unknown sizes</small>` : null}
-      </li>`)}</ul>` : null}
+      <div class="flow-metrics"><b>${shortSize(node.removable)}</b><span>unique size · removed if deleted · bar width</span><b>${shortSize(node.size)}</b><span>reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
+      ${this.renderVersions(node)}
       ${sizeFlowConnector(node, this.minSize) ? html`<p>Kept by Large so retained dependencies remain connected to an entry point.</p>` : null}
       ${node.removableMissing ? html`<p>${node.removableMissing} removed files have unknown sizes; removal totals include known bytes only.</p>` : null}
       ${node.missing ? html`<p>${node.missing} reachable file sizes are unknown.</p>` : null}
@@ -290,13 +296,27 @@ class SizeFlow extends LitElement {
       ${Math.max(node.incoming.length, node.outgoing.length) > 100 ? html`<p>Showing the 100 largest flows in each direction.</p>` : null}`
   }
 
+  renderVersions(node) {
+    if (!node.instances?.length) return null
+    if (node.instances.length === 1) {
+      const instance = node.instances[0]
+      return html`<div class="flow-versions"><div>${instance.version || 'Unknown version'}</div><small>${instance.directory}</small></div>`
+    }
+    const list = html`<ul class="flow-versions">${node.instances.map(instance => html`<li>
+      <div><span>${instance.version || 'Unknown version'}</span><span>${shortSize(instance.size)}${instance.missing ? '+' : ''}</span></div>
+      <small>${instance.directory}</small>
+      ${instance.missing ? html`<small>${instance.missing} files have unknown sizes</small>` : null}
+    </li>`)}</ul>`
+    return keyed(node.id, html`<details class="flow-versions-details"><summary>Versions: ${node.instances.length}</summary><h4>Own source size</h4>${list}</details>`)
+  }
+
   render() {
     if (!this.layout) return null
     const { nodes, width, height } = this.layout
     return html`<section class="flow-stage" aria-label="Dependency size flow" style=${`--flow-background:${graphBackground()}`}>
-      <div class="flow-viewport"><svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()};--flow-zoom:${this.zoom}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import paths with bars weighted by bundle size removed if deleted">
-        ${guard([this.layout], () => this.chart.render())}
-      </svg>${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${shortSize(this.minSize)}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>
+      <div class="flow-viewport">${this.chart.isCanvas ? this.chart.render() : html`<svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()};--flow-zoom:${this.zoom}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import paths with bars weighted by bundle size removed if deleted">
+        ${guard([this.layout, this.chart], () => this.chart.render())}
+      </svg>`}${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${shortSize(this.minSize)}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>
       <div class="flow-count">${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</div>
       <div class="g2-zoom-ctrl" role="group" aria-label="Flow zoom">
         <button aria-label="Zoom in" ?disabled=${this.zoom >= this.zoomMetrics().max * .9999} @click=${() => this.zoomBy(1.4)}>+</button>

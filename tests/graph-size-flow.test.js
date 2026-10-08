@@ -119,12 +119,17 @@ test('package sidebar lists every reachable install with its own bytes, includin
   ])
   assert.equal(node.instances.reduce((sum, instance) => sum + instance.size, 0), node.own)
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings
-    ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+    ? value.strings.map((part, i) => part + text(value.values[i])).join('') : value?.values ? text(value.values.at(-1)) : typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+  assert.match(text(flow.renderPanel()), /<details class="flow-versions-details"><summary>Versions: 4<\/summary>/u, 'multiple installs start collapsed, including repeated versions')
   const list = text(flow.renderPanel()).match(/<ul class="flow-versions">(.*?)<\/ul>/su)[1]
   assert.equal([...list.matchAll(/<li>/gu)].length, 4)
   assert.equal([...list.matchAll(/<span>1\.0\.0<\/span>/gu)].length, 2)
   for (const label of ['4.0 KiB', '3.0 KiB', '2.0 KiB', 'Unknown version', '0 B+']) assert.ok(list.includes(label), label)
   assert.doesNotMatch(list, /9\.0\.0/u)
+  const single = text(flow.renderVersions({ ...node, instances: [node.instances[0]] }))
+  assert.ok(single.includes('2.0.0'))
+  assert.ok(single.includes(installs.get('three').directory))
+  assert.doesNotMatch(single, /KiB|<details/u, 'a single install shows only its version and path')
   flow.packages = false; flow.willUpdate(new Map([['packages', true]])); flow.select('f:one/index.js')
   assert.doesNotMatch(text(flow.renderPanel()), /flow-versions/u, 'the breakdown belongs to package selection')
 })

@@ -6,6 +6,7 @@ import { buildGraph } from '../ui/view/graph/data.js'
 import { graph2 } from '../ui/view/graph/state.js'
 import { pkgColor } from '../ui/view/graph/utils.js'
 import { graphBackground, textOnPackage } from '../ui/view/graph/colors.js'
+import { flowNodeTooltip } from '../ui/view/graph/size-flow-chart.js'
 
 function mounted(t) {
   const previousQuery = graph2.pathFilter
@@ -36,6 +37,17 @@ function mounted(t) {
   chart.update(root)
   return { host, chart, root, nodes, edges, outline, writes: () => writes }
 }
+
+test('tooltips show a single version or group installed copies by version with their own sizes', () => {
+  const node = { label: 'dep', removable: 5120, size: 8192, own: 5120, filterSize: 5120 }
+  assert.match(flowNodeTooltip({ ...node, version: '1.2.3' }, 0), /\nVersion: 1\.2\.3$/u, 'file nodes retain their recorded package version')
+  const instances = [{ version: '1.2.3', size: 1024, missing: 0 }, { version: '1.2.3', size: 2048, missing: 0 },
+    { version: '2.0.0', size: 2048, missing: 0 }, { version: undefined, size: 0, missing: 1 }]
+  assert.match(flowNodeTooltip({ ...node, instances: instances.slice(0, 1) }, 0), /\nVersion: 1\.2\.3$/u)
+  const tooltip = flowNodeTooltip({ ...node, instances }, 0)
+  assert.match(tooltip, /Versions · own source size\n1\.2\.3 · 3\.0 KiB · 2 copies\n2\.0\.0 · 2\.0 KiB · 1 copy\nUnknown version · 0 B\+ · 1 copy/u)
+  assert.equal(tooltip.split('1.2.3').length - 1, 1, 'repeated versions are grouped only in the tooltip')
+})
 
 test('hover and selection retain geometry and update only affected highlights', t => {
   const { host, chart, root, nodes, edges, outline, writes } = mounted(t)

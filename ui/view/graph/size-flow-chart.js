@@ -7,6 +7,28 @@ import { flowRibbon, sizeFlowConnector } from './size-flow-model.js'
 
 export const shortSize = formatBytes
 
+function versionTooltip(n) {
+  if (!n.instances?.length) return n.version ? `\nVersion: ${n.version}` : ''
+  if (n.instances.length === 1) return `\nVersion: ${n.instances[0].version || 'Unknown'}`
+  const versions = new Map()
+  for (const instance of n.instances) {
+    const version = instance.version || 'Unknown version'
+    if (!versions.has(version)) versions.set(version, { version, size: 0, count: 0, missing: 0 })
+    const row = versions.get(version)
+    row.size += instance.size; row.count++; row.missing += instance.missing
+  }
+  return '\nVersions · own source size\n' + [...versions.values()].toSorted((a, b) => b.size - a.size || a.version.localeCompare(b.version))
+    .map(row => `${row.version} · ${formatBytes(row.size)}${row.missing ? '+' : ''} · ${row.count} ${row.count === 1 ? 'copy' : 'copies'}`).join('\n')
+}
+
+export function flowNodeTooltip(n, minSize) {
+  return `${n.label}\n${formatBytes(n.removable)} unique · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${versionTooltip(n)}${sizeFlowConnector(n, minSize) ? '\nKept by Large to preserve an entry-point path' : ''}`
+}
+
+export function flowEdgeTooltip(e, model) {
+  return `${model.byId.get(e.from).label} → ${model.byId.get(e.to).label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
+}
+
 // Retain the geometry and delegated listeners across inspector/filter updates.
 // Hover touches at most two ribbons; selection only touches incident edges.
 export class SizeFlowChart {
@@ -28,7 +50,7 @@ export class SizeFlowChart {
   }
 
   renderNode(n) {
-    const tooltip = `${n.label}\n${formatBytes(n.removable)} unique · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${sizeFlowConnector(n, this.host.minSize) ? '\nKept by Large to preserve an entry-point path' : ''}`
+    const tooltip = flowNodeTooltip(n, this.host.minSize)
     const label = n.width >= 40 ? `${n.label.replace(/^node_modules\//u, '')} · ${shortSize(n.removable)}` : ''
     return svg`<g class="flow-node" data-flow-node=${n.id} role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip} aria-pressed="false" fill=${textOnPackage(pkgColor(n.pkg))}>
       <rect x=${n.x} y=${n.y} width=${n.width} height="26" style=${`--flow-bar-width:${n.width}px`} fill=${pkgColor(n.pkg)} stroke="var(--flow-background)"></rect>
@@ -37,8 +59,8 @@ export class SizeFlowChart {
   }
 
   renderEdge(e) {
-    const from = this.model.byId.get(e.from), to = this.model.byId.get(e.to)
-    const tooltip = `${from.label} → ${to.label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
+    const to = this.model.byId.get(e.to)
+    const tooltip = flowEdgeTooltip(e, this.model)
     return svg`<path class="flow-edge" data-flow-edge=${e.id} d=${flowRibbon(e)} fill=${pkgColor(to.pkg)} opacity=".22"
       stroke=${e.returning ? 'var(--text)' : 'none'} stroke-width=".7" stroke-dasharray=${e.returning ? '3 3' : ''}
       role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip}></path>`

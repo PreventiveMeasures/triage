@@ -121,7 +121,7 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
   for (const file of active) {
     const id = idOf(file), n = files.get(file)
     if (!byId.has(id)) {byId.set(id, { id, pkg: n.pkg, label: packages ? pkgLabel(n.pkg) : file,
-      files: [], own: 0, virtual: true, incoming: [], outgoing: [] })}
+      version: packages ? undefined : n.packageInfo?.version, files: [], own: 0, virtual: true, incoming: [], outgoing: [] })}
     const row = byId.get(id)
     row.files.push(file); row.own += bytes(n.size); row.virtual &&= !!n.virtual
   }
