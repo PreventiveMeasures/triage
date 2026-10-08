@@ -14,6 +14,20 @@ export function sourceMetrics(files) {
   }), { bytes: 0, lines: 0 })
 }
 
+// Source panel counts. Until a bundle's inventory loads, its catalogue
+// summary (the counts the bundle picker already shows) stands in, so a
+// selection doesn't blank them while metadata is fetched. Code counts only
+// Code inputs, as codeScanFiles does. Packages need the inventory itself;
+// unknown counts are null.
+export function sourceStats(bundle, files, mode) {
+  if (Array.isArray(bundle?.files)) {
+    return { files: files.length, lines: sourceMetrics(files).lines, packages: new Set(files.map(file => file.module)).size }
+  }
+  const known = value => Number.isSafeInteger(value) && value >= 0 ? value : null
+  const summary = bundle?.summary
+  return { files: known(summary?.[mode === 'code' ? 'codeFiles' : 'files']), lines: known(summary?.lines), packages: null }
+}
+
 // Binary resources and directory captures are bundle entries, not Code scan
 // inputs. Use the recorded format rather than guessing from the path.
 export function codeScanFiles(files) {

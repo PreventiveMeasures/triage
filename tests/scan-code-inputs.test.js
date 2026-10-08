@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import './_polyfills.js'
 import { storedScanBundle, storedScanSource } from '../ui/scan/bundle-source.js'
-import { codeScanFiles, sourceMetrics } from '../ui/scan/metrics.js'
+import { codeScanFiles, sourceMetrics, sourceStats } from '../ui/scan/metrics.js'
 import { ScanPage } from '../ui/scan/page.js'
 import { bundleOptions } from '../ui/view/bundle-selector.js'
 import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
@@ -38,6 +38,29 @@ test('fresh and cached Stasis inventories preserve formats and give identical Co
     assert.equal(bundleOptions([{ ...bundle, files: code }])[0].secondary, '8.8 KiB · 2 files · 1 LoC')
   }
   assert.deepEqual(inventories[0].files, inventories[1].files)
+})
+
+test('a selected bundle shows its catalogue counts while loading, and they match the loaded inventory', async () => {
+  const full = resourceBundle()
+  const summary = createBundleSummary(full, await createBundleMetadata(full))
+  const pending = { ...storedScanSource([{ name: 'resources.stasis', integrity: full.integrity }]).bundles[0], size: '8.8 KiB', summary }
+  const loaded = storedScanBundle(pending, full)
+  for (const mode of ['code', 'dependencies', 'agentic']) {
+    const files = mode === 'code' ? codeScanFiles(loaded.files) : loaded.files
+    const after = sourceStats(loaded, files, mode)
+    assert.deepEqual(sourceStats(pending, [], mode), { ...after, packages: null }, mode)
+  }
+  assert.deepEqual(sourceStats({ ...pending, summary: null }, [], 'code'), { files: null, lines: null, packages: null })
+  assert.deepEqual(sourceStats({ ...pending, summary: { files: -1, codeFiles: 1.5, lines: '7' } }, [], 'code'), { files: null, lines: null, packages: null })
+
+  const page = new ScanPage()
+  page.source = { bundles: [pending] }
+  page.willUpdate(new Map([['source', null]]))
+  const text = value => Array.isArray(value) ? value.map(text).join('')
+    : value?.strings ? value.strings.map((part, index) => part + text(value.values[index])).join('') : value == null || typeof value !== 'string' && typeof value !== 'number' ? '' : String(value)
+  const stats = text(page._sourcePanel(page._bundle, page._files)).match(/aria-label="Bundle statistics">(.*?)<\/div><\/div>/su)[1]
+    .replaceAll(/<[^>]*>/gu, ' ').replaceAll(/\s+/gu, ' ').trim()
+  assert.equal(stats, '8.8 KiB bundle size 2 files 1 LoC — packages')
 })
 
 test('Code excludes binary resources and directories before scoping, selection, and run counts', () => {
