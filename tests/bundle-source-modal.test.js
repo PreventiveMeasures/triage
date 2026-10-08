@@ -263,6 +263,29 @@ test('Code search marks each match in its rail row and keeps far matches in view
   ])
 })
 
+test('Code and Search tab code search list own source before dependencies', t => {
+  const previous = { bundleCodeSearchMode: state.bundleCodeSearchMode, bundleCodeSearchQuery: state.bundleCodeSearchQuery,
+    bundleSearchQuery: state.bundleSearchQuery, bundleSearchRegex: state.bundleSearchRegex, bundleSearchCase: state.bundleSearchCase }
+  t.after(() => Object.assign(state, previous))
+  const entry = { name: 'order.stasis', integrity: 'sha512-own-source-first' }
+  // Own paths sort after `node_modules/` and `lib/`, so path order alone would list dependencies first.
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/app.js': 'needle()', 'zz/own.js': 'needle' } }],
+    ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'needle' } }],
+    ['lib/vendored', { name: 'vendored', version: '1.0.0', files: { 'needle.js': 'needle' } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry], bundleSourceFile: 'src/app.js',
+    bundleCodeSearchMode: 'code', bundleCodeSearchQuery: 'needle', bundleSearchQuery: 'needle', bundleSearchRegex: false, bundleSearchCase: false,
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const expected = ['src/app.js', 'zz/own.js', 'lib/vendored/needle.js', 'node_modules/dep/index.js']
+  state.bundleDetailsTab = 'code'
+  const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
+  assert.deepEqual([...rail.matchAll(/class="bundle-code-search-file-name"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), expected)
+  state.bundleDetailsTab = 'search'
+  const search = renderText(renderBundlesList([entry]))
+  assert.deepEqual([...search.matchAll(/class="bundle-search-file-name mono"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), expected)
+})
+
 test('Code package tooltips include recorded identities and counts even while filtering', () => {
   const entry = { name: 'npm.stasis', integrity: 'sha512-package-tooltip' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([

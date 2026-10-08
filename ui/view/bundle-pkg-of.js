@@ -44,6 +44,21 @@ export function bundlePkgOf(path, { packageDir = null } = {}) {
   return '__own__'
 }
 
+// Search order for the bundle Code rail and Search tab: own source
+// first, then dependencies, each keeping the order `paths` came in.
+// Matches in the bundle's own code are usually what a search is after,
+// and package code shouldn't push them past the result caps.
+// `packageDirs` is `bundlePackageDirs` output, or null for the path
+// heuristic alone.
+export function ownSourceFirst(paths, packageDirs = null) {
+  const own = []
+  const deps = []
+  for (const path of paths) {
+    (bundlePkgOf(path, { packageDir: packageDirs?.get(path) }) === '__own__' ? own : deps).push(path)
+  }
+  return [...own, ...deps]
+}
+
 // Display label for a package bucket: `__own__` is the sentinel for
 // own-source (non-dependency) files, spelled out as "Own source" in
 // package lists and tooltips.
