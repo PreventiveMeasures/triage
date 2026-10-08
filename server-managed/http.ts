@@ -52,7 +52,7 @@ import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
-import { auditCache } from './upstream-cache.ts'
+import { auditCache, auditedRepos } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, putUploadPart, readUpload, validUpload, validUploadPart } from './uploads.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
@@ -1209,7 +1209,8 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
     })) : null
     if (res.destroyed || (needsGithub && !(await authorize()))) return
     const result = await fetchBundleAdvisories(inventory.packages, controller.signal, {
-      debug: deps.config.debug, repoAdvisories, details, githubToken, cache: auditCache(deps.config.upstreamCacheDir, deps.db, controller.signal, deps.config.debug),
+      debug: deps.config.debug, repoAdvisories, details, githubToken,
+      cache: auditCache(deps.config.upstreamCacheDir, deps.db, controller.signal, deps.config.debug, auditedRepos(inventory.packages, repoAdvisories)),
     })
     if (res.destroyed || !(await authorize())) return
     // Return just inventory and public advisories, never source or report data.

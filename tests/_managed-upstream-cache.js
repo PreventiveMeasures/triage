@@ -12,5 +12,8 @@ export async function checkUpstreamCacheStore(db) {
   await db.setUpstreamCacheEntry('github/advisories/org/other', '[]', 1)
   assert.equal(await db.getUpstreamCacheEntry(key), '{"v":2}', 'keys are independent')
   assert.equal(await db.getUpstreamCacheEntry('github/advisories/ORG/DEP'), null, 'upstream normalizes keys, the store does not')
+  assert.deepEqual(await db.getUpstreamCacheEntries([key, 'github/advisories/org/other', 'github/advisories/org/missing', 'github/advisories/ORG/DEP']),
+    new Map([[key, '{"v":2}'], ['github/advisories/org/other', '[]']]), 'one read answers every key kept')
+  assert.deepEqual(await db.getUpstreamCacheEntries([]), new Map())
   return { key, value: '{"v":2}' }
 }

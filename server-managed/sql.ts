@@ -22,7 +22,7 @@ export interface ManagedSqlDriver extends ManagedSql {
 const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
-  'getUpstreamCacheEntry', 'setUpstreamCacheEntry'])
+  'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry'])
 
 export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver): ManagedDb {
   const entries = Object.entries(methods).map(([name, method]) => {
