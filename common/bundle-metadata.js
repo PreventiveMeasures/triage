@@ -13,7 +13,8 @@ import { bundleFileSizes, bundleSourcesAsMap, bundleUnsizedFiles } from './bundl
 // hashes alone and rebuilt on open.
 // Version 3 also retains the bundle's repository and package origin metadata.
 // Version 4 retains dependency repositories as well.
-export const BUNDLE_METADATA_VERSION = 4
+// Version 5 counts lines of code, leaving blank lines out.
+export const BUNDLE_METADATA_VERSION = 5
 const INDEX_VERSION = BUNDLE_METADATA_VERSION
 const hashJobs = new WeakMap()
 const SOURCE_TABS = new Set(['terminal', 'code', 'search', 'compare'])
@@ -42,19 +43,12 @@ export function computeBundleFileHashes(details) {
   return job
 }
 
-// Count source lines without charging a trailing newline as an extra line.
+// Count lines of code: lines with anything but whitespace on them, comments
+// included for now, split at \r\n, \r or \n. A match runs from a line's
+// first non-whitespace character to its end, so there is one per such line.
 // The source map intentionally excludes non-text resources, so a null entry
 // remains the metadata marker for images, fonts, and other binary payloads.
 export function bundleSourceLineCount(content) {
-  if (typeof content !== 'string' || content.length === 0) return 0
-  const breaks = content.match(/\r\n|\r|\n/gu)?.length ?? 0
-  return breaks + (/[\r\n]$/u.test(content) ? 0 : 1)
-}
-
-// Lines of code: lines with anything but whitespace on them, comments
-// included for now, by the same line breaks. A match runs from a line's first
-// non-whitespace character to its end, so there is one per such line.
-export function bundleSourceCodeLineCount(content) {
   if (typeof content !== 'string') return 0
   const code = /\S[^\r\n]*/gu
   let lines = 0
@@ -127,7 +121,7 @@ export function createBundleSummary(details, metadata) {
 // answer report lookups, but an open rebuilds it for current sizes, line
 // counts and origin metadata.
 export function parseBundleMetadata(data, integrity) {
-  if (![1, 2, 3, INDEX_VERSION].includes(data?.version) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
+  if (![1, 2, 3, 4, INDEX_VERSION].includes(data?.version) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
       || !Number.isSafeInteger(data.size) || data.size < 0 || !Array.isArray(data.files)) throw new Error('Invalid bundle metadata')
   const stale = data.version !== INDEX_VERSION
   const legacySizes = data.version === 1

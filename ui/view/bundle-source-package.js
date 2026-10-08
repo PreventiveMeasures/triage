@@ -2,7 +2,7 @@ import { parseToml } from '@preventive/lockfile/toml.js'
 import { reportRepoGithub } from '@preventive/report'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
 import { utf8ByteLength } from '../../common/utf8.js'
-import { bundleSourceCodeLineCount } from './bundle-metadata.js'
+import { bundleSourceLineCount } from './bundle-metadata.js'
 import { packageRepo } from './package-repo.js'
 
 function readManifest(files, name) {
@@ -50,8 +50,8 @@ export function bundleSourcePackageInfo(pkg, info, fileCount) {
 }
 
 // A package's weight for its tooltip: the sources under its directory, the
-// ones its file count counts, in bytes and in lines of code, blank lines left
-// out. Summed on the first hover that asks, then kept for the bundle.
+// ones its file count counts, in the bytes and lines of code the Overview
+// totals for the bundle. Summed on the first hover that asks, then kept.
 const sourceStats = new WeakMap()
 export function bundlePackageSourceStats(sources, dir) {
   let byDir = sourceStats.get(sources)
@@ -62,7 +62,7 @@ export function bundlePackageSourceStats(sources, dir) {
     for (const [path, content] of sources) {
       if (!path.startsWith(prefix)) continue
       bytes += utf8ByteLength(content)
-      loc += bundleSourceCodeLineCount(content)
+      loc += bundleSourceLineCount(content)
     }
     byDir.set(dir, { bytes, loc })
   }

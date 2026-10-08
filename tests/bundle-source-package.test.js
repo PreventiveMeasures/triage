@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { bundlePackageSourceStats, bundleSourcePackageInfo } from '../ui/view/bundle-source-package.js'
-import { bundleSourceCodeLineCount, bundleSourceLineCount } from '../common/bundle-metadata.js'
+import { bundleSourceLineCount } from '../common/bundle-metadata.js'
 
 test('package tooltip metadata prefers recorded identities and reads GitHub from captured npm manifests', () => {
   for (const repository of ['org/repo', 'github:org/repo', 'git+https://github.com/org/repo.git#main', 'git@github.com:org/repo.git', 'ssh://git@github.com/org/repo.git', { url: 'https://github.com/org/repo', directory: 'packages/dep' }]) {
@@ -102,14 +102,12 @@ test('package tooltips carry the commit a recorded repository pins, as its files
   assert.equal(at({ repo: { github: 'not a repo', commit }, files }), undefined)
 })
 
-test('lines of code leave out blank lines and keep comments, by the line breaks the Overview counts', () => {
+test('lines of code leave out blank lines and keep comments', () => {
   for (const [content, loc] of [
     ['', 0], ['\n\n', 0], ['  \t\n \r\n', 0], ['a', 1], ['a\n', 1], ['a\n\nb', 2],
     ['// note\n/* block */\ncode()\n', 3], ['a\r\n\r\n  b  \r\n', 2], ['a\rb\r\r', 2], ['\uFEFF\n\u00A0\nx', 1],
-  ]) assert.equal(bundleSourceCodeLineCount(content), loc, JSON.stringify(content))
-  assert.equal(bundleSourceCodeLineCount(null), 0)
-  // The Overview's count still includes the blank ones.
-  assert.equal(bundleSourceLineCount('a\n\nb'), 3)
+  ]) assert.equal(bundleSourceLineCount(content), loc, JSON.stringify(content))
+  assert.equal(bundleSourceLineCount(null), 0)
 })
 
 test('package stats weigh only the sources under the package, in bytes and non-blank lines of code', () => {

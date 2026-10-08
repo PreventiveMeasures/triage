@@ -37,7 +37,8 @@ contents or decode Brotli in the browser.
 The local/E2E wrapper lists saved bundles from browser storage,
 then uses the existing bundle metadata cache to load the selected bundle’s files,
 sizes, source-line counts, packages, and scopes. LoC uses the same source-line
-counting as the bundle overview and excludes resources. Bundles appear under each
+counting as the bundle overview: non-blank lines, comments included, excluding
+resources. Bundles appear under each
 workspace that contains them; bundles without workspace membership appear as
 Unattached. Local scan history starts empty.
 
