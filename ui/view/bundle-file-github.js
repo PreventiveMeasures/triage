@@ -46,5 +46,5 @@ export function bundleFileGithub(details, path, assigned = null) {
   }
   const pkg = bundleSourcePackageInfo({ name: info.name, ecosystem }, info, 0)
   if (!pkg.github) return null
-  return fileLink(pkg.github, pkg.directory ?? '', rel, reportRepoGithub(info) ? info.repo.commit : undefined, pkg)
+  return fileLink(pkg.github, pkg.directory ?? '', rel, pkg.commit, pkg)
 }

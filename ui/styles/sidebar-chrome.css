@@ -62,6 +62,8 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
 }
+/* Half the row gap again between a repository and its commit. */
+#styled-tooltip .tooltip-repo > span + .tooltip-commit { margin-left: .2rem; }
 #styled-tooltip:has(.tooltip-package) :is(.tooltip-package, .tooltip-repo) { margin-top: 12px; }
 #styled-tooltip .tooltip-package-details { display: flex; flex-wrap: wrap; column-gap: .75rem; }
 #styled-tooltip .tooltip-repo svg,

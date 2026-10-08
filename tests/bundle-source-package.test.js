@@ -87,3 +87,16 @@ test('package tooltips carry the repository directory a record or captured packa
   // A recorded repository wins over the manifest, directory included.
   assert.deepEqual(at({ repo: { github: 'org/recorded' }, ...manifest({ repository: { url: 'org/manifest', directory: 'lib' } }) }), ['org/recorded', undefined])
 })
+
+test('package tooltips carry the commit a recorded repository pins, as its files link to', () => {
+  const commit = 'a'.repeat(40)
+  const at = info => bundleSourcePackageInfo({ name: 'dep' }, info, 1).commit
+  assert.equal(at({ repo: { github: 'org/dep', directory: 'packages/dep', commit }, files: {} }), commit)
+  assert.equal(at({ repo: { github: 'org/dep', commit: 'b'.repeat(64) }, files: {} }), 'b'.repeat(64))
+  assert.equal(at({ repo: { github: 'org/dep', commit: 'main' }, files: {} }), undefined)
+  assert.equal(at({ repo: { github: 'org/dep' }, files: {} }), undefined)
+  // A captured manifest's repository names no commit, nor does an unusable record.
+  const files = { 'package.json': JSON.stringify({ repository: 'org/manifest' }) }
+  assert.equal(at({ files }), undefined)
+  assert.equal(at({ repo: { github: 'not a repo', commit }, files }), undefined)
+})
