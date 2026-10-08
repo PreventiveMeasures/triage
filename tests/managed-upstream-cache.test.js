@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { fetchBundleAdvisories } from '../server-managed/bundle-advisories.ts'
 import { setCacheDir } from '@preventive/upstream/npm.js'
-import { auditCache, upstreamCache } from '../server-managed/upstream-cache.ts'
+import { auditCache, auditedRepos, upstreamCache } from '../server-managed/upstream-cache.ts'
 import { checkUpstreamCacheStore } from './_managed-upstream-cache.js'
 
 const signal = () => new AbortController().signal
@@ -161,6 +161,68 @@ test('with a cache directory, audits keep listings and npm version documents on 
   calls.length = 0
   assert.equal((await recheck()).status, 200)
   assert.deepEqual(calls, ['https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'], 'neither npm nor GitHub is asked again')
+})
+
+test('an audit asks for the listings of the repositories it knows in one database read', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const integrity = `sha512-${createHash('sha512').update('found').digest('base64')}`
+  const repos = ['org/a', 'org/b', 'org/c', 'org/found', 'org/dep']
+  const github = []
+  t.mock.method(globalThis, 'fetch', url => {
+    const { hostname, pathname } = new URL(url)
+    if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (hostname === 'registry.npmjs.org') {
+      assert.equal(pathname, '/found/1.0.0')
+      return Promise.resolve(Response.json({ name: 'found', version: '1.0.0', repository: 'https://github.com/org/found',
+        dist: { tarball: 'https://registry.npmjs.org/found/-/found-1.0.0.tgz', integrity } }))
+    }
+    const repo = repos.find(name => url.toLowerCase() === `https://api.github.com/repos/${name}/security-advisories?state=published&per_page=100`)
+    assert.ok(repo, url)
+    github.push(repo)
+    return Promise.resolve(Response.json(repo === 'org/dep' ? [advisory] : []))
+  })
+  // `found` names no repository, so upstream looks it up; `Org/Dep` is spelled as GitHub may have it.
+  const audited = [...['a', 'b', 'c'].map(name => ({ ecosystem: 'npm', name, versions: ['1.0.0'], github: `org/${name}` })),
+    { ecosystem: 'npm', name: 'found', versions: ['1.0.0'] }, { ecosystem: 'github', name: 'Org/Dep', versions: ['1.0.0'] }]
+  const reads = { batched: [], single: [] }
+  const counted = {
+    getUpstreamCacheEntry: key => { reads.single.push(key); return db.getUpstreamCacheEntry(key) },
+    getUpstreamCacheEntries: keys => { reads.batched.push(keys); return db.getUpstreamCacheEntries(keys) },
+    setUpstreamCacheEntry: (...args) => db.setUpstreamCacheEntry(...args),
+  }
+  const recheck = () => fetchBundleAdvisories(audited, signal(),
+    { repoAdvisories: true, cache: upstreamCache(counted, signal(), false, auditedRepos(audited, true)) })
+  const first = await recheck()
+  assert.equal(first.status, 200)
+  assert.deepEqual(github.toSorted(), repos.toSorted())
+  reads.batched.length = 0
+  reads.single.length = 0
+  assert.deepEqual(await recheck(), first)
+  assert.equal(github.length, repos.length, 'every listing is answered from the database')
+  assert.deepEqual(reads.batched, [['github/advisories/org/a', 'github/advisories/org/b', 'github/advisories/org/c', 'github/advisories/org/dep']])
+  assert.deepEqual(reads.single, ['github/advisories/org/found'], 'a repository looked up is read alone')
+
+  // A failed batch read is read key by key instead, not answered from GitHub.
+  const failing = { ...counted, getUpstreamCacheEntries: () => Promise.reject(new Error('database unavailable')) }
+  reads.single.length = 0
+  const fallback = await fetchBundleAdvisories(audited, signal(),
+    { repoAdvisories: true, cache: upstreamCache(failing, signal(), false, auditedRepos(audited, true)) })
+  assert.deepEqual(fallback, first)
+  assert.equal(github.length, repos.length)
+  assert.equal(reads.single.length, repos.length)
+})
+
+test('audits batch the listings they ask for: github packages, soldeer repositories, and the rest only on a recheck', () => {
+  const mixed = [
+    { ecosystem: 'github', name: 'Org/Tool', versions: ['0.0.0'] },
+    { ecosystem: 'soldeer', name: 'lib', versions: ['1.0.0'], github: 'org/lib' },
+    { ecosystem: 'npm', name: 'dep', versions: ['1.0.0'], github: 'org/dep' },
+    { ecosystem: 'cargo', name: 'dep', versions: ['1.0.0'], github: 'org/dep' },
+    { ecosystem: 'npm', name: 'unknown', versions: ['1.0.0'] },
+  ]
+  assert.deepEqual(auditedRepos(mixed, false), ['Org/Tool', 'org/lib'])
+  assert.deepEqual(auditedRepos(mixed, true), ['Org/Tool', 'org/lib', 'org/dep'])
 })
 
 test('an abandoned audit leaves the database alone', async () => {

@@ -12,7 +12,7 @@ import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
-import { auditCache } from './upstream-cache.ts'
+import { auditCache, auditedRepos } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -116,9 +116,10 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
     if (inventory === undefined) { json(res, 400, { error: 'unknown-reason' }); return }
     if (Buffer.byteLength(JSON.stringify(inventory)) > MAX_PACKAGE_INVENTORY_BYTES) { json(res, 413, { error: 'payload-too-large' }); return }
     const signal = AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)
+    const repoAdvisories = url.searchParams.get('repoAdvisories') === 'true'
     const result = await fetchBundleAdvisories(inventory.packages, signal, {
-      debug: deps.config.debug, repoAdvisories: url.searchParams.get('repoAdvisories') === 'true', details: url.searchParams.get('details') === 'true',
-      cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
+      debug: deps.config.debug, repoAdvisories, details: url.searchParams.get('details') === 'true',
+      cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug, auditedRepos(inventory.packages, repoAdvisories)),
     })
     await recheck()
     json(res, result.status, result.status === 200 ? { ...inventory, advisories: result.body } : result.body); return

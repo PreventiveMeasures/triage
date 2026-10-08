@@ -753,8 +753,12 @@ On Vercel, only the listings are kept, in `managed_upstream_cache` and for the
 same 90 minutes, shared by every viewer, public share and instance: only public
 repositories publish advisories. Nothing else is kept there or on disk. Upstream
 stamps, checks and expires the entries; refreshes replace the repository's
-single row. A cache read or write failure is treated as a miss and never fails
-the audit.
+single row. The listings of repositories an audit already knows (GitHub
+dependencies, Soldeer dependencies' recorded repositories, and on a recheck,
+every dependency's recorded repository) are read in one query, since a request's
+queries share one Neon connection; listings of repositories upstream looks up,
+or all of them if that query fails, are read one at a time. A cache read or write
+failure is treated as a miss and never fails the audit.
 Bundle access and the team's `security` permission are required for view/triage
 users; `dependencies` is not required. That permission gates scan findings in
 dependencies' own code, while findings about effects on the app remain visible.
