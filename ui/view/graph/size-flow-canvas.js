@@ -29,7 +29,7 @@ export class SizeFlowCanvas extends SizeFlowChart {
     const nodes = this.layout.nodes.map((node, i) => ({ node, order: this.paths.length + i,
       left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }))
     this.index = flowHitIndex([...this.paths, ...nodes])
-    this.clearHover(); this.focused = null; this.baseKey = null
+    this.clearHover(); this.focused = null; this.invalidateRaster()
   }
 
   update(root) {
@@ -41,7 +41,7 @@ export class SizeFlowCanvas extends SizeFlowChart {
       this.paintedMatches = matches; this.palette = palette; this.background = background
       this.colors = new Map([...this.model.byId.values()].map(n => [n.pkg, pkgColor(n.pkg)]))
       this.foreground = getComputedStyle(this.host).getPropertyValue('--text').trim() || '#fff'
-      this.baseKey = null
+      this.invalidateRaster()
     }
     this.requestDraw()
   }
@@ -56,14 +56,44 @@ export class SizeFlowCanvas extends SizeFlowChart {
     if (this.frame != null) cancelAnimationFrame(this.frame)
     this.frame = null
     this.base = null; this.overlay = null
+    this.invalidateRaster()
+  }
+
+  stopPreview() {
+    clearTimeout(this.previewTimer)
+    if (this.settleFrame != null) cancelAnimationFrame(this.settleFrame)
+    this.settleFrame = null
+    this.previewTimer = null; this.preview = false
+  }
+
+  invalidateRaster() {
+    this.stopPreview()
     this.baseKey = null
+    this.overview = null; this.paintedViewport = null
   }
 
   viewportChanged() {
     const { width, height, zoom, pan } = this.host
     const key = `${width}:${height}:${zoom}:${pan.x}:${pan.y}`
-    if (key === this.viewportKey) return
+    if (key === this.viewportKey) {
+      if (this.preview && this.host.fitted) { this.stopPreview(); this.requestDraw() }
+      return
+    }
     this.viewportKey = key
+    this.stopPreview()
+    const painted = this.paintedViewport
+    if (this.host.fitted === false && this.overview && painted?.width === width && painted.height === height
+      && painted.dpr === (globalThis.devicePixelRatio || 1)) {
+      this.preview = true
+      this.previewTimer = setTimeout(() => {
+        this.previewTimer = null
+        // Give queued input a frame to cancel the expensive repaint, even
+        // if a busy browser delivered this idle timer before its next frame.
+        this.settleFrame = requestAnimationFrame(() => {
+          this.settleFrame = requestAnimationFrame(() => { this.stopPreview(); this.requestDraw() })
+        })
+      }, 100)
+    }
     this.clearHover(); this.requestDraw()
   }
 
@@ -81,6 +111,7 @@ export class SizeFlowCanvas extends SizeFlowChart {
   draw() {
     if (!this.overlay || !this.host.width || !this.host.height) return
     const { pan, zoom, width, height } = this.host, dpr = globalThis.devicePixelRatio || 1
+    if (this.preview) { this.drawPreview(dpr); return }
     const key = `${this.viewportKey}:${dpr}`
     const redraw = this.baseKey !== key
     if (redraw) {
@@ -92,8 +123,47 @@ export class SizeFlowCanvas extends SizeFlowChart {
       this.visibleNodes = this.layout.nodes.filter(node => !flowOutside({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }, this.view))
       for (const node of this.visibleNodes) this.paintNode(ctx, node)
       this.baseKey = key
+      this.paintedViewport = { width, height, zoom, pan: { ...pan }, dpr }
+      // Keep one full overview as a fallback for areas newly exposed by a
+      // gesture. The detailed viewport alone would leave holes on zoom-out.
+      if (this.view.left <= 0 && this.view.top <= 0 && this.view.right >= this.layout.width - 1e-6 && this.view.bottom >= this.layout.height - 1e-6) {
+        const canvas = this.overview?.canvas ?? document.createElement('canvas')
+        canvas.width = this.base.width; canvas.height = this.base.height
+        canvas.getContext('2d').drawImage(this.base, 0, 0)
+        this.overview = { ...this.paintedViewport, canvas }
+      }
     }
-    this.drawHighlight(dpr, redraw)
+    this.drawHighlight(dpr, redraw || this.previewVisible)
+    this.previewVisible = false
+  }
+
+  drawPreview(dpr) {
+    // Reuse rendered pixels while input is arriving instead of repainting
+    // thousands of ribbons. Clip before scaling so even deep zoom copies at
+    // most the viewport's pixels. Redraw precisely after 100ms of no input.
+    const { width, height, pan, zoom } = this.host, ctx = this.context(this.overlay, dpr, false)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = false
+    const detail = { ...this.paintedViewport, canvas: this.base }, scale = zoom / detail.zoom
+    const x = pan.x - detail.pan.x * scale, y = pan.y - detail.pan.y * scale
+    const coversViewport = x <= 0 && y <= 0 && x + detail.width * scale >= width && y + detail.height * scale >= height
+    if (!coversViewport) { ctx.fillStyle = this.background; ctx.fillRect(0, 0, width, height) }
+    for (const snapshot of coversViewport ? [detail] : [this.overview, detail]) {
+      const factor = zoom / snapshot.zoom, sx = pan.x - snapshot.pan.x * factor, sy = pan.y - snapshot.pan.y * factor
+      const left = Math.max(0, sx), top = Math.max(0, sy)
+      const bottom = Math.min(height, sy + snapshot.height * factor), right = Math.min(width, sx + snapshot.width * factor)
+      if (right <= left || bottom <= top) continue
+      const pixelScale = snapshot.dpr / factor
+      ctx.drawImage(snapshot.canvas, (left - sx) * pixelScale, (top - sy) * pixelScale,
+        (right - left) * pixelScale, (bottom - top) * pixelScale, left, top, right - left, bottom - top)
+    }
+    const selected = this.layout.byId.get(this.host.selection?.node)
+    if (selected) {
+      ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * pan.x, dpr * pan.y)
+      ctx.strokeStyle = this.foreground; ctx.lineWidth = Math.min(1.5 / zoom, selected.width / 2)
+      ctx.strokeRect(selected.x, selected.y, selected.width, 26)
+    }
+    this.previewVisible = true
   }
 
   edgeAlpha(edge) { return !this.matches.has(edge.from) && !this.matches.has(edge.to) ? .04 : .22 }

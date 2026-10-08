@@ -35,16 +35,16 @@ function mounted(t) {
   globalThis.devicePixelRatio = 2
   globalThis.getComputedStyle = () => ({ getPropertyValue: () => '#fff' })
   const canvas = () => {
-    const fills = [], strokes = []
+    const copyCalls = [], fills = [], strokes = []
     let clears = 0, copies = 0
     const ctx = {
       setTransform() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, setLineDash() {}, fillText() {}, stroke() {},
       fill(path) { fills.push(path) }, fillRect(...rect) { fills.push(rect) },
       strokeRect(...rect) { strokes.push({ rect, width: this.lineWidth }) },
-      clearRect() { clears++ }, drawImage() { copies++ }, isPointInPath: () => true,
+      clearRect() { clears++ }, drawImage(...args) { copies++; copyCalls.push(args) }, isPointInPath: () => true,
     }
     return { width: 0, height: 0, style: {}, dataset: {}, getContext: () => ctx, getBoundingClientRect: () => ({ left: 5, top: 10 }),
-      setAttribute() {}, fills, strokes, clears: () => clears, copies: () => copies }
+      setAttribute() {}, fills, strokes, copyCalls, clears: () => clears, copies: () => copies }
   }
   globalThis.document = { createElement: canvas }
   const base = canvas(), overlay = canvas()
@@ -107,6 +107,57 @@ test('canvas hit testing uses transformed coordinates, prioritizes bars, and ret
   assert.equal(host.selection.node, host.layout.nodes.at(-1).id)
   chart.click({ ...event, defaultPrevented: true })
   assert.equal(host.selection.node, host.layout.nodes.at(-1).id, 'a suppressed drag click never selects')
+})
+
+test('continuous zoom reprojects cached bitmaps and redraws exact geometry once input settles', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { chart, host, base, overlay, frame, frames } = mounted(t)
+  assert.ok(chart.overview, 'a fitted overview covers newly exposed regions')
+  const paints = base.clears(), snapshot = chart.paintedViewport
+  host.fitted = false
+  host.select('f:b.js')
+  for (let i = 0; i < 20; i++) {
+    host.zoom *= 1.05; host.pan.x -= 5
+    chart.viewportChanged(); frame(); t.mock.timers.tick(16)
+  }
+  assert.equal(base.clears(), paints, 'no ribbon redraw during continuous input')
+  const scale = host.zoom / snapshot.zoom
+  const [source, ...rect] = overlay.copyCalls.at(-1)
+  assert.equal(source, base)
+  const expected = [-host.pan.x / scale * snapshot.dpr, 0, host.width / scale * snapshot.dpr, host.height / scale * snapshot.dpr, 0, 0, host.width, host.height]
+  rect.forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 1e-9))
+  assert.equal(overlay.copies(), 20, 'each zoom frame copies only the visible portion of the detailed raster')
+  assert.ok(overlay.strokes.length > 0, 'the selected node remains outlined during zoom')
+  t.mock.timers.tick(100); frame()
+  host.zoom *= 1.01; chart.viewportChanged(); frame()
+  assert.equal(base.clears(), paints, 'queued zoom input cancels an idle repaint before it starts')
+  t.mock.timers.tick(100); frame(); frame(); frame()
+  assert.equal(base.clears(), paints + 1)
+  assert.equal(chart.previewVisible, false)
+  assert.equal(chart.paintedViewport.zoom, host.zoom)
+  host.zoom = .5; chart.viewportChanged(); frame()
+  assert.equal(overlay.copyCalls.at(-2)[0], chart.overview.canvas, 'zoom-out fills uncovered areas from the overview')
+  chart.dispose(); t.mock.timers.tick(100)
+  assert.equal(frames.size, 0, 'disconnect cancels delayed redraws')
+})
+
+test('fit, viewport resize, and changed graph filters bypass the zoom preview', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { chart, host, root, base, frame } = mounted(t)
+  const startPreview = () => { host.fitted = false; host.zoom *= 1.1; chart.viewportChanged(); frame(); assert.equal(chart.preview, true) }
+  startPreview()
+  let paints = base.clears()
+  host.fitted = true; host.zoom = 1; chart.viewportChanged(); frame()
+  assert.equal(chart.preview, false)
+  assert.equal(chart.previewVisible, false, 'fit clears the preview even when the original raster can be reused')
+  startPreview()
+  host.width += 10; chart.viewportChanged(); frame()
+  assert.equal(base.clears(), paints + 1, 'resize rerenders at the correct resolution immediately')
+  startPreview(); paints = base.clears()
+  host.graph.issuesHidden = true; chart.update(root); frame()
+  assert.equal(chart.preview, false)
+  assert.equal(base.clears(), paints + 1)
+  assert.equal(chart.overview, null, 'an outdated overview is never reused for new filter results')
 })
 
 test('canvas filters invalidate the base, and borders occupy at most half a bar at every zoom', t => {
