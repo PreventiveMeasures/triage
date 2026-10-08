@@ -46,7 +46,7 @@ import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './dialogs/why-dialog.js'
-import { bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from './bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts } from './file-counts.js'
@@ -301,7 +301,8 @@ export function buildBundleGraphData(details) {
     supportsLayers: true,
     layerRoots,
     // Entry packages are traversal roots too, but are not necessarily own source.
-    ownSourcePackages: ownFiles.length > 0 ? new Set(['__own__']) : undefined,
+    ownSourcePackages: bundleOwnSourcePackages(origToStripped, pkgOf, origPackageDirs),
+    entryPackages: bundleEntryPackages(details, origToStripped, pkgOf),
     // Preserve recorded file ownership for dependency-cycle classification.
     ownSourceFiles: new Set(ownFiles),
     reasons: [...reasons.keys()],

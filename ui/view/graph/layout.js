@@ -510,12 +510,22 @@ export function layoutSpiral(graph, w, h) {
 // steps + sqrt-radius growth. Degree-desc order seeds the assignment;
 // swaps then shorten edges without changing any of those positions.
 // Also used for the flat package graph, whose edges join package nodes.
+// Reserve the innermost slots for own-source entry packages, followed by
+// other own packages, then dependencies. Swaps stay within those groups.
 export function layoutFilesVogel(graph, w, h) {
   const cx = w / 2, cy = h / 2
   const unitToPx = Math.min(w, h) / 2
   const N = graph.nodes.length
   if (N === 0) return
-  const sorted = [...graph.nodes].toSorted((a, b) => b.deg - a.deg)
+  const dependencies = [], entries = [], own = []
+  for (const node of graph.nodes) {
+    const isOwn = node.pkg === '__own__' || graph.ownSourcePackages?.has(node.pkg)
+    if (!isOwn) dependencies.push(node)
+    else if (graph.entryPackages?.has(node.pkg)) entries.push(node)
+    else own.push(node)
+  }
+  const byDegree = (a, b) => b.deg - a.deg
+  const sorted = [...entries.toSorted(byDegree), ...own.toSorted(byDegree), ...dependencies.toSorted(byDegree)]
   for (let i = 0; i < N; i++) {
     const n = sorted[i]
     const angle = ((i * 137.508) % 360) * Math.PI / 180
@@ -523,5 +533,5 @@ export function layoutFilesVogel(graph, w, h) {
     n.x = cx + Math.cos(angle) * band * 0.85 * unitToPx
     n.y = cy + Math.sin(angle) * band * 0.85 * unitToPx
   }
-  optimizeSunflowerOrder(graph, [graph.nodes])
+  optimizeSunflowerOrder(graph, [entries, own, dependencies])
 }

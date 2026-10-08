@@ -2,6 +2,28 @@ import { bundlePkgOf } from './bundle-pkg-of.js'
 
 export { bundleReasons as bundleGraphReasons } from '../../common/bundle-reasons.js'
 
+// Named workspace modules are own code too, even when another workspace
+// imports them. Use recorded directories before display-prefix stripping;
+// entry points alone can also identify third-party packages.
+export function bundleOwnSourcePackages(origToStripped, pkgOf, packageDirs) {
+  const packages = new Set()
+  for (const [orig, path] of origToStripped) {
+    const dir = packageDirs?.get(orig)
+    if (bundlePkgOf(orig, { packageDir: dir }) === '__own__'
+      || (dir && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(dir))) packages.add(pkgOf(path))
+  }
+  return packages
+}
+
+export function bundleEntryPackages(details, origToStripped, pkgOf) {
+  const packages = new Set()
+  for (const entry of details?.bundle?.entries ?? []) {
+    const path = origToStripped.get(entry)
+    if (path !== undefined) packages.add(pkgOf(path))
+  }
+  return packages
+}
+
 export function filterBundleGraphReason(tree, origToStripped, reasons, requested) {
   // A hidden selector must never keep filtering after switching bundles.
   const selected = reasons.has(requested) ? requested : null
@@ -41,19 +63,12 @@ export function bundleLayerRoots(details, origToStripped, pkgOf, packageDirs, fu
   for (const [orig, path] of origToStripped) {
     if (bundlePkgOf(orig, { packageDir: packageDirs?.get(orig) }) === '__own__') roots.add(pkgOf(path))
   }
-  for (const entry of details?.bundle?.entries ?? []) {
-    const path = origToStripped.get(entry)
-    if (path !== undefined) roots.add(pkgOf(path))
-  }
+  for (const pkg of bundleEntryPackages(details, origToStripped, pkgOf)) roots.add(pkg)
   // Older/custom bundles may have no entry metadata and store app/ as a
   // named source module. Infer source roots from their directed imports,
   // never from dependency packages that merely happen to have no importers.
   if (roots.size === 0) {
-    const sourcePackages = new Set()
-    for (const [orig, path] of origToStripped) {
-      const dir = packageDirs?.get(orig)
-      if (dir && dir !== '.' && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(dir)) sourcePackages.add(pkgOf(path))
-    }
+    const sourcePackages = bundleOwnSourcePackages(origToStripped, pkgOf, packageDirs)
     const importedSources = new Set()
     for (const [parent, targets] of imports) {
       const path = origToStripped.get(parent)

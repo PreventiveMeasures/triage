@@ -526,6 +526,32 @@ test('Overview and graph classify ordinary directories directly as Own source wh
     const graph = buildBundleGraphData(details)
     assert.deepEqual(new Set(graph.files.map(graph.options.pkgOf)), new Set(['__own__', 'dep', workspace]))
     assert.deepEqual(graph.ownSourceFiles, new Set(['src/main.js', 'lib/util.js', 'index.js']))
+    assert.deepEqual(graph.ownSourcePackages, new Set(details === sourcemap ? ['__own__'] : ['__own__', workspace]))
+  }
+})
+
+test('full and metadata-only bundle graphs preserve multiple own entry packages separately from own source', async () => {
+  const full = { integrity: 'sunflower-entries', kind: 'stasis', size: 123, bundle: new Bundle({
+    entries: new Set(['apps/web/index.js', 'apps/cli/index.js', 'node_modules/dep/index.js']),
+    modules: new Map([
+      ['.', { name: 'app', files: { 'src/helper.js': 'helper' } }],
+      ['apps/web', { name: 'web', files: { 'index.js': 'web' } }],
+      ['apps/cli', { name: 'cli', files: { 'index.js': 'cli' } }],
+      ['packages/shared', { name: 'shared', files: { 'index.js': 'shared' } }],
+      ['node_modules/dep', { name: 'dep', version: '1', files: { 'index.js': 'dep' } }],
+    ]),
+    imports: new Map([['node,import', new Map([
+      ['apps/web/index.js', new Map([['shared', 'packages/shared/index.js']])],
+      ['apps/cli/index.js', new Map([['shared', 'packages/shared/index.js']])],
+      ['packages/shared/index.js', new Map([['web', 'apps/web/index.js']])],
+    ])]]),
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), full.integrity)
+  for (const details of [full, cached]) {
+    const prep = buildBundleGraphData(details)
+    assert.deepEqual(prep.ownSourcePackages, new Set(['__own__', 'apps/web', 'apps/cli', 'packages/shared']))
+    assert.deepEqual(prep.entryPackages, new Set(['apps/web', 'apps/cli', 'dep']))
+    assert.ok(prep.layerRoots.roots.includes('__own__'), 'being a traversal root alone does not make a package an entry')
   }
 })
 

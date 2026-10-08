@@ -33,13 +33,56 @@ const slots = nodes => positions(nodes).toSorted(([ax, ay], [bx, by]) => ax - bx
 
 // The pre-optimization assignment, also specifying the unchanged flat grid.
 function degreeLayout(graph, w = 1000, h = 800) {
-  const sorted = graph.nodes.toSorted((a, b) => b.deg - a.deg)
+  const ownRank = node => node.pkg === '__own__' || graph.ownSourcePackages?.has(node.pkg)
+    ? graph.entryPackages?.has(node.pkg) ? 0 : 1 : 2
+  const sorted = graph.nodes.toSorted((a, b) => ownRank(a) - ownRank(b) || b.deg - a.deg)
   const unitToPx = Math.min(w, h) / 2
   sorted.forEach((node, i) => {
     const angle = (i * 137.508 % 360) * Math.PI / 180
     const band = Math.sqrt(i / Math.max(1, sorted.length - 1))
     node.x = w / 2 + Math.cos(angle) * band * 0.85 * unitToPx
     node.y = h / 2 + Math.sin(angle) * band * 0.85 * unitToPx
+  })
+}
+
+for (const count of [1, 3, 1000]) {
+  test(`${count} own-code packages retain the central slots while edges shorten`, () => {
+    const graph = fixture('clusters', 1000)
+    for (const [i, node] of graph.nodes.entries()) node.pkg = `pkg${i}`
+    graph.ownSourcePackages = new Set(graph.nodes.slice(-count).map(node => node.pkg))
+    const dependencies = graph.nodes.slice(0, -count), own = graph.nodes.slice(-count)
+    degreeLayout(graph)
+    const before = edgeLength(graph), dependencySlots = slots(dependencies), ownSlots = slots(own)
+    layoutFilesVogel(graph, 1000, 800)
+    assert.deepEqual(slots(own), ownSlots, 'own packages can only exchange the central slots')
+    assert.deepEqual(slots(dependencies), dependencySlots, 'dependencies retain all the outer slots')
+    assert.ok(edgeLength(graph) < before * 0.4, 'edge optimization still improves the constrained assignment')
+    if (count === 1) assert.deepEqual(positions(own), [[500, 400]])
+    const first = positions(graph.nodes)
+    layoutFilesVogel(graph, 1000, 800)
+    assert.deepEqual(positions(graph.nodes), first)
+  })
+}
+
+test('an isolated own-source package stays at the center despite higher-degree dependencies', () => {
+  const graph = graphFromPairs(100, Array.from({ length: 98 }, (_, i) => [i, 98]), i => i === 99 ? '__own__' : `dep${i}`)
+  layoutFilesVogel(graph, 1000, 800)
+  assert.deepEqual(positions(graph.nodes.slice(-1)), [[500, 400]])
+})
+
+for (const count of [1, 2]) {
+  test(`${count} own entry packages precede other own packages and dependencies on the unchanged grid`, () => {
+    const graph = fixture('clusters', 1000)
+    for (const [i, node] of graph.nodes.entries()) node.pkg = `pkg${i}`
+    graph.ownSourcePackages = new Set(graph.nodes.slice(-10).map(node => node.pkg))
+    graph.entryPackages = new Set([...graph.nodes.slice(-count), graph.nodes[0]].map(node => node.pkg))
+    const groups = [graph.nodes.slice(-count), graph.nodes.slice(-10, -count), graph.nodes.slice(0, -10)]
+    degreeLayout(graph)
+    const before = edgeLength(graph), grids = groups.map(slots)
+    layoutFilesVogel(graph, 1000, 800)
+    assert.deepEqual(groups.map(slots), grids, 'entry, own-source and dependency groups retain their exact slots')
+    assert.ok(edgeLength(graph) < before * 0.4)
+    if (count === 1) assert.deepEqual(positions(groups[0]), [[500, 400]])
   })
 }
 
