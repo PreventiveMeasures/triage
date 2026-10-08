@@ -267,6 +267,10 @@ export function buildBundleGraphData(details) {
   // node_modules dependencies into own source. Recorded Stasis module
   // directories keep workspace and vendored packages distinct.
   const origPackageDirs = bundlePackageDirs(details)
+  // Preserve physical installs as well as the package-name grouping: equal
+  // versions in different directories are separate bundled copies.
+  const packageInfo = new Map(origPackageDirs ? [...details.bundle.modules].map(([directory, info]) =>
+    [directory, { directory, version: typeof info.version === 'string' ? info.version : undefined }]) : [])
   const pkgOf = (p) => {
     const orig = strippedToOrig.get(p) ?? p
     return bundlePkgOf(orig, { packageDir: origPackageDirs?.get(orig) })
@@ -310,7 +314,7 @@ export function buildBundleGraphData(details) {
   return {
     treeData: tree, files, ownCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
-    options: { pkgOf },
+    options: { pkgOf, packageInfoOf: file => packageInfo.get(origPackageDirs?.get(strippedToOrig.get(file) ?? file)) },
     strippedToOrig,
     canPackagesView,
     hasIssues,

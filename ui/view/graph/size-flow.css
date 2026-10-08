@@ -65,6 +65,10 @@ button:focus-visible { outline: 2px solid var(--accent); }
 .flow-metrics { display: grid; gap: 5px; margin: 18px 0; }
 .flow-metrics b { font-size: 20px; font-weight: 500; }
 .flow-metrics span { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.flow-versions { list-style: none; padding: 0; margin: 0 0 18px; font-size: 12px; }
+.flow-versions li + li { margin-top: 10px; }
+.flow-versions li > div { display: flex; justify-content: space-between; gap: 8px; }
+.flow-versions small { display: block; color: var(--muted); overflow-wrap: anywhere; margin-top: 3px; }
 .flow-direction { overflow-wrap: anywhere; }
 .flow-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .flow-link { grid-template-columns: 8px minmax(0, 1fr) auto; }

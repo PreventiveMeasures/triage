@@ -687,6 +687,25 @@ test('full and metadata-only bundle graphs preserve multiple own entry packages 
   }
 })
 
+test('bundle graph metadata preserves separate physical installs after stripping display paths', async () => {
+  const dirs = ['checkout/node_modules/dep', 'checkout/node_modules/parent/node_modules/dep', 'checkout/node_modules/.pnpm/dep@2.0.0/node_modules/dep']
+  const full = { integrity: 'flow-package-instances', kind: 'stasis', size: 123, bundle: new Bundle({
+    modules: new Map(dirs.map((dir, i) => [dir, { name: 'dep', version: i < 2 ? '1.0.0' : '2.0.0', files: { 'index.js': 'x'.repeat(i + 1), 'helper.js': 'helper' } }])),
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), full.integrity)
+  for (const details of [full, cached]) {
+    const prep = buildBundleGraphData(details)
+    for (const [file, original] of prep.strippedToOrig) {
+      const directory = original.slice(0, original.lastIndexOf('/'))
+      assert.notEqual(file, original, 'the common checkout prefix is stripped')
+      assert.equal(prep.options.pkgOf(file), 'dep')
+      assert.deepEqual(prep.options.packageInfoOf(file), { directory, version: dirs.indexOf(directory) < 2 ? '1.0.0' : '2.0.0' })
+    }
+  }
+  const sourcemap = buildBundleGraphData({ kind: 'sourcemap', integrity: 'flow-no-versions', json: { sources: ['node_modules/dep/index.js'], sourcesContent: ['x'] } })
+  assert.equal(sourcemap.options.packageInfoOf('index.js'), undefined, 'do not invent a version for sourcemaps')
+})
+
 test('Overview package and file sizes, and the Code file header, read in KiB from 1,024 bytes', () => {
   const entry = { name: 'sizes.stasis', integrity: 'sha512-sizes' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([

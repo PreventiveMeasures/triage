@@ -67,6 +67,8 @@ export function topIssueOf(counts) {
 // (recognizes both `node_modules/` and `dependencies/`) so its
 // `node_modules/foo/...` files bucket under `foo` instead of all
 // piling under the literal `node_modules` top-level dir.
+// `opts.packageInfoOf(file)` preserves a bundle's recorded directory and
+// version so package details can distinguish separately installed copies.
 export function buildGraph(treeData, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings, opts = {}) {
   const pkgOf = opts.pkgOf ?? packageOf
   const fileSet = new Set(files)
@@ -100,6 +102,7 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
       id: file,
       file,
       pkg,
+      packageInfo: opts.packageInfoOf?.(file),
       x: 0, y: 0,
       deg: 0,
       issue,

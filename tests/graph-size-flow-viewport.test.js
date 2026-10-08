@@ -186,3 +186,23 @@ test('theme changes repaint Size flow without changing its geometry or viewport'
   assert.deepEqual(flow.pan, pan)
   assert.equal(flow.zoom, zoom)
 })
+
+test('file/package switches reuse computed sizes until graph data changes', t => {
+  const { flow } = mounted(t)
+  const files = flow.model
+  flow.packages = true; flow.willUpdate(new Map([['packages', false]]))
+  const packages = flow.model
+  flow.packages = false; flow.willUpdate(new Map([['packages', true]]))
+  assert.equal(flow.model, files)
+  flow.packages = true; flow.willUpdate(new Map([['packages', false]]))
+  assert.equal(flow.model, packages)
+  flow.graph = fixture()
+  flow.graph.nodeByFile.get('entry.js').size += 100
+  flow.willUpdate(new Map([['graph', null]]))
+  assert.notEqual(flow.model, packages, 'new bundle data invalidates both cached modes')
+  assert.equal(flow.model.total.size, packages.total.size + 100)
+  flow.packages = false; flow.willUpdate(new Map([['packages', true]]))
+  assert.notEqual(flow.model, files)
+  assert.equal(flow.model.total.size, files.total.size + 100)
+  assert.equal(flow.models.size, 2, 'the component retains at most its two current graph models')
+})

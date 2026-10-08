@@ -16,6 +16,7 @@ export class SizeFlowChart {
     const { layout, model } = this.host
     if (this.layout === layout) return this.template
     this.layout = layout; this.model = model
+    this.templatePalette = pkgColor('__own__')
     this.template = svg`<g @click=${e => this.activate(e)} @dblclick=${e => this.activate(e, true)}
       @keydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.activate(e) } }}
       @pointerover=${e => this.setHover(e.target.closest('[data-flow-edge]')?.dataset.flowEdge ?? null)}
@@ -84,10 +85,11 @@ export class SizeFlowChart {
       this.edges = new Map([...root.querySelectorAll('[data-flow-edge]')].map(el => [el.dataset.flowEdge, el]))
       this.outline = root.querySelector('.flow-selection')
       this.domLayout = this.layout
+      this.palette = this.templatePalette
     }
     // Geometry stays cached on a theme change; repaint only its colors.
     const palette = pkgColor('__own__')
-    if (fresh || palette !== this.palette) {
+    if (palette !== this.palette) {
       this.palette = palette
       for (const [id, el] of this.nodes) {
         const color = pkgColor(this.model.byId.get(id).pkg)

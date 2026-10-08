@@ -35,6 +35,7 @@ class SizeFlow extends LitElement {
     this.fitted = true
     this.largeOnly = true
     this.largeThreshold = 0
+    this.models = new Map()
     this.chart = new SizeFlowChart(this)
     this.focus = null; this.selection = null; this.hover = null
     this.bridge = { requestDraw: () => this.requestUpdate(), _cleanup: () => {} }
@@ -43,8 +44,10 @@ class SizeFlow extends LitElement {
   willUpdate(changes) {
     if (!this.graph) return
     let rebuild = false
+    if (changes.has('graph')) this.models.clear()
     if (!this.model || changes.has('graph') || changes.has('packages')) {
-      this.model = buildSizeFlow(this.graph, { packages: this.packages })
+      if (!this.models.has(this.packages)) this.models.set(this.packages, buildSizeFlow(this.graph, { packages: this.packages }))
+      this.model = this.models.get(this.packages)
       this.largeThreshold = sizeFlowLargeThreshold(this.model)
       rebuild = true
       if (!this.model.byId.has(this.focus)) this.focus = null
@@ -260,10 +263,8 @@ class SizeFlow extends LitElement {
     const node = this.model.byId.get(this.selection?.node)
     const edge = this.model.edgeById.get(this.selection?.edge)
     if (!node) {return html`<h3>Size flow</h3><div class="flow-metrics"><b>${shortSize(this.model.total.size)}</b><span>unique reachable source</span></div>
-      <p>Bar widths show how much source would leave this bundle if the file or package were deleted: its own code plus dependencies no longer reachable from any entry point.</p>
-      <p>Shared dependencies stay when another path still loads them. Package removal deletes all its files together. Following imports keeps the same bundle-wide calculation.</p>
-      <p>Ribbons may overlap and taper to the bars they connect. Select a ribbon to see the total source size reachable through its import. These totals can overlap.</p>
-      <p>Dashed ribbons return to an earlier level, including cycles. Tiny bars and ribbons keep a minimum visible width.</p>
+      <p>Bar width shows how much source leaves the bundle when a file or package is removed.</p>
+      <p>Select a bar or ribbon for details. Double-click a bar to follow its imports.</p>
       ${this.model.total.missing ? html`<p>${this.model.total.missing} files have unknown sizes; totals include known bytes only.</p>` : null}
       ${this.model.weakEdges ? html`<p>${this.model.weakEdges} weak config/metadata loads excluded.</p>` : null}
       ${this.model.omittedFiles ? html`<p>${this.model.omittedFiles} files are not reachable from these entry points.</p>` : null}
@@ -273,6 +274,11 @@ class SizeFlow extends LitElement {
     return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => { if (this.focus) this.follow(null); else this.select(null) }}>×</button></div>
       ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
       <div class="flow-metrics"><b>${shortSize(node.removable)}</b><span>removed if deleted · bar width</span><b>${shortSize(node.size)}</b><span>unique reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
+      ${node.instances?.length ? html`<h4>Versions · own source size</h4><ul class="flow-versions">${node.instances.map(instance => html`<li>
+        <div><span>${instance.version || 'Unknown version'}</span><span>${shortSize(instance.size)}${instance.missing ? '+' : ''}</span></div>
+        <small>${instance.directory}</small>
+        ${instance.missing ? html`<small>${instance.missing} files have unknown sizes</small>` : null}
+      </li>`)}</ul>` : null}
       ${sizeFlowConnector(node, this.minSize) ? html`<p>Kept by Large so retained dependencies remain connected to an entry point.</p>` : null}
       ${node.removableMissing ? html`<p>${node.removableMissing} removed files have unknown sizes; removal totals include known bytes only.</p>` : null}
       ${node.missing ? html`<p>${node.missing} reachable file sizes are unknown.</p>` : null}

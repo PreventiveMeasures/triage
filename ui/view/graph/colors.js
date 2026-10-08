@@ -18,4 +18,3 @@ export function textOnPackage(color) {
   const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
   return luminance > 0.18 ? '#000' : '#fff'
 }
-

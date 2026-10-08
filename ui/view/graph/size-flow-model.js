@@ -3,6 +3,7 @@ import { countsTowardsCycles } from './cycle-imports.js'
 import { stronglyConnected } from './matrix-model.js'
 import { removalSizes } from './size-flow-removal.js'
 import { filterSizes } from './size-flow-filter.js'
+import { batchedReachability } from './size-flow-reachability.js'
 
 const bytes = n => Number.isFinite(n) && n >= 0 ? n : 0
 
@@ -41,23 +42,34 @@ function reachability(files, links) {
   indegree.forEach((n, i) => { if (!n) order.push(i) })
   for (const id of order) for (const to of next[id]) if (--indegree[to] === 0) order.push(to)
   const marks = new Uint32Array(groups.length), totals = new Map()
-  let stamp = 0
-  const sum = (starts) => {
+  // Cheap closures (trees and chains) are faster as walks/additions. Switch
+  // to word-sized unions once repeated visits dominate graph preparation.
+  const walkBudget = 8 * (groups.length + next.reduce((count, targets) => count + targets.size, 0))
+  let stamp = 0, work = 0
+  const sum = (starts, limited = false) => {
     if (++stamp === 0xffff_ffff) { marks.fill(0); stamp = 1 }
     let missing = 0, size = 0
     const stack = [...starts]
     while (stack.length > 0) {
       const id = stack.pop()
       if (marks[id] === stamp) continue
+      if (limited && (work += 1 + next[id].size) > walkBudget) return null
       marks[id] = stamp; size += weights[id]; missing += unknown[id]
       for (const to of next[id]) if (marks[to] !== stamp) stack.push(to)
     }
     return { size, missing }
   }
   // Linear chains (including very deep ones) only need one addition per node.
-  for (const id of order.toReversed()) {
+  const reverse = order.toReversed()
+  for (let i = 0; i < reverse.length; i++) {
+    const id = reverse[i]
     const child = next[id].size === 1 ? totals.get([...next[id]][0]) : null
-    totals.set(id, child ? { size: weights[id] + child.size, missing: unknown[id] + child.missing } : sum([id]))
+    const total = child ? { size: weights[id] + child.size, missing: unknown[id] + child.missing } : sum([id], true)
+    if (total) totals.set(id, total)
+    else {
+      for (const [node, value] of batchedReachability(next, order, weights, unknown, reverse.slice(i))) totals.set(node, value)
+      break
+    }
   }
   return {
     inferred: groups.filter((_, i) => incoming[i] === 0).map(group => group[0]),
@@ -84,6 +96,19 @@ function fileGraph(graph) {
   return { files, links, entries: entries.filter(n => n.entry !== false).map(n => n.file).filter(id => files.has(id)), weakEdges }
 }
 
+function packageInstances(ids, files) {
+  const installs = new Map()
+  for (const id of ids) {
+    const file = files.get(id), info = file.packageInfo
+    if (!info) continue
+    if (!installs.has(info.directory)) installs.set(info.directory, { ...info, size: 0, missing: 0 })
+    const install = installs.get(info.directory)
+    install.size += bytes(file.size)
+    if (!file.virtual && file.size == null) install.missing++
+  }
+  return [...installs.values()].toSorted((a, b) => b.size - a.size || a.directory.localeCompare(b.directory))
+}
+
 export function buildSizeFlow(graph, { packages = false } = {}) {
   const { files, links, entries, weakEdges } = fileGraph(graph)
   const reach = reachability(files, links)
@@ -100,7 +125,10 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
     const row = byId.get(id)
     row.files.push(file); row.own += bytes(n.size); row.virtual &&= !!n.virtual
   }
-  for (const row of byId.values()) Object.assign(row, reach.sum(row.files))
+  for (const row of byId.values()) {
+    Object.assign(row, reach.sum(row.files))
+    if (packages) row.instances = packageInstances(row.files, files)
+  }
   removalSizes(files, links, roots, byId)
   filterSizes(byId, parents, idOf)
   const pairs = new Map()

@@ -84,6 +84,51 @@ test('package flows use actual target files and preserve internal file reachabil
   assert.ok(model.edges.every(e => e.from !== e.to), 'internal imports are represented by package totals')
 })
 
+test('package sidebar lists every reachable install with its own bytes, including repeated versions', () => {
+  const installs = new Map([
+    ['one', { directory: 'node_modules/dep', version: '1.0.0' }],
+    ['two', { directory: 'node_modules/parent/node_modules/dep', version: '1.0.0' }],
+    ['three', { directory: 'node_modules/.pnpm/dep@2.0.0/node_modules/dep', version: '2.0.0' }],
+    ['unknown', { directory: 'node_modules/other/node_modules/dep', version: undefined }],
+    ['unused', { directory: 'node_modules/unused/node_modules/dep', version: '9.0.0' }],
+  ])
+  const tree = {
+    'entry.js': { size: 1, imports: ['one/index.js', 'two/index.js', 'three/index.js', 'unknown/index.js'] },
+    'one/index.js': { size: 1024, imports: ['one/helper.js', 'other/index.js'] },
+    'one/helper.js': { size: 1024, imports: [] },
+    'two/index.js': { size: 3072, imports: ['one/helper.js'] },
+    'three/index.js': { size: 4096, imports: [] },
+    'unknown/index.js': { size: null, imports: [] },
+    'unused/index.js': { size: 9999, imports: [] },
+    'other/index.js': { size: 10000, imports: [] },
+  }
+  const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, {
+    pkgOf: file => installs.has(file.split('/')[0]) ? 'dep' : 'app',
+    packageInfoOf: file => installs.get(file.split('/')[0]),
+  })
+  graph.flowEntries = [{ file: 'entry.js' }]
+  const Flow = customElements.get('size-flow'), flow = new Flow()
+  flow.graph = graph; flow.packages = true; flow.willUpdate(new Map([['graph', null]]))
+  flow.select('p:dep')
+  const node = flow.model.byId.get('p:dep')
+  assert.deepEqual(node.instances, [
+    { ...installs.get('three'), size: 4096, missing: 0 },
+    { ...installs.get('two'), size: 3072, missing: 0 },
+    { ...installs.get('one'), size: 2048, missing: 0 },
+    { ...installs.get('unknown'), size: 0, missing: 1 },
+  ])
+  assert.equal(node.instances.reduce((sum, instance) => sum + instance.size, 0), node.own)
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings
+    ? value.strings.map((part, i) => part + text(value.values[i])).join('') : typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+  const list = text(flow.renderPanel()).match(/<ul class="flow-versions">(.*?)<\/ul>/su)[1]
+  assert.equal([...list.matchAll(/<li>/gu)].length, 4)
+  assert.equal([...list.matchAll(/<span>1\.0\.0<\/span>/gu)].length, 2)
+  for (const label of ['4.0 KiB', '3.0 KiB', '2.0 KiB', 'Unknown version', '0 B+']) assert.ok(list.includes(label), label)
+  assert.doesNotMatch(list, /9\.0\.0/u)
+  flow.packages = false; flow.willUpdate(new Map([['packages', true]])); flow.select('f:one/index.js')
+  assert.doesNotMatch(text(flow.renderPanel()), /flow-versions/u, 'the breakdown belongs to package selection')
+})
+
 test('weak config loads are excluded before reachability, using original paths', () => {
   const graph = fixture({
     'entry.js': { size: 1, imports: ['loader.js'] },

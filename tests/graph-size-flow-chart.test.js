@@ -24,13 +24,13 @@ function mounted(t) {
   const { chart } = host
   chart.render()
   let writes = 0
-  function element(dataset = {}) {
-    const attributes = new Map()
+  function element(dataset = {}, initial = {}) {
+    const attributes = new Map(Object.entries(initial))
     const rect = { setAttribute(name, value) { attributes.set(`rect:${name}`, value); writes++ } }
     return { dataset, attributes, querySelector: () => rect, setAttribute(name, value) { attributes.set(name, value); writes++ } }
   }
-  const nodes = new Map(host.layout.nodes.map(n => [n.id, element({ flowNode: n.id })]))
-  const edges = new Map(host.layout.edges.map(e => [e.id, element({ flowEdge: e.id })]))
+  const nodes = new Map(host.layout.nodes.map(n => [n.id, element({ flowNode: n.id }, { fill: textOnPackage(pkgColor(n.pkg)), 'rect:fill': pkgColor(n.pkg) })]))
+  const edges = new Map(host.layout.edges.map(e => [e.id, element({ flowEdge: e.id }, { fill: pkgColor(host.model.byId.get(e.to).pkg) })]))
   const outline = element()
   const root = { querySelectorAll: selector => [...(selector === '[data-flow-node]' ? nodes : edges).values()], querySelector: () => outline }
   chart.update(root)
