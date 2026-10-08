@@ -2524,18 +2524,24 @@ body.report-fullscreen {
 .bundle-source-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 /* Node.js docs link at the end of a line that imports one built-in module.
    Sized under the line height, so the row keeps the gutter's rhythm. The
-   label is generated content, so it stays out of the source text. */
+   label is generated content, so it stays out of the source text. The link
+   takes no width and its contents overflow it: the line still ends at the
+   code, where a selection paints the newline. Not positioned, so the sticky
+   gutter keeps painting over it. */
 .source-node-doc {
-  margin-left: 1.5ch;
-  border-radius: var(--ui-radius, 2px);
+  display: inline-block;
+  width: 0;
   color: var(--muted);
   font-style: normal;
   user-select: none;
-  & svg { width: 1em; height: 1em; vertical-align: -.15em; fill: currentcolor; }
-  &::after { content: 'Node.js'; margin-left: .5ch; }
+  & svg { margin-left: 1.5ch; width: 1em; height: 1em; vertical-align: -.15em; fill: currentcolor; }
+  /* The code's end padding, which overflow past the line does not get. */
+  &::after { content: 'Node.js'; margin-left: .5ch; padding-right: .75rem; }
 }
-.source-node-doc:hover { color: var(--nodejs-green); }
-.source-node-doc:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.source-node-doc:hover,
+.source-node-doc:focus-visible { color: var(--nodejs-green); }
+.source-node-doc:focus-visible { outline: none; }
+.source-node-doc:focus-visible::after { text-decoration: underline; text-underline-offset: 3px; }
 
 /* Prism token theme. The palette is theme.css's `--code-*` custom
    properties rather than literals: the same colours have to reach the
