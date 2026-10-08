@@ -593,6 +593,24 @@ test('full and metadata-only bundle graphs preserve multiple own entry packages 
   }
 })
 
+test('Overview package and file sizes, and the Code file header, read in KiB from 1,024 bytes', () => {
+  const entry = { name: 'sizes.stasis', integrity: 'sha512-sizes' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1', files: { 'src/main.js': 'x' } }],
+    ['node_modules/dep', { name: 'dep', version: '1', files: { 'index.js': 'y'.repeat(3000) } }],
+  ]) }).serialize())
+  Object.assign(state, { selectedBundle: entry.integrity, bundles: [entry], bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const overview = renderText(renderBundlesList([entry]))
+  // 3,000 bytes is 2.93 KiB; a 1-byte file stays in bytes.
+  assert.match(overview, /class="bundles-dist-size">2\.9 KiB<\/span>/u)
+  assert.match(overview, /class="bundles-dist-size">1 B<\/span>/u)
+  assert.match(overview, /data-tooltip="?dep: 2\.9 KiB/u)
+  assert.match(overview, /class="bundles-source-size">2\.9 KiB<\/span>/u)
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', bundleSourceFile: 'node_modules/dep/index.js', bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '' })
+  const header = renderText(renderBundlesList([entry])).match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
+  assert.match(header, /1 line · 2\.9 KiB/u)
+})
+
 test('Overview and graph retain a sourcemap package identity when its entire directory prefix is stripped', () => {
   const entry = { name: 'dep.map', integrity: 'sha512-single-dependency' }
   state.selectedBundle = entry.integrity
