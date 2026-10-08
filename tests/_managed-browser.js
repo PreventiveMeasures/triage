@@ -18,6 +18,18 @@ export function browserAt(path = '/') {
       pushState(state, _, url) { entries.splice(index + 1); entries.push({ state, url: new URL(url, browser.location) }); index++; writes.push('push') },
     },
     async move(delta) { index += delta; listeners.get('popstate')?.({ state: entries[index].state }); await setImmediate() },
+    // A same-document fragment navigation, as from a pasted link that differs
+    // only in its fragment: a new entry, without state.
+    async fragment(value) {
+      entries.splice(index + 1)
+      const url = new URL(browser.location)
+      url.hash = value
+      entries.push({ state: null, url })
+      index++
+      listeners.get('popstate')?.({ state: null })
+      listeners.get('hashchange')?.()
+      await setImmediate()
+    },
     async hash(value) {
       entries[index].url.hash = value
       listeners.get('popstate')?.({ state: entries[index].state })

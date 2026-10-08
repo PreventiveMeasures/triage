@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { BUNDLE_TABS } from '../common/bundle-tabs.js'
 import { managedRouteForIds, managedRoutePath, parseManagedRoute, resolveManagedRoute } from '../common/managed/routes.js'
-import { managedBundleEntry, managedBundleRoute, managedCodeFile, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedCodeLocation, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
 import { bundleComparisonCandidates } from '../ui/view/bundle-comparison-candidates.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
@@ -50,11 +50,11 @@ test('all bundle tabs round-trip exact slugs and the clicked team, including Man
         { view: 'bundles', bundleTab: tab, teamId: team?.id ?? null, bundleId: a.id })
     }
     // Code numbers its open file from 1, never naming its path.
-    const route = managedBundleRoute(teams, managedBundleEntry(a), team?.id, 'code', 4)
+    const route = managedBundleRoute(teams, managedBundleEntry(a), team?.id, 'code', { file: 4, line: 42, endLine: 69 })
     const path = managedRoutePath(route)
-    assert.equal(path, `${team ? `/team/${team.slug}` : '/manage'}/bundle/a/code/4`)
+    assert.equal(path, `${team ? `/team/${team.slug}` : '/manage'}/bundle/a/code/4#L42-L69`)
     assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams, [a]),
-      { view: 'bundles', bundleTab: 'code', file: 4, teamId: team?.id ?? null, bundleId: a.id })
+      { view: 'bundles', bundleTab: 'code', file: 4, line: 42, endLine: 69, teamId: team?.id ?? null, bundleId: a.id })
   }
   assert.equal(resolveManagedRoute({ view: 'bundles', teamSlug: 'first', bundleSlug: a.id }, teams), null, 'UUIDs are not slug aliases')
   assert.equal(resolveManagedRoute({ view: 'bundles', teamSlug: 'other', bundleSlug: a.slug }, teams), null, 'bundle must be in the clicked team')
@@ -126,15 +126,21 @@ test('tab links survive reload, bundle switches, Compare swaps and Back/Forward 
   assert.equal(browser.location.hash, hash)
 })
 
-test('route rewrites number the Code tab\'s file shown, or the one a link asked for while its sources load', () => {
+test('route rewrites locate the Code tab\'s file shown and its marked lines, or what a link asked for while its sources load', () => {
   const details = { kind: 'stasis', integrity: 'sha512-a', bundle: { sources: new Map([['src/z.js', 'z'], ['lib/a.js', 'a'], ['src/b.js', 'b']]) } }
-  const state = { bundleDetailsTab: 'code', selectedBundle: 'sha512-a', bundleDetails: details, bundleSourceFile: 'src/z.js', bundleCodeFileRequest: null }
-  assert.equal(managedCodeFile(state), 3, 'numbered from 1 in path order')
-  assert.equal(managedCodeFile({ ...state, bundleSourceFile: 'lib/a.js' }), 1)
-  assert.equal(managedCodeFile(state, 'graph'), null, 'only Code names a file')
-  assert.equal(managedCodeFile({ ...state, bundleSourceFile: null }), null)
-  assert.equal(managedCodeFile({ ...state, bundleSourceFile: 'gone.js' }), null)
-  assert.equal(managedCodeFile({ ...state, selectedBundle: 'sha512-b' }), null, 'never from another bundle\'s sources')
-  assert.equal(managedCodeFile({ ...state, bundleSourceFile: null, bundleDetails: { ...details, metadataOnly: true }, bundleCodeFileRequest: { bundle: 'sha512-a', file: 7 } }), 7)
-  assert.equal(managedCodeFile({ ...state, bundleCodeFileRequest: { bundle: 'sha512-b', file: 7 } }), 3)
+  const state = { bundleDetailsTab: 'code', selectedBundle: 'sha512-a', bundleDetails: details, bundleSourceFile: 'src/z.js', bundleCodeFileRequest: null, bundleSourceTargetLine: null }
+  assert.deepEqual(managedCodeLocation(state), { file: 3 }, 'numbered from 1 in path order')
+  assert.deepEqual(managedCodeLocation({ ...state, bundleSourceFile: 'lib/a.js' }), { file: 1 })
+  assert.equal(managedCodeLocation(state, 'graph'), null, 'only Code names a file')
+  assert.equal(managedCodeLocation({ ...state, bundleSourceFile: null }), null)
+  assert.equal(managedCodeLocation({ ...state, bundleSourceFile: 'gone.js' }), null)
+  assert.equal(managedCodeLocation({ ...state, selectedBundle: 'sha512-b' }), null, 'never from another bundle\'s sources')
+  const marked = { bundle: 'sha512-a', path: 'src/z.js', line: 4 }
+  assert.deepEqual(managedCodeLocation({ ...state, bundleSourceTargetLine: marked }), { file: 3, line: 4 })
+  assert.deepEqual(managedCodeLocation({ ...state, bundleSourceTargetLine: { ...marked, end: 9, anchor: 9 } }), { file: 3, line: 4, endLine: 9 })
+  assert.deepEqual(managedCodeLocation({ ...state, bundleSourceTargetLine: { ...marked, path: 'src/b.js' } }), { file: 3 }, 'lines marked in another file')
+  assert.deepEqual(managedCodeLocation({ ...state, bundleSourceTargetLine: { ...marked, bundle: 'sha512-b' } }), { file: 3 })
+  const request = { bundle: 'sha512-a', file: 7, line: 2, endLine: 5 }
+  assert.deepEqual(managedCodeLocation({ ...state, bundleSourceFile: null, bundleDetails: { ...details, metadataOnly: true }, bundleCodeFileRequest: request }), { file: 7, line: 2, endLine: 5 })
+  assert.deepEqual(managedCodeLocation({ ...state, bundleCodeFileRequest: { ...request, bundle: 'sha512-b' } }), { file: 3 })
 })

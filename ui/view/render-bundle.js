@@ -16,7 +16,7 @@ import { html, nothing } from 'lit'
 import { store } from '@rray/frontend/state-management'
 import { getPublicShare } from '../../client/managed/public-share.js'
 import { loadManagedBundle } from './client-managed.js'
-import { managedBundleRoute } from './managed-bundle-navigation.js'
+import { managedBundleRoute, managedCodeLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
@@ -43,7 +43,7 @@ const indexedHashFindingCount = () => isManagedUiMode() ? 0 : localIndexedHashFi
 import { SEVERITIES, SEVERITY_ORDER, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
 import { formatBytes } from '../scan/metrics.js'
 import { utf8ByteLength } from '../../common/utf8.js'
-import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceOrder, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceLines, bundleSourceOrder, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleCodeStats } from '../../common/bundle-stats.js'
 import { bundleOriginLinks } from './bundle-origin-links.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
@@ -653,6 +653,15 @@ export function revealBundleCodeCurrent() {
   })
 }
 
+// Bring a line a link marks into the middle of the Code pane, two frames on:
+// once its source has laid out, and wrapped lines have resized their rows.
+function revealBundleSourceLine(line) {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.querySelector(`.bundle-code-main .bundle-source-lineno-row[data-line="${line}"]`)
+      ?.scrollIntoView({ block: 'center' })
+  }))
+}
+
 // Pick the worst severity (top of SEVERITIES order) among the
 // findings on a given line so the gutter dot reads as the most
 // urgent issue. Multiple findings on one line still resolve to a
@@ -679,10 +688,11 @@ function _topSeverityOf(findings) {
 // the gutter. Lines without findings render a plain number. The line
 // a clicked result opened (state.bundleSourceTargetLine) gets a band
 // across gutter and code (`.is-target`).
-function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null) {
+function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null, lineLinks = false) {
   const lineCount = content.split('\n').length
   const target = state.bundleSourceTargetLine
   const targetLine = target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
+  const targetEnd = targetLine == null ? null : Math.max(target.end ?? targetLine, targetLine)
   const digits = String(lineCount).length
   const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
   const cacheKey = `${details?.integrity ?? ''}\0${path}`
@@ -714,7 +724,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
         const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
         const isActive = entries && state.bundleSourceFindingIdx != null
           && entries.some((e) => e.idx === state.bundleSourceFindingIdx)
-        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false, 'is-target': ln === targetLine })} data-line=${ln}>
+        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false, 'is-target': targetLine != null && ln >= targetLine && ln <= targetEnd })} data-line=${ln}>
           ${entries
             ? html`<button
                 type="button"
@@ -724,7 +734,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
                 aria-label=${`${entries.length} issues on line ${ln}`}
               ></button>`
             : html`<span class="bundle-source-dot-placeholder"></span>`}
-          <span class="bundle-source-lineno-num">${ln}</span>
+          <span class="bundle-source-lineno-num" data-bundle-source-line=${lineLinks ? ln : nothing}>${ln}</span>
         </div>`
       })}
     </aside>
@@ -831,10 +841,10 @@ function renderBundleSourceBar(path, history = null) {
 
 // Code wrap + finding side panel — the viewer body every source
 // surface (modal, Code slide main pane, Search sidebar) renders.
-function renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines = null) {
+function renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines = null, lineLinks = false) {
   return html`<div class="bundle-source-code-wrap">
         ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, details, lineFindings, matchLines)
+          ? renderBundleSourceLines(content, path, details, lineFindings, matchLines, lineLinks)
           : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
       </div>
       ${renderBundleSourceFindingPanel(fileFindings)}`
@@ -1339,8 +1349,9 @@ function renderBundleCodeView(details, entry = null) {
     ? new Map([...issueIndex].filter(([file]) => defaultSources.has(file)))
     : issueIndex
   let path = state.bundleSourceFile
-  // A managed link's file, now that the sources it numbers have loaded. A
-  // number past the last file falls back to the usual pick.
+  // A managed link's file and lines, now that the sources it numbers have
+  // loaded. A number past the last file falls back to the usual pick; lines
+  // past the file's last mark none.
   const request = state.bundleCodeFileRequest
   if (request?.bundle === state.selectedBundle) {
     state.bundleCodeFileRequest = null
@@ -1349,6 +1360,11 @@ function renderBundleCodeView(details, entry = null) {
       path = linked
       state.bundleSourceFile = linked
       revealBundleCodeCurrent()
+      const end = request.endLine ?? request.line
+      state.bundleSourceTargetLine = request.line && end <= bundleSourceLines(sources.get(linked))
+        ? { bundle: details.integrity, path: linked, line: request.line, ...(end > request.line ? { end } : {}) }
+        : null
+      if (state.bundleSourceTargetLine) revealBundleSourceLine(request.line)
     }
   }
   // Any selection that isn't the untouched auto-pick (the user
@@ -1394,10 +1410,10 @@ function renderBundleCodeView(details, entry = null) {
     openBundleTreeAncestors(path, prefix)
     _bundleTreeCurrentPath = path
   }
-  // Keep a managed bundle's URL on the file shown, however it was picked.
-  // The other writers of its route add the file through managedCodeFile.
+  // Keep a managed bundle's URL on the file shown, however it was picked,
+  // and the lines marked in it. Its other writers use the same location.
   if (path && entry?.managedId && isManagedUiMode()) {
-    managedHistory?.replaceCodeRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'code', codeFiles.numbers.get(path)))
+    managedHistory?.replaceCodeRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'code', managedCodeLocation(state)))
   }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
@@ -1532,7 +1548,8 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
       </span>` : nothing}
     </header>
     <div class="bundle-code-main-body">
-      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings)}
+      ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
+        Boolean(entry?.managedId) && isManagedUiMode() && !getPublicShare())}
     </div>`
 }
 

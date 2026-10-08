@@ -68,6 +68,13 @@ export function bundleSourcesAsMap(details) {
   return result
 }
 
+// A source's lines as the viewer numbers them: one more than its newlines.
+export function bundleSourceLines(content) {
+  let lines = 1
+  for (let at = content.indexOf('\n'); at !== -1; at = content.indexOf('\n', at + 1)) lines++
+  return lines
+}
+
 // A bundle's sources in path order, and each one's number in it from 1: how a
 // managed Code link names a file. The content hash that names a bundle fixes
 // its sources, so the numbers stay put.

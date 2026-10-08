@@ -159,7 +159,8 @@ test('inactive bundle refreshes do not start catalogue reads or alter another pa
 test('a refresh keeps the number of the file the Code tab shows', async () => {
   const f = await fixture({ teamId: 'one' })
   Object.assign(f.state, { bundleSourceFile: 'lib.js', bundleCodeFileRequest: null,
+    bundleSourceTargetLine: { bundle: bundle.integrity, path: 'lib.js', line: 3, end: 5 },
     bundleDetails: { ...f.state.bundleDetails, kind: 'stasis', bundle: { sources: new Map([['lib.js', 'lib'], ['index.js', 'source']]) } } })
   assert.equal(await f.refresh([team('one'), team('two')]), true)
-  assert.equal(f.browser.location.pathname, '/team/one/bundle/bundle/code/2')
+  assert.equal(f.browser.location.pathname + f.browser.location.hash, '/team/one/bundle/bundle/code/2#L3-L5')
 })

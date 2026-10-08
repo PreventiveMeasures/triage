@@ -113,6 +113,14 @@ export function createManagedHistory(browser) {
       return
     }
     if ((!event.state?.[KEY] || event.state[KEY] === generation) && extractFindingRef(browser.location.hash)) { onHash(); return }
+    // A pasted or typed line link to the open file changes only the
+    // fragment, in an entry of its own. Adopt it, and let the Code tab
+    // follow the hash, instead of reopening the bundle.
+    if (!event.state?.[KEY]) {
+      const route = routeAt(new URL(browser.location.href))
+      const current = currentPath == null ? null : parseManagedRoute(new URL(currentPath, browser.location.href))
+      if (route?.file != null && route.file === current?.file && sameBundleCode(route, current)) { replace(managedRoutePath(route)); return }
+    }
     const route = event.state?.[KEY] === generation ? routeAt(new URL(browser.location.href)) : null
     void navigate(route ?? { view: 'home' }, { pop: true })
   }

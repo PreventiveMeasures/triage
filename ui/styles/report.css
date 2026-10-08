@@ -2484,8 +2484,10 @@ body.report-fullscreen {
   color: var(--accent);
   font-weight: 600;
 }
-/* Line a clicked search result opened — a band across gutter and
-   code. The code is one <pre> with no per-line boxes, so the band is
+/* Managed Code's line numbers mark lines for a link to them. */
+.bundle-source-lineno-num[data-bundle-source-line]:hover { color: var(--text); }
+/* Line a clicked search result opened, or managed Code's line link
+   marks (each line of a range) — a band across gutter and code. The code is one <pre> with no per-line boxes, so the band is
    the gutter row's own border-image pushed right by its outset: it
    follows the row's line box (rows align with code lines, see
    above), and outset is ink overflow, so it neither shifts layout nor

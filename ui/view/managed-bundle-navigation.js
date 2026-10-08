@@ -9,24 +9,32 @@ export function managedBundleEntry(bundle) {
 
 // Keep the clicked team when a bundle belongs to several teams. Manage can
 // also open an upload that has no accessible team (including unattached ones).
-// `file` numbers the Code tab's open file, from 1 (see managedRoutePath).
-export function managedBundleRoute(teams, entry, teamId, bundleTab = 'overview', file = null) {
+// `code` locates the Code tab's open file, `{ file, line, endLine }`, numbered
+// from 1 (see managedRoutePath).
+export function managedBundleRoute(teams, entry, teamId, bundleTab = 'overview', code = null) {
   if (!entry?.managedId) return null
   const team = teams.find(candidate => candidate.id === teamId && candidate.bundles?.some(bundle => bundle.id === entry.managedId))
   if (teamId != null && !team) return null
-  return managedRouteForIds({ view: 'bundles', teamId: team?.id ?? null, bundleId: entry.managedId, bundleTab, ...(file == null ? {} : { file }) },
+  return managedRouteForIds({ view: 'bundles', teamId: team?.id ?? null, bundleId: entry.managedId, bundleTab, ...code },
     teams, [{ id: entry.managedId, slug: entry.slug }])
 }
 
-// The number a route for the open bundle gives its Code tab's file, so a
-// rewrite of that route keeps it: the file shown, or while the sources a link
-// numbers still load, the file it asked for.
-export function managedCodeFile(state, tab = state.bundleDetailsTab) {
+// Where a route for the open bundle puts its Code tab, so a rewrite of that
+// route keeps it: the file shown, by number, with its marked lines, or while
+// the sources a link numbers still load, the file and lines it asked for.
+export function managedCodeLocation(state, tab = state.bundleDetailsTab) {
   if (tab !== 'code') return null
   const request = state.bundleCodeFileRequest
-  if (request?.bundle === state.selectedBundle) return request.file
+  if (request?.bundle === state.selectedBundle) {
+    const { bundle: _bundle, ...location } = request
+    return location
+  }
   if (!state.bundleSourceFile || state.bundleDetails?.integrity !== state.selectedBundle) return null
-  return bundleSourceOrder(bundleSourcesAsMap(state.bundleDetails)).numbers.get(state.bundleSourceFile) ?? null
+  const file = bundleSourceOrder(bundleSourcesAsMap(state.bundleDetails)).numbers.get(state.bundleSourceFile)
+  if (file == null) return null
+  const target = state.bundleSourceTargetLine
+  if (target?.bundle !== state.selectedBundle || target.path !== state.bundleSourceFile) return { file }
+  return { file, line: target.line, ...(target.end > target.line ? { endLine: target.end } : {}) }
 }
 
 export function managedTeamBundleEntries(teams) {
