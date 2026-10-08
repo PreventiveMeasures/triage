@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import '../ui/view/frontend-install.js'
+import '../ui/view/graph/size-flow.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG } from '../ui/view/icons.js'
 
 // The shared tooltip is a manual popover (so it shows above modal
@@ -13,6 +15,8 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
   let open = false
   const classes = new Set()
   const listeners = {}
+  const bodyListeners = {}
+  const windowListeners = {}
   let text = ''
   const node = {
     id: '', style: {}, offsetWidth: 100, offsetHeight: 32, children: [],
@@ -29,8 +33,8 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
   globalThis.document = { addEventListener(type, listener) { listeners[type] = listener }, createElement: () => {
     if (!created) { created = true; return node }
     return { children: [], append(child) { this.children.push(child) } }
-  }, body: { append() {}, addEventListener() {} } }
-  globalThis.window = { innerWidth: 1000, innerHeight: 800 }
+  }, body: { append() {}, addEventListener(type, listener) { bodyListeners[type] = listener } } }
+  globalThis.window = { innerWidth: 1000, innerHeight: 800, addEventListener(type, listener) { windowListeners[type] = listener } }
   try {
     const { showTooltip, hideTooltip, scheduleTooltip, installGlobalTooltipListener, installShadowTooltipListener } = await import('../ui/view/tooltip.js')
     const target = { dataset: { tooltip: 'hello' } }
@@ -252,6 +256,138 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       innerListeners.mouseout({ ...event, relatedTarget: null })
       nested.mock.timers.tick(100)
       assert.equal(open, false, 'leaving before the delay cancels the tooltip')
+    })
+    await t.test('nested roots and child transitions share one uninterrupted hover delay', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const rootListeners = {}
+      const root = { addEventListener(type, listener) { rootListeners[type] = listener } }
+      installShadowTooltipListener(root)
+      const bar = { nodeType: 1, dataset: { tooltip: 'entry.js' }, closest() { return this }, contains: child => child === rect }
+      const rect = { nodeType: 1, dataset: {}, closest: () => bar }
+      const event = { composedPath: () => [rect, bar, root], target: rect, relatedTarget: rect }
+      rootListeners.mouseover(event)
+      nested.mock.timers.tick(60)
+      rootListeners.mouseout(event)
+      rootListeners.mouseover(event)
+      bodyListeners.mouseout(event)
+      bodyListeners.mouseover(event)
+      nested.mock.timers.tick(40)
+      assert.equal(open, true, 'moving over children or reaching an outer listener does not postpone the tooltip')
+      assert.equal(node.textContent, 'entry.js')
+      const next = { nodeType: 1, dataset: { tooltip: 'dep.js' } }
+      rootListeners.mouseover({ composedPath: () => [next, root] })
+      assert.equal(open, false, 'the previous tooltip closes while the next hover is pending')
+      nested.mock.timers.tick(100)
+      assert.equal(node.textContent, 'dep.js')
+      rootListeners.mouseout({ composedPath: () => [next, root], relatedTarget: null })
+      assert.equal(open, false)
+    })
+    await t.test('interaction cancels both visible and pending tooltips without reopening during a drag', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const row = { dataset: { tooltip: 'hovered row' } }
+      const dismiss = [listeners.pointerdown, listeners.wheel, listeners.scroll, () => listeners.keydown({ key: 'Escape' }), windowListeners.blur]
+      for (const action of dismiss) {
+        scheduleTooltip(row)
+        nested.mock.timers.tick(50)
+        action()
+        nested.mock.timers.tick(100)
+        assert.equal(open, false, 'interaction cancels a pending tooltip')
+        showTooltip(row)
+        action()
+        assert.equal(open, false, 'interaction closes a visible tooltip')
+      }
+      const rootListeners = {}
+      const root = { addEventListener(type, listener) { rootListeners[type] = listener }, contains: el => el === row }
+      installShadowTooltipListener(root)
+      showTooltip(row)
+      rootListeners.scroll()
+      assert.equal(open, false, 'scrolling a shadow sidebar closes its tooltip')
+      rootListeners.mouseover({ buttons: 1, composedPath: () => [row, root] })
+      nested.mock.timers.tick(100)
+      assert.equal(open, false, 'dragging across elements does not open tooltips')
+    })
+    await t.test('removed or newly ineligible targets never show after the delay', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const row = { dataset: { tooltip: 'old node' }, isConnected: true }
+      scheduleTooltip(row)
+      row.isConnected = false
+      nested.mock.timers.tick(100)
+      assert.equal(open, false)
+      row.isConnected = true
+      let allowed = true
+      scheduleTooltip(row, { gate: () => allowed })
+      allowed = false
+      nested.mock.timers.tick(100)
+      assert.equal(open, false, 'a drag starting during the hover delay suppresses it')
+      scheduleTooltip(row)
+      showTooltip({ dataset: { tooltip: 'new tooltip' } })
+      nested.mock.timers.tick(100)
+      assert.equal(node.textContent, 'new tooltip', 'a pending tooltip cannot replace a newer immediate one')
+      hideTooltip()
+    })
+    await t.test('component invalidation cancels its tooltip without touching another surface', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const row = { dataset: { tooltip: 'graph node' } }
+      const root = { contains: el => el === row }
+      const otherRoot = { contains: () => false }
+      scheduleTooltip(row)
+      hideTooltip(otherRoot)
+      nested.mock.timers.tick(100)
+      assert.equal(open, true)
+      hideTooltip(otherRoot)
+      assert.equal(open, true)
+      hideTooltip(root)
+      assert.equal(open, false)
+      scheduleTooltip(row)
+      hideTooltip(root)
+      nested.mock.timers.tick(100)
+      assert.equal(open, false, 'replacing a graph also cancels its pending hover')
+    })
+    await t.test('Size flow handles internal hovers and cancels them on removal and reconnect', nested => {
+      nested.mock.timers.enable({ apis: ['setTimeout'] })
+      const previousObserver = globalThis.ResizeObserver
+      globalThis.ResizeObserver = class { observe() {} disconnect() {} }
+      const Flow = customElements.get('size-flow'), flow = new Flow()
+      const rootListeners = {}, stage = new EventTarget()
+      const first = { nodeType: 1, dataset: { tooltip: 'entry.js' } }
+      const second = { nodeType: 1, dataset: { tooltip: 'dep.js' } }
+      const root = flow.renderRoot = {
+        addEventListener(type, listener) { rootListeners[type] = listener },
+        querySelector: () => stage,
+        contains: el => el === first || el === second,
+      }
+      const over = el => rootListeners.mouseover({ composedPath: () => [el, root] })
+      try {
+        flow.connectViewport()
+        over(first)
+        nested.mock.timers.tick(100)
+        assert.equal(node.textContent, 'entry.js')
+        rootListeners.mouseout({ composedPath: () => [first, root], relatedTarget: second })
+        over(second)
+        nested.mock.timers.tick(100)
+        assert.equal(node.textContent, 'dep.js', 'internal transitions work without reaching graph-layout')
+        over(first)
+        flow.startPan({ button: 0, pointerId: 1, clientX: 10, clientY: 20 })
+        nested.mock.timers.tick(100)
+        assert.equal(open, false, 'the component gate cancels a hover when a drag starts')
+        flow.endPan({ pointerId: 1 })
+        over(first)
+        nested.mock.timers.tick(100)
+        assert.equal(open, true)
+        flow.disconnectedCallback()
+        assert.equal(open, false, 'removing the component closes its tooltip')
+        const listener = rootListeners.mouseover
+        flow.connectViewport()
+        assert.equal(rootListeners.mouseover, listener, 'reconnecting does not duplicate listeners')
+        over(second)
+        flow.disconnectedCallback()
+        nested.mock.timers.tick(100)
+        assert.equal(open, false, 'removing the component also cancels a pending hover')
+      } finally {
+        hideTooltip()
+        if (previousObserver) globalThis.ResizeObserver = previousObserver
+        else delete globalThis.ResizeObserver
+      }
     })
   } finally {
     globalThis.document = originalDocument

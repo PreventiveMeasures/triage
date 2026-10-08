@@ -31,7 +31,7 @@ function mounted(t, width = 1000, height = 400) {
     ['.flow-viewport', stage], ['.flow-chart', { style: { setProperty(key, value) { this[key] = value } } }], ['.g2-zoom-pct', {}],
     ['[aria-label="Zoom in"]', {}], ['[aria-label="Zoom out"]', {}],
   ])
-  flow.renderRoot = { querySelector: selector => elements.get(selector) ?? null }
+  flow.renderRoot = Object.assign(new EventTarget(), { querySelector: selector => elements.get(selector) ?? null, contains: () => false })
   flow.graph = fixture(); flow.willUpdate(new Map([['graph', null]])); flow.updated()
   t.after(() => {
     flow.disconnectedCallback()

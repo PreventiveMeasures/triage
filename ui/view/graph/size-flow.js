@@ -1,5 +1,6 @@
 import { guard } from 'lit/directives/guard.js'
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
+import { hideTooltip, installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowConnector, sizeFlowFilterSize, sizeFlowLargeThreshold } from './size-flow-model.js'
@@ -51,6 +52,7 @@ class SizeFlow extends LitElement {
     }
     if (this.focus && sizeFlowFilterSize(this.model.byId.get(this.focus)) < this.minSize) this.focus = null
     if (rebuild || this.layoutFocus !== this.focus || this.layoutMinSize !== this.minSize) {
+      if (this.renderRoot) hideTooltip(this.renderRoot)
       this.layout = fitSizeFlowWidth(layoutSizeFlow(this.model, { focus: this.focus, minSize: this.minSize }), availableWidth(this.width), this.height)
       this.layoutFocus = this.focus
       this.layoutMinSize = this.minSize
@@ -82,6 +84,9 @@ class SizeFlow extends LitElement {
   connectViewport() {
     const stage = this.renderRoot.querySelector('.flow-viewport')
     if (!stage || this.events) return
+    // Internal hover transitions are trimmed at this shadow boundary; the
+    // graph-layout listener only sees entry/exit of the whole component.
+    installShadowTooltipListener(this.renderRoot, { gate: () => !this.drag })
     this.events = new AbortController()
     const { signal } = this.events
     stage.addEventListener('wheel', e => this.wheel(e), { passive: false, signal })
@@ -101,6 +106,7 @@ class SizeFlow extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback()
+    hideTooltip(this.renderRoot)
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
     this.events?.abort(); this.events = null
@@ -132,7 +138,7 @@ class SizeFlow extends LitElement {
       this.pan.x = box.width / 2 - (this.width / 2 - this.pan.x) * layout.width / this.layout.width
       this.pan.y += (box.height - this.height) / 2
     }
-    if (layout !== this.layout) { this.layout = layout; this.requestUpdate() }
+    if (layout !== this.layout) { hideTooltip(this.renderRoot); this.layout = layout; this.requestUpdate() }
     this.width = box.width; this.height = box.height
     if (this.needsFit || this.fitted) { this.fit(); return }
     // Content and viewport changes can raise the floor. Clamp immediately,
@@ -147,7 +153,7 @@ class SizeFlow extends LitElement {
     const box = this.renderRoot.querySelector('.flow-viewport')?.getBoundingClientRect()
     if (!this.layout || !box || box.width <= 0 || box.height <= 0) return
     const layout = fitSizeFlowWidth(this.layout, availableWidth(box.width), box.height)
-    if (layout !== this.layout) { this.layout = layout; this.requestUpdate() }
+    if (layout !== this.layout) { hideTooltip(this.renderRoot); this.layout = layout; this.requestUpdate() }
     this.width = box.width; this.height = box.height
     this.zoom = this.fitScale()
     this.needsFit = false
@@ -212,7 +218,12 @@ class SizeFlow extends LitElement {
       zoomOut: this.renderRoot.querySelector('[aria-label="Zoom out"]'),
     }
     const { chart, label, zoomIn, zoomOut } = this.viewportElements
-    if (chart) { chart.style.transform = this.viewportTransform(); chart.style.setProperty('--flow-zoom', String(this.zoom)) }
+    if (chart) {
+      const transform = this.viewportTransform()
+      if (chart.style.transform !== transform) hideTooltip(this.renderRoot)
+      chart.style.transform = transform
+      chart.style.setProperty('--flow-zoom', String(this.zoom))
+    }
     const { min, max, percent } = this.zoomMetrics()
     if (label) label.textContent = `${percent}%`
     if (zoomIn) zoomIn.disabled = this.zoom >= max * .9999
