@@ -389,7 +389,16 @@
   }
   .bundles-slide-header:not(.boxed) .bundles-slide-bar { transform: translateY(1px); }
   .bundles-slide-header:not(.boxed) .bundles-scan-button { margin-right: 10px; }
-  .bundles-slide-header .bundles-slide-title { max-width: 20rem; margin-right: auto; }
+  /* Unboxed, the name counts at most 20rem toward the bar's width, so a
+     long name ellipsizes instead of pushing the bar out of the titlebar.
+     The title then grows into the free space up to the full name; only
+     what is left separates it from the tabs. */
+  .bundles-slide-header:not(.boxed) .bundles-slide-title {
+    flex: 1 1 auto;
+    width: calc-size(max-content, min(size, 20rem));
+    max-width: max-content;
+    margin-right: auto;
+  }
   .bundles-slide-header .bundles-slide-tabs {
     max-width: 100%;
     overflow-x: auto;
@@ -410,7 +419,6 @@
     border: 1px solid var(--border);
     box-shadow: var(--shadow-glass);
   }
-  .bundles-slide-header.boxed .bundles-slide-title { max-width: none; }
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
