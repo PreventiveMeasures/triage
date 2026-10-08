@@ -2523,7 +2523,8 @@ body.report-fullscreen {
 .bundle-source-link:hover { background: var(--surface-active); text-decoration-style: solid; }
 .bundle-source-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 /* Node.js docs link at the end of a line that imports one built-in module.
-   Sized under the line height, so the row keeps the gutter's rhythm. */
+   Sized under the line height, so the row keeps the gutter's rhythm. The
+   label is generated content, so it stays out of the source text. */
 .source-node-doc {
   margin-left: 1.5ch;
   border-radius: var(--ui-radius, 2px);
@@ -2531,8 +2532,10 @@ body.report-fullscreen {
   font-style: normal;
   user-select: none;
   & svg { width: 1em; height: 1em; vertical-align: -.15em; fill: currentcolor; }
+  &::after { content: 'Node.js'; margin-left: .5ch; }
 }
-.source-node-doc:hover { color: var(--accent); }
+/* Node.js brand green, as Simple Icons gives it. */
+.source-node-doc:hover { color: #5fa04e; }
 .source-node-doc:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 /* Prism token theme. The palette is theme.css's `--code-*` custom
