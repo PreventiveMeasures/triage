@@ -16,6 +16,8 @@ import { html, nothing } from 'lit'
 import { store } from '@rray/frontend/state-management'
 import { getPublicShare } from '../../client/managed/public-share.js'
 import { loadManagedBundle } from './client-managed.js'
+import { managedBundleRoute } from './managed-bundle-navigation.js'
+import { managedHistory } from './managed-history.js'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
@@ -1278,6 +1280,20 @@ function pickDefaultBundleCodeFile(details, sources, issueIndex) {
   return largest
 }
 
+// A bundle's sources in path order, and each one's number in it from 1: the
+// order a managed link numbers the Code tab's files by. The content hash
+// that names a bundle fixes its sources, so the numbers stay put.
+const _bundleCodeFiles = new WeakMap()
+function bundleCodeFiles(sources) {
+  let files = _bundleCodeFiles.get(sources)
+  if (!files) {
+    const paths = [...sources.keys()].toSorted()
+    files = { paths, numbers: new Map(paths.map((path, index) => [path, index + 1])) }
+    _bundleCodeFiles.set(sources, files)
+  }
+  return files
+}
+
 // Code slide — directory-tree rail on the left + the same
 // source-viewer body (line-numbered gutter, prism highlight,
 // per-line dot + side panel) on the right. Reuses
@@ -1301,7 +1317,8 @@ function renderBundleCodeView(details, entry = null) {
     _bundleTreeMapBundle = state.selectedBundle
     _bundleTreeCurrentPath = null
   }
-  const allPaths = [...sources.keys()].toSorted()
+  const codeFiles = bundleCodeFiles(sources)
+  const allPaths = codeFiles.paths
   const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
   const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules, allPaths)
   const stripped = allPaths.map(p => stripPathPrefix(p, prefix))
@@ -1322,6 +1339,18 @@ function renderBundleCodeView(details, entry = null) {
     ? new Map([...issueIndex].filter(([file]) => defaultSources.has(file)))
     : issueIndex
   let path = state.bundleSourceFile
+  // A managed link's file, now that the sources it numbers have loaded. A
+  // number past the last file falls back to the usual pick.
+  const request = state.bundleCodeFileRequest
+  if (request?.bundle === state.selectedBundle) {
+    state.bundleCodeFileRequest = null
+    const linked = allPaths[request.file - 1]
+    if (linked) {
+      path = linked
+      state.bundleSourceFile = linked
+      revealBundleCodeCurrent()
+    }
+  }
   // Any selection that isn't the untouched auto-pick (the user
   // clicked a file, came in via an Issues click, or switched
   // bundles) ends the auto-pick's lifecycle — the upgrade below
@@ -1364,6 +1393,10 @@ function renderBundleCodeView(details, entry = null) {
   if (path !== _bundleTreeCurrentPath) {
     openBundleTreeAncestors(path, prefix)
     _bundleTreeCurrentPath = path
+  }
+  // Keep a managed bundle's URL on the file shown, however it was picked.
+  if (path && entry?.managedId && isManagedUiMode()) {
+    managedHistory?.replaceCodeRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'code', codeFiles.numbers.get(path)))
   }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline

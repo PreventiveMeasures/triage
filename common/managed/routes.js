@@ -34,7 +34,10 @@ export function managedRoutePath(route) {
     const tab = route.bundleTab ?? 'overview'
     if (!BUNDLE_TABS.has(tab)) return null
     const parent = route.teamSlug ? `/team/${route.teamSlug}` : '/manage'
-    return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}`
+    // Code names its open file by number: 1-based in the bundle's sorted
+    // sources, which its content hash fixes. Never by path from the bundle.
+    const file = tab === 'code' && Number.isSafeInteger(route.file) && route.file > 0 ? `/${route.file}` : ''
+    return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}${file}`
   }
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
@@ -72,10 +75,12 @@ export function parseManagedRoute(url) {
           ...(url.searchParams.get('mode') === 'dependencies' ? { scanMode: 'dependencies' } : {}) } : {} : {}),
     }
   }
-  const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+))?$/u.exec(path)
+  const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+)(?:\/([1-9]\d*))?)?$/u.exec(path)
   if (bundle) {
     const bundleTab = bundle[3] ?? 'overview'
-    return BUNDLE_TABS.has(bundleTab) ? { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab } : null
+    const file = bundle[4] == null ? null : Number(bundle[4])
+    if (!BUNDLE_TABS.has(bundleTab) || file != null && (bundleTab !== 'code' || !Number.isSafeInteger(file))) return null
+    return { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab, ...(file == null ? {} : { file }) }
   }
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }

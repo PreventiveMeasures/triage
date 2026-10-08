@@ -49,6 +49,12 @@ test('all bundle tabs round-trip exact slugs and the clicked team, including Man
       assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams, [a]),
         { view: 'bundles', bundleTab: tab, teamId: team?.id ?? null, bundleId: a.id })
     }
+    // Code numbers its open file from 1, never naming its path.
+    const route = managedBundleRoute(teams, managedBundleEntry(a), team?.id, 'code', 4)
+    const path = managedRoutePath(route)
+    assert.equal(path, `${team ? `/team/${team.slug}` : '/manage'}/bundle/a/code/4`)
+    assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams, [a]),
+      { view: 'bundles', bundleTab: 'code', file: 4, teamId: team?.id ?? null, bundleId: a.id })
   }
   assert.equal(resolveManagedRoute({ view: 'bundles', teamSlug: 'first', bundleSlug: a.id }, teams), null, 'UUIDs are not slug aliases')
   assert.equal(resolveManagedRoute({ view: 'bundles', teamSlug: 'other', bundleSlug: a.slug }, teams), null, 'bundle must be in the clicked team')

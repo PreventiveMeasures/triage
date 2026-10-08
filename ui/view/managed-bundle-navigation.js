@@ -8,11 +8,12 @@ export function managedBundleEntry(bundle) {
 
 // Keep the clicked team when a bundle belongs to several teams. Manage can
 // also open an upload that has no accessible team (including unattached ones).
-export function managedBundleRoute(teams, entry, teamId, bundleTab = 'overview') {
+// `file` numbers the Code tab's open file, from 1 (see managedRoutePath).
+export function managedBundleRoute(teams, entry, teamId, bundleTab = 'overview', file = null) {
   if (!entry?.managedId) return null
   const team = teams.find(candidate => candidate.id === teamId && candidate.bundles?.some(bundle => bundle.id === entry.managedId))
   if (teamId != null && !team) return null
-  return managedRouteForIds({ view: 'bundles', teamId: team?.id ?? null, bundleId: entry.managedId, bundleTab },
+  return managedRouteForIds({ view: 'bundles', teamId: team?.id ?? null, bundleId: entry.managedId, bundleTab, ...(file == null ? {} : { file }) },
     teams, [{ id: entry.managedId, slug: entry.slug }])
 }
 
