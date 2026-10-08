@@ -19,6 +19,7 @@ import { loadManagedBundle } from './client-managed.js'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
+import { ref } from 'lit/directives/ref.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
@@ -28,6 +29,7 @@ import { bundleFileGithub } from './bundle-file-github.js'
 import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
+import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
@@ -601,6 +603,12 @@ const packageIconFor = ecosystem => ecosystem === 'composer' ? sourceComposerIco
 
 // Copy glyph for the Code slide's copy-path button — same two-rect
 // shape and stroke weight as the finding card's copy action.
+// Wrap toggle for a source viewer's bar. Hidden until source-wrap.js finds
+// wrapping makes a difference to the open file at the viewer's width.
+const WRAP_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3.5h12M2 8h9a2.5 2.5 0 0 1 0 5H8.5M10 11.5 8.5 13l1.5 1.5M2 13h3.5"/></svg>`
+const renderSourceWrapToggle = () => html`<button type="button" class="bundle-source-wrap-toggle" data-bundle-source-wrap hidden
+  aria-pressed=${state.bundleSourceWrap ? 'true' : 'false'} aria-label="Wrap lines" data-tooltip="Wrap lines">${WRAP_ICON}</button>`
+
 const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
@@ -682,7 +690,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
     })()
   }
   const highlighted = _bundleHighlightCache.get(cacheKey)
-  return html`<div class="bundle-source-lines" style=${styleMap({ '--lineno-width': `${digits}ch` })}>
+  return html`<div class=${classMap({ 'bundle-source-lines': true, 'is-wrapped': state.bundleSourceWrap })} style=${styleMap({ '--lineno-width': `${digits}ch` })} ${ref(watchSourceWrap)}>
     <aside class="bundle-source-lineno-col" aria-hidden="true">
       ${Array.from({ length: lineCount }, (_, i) => {
         const ln = i + 1
@@ -795,6 +803,7 @@ function renderBundleSourceBar(path, history = null) {
   return html`<header class="bundle-source-bar">
       <div class="bundle-source-title mono" data-tooltip-truncated data-tooltip=${path}>${path}</div>
       ${history?.files.length > 1 ? renderBundleCodeFileNav(history) : nothing}
+      ${renderSourceWrapToggle()}
       <button
         type="button"
         class="bundle-source-close"
@@ -1462,6 +1471,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
         data-tooltip-version=${github.package?.version ?? nothing}
       >${unsafeHTML(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${packageIconFor(github.package.ecosystem)}</span>` : nothing}</a>` : nothing}
       <span class="bundle-code-main-spacer"></span>
+      ${renderSourceWrapToggle()}
       ${typeof content === 'string'
         ? html`<span class="bundle-code-main-stats">${lineCount.toLocaleString()} ${lineCount === 1 ? 'line' : 'lines'} · ${formatBytes(byteSize)}</span>`
         : nothing}

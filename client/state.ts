@@ -8,6 +8,7 @@ export const SEVERITY_MODE_KEY = 'deepview.severityMode'
 export const REPO_URLS_KEY = 'deepview.repoUrls'
 export const FOCUS_SPLIT_KEY = 'deepview.focusSplit'
 export const KANBAN_DETAIL_FULLSCREEN_KEY = 'deepview.kanbanDetailFullscreen'
+export const BUNDLE_SOURCE_WRAP_KEY = 'deepview.bundleSourceWrap'
 const VALID_SEVERITY_MODES = new Set(['corrected', 'original'])
 
 // Focus view: where the divider between the finding-card and the
@@ -132,6 +133,7 @@ export interface State {
   bundleSourceFile: string | null
   bundleSourceFindingIdx: number | null
   bundleSourceTargetLine: { bundle: string | null; path: string; line: number } | null
+  bundleSourceWrap: boolean
   bundleOverviewFilesSort: 'name' | 'size'
   bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
@@ -261,6 +263,13 @@ function readSavedSeverityMode(): SeverityMode | null {
 function readSavedKanbanDetailFullscreen(): boolean | null {
   try {
     const v = localStorage.getItem(KANBAN_DETAIL_FULLSCREEN_KEY)
+    return v === 'true' ? true : v === 'false' ? false : null
+  } catch { return null }
+}
+
+function readSavedBundleSourceWrap(): boolean | null {
+  try {
+    const v = localStorage.getItem(BUNDLE_SOURCE_WRAP_KEY)
     return v === 'true' ? true : v === 'false' ? false : null
   } catch { return null }
 }
@@ -627,6 +636,9 @@ export const state: State = store<State>({
   // in the source viewer until another file or line is opened. Scoped
   // to its bundle and file, so it never marks a different source.
   bundleSourceTargetLine: null,
+  // Whether the source viewer wraps long lines. A reading preference,
+  // persisted like kanbanDetailFullscreen.
+  bundleSourceWrap: readSavedBundleSourceWrap() ?? false,
   bundleOverviewFilesSort: 'name',
   bundleOverviewPackagesSort: 'size',
   bundleCodeHistory: null,

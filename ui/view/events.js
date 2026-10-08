@@ -5,7 +5,7 @@ import { managedHistory } from './managed-history.js'
 import { openFindingHistoryDialog, openManagedIssueDialog } from './client-managed.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { renderHighlighted } from './render-finding.js'
-import { KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { BUNDLE_SOURCE_WRAP_KEY, KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, depsDirName, evidenceMarkdown, findingUrl, handoffBlock, isModule, lineRange, revalidationShown } from './format.js'
 import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
@@ -16,6 +16,7 @@ import { bundleFileHistory, stepBundleFile, visitBundleFile } from './bundle-cod
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { startViewTransition } from './render-transition.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
+import { keepSourceLine } from './source-wrap.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFindingSourceDialog } from './dialogs/finding-source-dialog.js'
@@ -275,6 +276,17 @@ function resetBundleSourceScroll(focus = false) {
 // #report (Code and finding panels) and the separate source overlay slot.
 // Return true when this delegate handled the click.
 function handleBundleSourceClick(e) {
+  const wrapToggle = e.target.closest('[data-bundle-source-wrap]')
+  if (wrapToggle) {
+    // Rewrapping moves every line below the first that changes, so put
+    // back the one at the top of the code once the gutter has followed.
+    const restore = keepSourceLine(wrapToggle)
+    state.bundleSourceWrap = !state.bundleSourceWrap
+    try { localStorage.setItem(BUNDLE_SOURCE_WRAP_KEY, String(state.bundleSourceWrap)) } catch {}
+    render()
+    queueMicrotask(restore)
+    return true
+  }
   const historyButton = e.target.closest('[data-bundle-code-history]')
   if (historyButton) {
     const history = bundleFileHistory(state.bundleCodeHistory, state.bundleDetails?.integrity ?? null, state.bundleSourceFile)
