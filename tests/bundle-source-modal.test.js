@@ -249,6 +249,27 @@ test('Code package tooltips include recorded identities and counts even while fi
   }
 })
 
+test('Code package tooltips show the commit a recorded repository pins, as its files do', () => {
+  const entry = { name: 'commit.stasis', integrity: 'sha512-package-commit' }
+  const commit = 'c'.repeat(40)
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['node_modules/pinned', { name: 'pinned', version: '1.0.0', repo: { github: 'org/mono', directory: 'packages/pinned', commit }, files: { 'index.js': 'pinned' } }],
+    ['node_modules/manifest', { name: 'manifest', version: '1.0.0', files: { 'package.json': JSON.stringify({ repository: 'org/manifest' }), 'index.js': 'manifest' } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleSourceFile: 'node_modules/pinned/index.js', bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '',
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const html = renderText(renderBundlesList([entry]))
+  const rows = html.match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1].match(/<summary\b[^>]*>/gsu)
+  const row = name => rows.find(summary => summary.includes(`data-tooltip-package=${name}`))
+  assert.ok(row('pinned').includes('data-tooltip-repo=org/mono/packages/pinned'))
+  assert.ok(row('pinned').includes(`data-tooltip-commit=${commit}`), 'the package names its commit')
+  assert.ok(row('manifest').includes('data-tooltip-repo=org/manifest'))
+  assert.doesNotMatch(row('manifest'), /data-tooltip-commit=\S/u, 'a captured package.json pins no commit')
+  const header = html.match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
+  assert.ok(header.includes(`data-tooltip-commit=${commit}`), 'its file links at the same commit')
+})
+
 test('Code file header links a file to GitHub after copy where its package or bundle names a repository', () => {
   const entry = { name: 'github.stasis', integrity: 'sha512-file-github' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([
