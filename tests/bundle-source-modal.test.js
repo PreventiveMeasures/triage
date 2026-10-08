@@ -387,7 +387,7 @@ test('bundles without entry-point metadata keep their counts and Size without in
   }
 })
 
-test('managed bundle Overview shows the unpacked total of every file beside Size; local bundles do not', async () => {
+test('bundle Overview shows the unpacked total of every file beside Size for local and managed bundles', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-unpacked' }
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe])
   const full = { integrity: entry.integrity, kind: 'stasis', size: 999, bundle: Bundle.parse(new Bundle({
@@ -405,16 +405,18 @@ test('managed bundle Overview shows the unpacked total of every file beside Size
   for (const details of [full, cached]) {
     state.bundleDetails = details
     // 17 B of source, plus the 6 B SVG and the 7 B its base64 PNG decodes to.
-    const managed = renderText(renderBundlesList([{ ...entry, managedId: 'managed-bundle' }]))
-    assert.match(managed, /<dt>Size<\/dt><dd>999 B<\/dd>\s*<dt>Unpacked<\/dt><dd>30 B<\/dd>/u)
-    assert.doesNotMatch(renderText(renderBundlesList([entry])), /<dt>Unpacked<\/dt>/u)
+    for (const managedId of [undefined, 'managed-bundle']) {
+      assert.match(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Size<\/dt><dd>999 B<\/dd>\s*<dt>Unpacked<\/dt><dd>30 B<\/dd>/u)
+    }
   }
   // Sourcemap sources left without content have no size to add.
   const json = { version: 3, sources: ['src/a.js', 'src/b.js', 'src/missing.js'], sourcesContent: ['1234', '😀', null] }
-  state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 50, json }
-  assert.match(renderText(renderBundlesList([{ ...entry, managedId: 'managed-map' }])), /<dt>Size<\/dt><dd>50 B<\/dd>\s*<dt>Unpacked<\/dt><dd>8 B<\/dd>/u)
-  state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 50, json: { ...json, sourcesContent: [] } }
-  assert.doesNotMatch(renderText(renderBundlesList([{ ...entry, managedId: 'managed-map' }])), /<dt>Unpacked<\/dt>/u)
+  for (const managedId of [undefined, 'managed-map']) {
+    state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 50, json }
+    assert.match(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Size<\/dt><dd>50 B<\/dd>\s*<dt>Unpacked<\/dt><dd>8 B<\/dd>/u)
+    state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 50, json: { ...json, sourcesContent: [] } }
+    assert.doesNotMatch(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Unpacked<\/dt>/u)
+  }
 })
 
 test('the Overview Files header offers Name and Size ordering for local and cached managed bundles', async () => {
