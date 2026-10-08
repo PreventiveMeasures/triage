@@ -24,7 +24,7 @@ const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'g
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
   'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry', 'ensureSessionUploadKey'])
 // Session presence and upload keys change only their own rows.
-const UNLOCKED_WRITES = new Set(['sessionWithUser', 'ensureSessionUploadKey'])
+const UNLOCKED_WRITES = new Set(['sessionWithUser', 'viewSessionWithUser', 'ensureSessionUploadKey'])
 
 export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver): ManagedDb {
   const entries = Object.entries(methods).map(([name, method]) => {

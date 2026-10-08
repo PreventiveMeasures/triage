@@ -2,6 +2,7 @@ import { checkLinkReports } from './_managed-link-reports.js'
 import { checkRepositoryAliases } from './_managed-repository-aliases.js'
 import { checkManagedIssueFixes } from './_managed-issue-fixes.js'
 import { checkHiddenTeams } from './_managed-hidden-teams.js'
+import { checkViewSessions } from './_managed-view-sessions.js'
 import { checkBundleBuildConditions, checkBundleProvenance } from './_managed-bundle-provenance.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -184,6 +185,29 @@ test('Postgres adds upload keys to existing sessions, keeping the first stored k
   assert.equal(await upgraded.ensureSessionUploadKey('session', 'second'), 'first')
   assert.equal((await upgraded.sessionWithUser('session', 2)).session.uploadKey, 'first')
   assert.equal(await upgraded.ensureSessionUploadKey('missing', 'third'), null)
+})
+
+test('Postgres view sessions share their SQLite semantics', async t => {
+  const { db } = await database(t)
+  await checkViewSessions(db)
+})
+
+test('Postgres adds view sessions to existing session tables', async t => {
+  const { db, connect } = await database(t)
+  const admin = await db.upsertUser(identity(1), 1), viewed = await db.upsertUser(identity(2), 1)
+  await db.setUserRole(admin, 'admin')
+  await db.createSession({ id: 'session', userId: admin, csrfToken: 'csrf', expiresAt: 100 }, 1)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_session DROP COLUMN viewer_session; DELETE FROM managed_schema_version WHERE version = 24;') }
+  finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.equal((await upgraded.sessionWithUser('session', 2)).user.id, admin, 'existing sign-ins are kept')
+  assert.equal(await upgraded.createViewSession({ id: 'view', viewerSessionId: 'session', userId: viewed, csrfToken: 'view-csrf' }, 2), true)
+  assert.equal((await upgraded.viewSessionWithUser('view', 'session', 3)).user.id, viewed)
+  await upgraded.deleteSession('session')
+  assert.equal(await upgraded.viewSessionWithUser('view', 'session', 3), null)
 })
 
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {

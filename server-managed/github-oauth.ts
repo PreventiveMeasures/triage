@@ -7,6 +7,7 @@ import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedUser, UserTokens } from './db.ts'
 import { randomToken, safeEqual } from './crypto.ts'
 import { STATE_COOKIE, buildCookie, clearCookie, cookieName, createSession, parseCookies } from './session.ts'
+import { isViewing } from './view-as.ts'
 
 const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
 const GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token'
@@ -126,9 +127,11 @@ async function postToken(payload: Record<string, string>, now: number, fetchImpl
 // refreshed (when a refresh token is on file) and re-persisted. Null when there
 // is no token or it's expired and unrefreshable — the caller prompts re-login.
 // A 60s skew margin avoids handing back a token about to expire mid-request.
+// An admin viewing as another user never borrows that user's GitHub access.
 export async function ensureUserAccessToken(
   config: ManagedConfig, db: ManagedDb, userId: string, now: number, fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<string | null> {
+  if (isViewing()) return null
   const tokens = await db.getUserTokens(userId)
   if (tokens == null) return null
   if (tokens.expiresAt == null || tokens.expiresAt > now + 60_000) return tokens.accessToken

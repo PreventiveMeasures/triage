@@ -42,6 +42,43 @@ approve other users through **Manage → Users**, and assign team access through
 These approval rules apply to the managed service. Combined managed + E2E
 deployments retain the E2E service's separate authentication and permissions.
 
+## Viewing as another user
+
+To check what an account can access, an admin selects **View as** on that
+user's row in **Manage → Users**. The app reloads as that user: their role,
+teams, Dependencies and Security permissions, and pages apply unchanged. A
+sidebar banner names the viewed user until the admin selects **Stop**, or
+**Return to @admin** in the account menu, which reopens Users.
+
+Every write is refused while viewing, with `403 { "error": "view-only" }`,
+before a request body is read: triage, comments, issues, public links,
+uploads and all management changes. The app shows the refusal and restores
+the server's triage. Reads behave as for the viewed user, including the
+read-only `POST /api/reports/query`. Requests never use the viewed user's
+GitHub authorization, so data that needs it is omitted, as for a user who has
+not authorized GitHub: private pull request and issue status, repository
+browsing, discovery and issue creation. GitHub issue authorization is refused.
+A combined deployment's E2E requests are unaffected; they keep that service's
+own authentication.
+
+`POST /api/auth/view-as` with `{ "userId": "<id>" }` opens a view. It requires
+an admin session, same-origin access and CSRF, and refuses the admin's own ID.
+The view is a separate session row for the viewed user, tied to the admin's
+session and stored in its own `dvview` cookie (`__Host-dvview` when Secure)
+beside the session cookie. `SESSION_COOKIE_NAME` cannot use this or the OAuth
+state cookie names (`dvstate`, `dvissuestate`); startup fails if it does. `GET /api/auth/session` then returns the viewed
+user, the view's own CSRF token, and the admin as `viewer`. A view token is
+never accepted as a session cookie, and a view only resolves together with
+the admin session that opened it. `DELETE /api/auth/view-as`, with the view's
+CSRF token, ends the view; logging out ends both. A view also ends when the
+admin session expires or ends, or the admin loses the admin role, and does not
+return if the role is granted again. The next session probe then clears the
+cookie, while other requests with it are unauthenticated: they never fall back
+to the admin's own, writable session.
+
+Opening a view adds `viewed as <login>` to the admin's access history.
+Viewing does not update the viewed user's Last seen or Last activity.
+
 # Managed browser navigation
 
 ## Public workspace links

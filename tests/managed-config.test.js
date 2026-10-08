@@ -36,6 +36,18 @@ test('public workspace sharing requires exactly DEEPVIEW_ALLOW_SHARE=1', t => {
   }
 })
 
+test('the session cookie cannot take the name of another managed cookie', t => {
+  useEnv(t, {})
+  for (const name of ['dvstate', 'dvissuestate', 'dvview', '__Host-dvstate', '__Host-dvissuestate', '__Host-dvview']) {
+    process.env.SESSION_COOKIE_NAME = name
+    assert.throws(() => loadManagedConfig(), /SESSION_COOKIE_NAME=.* is reserved/u, name)
+  }
+  for (const name of ['dvsid', '__Host-dvsid', 'dvviewer', '__Host-session']) {
+    process.env.SESSION_COOKIE_NAME = name
+    assert.equal(loadManagedConfig().sessionCookieName, name)
+  }
+})
+
 test('upstream keeps its records on disk at its default location, but nowhere on Vercel', t => {
   useEnv(t, {})
   assert.equal(loadManagedConfig().upstreamCacheDir, defaultCacheDir ?? null)

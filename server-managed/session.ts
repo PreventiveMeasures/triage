@@ -13,6 +13,14 @@ import { hashToken, randomToken } from './crypto.ts'
 // `cookieName` when cookies are Secure.
 export const STATE_COOKIE = 'dvstate'
 
+// Base names for GitHub issue authorization state (github-issue-oauth.ts) and
+// an administrator's read-only view as another user (view-as.ts).
+export const ISSUE_STATE_COOKIE = 'dvissuestate'
+export const VIEW_COOKIE = 'dvview'
+// The session cookie cannot share a name with these, or one would overwrite
+// or be read as the other.
+export const RESERVED_COOKIES: readonly string[] = [STATE_COOKIE, ISSUE_STATE_COOKIE, VIEW_COOKIE]
+
 // `__Host-`-prefix the base name when cookies are Secure (the prefix mandates
 // Secure + Path=/ + no Domain, which `buildCookie` already emits).
 export function cookieName(config: ManagedConfig, base: string): string {
@@ -62,11 +70,17 @@ export async function createSession(
 }
 
 // Resolve the current session (+ user) from the request's cookies, or null.
+// A view cookie resolves only to that admin's view as another user: a view
+// that has ended never falls back to the admin's own session. `own` skips the
+// view and reads the signed-in session itself.
 export function readSession(
-  config: ManagedConfig, db: ManagedDb, cookieHeader: string | undefined, now: number,
+  config: ManagedConfig, db: ManagedDb, cookieHeader: string | undefined, now: number, { own = false } = {},
 ): Promise<{ session: ManagedSession; user: StoredUser } | null> {
-  const token = parseCookies(cookieHeader).get(config.sessionCookieName)
+  const cookies = parseCookies(cookieHeader)
+  const token = cookies.get(config.sessionCookieName)
   if (token == null || token === '') return Promise.resolve(null)
+  const view = own ? undefined : cookies.get(cookieName(config, VIEW_COOKIE))
+  if (view != null && view !== '') return db.viewSessionWithUser(hashToken(view), hashToken(token), now)
   return db.sessionWithUser(hashToken(token), now)
 }
 

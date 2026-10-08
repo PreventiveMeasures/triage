@@ -2,6 +2,9 @@ import { LINK_REPORT_SCHEMA } from './link-reports.ts'
 import { REPOSITORY_ALIAS_SCHEMA } from './repository-aliases.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
 
+// Created after the column migration, which predates it on older databases.
+export const VIEW_SESSION_INDEX = 'CREATE INDEX IF NOT EXISTS managed_session_viewer_idx ON managed_session(viewer_session);'
+
 export const MANAGED_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
   id             TEXT PRIMARY KEY,
@@ -31,7 +34,10 @@ CREATE TABLE IF NOT EXISTS managed_session (
   expires_at INTEGER NOT NULL,
   -- Private X25519 JWK that this session's uploads are sealed to (see
   -- common/managed/upload-seal.ts). Created on first use.
-  upload_key TEXT
+  upload_key TEXT,
+  -- An administrator's read-only view as user_id: the admin's own session,
+  -- which must stay valid. Ending that session ends the view.
+  viewer_session TEXT REFERENCES managed_session(id) ON DELETE CASCADE
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS managed_session_user_idx ON managed_session(user_id);

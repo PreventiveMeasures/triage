@@ -134,8 +134,10 @@ function canPushTriage() {
 
 // A batch the server refused AS SENT (malformed, an id the caller may not
 // touch, too large) will not land by sending it again; anything else — the
-// network, a 5xx, a lapsed session, rate limiting — may.
+// network, a 5xx, a lapsed session, rate limiting — may. An admin's view as
+// another user is refused every write for as long as it lasts.
 function refusedAsSent(status) {
+  if (status === 403 && state.managedSession?.viewer) return true
   return status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 408 && status !== 429
 }
 
@@ -151,7 +153,7 @@ function requeue(p, ids) {
   for (const id of ids) if (!q.changes.has(id)) q.changes.set(id, p.changes.get(id))
 }
 
-async function flush(p, changedFixTeams) {
+async function flush(p, changedFixTeams, viewRefused) {
   if (!canPushTriage()) return
   const ids = [...p.changes.keys()]
   let i = 0
@@ -183,6 +185,7 @@ async function flush(p, changedFixTeams) {
     // and let the baseline absorb those entries so they aren't sent again
     // until they change (the other batches still go).
     if (!landed) console.warn('managed: the server refused a triage batch', p.report.id, status, Object.keys(batch))
+    if (!landed && status === 403 && state.managedSession?.viewer) viewRefused.add(p.report.id)
     for (const [id, entry] of Object.entries(batch)) {
       const previousFix = baseline.get(id)?.fix ?? ''
       const fix = landed ? entry?.fix ?? '' : previousFix
@@ -197,14 +200,17 @@ function flushPending() {
   const batches = [...pending.values()]
   pending.clear()
   if (batches.length === 0) return
-  const changedFixTeams = new Set()
+  const changedFixTeams = new Set(), viewRefused = new Set()
   for (const p of batches) {
-    flushChain = flushChain.then(() => flush(p, changedFixTeams)).catch((err) => { console.warn('managed: triage push failed', err) })
+    flushChain = flushChain.then(() => flush(p, changedFixTeams, viewRefused)).catch((err) => { console.warn('managed: triage push failed', err) })
   }
   // One refresh per affected workspace after every report/body batch settles,
   // including partially successful flushes. Non-Fix edits do not refetch.
+  // An admin viewing as another user saved nothing: show the server's
+  // entries again in place of the refused edits.
   flushChain = flushChain.finally(() => {
     for (const teamId of changedFixTeams) invalidateManagedFixes(teamId)
+    for (const reportId of viewRefused) void refreshManagedReportTriage(reportId)
   }).catch((err) => { console.warn('managed: Fix cache invalidation failed', err) })
 }
 
