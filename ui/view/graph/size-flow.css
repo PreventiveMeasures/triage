@@ -13,7 +13,10 @@ button:hover { background: var(--graph-hover-bg); }
 button:disabled { opacity: .4; cursor: default; }
 button:focus-visible { outline: 2px solid var(--accent); }
 .flow-stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.flow-scroll { flex: 1; overflow: auto; min-height: 0; }
+.flow-viewport {
+  flex: 1; position: relative; overflow: hidden; min-height: 0;
+  touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+}
 .flow-count {
   position: absolute;
   bottom: 12px;
@@ -21,15 +24,10 @@ button:focus-visible { outline: 2px solid var(--accent); }
   padding: 6px 8px;
   color: var(--muted);
   font-size: 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 6px);
-  background: var(--surface);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--shadow-glass);
   z-index: 3;
   pointer-events: none;
 }
-.flow-chart { display: block; }
+.flow-chart { display: block; position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 .flow-edge, .flow-node { cursor: default; }
 .flow-edge:focus, .flow-node:focus { outline: none; stroke: var(--text); stroke-width: 2px; }
 .flow-node text {

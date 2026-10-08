@@ -1,18 +1,13 @@
-import { svg } from 'lit'
+import { guard } from 'lit/directives/guard.js'
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
-import { formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
-import { buildSizeFlow, flowRibbon, layoutSizeFlow } from './size-flow-model.js'
+import { buildSizeFlow, layoutSizeFlow } from './size-flow-model.js'
+import { SizeFlowChart, shortSize } from './size-flow-chart.js'
+import { graphZoomMetrics } from './zoom.js'
 import css from './size-flow.css'
 import sidebarListCSS from './sidebar-list.css'
 import zoomControlsCSS from './zoom-controls.css'
-
-function shortSize(size) {
-  if (size >= 1e6) return `${(size / 1e6).toFixed(1)} MB`
-  if (size >= 1e3) return `${(size / 1e3).toFixed(1)} kB`
-  return `${size} B`
-}
 
 function flowRow(node, size, onClick) {
   return html`<button class="g2-dist-item flow-link" data-tooltip=${node.label} @click=${onClick}>
@@ -28,7 +23,10 @@ class SizeFlow extends LitElement {
   constructor() {
     super()
     this.packages = false; this.zoom = 1
+    this.pan = { x: 0, y: 0 }
+    this.width = 0; this.height = 0
     this.needsFit = true
+    this.chart = new SizeFlowChart(this)
     this.focus = null; this.selection = null; this.hover = null
     this.bridge = { requestDraw: () => this.requestUpdate(), _cleanup: () => {} }
   }
@@ -51,45 +49,140 @@ class SizeFlow extends LitElement {
 
   updated() {
     graph2.graphState = this.bridge
-    if (!this.needsFit || !this.layout) return
-    this.fit()
-    // A graph opened in a hidden container must wait for its first real size.
-    if (this.needsFit && !this.resizeObserver) {
-      const stage = this.renderRoot.querySelector('.flow-scroll')
-      if (!stage) return
-      this.resizeObserver = new ResizeObserver(() => { if (this.needsFit) this.fit() })
-      this.resizeObserver.observe(stage)
-    }
+    this.connectViewport()
+    this.syncViewport()
+    this.chart.update(this.renderRoot)
+  }
+
+  connectViewport() {
+    const stage = this.renderRoot.querySelector('.flow-viewport')
+    if (!stage || this.events) return
+    this.events = new AbortController()
+    const { signal } = this.events
+    stage.addEventListener('wheel', e => this.wheel(e), { passive: false, signal })
+    stage.addEventListener('pointerdown', e => this.startPan(e), { signal })
+    window.addEventListener('pointermove', e => this.movePan(e), { signal })
+    window.addEventListener('pointerup', e => this.endPan(e), { signal })
+    window.addEventListener('pointercancel', e => this.endPan(e), { signal })
+    stage.addEventListener('click', e => {
+      if (this.suppressClick && e.detail > 0) { e.preventDefault(); e.stopPropagation() }
+      this.suppressClick = false
+    }, { capture: true, signal })
+    this.resizeObserver = new ResizeObserver(() => this.syncViewport())
+    this.resizeObserver.observe(stage)
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.events?.abort(); this.events = null
+    this.viewportElements = null
+    this.drag = null
     if (graph2.graphState === this.bridge) graph2.graphState = null
   }
 
   select(node, edge = null) { this.selection = { node, edge }; this.requestUpdate() }
 
-  follow(node) { this.focus = node; this.selection = node ? { node, edge: null } : null; this.requestUpdate(); this.resetScroll() }
+  follow(node) { this.focus = node; this.selection = node ? { node, edge: null } : null; this.needsFit = true; this.requestUpdate() }
 
-  fit() {
-    const stage = this.renderRoot.querySelector('.flow-scroll')
-    if (!this.layout || !stage) return
-    // Measure the full viewport so scrollbars from the pre-fit chart don't
-    // skew the scale. The fitted chart must fit horizontally on narrow panes.
-    const { width, height } = stage.getBoundingClientRect()
-    if (width <= 0 || height <= 0) return
-    const baseWidth = Math.max(500, width)
-    this.zoom = Math.min(width / baseWidth, height * this.layout.width / (this.layout.height * baseWidth))
-    this.needsFit = false
-    this.resizeObserver?.disconnect()
-    this.requestUpdate(); this.resetScroll()
+  fitScale() {
+    return this.layout && this.width > 0 && this.height > 0
+      ? Math.min(this.width / this.layout.width, this.height / this.layout.height, 9.99) : 1
   }
 
-  async resetScroll() {
-    await this.updateComplete
-    this.renderRoot.querySelector('.flow-scroll')?.scrollTo(0, 0)
+  zoomMetrics() { return graphZoomMetrics(this.zoom, Math.min(this.fitScale(), 1)) }
+
+  center() {
+    this.pan = { x: (this.width - this.layout.width * this.zoom) / 2, y: (this.height - this.layout.height * this.zoom) / 2 }
+  }
+
+  syncViewport() {
+    const box = this.renderRoot.querySelector('.flow-viewport')?.getBoundingClientRect()
+    if (!this.layout || !box || box.width <= 0 || box.height <= 0) return
+    if (this.width > 0 && this.height > 0) {
+      this.pan.x += (box.width - this.width) / 2
+      this.pan.y += (box.height - this.height) / 2
+    }
+    this.width = box.width; this.height = box.height
+    if (this.needsFit) { this.fit(); return }
+    // Content and viewport changes can raise the floor. Clamp immediately,
+    // but retain a valid user viewport through popup/data refreshes.
+    const { min, max } = this.zoomMetrics()
+    const zoom = Math.max(min, Math.min(max, this.zoom))
+    if (zoom !== this.zoom) { this.zoom = zoom; this.center() }
+    this.drawViewport()
+  }
+
+  fit() {
+    const box = this.renderRoot.querySelector('.flow-viewport')?.getBoundingClientRect()
+    if (!this.layout || !box || box.width <= 0 || box.height <= 0) return
+    this.width = box.width; this.height = box.height
+    this.zoom = this.fitScale()
+    this.needsFit = false
+    this.center(); this.drawViewport()
+  }
+
+  zoomBy(factor, x = this.width / 2, y = this.height / 2) {
+    const { min, max } = this.zoomMetrics()
+    const zoom = Math.max(min, Math.min(max, this.zoom * factor))
+    const ratio = zoom / this.zoom
+    this.pan.x = x - (x - this.pan.x) * ratio
+    this.pan.y = y - (y - this.pan.y) * ratio
+    this.zoom = zoom; this.drawViewport()
+  }
+
+  wheel(e) {
+    e.preventDefault()
+    const box = this.renderRoot.querySelector('.flow-viewport').getBoundingClientRect()
+    const factor = Math.exp(-e.deltaY * .0015), { min } = this.zoomMetrics()
+    if (factor < 1 && this.zoom <= min * 1.0001) {
+      // Match the other graphs: at the floor, further scroll-out eases back
+      // toward the centered overview instead of shrinking the graph.
+      this.zoom = min
+      const step = Math.min(.4, (1 - factor) * 3)
+      this.pan.x += ((this.width - this.layout.width * min) / 2 - this.pan.x) * step
+      this.pan.y += ((this.height - this.layout.height * min) / 2 - this.pan.y) * step
+      this.drawViewport()
+    } else this.zoomBy(factor, e.clientX - box.left, e.clientY - box.top)
+  }
+
+  startPan(e) {
+    if (e.button !== 0) return
+    this.suppressClick = false
+    this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, pan: { ...this.pan }, moved: false }
+  }
+
+  movePan(e) {
+    if (!this.drag || e.pointerId !== this.drag.id) return
+    const dx = e.clientX - this.drag.x, dy = e.clientY - this.drag.y
+    if (Math.abs(dx) + Math.abs(dy) > 3) this.drag.moved = true
+    if (!this.drag.moved) return
+    this.suppressClick = true
+    this.chart.setHover(null)
+    this.pan = { x: this.drag.pan.x + dx, y: this.drag.pan.y + dy }
+    this.drawViewport()
+  }
+
+  endPan(e) { if (e.pointerId === this.drag?.id) this.drag = null }
+
+  viewportTransform() { return `translate(${this.pan.x}px, ${this.pan.y}px) scale(${this.zoom})` }
+
+  drawViewport() {
+    // Keep pointer/wheel updates independent of the potentially huge SVG
+    // template: only its transform and the zoom controls need to change.
+    this.viewportElements ??= {
+      chart: this.renderRoot.querySelector('.flow-chart'),
+      label: this.renderRoot.querySelector('.g2-zoom-pct'),
+      zoomIn: this.renderRoot.querySelector('[aria-label="Zoom in"]'),
+      zoomOut: this.renderRoot.querySelector('[aria-label="Zoom out"]'),
+    }
+    const { chart, label, zoomIn, zoomOut } = this.viewportElements
+    if (chart) chart.style.transform = this.viewportTransform()
+    const { min, max, percent } = this.zoomMetrics()
+    if (label) label.textContent = `${percent}%`
+    if (zoomIn) zoomIn.disabled = this.zoom >= max * .9999
+    if (zoomOut) zoomOut.disabled = this.zoom <= min * 1.0001
   }
 
   matches(node) {
@@ -98,31 +191,6 @@ class SizeFlow extends LitElement {
     const some = key => node.files.some(file => [...(this.model.files.get(file)[key] ?? [])].some(v =>
       (key === 'severitySet' ? graph2.selectedSeverities : graph2.selectedColors).has(v)))
     return (graph2.selectedSeverities.size === 0 || some('severitySet')) && (graph2.selectedColors.size === 0 || some('colorSet'))
-  }
-
-  renderNode(n) {
-    const selected = this.selection?.node === n.id
-    const tooltip = `${n.label}\n${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.missing ? ` · ${n.missing} file sizes unknown` : ''}`
-    const label = n.width >= 40 ? `${n.label.replace(/^node_modules\//u, '')} · ${shortSize(n.size)}` : ''
-    return svg`<g class="flow-node" role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip} aria-pressed=${String(selected)} opacity=${this.matches(n) ? 1 : .15}
-      @click=${() => this.select(n.id)} @dblclick=${() => this.follow(n.id)}
-      @keydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.select(n.id) } }}>
-      <rect x=${n.x} y=${n.y} width=${n.width} height="26" fill=${pkgColor(n.pkg)} stroke=${selected ? 'var(--text)' : 'var(--graph-canvas-bg)'} stroke-width=${selected ? 2 : 1}></rect>
-      <svg x=${n.x + 5} y=${n.y} width=${Math.max(0, n.width - 10)} height="26"><text x="0" y="18">${label}</text></svg>
-    </g>`
-  }
-
-  renderEdge(e) {
-    const from = this.model.byId.get(e.from), to = this.model.byId.get(e.to)
-    const active = this.selection?.edge === e.id || this.hover === e.id
-    const related = this.selection?.node === e.from || this.selection?.node === e.to
-    const dimmed = !this.matches(from) && !this.matches(to)
-    const tooltip = `${from.label} → ${to.label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
-    return svg`<path class="flow-edge" d=${flowRibbon(e)} fill=${pkgColor(to.pkg)} opacity=${dimmed ? .04 : active ? .8 : related ? .6 : .22}
-      stroke=${e.returning ? 'var(--text)' : 'none'} stroke-width=".7" stroke-dasharray=${e.returning ? '3 3' : ''}
-      role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip}
-      @click=${() => this.select(e.to, e.id)} @keydown=${event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.select(e.to, e.id) } }}
-      @pointerenter=${() => { this.hover = e.id; this.requestUpdate() }} @pointerleave=${() => { this.hover = null; this.requestUpdate() }}></path>`
   }
 
   renderLinks(edges, incoming = false) {
@@ -134,14 +202,14 @@ class SizeFlow extends LitElement {
 
   renderSearch() {
     if (!graph2.pathFilter.trim()) return null
-    const matches = [...this.model.byId.values()].filter(n => this.matches(n)).toSorted((a, b) => b.size - a.size)
+    const matches = this.chart.searchMatches()
     return html`<h4>Matches · ${matches.length}</h4>${matches.slice(0, 100).map(n => flowRow(n, n.size, () => this.follow(n.id)))}
       ${matches.length > 100 ? html`<p>Showing the 100 largest matches. Refine the search to find any file or package, including those beyond the visible graph.</p>` : null}`
   }
 
   renderPanel() {
     const node = this.model.byId.get(this.selection?.node)
-    const edge = this.model.edges.find(e => e.id === this.selection?.edge)
+    const edge = this.model.edgeById.get(this.selection?.edge)
     if (!node) {return html`<h3>Size flow</h3><div class="flow-metrics"><b>${shortSize(this.model.total.size)}</b><span>unique reachable source</span></div>
       <p>Ribbons show the total source size reachable through each import. Shared code contributes its full size to every loading edge, so flows are not additive.</p>
       <p>Bars make room for incoming and outgoing ribbons. Select a file or ribbon to compare its own size with its unique reachable size.</p>
@@ -166,17 +234,17 @@ class SizeFlow extends LitElement {
 
   render() {
     if (!this.layout) return null
-    const { nodes, edges, width, height } = this.layout
+    const { nodes, width, height } = this.layout
     return html`<section class="flow-stage" aria-label="Dependency size flow">
-      <div class="flow-scroll"><svg class="flow-chart" style=${`width:${this.zoom * 100}%;min-width:${this.zoom * 500}px`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import ribbons weighted by total reachable bytes">
+      <div class="flow-viewport"><svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import ribbons weighted by total reachable bytes">
         <text class="flow-level" x="24" y="24">${this.focus ? this.model.byId.get(this.focus).label : this.model.inferred ? 'Inferred roots' : 'Entry points'} ↓</text>
-        ${edges.map(e => this.renderEdge(e))}${nodes.map(n => this.renderNode(n))}
+        ${guard([this.layout], () => this.chart.render())}
       </svg>${nodes.length > 0 ? null : html`<p>No recorded dependency paths in this view.</p>`}</div>
       <div class="flow-count">${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</div>
       <div class="g2-zoom-ctrl" role="group" aria-label="Flow zoom">
-        <button aria-label="Zoom in" @click=${() => { this.zoom = Math.min(12, this.zoom * 1.5); this.requestUpdate() }}>+</button>
-        <div class="g2-zoom-pct">${Math.round(this.zoom * 100)}%</div>
-        <button aria-label="Zoom out" @click=${() => { this.zoom = Math.max(Number.EPSILON, this.zoom / 1.5); this.requestUpdate() }}>−</button>
+        <button aria-label="Zoom in" ?disabled=${this.zoom >= this.zoomMetrics().max * .9999} @click=${() => this.zoomBy(1.4)}>+</button>
+        <div class="g2-zoom-pct"></div>
+        <button aria-label="Zoom out" ?disabled=${this.zoom <= this.zoomMetrics().min * 1.0001} @click=${() => this.zoomBy(1 / 1.4)}>−</button>
         <button class="g2-zoom-fit-btn" aria-label="Fit to view" @click=${() => this.fit()}>fit</button>
       </div>
     </section><aside class="flow-panel" aria-label="Size flow details" aria-live="polite">${this.renderSearch()}${this.renderPanel()}</aside>`

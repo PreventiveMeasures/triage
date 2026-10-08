@@ -95,7 +95,7 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
     byId.get(edge.from).outgoing.push(edge); byId.get(edge.to).incoming.push(edge)
   }
   const rootIds = [...new Set(roots.map(idOf))]
-  return { byId, edges, roots: rootIds, files, packages, weakEdges, inferred: entries.length === 0,
+  return { byId, edges, edgeById: pairs, roots: rootIds, files, packages, weakEdges, inferred: entries.length === 0,
     total: reach.sum(roots), omittedFiles: files.size - active.size }
 }
 
