@@ -466,7 +466,7 @@ test('bundle Overview displays origin links from full contents and cached manage
   }
 })
 
-test('bundle Overview lists entry points on the left and puts Size under Sources for local and managed metadata', async () => {
+test('bundle Overview lists entries on the left and puts Size under Sources for local and managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-entries' }
   const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
     entries: new Set(['src/main.js', 'src/worker.js']),
@@ -482,13 +482,18 @@ test('bundle Overview lists entry points on the left and puts Size under Sources
     const markup = renderText(renderBundlesList([{ ...entry, managedId }]))
     const firstMeta = markup.match(/<dl class="bundles-detail-meta">(.*?)<\/dl>/su)[1]
     assert.match(firstMeta, /<dt>Prefix<\/dt><dd class="mono">src\/<\/dd>/u)
-    const points = firstMeta.match(/<dt>Entry points<\/dt><dd class="mono">(.*?)<\/dd>/su)[1]
+    const points = firstMeta.match(/<dt>Entries<\/dt><dd class="mono">(.*?)<\/dd>/su)[1]
     assert.match(points, /data-bundle-view-source=src\/main\.js>main\.js<\/button>/u)
     assert.match(points, /data-bundle-view-source=src\/worker\.js>worker\.js<\/button>/u)
     assert.doesNotMatch(points, /helper/u)
     assert.match(markup, /<dt>Sources<\/dt><dd>3<\/dd>\s*<dt>Size<\/dt><dd>123 B<\/dd>/u)
     assert.doesNotMatch(firstMeta, /<dt>Size<\/dt>/u)
   }
+  // A single entry gets the singular label.
+  state.bundleDetails = { ...full, bundle: new Bundle({ entries: new Set(['src/main.js']), modules: full.bundle.modules }) }
+  const single = renderText(renderBundlesList([entry])).match(/<dl class="bundles-detail-meta">(.*?)<\/dl>/su)[1]
+  assert.match(single, /<dt>Entry<\/dt><dd class="mono">.*data-bundle-view-source=src\/main\.js>main\.js<\/button>/su)
+  assert.doesNotMatch(single, /<dt>Entries<\/dt>/u)
 })
 
 test('bundles without entry-point metadata keep their counts and Size without inventing entries', () => {
@@ -504,7 +509,7 @@ test('bundles without entry-point metadata keep their counts and Size without in
   ]) {
     state.bundleDetails = { ...fields, integrity: entry.integrity, size: 200 }
     const markup = renderText(renderBundlesList([entry]))
-    assert.doesNotMatch(markup, /<dt>Entry points<\/dt>/u)
+    assert.doesNotMatch(markup, /<dt>Entr(?:y|ies)<\/dt>/u)
     assert.match(markup, /<dt>Sources<\/dt><dd>\d<\/dd>\s*<dt>Size<\/dt><dd>200 B<\/dd>/u)
   }
 })
