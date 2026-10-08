@@ -139,11 +139,11 @@ export function layoutSizeFlow(model, { focus = null, width = 1100 } = {}) {
   for (const e of edges) { ports.get(e.to).incoming += weight(e.size); ports.get(e.from).outgoing += weight(e.size) }
   for (const node of nodes) node.capacity = Math.max(weight(node.size), ports.get(node.id).incoming, ports.get(node.id).outgoing)
   const widest = [...bands.values()].reduce((max, band) => Math.max(max, band.reduce((s, n) => s + n.capacity, 0)), 1)
-  const padding = 24, scale = Math.max(200, width - padding * 2) / widest
+  const padding = 24, rowStep = 88, scale = Math.max(200, width - padding * 2) / widest
   let actualWidth = width
   for (const band of bands.values()) {
     let x = padding
-    for (const n of band) { n.x = x; n.y = 52 + n.level * 150; n.width = Math.max(1.5, n.capacity * scale); x += n.width }
+    for (const n of band) { n.x = x; n.y = 52 + n.level * rowStep; n.width = Math.max(1.5, n.capacity * scale); x += n.width }
     actualWidth = Math.max(actualWidth, x + padding)
   }
   const offsets = new Map(nodes.map(n => [n.id, { from: 0, to: 0 }]))
@@ -155,11 +155,11 @@ export function layoutSizeFlow(model, { focus = null, width = 1100 } = {}) {
     edge.y1 = from.y + 26; edge.y2 = to.y
     edge.returning = to.level <= from.level
   }
-  return { nodes, byId, edges, roots, width: actualWidth, height: Math.max(260, 150 * bands.size + 40) }
+  return { nodes, byId, edges, roots, width: actualWidth, height: Math.max(260, rowStep * bands.size + 40) }
 }
 
 export function flowRibbon(edge) {
   const { x1, x2, y1, y2, width: w } = edge
-  const bend = edge.returning ? Math.max(y1, y2) + 70 : (y1 + y2) / 2
+  const bend = edge.returning ? Math.max(y1, y2) + 35 : (y1 + y2) / 2
   return `M${x1},${y1} C${x1},${bend} ${x2},${bend} ${x2},${y2} L${x2 + w},${y2} C${x2 + w},${bend} ${x1 + w},${bend} ${x1 + w},${y1} Z`
 }

@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import '../ui/view/frontend-install.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { buildSizeFlow, flowRibbon, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
+import { graph2 } from '../ui/view/graph/state.js'
 import '../ui/view/graph/size-flow.js'
 
 function fixture(tree, entries = ['entry.js']) {
@@ -214,4 +215,61 @@ test('popup refreshes keep flow focus, selection and zoom while updating totals'
   flow.packages = true; flow.willUpdate(new Map([['packages', false]]))
   assert.equal(flow.focus, null)
   assert.equal(flow.selection, null)
+})
+
+test('flow initially fits both axes, then preserves manual zoom through refreshes', t => {
+  const previousState = graph2.graphState
+  t.after(() => { graph2.graphState = previousState })
+  const Flow = customElements.get('size-flow'), flow = new Flow()
+  let box = { width: 1000, height: 100 }, resets = 0
+  flow.renderRoot = { querySelector: () => ({ getBoundingClientRect: () => box }) }
+  flow.resetScroll = () => { resets++ }
+  flow.graph = fixture(diamond); flow.willUpdate(new Map([['graph', null]]))
+  flow.updated()
+  const renderedWidth = Math.max(500, box.width) * flow.zoom
+  assert.ok(renderedWidth <= box.width)
+  assert.ok(renderedWidth * flow.layout.height / flow.layout.width <= box.height + .001)
+  assert.ok(flow.zoom > 0 && flow.zoom < 1)
+  assert.equal(flow.needsFit, false)
+  assert.equal(resets, 1)
+
+  flow.zoom = 3
+  flow.graph = fixture({ ...diamond, 'large/index.js': { size: 2000, imports: [] } })
+  flow.willUpdate(new Map([['graph', null]])); flow.updated()
+  box = { width: 300, height: 1200 }; flow.updated()
+  assert.equal(flow.zoom, 3, 'updates after the initial fit leave user zoom alone')
+  assert.equal(resets, 1, 'updates leave the scroll position alone')
+  flow.fit()
+  assert.equal(flow.zoom, .6, 'explicit Fit also fits the 500px minimum chart into a narrow pane')
+})
+
+test('initial fit waits for a hidden flow viewport to become measurable', t => {
+  const previousState = graph2.graphState
+  const observerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver')
+  t.after(() => {
+    graph2.graphState = previousState
+    if (observerDescriptor) Object.defineProperty(globalThis, 'ResizeObserver', observerDescriptor)
+    else delete globalThis.ResizeObserver
+  })
+  let disconnects = 0, observed, resized
+  globalThis.ResizeObserver = class {
+    constructor(callback) { resized = callback }
+    observe(element) { observed = element }
+    disconnect() { disconnects++ }
+  }
+  const Flow = customElements.get('size-flow'), flow = new Flow()
+  let box = { width: 0, height: 0 }
+  const stage = { getBoundingClientRect: () => box }
+  flow.renderRoot = { querySelector: () => stage }
+  flow.resetScroll = () => {}
+  flow.graph = fixture(diamond); flow.willUpdate(new Map([['graph', null]])); flow.updated()
+  assert.equal(flow.needsFit, true)
+  assert.equal(flow.zoom, 1)
+  assert.equal(observed, stage)
+  box = { width: 800, height: 200 }; resized()
+  assert.equal(flow.needsFit, false)
+  assert.ok(flow.zoom > 0 && flow.zoom < 1)
+  assert.equal(disconnects, 1)
+  flow.zoom = 2; resized()
+  assert.equal(flow.zoom, 2, 'late observer notifications must not reset user zoom')
 })

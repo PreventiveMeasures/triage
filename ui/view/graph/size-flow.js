@@ -15,7 +15,7 @@ function shortSize(size) {
 }
 
 function flowRow(node, size, onClick) {
-  return html`<button class="g2-dist-item flow-link" title=${node.label} @click=${onClick}>
+  return html`<button class="g2-dist-item flow-link" data-tooltip=${node.label} @click=${onClick}>
     <span class="g2-dist-dot" style=${`background:${pkgColor(node.pkg)}`}></span>
     <span class="g2-dist-name">${node.label}</span><span class="g2-dist-count">${shortSize(size)}</span>
   </button>`
@@ -28,6 +28,7 @@ class SizeFlow extends LitElement {
   constructor() {
     super()
     this.packages = false; this.zoom = 1
+    this.needsFit = true
     this.focus = null; this.selection = null; this.hover = null
     this.bridge = { requestDraw: () => this.requestUpdate(), _cleanup: () => {} }
   }
@@ -48,10 +49,23 @@ class SizeFlow extends LitElement {
     }
   }
 
-  updated() { graph2.graphState = this.bridge }
+  updated() {
+    graph2.graphState = this.bridge
+    if (!this.needsFit || !this.layout) return
+    this.fit()
+    // A graph opened in a hidden container must wait for its first real size.
+    if (this.needsFit && !this.resizeObserver) {
+      const stage = this.renderRoot.querySelector('.flow-scroll')
+      if (!stage) return
+      this.resizeObserver = new ResizeObserver(() => { if (this.needsFit) this.fit() })
+      this.resizeObserver.observe(stage)
+    }
+  }
 
   disconnectedCallback() {
     super.disconnectedCallback()
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
     if (graph2.graphState === this.bridge) graph2.graphState = null
   }
 
@@ -61,7 +75,15 @@ class SizeFlow extends LitElement {
 
   fit() {
     const stage = this.renderRoot.querySelector('.flow-scroll')
-    this.zoom = stage ? Math.min(1, stage.clientHeight / (this.layout.height * Math.max(500, stage.clientWidth) / this.layout.width)) : 1
+    if (!this.layout || !stage) return
+    // Measure the full viewport so scrollbars from the pre-fit chart don't
+    // skew the scale. The fitted chart must fit horizontally on narrow panes.
+    const { width, height } = stage.getBoundingClientRect()
+    if (width <= 0 || height <= 0) return
+    const baseWidth = Math.max(500, width)
+    this.zoom = Math.min(width / baseWidth, height * this.layout.width / (this.layout.height * baseWidth))
+    this.needsFit = false
+    this.resizeObserver?.disconnect()
     this.requestUpdate(); this.resetScroll()
   }
 
@@ -80,12 +102,11 @@ class SizeFlow extends LitElement {
 
   renderNode(n) {
     const selected = this.selection?.node === n.id
-    const title = `${n.label}\n${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.missing ? ` · ${n.missing} file sizes unknown` : ''}`
+    const tooltip = `${n.label}\n${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.missing ? ` · ${n.missing} file sizes unknown` : ''}`
     const label = n.width >= 40 ? `${n.label.replace(/^node_modules\//u, '')} · ${shortSize(n.size)}` : ''
-    return svg`<g class="flow-node" role="button" tabindex="0" aria-label=${title} aria-pressed=${String(selected)} opacity=${this.matches(n) ? 1 : .15}
+    return svg`<g class="flow-node" role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip} aria-pressed=${String(selected)} opacity=${this.matches(n) ? 1 : .15}
       @click=${() => this.select(n.id)} @dblclick=${() => this.follow(n.id)}
       @keydown=${e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.select(n.id) } }}>
-      <title>${title}</title>
       <rect x=${n.x} y=${n.y} width=${n.width} height="26" fill=${pkgColor(n.pkg)} stroke=${selected ? 'var(--text)' : 'var(--graph-canvas-bg)'} stroke-width=${selected ? 2 : 1}></rect>
       <svg x=${n.x + 5} y=${n.y} width=${Math.max(0, n.width - 10)} height="26"><text x="0" y="18">${label}</text></svg>
     </g>`
@@ -96,12 +117,12 @@ class SizeFlow extends LitElement {
     const active = this.selection?.edge === e.id || this.hover === e.id
     const related = this.selection?.node === e.from || this.selection?.node === e.to
     const dimmed = !this.matches(from) && !this.matches(to)
-    const title = `${from.label} → ${to.label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
+    const tooltip = `${from.label} → ${to.label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
     return svg`<path class="flow-edge" d=${flowRibbon(e)} fill=${pkgColor(to.pkg)} opacity=${dimmed ? .04 : active ? .8 : related ? .6 : .22}
       stroke=${e.returning ? 'var(--text)' : 'none'} stroke-width=".7" stroke-dasharray=${e.returning ? '3 3' : ''}
-      role="button" tabindex="0" aria-label=${title}
+      role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip}
       @click=${() => this.select(e.to, e.id)} @keydown=${event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.select(e.to, e.id) } }}
-      @pointerenter=${() => { this.hover = e.id; this.requestUpdate() }} @pointerleave=${() => { this.hover = null; this.requestUpdate() }}><title>${title}</title></path>`
+      @pointerenter=${() => { this.hover = e.id; this.requestUpdate() }} @pointerleave=${() => { this.hover = null; this.requestUpdate() }}></path>`
   }
 
   renderLinks(edges, incoming = false) {
@@ -155,7 +176,7 @@ class SizeFlow extends LitElement {
       <div class="g2-zoom-ctrl" role="group" aria-label="Flow zoom">
         <button aria-label="Zoom in" @click=${() => { this.zoom = Math.min(12, this.zoom * 1.5); this.requestUpdate() }}>+</button>
         <div class="g2-zoom-pct">${Math.round(this.zoom * 100)}%</div>
-        <button aria-label="Zoom out" @click=${() => { this.zoom = Math.max(.5, this.zoom / 1.5); this.requestUpdate() }}>−</button>
+        <button aria-label="Zoom out" @click=${() => { this.zoom = Math.max(Number.EPSILON, this.zoom / 1.5); this.requestUpdate() }}>−</button>
         <button class="g2-zoom-fit-btn" aria-label="Fit to view" @click=${() => this.fit()}>fit</button>
       </div>
     </section><aside class="flow-panel" aria-label="Size flow details" aria-live="polite">${this.renderSearch()}${this.renderPanel()}</aside>`
