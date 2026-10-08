@@ -56,8 +56,9 @@ async function isText(blob: Blob): Promise<boolean> {
 }
 
 // Seal `blob` to the server's raw public key. Reads the input as a stream;
-// sealed segments are kept as Blobs, which browsers may page to disk.
-export async function sealUpload(blob: Blob, publicKey: Uint8Array<ArrayBuffer>): Promise<Blob> {
+// sealed segments are kept as Blobs, which browsers may page to disk. An abort
+// stops reading at the next chunk.
+export async function sealUpload(blob: Blob, publicKey: Uint8Array<ArrayBuffer>, signal?: AbortSignal): Promise<Blob> {
   const gzip = await isText(blob)
   const [server, ephemeral] = await Promise.all([
     crypto.subtle.importKey('raw', publicKey, CURVE, false, []),
@@ -76,15 +77,21 @@ export async function sealUpload(blob: Blob, publicKey: Uint8Array<ArrayBuffer>)
   }
   const stream: ReadableStream<Uint8Array> = gzip ? blob.stream().pipeThrough(new CompressionStream('gzip')) : blob.stream()
   const reader = stream.getReader()
-  for (let read = await reader.read(); !read.done; read = await reader.read()) {
-    for (let offset = 0; offset < read.value.length;) {
-      // A full segment is final only if the input ends with it.
-      if (filled === SEGMENT_BYTES) await seal(false)
-      const length = Math.min(SEGMENT_BYTES - filled, read.value.length - offset)
-      segment.set(read.value.subarray(offset, offset + length), filled)
-      filled += length
-      offset += length
+  try {
+    for (let read = await reader.read(); !read.done; read = await reader.read()) {
+      signal?.throwIfAborted()
+      for (let offset = 0; offset < read.value.length;) {
+        // A full segment is final only if the input ends with it.
+        if (filled === SEGMENT_BYTES) await seal(false)
+        const length = Math.min(SEGMENT_BYTES - filled, read.value.length - offset)
+        segment.set(read.value.subarray(offset, offset + length), filled)
+        filled += length
+        offset += length
+      }
     }
+  } catch (err) {
+    await reader.cancel(err).catch(() => {})
+    throw err
   }
   await seal(true)
   return new Blob(parts)

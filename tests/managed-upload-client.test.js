@@ -127,6 +127,28 @@ test('chunk failures and account switches prevent finalization; local servers re
   assert.equal((await managedFetch('/api/admin/bundles', options)).ok, true)
 })
 
+test('cancelling an upload stops sealing before the rest of the file is read', async t => {
+  const controller = new AbortController(), file = new Blob([new Uint8Array(16 * 1024 * 1024)])
+  let cancelled = false, pulled = 0
+  t.mock.method(file, 'stream', () => new ReadableStream({
+    pull(output) {
+      if (++pulled === 1) controller.abort()
+      output.enqueue(new Uint8Array(1024 * 1024))
+      if (pulled === 16) output.close()
+    },
+    cancel() { cancelled = true },
+  }, { highWaterMark: 0 }))
+  const calls = []
+  t.mock.method(globalThis, 'fetch', async url => {
+    calls.push(url)
+    return url === KEY_PATH ? keyResponse() : Response.json({ managed: { uploadChunkBytes: CHUNK } })
+  })
+  await assert.rejects(managedFetch('/api/admin/bundles', { method: 'POST', body: file, signal: controller.signal }), { name: 'AbortError' })
+  assert.deepEqual(calls, ['/api/config', KEY_PATH], 'nothing is uploaded')
+  assert.equal(pulled, 1, 'the rest of the file is never read')
+  assert.equal(cancelled, true)
+})
+
 test('advertised upload limits reject oversized reports and bundles before storing any parts', async t => {
   for (const kind of ['reports', 'bundles']) {
     const calls = []

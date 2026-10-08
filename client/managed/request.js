@@ -69,7 +69,7 @@ async function sealBody(options, send) {
   if (typeof key !== 'string') throw new Error('The server sent an invalid upload key')
   const headers = new Headers(options.headers)
   headers.set(UPLOAD_SEAL_HEADER, '1')
-  return { ...options, headers, body: await sealUpload(options.body, Uint8Array.fromBase64(key, { alphabet: 'base64url' })) }
+  return { ...options, headers, body: await sealUpload(options.body, Uint8Array.fromBase64(key, { alphabet: 'base64url' }), options.signal) }
 }
 
 // Large files are checked against the advertised limit before sealing. Each
