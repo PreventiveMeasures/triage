@@ -274,7 +274,7 @@ function renderConsentPrompt() {
 //                package name (or a one-line summary when none)
 //
 // `onScan`, when the viewer may scan the bundle, opens its Dependency
-// alerts scan from a Scan button right of the managed recheck button.
+// alerts scan from a Validate button right of the managed recheck button.
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
   const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
@@ -293,9 +293,8 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan =
         return loading
       }}></bundle-scope-selector>` : nothing}
     ${renderRepositoryRecheck(details, renderFn)}
-    ${details?.managedId && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan"
-      data-tooltip="Validate these alerts in a Dependency alerts scan" @click=${onScan}>
-      ${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span>
+    ${details?.managedId && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan" @click=${onScan}>
+      ${unsafeHTML(SCAN_ICON_SVG)}<span>Validate</span>
     </button>` : nothing}
     </div>` : nothing}
     </div>` : nothing}

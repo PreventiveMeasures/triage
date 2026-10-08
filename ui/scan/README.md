@@ -48,7 +48,7 @@ its repository/workspace selected. For a bundle shared across workspaces, the
 workspace row clicked in the sidebar is retained. Managed scan links include the
 bundle ID so Back/Forward and reload retain the requested input. An unavailable
 selection never silently switches to another bundle. The managed Advisories tab's
-Scan button opens the same setup in Dependency alerts mode, and its link keeps
+Validate button opens the same setup in Dependency alerts mode, and its link keeps
 that mode too.
 
 ## Reports and Advanced Code scans
