@@ -68,6 +68,20 @@ export function bundleSourcesAsMap(details) {
   return result
 }
 
+// A bundle's sources in path order, and each one's number in it from 1: how a
+// managed Code link names a file. The content hash that names a bundle fixes
+// its sources, so the numbers stay put.
+const sourceOrders = new WeakMap()
+export function bundleSourceOrder(sources) {
+  let order = sourceOrders.get(sources)
+  if (!order) {
+    const paths = [...sources.keys()].toSorted()
+    order = { paths, numbers: new Map(paths.map((path, index) => [path, index + 1])) }
+    sourceOrders.set(sources, order)
+  }
+  return order
+}
+
 // Every file the bundle carries, for a reader that wants the filesystem
 // rather than the source: what `bundleSourcesAsMap` returns, plus the
 // resources it leaves out, each in the form that is true to it.

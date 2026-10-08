@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { BUNDLE_TABS } from '../common/bundle-tabs.js'
 import { managedRouteForIds, managedRoutePath, parseManagedRoute, resolveManagedRoute } from '../common/managed/routes.js'
-import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedCodeFile, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
 import { bundleComparisonCandidates } from '../ui/view/bundle-comparison-candidates.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
@@ -124,4 +124,17 @@ test('tab links survive reload, bundle switches, Compare swaps and Back/Forward 
   assert.equal(shown.bundleId, a.id)
   assert.equal(shown.teamId, 'uuid-second')
   assert.equal(browser.location.hash, hash)
+})
+
+test('route rewrites number the Code tab\'s file shown, or the one a link asked for while its sources load', () => {
+  const details = { kind: 'stasis', integrity: 'sha512-a', bundle: { sources: new Map([['src/z.js', 'z'], ['lib/a.js', 'a'], ['src/b.js', 'b']]) } }
+  const state = { bundleDetailsTab: 'code', selectedBundle: 'sha512-a', bundleDetails: details, bundleSourceFile: 'src/z.js', bundleCodeFileRequest: null }
+  assert.equal(managedCodeFile(state), 3, 'numbered from 1 in path order')
+  assert.equal(managedCodeFile({ ...state, bundleSourceFile: 'lib/a.js' }), 1)
+  assert.equal(managedCodeFile(state, 'graph'), null, 'only Code names a file')
+  assert.equal(managedCodeFile({ ...state, bundleSourceFile: null }), null)
+  assert.equal(managedCodeFile({ ...state, bundleSourceFile: 'gone.js' }), null)
+  assert.equal(managedCodeFile({ ...state, selectedBundle: 'sha512-b' }), null, 'never from another bundle\'s sources')
+  assert.equal(managedCodeFile({ ...state, bundleSourceFile: null, bundleDetails: { ...details, metadataOnly: true }, bundleCodeFileRequest: { bundle: 'sha512-a', file: 7 } }), 7)
+  assert.equal(managedCodeFile({ ...state, bundleCodeFileRequest: { bundle: 'sha512-b', file: 7 } }), 3)
 })
