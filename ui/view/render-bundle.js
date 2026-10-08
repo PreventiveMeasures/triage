@@ -99,7 +99,7 @@ function buildBundleTree(details) {
   if (bundleTrees.has(details)) return bundleTrees.get(details)
   const sizes = bundleSourceSizes(details)
   const imports = bundleImportsAsMap(details)
-  const origFiles = [...sizes.keys()].filter((file) => sizes.get(file) !== null)
+  const origFiles = [...sizes.keys()]
   const { stripped } = stripCommonPathPrefix(origFiles)
   const origToStripped = new Map(origFiles.map((f, i) => [f, stripped[i]]))
   const tree = {}

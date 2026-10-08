@@ -208,16 +208,16 @@ export function bundleFileKinds(details) {
   return kinds
 }
 
-// `bundleFileSizes` narrowed to source: a resource's size is nulled, as a
-// directory capture's already is. The import graph draws this, and stays
-// source-only: an image or a font imports nothing and carries no finding.
+// Source paths and their recorded byte sizes. Keep null for a source whose
+// body is missing, but omit resources and directory captures entirely so
+// graph consumers can distinguish unknown source bytes from non-source.
 export function bundleSourceSizes(details) {
   const sizes = bundleFileSizes(details)
   const formats = details?.kind === 'stasis' ? details.bundle?.formats : null
   if (!formats || formats.size === 0) return sizes
   if (sourceSizesCache.has(sizes)) return sourceSizesCache.get(sizes)
   const result = new Map()
-  for (const [path, size] of sizes) result.set(path, Bundle.isResourceFormat(formats.get(path)) ? null : size)
+  for (const [path, size] of sizes) if (!Bundle.isResourceFormat(formats.get(path))) result.set(path, size)
   sourceSizesCache.set(sizes, result)
   return result
 }

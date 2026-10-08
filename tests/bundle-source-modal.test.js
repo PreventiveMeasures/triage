@@ -7,6 +7,8 @@ import { langForPath } from '../common/code-language.js'
 import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
 import { autorun } from '@rray/frontend/state-management'
 import { bundleWhy } from '../ui/view/bundle-why.js'
+import { buildGraph } from '../ui/view/graph/data.js'
+import { buildSizeFlow, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
 
 // Keep the real modal and bundle source rendering without unrelated page
 // navigation, tooltip listeners, or asynchronous syntax highlighting.
@@ -704,6 +706,72 @@ test('bundle graph metadata preserves separate physical installs after stripping
   }
   const sourcemap = buildBundleGraphData({ kind: 'sourcemap', integrity: 'flow-no-versions', json: { sources: ['node_modules/dep/index.js'], sourcesContent: ['x'] } })
   assert.equal(sourcemap.options.packageInfoOf('index.js'), undefined, 'do not invent a version for sourcemaps')
+})
+
+function flowFromBundle(details, packages = false) {
+  const prep = buildBundleGraphData(details)
+  assert.ok(prep, 'source paths without embedded contents must still open a graph')
+  const graph = buildGraph(prep.treeData, prep.files, prep.ownCounts, prep.transitiveCounts,
+    prep.severitySets, prep.colorSets, prep.fileFindings, prep.options)
+  graph.flowEntries = prep.flowEntries
+  graph.ownSourceFiles = prep.ownSourceFiles
+  for (const node of graph.nodes) node.origFile = prep.strippedToOrig.get(node.file)
+  return { prep, model: buildSizeFlow(graph, { packages }) }
+}
+
+test('Size flow preserves unknown sourcemap sources in full and metadata-only graphs', async t => {
+  const previousLayout = graph2.bundleLayout
+  t.after(() => { graph2.bundleLayout = previousLayout })
+  graph2.bundleLayout = 'flow'
+  for (const [content, total] of [
+    [{ sourcesContent: ['abc', null, ''] }, { size: 3, missing: 1 }],
+    [{ sourcesContent: ['abc'] }, { size: 3, missing: 2 }],
+    [{}, { size: 0, missing: 3 }],
+  ]) {
+    const full = { kind: 'sourcemap', integrity: `flow-unsized-${total.missing}`, size: 123, json: {
+      version: 3, sources: ['checkout/entry.js', 'checkout/node_modules/dep/index.js', 'checkout/empty.js'], ...content,
+    } }
+    const cached = parseBundleMetadata(await createBundleMetadata(full), full.integrity)
+    for (const details of [full, cached]) { for (const packages of [false, true]) {
+      const { prep, model } = flowFromBundle(details, packages)
+      assert.deepEqual(prep.files, ['entry.js', 'node_modules/dep/index.js', 'empty.js'])
+      assert.deepEqual(model.total, total)
+      assert.equal(model.omittedFiles, 0)
+      assert.equal(model.inferred, true)
+      assert.equal(model.roots.length, packages ? 2 : 3)
+      assert.equal(layoutSizeFlow(model).nodes.length, packages ? 2 : 3, 'even an entirely unknown-sized graph remains visible')
+      if (total.missing === 1) assert.equal(prep.treeData['empty.js'].size, 0, 'an empty source has a known zero-byte size')
+    } }
+  }
+})
+
+test('Size flow preserves imports through unsized Stasis source while excluding resources and directories', async t => {
+  const previousLayout = graph2.bundleLayout
+  t.after(() => { graph2.bundleLayout = previousLayout })
+  graph2.bundleLayout = 'flow'
+  const full = { kind: 'stasis', integrity: 'flow-unsized-stasis', size: 123, bundle: new Bundle({
+    config: { scope: 'full' }, entries: new Set(['index.js']),
+    modules: new Map([
+      ['.', { name: 'app', files: { 'index.js': 'app', 'missing.js': null, 'empty.js': '', 'asset.svg': '<svg/>', 'image.png': 'AQID', 'bad.bin': '%%%bad', assets: '["asset.svg"]' } }],
+      ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'depdep' } }],
+    ]),
+    formats: new Map([['missing.js', 'commonjs'], ['asset.svg', 'resource'], ['image.png', 'resource:base64'], ['bad.bin', 'resource:base64'], ['assets', 'directory']]),
+    imports: new Map([['node,import', new Map([
+      ['index.js', new Map(['missing.js', 'empty.js', 'asset.svg', 'image.png', 'bad.bin', 'assets'].map(file => [file, file]))],
+      ['missing.js', new Map([['dep', 'node_modules/dep/index.js']])],
+    ])]]),
+  }) }
+  const cached = parseBundleMetadata(await createBundleMetadata(full), full.integrity)
+  for (const details of [full, cached]) { for (const packages of [false, true]) {
+    const { prep, model } = flowFromBundle(details, packages)
+    assert.deepEqual(new Set(prep.files), new Set(['index.js', 'missing.js', 'empty.js', 'node_modules/dep/index.js']))
+    assert.deepEqual(prep.treeData['index.js'].imports, ['missing.js', 'empty.js'])
+    assert.deepEqual(model.total, { size: 9, missing: 1 })
+    assert.equal(model.omittedFiles, 0)
+    assert.equal(model.files.get('missing.js').size, null)
+    assert.ok(!model.files.get('missing.js').virtual, 'a source with unknown size remains a real file')
+    assert.ok(model.byId.has(packages ? 'p:dep' : 'f:node_modules/dep/index.js'), 'unsized intermediates must not disconnect their dependencies')
+  } }
 })
 
 test('Overview package and file sizes, and the Code file header, read in KiB from 1,024 bytes', () => {

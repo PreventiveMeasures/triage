@@ -359,8 +359,13 @@ describe('bundleFileSizes — what the Overview and Treemap weigh', () => {
 
   it('narrows to source for the import graph, which draws no images', () => {
     const sizes = bundleSourceSizes(details())
-    assert.deepEqual([...sizes].filter(([, size]) => size !== null).map(([path]) => path).toSorted(), ['a/b/c/util.js', 'index.js'])
-    assert.deepEqual([...sizes.keys()], [...bundleFileSizes(details()).keys()], 'over the same inventory')
+    assert.deepEqual([...sizes.keys()].toSorted(), ['a/b/c/util.js', 'index.js'])
+  })
+
+  it('preserves unknown source sizes separately from resources and known empty files', () => {
+    const sizes = bundleSourceSizes(bundleWith({ 'missing.js': null, 'empty.js': '', 'image.png': null, dir: null },
+      { 'missing.js': 'commonjs', 'image.png': 'resource:base64', dir: 'directory' }))
+    assert.deepEqual(sizes, new Map([['missing.js', null], ['empty.js', 0]]))
   })
 
   it('keeps every entry of a bundle that records no formats (v0)', () => {
