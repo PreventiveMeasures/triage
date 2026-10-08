@@ -51,6 +51,17 @@ export function bundleSourceLineCount(content) {
   return breaks + (/[\r\n]$/u.test(content) ? 0 : 1)
 }
 
+// Lines of code: lines with anything but whitespace on them, comments
+// included for now, by the same line breaks. A match runs from a line's first
+// non-whitespace character to its end, so there is one per such line.
+export function bundleSourceCodeLineCount(content) {
+  if (typeof content !== 'string') return 0
+  const code = /\S[^\r\n]*/gu
+  let lines = 0
+  while (code.test(content)) lines++
+  return lines
+}
+
 function mapObject(value) {
   return value instanceof Map ? Object.fromEntries([...value].map(([key, v]) => [key, mapObject(v)])) : value
 }

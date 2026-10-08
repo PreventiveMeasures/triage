@@ -941,11 +941,11 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const tooltip = pkg?.variant ? `${compact.node.sourcePath}\nVariant ${pkg.variant}` : compact.node.sourcePath
       const info = child.packageInfo
       const hasDetails = !!info || !!pkg?.variant
-      // Size and lines read every source in the package, so count them only
+      // Size and LoC read every source in the package, so count them only
       // when its tooltip is wanted; the tooltip shows after the hover delay.
       const weigh = info && sources ? (e) => {
-        const { bytes, lines } = bundlePackageSourceStats(sources, child.sourcePath)
-        Object.assign(e.currentTarget.dataset, { tooltipLines: String(lines), tooltipSize: formatBytes(bytes) })
+        const { bytes, loc } = bundlePackageSourceStats(sources, child.sourcePath)
+        Object.assign(e.currentTarget.dataset, { tooltipLoc: String(loc), tooltipSize: formatBytes(bytes) })
       } : nothing
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows

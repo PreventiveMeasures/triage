@@ -88,9 +88,9 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const ecosystem = el.dataset.tooltipEcosystem ?? ''
   const version = el.dataset.tooltipVersion ?? ''
   const files = el.dataset.tooltipFiles ?? ''
-  const lines = el.dataset.tooltipLines ?? ''
+  const loc = el.dataset.tooltipLoc ?? ''
   const size = el.dataset.tooltipSize ?? ''
-  const content = JSON.stringify([text, repo, commit, bundle, stats, built, packageName, ecosystem, version, files, lines, size])
+  const content = JSON.stringify([text, repo, commit, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
   if (!text) return
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
@@ -106,9 +106,9 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     if (icon) row.append(icon)
     const label = document.createElement('span')
     label.className = 'tooltip-package-details'
-    const count = (value, noun) => /^\d+$/u.test(value) ? `${Number(value).toLocaleString()} ${value === '1' ? noun : `${noun}s`}` : ''
+    const count = (value, unit) => /^\d+$/u.test(value) ? `${Number(value).toLocaleString()} ${unit}` : ''
     // The size comes formatted, like `data-tooltip-stats`.
-    for (const value of [packageName, version, count(files, 'file'), count(lines, 'line'), size].filter(Boolean)) {
+    for (const value of [packageName, version, count(files, files === '1' ? 'file' : 'files'), count(loc, 'LoC'), size].filter(Boolean)) {
       const field = document.createElement('span')
       field.textContent = value
       label.append(field)
