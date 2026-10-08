@@ -33,7 +33,9 @@ The managed wrapper shares the Manage bundle catalogue and model transport.
 Selecting a bundle fetches `/api/bundles/:id/metadata` through the shared
 in-memory cache. File sizes, source-line counts, packages, formats and scopes
 come from server-generated metadata; scan setup does not download source
-contents or decode Brotli in the browser.
+contents or decode Brotli in the browser. While that loads, the Source stats
+show the catalogue's own size, file and LoC counts (the ones the bundle picker
+lists); packages appear once the metadata arrives.
 The local/E2E wrapper lists saved bundles from browser storage,
 then uses the existing bundle metadata cache to load the selected bundle’s files,
 sizes, source-line counts, packages, and scopes. LoC uses the same source-line
