@@ -4,11 +4,7 @@ import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { flowRibbon } from './size-flow-model.js'
 
-export function shortSize(size) {
-  if (size >= 1e6) return `${(size / 1e6).toFixed(1)} MB`
-  if (size >= 1e3) return `${(size / 1e3).toFixed(1)} kB`
-  return `${size} B`
-}
+export const shortSize = formatBytes
 
 // Retain the geometry and delegated listeners across inspector/filter updates.
 // Hover touches at most two ribbons; selection only touches incident edges.
@@ -29,8 +25,8 @@ export class SizeFlowChart {
   }
 
   renderNode(n) {
-    const tooltip = `${n.label}\n${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.missing ? ` · ${n.missing} file sizes unknown` : ''}`
-    const label = n.width >= 40 ? `${n.label.replace(/^node_modules\//u, '')} · ${shortSize(n.size)}` : ''
+    const tooltip = `${n.label}\n${formatBytes(n.removable)} removed if deleted · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}`
+    const label = n.width >= 40 ? `${n.label.replace(/^node_modules\//u, '')} · ${shortSize(n.removable)}` : ''
     return svg`<g class="flow-node" data-flow-node=${n.id} role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip} aria-pressed="false">
       <rect x=${n.x} y=${n.y} width=${n.width} height="26" fill=${pkgColor(n.pkg)} stroke="var(--graph-canvas-bg)" stroke-width="1"></rect>
       ${label ? svg`<svg x=${n.x + 5} y=${n.y} width=${Math.max(0, n.width - 10)} height="26"><text x="0" y="18">${label}</text></svg>` : null}
@@ -75,7 +71,7 @@ export class SizeFlowChart {
 
   searchMatches() {
     const ids = this.matchingNodes()
-    return this.searchResult ??= [...ids].map(id => this.host.model.byId.get(id)).toSorted((a, b) => b.size - a.size)
+    return this.searchResult ??= [...ids].map(id => this.host.model.byId.get(id)).toSorted((a, b) => b.removable - a.removable)
   }
 
   update(root) {

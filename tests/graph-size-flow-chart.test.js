@@ -97,3 +97,10 @@ test('delegated chart actions retain node, edge, and follow-import navigation', 
   host.willUpdate(new Map())
   assert.notEqual(chart.render(), old, 'new geometry is generated when the focused graph changes')
 })
+
+test('node descriptions and search order use removal impact rather than reachable size', t => {
+  const { chart, host } = mounted(t)
+  assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:entry.js', 'f:shared.js', 'f:b.js', 'f:a.js'])
+  const template = chart.renderNode(host.layout.byId.get('f:a.js'))
+  assert.ok(template.values.includes('a.js\n20 B removed if deleted · 1020 B reachable · 20 B own'))
+})

@@ -127,10 +127,10 @@ test('full dependency paths are visible and following a dependency retains all i
   assert.equal(layoutSizeFlow(model, { focus: 'f:a/index.js' }).nodes.length, 2)
   const all = layout
   const shared = all.edges.filter(e => e.to === 'f:large/index.js')
-  assert.equal(shared[0].width, shared[1].width, 'shared target keeps equal ribbon widths on both paths')
+  assert.equal(shared[0].width2, shared[1].width2, 'shared target keeps equal ribbon endpoints on both paths')
   for (const e of all.edges) {
-    assert.ok(e.x1 + e.width <= all.byId.get(e.from).x + all.byId.get(e.from).width + .001)
-    assert.ok(e.x2 + e.width <= all.byId.get(e.to).x + all.byId.get(e.to).width + .001)
+    assert.ok(e.x1 + e.width1 <= all.byId.get(e.from).x + all.byId.get(e.from).width + .001)
+    assert.ok(e.x2 + e.width2 <= all.byId.get(e.to).x + all.byId.get(e.to).width + .001)
     assert.ok(!/NaN|Infinity/u.test(flowRibbon(e)))
   }
 })
@@ -140,12 +140,13 @@ test('deep chains avoid recursion and zero-byte graphs keep finite geometry', ()
   const model = buildSizeFlow(fixture(tree, ['0.js']))
   assert.equal(model.total.size, 12000)
   assert.equal(model.byId.get('f:5000.js').size, 7000)
+  assert.equal(model.byId.get('f:5000.js').removable, 7000)
   const all = layoutSizeFlow(model)
   assert.equal(all.nodes.length, 12000)
   assert.equal(all.edges.length, 11999)
   assert.equal(all.byId.get('f:11999.js').level, 11999)
   const zero = layoutSizeFlow(buildSizeFlow(fixture({ 'entry.js': { size: 0, imports: ['zero.js'] }, 'zero.js': { size: 0 } })))
-  assert.ok(zero.edges[0].width > 0)
+  assert.ok(zero.edges[0].width1 > 0 && zero.edges[0].width2 > 0)
   assert.ok(!/NaN|Infinity/u.test(flowRibbon(zero.edges[0])))
 })
 
@@ -164,11 +165,11 @@ test('wide rows pack small dependencies without gaps or obscuring the large flow
     assert.ok(row[0].width > .75 * row.reduce((sum, n) => sum + n.width, 0), 'the large dependency dominates despite hundreds of small neighbors')
     assert.equal(row[1].width, 1.5, 'small nodes use a quarter of the former 6px floor')
     const largeEdge = layout.edges.find(e => e.size === 1e6), smallEdge = layout.edges.find(e => e.size === 1)
-    assert.ok(smallEdge.width < largeEdge.width / 3900, 'minimum ribbon weight is also reduced fourfold')
+    assert.ok(smallEdge.width1 < largeEdge.width1 / 3900, 'minimum ribbon weight is also reduced fourfold')
     for (const edge of layout.edges) {
       const from = layout.byId.get(edge.from), to = layout.byId.get(edge.to)
-      assert.ok(edge.x1 + edge.width <= from.x + from.width + .001)
-      assert.ok(edge.x2 + edge.width <= to.x + to.width + .001)
+      assert.ok(edge.x1 + edge.width1 <= from.x + from.width + .001)
+      assert.ok(edge.x2 + edge.width2 <= to.x + to.width + .001)
     }
   }
 })

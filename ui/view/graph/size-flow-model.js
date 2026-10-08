@@ -1,6 +1,7 @@
 import { pkgLabel } from '../bundle-pkg-of.js'
 import { countsTowardsCycles } from './cycle-imports.js'
 import { stronglyConnected } from './matrix-model.js'
+import { removalSizes } from './size-flow-removal.js'
 
 const bytes = n => Number.isFinite(n) && n >= 0 ? n : 0
 
@@ -78,6 +79,7 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
     row.files.push(file); row.own += bytes(n.size); row.virtual &&= !!n.virtual
   }
   for (const row of byId.values()) Object.assign(row, reach.sum(row.files))
+  removalSizes(files, links, roots, byId)
   const pairs = new Map()
   for (const from of active) {for (const to of links.get(from)) {
     const a = idOf(from), b = idOf(to)
@@ -125,33 +127,29 @@ export function layoutSizeFlow(model, { focus = null, width = 1100 } = {}) {
   const roots = focus && model.byId.has(focus) ? [focus] : model.roots
   const levels = flowLevels(model, roots)
   const candidates = [...levels.keys()]
-    .toSorted((a, b) => levels.get(a) - levels.get(b) || model.byId.get(b).size - model.byId.get(a).size || a.localeCompare(b))
+    .toSorted((a, b) => levels.get(a) - levels.get(b) || model.byId.get(b).removable - model.byId.get(a).removable || a.localeCompare(b))
   const visible = new Set(candidates)
   const edges = model.edges.filter(e => visible.has(e.from) && visible.has(e.to))
     .toSorted((a, b) => b.size - a.size || a.id.localeCompare(b.id)).map(e => ({ ...e }))
   const nodes = [...visible].map(id => ({ ...model.byId.get(id), level: levels.get(id) }))
   const bands = Map.groupBy(nodes, n => n.level), byId = new Map(nodes.map(n => [n.id, n]))
-  const maxSize = nodes.reduce((max, n) => Math.max(max, n.size), 1)
-  // A port needs room for all incident ribbons because shared sizes are not
-  // additive. Node labels show unique totals; widths encode edge flow only.
+  const maxSize = nodes.reduce((max, n) => Math.max(max, n.removable), 1)
+  // Bars share one byte scale and measure deletion impact from all entry
+  // points, even while focusing. Overlapping ribbons never inflate a bar.
   const weight = n => Math.max(n, maxSize / 4000)
-  const ports = new Map(nodes.map(n => [n.id, { incoming: 0, outgoing: 0 }]))
-  for (const e of edges) { ports.get(e.to).incoming += weight(e.size); ports.get(e.from).outgoing += weight(e.size) }
-  for (const node of nodes) node.capacity = Math.max(weight(node.size), ports.get(node.id).incoming, ports.get(node.id).outgoing)
-  const widest = [...bands.values()].reduce((max, band) => Math.max(max, band.reduce((s, n) => s + n.capacity, 0)), 1)
+  const widest = [...bands.values()].reduce((max, band) => Math.max(max, band.reduce((s, n) => s + n.removable, 0)), 1)
   const padding = 24, rowStep = 88, scale = Math.max(200, width - padding * 2) / widest
   let actualWidth = width
   for (const band of bands.values()) {
     let x = padding
-    for (const n of band) { n.x = x; n.y = 52 + n.level * rowStep; n.width = Math.max(1.5, n.capacity * scale); x += n.width }
+    for (const n of band) { n.x = x; n.y = 52 + n.level * rowStep; n.width = Math.max(1.5, n.removable * scale); x += n.width }
     actualWidth = Math.max(actualWidth, x + padding)
   }
-  const offsets = new Map(nodes.map(n => [n.id, { from: 0, to: 0 }]))
   for (const edge of edges) {
     const from = byId.get(edge.from), to = byId.get(edge.to)
-    edge.width = weight(edge.size) * scale
-    edge.x1 = from.x + offsets.get(from.id).from; edge.x2 = to.x + offsets.get(to.id).to
-    offsets.get(from.id).from += edge.width; offsets.get(to.id).to += edge.width
+    const ribbonWidth = weight(edge.size) * scale
+    edge.width1 = Math.min(ribbonWidth, from.width); edge.width2 = Math.min(ribbonWidth, to.width)
+    edge.x1 = from.x + (from.width - edge.width1) / 2; edge.x2 = to.x + (to.width - edge.width2) / 2
     edge.y1 = from.y + 26; edge.y2 = to.y
     edge.returning = to.level <= from.level
   }
@@ -159,7 +157,7 @@ export function layoutSizeFlow(model, { focus = null, width = 1100 } = {}) {
 }
 
 export function flowRibbon(edge) {
-  const { x1, x2, y1, y2, width: w } = edge
+  const { x1, x2, y1, y2, width1, width2 } = edge
   const bend = edge.returning ? Math.max(y1, y2) + 35 : (y1 + y2) / 2
-  return `M${x1},${y1} C${x1},${bend} ${x2},${bend} ${x2},${y2} L${x2 + w},${y2} C${x2 + w},${bend} ${x1 + w},${bend} ${x1 + w},${y1} Z`
+  return `M${x1},${y1} C${x1},${bend} ${x2},${bend} ${x2},${y2} L${x2 + width2},${y2} C${x2 + width2},${bend} ${x1 + width1},${bend} ${x1 + width1},${y1} Z`
 }

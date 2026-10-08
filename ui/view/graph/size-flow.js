@@ -203,7 +203,7 @@ class SizeFlow extends LitElement {
   renderSearch() {
     if (!graph2.pathFilter.trim()) return null
     const matches = this.chart.searchMatches()
-    return html`<h4>Matches · ${matches.length}</h4>${matches.slice(0, 100).map(n => flowRow(n, n.size, () => this.follow(n.id)))}
+    return html`<h4>Matches · ${matches.length}</h4>${matches.slice(0, 100).map(n => flowRow(n, n.removable, () => this.follow(n.id)))}
       ${matches.length > 100 ? html`<p>Showing the 100 largest matches. Refine the search to find any file or package, including those beyond the visible graph.</p>` : null}`
   }
 
@@ -211,18 +211,20 @@ class SizeFlow extends LitElement {
     const node = this.model.byId.get(this.selection?.node)
     const edge = this.model.edgeById.get(this.selection?.edge)
     if (!node) {return html`<h3>Size flow</h3><div class="flow-metrics"><b>${shortSize(this.model.total.size)}</b><span>unique reachable source</span></div>
-      <p>Ribbons show the total source size reachable through each import. Shared code contributes its full size to every loading edge, so flows are not additive.</p>
-      <p>Bars make room for incoming and outgoing ribbons. Select a file or ribbon to compare its own size with its unique reachable size.</p>
-      <p>Dashed ribbons return to an earlier level, including cycles. Thin ribbons have a minimum visible width.</p>
+      <p>Bar widths show how much source would leave this bundle if the file or package were deleted: its own code plus dependencies no longer reachable from any entry point.</p>
+      <p>Shared dependencies stay when another path still loads them. Package removal deletes all its files together. Following imports keeps the same bundle-wide calculation.</p>
+      <p>Ribbons may overlap and taper to the bars they connect. Select a ribbon to see the total source size reachable through its import. These totals can overlap.</p>
+      <p>Dashed ribbons return to an earlier level, including cycles. Tiny bars and ribbons keep a minimum visible width.</p>
       ${this.model.total.missing ? html`<p>${this.model.total.missing} files have unknown sizes; totals include known bytes only.</p>` : null}
       ${this.model.weakEdges ? html`<p>${this.model.weakEdges} weak config/metadata loads excluded.</p>` : null}
       ${this.model.omittedFiles ? html`<p>${this.model.omittedFiles} files are not reachable from these entry points.</p>` : null}
       <h4>${this.model.inferred ? 'Inferred roots (no entry points in this view)' : 'Entry points'}</h4>
-      ${this.model.roots.slice(0, 100).map(id => { const n = this.model.byId.get(id); return flowRow(n, n.size, () => this.select(id)) })}
+      ${this.model.roots.slice(0, 100).map(id => { const n = this.model.byId.get(id); return flowRow(n, n.removable, () => this.select(id)) })}
       ${this.model.roots.length > 100 ? html`<p>Showing the first 100 entry points. Search to find another.</p>` : null}`}
     return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button aria-label="Clear flow selection" @click=${() => { if (this.focus) this.follow(null); else { this.selection = null; this.requestUpdate() } }}>×</button></div>
       ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
-      <div class="flow-metrics"><b>${shortSize(node.size)}</b><span>unique reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
+      <div class="flow-metrics"><b>${shortSize(node.removable)}</b><span>removed if deleted · bar width</span><b>${shortSize(node.size)}</b><span>unique reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
+      ${node.removableMissing ? html`<p>${node.removableMissing} removed files have unknown sizes; removal totals include known bytes only.</p>` : null}
       ${node.missing ? html`<p>${node.missing} reachable file sizes are unknown.</p>` : null}
       ${node.virtual ? html`<p>Entry source is absent from this bundle; only its recorded imports are counted.</p>` : null}
       <div class="flow-actions"><button @click=${() => this.follow(node.id)}>Follow imports</button>
@@ -236,7 +238,7 @@ class SizeFlow extends LitElement {
     if (!this.layout) return null
     const { nodes, width, height } = this.layout
     return html`<section class="flow-stage" aria-label="Dependency size flow">
-      <div class="flow-viewport"><svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import ribbons weighted by total reachable bytes">
+      <div class="flow-viewport"><svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import paths with bars weighted by bundle size removed if deleted">
         <text class="flow-level" x="24" y="24">${this.focus ? this.model.byId.get(this.focus).label : this.model.inferred ? 'Inferred roots' : 'Entry points'} ↓</text>
         ${guard([this.layout], () => this.chart.render())}
       </svg>${nodes.length > 0 ? null : html`<p>No recorded dependency paths in this view.</p>`}</div>
