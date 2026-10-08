@@ -119,6 +119,13 @@
   gap: .75rem;
   min-width: 0;
 }
+/* Issues sits at the end of the first row, beside fullscreen (or leads
+   the issue row when it doesn't fit; see graph-layout.js). Lines break by
+   base size, so the path filter starts narrower here and grows back to
+   its usual 12rem when the row has room, keeping one line on a typical
+   stage. */
+.g2-topbar-controls > .g2-issues-switch { margin-left: auto; }
+.g2-topbar-controls .g2-path-filter-wrap { flex: 1 1 8rem; max-width: 12rem; }
 
 .g2-matrix-controls {
   display: flex;

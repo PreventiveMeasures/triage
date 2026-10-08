@@ -46,6 +46,9 @@ class GraphLayout extends LitElement {
     graph:   { attribute: false },
     options: { attribute: false },
     matrixControls: { state: true },
+    // Bundle Issues switch moved from the end of the first row to the
+    // start of the issue row (see _placeIssues).
+    issuesWrapped: { state: true },
   }
 
   static styles = [unsafeCSS(toolbarCSS), unsafeCSS(treeCountChipCSS), unsafeCSS(graph2CSS), unsafeCSS(sidebarListCSS), unsafeCSS(zoomControlsCSS)]
@@ -55,6 +58,15 @@ class GraphLayout extends LitElement {
     this.graph = null
     this.options = {}
     this.matrixControls = null
+    this.issuesWrapped = false
+    this._topbarObserver = null
+    this._observedControls = null
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._topbarObserver?.disconnect()
+    this._observedControls = null
   }
 
   connectedCallback() {
@@ -73,22 +85,72 @@ class GraphLayout extends LitElement {
 
   updated() {
     this.toggleAttribute('matrix', !!this.options.showBundleLayouts && graph2.bundleLayout === 'matrix')
+    const controls = this.renderRoot.querySelector('.g2-topbar-controls')
+    if (controls !== this._observedControls && typeof ResizeObserver === 'function') {
+      this._topbarObserver ??= new ResizeObserver(() => this._placeIssues())
+      this._topbarObserver.disconnect()
+      if (controls) this._topbarObserver.observe(controls)
+      this._observedControls = controls
+    }
+    this._placeIssues()
+  }
+
+  // The bundle Issues switch ends the first row while it fits on that
+  // row's last line. Once it would start a line of its own, it leads the
+  // issue row instead, where the issue filters follow it. CSS can't move
+  // an item between rows, so this measures: in the first row, whether
+  // the switch wrapped; in the issue row, whether it would fit back,
+  // judged by the same base sizes the browser breaks lines by (the path
+  // filter shrinks to its flex basis), so the two checks agree.
+  _placeIssues() {
+    const controls = this.renderRoot.querySelector('.g2-topbar-controls')
+    const issues = this.renderRoot.querySelector('.g2-issues-switch')
+    if (!controls || !issues) return
+    const wrapped = this.issuesWrapped ? !issuesFitAfter(controls, issues) : startsLine(issues)
+    if (wrapped !== this.issuesWrapped) this.issuesWrapped = wrapped
   }
 
   render() {
     if (!this.graph) return html``
     if (this.options.showBundleLayouts && graph2.bundleLayout === 'matrix') {
       return html`<div class="graph2-layout g2-matrix-layout">
-        ${renderTopBar(this.graph, this.options, this.matrixControls)}
+        ${renderTopBar(this.graph, this.options, this.matrixControls, { issuesWrapped: this.issuesWrapped })}
         <dependency-matrix .graph=${this.graph} @matrix-controls-change=${(e) => { this.matrixControls = e.detail }}></dependency-matrix>
       </div>`
     }
     return html`<div class="graph2-layout">
-      ${renderTopBar(this.graph, this.options)}
+      ${renderTopBar(this.graph, this.options, null, { issuesWrapped: this.issuesWrapped })}
       ${renderStage(this.graph)}
       ${renderRightPanel()}
     </div>`
   }
+}
+
+// The element begins a flex line: it sits below its previous sibling.
+function startsLine(el) {
+  const prev = el.previousElementSibling
+  return prev != null && el.getBoundingClientRect().top >= prev.getBoundingClientRect().bottom - 1
+}
+
+// Would `el` fit after the last flex line of `container`? Sums that
+// line's items at their base sizes (a growing item counts its flex
+// basis) plus the gaps, the way the browser decides where lines break.
+function issuesFitAfter(container, el) {
+  const items = [...container.children]
+  if (items.length === 0) return true
+  const lastBox = items.at(-1).getBoundingClientRect()
+  const gap = parseFloat(getComputedStyle(container).columnGap) || 0
+  let used = 0
+  for (const item of items) {
+    const box = item.getBoundingClientRect()
+    if (box.bottom <= lastBox.top) continue
+    const style = getComputedStyle(item)
+    const basis = parseFloat(style.flexBasis)
+    const width = parseFloat(style.flexGrow) > 0 && Number.isFinite(basis)
+      ? Math.max(parseFloat(style.minWidth) || 0, Math.min(box.width, basis)) : box.width
+    used += width + gap
+  }
+  return used + el.getBoundingClientRect().width <= container.clientWidth
 }
 
 customElements.define('graph-layout', GraphLayout)

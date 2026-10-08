@@ -32,7 +32,10 @@ import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-
 // row above the main topbar. Used by the Findings-tab embed to host
 // the view-mode chooser inside the graph's own toolbar instead of
 // stacking a separate findings toolbar above the canvas.
-export function renderTopBar(graph, options, extraControls = null) {
+// `placement.issuesWrapped` (bundle graphs, measured by `<graph-layout>`)
+// moves the Issues switch from the end of the first row to the start of
+// the issue row when it would otherwise wrap onto a line of its own.
+export function renderTopBar(graph, options, extraControls = null, placement = {}) {
   const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
   const matrix = options.showBundleLayouts && graph2.bundleLayout === 'matrix'
   const dependencies = options.showBundleLayouts && graph2.bundleLayout === 'dependencies'
@@ -148,13 +151,21 @@ export function renderTopBar(graph, options, extraControls = null) {
   // button's right edge lands at the stage / sidebar boundary.
   const fullscreenBtn = html`<button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen">⛶</button>`
 
-  // Bundle graphs: the first row shapes the file set and view, with
-  // fullscreen pinned to its top-right corner even when the controls
-  // wrap. When findings matched the bundle, a second row leads with
-  // the Issues switch (off by default) and, while it is on, the issue
-  // controls: severity, mark and status filters. Off, the graph carries
-  // no findings at all (see buildBundleGraphData).
+  // Bundle graphs: the first row shapes the file set and view and ends
+  // with the Issues switch (offered when findings matched the bundle, off
+  // by default) and fullscreen, pinned to its top-right corner even when
+  // the controls wrap. While Issues is on, an issue row carries the issue
+  // controls: severity, mark and status filters. When the switch doesn't
+  // fit on the first row, it leads the issue row instead. Off, the graph
+  // carries no findings at all (see buildBundleGraphData).
   if (options.showBundleLayouts) {
+    const issuesOn = (options.hasIssues ?? false) && graph2.bundleIssues
+    const issuesSwitch = options.hasIssues ? html`<mode-switch
+      class="g2-issues-switch"
+      label="Issues" .checked=${graph2.bundleIssues}
+      data-g2-bundle-issues
+    ></mode-switch>` : null
+    const switchInIssueRow = issuesSwitch && placement.issuesWrapped
     return html`<div class="graph2-topbar">
       <div class="graph2-topbar-row graph2-topbar-row-main graph2-topbar-row-pinned toolbar-row">
         <div class="g2-topbar-controls">
@@ -163,15 +174,13 @@ export function renderTopBar(graph, options, extraControls = null) {
           ${pathFilter}
           ${packagesViewBtn}
           ${extraControls}
+          ${switchInIssueRow ? null : issuesSwitch}
         </div>
         ${fullscreenBtn}
       </div>
-      ${options.hasIssues ? html`<div class="graph2-topbar-row graph2-topbar-row-issues toolbar-row sev-row">
-        <mode-switch
-          label="Issues" .checked=${graph2.bundleIssues}
-          data-g2-bundle-issues
-        ></mode-switch>
-        ${graph2.bundleIssues ? html`${severityChips}${markFilter}${triageBtn}` : null}
+      ${issuesOn || switchInIssueRow ? html`<div class="graph2-topbar-row graph2-topbar-row-issues toolbar-row sev-row">
+        ${switchInIssueRow ? issuesSwitch : null}
+        ${issuesOn ? html`${severityChips}${markFilter}${triageBtn}` : null}
       </div>` : null}
     </div>`
   }

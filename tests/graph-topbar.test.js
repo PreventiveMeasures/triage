@@ -29,23 +29,37 @@ test('the bundle graph offers Issues only when findings matched, and shows issue
   assert.doesNotMatch(none, /data-g2-bundle-issues|<severity-chips|<triage-filter|<triage-selector/u)
 
   const off = rows(renderText(renderTopBar(graph, { ...bundle, hasIssues: true })))
-  assert.deepEqual(off.map(([name]) => name), ['main', 'issues'])
-  assert.match(off[1][1], /label="Issues"/u)
-  assert.doesNotMatch(off[1][1], /<severity-chips|<triage-filter|<triage-selector/u, 'issue controls stay hidden while Issues is off')
+  assert.deepEqual(off.map(([name]) => name), ['main'], 'no issue row while Issues is off')
+  assert.match(off[0][1], /label="Issues"/u)
+  assert.doesNotMatch(off[0][1], /<severity-chips|<triage-filter|<triage-selector/u)
 
   graph2.bundleIssues = true
   const [main, issues] = rows(renderText(renderTopBar(graph, { ...bundle, hasIssues: true })))
-  const order = ['label="Issues"', '<severity-chips', '<triage-filter', '<triage-selector'].map(part => issues[1].indexOf(part))
-  assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), 'Issues, then severity, mark and status filters')
+  assert.equal(issues?.[0], 'issues')
+  const order = ['<severity-chips', '<triage-filter', '<triage-selector'].map(part => issues[1].indexOf(part))
+  assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), 'severity, then mark and status filters')
   assert.doesNotMatch(main[1], /<severity-chips|<triage-filter|<triage-selector/u)
 })
 
-test('the bundle graph pins fullscreen to the first row, after the wrapping controls', () => {
+test('the bundle graph ends its first row with Issues, then fullscreen pinned after the wrapping controls', () => {
   const [[, main]] = rows(renderText(renderTopBar(graph, { ...bundle, hasIssues: true })))
-  const controls = main.indexOf('class="g2-topbar-controls"')
-  assert.ok(controls >= 0)
-  assert.ok(main.indexOf('id="g2-fullscreen"') > main.indexOf('g2-path-filter-wrap'), 'fullscreen follows the controls in row one')
   assert.match(main, /graph2-topbar-row-pinned/u)
+  const at = part => main.indexOf(part)
+  assert.ok(at('class="g2-topbar-controls"') >= 0)
+  assert.ok(at('g2-path-filter-wrap') < at('label="Issues"') && at('label="Issues"') < at('id="g2-fullscreen"'),
+    'path filter, then Issues, then fullscreen')
+})
+
+test('a bundle Issues switch that does not fit in the first row leads the issue row, before its filters', t => {
+  t.after(() => { graph2.bundleIssues = false })
+  for (const on of [false, true]) {
+    graph2.bundleIssues = on
+    const [main, issues] = rows(renderText(renderTopBar(graph, { ...bundle, hasIssues: true }, null, { issuesWrapped: true })))
+    assert.doesNotMatch(main[1], /label="Issues"/u)
+    assert.equal(issues?.[0], 'issues', `the issue row is shown with Issues ${on ? 'on' : 'off'}`)
+    const at = part => issues[1].indexOf(part)
+    assert.ok(at('label="Issues"') >= 0 && (on ? at('label="Issues"') < at('<severity-chips') : at('<severity-chips') < 0))
+  }
 })
 
 test('the findings graph keeps its single toolbar row with issue controls', () => {

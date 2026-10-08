@@ -1107,11 +1107,11 @@ report.addEventListener('click', (e) => {
   }
   // Issues switch (bundle Graph tab) — findings reach the bundle graph
   // only while it is on (buildBundleGraphData), so rebuild. Layouts
-  // don't depend on findings, so nodes keep their places and the file
-  // selection stays valid.
+  // don't depend on findings, so nodes keep their places, the file
+  // selection stays valid, and the canvas keeps its pan and zoom.
   if (pathClosest(e, '[data-g2-bundle-issues]')) {
     graph2.bundleIssues = !graph2.bundleIssues
-    cleanupGraph2()
+    cleanupGraph2({ keepViewport: true })
     render()
     return
   }

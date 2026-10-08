@@ -153,6 +153,20 @@ function alphaHex(a) {
 // refreshTopPkgs (optional) re-paints the Packages list when a
 // click changes the solo'd package (packages view only — file
 // clicks don't touch solo).
+// What an attachment lays out: the node set (hashed, so a long file
+// list costs one pass rather than a stored copy) plus every view switch
+// that changes positions. Equal keys mean a re-attach may keep the
+// previous pan and zoom.
+function graphViewKey(graph) {
+  let hash = 0x811c9dc5
+  for (const file of graph.files) {
+    for (let i = 0; i < file.length; i++) hash = Math.imul(hash ^ file.codePointAt(i), 0x01000193)
+    hash = Math.imul(hash ^ 10, 0x01000193)
+  }
+  return [hash >>> 0, graph.files.length, graph.edges.length, graph2.bundleLayout, graph2.packagesView,
+    graph2.dependencyPackagesView, graph2.focusedPkg, graph2.showAll].join('|')
+}
+
 export function attachGraph2Interaction(container, graph, refreshSidebar, refreshTopPkgs) {
   // Pierce the `<graph-layout>` shadow root — the canvas + corner
   // overlays + zoom controls all live inside it. Callers pass the
@@ -175,8 +189,15 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // unrelated re-render mid-graph would otherwise stack window
   // listeners + ResizeObserver + MutationObserver on top of the
   // previous set, leaking handlers. Tear down any prior attachment
-  // before re-wiring.
-  cleanupGraph2()
+  // before re-wiring, keeping its pan and zoom for the same view.
+  cleanupGraph2({ keepViewport: true })
+  // Re-attaching the view already on screen (an unrelated re-render, the
+  // bundle Issues switch) restores the user's pan and zoom, and lays out
+  // in the previous attachment's pixel space so positions match: layouts
+  // are deterministic in their inputs. Any other graph or view refits.
+  const viewKey = graphViewKey(graph)
+  let restore = graph2.keptViewport?.key === viewKey ? graph2.keptViewport : null
+  graph2.keptViewport = null
 
   const ctx = canvas.getContext('2d')
   let dpr = window.devicePixelRatio || 1
@@ -185,10 +206,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let statsSafeHeight = 0
   const viewport = { tx: 0, ty: 0, k: 1 }
   let hovered = null
-  let layoutH = 0
-  let layoutW = 0
+  let layoutH = restore?.layoutH ?? 0
+  let layoutW = restore?.layoutW ?? 0
   let needsLayout = true
-  let needsFit = true
+  let needsFit = !restore
   const renderCaches = new WeakMap()
   let nodePicker = null
   let paintedFrame = null
@@ -556,7 +577,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // the graph. The 15% threshold avoids re-fitting on cosmetic
     // 1px reflows from sub-pixel rounding when DPR changes.
     const sizeChanged = prevW > 0 && (Math.abs(W - prevW) / prevW > 0.15 || Math.abs(H - prevH) / prevH > 0.15)
-    if (needsFit || sizeChanged) { fitToView(); needsFit = false }
+    if (restore) {
+      // Keep the view centered when the stage changed size between
+      // attachments (e.g. the bundle issue-controls row came or went).
+      viewport.k = restore.k
+      viewport.tx = restore.tx + (W - restore.W) / 2
+      viewport.ty = restore.ty + (H - restore.H) / 2
+      restore = null
+    } else if (needsFit || sizeChanged) { fitToView(); needsFit = false }
     // Always redraw on resize: the canvas pixel buffer was just
     // resized via canvas.width/.height, which clears it. Without
     // an explicit draw the canvas would render blank until the
@@ -1622,7 +1650,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
 
   graph2.graphState = {
     requestDraw,
-    _cleanup: () => {
+    _cleanup: ({ keepViewport = false } = {}) => {
+      graph2.keptViewport = keepViewport && W > 0
+        ? { key: viewKey, k: viewport.k, tx: viewport.tx, ty: viewport.ty, W, H, layoutW, layoutH }
+        : null
       destroyed = true
       cancelAnimationFrame(rafId)
       ro.disconnect()

@@ -96,6 +96,9 @@ function createImpl() {
     // file set changes (the "All files" toggle in events.js nulls
     // it and tears the canvas down via cleanupGraph2).
     layoutCache: null,
+    // Pan / zoom handed from one canvas attachment to the next for the
+    // same view (cleanupGraph2's keepViewport). Consumed by the next attach.
+    keptViewport: null,
   }
 }
 
@@ -113,8 +116,14 @@ export const graph2 = new Proxy(_impl, {
   getOwnPropertyDescriptor(_t, prop) { return Object.getOwnPropertyDescriptor(_impl, prop) },
 })
 
-export function cleanupGraph2() {
-  if (graph2.graphState?._cleanup) graph2.graphState._cleanup()
+// `keepViewport`: the next attachment of the SAME view (see
+// attachGraph2Interaction) takes over this one's pan and zoom instead
+// of refitting. Only a re-attach of the graph on screen asks for it;
+// every other teardown (layout, Packages, focus, reason, navigation)
+// refits as before.
+export function cleanupGraph2({ keepViewport = false } = {}) {
+  if (graph2.graphState?._cleanup) graph2.graphState._cleanup({ keepViewport })
+  else if (!keepViewport) graph2.keptViewport = null
   graph2.graphState = null
 }
 
