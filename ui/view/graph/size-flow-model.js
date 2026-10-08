@@ -5,6 +5,22 @@ import { removalSizes } from './size-flow-removal.js'
 
 const bytes = n => Number.isFinite(n) && n >= 0 ? n : 0
 
+// Aim for at most 100 nodes, but don't take a step that would leave fewer
+// than 50. Count reachable bytes in the current file/package model once;
+// filtering must not alter reachability or the bundle's removal totals.
+export function sizeFlowLargeThreshold(model) {
+  if (model.byId.size <= 100) return 0
+  const steps = [0, 1, 4, 10, 20, 50, 100].map(n => n * 1024)
+  const counts = steps.map(() => 0)
+  for (const node of model.byId.values()) { for (let i = 0; i < steps.length; i++) {
+    if (node.size < steps[i]) break
+    counts[i]++
+  } }
+  let step = 0
+  while (step < steps.length - 1 && counts[step] > 100 && counts[step + 1] >= 50) step++
+  return steps[step]
+}
+
 // Condense cycles before counting reachability. Each source byte contributes
 // once to a node's total, even through diamonds, multiple entries, or cycles.
 // Cache scalar totals, not a quadratic collection of per-file reachable sets.

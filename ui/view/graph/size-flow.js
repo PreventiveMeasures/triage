@@ -2,7 +2,7 @@ import { guard } from 'lit/directives/guard.js'
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
-import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow } from './size-flow-model.js'
+import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowLargeThreshold } from './size-flow-model.js'
 import { SizeFlowChart, shortSize } from './size-flow-chart.js'
 import { graphZoomMetrics } from './zoom.js'
 import css from './size-flow.css'
@@ -32,6 +32,7 @@ class SizeFlow extends LitElement {
     this.needsFit = true
     this.fitted = true
     this.largeOnly = true
+    this.largeThreshold = 0
     this.chart = new SizeFlowChart(this)
     this.focus = null; this.selection = null; this.hover = null
     this.bridge = { requestDraw: () => this.requestUpdate(), _cleanup: () => {} }
@@ -42,6 +43,7 @@ class SizeFlow extends LitElement {
     let rebuild = false
     if (!this.model || changes.has('graph') || changes.has('packages')) {
       this.model = buildSizeFlow(this.graph, { packages: this.packages })
+      this.largeThreshold = sizeFlowLargeThreshold(this.model)
       rebuild = true
       if (!this.model.byId.has(this.focus)) this.focus = null
       if (this.selection && !this.model.byId.has(this.selection.node)) this.selection = null
@@ -56,18 +58,18 @@ class SizeFlow extends LitElement {
     }
   }
 
-  get minSize() { return this.graph.nodes.length > 50 && this.largeOnly ? 4096 : 0 }
+  get minSize() { return this.largeOnly ? this.largeThreshold : 0 }
 
   toggleLarge() { this.largeOnly = !this.largeOnly; this.needsFit = true; this.requestUpdate() }
 
   renderControls() {
-    return this.graph.nodes.length > 50 ? html`<mode-switch label="Large" .checked=${this.largeOnly}
-      data-tooltip="At least 4 KiB of unique reachable source" @click=${() => this.toggleLarge()}></mode-switch>` : null
+    return this.largeThreshold ? html`<mode-switch label=${`Large · ${this.largeThreshold / 1024} KiB`} .checked=${this.largeOnly}
+      data-tooltip=${`At least ${shortSize(this.largeThreshold)} of unique reachable source`} @click=${() => this.toggleLarge()}></mode-switch>` : null
   }
 
   updated() {
     graph2.graphState = this.bridge
-    const controlsKey = `${this.graph.nodes.length > 50}:${this.largeOnly}`
+    const controlsKey = `${this.largeThreshold}:${this.largeOnly}`
     if (controlsKey !== this.controlsKey) {
       this.controlsKey = controlsKey
       this.dispatchEvent(new CustomEvent('flow-controls-change', { detail: this.renderControls(), bubbles: true, composed: true }))
@@ -273,7 +275,7 @@ class SizeFlow extends LitElement {
     return html`<section class="flow-stage" aria-label="Dependency size flow">
       <div class="flow-viewport"><svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()};--flow-zoom:${this.zoom}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import paths with bars weighted by bundle size removed if deleted">
         ${guard([this.layout], () => this.chart.render())}
-      </svg>${nodes.length > 0 ? null : html`<p>${this.minSize ? 'No nodes reach 4 KiB. Turn off Large to show all nodes.' : 'No recorded dependency paths in this view.'}</p>`}</div>
+      </svg>${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${shortSize(this.minSize)}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>
       <div class="flow-count">${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</div>
       <div class="g2-zoom-ctrl" role="group" aria-label="Flow zoom">
         <button aria-label="Zoom in" ?disabled=${this.zoom >= this.zoomMetrics().max * .9999} @click=${() => this.zoomBy(1.4)}>+</button>
