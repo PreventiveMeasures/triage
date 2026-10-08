@@ -63,7 +63,7 @@ class SizeFlow extends LitElement {
   toggleLarge() { this.largeOnly = !this.largeOnly; this.needsFit = true; this.requestUpdate() }
 
   renderControls() {
-    return this.largeThreshold ? html`<mode-switch label=${`Large · ${this.largeThreshold / 1024} KiB`} .checked=${this.largeOnly}
+    return this.largeThreshold ? html`<mode-switch label=${`Large · ${this.largeThreshold / 1024}+ KiB`} .checked=${this.largeOnly}
       data-tooltip=${`At least ${shortSize(this.largeThreshold)} of unique reachable source`} @click=${() => this.toggleLarge()}></mode-switch>` : null
   }
 

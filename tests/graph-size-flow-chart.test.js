@@ -29,13 +29,14 @@ function mounted(t) {
   }
   const nodes = new Map(host.layout.nodes.map(n => [n.id, element({ flowNode: n.id })]))
   const edges = new Map(host.layout.edges.map(e => [e.id, element({ flowEdge: e.id })]))
-  const root = { querySelectorAll: selector => [...(selector === '[data-flow-node]' ? nodes : edges).values()] }
+  const outline = element()
+  const root = { querySelectorAll: selector => [...(selector === '[data-flow-node]' ? nodes : edges).values()], querySelector: () => outline }
   chart.update(root)
-  return { host, chart, root, nodes, edges, writes: () => writes }
+  return { host, chart, root, nodes, edges, outline, writes: () => writes }
 }
 
 test('hover and selection retain geometry and update only affected highlights', t => {
-  const { host, chart, root, nodes, edges, writes } = mounted(t)
+  const { host, chart, root, nodes, edges, outline, writes } = mounted(t)
   const geometry = chart.render()
   const renderEdge = t.mock.method(chart, 'renderEdge'), renderNode = t.mock.method(chart, 'renderNode')
   const matching = t.mock.method(host, 'matches'), updates = t.mock.method(host, 'requestUpdate')
@@ -50,16 +51,20 @@ test('hover and selection retain geometry and update only affected highlights', 
   assert.equal(updates.mock.callCount(), 0, 'hover never triggers a component rerender')
   host.select('f:a.js'); chart.update(root)
   assert.equal(nodes.get('f:a.js').attributes.get('aria-pressed'), 'true')
-  assert.equal(nodes.get('f:a.js').attributes.get('rect:stroke'), 'var(--text)')
+  assert.equal(outline.attributes.get('visibility'), 'visible')
+  for (const key of ['x', 'y', 'width']) assert.equal(outline.attributes.get(key), String(host.layout.byId.get('f:a.js')[key]))
   chart.setHover(null)
   for (const e of host.model.edges) assert.equal(edges.get(e.id).attributes.get('opacity'), e.from === 'f:a.js' || e.to === 'f:a.js' ? '0.6' : '0.22')
   host.select('f:b.js'); chart.update(root)
   assert.equal(nodes.get('f:a.js').attributes.get('aria-pressed'), 'false')
   assert.equal(nodes.get('f:b.js').attributes.get('aria-pressed'), 'true')
+  assert.equal(outline.attributes.get('x'), String(host.layout.byId.get('f:b.js').x))
   assert.equal(chart.render(), geometry)
   assert.equal(renderNode.mock.callCount(), 0)
   assert.equal(renderEdge.mock.callCount(), 0)
   assert.equal(matching.mock.callCount(), 0, 'unchanged filters reuse node matches')
+  host.select(null); chart.update(root)
+  assert.equal(outline.attributes.get('visibility'), 'hidden')
 })
 
 test('filter changes refresh highlights and cached search results without replacing geometry', t => {

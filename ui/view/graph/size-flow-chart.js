@@ -20,6 +20,7 @@ export class SizeFlowChart {
       @pointerover=${e => this.setHover(e.target.closest('[data-flow-edge]')?.dataset.flowEdge ?? null)}
       @pointerout=${e => this.setHover(e.relatedTarget?.closest?.('[data-flow-edge]')?.dataset.flowEdge ?? null)}>
       ${layout.edges.map(e => this.renderEdge(e))}${layout.nodes.map(n => this.renderNode(n))}
+      <rect class="flow-selection" height="26" visibility="hidden" aria-hidden="true"></rect>
     </g>`
     return this.template
   }
@@ -80,6 +81,7 @@ export class SizeFlowChart {
     if (fresh) {
       this.nodes = new Map([...root.querySelectorAll('[data-flow-node]')].map(el => [el.dataset.flowNode, el]))
       this.edges = new Map([...root.querySelectorAll('[data-flow-edge]')].map(el => [el.dataset.flowEdge, el]))
+      this.outline = root.querySelector('.flow-selection')
       this.domLayout = this.layout
     }
     const matches = this.matchingNodes()
@@ -93,8 +95,13 @@ export class SizeFlowChart {
       const active = id === selected?.node
       el.setAttribute('opacity', this.matches.has(id) ? '1' : '.15')
       el.setAttribute('aria-pressed', String(active))
-      const rect = el.querySelector('rect')
-      rect.setAttribute('stroke', active ? 'var(--text)' : 'var(--graph-canvas-bg)')
+    }
+    // Paint selection after every bar so a neighboring fill/border cannot
+    // cover its right edge. Keep the node order and retained SVG unchanged.
+    if (this.outline && (fresh || this.selected?.node !== selected?.node)) {
+      const node = this.layout.byId.get(selected?.node)
+      this.outline.setAttribute('visibility', node ? 'visible' : 'hidden')
+      if (node) for (const key of ['x', 'y', 'width']) this.outline.setAttribute(key, String(node[key]))
     }
     if (all) for (const id of this.edges.keys()) this.paintEdge(id)
     else if (this.selected?.node !== selected?.node || this.selected?.edge !== selected?.edge) {

@@ -33,8 +33,12 @@ button:focus-visible { outline: 2px solid var(--accent); }
 /* The SVG itself is scaled for zoom. Compensate here so outlines stay one
    screen pixel and never reserve space between adjacent bars. */
 .flow-node rect { stroke-width: calc(1px / var(--flow-zoom, 1)); }
-.flow-node[aria-pressed='true'] rect, .flow-node:focus rect {
+.flow-node:focus-visible rect {
   stroke: var(--text); stroke-width: calc(1.5px / var(--flow-zoom, 1));
+}
+.flow-selection {
+  fill: none; stroke: var(--text); stroke-width: calc(1.5px / var(--flow-zoom, 1));
+  pointer-events: none;
 }
 .flow-edge { stroke-width: calc(.7px / var(--flow-zoom, 1)); }
 .flow-edge:focus { stroke: var(--text); stroke-width: calc(1.5px / var(--flow-zoom, 1)); }
