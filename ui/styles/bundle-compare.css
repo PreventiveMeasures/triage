@@ -65,16 +65,21 @@
 .bundle-compare-select-wrap bundle-selector { flex: 1; min-width: 0; max-width: 32rem; }
 /* Scope selector — at the right end of the picker row. */
 .bundle-compare-picker > bundle-scope-selector { margin-left: auto; }
+/* Clear button — a square as tall as the swap button, the glyph centered
+   in it so the button and its hover sit level with the selector. */
 .bundle-compare-clear {
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  padding: 0;
   border: 0;
-  border-radius: var(--ui-radius, 4px);
+  border-radius: var(--ui-radius, 5px);
   background: transparent;
   color: var(--muted);
-  font: inherit;
-  font-size: 1.1rem;
-  padding: .1rem .35rem;
-  }
+  font: 500 1rem/1 ui-monospace, monospace;
+}
 .bundle-compare-clear:hover { background: var(--surface-active); color: var(--text); }
 /* Swap button — set a little apart from the clear button. Trades A and B
    and navigates to the other bundle. */
@@ -84,7 +89,8 @@
   gap: .3rem;
   margin-left: .65rem;
   flex-shrink: 0;
-  padding: .2rem .55rem;
+  height: 1.65rem;
+  padding: 0 .55rem;
   font: inherit;
   font-size: .74rem;
   color: var(--muted);
