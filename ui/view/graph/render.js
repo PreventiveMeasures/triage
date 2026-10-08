@@ -44,7 +44,7 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
     <button type="button" data-g2-layout="layers" aria-label="Layers" aria-pressed=${String(!!layers)}>${unsafeHTML(LAYERS_ICON_SVG)}</button>
     <button type="button" data-g2-layout="matrix" aria-label="Matrix" aria-pressed=${String(!!matrix)}>${unsafeHTML(MATRIX_ICON_SVG)}</button>
     <button type="button" data-g2-layout="dependencies" aria-label="Dependencies" aria-pressed=${String(!!dependencies)}>${unsafeHTML(DEPENDENCIES_ICON_SVG)}</button>
-    <button type="button" data-g2-layout="flow" aria-label="Size flow" data-tooltip="Size flow" aria-pressed=${String(!!flow)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h18M3 10h7m4 0h7M3 20h6m3 0h9M5 3v7m13-7v7M6 10c0 5 10 5 10 10m2-10c0 5-12 5-12 10"/></svg></button>
+    <button type="button" data-g2-layout="flow" aria-label="Size flow" aria-pressed=${String(!!flow)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h18M3 10h7m4 0h7M3 20h6m3 0h9M5 3v7m13-7v7M6 10c0 5 10 5 10 10m2-10c0 5-12 5-12 10"/></svg></button>
   </div>` : null
   const extraTopRow = options.extraTopRow
   const hideAllFiles = options.hideAllFiles ?? false
