@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bundleSourcePackageInfo } from '../ui/view/bundle-source-package.js'
+import { bundlePackageSourceStats, bundleSourcePackageInfo } from '../ui/view/bundle-source-package.js'
 
 test('package tooltip metadata prefers recorded identities and reads GitHub from captured npm manifests', () => {
   for (const repository of ['org/repo', 'github:org/repo', 'git+https://github.com/org/repo.git#main', 'git@github.com:org/repo.git', 'ssh://git@github.com/org/repo.git', { url: 'https://github.com/org/repo', directory: 'packages/dep' }]) {
@@ -99,4 +99,20 @@ test('package tooltips carry the commit a recorded repository pins, as its files
   const files = { 'package.json': JSON.stringify({ repository: 'org/manifest' }) }
   assert.equal(at({ files }), undefined)
   assert.equal(at({ repo: { github: 'not a repo', commit }, files }), undefined)
+})
+
+test('package stats weigh only the sources under the package, in the Overview\'s bytes and lines of code', () => {
+  const sources = new Map([
+    ['node_modules/dep/index.js', 'a\nb\n'],
+    ['node_modules/dep/lib/é.js', 'é'],
+    ['node_modules/dep/empty.js', ''],
+    ['node_modules/dep-extra/index.js', 'not\nmine\n'],
+    ['src/app.js', 'app'],
+  ])
+  const stats = bundlePackageSourceStats(sources, 'node_modules/dep')
+  // 'a\nb\n' is 4 bytes and 2 lines (no line after the last newline), 'é' 2 bytes and 1 line.
+  assert.deepEqual(stats, { bytes: 6, lines: 3 })
+  assert.equal(bundlePackageSourceStats(sources, 'node_modules/dep'), stats, 'kept after the first hover')
+  assert.deepEqual(bundlePackageSourceStats(sources, 'node_modules/dep-extra'), { bytes: 9, lines: 2 })
+  assert.deepEqual(bundlePackageSourceStats(new Map(), 'node_modules/dep'), { bytes: 0, lines: 0 }, 'kept per bundle')
 })

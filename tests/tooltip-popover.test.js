@@ -148,6 +148,15 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       packageTarget.dataset.tooltipFiles = '12'
       showTooltip(packageTarget)
       assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files'])
+      // Lines and size arrive on hover, after the target first rendered.
+      Object.assign(packageTarget.dataset, { tooltipLines: '1234', tooltipSize: '56,789 B' })
+      showTooltip(packageTarget)
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files', '1,234 lines', '56,789 B'])
+      Object.assign(packageTarget.dataset, { tooltipLines: '1', tooltipSize: '' })
+      showTooltip(packageTarget)
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files', '1 line'])
+      delete packageTarget.dataset.tooltipLines
+      delete packageTarget.dataset.tooltipSize
       delete packageTarget.dataset.tooltipVersion
       delete packageTarget.dataset.tooltipRepo
       showTooltip(packageTarget)
