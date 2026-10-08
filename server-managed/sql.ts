@@ -22,7 +22,9 @@ export interface ManagedSqlDriver extends ManagedSql {
 const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
-  'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry'])
+  'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry', 'ensureSessionUploadKey'])
+// Session presence and upload keys change only their own rows.
+const UNLOCKED_WRITES = new Set(['sessionWithUser', 'ensureSessionUploadKey'])
 
 export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver): ManagedDb {
   const entries = Object.entries(methods).map(([name, method]) => {
@@ -31,7 +33,7 @@ export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver
     return [name, (...args: unknown[]) => driver.scope(write, () => method(...args), {
       // Presence writes only one user's timestamp; they need no application
       // writer lock. Keep the session/user read and timestamp in one transaction.
-      lock: write && name !== 'sessionWithUser', statement: SINGLE_STATEMENTS.has(name),
+      lock: write && !UNLOCKED_WRITES.has(name), statement: SINGLE_STATEMENTS.has(name),
     })]
   })
   return Object.fromEntries(entries) as ManagedDb

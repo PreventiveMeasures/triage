@@ -498,6 +498,8 @@ test('upload batches preserve arrival order, use the current token without locat
     let refreshes = 0
     const fetch = t.mock.method(globalThis, 'fetch', (url, options) => {
       if (url === '/api/config') return Promise.resolve(Response.json({ managed: {} }))
+      // A server without sealed uploads receives the file itself.
+      if (url === '/api/admin/uploads/key') return Promise.resolve(Response.json({ error: 'not-found' }, { status: 404 }))
       assert.equal(url, `/api/admin/${kind}s`)
       if (options.method !== 'POST') {
         refreshes++
@@ -532,6 +534,7 @@ test('upload batches preserve arrival order, use the current token without locat
 
       fetch.mock.mockImplementation((url, options) => {
         if (url === '/api/config') return Promise.resolve(Response.json({ managed: {} }))
+        if (url === '/api/admin/uploads/key') return Promise.resolve(Response.json({ error: 'not-found' }, { status: 404 }))
         if (options.method !== 'POST') return Promise.resolve(Response.json({ [`${kind}s`]: [], repos: [] }))
         return Promise.resolve(options.body.name === 'ok.json' ? Response.json({ ok: true }) : new Response('', { status: 503 }))
       })
@@ -551,6 +554,7 @@ test('split Markdown imports upload every product and name the ones that failed'
   const names = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
     if (url === '/api/config') return Promise.resolve(Response.json({ managed: {} }))
+    if (url === '/api/admin/uploads/key') return Promise.resolve(Response.json({ error: 'not-found' }, { status: 404 }))
     const name = decodeURIComponent(options.headers['x-report-filename'])
     names.push(name)
     return Promise.resolve(name.endsWith('Product A.generic-md') ? new Response('', { status: 500 }) : Response.json({ id: name }))

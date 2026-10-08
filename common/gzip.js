@@ -21,7 +21,7 @@ export async function gzipBytes(bytes) {
 // ~1032:1, so a small hostile payload can balloon to GiBs and OOM the
 // process before any content validation runs. Callers decompressing
 // peer-controlled bytes (sync-crypto's inbound changesets) pass a cap;
-// the read then aborts with a throw the moment the budget is crossed,
+// the read then aborts with a RangeError the moment the budget is crossed,
 // instead of materialising the full expansion. Uncapped callers keep
 // the one-shot Response read.
 export async function gunzipBytes(bytes, { maxBytes } = {}) {
@@ -37,7 +37,7 @@ export async function gunzipBytes(bytes, { maxBytes } = {}) {
     if (total > maxBytes) {
       // Cancel so the DecompressionStream stops inflating the rest.
       try { await reader.cancel() } catch {}
-      throw new Error(`gunzipBytes: decompressed size exceeds ${maxBytes}-byte cap`)
+      throw new RangeError(`gunzipBytes: decompressed size exceeds ${maxBytes}-byte cap`)
     }
     chunks.push(value)
   }

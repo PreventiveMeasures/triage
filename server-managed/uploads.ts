@@ -2,13 +2,16 @@
 // authenticated session, destination and random upload ID. No bearer URL is
 // exposed; all reads/writes still pass the managed role/origin/CSRF gates.
 import { Buffer } from 'node:buffer'
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import type { BlobStore } from './blob-store.ts'
+import { maxSealedBytes, openUpload } from '../common/managed/upload-seal.ts'
 
 export const UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024
 export const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
-const MAX_UPLOAD_PARTS = Math.ceil(MAX_UPLOAD_BYTES / UPLOAD_CHUNK_BYTES)
+// Staged parts may carry a sealed body, slightly larger than its content.
+const MAX_STAGED_BYTES = maxSealedBytes(MAX_UPLOAD_BYTES)
+const MAX_UPLOAD_PARTS = Math.ceil(MAX_STAGED_BYTES / UPLOAD_CHUNK_BYTES)
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 export type UploadKind = 'reports' | 'bundles'
 
@@ -18,7 +21,7 @@ function partId(session: string, kind: UploadKind, id: string, index: number): s
 }
 
 export function validUploadPart(id: string, index: number, maxBytes: number): boolean {
-  return UUID.test(id) && Number.isSafeInteger(index) && index >= 0 && index < Math.ceil(Math.min(maxBytes, MAX_UPLOAD_BYTES) / UPLOAD_CHUNK_BYTES)
+  return UUID.test(id) && Number.isSafeInteger(index) && index >= 0 && index < Math.ceil(Math.min(maxSealedBytes(maxBytes), MAX_STAGED_BYTES) / UPLOAD_CHUNK_BYTES)
 }
 
 export function validUpload(id: string, count: number): boolean {
@@ -48,7 +51,7 @@ export async function readUpload(store: BlobStore, req: IncomingMessage, session
   if (typeof id !== 'string' || !validUpload(id, count)) throw new Error('bad-upload')
   try {
     if (!Number.isSafeInteger(size) || size <= 0 || count !== Math.ceil(size / UPLOAD_CHUNK_BYTES)) throw new Error('bad-upload')
-    if (size > maxBytes || size > MAX_UPLOAD_BYTES) throw new Error('too-large')
+    if (size > maxBytes || size > MAX_STAGED_BYTES) throw new Error('too-large')
     const parts: Buffer[] = []
     for (let index = 0; index < count; index++) {
       const bytes = await store.get(partId(session, kind, id, index))
@@ -62,4 +65,23 @@ export async function readUpload(store: BlobStore, req: IncomingMessage, session
     // are also covered by automatic staging maintenance.
     await deleteUpload(store, session, kind, id, count).catch(err => console.warn('managed: upload cleanup failed:', err))
   }
+}
+
+// A session's upload key pair, stored as its private JWK.
+export function newUploadKey(): string {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const { kty, crv, x, y, d } = privateKey.export({ format: 'jwk' })
+  return JSON.stringify({ kty, crv, x, y, d })
+}
+
+// The raw public point (base64url) browsers seal this session's uploads to.
+export function uploadPublicKey(key: string): string {
+  const { x, y } = JSON.parse(key) as { x: string; y: string }
+  return Buffer.concat([Buffer.of(4), Buffer.from(x, 'base64url'), Buffer.from(y, 'base64url')]).toString('base64url')
+}
+
+export async function openSessionUpload(key: string | null | undefined, sealed: Buffer, maxBytes: number): Promise<Buffer> {
+  if (!key) throw new Error('bad-upload')
+  const bytes = await openUpload(new Uint8Array(sealed.buffer as ArrayBuffer, sealed.byteOffset, sealed.byteLength), JSON.parse(key) as JsonWebKey, maxBytes)
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
 }

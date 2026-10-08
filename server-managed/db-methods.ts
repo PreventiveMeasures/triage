@@ -65,6 +65,8 @@ export interface ManagedSession {
   userId: string
   csrfToken: string
   expiresAt: number
+  // Private JWK for sealed uploads; null until the session first asks for it.
+  uploadKey?: string | null
 }
 
 // A repository selected for the workspace to operate on, with the context to
@@ -362,6 +364,9 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   upsertUser(user: ManagedUser, now: number, initialAdminGithubId?: number | null): Promise<string>
   createSession(session: ManagedSession, now: number): Promise<void>
   sessionWithUser(id: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
+  // Store `candidate` unless the session already has an upload key; returns
+  // the stored key, or null when the session no longer exists.
+  ensureSessionUploadKey(id: string, candidate: string): Promise<string | null>
   deleteSession(id: string): Promise<void>
   deleteExpiredSessions(now: number): Promise<number>
   listUsers(): Promise<AdminUser[]>
@@ -506,7 +511,7 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
 }
 
 type SessionRow = {
-  id: string; csrf: string; exp: number
+  id: string; csrf: string; exp: number; uploadKey: string | null
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
 
@@ -552,7 +557,7 @@ function prepareStatements(db: ManagedSql) {
       `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
     ),
     selectSessionStmt: db.prepare(
-      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp,
+      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
               u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
          FROM managed_session s
          JOIN managed_user u ON u.id = s.user_id
@@ -579,6 +584,10 @@ function prepareStatements(db: ManagedSql) {
     selectTokensStmt: db.prepare(
       `SELECT gh_access_token AS access, gh_refresh_token AS refresh, gh_token_expires_at AS exp, gh_tokens_encrypted AS encrypted
          FROM managed_user WHERE id = ?`,
+    ),
+    // Concurrent first requests keep whichever key was stored first.
+    ensureUploadKeyStmt: db.prepare(
+      `UPDATE managed_session SET upload_key = COALESCE(upload_key, ?) WHERE id = ? RETURNING upload_key AS uploadKey`,
     ),
     deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
     deleteExpiredStmt: db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`),
@@ -1535,7 +1544,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0, db)
   const {
     upsertUserStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectSessionStmt, selectUsersStmt,
-    touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, deleteSessionStmt, deleteExpiredStmt,
+    touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, ensureUploadKeyStmt, deleteSessionStmt, deleteExpiredStmt,
   } = stmts
 
   const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
@@ -1574,9 +1583,13 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       if (row == null) return null
       await touchUserSeenStmt.run(now, row.uid, now)
       return {
-        session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp },
+        session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey },
         user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
       }
+    },
+    async ensureSessionUploadKey(id, candidate) {
+      const row = (await ensureUploadKeyStmt.get(candidate, id)) as { uploadKey: string } | undefined
+      return row?.uploadKey ?? null
     },
     async deleteSession(id) {
       await deleteSessionStmt.run(id)

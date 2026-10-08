@@ -2,6 +2,7 @@ import { ROLES, isRole, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS } from '../../common/managed/permissions.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../../common/managed/scan-models.ts'
 import { getPublicShare } from './public-share.js'
+import { UPLOAD_SEAL_HEADER, sealUpload } from '../../common/managed/upload-seal.ts'
 
 // This module belongs to the lazy managed chunk. Both its session API and its
 // custom elements share this in-memory preview, without replacing global fetch
@@ -54,18 +55,48 @@ function previewResponse(url, options) {
   return Object.hasOwn(data, path) ? Response.json(data[path]) : Response.json({ error: 'not-found' }, { status: 404 })
 }
 
-// Each request is small enough for a function ingress. Capability negotiation
-// keeps local servers and older deployments on their existing raw upload API.
-async function uploadInParts(url, options, send) {
-  const config = await send('/api/config', { credentials: 'same-origin', signal: options.signal })
-  if (!config.ok) return config
-  const managed = (await config.json()).managed
-  const chunkBytes = managed?.uploadChunkBytes
-  if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0 || chunkBytes > 3 * 1024 * 1024) return send(url, options)
+const RAW_UPLOAD_BYTES = 3 * 1024 * 1024
+const UPLOAD_PATHS = new Set(['/api/admin/reports', '/api/admin/bundles', '/api/admin/deduplication'])
+
+// TLS-terminating proxies in front of the server would see file uploads, so
+// seal them to this session's key (see upload-seal.ts). Servers that predate
+// the key endpoint still receive the file as is.
+async function sealBody(options, send) {
+  const response = await send('/api/admin/uploads/key', { credentials: 'same-origin', signal: options.signal })
+  if (response.status === 404) return options
+  if (!response.ok) return response
+  const key = (await response.json())?.key
+  if (typeof key !== 'string') throw new Error('The server sent an invalid upload key')
+  const headers = new Headers(options.headers)
+  headers.set(UPLOAD_SEAL_HEADER, '1')
+  return { ...options, headers, body: await sealUpload(options.body, Uint8Array.fromBase64(key, { alphabet: 'base64url' })) }
+}
+
+// Large files are checked against the advertised limit before sealing. Each
+// request is small enough for a function ingress; capability negotiation keeps
+// local servers and older deployments on their existing raw upload API.
+async function uploadFile(url, options, send) {
+  let chunkBytes = null
+  if (url !== '/api/admin/deduplication' && options.body.size > RAW_UPLOAD_BYTES) {
+    const config = await send('/api/config', { credentials: 'same-origin', signal: options.signal })
+    if (!config.ok) return config
+    const managed = (await config.json()).managed
+    const maxBytes = managed?.uploadMaxBytes?.[url.endsWith('/reports') ? 'reports' : 'bundles']
+    if (Number.isSafeInteger(maxBytes) && maxBytes > 0 && options.body.size > maxBytes) return Response.json({ error: 'too-large' }, { status: 413 })
+    const advertised = managed?.uploadChunkBytes
+    if (Number.isSafeInteger(advertised) && advertised > 0 && advertised <= RAW_UPLOAD_BYTES) chunkBytes = advertised
+  }
+  const sealed = await sealBody(options, send)
+  if (sealed instanceof Response) return sealed
+  // Sealing adds 16 bytes per MiB to binary files, so a file under the raw
+  // limit still fits one request.
+  if (chunkBytes == null || sealed.body.size <= RAW_UPLOAD_BYTES) return await send(url, sealed)
+  return await uploadInParts(url, sealed, send, chunkBytes)
+}
+
+async function uploadInParts(url, options, send, chunkBytes) {
   const file = options.body, id = crypto.randomUUID()
   const kind = url.endsWith('/reports') ? 'reports' : 'bundles'
-  const maxBytes = managed?.uploadMaxBytes?.[kind]
-  if (Number.isSafeInteger(maxBytes) && maxBytes > 0 && file.size > maxBytes) return Response.json({ error: 'too-large' }, { status: 413 })
   const count = Math.ceil(file.size / chunkBytes)
   const partHeaders = new Headers(options.headers)
   partHeaders.set('content-type', 'application/octet-stream')
@@ -116,9 +147,6 @@ export async function managedFetch(url, options) {
     if (started !== generation) throw new DOMException('Managed session changed', 'AbortError')
     return response
   }
-  if (options?.method === 'POST' && ['/api/admin/reports', '/api/admin/bundles'].includes(url)
-    && options.body instanceof Blob && options.body.size > 3 * 1024 * 1024) {
-    return uploadInParts(url, options, send)
-  }
+  if (options?.method === 'POST' && UPLOAD_PATHS.has(url) && options.body instanceof Blob) return await uploadFile(url, options, send)
   return await send(url, options)
 }
