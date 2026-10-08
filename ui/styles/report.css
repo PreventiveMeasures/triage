@@ -1482,7 +1482,8 @@ bundle-search {
 .bundle-search-line.is-match .bundle-search-code { color: var(--text); }
 .bundle-search-clip { margin-right: .15rem; color: var(--muted); }
 /* Matched substring — yellow highlighter on black text, the
-   documented pairing for `--medium` (theme.css). */
+   documented pairing for `--medium` (theme.css). Also marks the
+   Code rail's search hits. */
 .bundle-search-mark {
   border-radius: 2px;
   background: var(--medium); color: #000;
