@@ -60,10 +60,11 @@ const UPLOAD_PATHS = new Set(['/api/admin/reports', '/api/admin/bundles', '/api/
 
 // TLS-terminating proxies in front of the server would see file uploads, so
 // seal them to this session's key (see upload-seal.ts). Servers that predate
-// the key endpoint still receive the file as is.
+// the key endpoint still receive the file as is: they answer 404, or 405 from
+// their upload-part route.
 async function sealBody(options, send) {
   const response = await send('/api/admin/uploads/key', { credentials: 'same-origin', signal: options.signal })
-  if (response.status === 404) return options
+  if (response.status === 404 || response.status === 405) return options
   if (!response.ok) return response
   const key = (await response.json())?.key
   if (typeof key !== 'string') throw new Error('The server sent an invalid upload key')

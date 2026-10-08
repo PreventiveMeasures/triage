@@ -81,14 +81,19 @@ test('uploads are sealed to the session key; text is compressed and older server
     fetch.mock.restore()
   }
   const blob = new Blob(['{}'])
-  const fetch = t.mock.method(globalThis, 'fetch', async (url, init) => {
-    if (url === KEY_PATH) return Response.json({ error: 'not-found' }, { status: 404 })
-    assert.equal(init.body, blob)
-    assert.equal(new Headers(init.headers).has('x-upload-encryption'), false)
-    return Response.json({ ok: true })
-  })
-  assert.equal((await managedFetch('/api/admin/reports', { method: 'POST', body: blob })).ok, true)
-  assert.equal(fetch.mock.callCount(), 2)
+  // Servers without the key endpoint answer 404, or 405 from their upload-part route.
+  for (const status of [404, 405]) {
+    const fetch = t.mock.method(globalThis, 'fetch', async (url, init) => {
+      if (url === KEY_PATH) return Response.json({ error: status === 404 ? 'not-found' : 'method-not-allowed' }, { status })
+      assert.equal(init.body, blob)
+      assert.equal(new Headers(init.headers).has('x-upload-encryption'), false)
+      return Response.json({ ok: true })
+    })
+    assert.equal((await managedFetch('/api/admin/reports', { method: 'POST', body: blob })).ok, true, `key endpoint ${status}`)
+    assert.equal(fetch.mock.callCount(), 2)
+    fetch.mock.restore()
+  }
+  const fetch = t.mock.method(globalThis, 'fetch')
   for (const [status, body] of [[403, { error: 'forbidden' }], [200, { key: null }]]) {
     fetch.mock.mockImplementation(async url => {
       assert.equal(url, KEY_PATH, 'nothing is uploaded without a usable key')
