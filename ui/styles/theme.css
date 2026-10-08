@@ -33,6 +33,9 @@
   --border: #2c2c2c; --text: #e6edf3;
   --muted: #8b949e; --accent: #58a6ff; --critical: #d8413a;
   --high: #d57422; --medium: #d29922; --low: #8b949e; --green: #3fb950;
+  /* Node.js brand green, as Simple Icons gives it. The light and pink
+     themes darken it to the earlier logo's green to read on pale pages. */
+  --nodejs-green: #5fa04e;
   /* Amber accent for the "In progress" triage state — distinct from the
      green (fixed) / red (deleted) / blue (ignored) / muted (invalid)
      bucket hues. Retuned per theme like --high / --medium: the dark +
@@ -183,6 +186,7 @@ body.theme-paper {
   --medium: #f0c040;
   --low: #6e7781;
   --green: #1a7f37;
+  --nodejs-green: #3c873a;
   /* Darkened amber (vs :root #d97706) so the In-progress badge/label
      text clears contrast on the light surface. */
   --warning: #9a6700;
@@ -443,6 +447,7 @@ body.theme-pink {
   --medium: #f0c040;
   --low: #a13a72;
   --green: #1d8c3c;
+  --nodejs-green: #3c873a;
   /* Darkened amber (vs :root #d97706) so the In-progress badge/label
      text clears contrast on the pale pink surface. */
   --warning: #9a6700;

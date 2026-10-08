@@ -2534,8 +2534,7 @@ body.report-fullscreen {
   & svg { width: 1em; height: 1em; vertical-align: -.15em; fill: currentcolor; }
   &::after { content: 'Node.js'; margin-left: .5ch; }
 }
-/* Node.js brand green, as Simple Icons gives it. */
-.source-node-doc:hover { color: #5fa04e; }
+.source-node-doc:hover { color: var(--nodejs-green); }
 .source-node-doc:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 /* Prism token theme. The palette is theme.css's `--code-*` custom
