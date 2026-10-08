@@ -191,6 +191,37 @@ test('managed advisories offer Validate right of the recheck button only when th
   assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(local, () => {}, () => {})), /bundle-advisories-scan/u)
 })
 
+test('managed bundles without dependency packages hide the tab once their modules load', () => {
+  const entry = { managedId: 'bundle-id', integrity: 'no-dependencies', name: 'bundle.br' }
+  const own = ['.', { name: 'app', version: '1.0.0', files: {} }]
+  const withModules = (...modules) => ({ managedId: entry.managedId, integrity: entry.integrity, kind: 'stasis', bundle: { modules: new Map([own, ...modules]) } })
+  assert.equal(showAdvisoriesTab(entry, null), true, 'shown while the bundle loads')
+  assert.equal(showAdvisoriesTab(entry, withModules()), false)
+  assert.equal(showAdvisoriesTab(entry, withModules(['packages/lib', { name: 'lib', version: '1.0.0', files: {} }])), false, 'a workspace package is no dependency')
+  assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: null, files: {} }])), false, 'v0 modules carry no versions')
+  assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: '1.0.0', files: {} }])), true)
+  assert.equal(showAdvisoriesTab(entry, withModules(['vendor/log', { ecosystem: 'cargo', name: 'log', version: '0.4.22', files: {} }])), true)
+  state.managedSession = { id: 'alice', role: 'none', csrfToken: 'session' }
+  assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: '1.0.0', files: {} }])), false, 'access still applies')
+})
+
+test('managed advisories show neither button for a bundle without dependency packages', async () => {
+  const buttons = details => renderText(renderBundleAdvisoriesTab(details, () => {}, () => {}))
+  const modulesOnly = { managedId: 'own-only', integrity: 'own-only', kind: 'stasis', bundle: { modules: new Map([['.', { name: 'app', version: '1.0.0', files: {} }]]) } }
+  assert.doesNotMatch(buttons(modulesOnly), /bundle-advisories-toolbar|bundle-advisories-recheck|bundle-advisories-scan/u)
+  // Without module metadata, the buttons wait for the server's inventory.
+  const audited = { managedId: 'audited-empty', integrity: 'audited-empty', kind: 'stasis' }
+  assert.match(buttons(audited), /bundle-advisories-recheck.*bundle-advisories-scan/su)
+  result = { packages: [], skipped: [], advisories: [] }
+  await ensureBundleAdvisories(audited, () => {})
+  assert.doesNotMatch(buttons(audited), /bundle-advisories-toolbar|bundle-advisories-recheck|bundle-advisories-scan/u)
+  // Dependencies that could not be audited are still dependency packages.
+  const skipped = { managedId: 'audited-skipped', integrity: 'audited-skipped', kind: 'stasis' }
+  result = { packages: [], skipped: [{ ecosystem: 'cargo-git', name: 'dep', version: '1.0.0', because: 'Crate vendored from git.' }], advisories: [] }
+  await ensureBundleAdvisories(skipped, () => {})
+  assert.match(buttons(skipped), /bundle-advisories-recheck.*bundle-advisories-scan/su)
+})
+
 test('repository recheck button shows a busy state, prevents duplicate requests and replaces results on completion', async () => {
   const details = { managedId: 'recheck-bundle', integrity: 'recheck-bundle', kind: 'stasis' }
   let renders = 0
@@ -387,7 +418,10 @@ function reasonBundle(integrity) {
     else assert.deepEqual(queries, [{ dep: ['1.0.0', '2.0.0'] }, { dep: ['1.0.0'] }, { dep: ['2.0.0'] }])
     result = { packages: {}, advisories: {} }
     await selectReason(details, 'reason:add')
-    assert.match(renderText(renderBundleAdvisoriesTab(details)), /No advisories for the 0 packages in this scope/u)
+    const text = renderText(renderBundleAdvisoriesTab(details))
+    assert.match(text, /No advisories for the 0 packages in this scope/u)
+    // The bundle itself has dependency packages: an empty scope keeps its recheck.
+    if (managed) assert.match(text, /bundle-advisories-recheck/u)
   })
 })
 

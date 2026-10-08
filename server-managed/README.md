@@ -739,6 +739,10 @@ GitHub rate limits and the 30-second caller deadline still apply. The button sho
 the previous results; a denied or missing bundle discards them.
 For admins and managers, a **Validate** button right of it opens Scans on that bundle with
 Dependency alerts selected (`/manage/scans?bundle=<id>&mode=dependencies`).
+Once a bundle's modules are loaded, the tab is hidden when none is a dependency
+package (a non-root module with an ecosystem, name and version). Neither button
+is shown when the bundle's unscoped audit finds no packages, audited or skipped.
+Managed bundles have no Issues tab: the Code tab shows each file's issues.
 For both initial audits and repository rechecks, GitHub requests use the current
 viewer's stored access token, refreshing it within the audit deadline when needed.
 Public shares and viewers without a usable token use an anonymous client. Credentials

@@ -468,7 +468,7 @@ function renderFileCard(graph, n, file, ctx) {
          so it lives on the canvas as a top-right icon button
          (renderStage), pairing with the top-left back button. -->
     <div class="g2-sel-jumps">
-      ${n.totalIssues > 0 ? html`<button type="button" class="g2-sel-jump" data-g2-jump-findings=${file}>Findings →</button>` : null}
+      ${n.totalIssues > 0 && ctx.findingsJump !== false ? html`<button type="button" class="g2-sel-jump" data-g2-jump-findings=${file}>Findings →</button>` : null}
       ${ctx.isBundleContext
         ? (n.origFile ? html`<button type="button" class="g2-sel-jump" data-bundle-view-source=${n.origFile}>View source →</button>` : null)
         : html`<button type="button" class="g2-sel-jump" data-g2-jump-file=${file}>Files →</button>`}

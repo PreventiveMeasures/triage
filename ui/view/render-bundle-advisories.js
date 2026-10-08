@@ -43,7 +43,7 @@ function advisoryScope(details) {
   if (!scopes.has(details)) scopes.set(details, { reasons: bundleReasons(details), selected: '' })
   return scopes.get(details)
 }
-function cacheKey(details) { return JSON.stringify([details.managedId ?? details.integrity, advisoryScope(details).selected]) }
+function cacheKey(details, reason = advisoryScope(details).selected) { return JSON.stringify([details.managedId ?? details.integrity, reason]) }
 
 // Local/e2e bundles are private from the server. Ask before sending their
 // package inventory through the proxy to npm. Managed bundles are already
@@ -83,7 +83,28 @@ function bundleHasAdvisoryCandidates(details) {
   return false
 }
 
-// Managed Stasis bundles require security access. Local visibility is tri-state:
+// A dependency package as the managed audit inventories one
+// (server-managed/bundle-advisory-inventory.ts), short of its evidence-file
+// rule, which only the server applies: a module other than the root, with an
+// ecosystem (recorded, or npm under node_modules), a name and a version.
+function bundleHasDependencyPackages(details) {
+  if (!details || details.kind !== 'stasis' || !details.bundle) return false
+  for (const [dir, info] of details.bundle.modules) {
+    if (dir === '.' || typeof info?.name !== 'string' || !info.name || typeof info.version !== 'string' || !info.version) continue
+    if (info.ecosystem || /(?:^|\/)node_modules\//u.test(dir)) return true
+  }
+  return false
+}
+
+// A managed bundle offers no recheck or scan without dependency packages: by
+// its modules, or once its unscoped audit answers, by the server's inventory.
+function managedBundleHasNoDependencies(details) {
+  if (details.bundle && !bundleHasDependencyPackages(details)) return true
+  const audit = advisoryCache(details).get(cacheKey(details, ''))
+  return audit?.state === 'ok' && audit.query.size === 0 && audit.skipped.length === 0
+}
+
+// Managed Stasis bundles require security access. Visibility is tri-state:
 //   * non-stasis filename → hide immediately (no parse needed; we
 //     already know there'll be no version metadata).
 //   * stasis filename, no matching parsed details yet → keep visible
@@ -97,19 +118,25 @@ function bundleHasAdvisoryCandidates(details) {
 //     new bundle's modules land — visible as a tab strip jump + a
 //     content swap on every navigation between stasis bundles.
 //   * stasis filename, matching parsed details → defer to
-//     `bundleHasAdvisoryCandidates` (so v0 stasis correctly hides).
+//     `bundleHasAdvisoryCandidates`, or for a managed bundle with module
+//     metadata `bundleHasDependencyPackages` (so v0 stasis, and bundles
+//     without dependency packages, correctly hide). The server audits a
+//     managed bundle without the viewer's metadata, so none keeps it.
 export function showAdvisoriesTab(entry, details) {
   if (!entry || bundleKind(entry.name) !== 'stasis') return false
-  if (entry.managedId) {
-    const role = state.managedSession?.role
-    if (['admin', 'manage'].includes(role)) return true
-    if (!['view', 'triage'].includes(role)) return false
-    // Match the API's team scope, including a public link's own grant.
-    return state.managedTeams.some(team => (state.currentManagedTeam == null || team.id === state.currentManagedTeam)
-      && team.permissions?.security === true && team.bundles?.some(bundle => bundle.id === entry.managedId))
-  }
+  if (entry.managedId && !canReadManagedAdvisories(entry)) return false
   if (!details || details.integrity !== entry.integrity) return true
+  if (entry.managedId) return !details.bundle || bundleHasDependencyPackages(details)
   return bundleHasAdvisoryCandidates(details)
+}
+
+function canReadManagedAdvisories(entry) {
+  const role = state.managedSession?.role
+  if (['admin', 'manage'].includes(role)) return true
+  if (!['view', 'triage'].includes(role)) return false
+  // Match the API's team scope, including a public link's own grant.
+  return state.managedTeams.some(team => (state.currentManagedTeam == null || team.id === state.currentManagedTeam)
+    && team.permissions?.security === true && team.bundles?.some(bundle => bundle.id === entry.managedId))
 }
 
 // Object.fromEntries safely preserves package names such as __proto__.
@@ -275,14 +302,16 @@ function renderConsentPrompt() {
 //
 // `onScan`, when the viewer may scan the bundle, opens its Dependency
 // alerts scan from a Validate button right of the managed recheck button.
+// Neither button shows for a bundle without dependency packages.
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
   const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
   const summary = renderAdvisoriesSummary(details)
+  const actions = Boolean(details?.managedId) && !managedBundleHasNoDependencies(details)
   return html`<div class="bundle-advisories-panel">
-    ${summary !== nothing || reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-toolbar">
+    ${summary !== nothing || reasons.length > 0 || actions ? html`<div class="bundle-advisories-toolbar">
     ${summary}
-    ${reasons.length > 0 || details?.managedId ? html`<div class="bundle-advisories-scopes">
+    ${reasons.length > 0 || actions ? html`<div class="bundle-advisories-scopes">
     ${reasons.length > 0 ? html`<bundle-scope-selector
       .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
       @scope-change=${event => {
@@ -292,8 +321,8 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan =
         renderFn()
         return loading
       }}></bundle-scope-selector>` : nothing}
-    ${renderRepositoryRecheck(details, renderFn)}
-    ${details?.managedId && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan" @click=${onScan}>
+    ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
+    ${actions && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan" @click=${onScan}>
       ${unsafeHTML(SCAN_ICON_SVG)}<span>Validate</span>
     </button>` : nothing}
     </div>` : nothing}

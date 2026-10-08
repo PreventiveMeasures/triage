@@ -66,6 +66,19 @@ test('losing security access removes the advisory tab and restores Overview', t 
   assert.equal(state.bundleDetailsTab, 'overview')
 })
 
+test('managed bundles have no Issues tab, and an Issues selection restores Overview', t => {
+  const previous = { serverMode: state.serverMode, localMode: state.localMode }
+  t.after(() => Object.assign(state, previous))
+  for (const [serverMode, localMode, shown] of [['managed', false, false], ['managed', true, true], ['standalone', true, true]]) {
+    const entry = { name: 'issues.map', integrity: 'issues-tab-hash' }
+    Object.assign(state, { serverMode, localMode, selectedBundle: entry.integrity, bundles: [entry], bundleDetailsTab: 'issues' })
+    const text = renderText(renderBundlesList([entry]))
+    assert.equal(/data-bundle-tab="issues"/u.test(text), shown)
+    assert.equal(/data-bundle-tab="overview"/u.test(text), true)
+    assert.equal(state.bundleDetailsTab, shown ? 'issues' : 'overview')
+  }
+})
+
 test('unattached managed bundle headers return to Manage Bundles before the bundle identity', t => {
   const previous = { serverMode: state.serverMode, localMode: state.localMode }
   const previousDocument = globalThis.document
