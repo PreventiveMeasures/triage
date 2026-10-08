@@ -104,6 +104,22 @@
 
 .graph2-topbar .g2-spacer { flex: 1; }
 
+/* Bundle graph first row: the controls wrap among themselves while
+   fullscreen stays pinned to the row's top-right corner instead of
+   wrapping down with them. */
+.graph2-topbar-row-pinned {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+.g2-topbar-controls {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+  min-width: 0;
+}
+
 .g2-matrix-controls {
   display: flex;
   align-items: center;

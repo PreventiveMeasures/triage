@@ -26,6 +26,7 @@ mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, t
   return items.map(template)
 } } })
 const { state } = await import('../client/state.ts')
+const { graph2 } = await import('../ui/view/graph/state.js')
 const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
@@ -808,7 +809,7 @@ test('same-ID App and dependency findings remain selectable in package and bundl
   const { ensureBundleFindingsIndexed, findingsForFileHash } = await import('../client/bundle-finding-index.js')
   const { renderPackagesView } = await import('../ui/view/render-packages.js')
   const previous = { shownTriage: state.shownTriage, selectedPackage: state.selectedPackage }
-  t.after(() => Object.assign(state, previous))
+  t.after(() => { Object.assign(state, previous); graph2.bundleIssues = false })
   state.selectedPackage = null
   for (const reverse of [false, true]) {
     const pkg = `aggregate-scope-${reverse}`
@@ -826,6 +827,11 @@ test('same-ID App and dependency findings remain selectable in package and bundl
     for (const triage of [null, 'ignored']) {
       state.shownTriage = triage
       assert.ok(renderText(renderPackagesView()).includes(`data-select-package=${pkg}`), `package remains visible in ${triage ?? 'live'}`)
+      graph2.bundleIssues = false
+      const hidden = buildBundleGraphData(details)
+      assert.equal(hidden.hasIssues, true, 'matched findings offer the Issues switch')
+      assert.equal(hidden.fileFindings.size, 0, 'findings stay off the graph until Issues is on')
+      graph2.bundleIssues = true
       const graph = buildBundleGraphData(details)
       assert.equal([...graph.fileFindings.values()].flat().length, 1, `graph keeps the matching scope in ${triage ?? 'live'}`)
     }

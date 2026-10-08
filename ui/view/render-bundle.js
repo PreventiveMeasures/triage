@@ -218,11 +218,16 @@ export function buildBundleGraphData(details) {
     }
   }
   const findingsByFile = bundleFindingsByFile(strippedHashes)
+  // The topbar's Issues switch (offered only when something matched)
+  // decides whether findings reach the graph at all: off, every layout
+  // draws the bundle without issue markers, counts or filters.
+  const hasIssues = findingsByFile.size > 0
+  const issuesShown = hasIssues && graph2.bundleIssues
   const ownCounts = new Map()
   const severitySets = new Map()
   const colorSets = new Map()
   const fileFindings = new Map()
-  for (const [file, findings] of findingsByFile) {
+  for (const [file, findings] of issuesShown ? findingsByFile : []) {
     const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
     const sevs = new Set()
     const cols = new Set()
@@ -300,6 +305,8 @@ export function buildBundleGraphData(details) {
     options: { pkgOf },
     strippedToOrig,
     canPackagesView,
+    hasIssues,
+    issuesShown,
     supportsLayers: true,
     layerRoots,
     // Entry packages are traversal roots too, but are not necessarily own source.

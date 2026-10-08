@@ -188,7 +188,7 @@ class DependencyMatrix extends LitElement {
     const c = this.model.index.get(this.selection?.to), r = this.model.index.get(this.selection?.from)
     paintMatrix(ctx, this.model, this.view, { width: this.width, height: this.height, theme, colorOf: pkgColor,
       hover: this.hover, selected: r === undefined ? null : { row: r, col: c ?? null },
-      dimmed: (row) => !row.files.some((file) => {
+      dimmed: (row) => !this.graph.issuesHidden && !row.files.some((file) => {
         const n = this.graph.nodeByFile.get(file)
         return (graph2.selectedSeverities.size === 0 || [...graph2.selectedSeverities].some((s) => n.severitySet?.has(s)))
           && (graph2.selectedColors.size === 0 || [...graph2.selectedColors].some((s) => n.colorSet?.has(s)))

@@ -482,14 +482,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // All filters AND-combine — a node passes only when it satisfies
   // every active filter.
   function nodeIsDimmed(n) {
-    if (graph2.selectedSeverities.size > 0) {
+    if (!graph.issuesHidden && graph2.selectedSeverities.size > 0) {
       const sevs = n.severitySet
       if (!sevs) return true
       let hit = false
       for (const s of graph2.selectedSeverities) if (sevs.has(s)) { hit = true; break }
       if (!hit) return true
     }
-    if (graph2.selectedColors.size > 0) {
+    if (!graph.issuesHidden && graph2.selectedColors.size > 0) {
       const cols = n.colorSet
       if (!cols) return true
       let hit = false

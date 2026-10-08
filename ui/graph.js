@@ -90,5 +90,9 @@ export function buildGraphFromPrep(prep) {
   graph.entryPackages = prep.entryPackages
   graph.ownSourceFiles = prep.ownSourceFiles
   graph.reasons = prep.reasons ?? []
+  // Bundle graph with its Issues switch off (or nothing matched): the
+  // severity and mark filters, shared with the findings graph, must not
+  // dim nodes that carry no findings here.
+  graph.issuesHidden = prep.issuesShown === false
   return graph
 }

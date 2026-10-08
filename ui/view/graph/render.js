@@ -114,6 +114,68 @@ export function renderTopBar(graph, options, extraControls = null) {
     </select>
   </label>` : null
 
+  const severityChips = hasAnyVisible ? html`<severity-chips
+    .counts=${issueCounts}
+    .selected=${[...graph2.selectedSeverities]}
+    kind="graph"
+  ></severity-chips>` : null
+  const markFilter = hasAnyColor ? html`<triage-filter
+    .counts=${colorCounts}
+    .selected=${[...graph2.selectedColors]}
+    kind="graph"
+  ></triage-filter>` : null
+  // Path / package substring filter — same .toolbar-search shell as the
+  // findings tab's "Search findings", wired to the canvas dim predicate
+  // instead of the row filter. Clear button always rendered, hidden via
+  // CSS when empty (:placeholder-shown sibling), so it stays live as the
+  // user types without re-rendering the topbar per keystroke — input
+  // redraws the canvas but not the chrome.
+  const pathFilter = html`<div class="toolbar-search g2-path-filter-wrap">
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"/>
+      <path d="m20 20-3.5-3.5"/>
+    </svg>
+    <input
+      type="text"
+      class="g2-path-filter"
+      id="g2-path-filter"
+      placeholder="filter path/package…"
+      .value=${graph2.pathFilter}>
+    <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" aria-label="Clear filter">✕</button>
+  </div>`
+  // Fullscreen — toggles body.report-fullscreen. The sidebar spans both
+  // grid rows, so the topbar covers only the stage column and this
+  // button's right edge lands at the stage / sidebar boundary.
+  const fullscreenBtn = html`<button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen">⛶</button>`
+
+  // Bundle graphs: the first row shapes the file set and view, with
+  // fullscreen pinned to its top-right corner even when the controls
+  // wrap. When findings matched the bundle, a second row leads with
+  // the Issues switch (off by default) and, while it is on, the issue
+  // controls: severity, mark and status filters. Off, the graph carries
+  // no findings at all (see buildBundleGraphData).
+  if (options.showBundleLayouts) {
+    return html`<div class="graph2-topbar">
+      <div class="graph2-topbar-row graph2-topbar-row-main graph2-topbar-row-pinned toolbar-row">
+        <div class="g2-topbar-controls">
+          ${layoutSelector}
+          ${reasonFilter}
+          ${pathFilter}
+          ${packagesViewBtn}
+          ${extraControls}
+        </div>
+        ${fullscreenBtn}
+      </div>
+      ${options.hasIssues ? html`<div class="graph2-topbar-row graph2-topbar-row-issues toolbar-row sev-row">
+        <mode-switch
+          label="Issues" .checked=${graph2.bundleIssues}
+          data-g2-bundle-issues
+        ></mode-switch>
+        ${graph2.bundleIssues ? html`${severityChips}${markFilter}${triageBtn}` : null}
+      </div>` : null}
+    </div>`
+  }
+
   // When the topbar carries an extra row (Findings-tab embed), the
   // view-mode chooser + All files + Trash sit on the new top row,
   // and the main row keeps the data-shaping filters (severity /
@@ -130,46 +192,15 @@ export function renderTopBar(graph, options, extraControls = null) {
     <div class="graph2-topbar-row graph2-topbar-row-main toolbar-row sev-row">
     ${layoutSelector}
     ${reasonFilter}
-    ${hasAnyVisible ? html`<severity-chips
-      .counts=${issueCounts}
-      .selected=${[...graph2.selectedSeverities]}
-      kind="graph"
-    ></severity-chips>` : null}
-    ${hasAnyColor ? html`<triage-filter
-      .counts=${colorCounts}
-      .selected=${[...graph2.selectedColors]}
-      kind="graph"
-    ></triage-filter>` : null}
-    <!-- Path / package substring filter — same .toolbar-search shell
-         as the findings tab's "Search findings", wired to the canvas
-         dim predicate instead of the row filter. Clear button always
-         rendered, hidden via CSS when empty (:placeholder-shown
-         sibling), so it stays live as the user types without re-
-         rendering the topbar per keystroke — input redraws the canvas
-         but not the chrome. -->
-    <div class="toolbar-search g2-path-filter-wrap">
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="11" cy="11" r="7"/>
-        <path d="m20 20-3.5-3.5"/>
-      </svg>
-      <input
-        type="text"
-        class="g2-path-filter"
-        id="g2-path-filter"
-        placeholder="filter path/package…"
-        .value=${graph2.pathFilter}>
-      <button type="button" class="g2-path-filter-clear" id="g2-path-filter-clear" aria-label="Clear filter">✕</button>
-    </div>
+    ${severityChips}
+    ${markFilter}
+    ${pathFilter}
     ${extraTopRow ? null : allFilesBtn}
     ${extraTopRow ? null : packagesViewBtn}
     ${extraControls}
     <div class="g2-spacer"></div>
     ${extraTopRow ? null : triageBtn}
-    <!-- Fullscreen — toggles body.report-fullscreen. The sidebar
-         spans both grid rows, so the topbar covers only the stage
-         column and this button's right edge lands at the stage /
-         sidebar boundary. -->
-    <button type="button" class="g2-icon-btn" id="g2-fullscreen" aria-label="Toggle fullscreen">⛶</button>
+    ${fullscreenBtn}
     </div>
   </div>`
 }
@@ -293,7 +324,7 @@ export function renderStage(graph) {
       ${!network || network.fileLevel ? html`<span><b>${graph.nodes.length}</b> files</span>` : null}
       <span><b>${network && !network.fileLevel ? network.nodes.length : graph.packages.length}</b> packages</span>
       <span><b>${edgeCount}</b> ${network ? 'dependencies' : html`edges (${intra} intra · ${cross} cross)`}</span>
-      <span><b>${issues}</b> issues</span>
+      ${graph.issuesHidden ? null : html`<span><b>${issues}</b> issues</span>`}
       <span>avg degree <b>${avgDeg}</b></span>
     </div>
     <div class="g2-zoom-ctrl">
@@ -561,8 +592,8 @@ function renderDistribution(graph, activeTab) {
   // (the unfiltered count).
   const sevFilter = graph2.selectedSeverities
   const colorFilter = graph2.selectedColors
-  const useSev = sevFilter.size > 0
-  const useColor = colorFilter.size > 0
+  const useSev = !graph.issuesHidden && sevFilter.size > 0
+  const useColor = !graph.issuesHidden && colorFilter.size > 0
   const useFilter = useSev || useColor
   const issueByPkg = new Map()
   const sizeByPkg = new Map()
@@ -686,7 +717,7 @@ function renderDependencyList(pg, ids, counts = false) {
 
 function renderDependencyCard(pg, id) {
   const n = pg.byPkg.get(id)
-  if (!n) return html`<div class="g2-empty-state">Select a package to trace its importers and dependencies.</div>`
+  if (!n) return html`<div class="g2-empty-state">Select a package to trace its imports.</div>`
   const importers = pg.importedBy.get(id) ?? [], imports = pg.importsOf.get(id) ?? []
   return html`<div class="g2-selection-card">
     <div class="g2-sel-head">

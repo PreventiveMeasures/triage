@@ -1814,6 +1814,9 @@ function renderImpl() {
               // packages, where the package graph carries no signal.
               showPackagesView: prep.canPackagesView,
               showBundleLayouts: true,
+              // Offers the topbar's Issues switch only when findings
+              // matched this bundle's files.
+              hasIssues: prep.hasIssues,
             }
             // First open of the graph tab triggers the dynamic
             // import of `ui/graph.js` (LitElement + ~37 KB shadow
