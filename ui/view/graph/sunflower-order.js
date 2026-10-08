@@ -1,3 +1,5 @@
+import { diskSwapCheck } from './sunflower-disks.js'
+
 // Improve a sunflower's assignment, never its geometry. Every accepted swap
 // reduces the sum of Euclidean lengths of the drawn (undirected) edges. Groups
 // preserve disks, priority tiers and hub/member bands; edges to other groups
@@ -11,12 +13,13 @@
 const NEAR = 12, PASSES = 8, SCATTERED = 12
 const MAX_EDGE_VISITS = 8_000_000, MAX_SLOT_VISITS = 8_000_000
 
-export function optimizeSunflowerOrder(graph, groups) {
+export function optimizeSunflowerOrder(graph, groups, { radiusOf } = {}) {
   const nodes = graph.nodes
   if (nodes.length < 2 || graph.edges.length === 0) return
   const index = new Map(nodes.map((node, i) => [node.file, i]))
   const xs = Float64Array.from(nodes, node => node.x), ys = Float64Array.from(nodes, node => node.y)
   const nodeAtSlot = Int32Array.from(nodes, (_, i) => i), slotOfNode = nodeAtSlot.slice()
+  const canSwap = radiusOf ? diskSwapCheck(xs, ys, Float64Array.from(nodes, radiusOf), nodeAtSlot) : null
   const adjacent = Array.from(nodes, () => [])
   for (const edge of graph.edges) {
     const a = index.get(edge.a), b = index.get(edge.b)
@@ -80,7 +83,7 @@ export function optimizeSunflowerOrder(graph, groups) {
           let delta = 0
           for (const c of adjacent[a]) if (c !== b) delta += distance(sb, slotOfNode[c]) - distance(sa, slotOfNode[c])
           for (const c of adjacent[b]) if (c !== a) delta += distance(sa, slotOfNode[c]) - distance(sb, slotOfNode[c])
-          if (delta < bestDelta) { best = b; bestDelta = delta }
+          if (delta < bestDelta && (!canSwap || canSwap(a, b, sa, sb))) { best = b; bestDelta = delta }
         }
         if (best !== -1) {
           const sb = slotOfNode[best]
