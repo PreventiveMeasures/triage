@@ -1,5 +1,4 @@
 import { classMap, html, repeat, styleMap } from '../frontend-global.js'
-import { live } from 'lit/directives/live.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG } from '../icons.js'
 import { SEVERITIES, formatBytes } from '../format.js'
@@ -108,14 +107,18 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
     data-g2-packages-view
   ></mode-switch>` : null
 
-  const reasonFilter = graph.reasons?.length > 0 ? html`<label class="g2-reason-filter">
-    <select aria-label="Filter files" .value=${live(graph2.bundleReason ?? '')} @change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
-      detail: { reason: e.currentTarget.value || null }, bubbles: true, composed: true,
-    }))}>
-      <option value="" ?selected=${graph2.bundleReason === null}>All</option>
-      ${graph.reasons.map((reason) => html`<option value=${reason} ?selected=${reason === graph2.bundleReason}>${reason}</option>`)}
-    </select>
-  </label>` : null
+  // Bundle scope (reason) filter — the full selector the Advisories,
+  // Treemap and Scan views use: one-click options with their description
+  // for recognized scopes, a select for custom ones. The element is
+  // defined by the main bundle (render-bundle-advisories.js imports it);
+  // importing it here would bundle a second Lit into this lazy chunk.
+  const reasonFilter = graph.reasons?.length > 0 ? html`<bundle-scope-selector class="g2-reason-scope"
+    .reasons=${graph.reasons.map((reason) => ({ id: `reason:${reason}`, label: reason }))}
+    .value=${graph2.bundleReason ? `reason:${graph2.bundleReason}` : ''} label="Filter files"
+    @scope-change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
+      detail: { reason: e.detail.value.replace(/^reason:/u, '') || null }, bubbles: true, composed: true,
+    }))}
+  ></bundle-scope-selector>` : null
 
   const severityChips = hasAnyVisible ? html`<severity-chips
     .counts=${issueCounts}
@@ -170,10 +173,10 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
       <div class="graph2-topbar-row graph2-topbar-row-main graph2-topbar-row-pinned toolbar-row">
         <div class="g2-topbar-controls">
           ${layoutSelector}
-          ${reasonFilter}
           ${pathFilter}
           ${packagesViewBtn}
           ${extraControls}
+          ${reasonFilter}
           ${switchInIssueRow ? null : issuesSwitch}
         </div>
         ${fullscreenBtn}

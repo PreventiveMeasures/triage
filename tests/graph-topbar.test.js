@@ -41,13 +41,14 @@ test('the bundle graph offers Issues only when findings matched, and shows issue
   assert.doesNotMatch(main[1], /<severity-chips|<triage-filter|<triage-selector/u)
 })
 
-test('the bundle graph ends its first row with Issues, then fullscreen pinned after the wrapping controls', () => {
-  const [[, main]] = rows(renderText(renderTopBar(graph, { ...bundle, hasIssues: true })))
+test('the bundle graph ends its first row with the scope selector, Issues, then fullscreen pinned after the wrapping controls', () => {
+  const [[, main]] = rows(renderText(renderTopBar({ ...graph, reasons: ['run'] }, { ...bundle, hasIssues: true })))
   assert.match(main, /graph2-topbar-row-pinned/u)
   const at = part => main.indexOf(part)
   assert.ok(at('class="g2-topbar-controls"') >= 0)
-  assert.ok(at('g2-path-filter-wrap') < at('label="Issues"') && at('label="Issues"') < at('id="g2-fullscreen"'),
-    'path filter, then Issues, then fullscreen')
+  const order = ['g2-path-filter-wrap', '<bundle-scope-selector', 'label="Issues"', 'id="g2-fullscreen"'].map(at)
+  assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), 'path filter, scope selector, Issues, fullscreen')
+  assert.doesNotMatch(main, /<select/u, 'the full scope selector replaces the plain reason select')
 })
 
 test('a bundle Issues switch that does not fit in the first row leads the issue row, before its filters', t => {

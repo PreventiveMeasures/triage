@@ -61,6 +61,7 @@ class GraphLayout extends LitElement {
     this.issuesWrapped = false
     this._topbarObserver = null
     this._observedControls = null
+    this._issuesWrapWidth = 0
   }
 
   disconnectedCallback() {
@@ -79,8 +80,10 @@ class GraphLayout extends LitElement {
     installShadowTooltipListener(this.renderRoot)
   }
 
-  willUpdate() {
+  willUpdate(changed) {
     if (!this.options.showBundleLayouts || graph2.bundleLayout !== 'matrix') this.matrixControls = null
+    // New first-row contents may make room for the Issues switch again.
+    if (changed.has('graph') || changed.has('options') || changed.has('matrixControls')) this._issuesWrapWidth = 0
   }
 
   updated() {
@@ -95,19 +98,27 @@ class GraphLayout extends LitElement {
     this._placeIssues()
   }
 
-  // The bundle Issues switch ends the first row while it fits on that
-  // row's last line. Once it would start a line of its own, it leads the
-  // issue row instead, where the issue filters follow it. CSS can't move
-  // an item between rows, so this measures: in the first row, whether
-  // the switch wrapped; in the issue row, whether it would fit back,
-  // judged by the same base sizes the browser breaks lines by (the path
-  // filter shrinks to its flex basis), so the two checks agree.
+  // The bundle Issues switch ends the first row while that row, switch
+  // included, fits on one line. Otherwise it leads the issue row, where
+  // the issue filters follow it. CSS can't move an item between rows, so
+  // this measures: in the first row, whether the switch fell below the
+  // first line; in the issue row, whether it would fit back, judged by the
+  // base sizes the browser breaks lines by. A return is only tried on a
+  // wider row than the last miss (or new row contents), so a misjudged fit
+  // can't bounce the switch between rows.
   _placeIssues() {
     const controls = this.renderRoot.querySelector('.g2-topbar-controls')
     const issues = this.renderRoot.querySelector('.g2-issues-switch')
     if (!controls || !issues) return
-    const wrapped = this.issuesWrapped ? !issuesFitAfter(controls, issues) : startsLine(issues)
-    if (wrapped !== this.issuesWrapped) this.issuesWrapped = wrapped
+    const width = controls.clientWidth
+    if (!this.issuesWrapped) {
+      if (belowFirstLine(controls, issues)) {
+        this._issuesWrapWidth = width
+        this.issuesWrapped = true
+      }
+    } else if (width > this._issuesWrapWidth && fitsOnFirstLine(controls, issues)) {
+      this.issuesWrapped = false
+    }
   }
 
   render() {
@@ -126,24 +137,31 @@ class GraphLayout extends LitElement {
   }
 }
 
-// The element begins a flex line: it sits below its previous sibling.
-function startsLine(el) {
-  const prev = el.previousElementSibling
-  return prev != null && el.getBoundingClientRect().top >= prev.getBoundingClientRect().bottom - 1
+// The switch sits below the row's first line (whose first item, the
+// layout tabs, is its tallest). Child elements that haven't rendered yet
+// have no height and would read as stacked, so no verdict until both have
+// a size; if the switch does wrap once they render, the row grows and the
+// observer asks again.
+function belowFirstLine(container, el) {
+  const first = container.firstElementChild
+  if (!first || first === el) return false
+  const box = el.getBoundingClientRect(), firstBox = first.getBoundingClientRect()
+  return box.height > 0 && firstBox.height > 0 && box.top >= firstBox.bottom - 1
 }
 
-// Would `el` fit after the last flex line of `container`? Sums that
-// line's items at their base sizes (a growing item counts its flex
-// basis) plus the gaps, the way the browser decides where lines break.
-function issuesFitAfter(container, el) {
+// Would `el` fit at the end of the row's single line? Only when the row
+// doesn't wrap without it; then sums its items at their base sizes (a
+// growing item counts its flex basis) plus the gaps, the way the browser
+// decides where lines break.
+function fitsOnFirstLine(container, el) {
   const items = [...container.children]
   if (items.length === 0) return true
-  const lastBox = items.at(-1).getBoundingClientRect()
+  const firstBottom = items[0].getBoundingClientRect().bottom
   const gap = parseFloat(getComputedStyle(container).columnGap) || 0
   let used = 0
   for (const item of items) {
     const box = item.getBoundingClientRect()
-    if (box.bottom <= lastBox.top) continue
+    if (box.top >= firstBottom - 1) return false
     const style = getComputedStyle(item)
     const basis = parseFloat(style.flexBasis)
     const width = parseFloat(style.flexGrow) > 0 && Number.isFinite(basis)
