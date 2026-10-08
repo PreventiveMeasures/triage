@@ -65,7 +65,8 @@ own authentication.
 an admin session, same-origin access and CSRF, and refuses the admin's own ID.
 The view is a separate session row for the viewed user, tied to the admin's
 session and stored in its own `dvview` cookie (`__Host-dvview` when Secure)
-beside the session cookie. `GET /api/auth/session` then returns the viewed
+beside the session cookie. `SESSION_COOKIE_NAME` cannot use this or the OAuth
+state cookie names (`dvstate`, `dvissuestate`); startup fails if it does. `GET /api/auth/session` then returns the viewed
 user, the view's own CSRF token, and the admin as `viewer`. A view token is
 never accepted as a session cookie, and a view only resolves together with
 the admin session that opened it. `DELETE /api/auth/view-as`, with the view's

@@ -13,8 +13,13 @@ import { hashToken, randomToken } from './crypto.ts'
 // `cookieName` when cookies are Secure.
 export const STATE_COOKIE = 'dvstate'
 
-// Base name for an administrator's read-only view as another user (view-as.ts).
+// Base names for GitHub issue authorization state (github-issue-oauth.ts) and
+// an administrator's read-only view as another user (view-as.ts).
+export const ISSUE_STATE_COOKIE = 'dvissuestate'
 export const VIEW_COOKIE = 'dvview'
+// The session cookie cannot share a name with these, or one would overwrite
+// or be read as the other.
+export const RESERVED_COOKIES: readonly string[] = [STATE_COOKIE, ISSUE_STATE_COOKIE, VIEW_COOKIE]
 
 // `__Host-`-prefix the base name when cookies are Secure (the prefix mandates
 // Secure + Path=/ + no Domain, which `buildCookie` already emits).

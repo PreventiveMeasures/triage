@@ -6,6 +6,7 @@ import { databaseUrls } from '../server-common/database-config.ts'
 import { MAX_UPLOAD_BYTES } from './uploads.ts'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
 import { defaultCacheDir } from '@preventive/upstream/npm.js'
+import { RESERVED_COOKIES } from './session.ts'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 
@@ -116,6 +117,9 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
   const sessionCookieName = env['SESSION_COOKIE_NAME'] ?? '__Host-dvsid'
   if (sessionCookieName.startsWith('__Host-') && !cookieSecure) {
     fail(`SESSION_COOKIE_NAME=${sessionCookieName} uses the __Host- prefix but the callback is not https. Use a non-prefixed name for loopback http dev.`)
+  }
+  if (RESERVED_COOKIES.includes(sessionCookieName.replace(/^__Host-/u, ''))) {
+    fail(`SESSION_COOKIE_NAME=${sessionCookieName} is reserved for another managed cookie. Choose a different name.`)
   }
   return {
     neonUrl, blobToken, serverless, storageEncryptionKey, storageEncryptionMigrate,
