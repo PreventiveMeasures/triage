@@ -417,7 +417,11 @@ function openBundleWhy(details, query) {
 // weigh in the Packages column and list among the Files like any other
 // file, but are counted apart from Sources and open no source viewer:
 // there is no source to show.
-function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, resources = null, details = null } = {}) {
+//
+// `unpackedSize` is the bytes every listed file adds up to once unpacked —
+// what the Packages column totals — shown beside the artifact's own Size.
+// Null leaves the row out: only managed bundles ask for it.
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, unpackedSize = null, resources = null, details = null } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
   // the stripped paths are only for displaying the file list.
@@ -538,6 +542,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
           ${extras}
           <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
           ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
+          ${unpackedSize == null ? nothing : html`<dt>Unpacked</dt><dd>${formatBytes(unpackedSize)}</dd>`}
           ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
         </dl>
         ${exportsCol ?? nothing}
@@ -2325,6 +2330,15 @@ function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
   </div>`
 }
 
+// The bytes a managed bundle's files take once unpacked: the sum of every
+// known file size, by the measure the Packages column weighs them with.
+// Null for a local bundle, or when no file has a size to add.
+function bundleUnpackedSize(entry, sizes) {
+  if (!entry.managedId) return null
+  const known = sizes.filter((size) => typeof size === 'number')
+  return known.length > 0 ? known.reduce((sum, size) => sum + size, 0) : null
+}
+
 // Overview tab body for the open bundle. Until bundle-load.js finishes
 // the readBundle + parse, `state.bundleDetails` is null (or stale for
 // a previous selection); the metadata block renders on its own. Parsed
@@ -2385,7 +2399,7 @@ function renderBundleDetails(entry, details) {
     `
     // Sourcemaps carry no package metadata — pass null so the panel
     // falls back to the path heuristic for bucketing.
-    return renderBundleSourcesPanel(meta, extras, sources, sizes, null, exportsCol, { bundleSize: details.size })
+    return renderBundleSourcesPanel(meta, extras, sources, sizes, null, exportsCol, { bundleSize: details.size, unpackedSize: bundleUnpackedSize(entry, sizes) })
   }
   if (details.kind === 'stasis' && details.bundle) {
     const bundle = details.bundle
@@ -2421,7 +2435,7 @@ function renderBundleDetails(entry, details) {
     `
     // Stasis records authoritative package boundaries — feed them in so
     // workspace packages bucket apart from their shared parent dir.
-    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, { bundleSize: details.size, resources, details })
+    return renderBundleSourcesPanel(meta, extras, sourceNames, sizes, bundlePackageDirs(details), exportsCol, { bundleSize: details.size, unpackedSize: bundleUnpackedSize(entry, sizes), resources, details })
   }
   // Stasis without a parsed bundle — likely a brotli decompression
   // that failed silently (no error path filled in). Fall back to
