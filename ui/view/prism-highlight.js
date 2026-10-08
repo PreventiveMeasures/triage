@@ -26,6 +26,16 @@ function loadPrism() {
 }
 
 export { langForPath } from '../../common/code-language.js'
+import { utf8ByteLength } from '../../common/utf8.js'
+
+// Sources over 1 MiB stay plain text. Prism tokenizes on the main thread,
+// at about a second per MiB, into markup several times the source's size,
+// so a large file would freeze the viewer that opens it. The length bounds
+// the byte count from below, so only a source near the limit is encoded.
+const HIGHLIGHT_MAX_BYTES = 1024 * 1024
+export function highlightable(code) {
+  return code.length <= HIGHLIGHT_MAX_BYTES && utf8ByteLength(code) <= HIGHLIGHT_MAX_BYTES
+}
 
 // Fence info string → prism language, for the ```ts blocks a finding
 // description carries (format.js codeBlockSegments reads the tag off
@@ -76,10 +86,11 @@ export function langForTag(tag) {
 }
 
 // Returns highlighted HTML string when prismjs supports the
-// language; null otherwise (caller renders plain text). Async
+// language and the source is not too large to highlight; null
+// otherwise (caller renders plain text). Async
 // because the first call may need to download the prism bundle.
 export async function highlight(code, lang, resolveString = null) {
-  if (!lang) return null
+  if (!lang || !highlightable(code)) return null
   try {
     const mod = await loadPrism()
     return mod.highlight(code, lang, resolveString)

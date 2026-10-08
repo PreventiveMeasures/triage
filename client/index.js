@@ -101,6 +101,7 @@ export {
 export { forgetScanAccess, hasSavedScanAccess, onSavedScanAccessChange, readSavedScanAccess, saveScanAccess } from './scan-access.js'
 
 export {
+  BUNDLE_SOURCE_WRAP_KEY,
   FOCUS_SPLIT_DEFAULT,
   FOCUS_SPLIT_KEY,
   FOCUS_SPLIT_MAX,

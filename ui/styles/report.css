@@ -1171,7 +1171,8 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 }
 .bundle-code-file-nav { display: flex; align-items: center; gap: .2rem; flex: none; }
 .bundle-code-copy-path,
-.bundle-code-github-link {
+.bundle-code-github-link,
+.bundle-source-wrap-toggle {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.35rem; height: 1.35rem;
@@ -1182,8 +1183,11 @@ body:is(.theme-light, .theme-pink, .theme-paper)
   cursor: default;
 }
 .bundle-code-copy-path:hover,
-.bundle-code-github-link:hover { background: var(--bg); color: var(--text); }
+.bundle-code-github-link:hover,
+.bundle-source-wrap-toggle:hover { background: var(--bg); color: var(--text); }
 .bundle-code-copy-path.copied { color: var(--green); }
+.bundle-source-wrap-toggle[aria-pressed=true] { color: var(--accent); }
+.bundle-source-wrap-toggle[hidden] { display: none; }
 .bundle-code-main-spacer { flex: 1; }
 .bundle-code-main-stats {
   flex-shrink: 0;
@@ -2447,6 +2451,20 @@ body.report-fullscreen {
   width: var(--lineno-width);
   text-align: right;
   font-variant-numeric: tabular-nums;
+  /* Line breaks source-wrap.js sets on the row of a wrapped line, one
+     line box for each further row the line takes in the code. */
+  &::after { content: var(--wrap-breaks, none); white-space: pre; }
+}
+/* Wrapped lines. Rows stay one line box apart where a line takes one
+   row, so the dot keeps to the first row of a taller one: centred on it
+   by its line height, as `align-items: center` centres it on one. The
+   Node.js docs link, which takes no width, would push past the right
+   edge; clip it there instead of scrolling for it. */
+.bundle-source-lines.is-wrapped {
+  min-width: 0;
+  & .bundle-source-code { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: clip; }
+  & .bundle-source-lineno-row { align-items: flex-start; }
+  & :is(.bundle-source-dot, .bundle-source-dot-placeholder) { font: inherit; margin-top: calc((1lh - .65rem) / 2); }
 }
 /* Search-matched line — tint the gutter row + accent the number so
    hits stand out while scrolling the full file in the Search
@@ -2531,6 +2549,8 @@ body.report-fullscreen {
 .source-node-doc {
   display: inline-block;
   width: 0;
+  /* Not wrapped into its own width when the code wraps. */
+  white-space: nowrap;
   color: var(--muted);
   font-style: normal;
   user-select: none;

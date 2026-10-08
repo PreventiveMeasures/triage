@@ -10,9 +10,9 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 
-// No stubs needed: prism-highlight.js is a leaf (it imports nothing,
-// and reaches prismjs only through a runtime-string dynamic import).
-const { langForTag, langForPath, splitHighlightedLines } = await import('../ui/view/prism-highlight.js')
+// No stubs needed: prism-highlight.js imports only pure helpers, and
+// reaches prismjs only through a runtime-string dynamic import.
+const { highlight, highlightable, langForTag, langForPath, splitHighlightedLines } = await import('../ui/view/prism-highlight.js')
 
 describe('langForTag — recognized tags', () => {
   it('maps the TypeScript tags', () => {
@@ -236,5 +236,21 @@ describe('splitHighlightedLines', () => {
       const closes = (line.match(/<\/span>/gu) ?? []).length
       assert.equal(opens, closes, line)
     }
+  })
+})
+
+describe('highlightable — the size limit', () => {
+  const MiB = 1024 * 1024
+  it('highlights up to 1 MiB of UTF-8 and no more', () => {
+    assert.equal(highlightable('x'.repeat(MiB)), true)
+    assert.equal(highlightable('x'.repeat(MiB + 1)), false)
+  })
+  it('counts bytes, not characters', () => {
+    assert.equal(highlightable('é'.repeat(MiB / 2)), true)
+    assert.equal(highlightable(`${'é'.repeat(MiB / 2)}x`), false)
+    assert.equal(highlightable('漢'.repeat(MiB / 3 + 1)), false)
+  })
+  it('leaves an oversized source plain without loading Prism', async () => {
+    assert.equal(await highlight('x'.repeat(MiB + 1), 'javascript'), null)
   })
 })
