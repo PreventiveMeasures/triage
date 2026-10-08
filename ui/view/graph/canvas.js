@@ -14,6 +14,7 @@ import { layoutPackageDependencies } from './dependency-layout.js'
 import { drawPackageDependencies } from './dependency-render.js'
 import { dependencyFilesOn, dependencyNetwork } from './package-network.js'
 import { circleOutside, createRenderCache, edgeGradient, edgeOutside, edgePaints, haloGradient, updateRenderCache } from './render-cache.js'
+import { graphViewKey } from './view-key.js'
 import { createNodePicker } from './node-picker.js'
 import { outsideDamage, panDamage } from './pan-damage.js'
 
@@ -153,20 +154,6 @@ function alphaHex(a) {
 // refreshTopPkgs (optional) re-paints the Packages list when a
 // click changes the solo'd package (packages view only — file
 // clicks don't touch solo).
-// What an attachment lays out: the node set (hashed, so a long file
-// list costs one pass rather than a stored copy) plus every view switch
-// that changes positions. Equal keys mean a re-attach may keep the
-// previous pan and zoom.
-function graphViewKey(graph) {
-  let hash = 0x811c9dc5
-  for (const file of graph.files) {
-    for (let i = 0; i < file.length; i++) hash = Math.imul(hash ^ file.codePointAt(i), 0x01000193)
-    hash = Math.imul(hash ^ 10, 0x01000193)
-  }
-  return [hash >>> 0, graph.files.length, graph.edges.length, graph2.bundleLayout, graph2.packagesView,
-    graph2.dependencyPackagesView, graph2.focusedPkg, graph2.showAll].join('|')
-}
-
 export function attachGraph2Interaction(container, graph, refreshSidebar, refreshTopPkgs) {
   // Pierce the `<graph-layout>` shadow root — the canvas + corner
   // overlays + zoom controls all live inside it. Callers pass the
@@ -1651,7 +1638,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   graph2.graphState = {
     requestDraw,
     _cleanup: ({ keepViewport = false } = {}) => {
-      graph2.keptViewport = keepViewport && W > 0
+      // Keep only a viewport fitted to a laid-out stage: while the graph
+      // is being replaced its stage can collapse, and resize() then refits
+      // to the 80px floor, which would hand the next attach a near-zero zoom.
+      const stageBox = stage.getBoundingClientRect()
+      graph2.keptViewport = keepViewport && stageBox.width > 0 && stageBox.height > 0
         ? { key: viewKey, k: viewport.k, tx: viewport.tx, ty: viewport.ty, W, H, layoutW, layoutH }
         : null
       destroyed = true

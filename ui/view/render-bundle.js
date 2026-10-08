@@ -311,6 +311,7 @@ export function buildBundleGraphData(details) {
     canPackagesView,
     hasIssues,
     issuesShown,
+    viewId: details.integrity ?? null,
     supportsLayers: true,
     layerRoots,
     // Entry packages are traversal roots too, but are not necessarily own source.

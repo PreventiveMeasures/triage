@@ -94,5 +94,8 @@ export function buildGraphFromPrep(prep) {
   // severity and mark filters, shared with the findings graph, must not
   // dim nodes that carry no findings here.
   graph.issuesHidden = prep.issuesShown === false
+  // Which data this graph shows (the bundle's integrity), so a kept pan
+  // and zoom never carries over to another bundle with the same files.
+  graph.viewId = prep.viewId ?? null
   return graph
 }
