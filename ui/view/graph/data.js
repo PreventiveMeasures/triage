@@ -313,7 +313,8 @@ export function buildPackageGraph(graph) {
     if (e.fromHi) importsOf.get(e.b).push(e.a)
   }
 
-  return { nodes, byPkg, nodeByFile: byPkg, edges, adj, importsOf }
+  return { nodes, byPkg, nodeByFile: byPkg, edges, adj, importsOf,
+    ownSourcePackages: graph.ownSourcePackages, entryPackages: graph.entryPackages }
 }
 
 // Display name for a package key — the synthetic `__own__` bucket

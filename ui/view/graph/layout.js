@@ -1,3 +1,5 @@
+import { optimizeSunflowerOrder } from './sunflower-order.js'
+
 // Spiral layout for the v2 graph. Each package becomes a disk
 // in a Vogel sunflower (golden-angle steps + sqrt-radius
 // growth, sorted by cross-package degree desc so the most
@@ -76,8 +78,8 @@ function findEntryPkg(graph) {
   return null
 }
 
-// Distribute files inside their per-package disks. Two-phase,
-// same approach as the package-level Spiral above at file scope:
+// Seed files inside their per-package disks, then improve the assignment
+// by edge length without moving any slot or exchanging files across disks:
 //
 //   1. Vogel slot positions. File index within the package's
 //      sorted list maps to a fixed (angle, radius) via the same
@@ -94,16 +96,20 @@ function findEntryPkg(graph) {
 //      files with no placed neighbours take the lowest unused index
 //      in their band, inheriting the golden-angle spread.
 //
-// Net effect: files with cross-package edges drift to the disk rim
+// This seeds files with cross-package edges toward the disk rim
 // facing the connected packages, so those edges run as short radial
 // chords instead of long diagonals.
 //
-// Hub-pull-to-center is gated on hub count: past 5 hubs (common on a
-// large public-API package), pulling them all into the inner 30%
-// piles them into an unreadable blob. Above the limit, hubs share
-// the outer band with members and rely on their bigger radius +
-// halo + ring as the "this is a hub" cue.
+// Keep the existing grid: up to 5 hubs have slots in the inner 30%; above
+// that limit all slots use the outer band to avoid crowding. Hubs always
+// occupy the innermost available slots. Optimization can reorder hubs among
+// themselves and members among themselves, but cannot exchange the two.
 const HUB_PULL_LIMIT = 5
+
+function hubGroups(nodes) {
+  return [nodes.filter(node => node.isHub), nodes.filter(node => !node.isHub)]
+}
+
 function placeFilesInDisk(graph, pkgInfo) {
   // Files-per-package buckets, in priority order (hubs first by
   // degree, then members by degree). Computed once so the placement
@@ -169,16 +175,10 @@ function placeFilesInDisk(graph, pkgInfo) {
 
     for (let fi = 0; fi < N; fi++) {
       const f = files[fi]
-      // Slot range for this file:
-      //   pullToCenter && hub → inner band [0, innerN)
-      //   pullToCenter && member → outer band [innerN, N)
-      //   !pullToCenter → entire disk [0, N) (hubs sort earlier so
-      //   still take the inner indices)
-      let bandEnd
-      let bandStart
-      if (pullToCenter && f.isHub) { bandStart = 0; bandEnd = innerN }
-      else if (pullToCenter) { bandStart = innerN; bandEnd = N }
-      else { bandStart = 0; bandEnd = N }
+      // Reserve the lowest-radius slots for hubs, including when there
+      // are too many hubs for the grid's separate inner band.
+      const bandStart = f.isHub ? 0 : totalHubs
+      const bandEnd = f.isHub ? totalHubs : N
 
       // Weighted barycenter of placed neighbours (intra- and cross-
       // package). Each import / imported-by counts once, so a bidi
@@ -232,6 +232,7 @@ function placeFilesInDisk(graph, pkgInfo) {
       placedY.set(f.file, f.y)
     }
   }
+  optimizeSunflowerOrder(graph, [...filesByPkg.values()].flatMap(hubGroups))
 }
 
 // "Spiral" — Vogel sunflower positions ((i × 137.5°,
@@ -503,16 +504,27 @@ export function layoutSpiral(graph, w, h) {
 // when the package is too large for graph v1's force-directed
 // solver to finish in interactive time (>50 files). Treats each
 // file as its own seed in a sunflower spiral: golden-angle
-// steps + sqrt-radius growth, sorted by intra-package degree
-// desc so hubs land near the center and leaves drift to the
-// rim. Same per-area uniform density argument as layoutSpiral,
-// just operating on individual files instead of packages.
+// steps + sqrt-radius growth. Degree-desc order seeds the assignment;
+// swaps then shorten edges without changing any of those positions.
+// Also used for the flat package graph, whose edges join package nodes.
+// Reserve the innermost slots for own-source entry packages, followed by
+// other own packages, then dependencies. Within each tier, hubs come first.
+// Swaps stay within each tier's hub/member groups.
 export function layoutFilesVogel(graph, w, h) {
   const cx = w / 2, cy = h / 2
   const unitToPx = Math.min(w, h) / 2
   const N = graph.nodes.length
   if (N === 0) return
-  const sorted = [...graph.nodes].toSorted((a, b) => b.deg - a.deg)
+  const dependencies = [], entries = [], own = []
+  for (const node of graph.nodes) {
+    const isOwn = node.pkg === '__own__' || graph.ownSourcePackages?.has(node.pkg)
+    if (!isOwn) dependencies.push(node)
+    else if (graph.entryPackages?.has(node.pkg)) entries.push(node)
+    else own.push(node)
+  }
+  const byDegree = (a, b) => b.deg - a.deg
+  const groups = [entries, own, dependencies].flatMap(hubGroups)
+  const sorted = groups.flatMap(group => group.toSorted(byDegree))
   for (let i = 0; i < N; i++) {
     const n = sorted[i]
     const angle = ((i * 137.508) % 360) * Math.PI / 180
@@ -520,4 +532,5 @@ export function layoutFilesVogel(graph, w, h) {
     n.x = cx + Math.cos(angle) * band * 0.85 * unitToPx
     n.y = cy + Math.sin(angle) * band * 0.85 * unitToPx
   }
+  optimizeSunflowerOrder(graph, groups)
 }

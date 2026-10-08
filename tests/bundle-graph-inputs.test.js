@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundlePackageDirs } from '../ui/view/bundle-sources.js'
@@ -68,6 +68,35 @@ it('keeps other workspace packages at their dependency level when inferring the 
     dirs: { 'app/index.js': 'app', 'packages/common/index.js': 'packages/common', 'vendor/a/index.php': 'vendor/a' },
     imports: { 'app/index.js': { common: 'packages/common/index.js', vendor: 'vendor/a/index.php' } },
   }).roots, ['app'])
+})
+
+it('identifies all own-source packages independently of entries and display prefixes', () => {
+  const dirs = new Map([
+    ['checkout/src/index.js', '.'],
+    ['checkout/dependencies/helper.js', '.'],
+    ['checkout/apps/web/index.js', 'apps/web'],
+    ['checkout/packages/common/index.js', 'packages/common'],
+    ['checkout/node_modules/app/index.js', 'node_modules/app'],
+    ['checkout/node_modules/.pnpm/dep@1/node_modules/dep/index.js', 'node_modules/.pnpm/dep@1/node_modules/dep'],
+    ['checkout/dependencies/dep/index.js', 'dependencies/dep'],
+    ['checkout/vendor/app/index.php', 'vendor/app'],
+  ])
+  const paths = new Map([...dirs.keys()].map(path => [path, path.slice('checkout/'.length)]))
+  const pkgOf = path => bundlePkgOf(`checkout/${path}`, { packageDir: dirs.get(`checkout/${path}`) })
+  assert.deepEqual(bundleOwnSourcePackages(paths, pkgOf, dirs), new Set(['__own__', 'apps/web', 'packages/common']))
+
+  const depPaths = new Map([['checkout/node_modules/app/index.js', 'index.js']])
+  assert.deepEqual(bundleOwnSourcePackages(depPaths, () => 'app'), new Set(), 'a stripped dependency path is still third-party')
+})
+
+it('entry priority follows recorded entries retained in the graph, not inferred roots', () => {
+  const details = { bundle: { entries: new Set(['checkout/app/main.js', 'checkout/hidden/index.js']) } }
+  const paths = new Map([['checkout/app/main.js', 'app/main.js'], ['checkout/shared/index.js', 'shared/index.js']])
+  const pkgOf = path => path.split('/')[0]
+  assert.deepEqual(bundleEntryPackages(details, paths, pkgOf), new Set(['app']))
+  assert.deepEqual(bundleEntryPackages({ kind: 'sourcemap' }, paths, pkgOf), new Set())
+  paths.delete('checkout/app/main.js')
+  assert.deepEqual(bundleEntryPackages(details, paths, pkgOf), new Set(), 'reason filtering can remove the entry file')
 })
 
 it('retains recorded app imports when app source is excluded from the bundle', () => {

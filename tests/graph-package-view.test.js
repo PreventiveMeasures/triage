@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { layoutDependencyLayers } from '../ui/view/graph/layered-layout.js'
+import { layoutFilesVogel } from '../ui/view/graph/layout.js'
 import { bundleLayerRoots } from '../ui/view/bundle-graph-inputs.js'
 
 // data.js → utils.js → format.js → frontend-global.js throws at
@@ -47,6 +48,35 @@ function graphFrom(treeData, { ownCounts = new Map(), severitySets = null, color
     pkgOf: bundlePkgOf,
   })
 }
+
+it('the flat sunflower shortens drawn links between aggregated package nodes', () => {
+  const files = Array.from({ length: 120 }, (_, i) => `node_modules/pkg${i}/index.js`)
+  const graph = buildPackageGraph(graphFrom(Object.fromEntries(files.map((file, i) => [file, { imports: [files[(i + 1) % files.length]] }]))))
+  layoutFilesVogel(graph, 1000, 800)
+  const length = graph.edges.reduce((sum, edge) => {
+    const a = graph.nodeByFile.get(edge.a), b = graph.nodeByFile.get(edge.b)
+    return sum + Math.hypot(a.x - b.x, a.y - b.y)
+  }, 0)
+  assert.equal(graph.nodes.length, 120)
+  assert.equal(graph.edges.length, 120)
+  assert.ok(length / graph.edges.length < 140, 'linked packages occupy nearby sunflower slots')
+})
+
+it('package aggregation retains all own-source packages for central sunflower placement', () => {
+  const files = Array.from({ length: 120 }, (_, i) => i < 117 ? `node_modules/pkg${i}/index.js` : `packages/own${i}/index.js`)
+  const pkgOf = file => file.slice(0, file.lastIndexOf('/'))
+  const tree = Object.fromEntries(files.map((file, i) => [file, { imports: [files[(i + 1) % files.length]] }]))
+  const source = buildGraph(tree, files, new Map(), null, null, null, null, { pkgOf })
+  source.ownSourcePackages = new Set(files.slice(-3).map(pkgOf))
+  source.entryPackages = new Set([pkgOf(files[119]), pkgOf(files[118]), pkgOf(files[0])])
+  const graph = buildPackageGraph(source)
+  layoutFilesVogel(graph, 1000, 800)
+  const central = graph.nodes.toSorted((a, b) => Math.hypot(a.x - 500, a.y - 400) - Math.hypot(b.x - 500, b.y - 400)).slice(0, 3)
+  assert.deepEqual(new Set(central.map(node => node.pkg)), source.ownSourcePackages,
+    'include non-entry workspace packages, excluding third-party entries')
+  assert.deepEqual(new Set(central.slice(0, 2).map(node => node.pkg)), new Set(files.slice(-2).map(pkgOf)),
+    'own entry packages precede other own packages, even when own packages import each other')
+})
 
 describe('fourth dependency view files/packages switch', () => {
   it('defaults to files through 100 nodes and always aggregates beyond that', () => {

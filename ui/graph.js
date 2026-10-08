@@ -87,6 +87,7 @@ export function buildGraphFromPrep(prep) {
   graph.supportsLayers = prep.supportsLayers ?? false
   graph.layerRoots = prep.layerRoots
   graph.ownSourcePackages = prep.ownSourcePackages
+  graph.entryPackages = prep.entryPackages
   graph.ownSourceFiles = prep.ownSourceFiles
   graph.reasons = prep.reasons ?? []
   return graph
