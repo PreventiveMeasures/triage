@@ -234,6 +234,7 @@ class SizeFlow extends LitElement {
     if (sizeFlowFilterSize(node) < this.minSize) return false
     const query = graph2.pathFilter.trim().toLowerCase()
     if (query && !`${node.label} ${node.pkg}`.toLowerCase().includes(query)) return false
+    if (this.graph.issuesHidden) return true
     const some = key => node.files.some(file => [...(this.model.files.get(file)[key] ?? [])].some(v =>
       (key === 'severitySet' ? graph2.selectedSeverities : graph2.selectedColors).has(v)))
     return (graph2.selectedSeverities.size === 0 || some('severitySet')) && (graph2.selectedColors.size === 0 || some('colorSet'))

@@ -61,7 +61,7 @@ export class SizeFlowChart {
 
   matchingNodes() {
     const model = this.host.model
-    const key = JSON.stringify([this.host.minSize, graph2.pathFilter, [...graph2.selectedSeverities].toSorted(), [...graph2.selectedColors].toSorted()])
+    const key = JSON.stringify([this.host.minSize, this.host.graph.issuesHidden, graph2.pathFilter, [...graph2.selectedSeverities].toSorted(), [...graph2.selectedColors].toSorted()])
     if (this.matchModel !== model || this.filterKey !== key) {
       this.matches = new Set([...model.byId.values()].filter(n => this.host.matches(n)).map(n => n.id))
       this.matchModel = model; this.filterKey = key

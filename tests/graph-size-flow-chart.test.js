@@ -103,6 +103,31 @@ test('delegated chart actions retain node, edge, and follow-import navigation', 
   assert.notEqual(chart.render(), old, 'new geometry is generated when the focused graph changes')
 })
 
+test('hiding Issues ignores saved severity and mark filters while keeping path and Large filters', t => {
+  const { chart, host, nodes, root } = mounted(t)
+  const colors = graph2.selectedColors, severities = graph2.selectedSeverities
+  t.after(() => { graph2.selectedColors = colors; graph2.selectedSeverities = severities })
+  graph2.selectedColors = new Set(['red'])
+  graph2.selectedSeverities = new Set(['high'])
+  Object.assign(host.model.files.get('a.js'), { severitySet: new Set(['high']), colorSet: new Set(['red']) })
+  chart.update(root)
+  assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:a.js'])
+  host.graph.issuesHidden = true
+  chart.update(root)
+  assert.equal(chart.searchMatches().length, 4)
+  assert.ok([...nodes.values()].every(el => el.attributes.get('opacity') === '1'))
+  graph2.pathFilter = 'shared'
+  assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:shared.js'], 'path filtering remains active with Issues off')
+  graph2.pathFilter = ''
+  host.largeThreshold = 2000
+  assert.equal(chart.searchMatches().length, 0, 'Large filtering remains active with Issues off')
+  host.largeThreshold = 0
+  host.graph.issuesHidden = false
+  chart.update(root)
+  assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:a.js'], 'turning Issues on restores the saved filters')
+  assert.equal(nodes.get('f:shared.js').attributes.get('opacity'), '.15')
+})
+
 test('node descriptions and search order use removal impact rather than reachable size', t => {
   const { chart, host } = mounted(t)
   assert.deepEqual(chart.searchMatches().map(n => n.id), ['f:entry.js', 'f:shared.js', 'f:b.js', 'f:a.js'])
