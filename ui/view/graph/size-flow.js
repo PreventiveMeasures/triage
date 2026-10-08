@@ -66,7 +66,7 @@ class SizeFlow extends LitElement {
 
   renderControls() {
     return this.largeThreshold ? html`<mode-switch label=${`Large · ${this.largeThreshold / 1024}+ KiB`} .checked=${this.largeOnly}
-      data-tooltip=${`At least ${shortSize(this.largeThreshold)} removed if deleted or in own code, plus connecting paths from entry points`} @click=${() => this.toggleLarge()}></mode-switch>` : null
+      @click=${() => this.toggleLarge()}></mode-switch>` : null
   }
 
   updated() {
