@@ -316,6 +316,38 @@ test('Stasis link rendering skips ambiguous imports and preserves source escapin
   assert.doesNotMatch(escaped.match(/<[^>]+>/gu).join(''), /<img|" onmouseover="/u)
 })
 
+test('lines importing one unlinked Node.js built-in end with a link to its docs', () => {
+  const resolve = bundleSourceLinkResolver(stasis({ browser: { 'src/main.js': { buffer: 'node_modules/pkg/index.js' } } }), 'src/main.js')
+  const lines = [
+    [`const fs = require('fs')`, 'fs.html'],
+    [`const { join } = require('node:path'), os = require('os')`, null],
+    [`import { readFile } from 'node:fs/promises'`, 'fs.html#promises-api'],
+    [`import {`, null],
+    [`} from "crypto"`, 'crypto.html'],
+    [`// const cp = require('child_process')`, null],
+    [`const text = "require('zlib')"`, null],
+    [`const polyfill = require('buffer')`, null],
+    [`import 'test'`, null],
+    [`import 'node:test'`, 'test.html'],
+    [`const workers = await import('node:worker_threads')`, 'worker_threads.html'],
+    [`const where = require.resolve('http')`, null],
+    [`const dynamic = require('fs' + suffix)`, null],
+    [`const a = require('fs'); const b = require('node:fs')`, 'fs.html'],
+    [`const tty = __require("tty") /* esbuild`, 'tty.html'],
+    [`*/ export * from 'events'`, 'events.html'],
+  ]
+  const code = lines.map(([line]) => line).join('\n')
+  const html = highlight(code, 'javascript', resolve)
+  assert.deepEqual(styledText(html), styledText(highlight(code, 'javascript')), 'links preserve text and syntax')
+  assert.deepEqual(splitHighlightedLines(html).map(line => /<a class="source-node-doc" href="https:\/\/nodejs\.org\/api\/([^"]+)"/u.exec(line)?.[1] ?? null),
+    lines.map(([, page]) => page))
+  assert.match(html, /aria-label="Node.js docs for node:fs"/u)
+  assert.doesNotMatch(html, /data-tooltip/u)
+  assert.doesNotMatch(highlight(code, 'javascript'), /source-node-doc/u, 'other highlight callers stay unchanged')
+  assert.doesNotMatch(highlight(`const fs = require('fs')`, 'php', resolve), /source-node-doc/u)
+  assert.match(highlight(`import fs = require('fs')\r\nfs.statSync('.')`, 'typescript', resolve), /<\/a>\r\n/u, 'before a CRLF, not between it')
+})
+
 test('nested syntax retains Prism output when no target resolves', () => {
   const examples = [
     ['javascript', 'const a = `./${"./foo.js"}`;'],

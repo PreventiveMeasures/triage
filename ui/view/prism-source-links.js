@@ -1,4 +1,6 @@
 import Prism from 'prismjs/prism.js'
+import { NODEJS_MARK_PATH } from './icons.js'
+import { nodeApiDocUrl, nodeBuiltinName } from './node-api-docs.js'
 import { sourceNameLinks } from './prism-source-names.js'
 
 function literalValue(token) {
@@ -23,6 +25,55 @@ function button(content, target) {
   return `<button type="button" class="bundle-source-link" data-bundle-source-link="${attribute(target)}">${content}</button>`
 }
 
+function nodeApiLink(name) {
+  const label = attribute(`Node.js docs for node:${name}`)
+  return `<a class="source-node-doc" href="${attribute(nodeApiDocUrl(name))}" target="_blank" rel="noopener noreferrer" aria-label="${label}">`
+    + `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${NODEJS_MARK_PATH}"></path></svg></a>`
+}
+
+const NODE_API_LANGUAGES = new Set(['javascript', 'jsx', 'typescript', 'tsx'])
+// What leads a specifier: `require(`, esbuild's `__require(`, `import(`, `from`
+// or a bare `import`. `\0` stands for blanked comments and literals.
+const IMPORT_BEFORE = /(?<![\p{ID_Continue}$.#])(?:((?:__)?require|import)[\s\0]*\(|from|import)[\s\0]*$/u
+const CALL_AFTER = /^[\s\0]*[),]/u
+
+// Line ends to mark with a link to the Node.js docs: lines that import one
+// built-in module by a literal specifier the bundle does not link.
+function nodeApiMarks(tokens, language, resolve) {
+  if (!resolve || !NODE_API_LANGUAGES.has(language)) return []
+  const pieces = []
+  const literals = []
+  let length = 0
+  function walk(token, blank) {
+    if (typeof token === 'string') {
+      pieces.push(blank ? token.replaceAll(/[^\r\n]/gu, '\0') : token)
+      length += token.length
+    } else if (Array.isArray(token)) {
+      for (const child of token) walk(child, blank)
+    } else {
+      const start = length
+      walk(token.content, blank || /comment|string|regex/u.test(token.type))
+      const value = blank ? null : literalValue(token)
+      const name = nodeBuiltinName(value)
+      if (name && !resolve(value)) literals.push({ start, end: length, name })
+    }
+  }
+  walk(tokens, false)
+  if (literals.length === 0) return []
+  const code = pieces.join('')
+  const lines = new Map()
+  for (const { start, end, name } of literals) {
+    const before = IMPORT_BEFORE.exec(code.slice(Math.max(0, start - 256), start))
+    if (!before || before[1] && !CALL_AFTER.test(code.slice(end, end + 256))) continue
+    // Before a CRLF's CR: alone, the HTML parser would read it as a newline.
+    let at = code.indexOf('\n', end)
+    if (at === -1) at = code.length
+    else if (code[at - 1] === '\r') at--
+    lines.set(at, lines.has(at) && lines.get(at) !== name ? null : name)
+  }
+  return [...lines].filter(([, name]) => name).map(([at, name]) => ({ at, html: nodeApiLink(name) }))
+}
+
 function append(parts, part) {
   if (parts.at(-1)?.link === part.link) parts.at(-1).html += part.html
   else parts.push(part)
@@ -30,20 +81,27 @@ function append(parts, part) {
 
 // Serialize Prism's token tree, so quoted comments and regexes never become
 // links. Preserve nested syntax and hooks, and encode source text exactly once.
+// Node.js doc links go at the end of their lines, inside any open token.
 export function stringifySourceLinks(tokens, language, resolve) {
   const links = sourceNameLinks(tokens, language, resolve)
+  const marks = nodeApiMarks(tokens, language, resolve)
   let offset = 0
   let next = 0
+  let mark = 0
   function stringify(token, resolveLiteral) {
     if (typeof token === 'string') {
       const parts = []
       const end = offset + token.length
       let start = 0
       while (offset < end) {
+        if (marks[mark]?.at === offset) {
+          parts.push({ link: null, html: marks[mark++].html })
+          continue
+        }
         while (links[next]?.end <= offset) next++
         const candidate = links[next]
         const link = candidate?.start <= offset ? candidate : null
-        const stop = Math.min(end, (link ? link.end : candidate?.start) ?? end)
+        const stop = Math.min(end, (link ? link.end : candidate?.start) ?? end, marks[mark]?.at ?? end)
         parts.push({ link, html: Prism.util.encode(token.slice(start, start + stop - offset)) })
         start += stop - offset
         offset = stop
@@ -65,5 +123,8 @@ export function stringifySourceLinks(tokens, language, resolve) {
       return { link, html: target ? button(markup, target) : markup }
     })
   }
-  return stringify(tokens, resolve).map(({ link, html }) => link ? button(html, link.target) : html).join('')
+  const parts = stringify(tokens, resolve)
+  // A last line without a newline ends the source.
+  for (const { html } of marks.slice(mark)) parts.push({ link: null, html })
+  return parts.map(({ link, html }) => link ? button(html, link.target) : html).join('')
 }

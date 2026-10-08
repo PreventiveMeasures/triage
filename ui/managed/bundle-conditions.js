@@ -1,4 +1,5 @@
 import { LitElement, html, nothing, svg, unsafeCSS } from 'lit'
+import { NODEJS_MARK_PATH } from '../view/icons.js'
 import commonStyles from './styles/common.css'
 import styles from './styles/bundle-conditions.css'
 
@@ -7,7 +8,7 @@ import styles from './styles/bundle-conditions.css'
 const BUNDLER_AUTOMATIC = ['import', 'require', 'default']
 const NODE_AUTOMATIC = [...BUNDLER_AUTOMATIC, 'node', 'node-addons', 'module-sync']
 const PRESETS = [
-  { id: 'node', label: 'Node.js', conditions: ['node'], automatic: NODE_AUTOMATIC, icon: svg`<path d="m8 1.5 5.5 3.2v6.6L8 14.5l-5.5-3.2V4.7Z"/><path d="M6 10V6l4 4V6"/>` },
+  { id: 'node', label: 'Node.js', conditions: ['node'], automatic: NODE_AUTOMATIC, icon: svg`<path transform="scale(.6667)" fill="currentColor" stroke="none" d=${NODEJS_MARK_PATH}/>` },
   { id: 'browser', label: 'Browser', conditions: ['browser', 'module'], automatic: BUNDLER_AUTOMATIC, icon: svg`<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6h13M4 4.3h.1m2 0h.1"/>` },
   { id: 'metro', label: 'Metro', conditions: ['react-native'], automatic: BUNDLER_AUTOMATIC, icon: svg`<rect x="4" y="1.5" width="8" height="13" rx="2"/><path d="M6.5 3.5h3M7 12.5h2"/>` },
 ]
