@@ -7,6 +7,7 @@ import { html, nothing } from './frontend-global.js'
 // `client/finding-link.js` depends only on shared codec/route helpers,
 // so pulling it in does not load client state.
 import { parseFindingUrl } from '../../client/finding-link.js'
+import { formatBytes as formatByteSize } from '../scan/metrics.js'
 // What a finding IS — the readers shared with the report library's
 // markdown writer — lives in that library; re-exported here unchanged so
 // the viewer's callers keep one import. `revalidateKindOf` and
@@ -369,14 +370,14 @@ export function nodePackageRoot(file) {
   return NODE_PKG_ROOT_RE.exec(typeof file === 'string' ? file : '')?.[1] ?? null
 }
 
-// File size formatter — bytes with thousand-separators and a `B`
-// suffix (`12,345 B`). Used by the file table/list and the graph's
-// selection card / tooltip when treeData entries carry a `size`.
-// Returns null for missing values so callers can suppress the chip
-// rather than render a placeholder.
+// File size formatter for the file table/list, the graph's selection
+// card / tooltip, Compare, the Treemap and the file dialog. Sizes read as
+// they do everywhere else (`ui/scan/metrics.js`): bytes below 1 KiB, then
+// KiB / MiB / GiB to one decimal. Returns null for missing values so
+// callers can suppress the chip rather than render a placeholder.
 export function formatBytes(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return null
-  return `${n.toLocaleString()} B`
+  return formatByteSize(n)
 }
 
 // Strip the longest common DIRECTORY prefix shared by every path

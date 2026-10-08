@@ -149,9 +149,9 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       showTooltip(packageTarget)
       assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files'])
       // LoC and size arrive on hover, after the target first rendered.
-      Object.assign(packageTarget.dataset, { tooltipLoc: '1234', tooltipSize: '56,789 B' })
+      Object.assign(packageTarget.dataset, { tooltipLoc: '1234', tooltipSize: '55.5 KiB' })
       showTooltip(packageTarget)
-      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files', '1,234 LoC', '56,789 B'])
+      assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files', '1,234 LoC', '55.5 KiB'])
       Object.assign(packageTarget.dataset, { tooltipLoc: '1', tooltipSize: '' })
       showTooltip(packageTarget)
       assert.deepEqual(packageFields().map(field => field.textContent), ['<img onerror=alert(1)>', '2.0.0', '12 files', '1 LoC'])
@@ -194,7 +194,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       const row = {
         dataset: { tooltip: 'node_modules/dep', tooltipPackage: 'dep', tooltipFiles: '2' },
         querySelector: () => null,
-        prepareTooltip: el => { prepared.push(el); Object.assign(el.dataset, { tooltipLoc: '42', tooltipSize: '1,024 B' }) },
+        prepareTooltip: el => { prepared.push(el); Object.assign(el.dataset, { tooltipLoc: '42', tooltipSize: '1.0 KiB' }) },
       }
       scheduleTooltip(row)
       nested.mock.timers.tick(50)
@@ -205,7 +205,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.deepEqual(prepared, [], 'nothing before the delay runs out')
       nested.mock.timers.tick(100)
       assert.deepEqual(prepared, [row])
-      assert.deepEqual([...node.children[0].children[0].children].map(field => field.textContent), ['dep', '2 files', '42 LoC', '1,024 B'], 'prepared before the details are read')
+      assert.deepEqual([...node.children[0].children[0].children].map(field => field.textContent), ['dep', '2 files', '42 LoC', '1.0 KiB'], 'prepared before the details are read')
       hideTooltip()
     })
     await t.test('pickers register with the host tooltip and handle transitions within their own root', nested => {

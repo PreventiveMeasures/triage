@@ -537,6 +537,9 @@ test('bundle Overview shows the unpacked total of every file beside Size for loc
     assert.match(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Size<\/dt><dd>50 B<\/dd>\s*<dt>Unpacked<\/dt><dd>8 B<\/dd>/u)
     state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 50, json: { ...json, sourcesContent: [] } }
     assert.doesNotMatch(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Unpacked<\/dt>/u)
+    // Larger sizes read in KiB and MiB, as the sidebar and scan page give them.
+    state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 4_827_136, json: { version: 3, sources: ['src/a.js'], sourcesContent: ['x'.repeat(2048)] } }
+    assert.match(renderText(renderBundlesList([{ ...entry, managedId }])), /<dt>Size<\/dt><dd>4\.6 MiB<\/dd>\s*<dt>Unpacked<\/dt><dd>2\.0 KiB<\/dd>/u)
   }
 })
 
@@ -676,6 +679,24 @@ test('full and metadata-only bundle graphs preserve multiple own entry packages 
     assert.deepEqual(prep.entryPackages, new Set(['apps/web', 'apps/cli', 'dep']))
     assert.ok(prep.layerRoots.roots.includes('__own__'), 'being a traversal root alone does not make a package an entry')
   }
+})
+
+test('Overview package and file sizes, and the Code file header, read in KiB from 1,024 bytes', () => {
+  const entry = { name: 'sizes.stasis', integrity: 'sha512-sizes' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1', files: { 'src/main.js': 'x' } }],
+    ['node_modules/dep', { name: 'dep', version: '1', files: { 'index.js': 'y'.repeat(3000) } }],
+  ]) }).serialize())
+  Object.assign(state, { selectedBundle: entry.integrity, bundles: [entry], bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const overview = renderText(renderBundlesList([entry]))
+  // 3,000 bytes is 2.93 KiB; a 1-byte file stays in bytes.
+  assert.match(overview, /class="bundles-dist-size">2\.9 KiB<\/span>/u)
+  assert.match(overview, /class="bundles-dist-size">1 B<\/span>/u)
+  assert.match(overview, /data-tooltip="?dep: 2\.9 KiB/u)
+  assert.match(overview, /class="bundles-source-size">2\.9 KiB<\/span>/u)
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', bundleSourceFile: 'node_modules/dep/index.js', bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '' })
+  const header = renderText(renderBundlesList([entry])).match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
+  assert.match(header, /1 line · 2\.9 KiB/u)
 })
 
 test('Overview and graph retain a sourcemap package identity when its entire directory prefix is stripped', () => {
