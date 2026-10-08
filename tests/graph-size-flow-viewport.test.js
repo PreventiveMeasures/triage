@@ -142,7 +142,7 @@ test('dragging pans without selecting a node, while ordinary clicks still work',
   assert.equal(flow.selection, null, 'a click on empty space clears selection')
 })
 
-test('fitted views retain side margins on resize, while manual zoom survives file/package switches', t => {
+test('resizing fitted views and switching file/package modes restore the full fitted view', t => {
   const { flow, box, resize } = mounted(t)
   for (const [width, height] of [[400, 900], [1600, 200], [1200, 700]]) {
     resize(width, height)
@@ -150,15 +150,45 @@ test('fitted views retain side margins on resize, while manual zoom survives fil
     near(Math.max(...flow.layout.nodes.map(n => n.x + n.width)) * flow.zoom + flow.pan.x, width - 10)
     assert.ok(flow.layout.height * flow.zoom <= height + .001)
   }
-  flow.zoomBy(3)
-  const zoom = flow.zoom
   for (const packages of [true, false]) {
+    flow.zoomBy(3)
+    flow.pan.x += 50; flow.pan.y -= 80
+    assert.equal(flow.fitted, false)
     flow.packages = packages; flow.willUpdate(new Map([['packages', !packages]])); flow.updated()
-    assert.equal(flow.zoom, zoom)
+    assert.equal(flow.zoom, flow.fitScale())
+    assert.equal(flow.fitted, true)
+    near(flow.pan.x, 10)
+    near(flow.pan.y, (box.height - flow.layout.height * flow.zoom) / 2)
+    near(flow.layout.width * flow.zoom, box.width - 20)
   }
-  flow.fit()
-  near(flow.pan.x, 10)
-  near(flow.layout.width * flow.zoom, box.width - 20)
+})
+
+test('turning Large off and on refits after manual framing in files and packages', t => {
+  const { flow, box } = mounted(t)
+  const files = Array.from({ length: 120 }, (_, i) => `pkg${i}/index.js`)
+  const tree = Object.fromEntries(files.map((file, i) => [file, { size: i < 60 ? 512 : 8192, imports: [] }]))
+  tree['entry.js'] = { size: 1, imports: files }
+  flow.graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf: file => file.split('/')[0] })
+  flow.graph.flowEntries = [{ file: 'entry.js' }]
+  flow.willUpdate(new Map([['graph', null]])); flow.updated()
+  for (const packages of [false, true]) {
+    if (packages) { flow.packages = true; flow.willUpdate(new Map([['packages', false]])); flow.updated() }
+    assert.ok(flow.minSize > 0)
+    assert.equal(flow.layout.nodes.length, 61)
+    for (const large of [false, true]) {
+      flow.zoomBy(3)
+      flow.pan.x += 50; flow.pan.y -= 80
+      assert.equal(flow.fitted, false)
+      flow.toggleLarge(); flow.willUpdate(new Map()); flow.updated()
+      assert.equal(flow.largeOnly, large)
+      assert.equal(flow.layout.nodes.length, large ? 61 : 121)
+      assert.equal(flow.zoom, flow.fitScale())
+      assert.equal(flow.fitted, true)
+      near(flow.pan.x, 10)
+      near(flow.pan.y, (box.height - flow.layout.height * flow.zoom) / 2)
+      near(flow.layout.width * flow.zoom, box.width - 20)
+    }
+  }
 })
 
 test('a hidden flow waits for measurable dimensions and keeps enforcing bounds on resize', t => {

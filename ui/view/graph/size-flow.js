@@ -47,6 +47,7 @@ class SizeFlow extends LitElement {
     if (!this.graph) return
     let rebuild = false
     if (changes.has('graph')) this.models.clear()
+    if (changes.has('packages')) this.needsFit = true
     if (!this.model || changes.has('graph') || changes.has('packages')) {
       if (!this.models.has(this.packages)) this.models.set(this.packages, buildSizeFlow(this.graph, { packages: this.packages }))
       this.model = this.models.get(this.packages)
