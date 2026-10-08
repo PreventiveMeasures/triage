@@ -1,0 +1,46 @@
+.g2-zoom-ctrl {
+  position: absolute;
+  right: 12px; bottom: 12px;
+  display: flex; flex-direction: column;
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 6px);
+  overflow: hidden;
+  z-index: 3;
+  box-shadow: var(--shadow-glass);
+
+  & button {
+    width: 28px; height: 28px;
+    margin: 0; padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: var(--muted);
+    border-bottom: 1px solid var(--graph-divider);
+    display: grid; place-items: center;
+    font-family: inherit; font-size: 13px;
+
+    &:last-child { border-bottom: 0; }
+    &:hover:not(:disabled) { color: var(--accent); background: var(--surface-active); }
+    &:disabled { opacity: .35; }
+  }
+}
+
+.g2-zoom-pct {
+  font: 500 9px/1 ui-monospace, monospace;
+  color: var(--muted);
+  padding: 5px 0;
+  text-align: center;
+  border-bottom: 1px solid var(--graph-divider);
+}
+
+/* Keep the fit label small enough for the shared 28px button. */
+.g2-zoom-ctrl .g2-zoom-fit-btn {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-weight: 600;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: -.02em;
+  text-transform: lowercase;
+}

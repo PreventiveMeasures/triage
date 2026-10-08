@@ -32,6 +32,7 @@
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import graph2CSS from './graph2.css'
 import sidebarListCSS from './sidebar-list.css'
+import zoomControlsCSS from './zoom-controls.css'
 import treeCountChipCSS from '../../styles/tree-count-chip.css'
 import toolbarCSS from '../../styles/toolbar.css'
 import { renderRightPanel, renderStage, renderTopBar } from './render.js'
@@ -47,7 +48,7 @@ class GraphLayout extends LitElement {
     matrixControls: { state: true },
   }
 
-  static styles = [unsafeCSS(toolbarCSS), unsafeCSS(treeCountChipCSS), unsafeCSS(graph2CSS), unsafeCSS(sidebarListCSS)]
+  static styles = [unsafeCSS(toolbarCSS), unsafeCSS(treeCountChipCSS), unsafeCSS(graph2CSS), unsafeCSS(sidebarListCSS), unsafeCSS(zoomControlsCSS)]
 
   constructor() {
     super()

@@ -6,11 +6,12 @@ import { MATRIX_LEFT, MATRIX_TOP, matrixFitCell, matrixHit, matrixZoomCell, pain
 import { renderMatrixPanel } from './matrix-panel.js'
 import css from './dependency-matrix.css'
 import sidebarListCSS from './sidebar-list.css'
+import zoomControlsCSS from './zoom-controls.css'
 import detailActionCSS from '../../styles/detail-action.css'
 
 class DependencyMatrix extends LitElement {
   static properties = { graph: { attribute: false } }
-  static styles = [unsafeCSS(sidebarListCSS), unsafeCSS(css), unsafeCSS(detailActionCSS)]
+  static styles = [unsafeCSS(sidebarListCSS), unsafeCSS(css), unsafeCSS(detailActionCSS), unsafeCSS(zoomControlsCSS)]
 
   constructor() {
     super()
@@ -219,7 +220,12 @@ class DependencyMatrix extends LitElement {
           @pointerup=${(e) => { if (!this.drag) return; if (!this.drag.moved) { const hit = this.pointer(e); if (hit) this.select(this.model.rows[hit.row].id, hit.col === null ? null : this.model.rows[hit.col].id, false) } this.drag = null }}
           @dblclick=${(e) => { const hit = this.pointer(e); if (hit) this.expand(this.model.rows[hit.row].pkg) }}></canvas>
         ${hoverRow && (!hoverCol || hoverImports > 0) ? html`<div class="matrix-hover">${hoverRow.label}${hoverCol ? ` → ${hoverCol.label} · ${hoverImports} imports` : ` · ${hoverRow.files.length} files`}</div>` : null}
-        <div class="matrix-zoom"><button aria-label="Zoom out" @click=${() => this.zoom(1 / 1.5)}>−</button><span>${Math.round(this.view.cell / 18 * 100)}%</span><button aria-label="Zoom in" @click=${() => this.zoom(1.5)}>+</button><button @click=${() => this.fit()}>Fit</button></div>
+        <div class="g2-zoom-ctrl" role="group" aria-label="Matrix zoom">
+          <button aria-label="Zoom in" @click=${() => this.zoom(1.5)}>+</button>
+          <div class="g2-zoom-pct">${Math.round(this.view.cell / 18 * 100)}%</div>
+          <button aria-label="Zoom out" @click=${() => this.zoom(1 / 1.5)}>−</button>
+          <button class="g2-zoom-fit-btn" aria-label="Fit to view" @click=${() => this.fit()}>fit</button>
+        </div>
       </div>
       <aside class="matrix-panel" aria-label="Matrix details" aria-live="polite">${renderMatrixPanel(this.model, this.graph, this.selection, {
         select: (from, to) => this.select(from, to), expand: (pkg) => this.expand(pkg), expanded: this.expanded, neighborhood: this.neighborhood,

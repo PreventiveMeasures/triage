@@ -29,19 +29,6 @@ button:focus-visible, select:focus-visible, canvas:focus-visible { outline: 2px 
   font-size: 11px;
 }
 canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-.matrix-zoom {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 5px);
-  background: var(--surface);
-}
-.matrix-zoom span { min-width: 35px; text-align: center; font-size: 11px; color: var(--muted); }
 .matrix-hover {
   position: absolute;
   bottom: 10px;
