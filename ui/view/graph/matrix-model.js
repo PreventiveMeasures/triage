@@ -48,7 +48,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     if (!byId.has(id)) {
       byId.set(id, { id, pkg: file.pkg, file: isFile ? file.file : null,
         label: isFile ? file.file : pkgLabel(file.pkg),
-        files: [], size: 0, issues: 0, incoming: 0, outgoing: 0 })
+        files: [], size: 0, issues: 0, incoming: 0, outgoing: 0, importers: 0, dependencies: 0 })
     }
     const row = byId.get(id)
     row.files.push(file.file)
@@ -125,6 +125,14 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     }
     if (targets.size === 0) cells.delete(from)
   }
+  // Other rows on each side, as the panel's Imported by / Imports lists
+  // count them. A package's internal imports count for neither.
+  for (const [from, targets] of cells) {
+    for (const to of targets.keys()) {
+      if (from === to) continue
+      byId.get(from).dependencies++; byId.get(to).importers++
+    }
+  }
   const q = query.trim().toLowerCase()
   const matches = new Set(ids.filter((id) => !q || byId.get(id).files.some((f) => f.toLowerCase().includes(q)) || byId.get(id).label.toLowerCase().includes(q)))
   const keep = new Set(neighborhood ? [neighborhood] : matches)
@@ -149,14 +157,16 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     }
     const appDiff = appRank(a) - appRank(b)
     if (appDiff) return appDiff
+    // The count orders rank by their count alone, so a module that is only
+    // imported (or only imports) still leads when its count is highest.
+    if (order === 'importers') return b.importers - a.importers || alphabetical(a, b)
+    if (order === 'imports') return b.dependencies - a.dependencies || alphabetical(a, b)
     const boundaryDiff = boundaryRank(a) - boundaryRank(b)
     if (boundaryDiff) return boundaryDiff
     if (order === 'structure' && a.component === b.component) {
       const diff = (cycleOrder.get(a.id) ?? 0) - (cycleOrder.get(b.id) ?? 0)
       if (diff) return diff
     }
-    if (order === 'importers' && a.incoming !== b.incoming) return b.incoming - a.incoming
-    if (order === 'imports' && a.outgoing !== b.outgoing) return b.outgoing - a.outgoing
     return alphabetical(a, b)
   }
   const rows = [...byId.values()].filter((n) => keep.has(n.id) && (!cyclesOnly || n.cyclic)).toSorted(compare)

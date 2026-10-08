@@ -84,7 +84,7 @@ it('orders cyclic groups mostly above the diagonal instead of alphabetically', (
   assert.deepEqual(buildDependencyMatrix(graph, { order: 'name' }).rows.map((r) => r.pkg), ['w', 'x', 'y', 'z'])
   for (const order of ['imports', 'importers']) {
     const rows = buildDependencyMatrix(graph, { order }).rows
-    const metric = order === 'imports' ? 'outgoing' : 'incoming'
+    const metric = order === 'imports' ? 'dependencies' : 'importers'
     assert.ok(rows.every((row, i) => i === 0 || rows[i - 1][metric] >= row[metric]))
   }
   // Input enumeration order must not reshuffle a cycle on each rebuild.
@@ -167,7 +167,7 @@ it('keeps own source before dependency modules within its cycle', () => {
   }
 })
 
-it('puts modules missing imports or importers last, ignoring package-internal imports', () => {
+it('puts modules missing imports or importers last in Structure and Name, ignoring package-internal imports', () => {
   const graph = {
     nodes: [
       { file: 'app.js', pkg: '__own__' },
@@ -185,11 +185,39 @@ it('puts modules missing imports or importers last, ignoring package-internal im
       ['isolated-b.js', ['isolated-a.js']],
     ]),
   }
-  for (const order of ['structure', 'name', 'importers', 'imports']) {
+  for (const order of ['structure', 'name']) {
     const model = buildDependencyMatrix(graph, { order })
     assert.deepEqual(model.rows.slice(0, 2).map((row) => row.pkg), ['__own__', 'middle'], order)
     assert.deepEqual(new Set(model.rows.slice(2).map((row) => row.pkg)), new Set(['aaa-source', 'bbb-sink', 'ccc-isolated']))
   }
+})
+
+it('ranks Most imported and Most imports by the other rows on each side, leaves included', () => {
+  // `runtime` imports nothing but is imported by every package; `entry`
+  // imports every package and has no importers. `big` has the most file
+  // imports, all of them internal.
+  const big = Array.from({ length: 5 }, (_, i) => `big/${i}.js`)
+  const graph = {
+    nodes: [
+      { file: 'app.js', pkg: '__own__' },
+      { file: 'runtime.js', pkg: 'runtime' },
+      { file: 'entry.js', pkg: 'entry' },
+      { file: 'middle.js', pkg: 'middle' },
+      ...big.map((file) => ({ file, pkg: 'big' })),
+    ],
+    importsOf: new Map([
+      ['app.js', ['runtime.js', 'middle.js']],
+      ['entry.js', ['runtime.js', 'middle.js', 'big/0.js']],
+      ['middle.js', ['runtime.js']],
+      ...big.map((file) => [file, ['runtime.js', ...big.filter((other) => other !== file)]]),
+    ]),
+  }
+  const importers = buildDependencyMatrix(graph, { order: 'importers' })
+  assert.deepEqual(importers.rows.map((row) => row.pkg), ['__own__', 'runtime', 'middle', 'big', 'entry'])
+  assert.deepEqual(importers.rows.map((row) => row.importers), [0, 4, 2, 1, 0])
+  const imports = buildDependencyMatrix(graph, { order: 'imports' })
+  assert.deepEqual(imports.rows.map((row) => row.pkg), ['__own__', 'entry', 'big', 'middle', 'runtime'])
+  assert.deepEqual(imports.rows.map((row) => row.dependencies), [2, 3, 1, 1, 0])
 })
 
 it('searches retain only the match and its direct neighbors', () => {
