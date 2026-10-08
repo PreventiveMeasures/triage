@@ -27,7 +27,7 @@ function button(content, target) {
 
 function nodeApiLink(name) {
   const label = attribute(`Node.js docs for node:${name}`)
-  return `<a class="source-node-doc" href="${attribute(nodeApiDocUrl(name))}" target="_blank" rel="noopener noreferrer" data-tooltip="${label}" aria-label="${label}">`
+  return `<a class="source-node-doc" href="${attribute(nodeApiDocUrl(name))}" target="_blank" rel="noopener noreferrer" aria-label="${label}">`
     + `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${NODEJS_MARK_PATH}"></path></svg></a>`
 }
 

@@ -341,7 +341,8 @@ test('lines importing one unlinked Node.js built-in end with a link to its docs'
   assert.deepEqual(styledText(html), styledText(highlight(code, 'javascript')), 'links preserve text and syntax')
   assert.deepEqual(splitHighlightedLines(html).map(line => /<a class="source-node-doc" href="https:\/\/nodejs\.org\/api\/([^"]+)"/u.exec(line)?.[1] ?? null),
     lines.map(([, page]) => page))
-  assert.match(html, /data-tooltip="Node.js docs for node:fs"/u)
+  assert.match(html, /aria-label="Node.js docs for node:fs"/u)
+  assert.doesNotMatch(html, /data-tooltip/u)
   assert.doesNotMatch(highlight(code, 'javascript'), /source-node-doc/u, 'other highlight callers stay unchanged')
   assert.doesNotMatch(highlight(`const fs = require('fs')`, 'php', resolve), /source-node-doc/u)
   assert.match(highlight(`import fs = require('fs')\r\nfs.statSync('.')`, 'typescript', resolve), /<\/a>\r\n/u, 'before a CRLF, not between it')
