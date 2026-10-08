@@ -135,6 +135,55 @@ test('full dependency paths are visible and following a dependency retains all i
   }
 })
 
+test('ribbons use the available bar width without crossing when their endpoints fit', () => {
+  const layout = layoutSizeFlow(buildSizeFlow(fixture({
+    'entry.js': { size: 500, imports: ['small.js', 'large.js', 'medium.js'] },
+    'small.js': { size: 100 }, 'large.js': { size: 300 }, 'medium.js': { size: 200 },
+  })))
+  const root = layout.byId.get('f:entry.js')
+  const outgoing = layout.edges.toSorted((a, b) => layout.byId.get(a.to).x - layout.byId.get(b.to).x)
+  assert.equal(outgoing[0].x1, root.x)
+  assert.ok(Math.abs(outgoing.at(-1).x1 + outgoing.at(-1).width1 - root.x - root.width) < 1e-8)
+  for (let i = 1; i < outgoing.length; i++) assert.ok(outgoing[i].x1 >= outgoing[i - 1].x1 + outgoing[i - 1].width1)
+
+  const packages = layoutSizeFlow(buildSizeFlow(fixture({
+    'a/index.js': { size: 200, imports: ['lib/a.js'] },
+    'b/index.js': { size: 400, imports: ['lib/b.js'] },
+    'lib/entry.js': { size: 500 }, 'lib/a.js': { size: 100 }, 'lib/b.js': { size: 200 },
+  }, ['a/index.js', 'b/index.js', 'lib/entry.js']), { packages: true }))
+  const lib = packages.byId.get('p:lib')
+  const incoming = packages.edges.toSorted((a, b) => packages.byId.get(a.from).x - packages.byId.get(b.from).x)
+  assert.equal(incoming[0].x2, lib.x)
+  assert.ok(incoming[0].x2 + incoming[0].width2 <= incoming[1].x2)
+  assert.ok(Math.abs(incoming.at(-1).x2 + incoming.at(-1).width2 - lib.x - lib.width) < 1e-8)
+})
+
+test('oversubscribed ribbons spread across the bar while retaining their overlapping widths', () => {
+  const layout = layoutSizeFlow(buildSizeFlow(fixture({
+    ...diamond,
+    'entry.js': { size: 10, imports: ['a/index.js', 'b/index.js', 'small.js'] },
+    'small.js': { size: 10 },
+  })))
+  const root = layout.byId.get('f:entry.js'), shared = layout.byId.get('f:large/index.js')
+  const outgoing = layout.edges.filter(e => e.from === root.id)
+    .toSorted((a, b) => layout.byId.get(a.to).x - layout.byId.get(b.to).x)
+  assert.ok(Math.abs(root.width - 1100) < 1e-8, 'overlap must not inflate removal-impact bars')
+  assert.equal(outgoing[0].x1, root.x)
+  assert.ok(Math.abs(outgoing.at(-1).x1 + outgoing.at(-1).width1 - root.x - root.width) < 1e-8)
+  assert.ok(outgoing.reduce((sum, e) => sum + e.width1, 0) > root.width)
+  assert.ok(outgoing[0].x1 + outgoing[0].width1 > outgoing[1].x1, 'shared reachability is allowed to overlap')
+  for (let i = 0; i < outgoing.length; i++) {
+    const edge = outgoing[i]
+    assert.ok(Math.abs(edge.width1 / root.width - edge.size / root.removable) < 1e-8)
+    assert.ok(edge.x1 >= root.x && edge.x1 + edge.width1 <= root.x + root.width + 1e-8)
+    if (i > 0) assert.ok(edge.x1 + edge.width1 / 2 >= outgoing[i - 1].x1 + outgoing[i - 1].width1 / 2)
+  }
+  for (const edge of layout.edges.filter(e => e.to === shared.id)) {
+    assert.equal(edge.width2, shared.width)
+    assert.equal(edge.x2, shared.x, 'full-width incoming flows may completely overlap')
+  }
+})
+
 test('deep chains avoid recursion and zero-byte graphs keep finite geometry', () => {
   const tree = Object.fromEntries(Array.from({ length: 12000 }, (_, i) => [`${i}.js`, { size: 1, imports: i < 11999 ? [`${i + 1}.js`] : [] }]))
   const model = buildSizeFlow(fixture(tree, ['0.js']))
@@ -215,4 +264,40 @@ test('popup refreshes keep flow focus, selection and zoom while updating totals'
   flow.packages = true; flow.willUpdate(new Map([['packages', false]]))
   assert.equal(flow.focus, null)
   assert.equal(flow.selection, null)
+})
+
+test('Large defaults on above 50 files and filters reachable bytes without changing removal totals', () => {
+  const small = Object.fromEntries(Array.from({ length: 45 }, (_, i) => [`small-${i}.js`, { size: 1, imports: [] }]))
+  const tree = {
+    ...small,
+    'entry.js': { size: 1, imports: [...Object.keys(small), 'via.js', 'other.js', 'boundary.js', 'below.js'] },
+    'via.js': { size: 1, imports: ['shared.js'] },
+    'other.js': { size: 1, imports: ['shared.js'] },
+    'shared.js': { size: 5000, imports: [] },
+    'boundary.js': { size: 4096, imports: [] },
+    'below.js': { size: 4095, imports: [] },
+  }
+  const Flow = customElements.get('size-flow'), flow = new Flow()
+  flow.graph = fixture(tree); flow.willUpdate(new Map([['graph', null]]))
+  assert.equal(flow.graph.nodes.length, 51)
+  assert.equal(flow.minSize, 4096)
+  assert.notEqual(flow.renderControls(), null)
+  assert.deepEqual(new Set(flow.layout.nodes.map(n => n.id)), new Set(['f:entry.js', 'f:via.js', 'f:other.js', 'f:shared.js', 'f:boundary.js']))
+  assert.equal(flow.model.byId.get('f:via.js').removable, 1, 'a tiny file stays visible when its reachable size exceeds the cutoff')
+  assert.equal(flow.matches(flow.model.byId.get('f:below.js')), false)
+  const model = flow.model
+  flow.toggleLarge(); flow.willUpdate(new Map())
+  assert.equal(flow.model, model, 'filtering never recomputes reachability on a pruned graph')
+  assert.equal(flow.layout.nodes.length, 51)
+  assert.equal(flow.matches(flow.model.byId.get('f:below.js')), true)
+  flow.select('f:below.js'); flow.toggleLarge(); flow.willUpdate(new Map())
+  assert.equal(flow.selection, null, 'hide the selection when it no longer passes the filter')
+  flow.packages = true; flow.willUpdate(new Map([['packages', false]]))
+  assert.equal(flow.layout.nodes.length, 1, 'package filtering uses the package reachable size')
+  const { 'small-0.js': omitted, ...fifty } = tree
+  assert.equal(omitted.size, 1)
+  flow.graph = fixture(fifty); flow.packages = false; flow.willUpdate(new Map([['graph', null], ['packages', true]]))
+  assert.equal(flow.minSize, 0)
+  assert.equal(flow.renderControls(), null, 'exactly 50 files does not show or apply Large')
+  assert.equal(flow.layout.nodes.length, 50)
 })

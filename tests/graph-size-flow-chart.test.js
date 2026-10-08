@@ -50,7 +50,7 @@ test('hover and selection retain geometry and update only affected highlights', 
   assert.equal(updates.mock.callCount(), 0, 'hover never triggers a component rerender')
   host.select('f:a.js'); chart.update(root)
   assert.equal(nodes.get('f:a.js').attributes.get('aria-pressed'), 'true')
-  assert.equal(nodes.get('f:a.js').attributes.get('rect:stroke-width'), '2')
+  assert.equal(nodes.get('f:a.js').attributes.get('rect:stroke'), 'var(--text)')
   chart.setHover(null)
   for (const e of host.model.edges) assert.equal(edges.get(e.id).attributes.get('opacity'), e.from === 'f:a.js' || e.to === 'f:a.js' ? '0.6' : '0.22')
   host.select('f:b.js'); chart.update(root)

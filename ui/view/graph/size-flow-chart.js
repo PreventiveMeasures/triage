@@ -60,7 +60,7 @@ export class SizeFlowChart {
 
   matchingNodes() {
     const model = this.host.model
-    const key = JSON.stringify([graph2.pathFilter, [...graph2.selectedSeverities].toSorted(), [...graph2.selectedColors].toSorted()])
+    const key = JSON.stringify([this.host.minSize, graph2.pathFilter, [...graph2.selectedSeverities].toSorted(), [...graph2.selectedColors].toSorted()])
     if (this.matchModel !== model || this.filterKey !== key) {
       this.matches = new Set([...model.byId.values()].filter(n => this.host.matches(n)).map(n => n.id))
       this.matchModel = model; this.filterKey = key
@@ -95,7 +95,6 @@ export class SizeFlowChart {
       el.setAttribute('aria-pressed', String(active))
       const rect = el.querySelector('rect')
       rect.setAttribute('stroke', active ? 'var(--text)' : 'var(--graph-canvas-bg)')
-      rect.setAttribute('stroke-width', active ? '2' : '1')
     }
     if (all) for (const id of this.edges.keys()) this.paintEdge(id)
     else if (this.selected?.node !== selected?.node || this.selected?.edge !== selected?.edge) {

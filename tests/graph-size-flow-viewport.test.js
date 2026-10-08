@@ -28,7 +28,7 @@ function mounted(t, width = 1000, height = 400) {
   const stage = new EventTarget()
   stage.getBoundingClientRect = () => box
   const elements = new Map([
-    ['.flow-viewport', stage], ['.flow-chart', { style: {} }], ['.g2-zoom-pct', {}],
+    ['.flow-viewport', stage], ['.flow-chart', { style: { setProperty(key, value) { this[key] = value } } }], ['.g2-zoom-pct', {}],
     ['[aria-label="Zoom in"]', {}], ['[aria-label="Zoom out"]', {}],
   ])
   flow.renderRoot = { querySelector: selector => elements.get(selector) ?? null }
@@ -48,11 +48,13 @@ function mounted(t, width = 1000, height = 400) {
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} ≠ ${expected}`)
 const world = (flow, x, y) => [(x - flow.pan.x) / flow.zoom, (y - flow.pan.y) / flow.zoom]
 
-test('flow fits and centers initially, then preserves valid zoom and pan through popup refreshes', t => {
+test('flow fits full depth, fills the width and aligns left, preserving manual framing on refresh', t => {
   const { flow, box } = mounted(t)
-  assert.ok(flow.layout.width * flow.zoom <= box.width + .001)
+  near(flow.layout.width * flow.zoom, box.width)
   assert.ok(flow.layout.height * flow.zoom <= box.height + .001)
-  near(flow.pan.x, (box.width - flow.layout.width * flow.zoom) / 2)
+  near(flow.pan.x, 0)
+  near(Math.min(...flow.layout.nodes.map(n => n.x)), 0)
+  near(Math.max(...flow.layout.nodes.map(n => n.x + n.width)) * flow.zoom, box.width)
   near(flow.pan.y, (box.height - flow.layout.height * flow.zoom) / 2)
   assert.equal(flow.needsFit, false)
   flow.zoomBy(2)
@@ -72,9 +74,9 @@ test('minimum zoom follows files/package content, with 100% as the floor when fi
   assert.ok(flow.zoom > fileFit)
   assert.equal(flow.zoom, flow.fitScale())
   assert.equal(elements.get('[aria-label="Zoom out"]').disabled, true)
-  const packageZoom = flow.zoom
   flow.packages = false; flow.willUpdate(new Map([['packages', true]])); flow.updated()
-  assert.equal(flow.zoom, packageZoom, 'switching back preserves zoom that is still within the new bounds')
+  assert.equal(flow.zoom, fileFit, 'automatically fitted views remain fitted on content switches')
+  flow.zoomBy(1.2)
   resize(2200, 3000)
   assert.equal(flow.zoom, 1, 'a larger viewport enforces the new minimum immediately')
   flow.fit()
@@ -100,6 +102,7 @@ test('buttons zoom around the center and wheel zoom preserves the point under th
   near(flow.zoom, wheelBefore * Math.exp(.15))
   world(flow, 140, 90).forEach((n, i) => near(n, pointer[i]))
   assert.equal(elements.get('.flow-chart').style.transform, flow.viewportTransform())
+  assert.equal(elements.get('.flow-chart').style['--flow-zoom'], String(flow.zoom), 'outlines compensate for the SVG zoom without rebuilding geometry')
   assert.equal(elements.get('.g2-zoom-pct').textContent, `${Math.round(flow.zoom * 100)}%`)
   assert.equal(updates.mock.callCount(), 0, 'zooming must not rebuild the SVG node/ribbon templates')
 })
@@ -116,6 +119,7 @@ test('scrolling out at the minimum recenters instead of shrinking below the fitt
 
 test('dragging pans without selecting a node, while ordinary clicks still work', t => {
   const { flow, stage } = mounted(t)
+  flow.select('f:entry.js')
   const pan = { ...flow.pan }
   flow.startPan({ button: 0, pointerId: 1, clientX: 100, clientY: 100 })
   flow.movePan({ pointerId: 2, clientX: 200, clientY: 200 })
@@ -126,11 +130,32 @@ test('dragging pans without selecting a node, while ordinary clicks still work',
   const dragClick = Object.assign(new Event('click', { cancelable: true }), { detail: 1 })
   stage.dispatchEvent(dragClick)
   assert.equal(dragClick.defaultPrevented, true)
+  assert.equal(flow.selection.node, 'f:entry.js', 'a drag ending on empty space must not clear selection')
   flow.startPan({ button: 0, pointerId: 1, clientX: 100, clientY: 100 })
   flow.endPan({ pointerId: 1 })
   const click = Object.assign(new Event('click', { cancelable: true }), { detail: 1 })
   stage.dispatchEvent(click)
   assert.equal(click.defaultPrevented, false)
+  assert.equal(flow.selection, null, 'a click on empty space clears selection')
+})
+
+test('fitted views fill resized viewports, while manual zoom survives file/package switches', t => {
+  const { flow, box, resize } = mounted(t)
+  for (const [width, height] of [[400, 900], [1600, 200], [1200, 700]]) {
+    resize(width, height)
+    near(flow.pan.x, 0)
+    near(Math.max(...flow.layout.nodes.map(n => n.x + n.width)) * flow.zoom, width)
+    assert.ok(flow.layout.height * flow.zoom <= height + .001)
+  }
+  flow.zoomBy(3)
+  const zoom = flow.zoom
+  for (const packages of [true, false]) {
+    flow.packages = packages; flow.willUpdate(new Map([['packages', !packages]])); flow.updated()
+    assert.equal(flow.zoom, zoom)
+  }
+  flow.fit()
+  near(flow.pan.x, 0)
+  near(flow.layout.width * flow.zoom, box.width)
 })
 
 test('a hidden flow waits for measurable dimensions and keeps enforcing bounds on resize', t => {
