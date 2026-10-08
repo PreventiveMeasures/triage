@@ -826,6 +826,33 @@ test('the bundle graph offers Issues when every matched finding sits outside the
   assert.equal([...buildBundleGraphData(details).fileFindings.values()].flat().length, 1, 'the fixed bucket draws the finding')
 })
 
+test('the bundle graph offers Issues when the selected scope has no findings but the bundle does', async t => {
+  const { saveFile, deleteFile } = await import('../client/storage.js')
+  const { ensureBundleFindingsIndexed } = await import('../client/bundle-finding-index.js')
+  const previous = { reason: graph2.bundleReason, reasonFor: graph2.bundleReasonFor }
+  t.after(() => { graph2.bundleReason = previous.reason; graph2.bundleReasonFor = previous.reasonFor; graph2.bundleIssues = false })
+  const hash = 'hash-graph-other-scope', id = 'graph-other-scope'
+  const name = `${id}.json`
+  await saveFile(name, JSON.stringify({ findings: [{ id, file: 'src/build.js', fileHash: hash, severity: 'high', description: 'Only in the build scope' }] }))
+  t.after(async () => { await deleteFile(name) })
+  await ensureBundleFindingsIndexed()
+  const bundle = Bundle.parse(new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/run.js': 'run()', 'src/build.js': 'build()' } }]]),
+    reason: { run: ['src/run.js'], build: ['src/build.js'] },
+  }).serialize())
+  const details = { kind: 'stasis', integrity: id, bundle, fileHashes: new Map([['src/run.js', 'hash-graph-run-scope'], ['src/build.js', hash]]) }
+  graph2.bundleReasonFor = id
+  for (const issues of [false, true]) {
+    graph2.bundleIssues = issues
+    graph2.bundleReason = 'run'
+    const scoped = buildBundleGraphData(details)
+    assert.equal(graph2.bundleReason, 'run', 'the run scope stays selected')
+    assert.deepEqual(scoped.files, ['run.js'], 'only the run scope is drawn (display prefix stripped)')
+    assert.equal(scoped.hasIssues, true, `Issues ${issues ? 'on' : 'off'}: the switch stays while the scope has no findings`)
+    assert.equal(scoped.fileFindings.size, 0, 'nothing in the run scope to draw')
+  }
+})
+
 test('same-ID App and dependency findings remain selectable in package and bundle triage views', async t => {
   const { saveFile, deleteFile } = await import('../client/storage.js')
   const { ensureBundleFindingsIndexed, findingsForFileHash } = await import('../client/bundle-finding-index.js')

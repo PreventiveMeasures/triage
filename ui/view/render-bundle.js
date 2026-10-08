@@ -223,11 +223,13 @@ export function buildBundleGraphData(details) {
   // The topbar's Issues switch (offered only when something matched)
   // decides whether findings reach the graph at all: off, every layout
   // draws the bundle without issue markers, counts or filters. Offer it
-  // for matches in ANY triage bucket, not just the shown one: its row
+  // for matches anywhere in the bundle (All files), not just the selected
+  // scope, so picking a scope without findings doesn't take the switch
+  // away; and in ANY triage bucket, not just the shown one: its row
   // carries the status filter, the only way to reach a bundle whose
   // findings are all fixed, invalid, deleted or ignored.
   const hasIssues = findingsByFile.size > 0
-    || [...(strippedHashes?.values() ?? [])].some((hash) => findingsForFileHash(hash).length > 0)
+    || [...(details.fileHashes ?? [])].some(([orig, hash]) => full.origToStripped.has(orig) && findingsForFileHash(hash).length > 0)
   const issuesShown = hasIssues && graph2.bundleIssues
   const ownCounts = new Map()
   const severitySets = new Map()
