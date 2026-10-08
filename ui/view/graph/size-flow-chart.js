@@ -2,7 +2,7 @@ import { svg } from 'lit'
 import { formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
-import { flowRibbon } from './size-flow-model.js'
+import { flowRibbon, sizeFlowConnector } from './size-flow-model.js'
 
 export const shortSize = formatBytes
 
@@ -26,10 +26,10 @@ export class SizeFlowChart {
   }
 
   renderNode(n) {
-    const tooltip = `${n.label}\n${formatBytes(n.removable)} removed if deleted · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}`
+    const tooltip = `${n.label}\n${formatBytes(n.removable)} removed if deleted · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${sizeFlowConnector(n, this.host.minSize) ? '\nKept by Large to preserve an entry-point path' : ''}`
     const label = n.width >= 40 ? `${n.label.replace(/^node_modules\//u, '')} · ${shortSize(n.removable)}` : ''
     return svg`<g class="flow-node" data-flow-node=${n.id} role="button" tabindex="0" aria-label=${tooltip} data-tooltip=${tooltip} aria-pressed="false">
-      <rect x=${n.x} y=${n.y} width=${n.width} height="26" fill=${pkgColor(n.pkg)} stroke="var(--graph-canvas-bg)" stroke-width="1"></rect>
+      <rect x=${n.x} y=${n.y} width=${n.width} height="26" style=${`--flow-bar-width:${n.width}px`} fill=${pkgColor(n.pkg)} stroke="var(--graph-canvas-bg)"></rect>
       ${label ? svg`<svg x=${n.x + 5} y=${n.y} width=${Math.max(0, n.width - 10)} height="26"><text x="0" y="18">${label}</text></svg>` : null}
     </g>`
   }
@@ -101,7 +101,10 @@ export class SizeFlowChart {
     if (this.outline && (fresh || this.selected?.node !== selected?.node)) {
       const node = this.layout.byId.get(selected?.node)
       this.outline.setAttribute('visibility', node ? 'visible' : 'hidden')
-      if (node) for (const key of ['x', 'y', 'width']) this.outline.setAttribute(key, String(node[key]))
+      if (node) {
+        for (const key of ['x', 'y', 'width']) this.outline.setAttribute(key, String(node[key]))
+        this.outline.setAttribute('style', `--flow-bar-width:${node.width}px`)
+      }
     }
     if (all) for (const id of this.edges.keys()) this.paintEdge(id)
     else if (this.selected?.node !== selected?.node || this.selected?.edge !== selected?.edge) {

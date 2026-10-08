@@ -109,3 +109,15 @@ test('node descriptions and search order use removal impact rather than reachabl
   const template = chart.renderNode(host.layout.byId.get('f:a.js'))
   assert.ok(template.values.includes('a.js\n20 B removed if deleted · 1020 B reachable · 20 B own'))
 })
+
+test('small retained connectors explain why they remain under Large', t => {
+  const { chart, host } = mounted(t)
+  host.largeThreshold = 500; host.willUpdate(new Map())
+  const connector = chart.renderNode(host.layout.byId.get('f:a.js'))
+  assert.ok(connector.values.some(value => typeof value === 'string' && value.includes('Kept by Large to preserve an entry-point path')))
+  const shared = chart.renderNode(host.layout.byId.get('f:shared.js'))
+  assert.ok(!shared.values.some(value => typeof value === 'string' && value.includes('Kept by Large')))
+  host.toggleLarge(); host.willUpdate(new Map())
+  const unfiltered = chart.renderNode(host.layout.byId.get('f:a.js'))
+  assert.ok(!unfiltered.values.some(value => typeof value === 'string' && value.includes('Kept by Large')))
+})

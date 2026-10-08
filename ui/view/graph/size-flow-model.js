@@ -2,18 +2,22 @@ import { pkgLabel } from '../bundle-pkg-of.js'
 import { countsTowardsCycles } from './cycle-imports.js'
 import { stronglyConnected } from './matrix-model.js'
 import { removalSizes } from './size-flow-removal.js'
+import { filterSizes } from './size-flow-filter.js'
 
 const bytes = n => Number.isFinite(n) && n >= 0 ? n : 0
 
+export const sizeFlowFilterSize = node => node.filterSize
+export const sizeFlowConnector = (node, minSize) => Math.max(node.removable, node.own) < minSize && node.filterSize >= minSize
+
 // Aim for at most 100 nodes, but don't take a step that would leave fewer
-// than 50. Count reachable bytes in the current file/package model once;
-// filtering must not alter reachability or the bundle's removal totals.
+// than 50. Count both size-qualified nodes and their required entry-point
+// paths. Filtering does not change the displayed bundle removal totals.
 export function sizeFlowLargeThreshold(model) {
   if (model.byId.size <= 100) return 0
-  const steps = [0, 1, 4, 10, 20, 50, 100].map(n => n * 1024)
+  const steps = [0, 1, 4, 10, 20, 50, 100, 200].map(n => n * 1024)
   const counts = steps.map(() => 0)
   for (const node of model.byId.values()) { for (let i = 0; i < steps.length; i++) {
-    if (node.size < steps[i]) break
+    if (sizeFlowFilterSize(node) < steps[i]) break
     counts[i]++
   } }
   let step = 0
@@ -84,8 +88,10 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
   const { files, links, entries, weakEdges } = fileGraph(graph)
   const reach = reachability(files, links)
   const roots = entries.length > 0 ? [...new Set(entries)] : reach.inferred
-  const active = new Set(roots), pending = [...roots]
-  for (const id of pending) for (const to of links.get(id)) if (!active.has(to)) { active.add(to); pending.push(to) }
+  const active = new Set(roots), parents = new Map(), pending = [...roots]
+  for (const id of pending) { for (const to of links.get(id)) { if (!active.has(to)) {
+    active.add(to); pending.push(to); parents.set(to, id)
+  } } }
   const byId = new Map(), idOf = file => `${packages ? 'p' : 'f'}:${packages ? files.get(file).pkg : file}`
   for (const file of active) {
     const id = idOf(file), n = files.get(file)
@@ -96,6 +102,7 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
   }
   for (const row of byId.values()) Object.assign(row, reach.sum(row.files))
   removalSizes(files, links, roots, byId)
+  filterSizes(byId, parents, idOf)
   const pairs = new Map()
   for (const from of active) {for (const to of links.get(from)) {
     const a = idOf(from), b = idOf(to)
@@ -120,10 +127,12 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
 // Longest-path ranks keep ordinary imports flowing down, including diamonds
 // and direct + indirect imports of the same module. Only entries are pinned;
 // cycles share a rank and retain explicit return ribbons.
-function flowLevels(model, roots) {
+function flowLevels(model, roots, minSize) {
   const active = new Set(roots), pending = [...roots], rootSet = new Set(roots)
-  for (const id of pending) for (const e of model.byId.get(id).outgoing) if (!active.has(e.to)) { active.add(e.to); pending.push(e.to) }
-  const links = new Map(pending.map(id => [id, new Set(model.byId.get(id).outgoing.map(e => e.to).filter(to => !rootSet.has(to)))]))
+  for (const id of pending) { for (const e of model.byId.get(id).outgoing) {
+    if (!active.has(e.to) && sizeFlowFilterSize(model.byId.get(e.to)) >= minSize) { active.add(e.to); pending.push(e.to) }
+  } }
+  const links = new Map(pending.map(id => [id, new Set(model.byId.get(id).outgoing.map(e => e.to).filter(to => active.has(to) && !rootSet.has(to)))]))
   const { componentOf, groups } = stronglyConnected(pending, links)
   const incoming = groups.map(() => 0), next = groups.map(() => new Set()), ranks = groups.map(() => 0)
   for (const [from, targets] of links) { for (const to of targets) {
@@ -173,10 +182,10 @@ function spreadFlowPorts(nodes, edges, byId) {
 }
 
 export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 } = {}) {
-  const roots = focus && model.byId.has(focus) ? [focus] : model.roots
-  const levels = flowLevels(model, roots)
+  const roots = (focus && model.byId.has(focus) ? [focus] : model.roots).filter(id => sizeFlowFilterSize(model.byId.get(id)) >= minSize)
+  const levels = flowLevels(model, roots, minSize)
   const candidates = [...levels.keys()]
-    .filter(id => model.byId.get(id).size >= minSize)
+    .filter(id => sizeFlowFilterSize(model.byId.get(id)) >= minSize)
     .toSorted((a, b) => levels.get(a) - levels.get(b) || model.byId.get(b).removable - model.byId.get(a).removable || a.localeCompare(b))
   const visible = new Set(candidates)
   const edges = model.edges.filter(e => visible.has(e.from) && visible.has(e.to))

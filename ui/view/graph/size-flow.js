@@ -2,7 +2,7 @@ import { guard } from 'lit/directives/guard.js'
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
-import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowLargeThreshold } from './size-flow-model.js'
+import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowConnector, sizeFlowFilterSize, sizeFlowLargeThreshold } from './size-flow-model.js'
 import { SizeFlowChart, shortSize } from './size-flow-chart.js'
 import { graphZoomMetrics } from './zoom.js'
 import css from './size-flow.css'
@@ -49,7 +49,7 @@ class SizeFlow extends LitElement {
       if (this.selection && !this.model.byId.has(this.selection.node)) this.selection = null
       this.hover = null
     }
-    if (this.focus && this.model.byId.get(this.focus)?.size < this.minSize) this.focus = null
+    if (this.focus && sizeFlowFilterSize(this.model.byId.get(this.focus)) < this.minSize) this.focus = null
     if (rebuild || this.layoutFocus !== this.focus || this.layoutMinSize !== this.minSize) {
       this.layout = fitSizeFlowWidth(layoutSizeFlow(this.model, { focus: this.focus, minSize: this.minSize }), availableWidth(this.width), this.height)
       this.layoutFocus = this.focus
@@ -64,7 +64,7 @@ class SizeFlow extends LitElement {
 
   renderControls() {
     return this.largeThreshold ? html`<mode-switch label=${`Large · ${this.largeThreshold / 1024}+ KiB`} .checked=${this.largeOnly}
-      data-tooltip=${`At least ${shortSize(this.largeThreshold)} of unique reachable source`} @click=${() => this.toggleLarge()}></mode-switch>` : null
+      data-tooltip=${`At least ${shortSize(this.largeThreshold)} removed if deleted or in own code, plus connecting paths from entry points`} @click=${() => this.toggleLarge()}></mode-switch>` : null
   }
 
   updated() {
@@ -220,7 +220,7 @@ class SizeFlow extends LitElement {
   }
 
   matches(node) {
-    if (node.size < this.minSize) return false
+    if (sizeFlowFilterSize(node) < this.minSize) return false
     const query = graph2.pathFilter.trim().toLowerCase()
     if (query && !`${node.label} ${node.pkg}`.toLowerCase().includes(query)) return false
     const some = key => node.files.some(file => [...(this.model.files.get(file)[key] ?? [])].some(v =>
@@ -259,6 +259,7 @@ class SizeFlow extends LitElement {
     return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => { if (this.focus) this.follow(null); else this.select(null) }}>×</button></div>
       ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
       <div class="flow-metrics"><b>${shortSize(node.removable)}</b><span>removed if deleted · bar width</span><b>${shortSize(node.size)}</b><span>unique reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
+      ${sizeFlowConnector(node, this.minSize) ? html`<p>Kept by Large so retained dependencies remain connected to an entry point.</p>` : null}
       ${node.removableMissing ? html`<p>${node.removableMissing} removed files have unknown sizes; removal totals include known bytes only.</p>` : null}
       ${node.missing ? html`<p>${node.missing} reachable file sizes are unknown.</p>` : null}
       ${node.virtual ? html`<p>Entry source is absent from this bundle; only its recorded imports are counted.</p>` : null}

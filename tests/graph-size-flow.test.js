@@ -267,22 +267,24 @@ test('popup refreshes keep flow focus, selection and zoom while updating totals'
 })
 
 test('Large chooses a cutoff using the current and next step counts', () => {
-  const threshold = (...groups) => sizeFlowLargeThreshold({ byId: new Map(groups.flatMap(([count, size]) =>
-    Array.from({ length: count }, () => ({ size }))).map((node, i) => [i, node])) })
+  const threshold = (...groups) => sizeFlowLargeThreshold({ byId: new Map(groups.flatMap(([count, removable, own = removable]) =>
+    Array.from({ length: count }, () => ({ filterSize: Math.max(removable, own) }))).map((node, i) => [i, node])) })
   assert.equal(threshold([100, 200 * 1024]), 0, '100 nodes need no filtering')
   assert.equal(threshold([200, 1023], [49, 200 * 1024]), 0, 'do not enable a filter that would keep fewer than 50 nodes')
-  for (const kib of [1, 4, 10, 20, 50, 100]) {
+  for (const kib of [1, 4, 10, 20, 50, 100, 200]) {
     assert.equal(threshold([101, kib * 1024 - 1], [50, kib * 1024]), kib * 1024, `include the exact ${kib} KiB boundary`)
   }
   assert.equal(threshold([200, 500], [100, 4096]), 1024, 'stop once the current step retains 100 nodes')
   assert.equal(threshold([60, 1024], [49, 4096]), 1024, 'keep more than 100 when the next step would be too sparse')
-  assert.equal(threshold([1000, 200 * 1024]), 100 * 1024, '100 KiB is the final step even if many nodes remain')
+  assert.equal(threshold([1000, 200 * 1024]), 200 * 1024, '200 KiB is the final step even if many nodes remain')
+  assert.equal(threshold([101, 4095, 0], [50, 0, 4096]), 4096, 'own code can meet the threshold independently')
+  assert.equal(threshold([101, 0, 4095], [50, 4096, 0]), 4096, 'removal impact can meet the threshold independently')
 })
 
-test('Large uses reachable bytes, adapts to files/packages and preserves the manual off setting', () => {
+test('Large uses removal impact and own code, adapts to files/packages and preserves manual off', () => {
   const small = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`small-${i}.js`, { size: 1, imports: [] }]))
   const medium = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`medium-${i}.js`, { size: 1024, imports: [] }]))
-  const large = Object.fromEntries(Array.from({ length: 45 }, (_, i) => [`large-${i}.js`, { size: 5000, imports: [] }]))
+  const large = Object.fromEntries(Array.from({ length: 47 }, (_, i) => [`large-${i}.js`, { size: 5000, imports: [] }]))
   const tree = {
     ...small, ...medium, ...large,
     'entry.js': { size: 1, imports: [...Object.keys(small), ...Object.keys(medium), ...Object.keys(large), 'via.js', 'other.js', 'boundary.js', 'below.js'] },
@@ -294,18 +296,22 @@ test('Large uses reachable bytes, adapts to files/packages and preserves the man
   }
   const Flow = customElements.get('size-flow'), flow = new Flow()
   flow.graph = fixture(tree); flow.willUpdate(new Map([['graph', null]]))
-  assert.equal(flow.graph.nodes.length, 171)
+  assert.equal(flow.graph.nodes.length, 173)
   assert.equal(flow.minSize, 4096)
   assert.notEqual(flow.renderControls(), null)
-  assert.deepEqual(new Set(flow.layout.nodes.map(n => n.id)), new Set([...Object.keys(large).map(file => `f:${file}`), 'f:entry.js', 'f:via.js', 'f:other.js', 'f:shared.js', 'f:boundary.js']))
-  assert.equal(flow.model.byId.get('f:via.js').removable, 1, 'a tiny file stays visible when its reachable size exceeds the cutoff')
+  assert.deepEqual(new Set(flow.layout.nodes.map(n => n.id)), new Set([...Object.keys(large).map(file => `f:${file}`), 'f:entry.js', 'f:via.js', 'f:shared.js', 'f:boundary.js']))
+  assert.equal(flow.model.byId.get('f:via.js').removable, 1)
+  assert.equal(flow.model.byId.get('f:via.js').size, 5001)
+  assert.equal(flow.matches(flow.model.byId.get('f:via.js')), true, 'keep one connector to the significant dependency')
+  assert.equal(flow.matches(flow.model.byId.get('f:other.js')), false, 'reachable size alone does not qualify a redundant wrapper')
   assert.equal(flow.matches(flow.model.byId.get('f:below.js')), false)
   const model = flow.model
   flow.toggleLarge(); flow.willUpdate(new Map())
   assert.equal(flow.model, model, 'filtering never recomputes reachability on a pruned graph')
-  assert.equal(flow.layout.nodes.length, 171)
+  assert.equal(flow.layout.nodes.length, 173)
   assert.equal(flow.matches(flow.model.byId.get('f:below.js')), true)
-  flow.select('f:below.js'); flow.toggleLarge(); flow.willUpdate(new Map())
+  flow.follow('f:other.js'); flow.toggleLarge(); flow.willUpdate(new Map())
+  assert.equal(flow.focus, null, 'clear a focused node when both its own size and removal impact fall below the cutoff')
   assert.equal(flow.selection, null, 'hide the selection when it no longer passes the filter')
   flow.packages = true; flow.willUpdate(new Map([['packages', false]]))
   assert.equal(flow.layout.nodes.length, 1)
