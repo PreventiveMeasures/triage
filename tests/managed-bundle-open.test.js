@@ -238,3 +238,17 @@ test('an unrelated transport cancellation does not restart the same metadata res
   assert.equal(f.landings.length, 1)
   assert.equal(state.bundleDetails, null)
 })
+
+test('a Code link carries its file number into the opened bundle until its sources load', async t => {
+  const f = await fixture(t)
+  f.requests[0].resolve(Response.json(metadata))
+  assert.equal(await f.opening, true)
+  const requested = f.requests.length
+  const opening = f.history.navigate({ view: 'bundles', teamSlug: null, bundleSlug: bundle.slug, bundleTab: 'code', file: 3 })
+  await setImmediate()
+  if (f.requests.length > requested) f.requests.at(-1).resolve(Response.json(metadata))
+  assert.equal(await opening, true)
+  assert.equal(state.bundleDetailsTab, 'code')
+  assert.deepEqual(state.bundleCodeFileRequest, { bundle: bundle.integrity, file: 3 })
+  assert.equal(f.browser.location.pathname, '/manage/bundle/created/code/3')
+})

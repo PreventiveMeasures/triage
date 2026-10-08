@@ -7,7 +7,7 @@ import { render } from './render.js'
 import { showToast } from './toast.js'
 import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
 
-export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab }, entries, isCurrent, renderSidebar) {
+export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, file }, entries, isCurrent, renderSidebar) {
   const generation = currentViewGeneration()
   let metadata
   try { metadata = await fetchBundleMetadata(id, { signal: currentViewSignal() }) } catch { return false } // The managed state reports request errors.
@@ -20,6 +20,7 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab }
     state.bundles = entries
     cleanupGraph2()
     selectBundle(entry.integrity, tab)
+    if (tab === 'code' && file != null) state.bundleCodeFileRequest = { bundle: entry.integrity, file }
     state.bundleDetails = details
     state.currentManagedTeam = teamId
     state.currentManagedReport = null

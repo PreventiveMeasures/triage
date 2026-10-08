@@ -49,14 +49,18 @@ test('pasting a new public fragment cannot restore the previous credential befor
 })
 
 test('all managed pages and team/report Files routes round-trip', () => {
-  const routes = [{ view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'overview' }, { view: 'home' }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
+  const routes = [{ view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'overview' }, { view: 'home' },
+    { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'code', file: 7 }, { view: 'bundles', teamSlug: null, bundleSlug: 'bundle-id', bundleTab: 'code', file: 1 }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
     { view: 'manage-history', actor: 'user name & repo' }, { view: 'manage-scans', bundleId: 'bundle-id' }, { view: 'manage-scans', bundleId: 'bundle-id', scanMode: 'dependencies' }, { view: 'manage-scans', scanMode: 'link' }, { view: 'manage-bundles', createRepoId: 106 }]
   for (const view of ['findings', 'files']) for (const reportSlug of [null, 'report-id']) routes.push({ view, teamSlug: 'team-id', reportSlug })
   for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
-  for (const path of ['/bundles', '/bundles/%2f', '/bundles/../api/config', '/api/config', '/api/admin/users', '/manage/missing', '/teams/a/reports', '/teams/%2f', '/teams/%00', '/teams/%ff']) {
+  for (const path of ['/bundles', '/bundles/%2f', '/bundles/../api/config', '/api/config', '/api/admin/users', '/manage/missing', '/teams/a/reports', '/teams/%2f', '/teams/%00', '/teams/%ff',
+    '/team/a/bundle/b/graph/3', '/team/a/bundle/b/code/0', '/team/a/bundle/b/code/03', '/team/a/bundle/b/code/9007199254740992', '/team/a/bundle/b/code/src', '/team/a/bundle/b/code/src%2Findex.js', '/manage/bundle/b/code/1/2']) {
     assert.equal(parseManagedRoute(new URL(path, 'https://triage.test')), null, path)
   }
   assert.equal(managedRoutePath({ view: 'files', teamSlug: '../api' }), null)
+  assert.equal(managedRoutePath({ view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'graph', file: 3 }), '/team/t/bundle/b/graph', 'only Code names a file')
+  assert.equal(managedRoutePath({ view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code', file: 0 }), '/team/t/bundle/b/code')
 })
 
 test('managed deduplication details round-trip through history', () => {
@@ -409,4 +413,45 @@ test('failed or superseded navigation cannot publish a pending finding selection
   pending.resolve()
   assert.equal(await slow, false)
   assert.equal(browser.location.pathname, '/manage')
+})
+
+test('the Code tab replaces its file in place, so Back leaves the bundle rather than stepping through files', async () => {
+  const report = { view: 'findings', teamSlug: 'team', reportSlug: 'report' }
+  const code = { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle', bundleTab: 'code' }
+  const { browser, entries } = browserAt(managedRoutePath(report))
+  const nav = createManagedHistory(browser)
+  await nav.start(() => true)
+  await nav.navigate(code)
+  for (const file of [3, 5, 1]) {
+    nav.replaceCodeRoute({ ...code, file })
+    assert.equal(browser.location.pathname, `/team/team/bundle/bundle/code/${file}`)
+  }
+  assert.equal(entries.length, 2, 'files do not fill Back history')
+  nav.replaceCodeRoute({ ...code, bundleSlug: 'other', file: 9 })
+  nav.replaceCodeRoute({ ...code, teamSlug: null, file: 9 })
+  assert.equal(browser.location.pathname, '/team/team/bundle/bundle/code/1', 'late paints cannot switch bundles')
+  nav.replaceRoute({ ...code, bundleTab: 'graph' })
+  nav.replaceCodeRoute({ ...code, file: 9 })
+  assert.equal(browser.location.pathname, '/team/team/bundle/bundle/graph', 'or bring back a tab that was left')
+  await browser.move(-1)
+  assert.equal(browser.location.pathname, managedRoutePath(report))
+})
+
+test('a Code link commits the file the tab shows once it opens, without touching the page it leaves', async () => {
+  const report = { view: 'findings', teamSlug: 'team', reportSlug: 'report' }
+  const code = { view: 'bundles', teamSlug: null, bundleSlug: 'bundle', bundleTab: 'code' }
+  const { browser, entries } = browserAt(managedRoutePath(report))
+  const nav = createManagedHistory(browser)
+  let opening = false
+  await nav.start(route => {
+    if (!opening) return true
+    // A number past the last file falls back to the tab's own pick.
+    nav.replaceCodeRoute({ ...code, file: 2 })
+    assert.equal(browser.location.pathname, managedRoutePath(report), 'the departing entry stays as it was')
+    return route
+  })
+  opening = true
+  await nav.navigate({ ...code, file: 99 })
+  assert.equal(browser.location.pathname, '/manage/bundle/bundle/code/2')
+  assert.equal(entries.length, 2)
 })

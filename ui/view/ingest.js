@@ -1,7 +1,7 @@
 import { splitMarkdownImport } from '../../common/markdown-import.js'
 import { dependencyDirectory } from '../../client/dependency-paths.js'
 import { BUNDLE_TABS } from '../../common/bundle-tabs.js'
-import { managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
+import { managedBundleRoute, managedCodeFile, managedTeamBundleEntries } from './managed-bundle-navigation.js'
 import { setManagedWorkspace } from '../../client/managed/workspace.js'
 import { managedRouteForIds } from '../../common/managed/routes.js'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
@@ -62,7 +62,7 @@ export { BUNDLE_TABS } from '../../common/bundle-tabs.js'
 export function persistLastBundle(integrity, tab = 'overview') {
   if (isManagedUiMode()) {
     const entry = state.bundles.find(bundle => bundle.integrity === integrity)
-    managedHistory.replaceRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, tab))
+    managedHistory.replaceRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, tab, managedCodeFile(state, tab)))
     return
   }
   const suffix = tab && tab !== 'overview' && BUNDLE_TABS.has(tab) ? ` ${tab}` : ''

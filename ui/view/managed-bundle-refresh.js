@@ -1,4 +1,4 @@
-import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedCodeFile, managedTeamBundleEntries } from './managed-bundle-navigation.js'
 
 // Bundle contents are immutable. Refresh their authorized catalogue entries
 // without resetting the loaded sources, tab, search, graph or file history.
@@ -29,6 +29,6 @@ export async function refreshManagedBundleView(state, teams, { fetchCatalog, isC
   state.currentManagedTeam = team?.id ?? null
   render()
   // Rendering can fall back from Advisories when security access is lost.
-  replaceRoute(managedBundleRoute(teams, entry, state.currentManagedTeam, state.bundleDetailsTab))
+  replaceRoute(managedBundleRoute(teams, entry, state.currentManagedTeam, state.bundleDetailsTab, managedCodeFile(state)))
   return true
 }

@@ -134,6 +134,7 @@ export interface State {
   bundleSourceFindingIdx: number | null
   bundleSourceTargetLine: { bundle: string | null; path: string; line: number } | null
   bundleSourceWrap: boolean
+  bundleCodeFileRequest: { bundle: string; file: number } | null
   bundleOverviewFilesSort: 'name' | 'size'
   bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
@@ -639,6 +640,10 @@ export const state: State = store<State>({
   // Whether the source viewer wraps long lines. A reading preference,
   // persisted like kanbanDetailFullscreen.
   bundleSourceWrap: readSavedBundleSourceWrap() ?? false,
+  // The file a managed link opens the Code tab on, by its 1-based number in
+  // the bundle's sorted sources. Kept until the tab has the sources to read
+  // it from, and dropped with any other bundle or tab.
+  bundleCodeFileRequest: null,
   bundleOverviewFilesSort: 'name',
   bundleOverviewPackagesSort: 'size',
   bundleCodeHistory: null,

@@ -10,6 +10,11 @@ function sameFindingsPage(a, b) {
     && a.teamSlug === b.teamSlug && (a.reportSlug ?? null) === (b.reportSlug ?? null)
 }
 
+function sameBundleCode(a, b) {
+  return a?.view === 'bundles' && b?.view === 'bundles' && a.bundleTab === 'code' && b.bundleTab === 'code'
+    && (a.teamSlug ?? null) === (b.teamSlug ?? null) && a.bundleSlug === b.bundleSlug
+}
+
 // Browser history contains only a navigation generation, never report data.
 // A mode change invalidates old entries; Back cannot restore the prior mode.
 export function createManagedHistory(browser) {
@@ -66,7 +71,7 @@ export function createManagedHistory(browser) {
     let path = managedRoutePath(route)
     if (path === null) return false
     const request = ++revision
-    const pending = restoring = { route, findingRoute: null }
+    const pending = restoring = { route, findingRoute: null, codeRoute: null }
     const isCurrent = () => active && request === revision && !shareChanged()
     let ok = false
     try { ok = await restore(route, isCurrent) }
@@ -88,6 +93,7 @@ export function createManagedHistory(browser) {
     if (sameFindingsPage(pending.findingRoute, typeof ok === 'object' ? ok : route)) {
       path = managedRoutePath(pending.findingRoute)
     }
+    if (sameBundleCode(pending.codeRoute, typeof ok === 'object' ? ok : route)) path = managedRoutePath(pending.codeRoute)
     restoring = null
     if (pop || replacing) replace(path)
     else if (publicSharePath(path, publicShare) !== currentPath) {
@@ -170,6 +176,21 @@ export function createManagedHistory(browser) {
       }
       // A late repaint of a previous report must not steal the current URL.
       if (!sameFindingsPage(route, parseManagedRoute(new URL(browser.location.href)))) return
+      if (publicSharePath(path, publicShare) !== currentPath) replace(path)
+    },
+    // The file a bundle's Code tab shows, as the tab renders it. Replaced, so
+    // Back leaves the page rather than stepping through files, which the
+    // tab's own history does; held for the end of a navigation that opens
+    // the tab, like replaceFindingRoute's.
+    replaceCodeRoute(route) {
+      if (!active || shareChanged() || route?.view !== 'bundles' || route.bundleTab !== 'code') return
+      const path = managedRoutePath(route)
+      if (path == null) return
+      if (restoring) {
+        if (sameBundleCode(route, restoring.route)) restoring.codeRoute = route
+        return
+      }
+      if (!sameBundleCode(route, parseManagedRoute(new URL(browser.location.href)))) return
       if (publicSharePath(path, publicShare) !== currentPath) replace(path)
     },
     replaceRoute(route) {
