@@ -1,11 +1,11 @@
 // Managed uploads cross TLS-terminating proxies (Cloudflare, corporate
 // gateways) that would otherwise read report and bundle bytes in plaintext.
-// The server sends each session a P-256 public key; the browser seals every
-// upload to it with a fresh ephemeral key (ECDH → HKDF-SHA-256 → AES-256-GCM),
-// so the content key itself never crosses the proxy. Text is gzipped before
-// sealing; binary content is sealed as is.
+// The server sends each session an X25519 public key; the browser seals every
+// upload to it with a fresh ephemeral key (X25519 → HKDF-SHA-256 →
+// AES-256-GCM), so the content key itself never crosses the proxy. Text is
+// gzipped before sealing; binary content is sealed as is.
 //
-// Sealed body: version(1) | flags(1) | ephemeral public point(65), then the
+// Sealed body: version(1) | flags(1) | ephemeral public key(32), then the
 // payload in 1 MiB segments, each sealed under nonce = big-endian segment
 // index with the last byte marking the final segment. The header is the HKDF
 // salt, so altering it changes the key. Segments bound browser memory for
@@ -19,8 +19,8 @@ import { encodeUtf8 } from '../utf8.js'
 export const UPLOAD_SEAL_HEADER = 'x-upload-encryption'
 const VERSION = 1
 const FLAG_GZIP = 1
-const CURVE = { name: 'ECDH', namedCurve: 'P-256' }
-const HEADER_BYTES = 2 + 65
+const CURVE = { name: 'X25519' }
+const HEADER_BYTES = 2 + 32
 const TAG_BYTES = 16
 const SEGMENT_BYTES = 1024 * 1024
 const SNIFF_BYTES = 64 * 1024
@@ -55,19 +55,19 @@ async function isText(blob: Blob): Promise<boolean> {
   catch { return false }
 }
 
-// Seal `blob` to the server's raw public point. Reads the input as a stream;
+// Seal `blob` to the server's raw public key. Reads the input as a stream;
 // sealed segments are kept as Blobs, which browsers may page to disk.
 export async function sealUpload(blob: Blob, publicKey: Uint8Array<ArrayBuffer>): Promise<Blob> {
   const gzip = await isText(blob)
   const [server, ephemeral] = await Promise.all([
     crypto.subtle.importKey('raw', publicKey, CURVE, false, []),
-    crypto.subtle.generateKey(CURVE, false, ['deriveBits']),
+    crypto.subtle.generateKey(CURVE, false, ['deriveBits']) as Promise<CryptoKeyPair>,
   ])
   const header = new Uint8Array(HEADER_BYTES)
   header[0] = VERSION
   header[1] = gzip ? FLAG_GZIP : 0
   header.set(new Uint8Array(await crypto.subtle.exportKey('raw', ephemeral.publicKey)), 2)
-  const key = await contentKey(await crypto.subtle.deriveBits({ name: 'ECDH', public: server }, ephemeral.privateKey, 256), header, 'encrypt')
+  const key = await contentKey(await crypto.subtle.deriveBits({ name: 'X25519', public: server }, ephemeral.privateKey, 256), header, 'encrypt')
   const parts = [new Blob([header])], segment = new Uint8Array(SEGMENT_BYTES)
   let filled = 0, index = 0
   const seal = async (final: boolean) => {
@@ -106,7 +106,7 @@ export async function openUpload(sealed: Uint8Array<ArrayBuffer>, privateKey: Js
       crypto.subtle.importKey('jwk', privateKey, CURVE, false, ['deriveBits']),
       crypto.subtle.importKey('raw', header.slice(2), CURVE, false, []),
     ])
-    const content = await contentKey(await crypto.subtle.deriveBits({ name: 'ECDH', public: peer }, key, 256), header, 'decrypt')
+    const content = await contentKey(await crypto.subtle.deriveBits({ name: 'X25519', public: peer }, key, 256), header, 'decrypt')
     for (let index = 0; index < count; index++) {
       const start = HEADER_BYTES + index * (SEGMENT_BYTES + TAG_BYTES)
       const segment = sealed.subarray(start, Math.min(start + SEGMENT_BYTES + TAG_BYTES, sealed.length))

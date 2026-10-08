@@ -45,9 +45,9 @@ test('large managed uploads negotiate chunks, preserve metadata and finalize onl
   assert.equal(result.ok, true)
   assert.deepEqual(calls.map(call => call.url.replace(/[a-f\d-]{36}/u, 'id')),
     ['/api/config', KEY_PATH, '/api/admin/uploads/reports/id/0', '/api/admin/uploads/reports/id/1', '/api/admin/reports'])
-  // Binary content is sealed without compression: a 67-byte header and a
+  // Binary content is sealed without compression: a 34-byte header and a
   // 16-byte tag for each of its four 1 MiB segments.
-  const sealed = CHUNK + 10 + 67 + 4 * 16
+  const sealed = CHUNK + 10 + 34 + 4 * 16
   assert.equal(calls[2].options.body.size, CHUNK)
   assert.equal(calls[3].options.body.size, sealed - CHUNK)
   assert.deepEqual(await open(calls[2].options.body, calls[3].options.body), Buffer.from(file))

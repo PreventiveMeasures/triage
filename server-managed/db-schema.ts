@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS managed_session (
   csrf_token TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
-  -- Private P-256 JWK that this session's uploads are sealed to (see
+  -- Private X25519 JWK that this session's uploads are sealed to (see
   -- common/managed/upload-seal.ts). Created on first use.
   upload_key TEXT
 ) STRICT;

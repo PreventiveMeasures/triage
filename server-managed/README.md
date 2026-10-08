@@ -571,10 +571,10 @@ Brotli representation and verifies its original upload hash after decompression.
 
 A CDN or proxy that terminates TLS in front of the server, such as Cloudflare,
 would otherwise read every uploaded report, bundle and link report. The browser
-seals these uploads before sending them. Each session has its own P-256 key pair,
-created on first use: `GET /api/admin/uploads/key` returns the public key, and
-the private key stays in the session row. For every file, the browser derives a
-fresh AES-256-GCM key by ECDH with a new ephemeral key, so the proxy sees only
+seals these uploads before sending them. Each session has its own X25519 key
+pair, created on first use: `GET /api/admin/uploads/key` returns the public key,
+and the private key stays in the session row. For every file, the browser derives
+a fresh AES-256-GCM key by X25519 with a new ephemeral key, so the proxy sees only
 public keys and ciphertext. Text is gzipped before sealing and binary files are
 sealed as is. Large uploads are split into parts after sealing.
 

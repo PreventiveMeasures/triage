@@ -69,15 +69,14 @@ export async function readUpload(store: BlobStore, req: IncomingMessage, session
 
 // A session's upload key pair, stored as its private JWK.
 export function newUploadKey(): string {
-  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
-  const { kty, crv, x, y, d } = privateKey.export({ format: 'jwk' })
-  return JSON.stringify({ kty, crv, x, y, d })
+  const { privateKey } = generateKeyPairSync('x25519')
+  const { kty, crv, x, d } = privateKey.export({ format: 'jwk' })
+  return JSON.stringify({ kty, crv, x, d })
 }
 
-// The raw public point (base64url) browsers seal this session's uploads to.
+// The raw public key (base64url) browsers seal this session's uploads to.
 export function uploadPublicKey(key: string): string {
-  const { x, y } = JSON.parse(key) as { x: string; y: string }
-  return Buffer.concat([Buffer.of(4), Buffer.from(x, 'base64url'), Buffer.from(y, 'base64url')]).toString('base64url')
+  return (JSON.parse(key) as { x: string }).x
 }
 
 export async function openSessionUpload(key: string | null | undefined, sealed: Buffer, maxBytes: number): Promise<Buffer> {
