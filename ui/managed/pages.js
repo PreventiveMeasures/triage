@@ -11,6 +11,7 @@ import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.t
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { displayName } from '../../common/report-display-name.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
+import { formatBytes } from '../scan/metrics.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
@@ -775,14 +776,6 @@ class ManagedAdminRepos extends ManagedPage {
   }
 }
 customElements.define('managed-admin-repos', ManagedAdminRepos)
-
-// Human byte size (B / KB / MB) for the report / bundle rows.
-function formatBytes(n) {
-  if (typeof n !== 'number' || !Number.isFinite(n)) return ''
-  if (n < 1024) return `${n} B`
-  if (n < 1_048_576) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1_048_576).toFixed(1)} MB`
-}
 
 // Keep managed numeric repository IDs and null (unattached) intact.
 function repoOptions(repos) {

@@ -37,6 +37,7 @@ const findingsForFileHash = hash => isManagedUiMode() ? [] : localFindingsForFil
 const indexedHashFindingCount = () => isManagedUiMode() ? 0 : localIndexedHashFindingCount()
 
 import { SEVERITIES, SEVERITY_ORDER, formatBytes, formatRunMeta, stripCommonPathPrefix, titledDescription } from './format.js'
+import { formatBytes as formatByteSize } from '../scan/metrics.js'
 import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleCodeStats } from '../../common/bundle-stats.js'
@@ -951,7 +952,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       // passing over the row on its way somewhere else.
       const weigh = info && sources ? (el) => {
         const { bytes, loc } = bundlePackageSourceStats(sources, child.sourcePath)
-        Object.assign(el.dataset, { tooltipLoc: String(loc), tooltipSize: formatBytes(bytes) })
+        // Sized like bundle rows in the sidebar and scan page: B, then KiB / MiB / GiB.
+        Object.assign(el.dataset, { tooltipLoc: String(loc), tooltipSize: formatByteSize(bytes) })
       } : undefined
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
