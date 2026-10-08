@@ -10,7 +10,7 @@ import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
-import { GITHUB_ICON_SVG } from './icons.js'
+import { GITHUB_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
 import { sourceNpmIcon } from './source-file-icon.js'
 import osvIcon from './osv-icon.svg'
 import './bundle-scope-selector.js'
@@ -272,7 +272,10 @@ function renderConsentPrompt() {
 //   * Data     — render one section per package with at least
 //                one advisory, sorted by severity desc then by
 //                package name (or a one-line summary when none)
-export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
+//
+// `onScan`, when the viewer may scan the bundle, opens its Dependency
+// alerts scan from a Scan button right of the managed recheck button.
+export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
   const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
   const summary = renderAdvisoriesSummary(details)
@@ -290,6 +293,10 @@ export function renderBundleAdvisoriesTab(details, renderFn = () => {}) {
         return loading
       }}></bundle-scope-selector>` : nothing}
     ${renderRepositoryRecheck(details, renderFn)}
+    ${details?.managedId && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan"
+      data-tooltip="Validate these alerts in a Dependency alerts scan" @click=${onScan}>
+      ${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span>
+    </button>` : nothing}
     </div>` : nothing}
     </div>` : nothing}
     ${renderAdvisoriesBody(details)}

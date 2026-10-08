@@ -2250,7 +2250,7 @@ document.addEventListener('managed-feed-closed', () => {
 export async function navigateToAdminPage(view, options = {}) {
   if (options.history !== false && isManagedUiMode()) {
     if (!managedHistory.active) await refreshManagedSession()
-    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(options.scanMode === 'link' ? { scanMode: 'link' } : {}), ...(options.linkId ? { linkId: options.linkId } : {}) })
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(['link', 'dependencies'].includes(options.scanMode) ? { scanMode: options.scanMode } : {}), ...(options.linkId ? { linkId: options.linkId } : {}) })
   }
   if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
@@ -2262,7 +2262,8 @@ export async function navigateToAdminPage(view, options = {}) {
   catch (err) { console.warn(ADMIN_PAGES[view], err); return false }
   if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view
-  state.scanSelection = view === 'manage-scans' ? options.scanMode === 'link' ? { mode: 'report', reportMode: 'link' } : options.bundleId ? { bundleId: options.bundleId } : null : null
+  state.scanSelection = view === 'manage-scans' ? options.scanMode === 'link' ? { mode: 'report', reportMode: 'link' }
+    : options.bundleId ? { bundleId: options.bundleId, ...(options.scanMode === 'dependencies' ? { mode: 'dependencies' } : {}) } : null : null
   state.bundleCreationRepoId = view === 'manage-bundles' ? options.createRepoId ?? null : null
   render({ animate: false })
   renderSidebar()

@@ -64,6 +64,15 @@ test('bundle Scan obeys local service availability and managed roles', async () 
   assert.deepEqual(navigated, { view: 'manage-scans', options: { bundleId: 'managed-bundle' } })
 })
 
+test('an Advisories Scan opens the bundle in Dependency alerts mode on both hosts', async () => {
+  await openScan({ integrity: 'shared' }, { mode: 'dependencies' })
+  assert.deepEqual(state.scanSelection, { bundleId: 'shared', repoId: 'second-workspace', mode: 'dependencies' })
+  managed = true
+  state.managedSession = { role: 'manage' }
+  await openScan({ managedId: 'managed-bundle' }, { mode: 'dependencies' })
+  assert.deepEqual(navigated, { view: 'manage-scans', options: { bundleId: 'managed-bundle', scanMode: 'dependencies' } })
+})
+
 test('a newer navigation cancels a pending bundle Scan click', async () => {
   const ready = Promise.withResolvers()
   modeGate = ready.promise
