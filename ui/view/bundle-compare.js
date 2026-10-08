@@ -59,15 +59,17 @@ let _pendingSwap = null
 // Signed count for a summary metric delta: `+3` / `−2` / `±0`. Uses a
 // real minus (−) to match the typographic style elsewhere in the
 // chrome and so it never reads as a hyphen in a path. Used by the
-// Files and Deps metrics, and by formatDelta below for byte counts.
+// Files and Deps metrics.
 function formatCountDelta(n) {
   if (n === 0) return '±0'
   return `${n > 0 ? '+' : '−'}${Math.abs(n).toLocaleString()}`
 }
 
-// Signed byte count for a delta cell: `+1,234 B` / `−1,234 B` / `±0 B`.
+// Signed byte size for a delta cell, sized like the totals beside it:
+// `+1.2 KiB` / `−340 B` / `±0 B`.
 function formatDelta(n) {
-  return `${formatCountDelta(n)} B`
+  if (n === 0) return '±0 B'
+  return `${n > 0 ? '+' : '−'}${formatBytes(Math.abs(n))}`
 }
 
 // CSS direction suffix for a signed number: 'up' (green) / 'down'
