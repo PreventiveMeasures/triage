@@ -14,10 +14,10 @@ function rowButton(row, count, select) {
 export function renderMatrixPanel(model, graph, selection, { select, expand, expanded, neighborhood, focus, clear }) {
   const row = model.byId.get(selection?.from), target = model.byId.get(selection?.to)
   if (!row) {
-    const hubs = [...model.rows].toSorted((a, b) => b.incoming - a.incoming).slice(0, 15)
+    const hubs = [...model.rows].toSorted((a, b) => b.importers - a.importers).slice(0, 15)
     return html`<div class="matrix-metrics"><span><b>${number(graph.nodes.length)}</b>files</span><span><b>${number(graph.packages.length)}</b>packages</span><span><b>${number(model.importCount)}</b>imports</span></div>
       <p class="matrix-empty">Select a row to inspect a package.<br>Select a cell to see the files behind a dependency.</p>
-      <h4>Most imported</h4>${hubs.map((n) => rowButton(n, n.incoming, select))}
+      <h4>Most imported</h4>${hubs.map((n) => rowButton(n, n.importers, select))}
       ${model.cycleCount ? html`<h4>Cyclic groups <b>${model.cycleCount}</b></h4>${model.rows.filter((n) => n.cyclic).slice(0, 12).map((n) => rowButton(n, n.outgoing, select))}` : null}`
   }
   const cell = target ? model.cells.get(row.id)?.get(target.id) : null
