@@ -429,6 +429,12 @@ input[type=checkbox] {
 .page-intro .intro {
   margin: 0;
 }
+/* A lone action beside the intro: as with the repository actions, its
+   padding and border use the space around the intro text, so the row keeps
+   the text's height and position. */
+.page-intro > .btn {
+  margin-block: calc(-.45rem - 1px);
+}
 
 a { cursor: default; }
 
