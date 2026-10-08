@@ -17,6 +17,10 @@
 // only shows when the row's label is actually truncated (skip when
 // the label fits) while the bundle view shows unconditionally.
 //
+// A target whose details cost too much to compute on every hover can carry
+// a `prepareTooltip(el)` function: the show calls it, once the hover delay
+// has run out, to fill in the target's `data-tooltip-*` attributes.
+//
 // Placement: 'cursor' (default) anchors below the cursor and clamps
 // horizontally to the viewport — natural for in-column rows where
 // right-of-element would overlap the next column. 'right' anchors to
@@ -76,6 +80,7 @@ const RIGHT_GAP_PX = 8
 const VIEWPORT_MARGIN_PX = 8
 
 export function showTooltip(el, { placement = 'cursor' } = {}) {
+  el.prepareTooltip?.(el)
   placement = el.dataset.tooltipPlacement ?? placement
   const node = ensureEl()
   const text = el.dataset.tooltip ?? ''
@@ -88,7 +93,9 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const ecosystem = el.dataset.tooltipEcosystem ?? ''
   const version = el.dataset.tooltipVersion ?? ''
   const files = el.dataset.tooltipFiles ?? ''
-  const content = JSON.stringify([text, repo, commit, bundle, stats, built, packageName, ecosystem, version, files])
+  const loc = el.dataset.tooltipLoc ?? ''
+  const size = el.dataset.tooltipSize ?? ''
+  const content = JSON.stringify([text, repo, commit, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
   if (!text) return
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
@@ -104,7 +111,9 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
     if (icon) row.append(icon)
     const label = document.createElement('span')
     label.className = 'tooltip-package-details'
-    for (const value of [packageName, version, /^\d+$/u.test(files) ? `${files} ${files === '1' ? 'file' : 'files'}` : ''].filter(Boolean)) {
+    const count = (value, unit) => /^\d+$/u.test(value) ? `${Number(value).toLocaleString()} ${unit}` : ''
+    // The size comes formatted, like `data-tooltip-stats`.
+    for (const value of [packageName, version, count(files, files === '1' ? 'file' : 'files'), count(loc, 'LoC'), size].filter(Boolean)) {
       const field = document.createElement('span')
       field.textContent = value
       label.append(field)

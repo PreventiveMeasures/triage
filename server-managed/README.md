@@ -692,7 +692,7 @@ The GitHub Contents API limits directory listings to
 # Bundle metadata and contents
 
 `GET /api/bundles/:id/metadata` returns the shared `common/bundle-metadata.js`
-format: file inventory, byte sizes, source hashes and line counts, package
+format: file inventory, byte sizes, source hashes and lines of code (blank lines excluded), package
 identity, repository/package origins, imports, entry points, executable flags and language/code statistics.
 It excludes source bodies and binary resources. `GET /api/bundles/:id/contents`
 returns the original sourcemap or Stasis JSON after HTTP decoding.

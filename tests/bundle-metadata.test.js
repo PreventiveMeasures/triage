@@ -86,7 +86,7 @@ it('supports legacy Stasis bundles and sourcemaps with absent source content', a
 it('rejects wrong integrities, versions, invalid sizes/hashes and mismatched inventories', async () => {
   const data = await createBundleMetadata(details())
   for (const corrupt of [
-    { ...data, integrity: 'other' }, { ...data, version: 5 },
+    { ...data, integrity: 'other' }, { ...data, version: 6 },
     { ...data, files: data.files.map((row) => row.slice(0, 3)) },
     { ...data, files: [['src/main.js', -1, 'bad']] },
     { ...data, files: [['src/main.js', 12, 'bad']] },
@@ -128,7 +128,7 @@ function withResources() {
 it('keeps a resource\'s byte size, and no hash or line count, since it is no source', async () => {
   const full = withResources()
   const data = await createBundleMetadata(full)
-  assert.equal(data.version, 4)
+  assert.equal(data.version, 5)
   const rows = new Map(data.files.map(([path, ...rest]) => [path, rest]))
   assert.deepEqual(rows.get('assets/logo.png'), [7, null, null])
   assert.deepEqual(rows.get('assets/icon.svg'), [6, null, null])
@@ -147,6 +147,21 @@ it('reads version 2 hashes but rebuilds metadata that predates bundle origins', 
   const cached = parseBundleMetadata(data, full.integrity)
   assert.equal(cached.stale, true)
   assert.deepEqual(cached.fileHashes, full.fileHashes)
+})
+
+it('counts lines of code without blank lines, and rebuilds version 4 metadata that counted them', async () => {
+  const full = { integrity: 'sha512-blank', kind: 'stasis', size: 64, bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files: { 'src/blank.js': '// comment\n\n  \nexport {}\n\n', 'src/code.js': 'a\r\n\r\nb' } }]]),
+  }) }
+  const data = await createBundleMetadata(full)
+  const lines = new Map(data.files.map(([path, , , count]) => [path, count]))
+  assert.equal(lines.get('src/blank.js'), 2, 'the comment and the code, not the blank lines')
+  assert.equal(lines.get('src/code.js'), 2)
+  assert.equal(data.codeStats.lines, [...lines.values()].reduce((sum, count) => sum + (count ?? 0), 0))
+  assert.equal(createBundleSummary(full, data).lines, data.codeStats.lines)
+  const cached = parseBundleMetadata({ ...data, version: 4 }, full.integrity)
+  assert.equal(cached.stale, true, 'a version 4 count included blank lines')
+  assert.deepEqual(cached.fileHashes, await computeBundleFileHashes(full))
 })
 
 it('retains an explicit repository root and rebuilds version 3 metadata without dependency repositories', async () => {

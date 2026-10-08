@@ -25,6 +25,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { sourceCargoIcon, sourceComposerIcon, sourceFileIcon, sourceNpmIcon, sourceSoldeerIcon } from './source-file-icon.js'
 import { bundleFileGithub } from './bundle-file-github.js'
+import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { bundleFileHistory } from './bundle-code-history.js'
@@ -908,7 +909,7 @@ function dirIssueStats(node, issueIndex) {
 // so the user can drill in. Selected file gets a `current` class
 // for its background; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false, formats = null) {
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false, formats = null, sources = null) {
   const dirs = [...node.dirs.entries()].toSorted(([a, an], [b, bn]) => sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path))
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
@@ -945,6 +946,13 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const tooltip = pkg?.variant ? `${compact.node.sourcePath}\nVariant ${pkg.variant}` : compact.node.sourcePath
       const info = child.packageInfo
       const hasDetails = !!info || !!pkg?.variant
+      // Size and LoC read every source in the package, so count them only
+      // when its tooltip shows: after the hover delay, not for a pointer
+      // passing over the row on its way somewhere else.
+      const weigh = info && sources ? (el) => {
+        const { bytes, loc } = bundlePackageSourceStats(sources, child.sourcePath)
+        Object.assign(el.dataset, { tooltipLoc: String(loc), tooltipSize: formatBytes(bytes) })
+      } : undefined
       // Rollup chip — total findings under this dir, colored by the
       // worst severity present, so a collapsed subtree still shows
       // where the issues live (the per-file chips only help once
@@ -952,7 +960,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const stats = dirIssueStats(child, issueIndex)
       return html`<li class="bundle-code-tree-dir">
         <details .open=${live(computeOpen(childPath, child))}>
-          <summary @click=${onSummaryClick(childPath)}
+          <summary @click=${onSummaryClick(childPath)} .prepareTooltip=${weigh}
             data-tooltip-package=${info?.name ?? nothing}
             data-tooltip-ecosystem=${info?.ecosystem ?? nothing}
             data-tooltip-version=${info?.version ?? nothing}
@@ -970,7 +978,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} data-tooltip=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
           </summary>
-          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll, formats)}
+          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll, formats, sources)}
         </details>
       </li>`
     })}
@@ -1007,8 +1015,8 @@ function stripPathPrefix(p, prefix) {
 
 // Filter the full presentation so package boundaries and variant labels stay
 // stable. Both physical paths and the displayed package names are searchable.
-function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '', formats = null) {
-  if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex, false, formats)
+function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '', formats = null, sources = null) {
+  if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex, false, formats, sources)
   const filtered = filterBundleSourceTree(tree, query, prefix)
   if (!filtered) {
     return html`<div class="bundle-code-search-empty">No files match.</div>`
@@ -1017,7 +1025,7 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
   // exists because something inside it matched, so opening them
   // all means the user sees every hit at a glance instead of
   // having to click every level open after typing.
-  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true, formats)
+  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true, formats, sources)
 }
 
 // Code-mode result pane — flat list of files, each with up to
@@ -1342,7 +1350,7 @@ function renderBundleCodeView(details, entry = null) {
       <bundle-code-search .modes=${searchModes}></bundle-code-search>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
-          ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix, details.kind === 'stasis' ? details.bundle.formats : null)],
+          ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix, details.kind === 'stasis' ? details.bundle.formats : null, sources)],
           ['code', () => renderBundleCodeContentResults(sources, query, path, prefix)],
           ['issues', () => renderBundleCodeIssuesResults(details, query, path, prefix)],
         ])}
@@ -2275,7 +2283,7 @@ function renderBundleLanguagesBar(details) {
       return html`<span
         class="bundles-languages-segment"
         style=${styleMap({ flexGrow: lineCount, background: bundleLanguageColor(key) })}
-        data-language-tooltip=${`${label} · ${pct < 1 ? pct.toFixed(1) : pct.toFixed(0)}% · ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`}
+        data-language-tooltip=${`${label} · ${pct < 1 ? pct.toFixed(1) : pct.toFixed(0)}% · ${lineCount.toLocaleString()} LoC`}
       ></span>`
     })}
   </div>`

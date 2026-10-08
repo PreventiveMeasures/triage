@@ -5,8 +5,9 @@ import { decodeUtf8 } from '../common/utf8.js'
 import { bundleCommitHash } from '../common/bundle-commit.js'
 import type { BundleCacheRecord, BundleCacheStorage, BundleSummary } from './bundle-cache.ts'
 
-// Version 3 adds the optional source commit; older bundles use bounded backfill.
-export const SUMMARY_FILENAME = 'v3-summary.json'
+// Version 3 adds the optional source commit; version 4 counts lines of code
+// without blank lines. Older bundles use bounded backfill.
+export const SUMMARY_FILENAME = 'v4-summary.json'
 const RETRY_MS = 5 * 60_000
 const BACKFILL_LIMIT = 4
 type CachedSummary = BundleSummary | { retryAt: number }

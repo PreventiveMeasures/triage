@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bundleSourcePackageInfo } from '../ui/view/bundle-source-package.js'
+import { bundlePackageSourceStats, bundleSourcePackageInfo } from '../ui/view/bundle-source-package.js'
+import { bundleSourceLineCount } from '../common/bundle-metadata.js'
 
 test('package tooltip metadata prefers recorded identities and reads GitHub from captured npm manifests', () => {
   for (const repository of ['org/repo', 'github:org/repo', 'git+https://github.com/org/repo.git#main', 'git@github.com:org/repo.git', 'ssh://git@github.com/org/repo.git', { url: 'https://github.com/org/repo', directory: 'packages/dep' }]) {
@@ -99,4 +100,28 @@ test('package tooltips carry the commit a recorded repository pins, as its files
   const files = { 'package.json': JSON.stringify({ repository: 'org/manifest' }) }
   assert.equal(at({ files }), undefined)
   assert.equal(at({ repo: { github: 'not a repo', commit }, files }), undefined)
+})
+
+test('lines of code leave out blank lines and keep comments', () => {
+  for (const [content, loc] of [
+    ['', 0], ['\n\n', 0], ['  \t\n \r\n', 0], ['a', 1], ['a\n', 1], ['a\n\nb', 2],
+    ['// note\n/* block */\ncode()\n', 3], ['a\r\n\r\n  b  \r\n', 2], ['a\rb\r\r', 2], ['\uFEFF\n\u00A0\nx', 1],
+  ]) assert.equal(bundleSourceLineCount(content), loc, JSON.stringify(content))
+  assert.equal(bundleSourceLineCount(null), 0)
+})
+
+test('package stats weigh only the sources under the package, in bytes and non-blank lines of code', () => {
+  const sources = new Map([
+    ['node_modules/dep/index.js', '// a\n\nb\n'],
+    ['node_modules/dep/lib/é.js', 'é'],
+    ['node_modules/dep/empty.js', ''],
+    ['node_modules/dep-extra/index.js', 'not\n\nmine\n'],
+    ['src/app.js', 'app'],
+  ])
+  const stats = bundlePackageSourceStats(sources, 'node_modules/dep')
+  // '// a\n\nb\n' is 8 bytes and 2 LoC (the comment counts, the blank line does not), 'é' 2 bytes and 1 LoC.
+  assert.deepEqual(stats, { bytes: 10, loc: 3 })
+  assert.equal(bundlePackageSourceStats(sources, 'node_modules/dep'), stats, 'kept after the first hover')
+  assert.deepEqual(bundlePackageSourceStats(sources, 'node_modules/dep-extra'), { bytes: 10, loc: 2 })
+  assert.deepEqual(bundlePackageSourceStats(new Map(), 'node_modules/dep'), { bytes: 0, loc: 0 }, 'kept per bundle')
 })
