@@ -758,6 +758,7 @@ sidebar-delete-current button {
   border-radius: var(--ui-radius, 5px);
   color: var(--text);
   font-size: .72rem;
+  user-select: none;
   -webkit-app-region: no-drag; app-region: no-drag;
 
   & .view-as-label { flex: 1; display: grid; gap: .05rem; min-width: 0; }

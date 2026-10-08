@@ -345,9 +345,9 @@ class ManagedAdminUsers extends ManagedPage {
         ${ROLES.map((r) => html`<option value=${r} ?selected=${r === u.role}>${ADMIN_ROLE_LABELS[r]}</option>`)}
       </select>
       </span>
-      <span class="view-as">${isSelf ? nothing : html`<button type="button" class="btn view-as-btn"
-        aria-label=${`View as ${u.login}`} title="See the app as this user, without saving changes"
-        @click=${(e) => void this._viewAs(u, e.currentTarget)}>View as</button>`}</span>
+      <span class="view-as">${isSelf ? nothing : html`<button type="button" class="icon-btn"
+        aria-label=${`View as ${u.login}`} data-tooltip="See the app as this user"
+        @click=${(e) => void this._viewAs(u, e.currentTarget)}>${adminIcon('show')}</button>`}</span>
     </li>`
   }
 
