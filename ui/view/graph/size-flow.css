@@ -1,6 +1,6 @@
 :host { display: contents; }
 * { box-sizing: border-box; }
-button, select {
+button {
   font: inherit;
   color: var(--text);
   border: 1px solid var(--border);
@@ -11,14 +11,26 @@ button, select {
 }
 button:hover { background: var(--graph-hover-bg); }
 button:disabled { opacity: .4; cursor: default; }
-button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); }
-.flow-stage { grid-area: stage; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+button:focus-visible { outline: 2px solid var(--accent); }
+.flow-stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .flow-controls {
   display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--border);
 }
 .flow-controls span { color: var(--muted); margin-left: auto; }
 .flow-scroll { flex: 1; overflow: auto; min-height: 0; }
+.flow-zoom {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 5px);
+  background: var(--surface);
+}
 .flow-chart { display: block; }
 .flow-edge, .flow-node { cursor: default; }
 .flow-edge:focus, .flow-node:focus { outline: none; stroke: var(--text); stroke-width: 2px; }
@@ -33,8 +45,7 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); }
 }
 .flow-panel h3 { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
 .flow-panel h4 { margin: 20px 0 8px; color: var(--muted); font-size: 11px; }
-.flow-panel p, .flow-notice { color: var(--muted); font-size: 12px; line-height: 1.6; }
-.flow-notice { margin: 0; padding: 8px 14px; }
+.flow-panel p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .flow-panel-heading { display: flex; align-items: start; gap: 10px; justify-content: space-between; }
 .flow-metrics { display: grid; gap: 5px; margin: 18px 0; }
 .flow-metrics b { font-size: 20px; font-weight: 500; }

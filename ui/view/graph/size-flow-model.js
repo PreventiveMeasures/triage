@@ -121,10 +121,10 @@ function flowLevels(model, roots) {
   return new Map(pending.map(id => [id, ranks[componentOf.get(id)]]))
 }
 
-export function layoutSizeFlow(model, { focus = null, depth = 4, width = 1100 } = {}) {
+export function layoutSizeFlow(model, { focus = null, width = 1100 } = {}) {
   const roots = focus && model.byId.has(focus) ? [focus] : model.roots
   const levels = flowLevels(model, roots)
-  const candidates = [...levels.keys()].filter(id => levels.get(id) <= depth)
+  const candidates = [...levels.keys()]
     .toSorted((a, b) => levels.get(a) - levels.get(b) || model.byId.get(b).size - model.byId.get(a).size || a.localeCompare(b))
   const visible = new Set(candidates)
   const edges = model.edges.filter(e => visible.has(e.from) && visible.has(e.to))
@@ -156,8 +156,7 @@ export function layoutSizeFlow(model, { focus = null, depth = 4, width = 1100 } 
     edge.y1 = from.y + 26; edge.y2 = to.y
     edge.returning = to.level <= from.level
   }
-  return { nodes, byId, edges, roots, width: actualWidth, height: Math.max(260, 150 * bands.size + 40),
-    hidden: levels.size - nodes.length, reachable: levels.size }
+  return { nodes, byId, edges, roots, width: actualWidth, height: Math.max(260, 150 * bands.size + 40) }
 }
 
 export function flowRibbon(edge) {

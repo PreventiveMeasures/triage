@@ -18,7 +18,7 @@ class SizeFlow extends LitElement {
 
   constructor() {
     super()
-    this.packages = false; this.depth = 4; this.zoom = 1
+    this.packages = false; this.zoom = 1
     this.focus = null; this.selection = null; this.hover = null
     this.bridge = { requestDraw: () => this.requestUpdate(), _cleanup: () => {} }
   }
@@ -33,9 +33,9 @@ class SizeFlow extends LitElement {
       if (this.selection && !this.model.byId.has(this.selection.node)) this.selection = null
       this.hover = null
     }
-    if (rebuild || this.layoutFocus !== this.focus || this.layoutDepth !== this.depth) {
-      this.layout = layoutSizeFlow(this.model, { focus: this.focus, depth: this.depth })
-      this.layoutFocus = this.focus; this.layoutDepth = this.depth
+    if (rebuild || this.layoutFocus !== this.focus) {
+      this.layout = layoutSizeFlow(this.model, { focus: this.focus })
+      this.layoutFocus = this.focus
     }
   }
 
@@ -136,22 +136,20 @@ class SizeFlow extends LitElement {
 
   render() {
     if (!this.layout) return null
-    const { nodes, edges, width, height, hidden } = this.layout
+    const { nodes, edges, width, height } = this.layout
     return html`<section class="flow-stage" aria-label="Dependency size flow">
       <div class="flow-controls"><button ?disabled=${!this.focus} @click=${() => this.follow(null)}>Entry points</button>
-        <label>Depth <select aria-label="Flow depth" .value=${String(this.depth)} @change=${e => { this.depth = Number(e.target.value); this.requestUpdate() }}>
-          ${[1, 2, 3, 4, 6, 10, Infinity].map(n => html`<option value=${String(n)} ?selected=${this.depth === n}>${n === Infinity ? 'All' : n}</option>`)}
-        </select></label>
-        <button aria-label="Zoom out" @click=${() => { this.zoom = Math.max(.5, this.zoom / 1.5); this.requestUpdate() }}>−</button>
-        <button @click=${() => this.fit()}>Fit</button>
-        <button aria-label="Zoom in" @click=${() => { this.zoom = Math.min(12, this.zoom * 1.5); this.requestUpdate() }}>+</button>
-        <span>${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}${hidden ? ` · ${hidden} beyond this view` : ''}</span>
+        <span>${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</span>
       </div>
-      ${hidden ? html`<p class="flow-notice">Select a deeper level or All to show more dependencies. Sizes include dependencies beyond the selected depth.</p>` : null}
       <div class="flow-scroll"><svg class="flow-chart" style=${`width:${this.zoom * 100}%;min-width:${this.zoom * 500}px`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import ribbons weighted by total reachable bytes">
         <text class="flow-level" x="24" y="24">${this.focus ? this.model.byId.get(this.focus).label : this.model.inferred ? 'Inferred roots' : 'Entry points'} ↓</text>
         ${edges.map(e => this.renderEdge(e))}${nodes.map(n => this.renderNode(n))}
       </svg>${nodes.length > 0 ? null : html`<p>No recorded dependency paths in this view.</p>`}</div>
+      <div class="flow-zoom" role="group" aria-label="Flow zoom">
+        <button aria-label="Zoom out" @click=${() => { this.zoom = Math.max(.5, this.zoom / 1.5); this.requestUpdate() }}>−</button>
+        <button @click=${() => this.fit()}>Fit</button>
+        <button aria-label="Zoom in" @click=${() => { this.zoom = Math.min(12, this.zoom * 1.5); this.requestUpdate() }}>+</button>
+      </div>
     </section><aside class="flow-panel" aria-label="Size flow details" aria-live="polite">${this.renderSearch()}${this.renderPanel()}</aside>`
   }
 }
