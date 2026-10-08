@@ -10,6 +10,9 @@ import sidebarListCSS from './sidebar-list.css'
 import zoomControlsCSS from './zoom-controls.css'
 import detailActionCSS from '../../styles/detail-action.css'
 
+const sidePadding = 10
+const availableWidth = width => Math.max(1, width - 2 * sidePadding)
+
 function flowRow(node, size, onClick) {
   return html`<button class="g2-dist-item flow-link" data-tooltip=${node.label} @click=${onClick}>
     <span class="g2-dist-dot" style=${`background:${pkgColor(node.pkg)}`}></span>
@@ -46,7 +49,7 @@ class SizeFlow extends LitElement {
     }
     if (this.focus && this.model.byId.get(this.focus)?.size < this.minSize) this.focus = null
     if (rebuild || this.layoutFocus !== this.focus || this.layoutMinSize !== this.minSize) {
-      this.layout = fitSizeFlowWidth(layoutSizeFlow(this.model, { focus: this.focus, minSize: this.minSize }), this.width, this.height)
+      this.layout = fitSizeFlowWidth(layoutSizeFlow(this.model, { focus: this.focus, minSize: this.minSize }), availableWidth(this.width), this.height)
       this.layoutFocus = this.focus
       this.layoutMinSize = this.minSize
       if (this.selection && !this.layout.byId.has(this.selection.node)) this.selection = null
@@ -110,19 +113,19 @@ class SizeFlow extends LitElement {
 
   fitScale() {
     return this.layout && this.width > 0 && this.height > 0
-      ? Math.min(this.width / this.layout.width, this.height / this.layout.height, 9.99) : 1
+      ? Math.min(availableWidth(this.width) / this.layout.width, this.height / this.layout.height, 9.99) : 1
   }
 
   zoomMetrics() { return graphZoomMetrics(this.zoom, Math.min(this.fitScale(), 1)) }
 
   align() {
-    this.pan = { x: 0, y: (this.height - this.layout.height * this.zoom) / 2 }
+    this.pan = { x: sidePadding, y: (this.height - this.layout.height * this.zoom) / 2 }
   }
 
   syncViewport() {
     const box = this.renderRoot.querySelector('.flow-viewport')?.getBoundingClientRect()
     if (!this.layout || !box || box.width <= 0 || box.height <= 0) return
-    const layout = fitSizeFlowWidth(this.layout, box.width, box.height)
+    const layout = fitSizeFlowWidth(this.layout, availableWidth(box.width), box.height)
     if (this.width > 0 && this.height > 0) {
       this.pan.x = box.width / 2 - (this.width / 2 - this.pan.x) * layout.width / this.layout.width
       this.pan.y += (box.height - this.height) / 2
@@ -141,7 +144,7 @@ class SizeFlow extends LitElement {
   fit() {
     const box = this.renderRoot.querySelector('.flow-viewport')?.getBoundingClientRect()
     if (!this.layout || !box || box.width <= 0 || box.height <= 0) return
-    const layout = fitSizeFlowWidth(this.layout, box.width, box.height)
+    const layout = fitSizeFlowWidth(this.layout, availableWidth(box.width), box.height)
     if (layout !== this.layout) { this.layout = layout; this.requestUpdate() }
     this.width = box.width; this.height = box.height
     this.zoom = this.fitScale()
@@ -169,7 +172,7 @@ class SizeFlow extends LitElement {
       // toward the left-aligned overview instead of shrinking the graph.
       this.zoom = min
       const step = Math.min(.4, (1 - factor) * 3)
-      this.pan.x += -this.pan.x * step
+      this.pan.x += (sidePadding - this.pan.x) * step
       this.pan.y += ((this.height - this.layout.height * min) / 2 - this.pan.y) * step
       this.drawViewport()
     } else this.zoomBy(factor, e.clientX - box.left, e.clientY - box.top)

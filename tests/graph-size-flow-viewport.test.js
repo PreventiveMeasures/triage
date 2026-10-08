@@ -48,13 +48,13 @@ function mounted(t, width = 1000, height = 400) {
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} ≠ ${expected}`)
 const world = (flow, x, y) => [(x - flow.pan.x) / flow.zoom, (y - flow.pan.y) / flow.zoom]
 
-test('flow fits full depth, fills the width and aligns left, preserving manual framing on refresh', t => {
+test('flow fits full depth with 10px side margins, preserving manual framing on refresh', t => {
   const { flow, box } = mounted(t)
-  near(flow.layout.width * flow.zoom, box.width)
+  near(flow.layout.width * flow.zoom, box.width - 20)
   assert.ok(flow.layout.height * flow.zoom <= box.height + .001)
-  near(flow.pan.x, 0)
+  near(flow.pan.x, 10)
   near(Math.min(...flow.layout.nodes.map(n => n.x)), 0)
-  near(Math.max(...flow.layout.nodes.map(n => n.x + n.width)) * flow.zoom, box.width)
+  near(Math.max(...flow.layout.nodes.map(n => n.x + n.width)) * flow.zoom + flow.pan.x, box.width - 10)
   near(flow.pan.y, (box.height - flow.layout.height * flow.zoom) / 2)
   assert.equal(flow.needsFit, false)
   flow.zoomBy(2)
@@ -62,17 +62,20 @@ test('flow fits full depth, fills the width and aligns left, preserving manual f
   const pan = { ...flow.pan }, zoom = flow.zoom
   flow.graph = fixture(); flow.willUpdate(new Map([['graph', null]])); flow.updated()
   assert.equal(flow.zoom, zoom)
-  assert.deepEqual(flow.pan, pan)
+  near(flow.pan.x, pan.x)
+  near(flow.pan.y, pan.y)
 })
 
 test('minimum zoom follows files/package content, with 100% as the floor when fit is larger', t => {
-  const { flow, resize, elements } = mounted(t)
+  const { flow, box, resize, elements } = mounted(t)
   const fileFit = flow.zoom
   flow.zoomBy(.01)
   assert.equal(flow.zoom, fileFit)
   flow.packages = true; flow.willUpdate(new Map([['packages', false]])); flow.updated()
   assert.ok(flow.zoom > fileFit)
   assert.equal(flow.zoom, flow.fitScale())
+  near(flow.pan.x, 10)
+  near(flow.layout.width * flow.zoom + flow.pan.x, box.width - 10)
   assert.equal(elements.get('[aria-label="Zoom out"]').disabled, true)
   flow.packages = false; flow.willUpdate(new Map([['packages', true]])); flow.updated()
   assert.equal(flow.zoom, fileFit, 'automatically fitted views remain fitted on content switches')
@@ -113,7 +116,7 @@ test('scrolling out at the minimum recenters instead of shrinking below the fitt
   flow.pan.x += 100; flow.pan.y -= 80
   flow.wheel({ deltaY: 120, clientX: box.left + 100, clientY: box.top + 100, preventDefault() {} })
   assert.equal(flow.zoom, fit)
-  assert.ok(flow.pan.x > center.x && flow.pan.x < center.x + 100)
+  near(flow.pan.x, center.x + 60)
   assert.ok(flow.pan.y < center.y && flow.pan.y > center.y - 80)
 })
 
@@ -139,12 +142,12 @@ test('dragging pans without selecting a node, while ordinary clicks still work',
   assert.equal(flow.selection, null, 'a click on empty space clears selection')
 })
 
-test('fitted views fill resized viewports, while manual zoom survives file/package switches', t => {
+test('fitted views retain side margins on resize, while manual zoom survives file/package switches', t => {
   const { flow, box, resize } = mounted(t)
   for (const [width, height] of [[400, 900], [1600, 200], [1200, 700]]) {
     resize(width, height)
-    near(flow.pan.x, 0)
-    near(Math.max(...flow.layout.nodes.map(n => n.x + n.width)) * flow.zoom, width)
+    near(flow.pan.x, 10)
+    near(Math.max(...flow.layout.nodes.map(n => n.x + n.width)) * flow.zoom + flow.pan.x, width - 10)
     assert.ok(flow.layout.height * flow.zoom <= height + .001)
   }
   flow.zoomBy(3)
@@ -154,8 +157,8 @@ test('fitted views fill resized viewports, while manual zoom survives file/packa
     assert.equal(flow.zoom, zoom)
   }
   flow.fit()
-  near(flow.pan.x, 0)
-  near(flow.layout.width * flow.zoom, box.width)
+  near(flow.pan.x, 10)
+  near(flow.layout.width * flow.zoom, box.width - 20)
 })
 
 test('a hidden flow waits for measurable dimensions and keeps enforcing bounds on resize', t => {
@@ -166,7 +169,7 @@ test('a hidden flow waits for measurable dimensions and keeps enforcing bounds o
   assert.equal(flow.needsFit, false)
   assert.ok(flow.zoom > 0 && flow.zoom < 1)
   resize(300, 2000)
-  near(flow.zoom, 300 / flow.layout.width)
+  near(flow.zoom, 280 / flow.layout.width)
   flow.zoomBy(2)
   const zoom = flow.zoom
   resize(301, 2000)
