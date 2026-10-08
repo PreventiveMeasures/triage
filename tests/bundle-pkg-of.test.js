@@ -120,10 +120,10 @@ describe('ownSourceFirst', () => {
     assert.deepEqual(ownSourceFirst(paths), ['lib/z.js', 'app.js', 'node_modules/a/x.js', 'dependencies/b/y.js', 'node_modules/.pnpm/c@1/node_modules/c/i.js'])
   })
 
-  it('classifies by recorded package dirs when given', () => {
-    const packageDirs = new Map([['vendor/log/lib.rs', 'vendor/log'], ['src/dependencies/own.js', '.'], ['src/main.rs', '.']])
-    assert.deepEqual(ownSourceFirst(['vendor/log/lib.rs', 'src/dependencies/own.js', 'src/main.rs'], packageDirs),
-      ['src/dependencies/own.js', 'src/main.rs', 'vendor/log/lib.rs'])
+  it('classifies by recorded package dirs when given, counting workspace modules as own code', () => {
+    const packageDirs = new Map([['vendor/log/lib.rs', 'vendor/log'], ['src/dependencies/own.js', '.'], ['packages/ui/index.js', 'packages/ui'], ['src/main.rs', '.']])
+    assert.deepEqual(ownSourceFirst(['vendor/log/lib.rs', 'src/dependencies/own.js', 'packages/ui/index.js', 'src/main.rs'], packageDirs),
+      ['src/dependencies/own.js', 'packages/ui/index.js', 'src/main.rs', 'vendor/log/lib.rs'])
   })
 })
 

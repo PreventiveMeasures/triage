@@ -268,16 +268,18 @@ test('Code and Search tab code search list own source before dependencies', t =>
     bundleSearchQuery: state.bundleSearchQuery, bundleSearchRegex: state.bundleSearchRegex, bundleSearchCase: state.bundleSearchCase }
   t.after(() => Object.assign(state, previous))
   const entry = { name: 'order.stasis', integrity: 'sha512-own-source-first' }
-  // Own paths sort after `node_modules/` and `lib/`, so path order alone would list dependencies first.
+  // Own code (root source and the `packages/ui` workspace) sorts after both dependencies, so path order
+  // alone would list dependencies first.
   const bundle = Bundle.parse(new Bundle({ modules: new Map([
     ['.', { name: 'app', version: '1.0.0', files: { 'src/app.js': 'needle()', 'zz/own.js': 'needle' } }],
+    ['packages/ui', { name: 'ui', version: '1.0.0', files: { 'index.js': 'needle' } }],
     ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'needle' } }],
-    ['lib/vendored', { name: 'vendored', version: '1.0.0', files: { 'needle.js': 'needle' } }],
+    ['lib/vendor/log', { name: 'log', version: '1.0.0', files: { 'needle.rs': 'needle' } }],
   ]) }).serialize())
   Object.assign(state, { currentView: 'bundles', selectedBundle: entry.integrity, bundles: [entry], bundleSourceFile: 'src/app.js',
     bundleCodeSearchMode: 'code', bundleCodeSearchQuery: 'needle', bundleSearchQuery: 'needle', bundleSearchRegex: false, bundleSearchCase: false,
     bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
-  const expected = ['src/app.js', 'zz/own.js', 'lib/vendored/needle.js', 'node_modules/dep/index.js']
+  const expected = ['packages/ui/index.js', 'src/app.js', 'zz/own.js', 'lib/vendor/log/needle.rs', 'node_modules/dep/index.js']
   state.bundleDetailsTab = 'code'
   const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
   assert.deepEqual([...rail.matchAll(/class="bundle-code-search-file-name"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), expected)
