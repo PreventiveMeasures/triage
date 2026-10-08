@@ -90,8 +90,11 @@
 .report + .report {
   border-top: 1px solid var(--border);
 }
+/* Table cells, not text fields: no I-beam over them (still selectable).
+   The preview <pre> keeps its text cursor from common.css. */
 .report-main {
   min-height: 2.7rem;
+  cursor: default;
 }
 .report-main:hover {
   background: var(--panel-hover);
