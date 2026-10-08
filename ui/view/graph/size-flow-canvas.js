@@ -294,12 +294,12 @@ export class SizeFlowCanvas extends SizeFlowChart {
   key(event) {
     const nodes = this.layout.nodes
     if (nodes.length === 0) return
-    let index = Math.max(0, nodes.findIndex(n => n.id === (this.focused ?? this.host.selection?.node)))
+    let index = nodes.findIndex(n => n.id === (this.focused ?? this.host.selection?.node))
     if (['ArrowRight', 'ArrowDown'].includes(event.key)) index = Math.min(nodes.length - 1, index + 1)
     else if (['ArrowLeft', 'ArrowUp'].includes(event.key)) index = Math.max(0, index - 1)
     else if (event.key === 'Home') index = 0
     else if (event.key === 'End') index = nodes.length - 1
-    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.host.select(nodes[index].id); return }
+    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.host.select(nodes[Math.max(0, index)].id); return }
     else if (event.key === 'Escape') { this.clearHover(); this.host.select(null); return }
     else return
     event.preventDefault()

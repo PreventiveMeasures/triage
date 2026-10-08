@@ -109,6 +109,32 @@ test('canvas hit testing uses transformed coordinates, prioritizes bars, and ret
   assert.equal(host.selection.node, host.layout.nodes.at(-1).id, 'a suppressed drag click never selects')
 })
 
+test('keyboard navigation starts at the first bar without skipping and stays within its bounds', t => {
+  const { chart, host, root } = mounted(t)
+  const press = key => chart.key({ key, preventDefault() {} })
+  const reset = () => { chart.clearHover(); host.select(null) }
+  const nodes = host.layout.nodes
+  for (const forward of ['ArrowRight', 'ArrowDown']) {
+    reset(); press(forward); press('Enter')
+    assert.equal(host.selection.node, nodes[0].id, `${forward} starts on the first bar`)
+    press(forward)
+    assert.equal(chart.focused, nodes[1].id, 'subsequent arrows advance normally')
+    press('End'); press(forward)
+    assert.equal(chart.focused, nodes.at(-1).id, 'forward navigation stops at the last bar')
+  }
+  for (const backward of ['ArrowLeft', 'ArrowUp']) {
+    reset(); press(backward); press(backward)
+    assert.equal(chart.focused, nodes[0].id, 'backward navigation stops at the first bar')
+  }
+  for (const activate of ['Enter', ' ']) {
+    reset(); press(activate)
+    assert.equal(host.selection.node, nodes[0].id, 'activation without a focused bar still selects the first')
+  }
+  reset(); host.layout = { ...host.layout, nodes: [], edges: [] }; chart.update(root)
+  for (const key of ['ArrowRight', 'ArrowDown', 'Enter', ' ']) press(key)
+  assert.equal(host.selection, null, 'empty graphs do not activate a nonexistent bar')
+})
+
 test('continuous zoom reprojects cached bitmaps and redraws exact geometry once input settles', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const { chart, host, base, overlay, frame, frames } = mounted(t)
