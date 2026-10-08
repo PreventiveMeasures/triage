@@ -131,6 +131,7 @@ export interface State {
   repositoriesSortBy: string
   bundleSourceFile: string | null
   bundleSourceFindingIdx: number | null
+  bundleSourceTargetLine: { bundle: string | null; path: string; line: number } | null
   bundleOverviewFilesSort: 'name' | 'size'
   bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
@@ -622,6 +623,10 @@ export const state: State = store<State>({
   // array; null when no panel is open). Reset alongside
   // bundleSourceFile.
   bundleSourceFindingIdx: null,
+  // The line a search result (or other line link) last opened, marked
+  // in the source viewer until another file or line is opened. Scoped
+  // to its bundle and file, so it never marks a different source.
+  bundleSourceTargetLine: null,
   bundleOverviewFilesSort: 'name',
   bundleOverviewPackagesSort: 'size',
   bundleCodeHistory: null,

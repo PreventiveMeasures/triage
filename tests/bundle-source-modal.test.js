@@ -288,6 +288,28 @@ test('Code and Search tab code search list own source before dependencies', t =>
   assert.deepEqual([...search.matchAll(/class="bundle-search-file-name mono"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), expected)
 })
 
+test('the source viewer marks the line a search result opened, only in that bundle and file', t => {
+  t.after(() => { state.bundleSourceTargetLine = null })
+  const entry = { name: 'target.stasis', integrity: 'sha512-target-line' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/app.js': 'one\ntwo needle\nthree', 'src/other.js': 'a\nb' } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleSourceFile: 'src/app.js', bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const marked = () => templates(renderBundlesList([entry]))
+    .filter(part => part.strings.join('').includes('data-line='))
+    .filter(part => part.values[0].values[0]['is-target']).map(part => part.values[1])
+  for (const [target, lines] of [
+    [{ bundle: entry.integrity, path: 'src/app.js', line: 2 }, [2]],
+    [{ bundle: entry.integrity, path: 'src/other.js', line: 2 }, []],
+    [{ bundle: 'sha512-another-bundle', path: 'src/app.js', line: 2 }, []],
+    [null, []],
+  ]) {
+    state.bundleSourceTargetLine = target
+    assert.deepEqual(marked(), lines, JSON.stringify(target))
+  }
+})
+
 test('Code package tooltips include recorded identities and counts even while filtering', () => {
   const entry = { name: 'npm.stasis', integrity: 'sha512-package-tooltip' }
   const bundle = Bundle.parse(new Bundle({ modules: new Map([

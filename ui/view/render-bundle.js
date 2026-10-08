@@ -652,9 +652,13 @@ function _topSeverityOf(findings) {
 // matches across both columns so the rows align with their lines.
 //
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
-// the gutter. Lines without findings render a plain number.
+// the gutter. Lines without findings render a plain number. The line
+// a clicked result opened (state.bundleSourceTargetLine) gets a band
+// across gutter and code (`.is-target`).
 function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null) {
   const lineCount = content.split('\n').length
+  const target = state.bundleSourceTargetLine
+  const targetLine = target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
   const digits = String(lineCount).length
   const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
   const cacheKey = `${details?.integrity ?? ''}\0${path}`
@@ -686,7 +690,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
         const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
         const isActive = entries && state.bundleSourceFindingIdx != null
           && entries.some((e) => e.idx === state.bundleSourceFindingIdx)
-        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false })} data-line=${ln}>
+        return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false, 'is-target': ln === targetLine })} data-line=${ln}>
           ${entries
             ? html`<button
                 type="button"
