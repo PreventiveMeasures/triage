@@ -1,4 +1,5 @@
 import { optimizeSunflowerOrder } from './sunflower-order.js'
+import { optimizePackageRings } from './package-order.js'
 
 // Spiral layout for the v2 graph. Each package becomes a disk
 // in a Vogel sunflower (golden-angle steps + sqrt-radius
@@ -240,7 +241,7 @@ function placeFilesInDisk(graph, pkgInfo) {
 // them. Slot geometry is fixed; the only freedom is which
 // priority-ranked package occupies which slot.
 //
-// Two phases:
+// Three phases:
 //
 //   1. Priority bucketing. Packages sort by cross-package degree
 //      desc (ties: file count desc); the rank order quantizes into
@@ -256,12 +257,16 @@ function placeFilesInDisk(graph, pkgInfo) {
 //      count). Packages with no placed neighbours take the next
 //      available slot in Vogel index order (golden-angle spread).
 //
+//   3. Refine within each ring using unique cross-package links. Every swap
+//      shortens their total center-to-center length and preserves disk
+//      clearance. File-import counts affect the seed, not this objective.
+//
 // The entry-point package (largest with no incoming cross-package
 // edges — typically the project's own source root) is pinned at
 // center. Files inside each package fan out via placeFilesInDisk.
 //
-// Greedy, single-pass: O(N × (avgNeighbours + ringSlots))
-// ≈ O(N²/numRings). Sub-millisecond on 500+ packages.
+// The greedy seed costs O(N × (avgNeighbours + ringSlots)); refinement uses
+// the same bounded search as the inner sunflower, with disk-size checks.
 export function layoutSpiral(graph, w, h) {
   const cx = w / 2, cy = h / 2
   // Work in unit space (1.0 = half-canvas) so the magic numbers
@@ -497,6 +502,8 @@ export function layoutSpiral(graph, w, h) {
     }
   }
 
+  const rings = Array.from({ length: numRings }, (_, k) => others.slice(ringStart[k], ringStart[k + 1]))
+  optimizePackageRings(pkgInfo, pkgEdgesOf, rings)
   placeFilesInDisk(graph, pkgInfo)
 }
 
