@@ -25,6 +25,20 @@
 // `request` (`state.bundleCompare`, from a managed link) picks the bundle
 // and mode to start from; a pick, clear, or mode switch the user makes
 // is reported as `bundle-compare-change`, which keeps a managed URL on it.
+// `source`, when set, offers what to compare with in place of the bundles
+// on hand, as an npm package version offers the package's other versions
+// (npm-package.js npmCompareSource): `{ noun, base, options, choices,
+// pending, error, name(id), load(id), open(base, target, mode),
+// dependencies(base, other) }`, each option `{ id, name, format, detail }`;
+// its ids stand where bundles' integrities do, `base` the open one's.
+// `options` are what the open one compares with, `choices` what may take
+// its place.
+//
+// Both sides are pickers. Picking the other side compares with it; picking
+// this side opens what was picked, compared with the same other side, and
+// picking the other side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
+// added and changed rows, `{ key, name, kind, range }` or, changed, with
+// `from` and `to` in place of `range`.
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -53,17 +67,16 @@ const MAX_VERSION_CHARS = 24
 // The Overview's column order, Packages and Files alike.
 const LANES = ['removed', 'added', 'changed']
 
-// Swap handoff. The swap button switches the active bundle to the
-// current comparison target (so A and B trade places, and the app
-// navigates to the other bundle). That base change would normally clear
-// the comparison in willUpdate; this module-level slot carries the
-// intended new target (the old base) across the prop teardown — a
+// Reopen handoff. Swap, or a pick on this side, opens another bundle (the
+// app navigates to it) to compare with a target. That base change would
+// normally clear the comparison in willUpdate; this module-level slot
+// carries the intended target across the prop teardown — a
 // component-internal field wouldn't survive the navigation. Shape:
-// `{ base, target, scope, mode, codePath }`, consumed once by willUpdate
-// when integrity flips to `base`, or dropped when another bundle opens.
-// It holds no parsed bundle: those ride the swap event to the navigation,
-// which hands them over (bundle-load.js handOffBundles) for as long as it
-// runs.
+// `{ base, target, scope, mode, codePath }`, `base` the opened one's
+// integrity, or a source's id, consumed once by willUpdate when the base
+// becomes it, or dropped when another bundle opens. It holds no parsed
+// bundle: those ride the swap event to the navigation, which hands them
+// over (bundle-load.js handOffBundles) for as long as it runs.
 let _pendingSwap = null
 
 // Signed count for a summary metric delta: `+3` / `−2` / `±0`. Uses a
@@ -111,6 +124,7 @@ class BundleCompare extends LitElement {
     // `{ bundle, target, mode }`: compare `bundle` (when it's the one open)
     // with `target`, in `mode`.
     request: { attribute: false },
+    source: { attribute: false },
     // Integrity of the bundle picked to compare against (null = none
     // chosen yet), the parsed bytes of that bundle once loaded, and a
     // coarse load status the body switches on.
@@ -138,6 +152,7 @@ class BundleCompare extends LitElement {
     this.details = null
     this.integrity = null
     this.request = null
+    this.source = null
     this._targetIntegrity = null
     this._otherDetails = null
     this._status = 'idle'
@@ -177,23 +192,30 @@ class BundleCompare extends LitElement {
   // The base bundle changed: compare it afresh, or after a swap, with the
   // old base.
   _rebase() {
-    // A swap navigates to the old comparison target as the new base; in
-    // that single case restore the old base as the new target instead
-    // of clearing it (the module-level handoff survives the prop
-    // teardown the navigation triggers). A swap that landed elsewhere
-    // (another bundle opened first) is over.
-    if (_pendingSwap && this.integrity && this.integrity !== _pendingSwap.base) _pendingSwap = null
-    if (_pendingSwap && this.integrity === _pendingSwap.base) {
+    // A swap, or a pick on this side, navigates to the new base; in that
+    // case restore the target it was opened to compare with instead of
+    // clearing it (the module-level handoff survives the prop teardown the
+    // navigation triggers). One that landed elsewhere (another bundle
+    // opened first) is over.
+    const base = this._baseKey
+    if (_pendingSwap && base && base !== _pendingSwap.base) _pendingSwap = null
+    if (_pendingSwap && base === _pendingSwap.base) {
       const { target } = _pendingSwap
       this._scope = _pendingSwap.scope
       this._mode = _pendingSwap.mode
       this._codePath = _pendingSwap.codePath
       _pendingSwap = null
+      if (!target) {
+        this._targetIntegrity = null
+        this._otherDetails = null
+        this._status = 'idle'
+        return
+      }
       this._targetIntegrity = target
       this._diff = null
       this._diffKey = null
       // The old base is still parsed: compare against it as it stands.
-      const handed = takeHandedOffBundle(target, details => Boolean(details.json || details.bundle))
+      const handed = this.source ? null : takeHandedOffBundle(target, details => Boolean(details.json || details.bundle))
       if (handed) {
         this._otherDetails = handed
         this._status = 'ready'
@@ -213,26 +235,46 @@ class BundleCompare extends LitElement {
     this._diffKey = null
   }
 
-  // Swap A and B: open the current comparison target as the active
-  // bundle (so the app navigates to it) and flip the comparison to the
-  // old base. The pending-swap slot carries the new target across the
-  // base change; events.js handles the actual bundle switch off the
-  // dispatched event (same path the sidebar row click takes). Both sides
-  // are already parsed, so each is handed to its new role rather than
-  // read from storage and parsed again.
+  // The id this side is picked by: its integrity, or its source's id.
+  get _baseKey() {
+    return this.source ? this.source.base : this.integrity
+  }
+
+  // Swap A and B: open the current comparison target as the active bundle
+  // and compare it with the old base.
   _swap() {
-    const newBase = this._targetIntegrity
-    if (!newBase || newBase === this.integrity) return
-    if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
-    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath }
-    const bundles = [
-      this._otherDetails?.integrity === newBase && (this._otherDetails.json || this._otherDetails.bundle) ? this._otherDetails : null,
-      this._baseReady ? this.details : null,
-    ].filter(Boolean)
+    const target = this._targetIntegrity
+    if (target && target !== this._baseKey) this._reopen(target, this._baseKey)
+  }
+
+  // A pick on this side: open it to compare with the same target, or with
+  // the old base when it is the target (a swap).
+  _pickBase(value) {
+    if (!value || value === this._baseKey) return
+    if (value === this._targetIntegrity) this._swap()
+    else this._reopen(value, this._targetIntegrity)
+  }
+
+  // Open `base` (the app navigates to it), compared with `target` (null:
+  // nothing picked yet). The pending slot carries the target, scope, mode
+  // and Code file across the base change. events.js handles the bundle
+  // switch off the dispatched event (the path a sidebar row click takes);
+  // what is already parsed of either side is handed to its new role rather
+  // than read from storage and parsed again. A source opens its own.
+  _reopen(base, target) {
+    if (this.source) {
+      _pendingSwap = { base, target, scope: this._scope, mode: this._mode, codePath: this._codePath }
+      this.source.open(base, target, this._mode)
+      return
+    }
+    if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === base)) return
+    _pendingSwap = { base, target, scope: this._scope, mode: this._mode, codePath: this._codePath }
+    const parsed = details => details && !details.error && (details.json || details.bundle) && [base, target].includes(details.integrity)
+    const bundles = [this._otherDetails, this._baseReady ? this.details : null].filter(parsed)
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,
-      detail: { integrity: newBase, bundles, mode: this._mode },
+      detail: { integrity: base, target, bundles, mode: this._mode },
     }))
   }
 
@@ -240,6 +282,7 @@ class BundleCompare extends LitElement {
   // bundle list (`state.bundles`). Falls back to a short integrity
   // prefix when the entry isn't found (deleted out from under us).
   _nameFor(integrity) {
+    if (this.source) return this.source.name(integrity)
     const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
     return entry?.name ?? `${integrity.slice(0, 'sha512-'.length + 8)}…`
   }
@@ -277,6 +320,18 @@ class BundleCompare extends LitElement {
   }
 
   async _loadOther(integrity) {
+    if (this.source) {
+      let details
+      try { details = await this.source.load(integrity) }
+      catch (err) {
+        if (err.name === 'AbortError') return
+        details = { error: err.message }
+      }
+      if (this._targetIntegrity !== integrity) return
+      this._otherDetails = details
+      this._status = 'ready'
+      return
+    }
     const entry = bundleComparisonCandidates(state.bundles ?? [], this.integrity).find(b => b.integrity === integrity)
     if (!entry) { this._status = 'idle'; this._targetIntegrity = null; this._notify(); return }
     let details
@@ -410,6 +465,33 @@ class BundleCompare extends LitElement {
       <span class=${`bundle-compare-ver-to ${direction}`}>${versionList(after) || '—'}</span>
       <span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>
     </span>`
+  }
+
+  // A source's dependencies (see `source`): the range each requires, or for
+  // Changed the one it moved from and to; `kind` marks peer and optional.
+  _depGroup(title, rows, kind, lanes) {
+    const rangeChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.range.length)))
+    return this._group(title, rows, kind, r => r.key, r => html`<li><div class="bundle-compare-row">
+      <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
+      ${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
+      ${kind === 'changed' ? html`<span class="bundle-compare-ver" aria-label=${`Changed: ${r.from} to ${r.to}`}>
+          <span class="bundle-compare-ver-from">${r.from}</span>
+          <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
+          <span class="bundle-compare-ver-to changed">${r.to}</span>
+        </span>`
+        : html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${r.range}>${r.range}</span>`}
+    </div></li>`, nothing, { fill: true, lanes, style: rangeChars > 0 ? { '--compare-version-width': `${rangeChars}ch` } : {} })
+  }
+
+  _renderDependencies(rows, baseName, otherName, lanes) {
+    if (lanes.length === 0) return nothing
+    return html`<section class="bundle-compare-section">
+      <h3 class="bundle-compare-section-head">Dependencies</h3>
+      ${this._cols(lanes, html`
+        ${this._depGroup(`Removed · only in ${baseName}`, rows.removed, 'removed', lanes)}
+        ${this._depGroup(`Added · only in ${otherName}`, rows.added, 'added', lanes)}
+        ${this._depGroup('Changed', rows.changed, 'changed', lanes)}`)}
+    </section>`
   }
 
   // Packages section: removed | added | changed, each package once, from
@@ -576,29 +658,52 @@ class BundleCompare extends LitElement {
   }
 
   _renderPicker(others, hasTarget, scopeSelector) {
-    const baseName = this._nameFor(this.integrity)
+    const noun = this.source?.noun ?? 'bundle'
+    const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
     return html`<div class="bundle-compare-picker">
-      <span class="bundle-compare-base" data-tooltip-truncated data-tooltip=${baseName}>${baseName}</span>
+      <div class="bundle-compare-select-wrap bundle-compare-base-wrap">
+        <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .ordered=${Boolean(this.source)}
+          label=${`${Noun} to compare`} placeholder=${this._nameFor(this.integrity)} @bundle-change=${event => this._pickBase(event.detail.value)}></bundle-selector>
+      </div>
       <span class="bundle-compare-arrow" aria-hidden="true">→</span>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare with</span>
-        <bundle-selector .bundles=${others} .value=${this._targetIntegrity} label="Bundle to compare with" placeholder="Choose a bundle…" @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
+        <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .ordered=${Boolean(this.source)}
+          label=${`${Noun} to compare with`} placeholder=${`Choose a ${noun}…`} @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
         ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>
           <button
             type="button"
             class="bundle-compare-swap"
             @click=${() => this._swap()}
-            aria-label="Swap the two bundles"
+            aria-label=${`Swap the two ${noun}s`}
           ><span class="bundle-compare-swap-icon" aria-hidden="true">↔</span>Swap</button>` : nothing}
       </div>
       ${scopeSelector}
     </div>`
   }
 
+  // What this side may become: the open bundle and those it compares with,
+  // or a source's choices.
+  _baseOptions() {
+    if (this.source) return this._sourceOptions(this.source.choices ?? [])
+    const base = (state.bundles ?? []).find(bundle => bundle.integrity === this.integrity)
+    const others = bundleComparisonCandidates(state.bundles ?? [], this.integrity)
+    return this._bundleOptions(base ? [base, ...others] : others)
+  }
+
+  _sourceOptions(options) {
+    return options.map(option => ({ id: option.id, integrity: option.id, kind: option.format, format: option.format,
+      detail: option.detail, filename: option.name, size: '—', summary: null }))
+  }
+
   // Build the picker option list, disambiguating duplicate names with a
   // short integrity suffix so two same-named bundles are tellable apart.
   _otherOptions() {
-    const others = bundleComparisonCandidates(state.bundles ?? [], this.integrity)
+    if (this.source) return this._sourceOptions(this.source.options)
+    return this._bundleOptions(bundleComparisonCandidates(state.bundles ?? [], this.integrity))
+  }
+
+  _bundleOptions(others) {
     const nameCounts = new Map()
     for (const b of others) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1)
     return others.map((b) => ({
@@ -618,8 +723,10 @@ class BundleCompare extends LitElement {
     // this tab or another) while its diff was showing — treat a target
     // that's no longer on disk as no selection so we don't keep
     // rendering a diff against a bundle the user can't see in the list.
+    // A source's target stands while its options are still listing: the
+    // load says whether it exists.
     const hasTarget = Boolean(this._targetIntegrity)
-      && others.some((o) => o.integrity === this._targetIntegrity)
+      && (Boolean(this.source) || others.some((o) => o.integrity === this._targetIntegrity))
     const scopes = this._baseReady ? bundleCompareScopes(this.details, hasTarget ? this._otherDetails : null) : []
     const scopeSelector = scopes.length > 0
       ? html`<bundle-scope-selector .reasons=${scopes} .value=${this._scope} label="Compare scope" @scope-change=${event => { this._scope = event.detail.value }}></bundle-scope-selector>`
@@ -629,7 +736,8 @@ class BundleCompare extends LitElement {
     // swap button rides next to the clear button once a target is live,
     // and the scope selector sits at the row's right end, so the head is
     // one row before a pick and two (picker, summary) after.
-    const picker = others.length > 0 ? this._renderPicker(others, hasTarget, scopeSelector) : scopeSelector
+    const picker = others.length > 0 || this.source ? this._renderPicker(others, hasTarget, scopeSelector) : scopeSelector
+    const noun = this.source?.noun ?? 'bundle'
     const ready = hasTarget
       && this._status === 'ready'
       && this._otherDetails
@@ -639,16 +747,19 @@ class BundleCompare extends LitElement {
     let body
     if (!this._baseReady) {
       body = html`<div class="bundle-compare-empty">Loading bundle…</div>`
-    } else if (others.length === 0) {
+    } else if (this.source && !hasTarget && (this.source.pending || this.source.error || others.length === 0)) {
+      body = html`<div class=${`bundle-compare-empty${this.source.error ? ' is-error' : ''}`}>${this.source.pending ? `Loading ${noun}s…`
+        : this.source.error ?? html`No other ${noun}s to compare <strong>${this._nameFor(this.integrity)}</strong> with.`}</div>`
+    } else if (others.length === 0 && !this.source) {
       body = html`<div class="bundle-compare-empty">No other bundles to compare with. Drop a second <code>.map</code> or <code>.stasis.code.br</code> bundle to diff against this one.</div>`
     } else if (!hasTarget) {
-      body = html`<div class="bundle-compare-empty">Pick a bundle above to compare against <strong>${this._nameFor(this.integrity)}</strong>.</div>`
+      body = html`<div class="bundle-compare-empty">Pick a ${noun} above to compare against <strong>${this._nameFor(this.integrity)}</strong>.</div>`
     } else if (this._status === 'loading' || !this._otherDetails) {
       body = html`<div class="bundle-compare-empty">Comparing…</div>`
     } else if (this._otherDetails.error) {
-      body = html`<div class="bundle-compare-empty is-error">Couldn't read the selected bundle: ${this._otherDetails.error}</div>`
+      body = html`<div class="bundle-compare-empty is-error">Couldn't read the selected ${noun}: ${this._otherDetails.error}</div>`
     } else if (!this._otherDetails.json && !this._otherDetails.bundle) {
-      body = html`<div class="bundle-compare-empty is-error">The selected bundle couldn't be parsed.</div>`
+      body = html`<div class="bundle-compare-empty is-error">The selected ${noun} couldn't be parsed.</div>`
     } else {
       body = this._renderDiff()
     }
@@ -689,14 +800,17 @@ class BundleCompare extends LitElement {
     // Files line up under Packages, the main columns, while Packages has a
     // lane for each kind Files lists; otherwise each lays out its own kinds,
     // Packages without an empty column.
-    const packageLanes = LANES.filter(kind => diff.packageRows[kind].length > 0)
+    // A source may list its own dependencies in place of Packages.
+    const dependencies = this.source?.dependencies?.(this.details, this._otherDetails) ?? null
+    const packageLanes = LANES.filter(kind => (dependencies ?? diff.packageRows)[kind].length > 0)
     const fileKinds = listsFiles ? LANES.filter(kind => files[kind].length > 0) : []
     const fileLanes = fileKinds.every(kind => packageLanes.includes(kind)) ? packageLanes : fileKinds
 
     // The header and the group titles already say which bundle is which;
     // the shared root the file rows drop rides on the Files heading.
     return html`
-      ${this._renderPackages(diff.packageRows, baseName, otherName, packageLanes)}
+      ${dependencies ? this._renderDependencies(dependencies, baseName, otherName, packageLanes)
+        : this._renderPackages(diff.packageRows, baseName, otherName, packageLanes)}
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`

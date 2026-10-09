@@ -74,6 +74,44 @@ test('all managed pages and team/report Files routes round-trip', () => {
   assert.equal(managedRoutePath({ view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code', line: 4 }), '/team/t/bundle/b/code')
 })
 
+test('npm viewer routes round-trip, a scoped name in two components', () => {
+  const routes = [{ view: 'npm' },
+    { view: 'npm', packageName: 'lodash', packageSpec: null, bundleTab: 'overview' },
+    { view: 'npm', packageName: 'lodash', packageSpec: '4.17.21', bundleTab: 'overview' },
+    { view: 'npm', packageName: '@babel/core', packageSpec: 'next', bundleTab: 'code' },
+    { view: 'npm', packageName: '@babel/core', packageSpec: '7.24.0', bundleTab: 'code', file: 12 },
+    { view: 'npm', packageName: '@babel/core', packageSpec: '1.0.0-rc.1+build.2', bundleTab: 'code', file: 3, line: 4, endLine: 9 },
+    { view: 'npm', packageName: 'lodash', packageSpec: '4.17.21', bundleTab: 'treemap' },
+    { view: 'npm', packageName: 'lodash', packageSpec: '4.17.21', bundleTab: 'compare' },
+    { view: 'npm', packageName: '@a/b', packageSpec: '2.0.0', bundleTab: 'compare', compareSpec: '1.0.0' },
+    { view: 'npm', packageName: '@a/b', packageSpec: '2.0.0', bundleTab: 'compare', compareSpec: 'next', compareMode: 'code' }]
+  for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
+  assert.equal(managedRoutePath(routes[4]), '/npm/@babel/core@7.24.0/code/12')
+  for (const path of ['/npm/@babel', '/npm/_private', '/npm/.hidden', '/npm/a/b/c', '/npm/lodash@^4', '/npm/lodash/graph', '/npm/lodash/code/0',
+    '/npm/lodash/code/src', '/npm/lodash@1.0.0/code/1/2', '/npm/@a/b@1@2', '/npm/a@1.0.0/compare/^1', '/npm/a@1.0.0/compare/1.0.0/graph',
+    '/npm/a@1.0.0/treemap/3', '/npm/a@1.0.0/code/3/code']) {
+    assert.equal(parseManagedRoute(new URL(path, 'https://triage.test')), null, path)
+  }
+  for (const route of [{ view: 'npm', packageName: '../api' }, { view: 'npm', packageName: 'a', packageSpec: '^1' }, { view: 'npm', packageName: 'a', bundleTab: 'graph' }]) {
+    assert.equal(managedRoutePath(route), null, JSON.stringify(route))
+  }
+  assert.equal(managedRoutePath({ view: 'npm', packageName: 'a', bundleTab: 'overview', file: 3 }), '/npm/a', 'only Code names a file')
+})
+
+test('an npm package\'s Code tab replaces its file in place, for the version shown alone', async () => {
+  const code = { view: 'npm', packageName: '@scope/pkg', packageSpec: '1.0.0', bundleTab: 'code' }
+  const { browser, entries } = browserAt('/npm')
+  const nav = createManagedHistory(browser)
+  await nav.start(() => true)
+  await nav.navigate(code)
+  for (const file of [3, 5]) nav.replaceCodeRoute({ ...code, file, line: 2 })
+  assert.equal(`${browser.location.pathname}${browser.location.hash}`, '/npm/@scope/pkg@1.0.0/code/5#L2')
+  assert.equal(entries.length, 2)
+  nav.replaceCodeRoute({ ...code, packageSpec: '2.0.0', file: 9 })
+  nav.replaceCodeRoute({ view: 'bundles', bundleSlug: 'b', bundleTab: 'code', file: 9 })
+  assert.equal(browser.location.pathname, '/npm/@scope/pkg@1.0.0/code/5', 'another version or a bundle cannot take the entry')
+})
+
 test('managed deduplication details round-trip through history', () => {
   const route = { view: 'manage-deduplication', linkId: 'a-link-report' }
   assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)

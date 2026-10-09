@@ -375,7 +375,7 @@ class BundleCompareCode extends LitElement {
   // it; the first ask starts the work and re-renders once it lands.
   _highlighted(details, path, text) {
     if (!text) return null
-    const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
+    const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined, text)
     if (!lang) return null
     const key = `${details.integrity}\0${path}`
     if (highlightCache.has(key)) return highlightCache.get(key)

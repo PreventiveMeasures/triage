@@ -68,3 +68,36 @@ export function fetchBundleAdvisories(id, teamId, reason = '', repoAdvisories = 
   const part = `advisories${params ? `?${params}` : ''}`
   return requestBundle(id, part, managedAppState.sessionController.signal)
 }
+
+const NPM_ERRORS = {
+  400: 'Not an npm package name and version.',
+  404: 'No such package version, or it is not available to you.',
+  413: 'This package is too large to open here.',
+  429: 'Too many packages are loading. Try again shortly.',
+  502: "The npm registry couldn't be reached.",
+}
+
+// npm package reads are never kept: the server checks access, against the
+// registry, on every one.
+async function requestNpm(part, params, signal) {
+  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  const generation = managedAppState.generation
+  const response = await managedFetch(`/api/npm/${part}?${new URLSearchParams(params)}`, { credentials: 'same-origin', signal })
+  signal.throwIfAborted()
+  if (!response.ok) {
+    const code = (await response.json().catch(() => null))?.error ?? null
+    throw Object.assign(new Error(NPM_ERRORS[response.status] ?? `npm request failed (${response.status})`), { status: response.status, code })
+  }
+  const data = await response.json()
+  signal.throwIfAborted()
+  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+  return data
+}
+
+export function fetchNpmPackage(name, version, { signal } = {}) {
+  return requestNpm('package', { name, version }, signal)
+}
+
+export function fetchNpmVersions(name, { signal } = {}) {
+  return requestNpm('versions', { name }, signal)
+}

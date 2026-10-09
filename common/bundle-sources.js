@@ -118,6 +118,10 @@ export function bundleFilesAsMap(details) {
   const key = details?.bundle ?? details?.json
   if (key && filesCache.has(key)) return filesCache.get(key)
   const files = new Map(bundleSourcesAsMap(details))
+  // An npm package's files that are not text (view/npm-package.js) carry
+  // their size and digest alone: enough for Compare to tell a changed one
+  // from an unchanged one, as `{ format: 'digest', size, digest }`.
+  for (const [path, file] of details?.npmBinaries ?? []) files.set(path, { format: 'digest', ...file })
   if (details?.kind === 'stasis' && details.bundle) {
     const formats = details.bundle.formats
     for (const [file, content] of details.bundle.sources) {
@@ -160,6 +164,7 @@ function base64ByteLength(text) {
 // bundles' files by this, so its totals are the Overview's.
 export function bundleFileByteLength(content) {
   if (typeof content === 'string') return utf8ByteLength(content)
+  if (content?.format === 'digest') return content.size
   return content?.format === 'base64' ? base64ByteLength(content.data) : null
 }
 
@@ -223,7 +228,8 @@ export function bundleFileKinds(details) {
   const kinds = new Map()
   for (const [path, size] of sizes) {
     if (size === null && !unsized.has(path)) continue
-    kinds.set(path, Bundle.isResourceFormat(formats?.get(path)) ? 'resource' : 'source')
+    // An npm package's file that is not text is a resource too: no source to view.
+    kinds.set(path, Bundle.isResourceFormat(formats?.get(path)) || details?.npmBinaries?.has(path) ? 'resource' : 'source')
   }
   kindsCache.set(sizes, kinds)
   return kinds

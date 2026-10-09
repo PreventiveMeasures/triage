@@ -10,9 +10,11 @@ function sameFindingsPage(a, b) {
     && a.teamSlug === b.teamSlug && (a.reportSlug ?? null) === (b.reportSlug ?? null)
 }
 
+// The Code tab of one bundle, or of one npm package version.
 function sameBundleCode(a, b) {
-  return a?.view === 'bundles' && b?.view === 'bundles' && a.bundleTab === 'code' && b.bundleTab === 'code'
-    && (a.teamSlug ?? null) === (b.teamSlug ?? null) && a.bundleSlug === b.bundleSlug
+  if (a?.bundleTab !== 'code' || b?.bundleTab !== 'code' || a.view !== b.view) return false
+  if (a.view === 'npm') return a.packageName === b.packageName && (a.packageSpec ?? null) === (b.packageSpec ?? null)
+  return a.view === 'bundles' && (a.teamSlug ?? null) === (b.teamSlug ?? null) && a.bundleSlug === b.bundleSlug
 }
 
 // Browser history contains only a navigation generation, never report data.
@@ -195,7 +197,7 @@ export function createManagedHistory(browser) {
     // tab's own history does; held for the end of a navigation that opens
     // the tab, like replaceFindingRoute's.
     replaceCodeRoute(route) {
-      if (!active || shareChanged() || route?.view !== 'bundles' || route.bundleTab !== 'code') return
+      if (!active || shareChanged() || !['bundles', 'npm'].includes(route?.view) || route.bundleTab !== 'code') return
       const path = managedRoutePath(route)
       if (path == null) return
       if (restoring) {

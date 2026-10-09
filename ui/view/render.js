@@ -51,6 +51,7 @@ import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
 import { createSyncSuggester } from './sync-suggest.js'
 import { findingDetailGroup, managedFindingSelectionRoute } from './finding-selection.js'
 import { managedHistory } from './managed-history.js'
+import { renderNpmLookup } from './npm-package.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
@@ -1866,9 +1867,19 @@ function renderImpl() {
       }
       report.classList.add('active')
       dropZone.classList.add('hidden')
-      document.title = 'DeepView — bundles'
+      const npm = state.bundles.find(entry => entry.integrity === state.selectedBundle)?.npm
+      document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : 'DeepView — bundles'
       return
     }
+  }
+  // The npm viewer's lookup page; a package it opens shows as a bundle.
+  if (state.currentView === 'npm') {
+    const slot = ensureReportSlot('npm-slot')
+    if (slot) litRender(renderNpmLookup(), slot)
+    report.classList.add('active')
+    dropZone.classList.add('hidden')
+    document.title = 'DeepView — npm packages'
+    return
   }
   // Packages view — cross-report aggregation by package, fed by
   // the OPFS-wide finding index (bundle-finding-index.js). Doesn't

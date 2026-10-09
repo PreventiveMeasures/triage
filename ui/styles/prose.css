@@ -59,8 +59,11 @@
    light-DOM copy of finding-card.css's `.code-block` rules, so a
    snippet in a bundle-side description reads as the same box the card
    draws (see render-finding.js codeBlockTemplate). `pre` + horizontal
-   scroll rather than wrapping: a folded line reads as different code. */
-.code-block {
+   scroll rather than wrapping: a folded line reads as different code.
+   Not Prism's Markdown token of the same name (`.token.code-block`), the
+   fenced block inside a highlighted README: given this box, its lines ran
+   together as one. */
+.code-block:not(.token) {
   white-space: normal;
   margin: .4rem 0;
   border: 1px solid var(--border);

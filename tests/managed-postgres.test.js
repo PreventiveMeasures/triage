@@ -3,6 +3,7 @@ import { checkRepositoryAliases } from './_managed-repository-aliases.js'
 import { checkManagedIssueFixes } from './_managed-issue-fixes.js'
 import { checkHiddenTeams } from './_managed-hidden-teams.js'
 import { checkViewSessions } from './_managed-view-sessions.js'
+import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 import { checkBundleBuildConditions, checkBundleProvenance } from './_managed-bundle-provenance.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -208,6 +209,26 @@ test('Postgres adds view sessions to existing session tables', async t => {
   assert.equal((await upgraded.viewSessionWithUser('view', 'session', 3)).user.id, viewed)
   await upgraded.deleteSession('session')
   assert.equal(await upgraded.viewSessionWithUser('view', 'session', 3), null)
+})
+
+test('Postgres team npm scopes share normalization, membership and authorization semantics', async t => {
+  const { db } = await database(t)
+  await checkTeamNpmScopes(db)
+})
+
+test('Postgres adds team npm scopes to existing installations', async t => {
+  const { db, connect } = await database(t)
+  const session = await setup(db), sid = hashToken(session.setCookie.split(';')[0].slice(4))
+  await db.createTeam('team', 'Team', 1)
+  const legacy = await connect()
+  try { await legacy.query('DROP TABLE managed_team_npm_scope; DELETE FROM managed_schema_version WHERE version = 26;') }
+  finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.deepEqual(await upgraded.listTeamNpmScopes(), {})
+  assert.deepEqual(await upgraded.setTeamNpmScopes(sid, 'team', ['@acme']), { added: ['@acme'], removed: [] })
+  assert.deepEqual(await upgraded.listTeamNpmScopes(), { team: ['@acme'] })
 })
 
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {

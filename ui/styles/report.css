@@ -3447,3 +3447,64 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
   .bundle-advisory-cwes { margin-left: 0; }
   .bundle-advisory-cvss-vector { text-align: left; }
 }
+
+/* npm package Overview (view/npm-package.js). Its Dependencies column lists
+   rows as Files does, each opening in the viewer at its latest version. */
+.npm-dependency-row .bundles-source-size { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.npm-dependency-kind {
+  flex-shrink: 0; padding: 0 .3rem;
+  color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
+  font-family: system-ui, sans-serif; font-size: .62rem; line-height: 1.3;
+}
+.bundles-detail-meta {
+  & .npm-deprecated { color: var(--critical); }
+  & .npm-version-select {
+    max-width: 100%; padding: .1rem .3rem;
+    &:disabled { opacity: 1; }
+    color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem;
+  }
+}
+
+/* The npm viewer's lookup page. */
+.npm-lookup {
+  max-width: 40rem;
+  margin: 3rem auto;
+  padding: 0 1rem;
+}
+.npm-lookup-head {
+  display: flex; align-items: center; gap: .6rem;
+  margin-bottom: .5rem;
+
+  & h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+}
+.npm-lookup-icon {
+  display: grid; place-items: center;
+  color: var(--critical);
+
+  & svg { width: 20px; height: 20px; }
+}
+.npm-lookup-intro { margin: 0 0 1rem; color: var(--muted); font-size: .875rem; line-height: 1.5; }
+.npm-lookup-form {
+  display: flex; gap: .5rem;
+
+  & input {
+    flex: 1; min-width: 0; padding: .5rem .65rem;
+    color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem;
+  }
+  & input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  & button {
+    flex-shrink: 0; padding: .5rem 1rem;
+    color: var(--bg); background: var(--accent);
+    border: 0; border-radius: var(--ui-radius, 6px);
+    font: inherit; font-size: .85rem; font-weight: 600; cursor: default;
+  }
+  & :disabled { opacity: .6; }
+}
+.npm-lookup-status,
+.npm-lookup-error { margin: .75rem 0 0; font-size: .85rem; }
+.npm-lookup-status { color: var(--muted); }
+.npm-lookup-error { color: var(--critical); }

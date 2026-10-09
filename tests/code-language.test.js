@@ -35,3 +35,15 @@ test('missing and unrecognized formats fall back to filename detection', () => {
     assert.equal(sourceFileType(path), 'generic')
   }
 })
+
+test('a .map file is JSON when its text is an object, whitespace aside', () => {
+  for (const content of ['{"version":3,"sources":[]}', '\n  {\n  "mappings": ""\n}\n', '\uFEFF{}']) {
+    assert.equal(langForPath('dist/index.js.map', undefined, content), 'json', JSON.stringify(content))
+    assert.equal(langForPath('DIST/INDEX.JS.MAP', undefined, content), 'json')
+  }
+  for (const content of [undefined, null, '', '{', '}', ' { ', '[1, 2]', 'export default {}', '{"a": 1}\n// tail', 'not json']) {
+    assert.equal(langForPath('dist/index.js.map', undefined, content), null, JSON.stringify(content))
+  }
+  assert.equal(langForPath('dist/index.map.js', undefined, '{}'), 'javascript', 'only the last extension counts')
+  assert.equal(langForPath('dist/index.js.map', 'commonjs', '{}'), 'javascript', 'a recorded format still wins')
+})

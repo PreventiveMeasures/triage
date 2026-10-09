@@ -679,8 +679,9 @@ span.evidence-ref:not([role]) { color: var(--muted); }
    the chrome; and `pre` on the code itself, so a long line SCROLLS
    under the reader rather than folding — a wrapped snippet reads as a
    different snippet. The fence's language tag (```ts) heads the block
-   when it named one. */
-.code-block {
+   when it named one. Not Prism's Markdown token of the same name
+   (`.token.code-block`), whose lines this box would run together. */
+.code-block:not(.token) {
   white-space: normal;
   margin: .5rem 0;
   border: 1px solid var(--border);
@@ -1555,7 +1556,7 @@ span.evidence-ref:not([role]) { color: var(--muted); }
   /* A snippet can't scroll on paper: let its long lines wrap so the
      block prints whole, and drop the screen fill for a plain outline
      (a painted background is the first thing a printer discards). */
-  .code-block {
+  .code-block:not(.token) {
     background: transparent;
     border-color: #bbb;
 

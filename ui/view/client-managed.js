@@ -53,6 +53,14 @@ export async function fetchManagedBundleCatalog(options) {
   return (await loadManagedBundle()).fetchManagedBundleCatalog(options)
 }
 
+export async function fetchNpmPackage(name, version, options) {
+  return (await loadManagedBundle()).fetchNpmPackage(name, version, options)
+}
+
+export async function fetchNpmVersions(name, options) {
+  return (await loadManagedBundle()).fetchNpmVersions(name, options)
+}
+
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }

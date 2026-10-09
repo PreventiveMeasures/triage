@@ -58,6 +58,10 @@ export function managedCodeLocation(state, tab = state.bundleDetailsTab) {
 export function managedCompareLocation(state, tab = state.bundleDetailsTab) {
   const compare = state.bundleCompare
   if (tab !== 'compare' || !compare?.target || compare.bundle !== state.selectedBundle) return null
+  // An npm package version compares with another version, by its number.
+  if (state.bundles?.find(bundle => bundle.integrity === state.selectedBundle)?.npm) {
+    return { compareSpec: compare.target, ...(compare.mode === 'code' ? { compareMode: 'code' } : {}) }
+  }
   const target = bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).find(bundle => bundle.integrity === compare.target)
   if (!target?.managedId) return null
   return { compareId: target.managedId, ...(compare.mode === 'code' ? { compareMode: 'code' } : {}) }

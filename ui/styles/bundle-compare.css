@@ -37,15 +37,6 @@
   flex-wrap: wrap;
   min-width: 0;
 }
-.bundle-compare-base {
-  max-width: 28ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: .8rem;
-  color: var(--text);
-}
 .bundle-compare-arrow { flex-shrink: 0; color: var(--muted); }
 .bundle-compare-select-wrap {
   display: inline-flex;
@@ -56,6 +47,8 @@
 /* Room for the swap button too, so a narrow row wraps the scope selector
    rather than squeezing the bundle selector. */
 .bundle-compare-select-wrap:has(.bundle-compare-swap) { flex-basis: 24rem; }
+/* The open bundle's own picker: the narrower of the two, with no hint. */
+.bundle-compare-base-wrap { flex: 1 1 14rem; max-width: 24rem; }
 .bundle-compare-select-hint {
   font-size: .64rem;
   text-transform: uppercase;

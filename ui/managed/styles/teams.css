@@ -235,6 +235,64 @@
 .perm:has(:disabled) {
   opacity: .5;
 }
+.sub.npm-scopes {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border);
+  border-left: 0;
+}
+/* The tip rides the heading's line at its right end, and wraps under it,
+   left-aligned, when narrow. */
+.npm-scopes .sub-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .15rem .75rem;
+  margin-bottom: .4rem;
+}
+.npm-scopes .sub-head > .sub-title,
+.npm-scopes .sub-head > .ui-hint {
+  margin: 0;
+}
+.npm-scopes .sub-head > .ui-hint {
+  margin-left: auto;
+  text-align: right;
+}
+/* The scopes follow the input and its button on their line, wrapping. */
+.npm-scope-row {
+  flex-wrap: wrap;
+  padding-top: 0;
+}
+.npm-scope-list {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .35rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.npm-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: .2rem;
+  padding: .1rem .1rem .1rem .45rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: .75rem;
+}
+.add-npm-scope {
+  flex: 1;
+  width: 0;
+  max-width: 18rem;
+}
+/* Room to type a scope: past it, the scopes wrap under the input rather
+   than squeezing it (common.css lets inputs shrink to nothing). */
+.npm-scope-row > .add-npm-scope {
+  min-width: 8rem;
+}
 .add-row {
   display: flex;
   align-items: center;
@@ -260,7 +318,8 @@
   margin: .5rem 0;
 }
 @container (max-width: 50rem) {
-  .access-note {
+  .access-note,
+  .npm-scopes .sub-head > .ui-hint {
     flex-basis: 100%;
     margin-left: 0;
     text-align: left;

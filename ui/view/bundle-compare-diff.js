@@ -55,9 +55,10 @@ function byteLen(content) {
 // resource arrives as a fresh `{ format: 'base64', data }` on each side,
 // so it compares by its spelling — identity would call every image
 // changed. A file that is text on one side and base64 on the other has
-// changed.
+// changed. An npm package's binary file compares by its digest.
 function sameContent(a, b) {
   return a === b || (a?.format === 'base64' && b?.format === 'base64' && a.data === b.data)
+    || (a?.format === 'digest' && b?.format === 'digest' && a.digest === b.digest)
 }
 
 // Comparator: largest absolute delta first, then path/label ascending

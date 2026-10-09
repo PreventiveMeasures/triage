@@ -175,6 +175,10 @@ window also navigate to their managed page URL.
 | `/manage/users` | Users (admin) |
 | `/manage/team` | Teams (admin) |
 | `/manage/history` | Activity history; optional `?actor=<login>` |
+| `/npm` | npm package lookup |
+| `/npm/:name[@:version][/:tab]` | npm package version; `:version` may be a dist-tag |
+| `/npm/:name@:version/code[/:file]` | Its Code tab, at a file |
+| `/npm/:name@:version/compare[/:otherVersion[/code]]` | Its Compare tab, with another version |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
 unique, otherwise the full ID, with the same allocation rules for teams, reports,
@@ -190,7 +194,10 @@ fetching report contents or changing the catalogue used to open a team.
 
 Bundle links retain the clicked team, even when several teams share a repository.
 The optional tab suffix is omitted for Overview. Reload and Back/Forward restore
-the tab; switching bundles retains it when available. Compare offers accessible
+the tab; switching bundles retains it when available. Compare's two sides are
+both pickers: the open bundle's opens the bundle picked, compared with the same
+one (picking that one swaps the two), and the other's picks what to compare
+with. Compare offers accessible
 bundles assigned to the same repository, including bundles not previously opened.
 Unattached bundles cannot be compared with each other.
 
@@ -1001,6 +1008,88 @@ Terminal, source search and source comparison request contents when needed;
 the browser handles HTTP Brotli decoding. Neither payload enters OPFS, IndexedDB
 or localStorage. Session/role changes clear managed caches and terminal state.
 
+
+# npm package viewer
+
+Every role but `none` can open a published npm package version from the
+landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
+in the bundle view with four tabs:
+
+- **Overview**: the manifest's description, license, author, GitHub
+  repository and publish commit, entry points, engines and install scripts,
+  a tarball download, and two columns: Dependencies, peer and optional ones
+  included, which open in the viewer at their latest version (an `npm:`
+  alias at the package it names), and the tarball's Files. The version
+  picker lists the package's versions and dist-tags; it holds the version
+  shown, disabled, until they arrive.
+- **Code**: the file tree and source viewer, opening on what `main` names.
+- **Treemap**: the files by size, as for bundles.
+- **Compare**: the bundle Compare, with another version of the same package,
+  picked from its versions newest first. Its Dependencies section, in place
+  of Packages, lists the dependencies only one version has and the ranges
+  that changed. Files that are not text compare by digest. **Swap** opens
+  the version compared with, comparing it with the one before. Both sides
+  are pickers, as for bundles: picking the open side's opens that version
+  compared with the same one, and picking the other side's swaps them.
+
+A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
+version it opened. Code links name files by number and lines in the fragment,
+and Compare links the version compared with and its mode, as for bundles. The
+browser keeps the last three public versions it read, and the package's
+version list, in memory for the session and role that read them, so a swap or
+Back reopens one without another request. A private version is asked for each
+time it opens, so the server checks again access the reader may have lost
+since, as to a team's npm scopes. A version list that failed is asked for
+again after ten seconds, twice as long after each failure in a row up to five
+minutes, on a repaint scheduled for then.
+
+`GET /api/npm/package?name=&version=` returns `{ name, version, private,
+integrity, tarballSize, manifest, files }`, where each file row is `[path,
+bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
+'sha256-<base64>']`. `version` defaults to `latest`. `GET
+/api/npm/versions?name=` returns `{ name, private, distTags, versions }`,
+newest first, and `GET /api/npm/download?name=&version=` the tarball.
+Responses are `private, no-store`, and nothing derived from a package is kept
+on the server.
+
+Anyone with workspace access can read public packages. Private packages need
+the server's `NPM_TOKEN`, the same one bundle builds use, and a reader with
+access to them: an admin or manager, or a member of a visible team that lists
+the package's scope. Admins list scopes per team in **Manage → Teams → npm
+scopes** (`POST /api/admin/teams/set-npm-scopes` with `{ teamId, scopes }`,
+replacing the team's list); `GET /api/admin/teams` returns each team's
+`npmScopes`. Scopes are lowercase, with `@` added when typed without one.
+Changes are recorded in the activity history, and scopes are removed with
+their team.
+
+For everyone else, a version is public only when the registry answers for it
+without credentials. That request is made on every read and never answered
+from a cache: tarballs that a bundle build fetched with the token can remain
+in upstream's caches, readable without one, so leaving the token out is not
+enough. The viewer never reads those caches: the tarball comes from the
+registry, at the package's own path, without credentials for a public version,
+and is checked against the sha512 that anonymous answer gives. Readers with
+private access also try the registry anonymously first, and retry a scoped
+package with the token; their answer says `private: true` when only the token
+could read it. Access is checked again after the registry answers, and a
+reader who lost private access meanwhile gets 404. A version npm doesn't have,
+and a private one the reader cannot open, are both 404 `package-not-found`.
+
+Packages unpack in memory, bounded at 64 MiB of files, 20,000 files and a 96
+MiB tar stream, and their files at 96 Mi characters of JSON, counted before it
+is written, as escaping can grow a text sixfold; larger ones return 413
+`package-too-large`, before download when the registry's `dist.unpackedSize`
+or `dist.fileCount` says so. Directories, links, and paths that would leave
+the package are not extracted. At most four loads run at once per process (429
+`npm-busy`), each until its response is encoded and every response holding it
+is written or abandoned, a response left unread for a minute being dropped;
+concurrent reads of one version share its download and its encoded response. A
+download is the tarball as the registry has it, not unpacked, and a tarball is
+refused once past 96 MiB as it arrives, whatever sizes its document declares.
+Registry documents being read at once are held to 256 MiB, each counted at its
+limit until it is parsed (8 MiB for a version, 64 MiB for a version list); a
+read past that is 429 `npm-busy` too. Public workspace links cannot reach
+these endpoints.
 
 # Report access and blocked accounts
 

@@ -210,7 +210,7 @@
 }
 
 .managed-content-links {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .5rem;
   margin-top: 1.25rem; padding-top: 1.25rem;
   border-top: 1px solid var(--border);
 }
@@ -248,6 +248,14 @@
   color: var(--scan-icon-color, var(--yellow));
   border-color: color-mix(in srgb, var(--scan-icon-color, var(--yellow)) 18%, var(--border));
   background: color-mix(in srgb, var(--scan-icon-color, var(--yellow)) 6%, var(--panel));
+}
+
+.managed-content-card[data-managed-page='npm'] .managed-content-icon {
+  color: var(--critical);
+  border-color: color-mix(in srgb, var(--critical) 18%, var(--border));
+  background: color-mix(in srgb, var(--critical) 6%, var(--panel));
+
+  & svg { width: 16px; height: 16px; }
 }
 
 body.theme-light .managed-content-card[data-managed-page='manage-scans'] .managed-content-icon {

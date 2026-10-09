@@ -17,6 +17,7 @@ mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 await import('../ui/view/bundle-compare.js')
 const Compare = customElements.get('bundle-compare')
+const { state: compareState } = await import('../client/index.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -358,4 +359,127 @@ test('the Overview lists a renamed file under Changed as `{old → new}`, and th
   const changed = markup.slice(markup.lastIndexOf('bundle-compare-group bundle-compare-changed'))
   assert.match(changed, /data-tooltip=src\/util\.js → lib\/util\.ts>\{<span class="bundle-compare-rename-from">src\/util\.js<\/span> → <span class="bundle-compare-rename-to">lib\/util\.ts<\/span>\}</u)
   assert.match(renderText(view._renderSummary(view._diffFor())), /1 changed \(1 renamed\)/u)
+})
+
+// A `source` offers what to compare with in place of the bundles on hand, as
+// an npm package version offers the package's other versions.
+function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', format: 'npm', detail: 'old' }], pending = false, error = null } = {}) {
+  const npm = (integrity, text) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: ['a.js'], sourcesContent: [text] } })
+  const calls = { loads: [], opens: [] }
+  const source = base => ({
+    noun: 'version', base, pending, error, options, choices: [{ id: base, name: `pkg@${base}`, format: 'npm', detail: '' }, ...options],
+    name: id => `pkg@${id.replace(/^sha512-/u, '')}`,
+    load: id => { calls.loads.push(id); return Promise.resolve(npm(`sha512-${id}`, id)) },
+    open: (opened, target, mode) => calls.opens.push([opened, target, mode]),
+    dependencies: () => ({ removed: [], added: [{ key: '\0dep', name: 'dep', kind: 'peer', range: '^1.0.0' }], changed: [] }),
+  })
+  const view = new Compare()
+  view.integrity = 'sha512-2.0.0'
+  view.details = npm('sha512-2.0.0', '2.0.0')
+  view.source = source('2.0.0')
+  return { view, calls, source, npm }
+}
+
+test('a source\'s options, names and loads stand in for the bundles on hand', async () => {
+  const { view, calls } = sourced()
+  assert.deepEqual(view._otherOptions(), [{ id: '1.0.0', integrity: '1.0.0', kind: 'npm', format: 'npm', detail: 'old', filename: 'pkg@1.0.0', size: '—', summary: null }])
+  view.request = { bundle: 'sha512-2.0.0', target: '1.0.0', mode: 'code' }
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(view._targetIntegrity, '1.0.0')
+  assert.equal(view._mode, 'code')
+  await Promise.resolve()
+  assert.deepEqual(calls.loads, ['1.0.0'])
+  assert.equal(view._otherDetails.integrity, 'sha512-1.0.0')
+  assert.equal(view._status, 'ready')
+  const diff = renderText(view._renderDiff())
+  assert.match(diff, /<h3 class="bundle-compare-section-head">Dependencies<\/h3>/u, 'its dependencies in place of Packages')
+  assert.doesNotMatch(diff, />Packages</u)
+  assert.match(diff, /Added · only in pkg@1\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
+})
+
+test('a source opens the other side to swap, which compares with the old base once it arrives', async () => {
+  const { view, calls, source, npm } = sourced()
+  view._targetIntegrity = '1.0.0'
+  view._otherDetails = npm('sha512-1.0.0', '1.0.0')
+  view._status = 'ready'
+  view._swap()
+  assert.deepEqual(calls.opens, [['1.0.0', '2.0.0', 'overview']], 'the other side opens, compared with this one')
+  const old = view.details
+  view.integrity = 'sha512-1.0.0'
+  view.details = view._otherDetails
+  view.source = source('1.0.0')
+  view.willUpdate(new Map([['integrity', 'sha512-2.0.0'], ['details', old]]))
+  assert.equal(view._targetIntegrity, '2.0.0', 'the old base, by its id')
+  await Promise.resolve()
+  assert.deepEqual(calls.loads, ['2.0.0'])
+  assert.equal(view._otherDetails.integrity, 'sha512-2.0.0')
+})
+
+test('a source says when its options are loading, missing or failed, and a failed load why', async () => {
+  const text = options => { const { view } = sourced(options); return renderText(view.render()) }
+  assert.match(text({ pending: true, options: [] }), /Loading versions…/u)
+  assert.match(text({ options: [] }), /No other versions to compare <strong>pkg@2\.0\.0<\/strong> with\./u)
+  assert.match(text({ error: "Couldn't list the versions of pkg.", options: [] }), /is-error[^]*Couldn't list the versions of pkg\./u)
+  assert.match(text(), /Pick a version above to compare against/u)
+  const { view } = sourced()
+  view.source = { ...view.source, load: () => Promise.reject(new Error('No such package version, or it is not available to you.')) }
+  view._choose('9.9.9')
+  await Promise.resolve(); await Promise.resolve()
+  assert.match(renderText(view.render()), /Couldn't read the selected version: No such package version/u)
+})
+
+test('this side is a picker too, listing the open bundle and those it compares with; picking the target swaps', () => {
+  const view = compare()
+  view._status = 'ready'
+  const events = []
+  view.addEventListener('bundle-swap', event => events.push(event.detail))
+  assert.deepEqual(view._baseOptions().map(option => option.filename), ['Before', 'After'])
+  view._pickBase('base')
+  assert.equal(events.length, 0, 'the bundle shown is no change')
+  view._pickBase('other')
+  assert.deepEqual(events.map(detail => [detail.integrity, detail.target]), [['other', 'base']])
+})
+
+test('a pick on this side opens it compared with the same target, handing over the target already parsed', t => {
+  compareState.bundles.push({ integrity: 'third', name: 'Third' })
+  t.after(() => { compareState.bundles.pop(); handedOff = null })
+  const view = compare()
+  view._status = 'ready'
+  const other = view._otherDetails
+  let detail = null
+  view.addEventListener('bundle-swap', event => { detail = event.detail })
+  view._pickBase('third')
+  assert.equal(detail.integrity, 'third')
+  assert.equal(detail.target, 'other')
+  assert.deepEqual(detail.bundles, [other], 'the target is parsed; the new base is read as it opens')
+  // The navigation lands on Third, which compares with the same target.
+  handedOff = { bundles: new Map(detail.bundles.map(parsed => [parsed.integrity, parsed])) }
+  view.integrity = 'third'
+  view.details = details('third', 'a.js')
+  view.willUpdate(new Map([['integrity', 'base']]))
+  assert.equal(view._targetIntegrity, 'other')
+  assert.equal(view._otherDetails, other)
+  assert.equal(view._status, 'ready')
+})
+
+test('a source\'s own side lists every choice; a pick opens it with the same target, or with none', () => {
+  const { view, calls } = sourced({ options: [{ id: '1.0.0', name: 'pkg@1.0.0', format: 'npm', detail: '' }, { id: '0.9.0', name: 'pkg@0.9.0', format: 'npm', detail: '' }] })
+  assert.deepEqual(view._baseOptions().map(option => option.id), ['2.0.0', '1.0.0', '0.9.0'])
+  view._pickBase('0.9.0')
+  assert.deepEqual(calls.opens, [['0.9.0', null, 'overview']], 'nothing picked to compare with yet')
+  view._targetIntegrity = '1.0.0'
+  view._mode = 'code'
+  view._codePath = 'a.js'
+  view._pickBase('0.9.0')
+  assert.deepEqual(calls.opens.at(-1), ['0.9.0', '1.0.0', 'code'])
+  // Its navigation lands: the same target, mode and file, the target read again.
+  view.integrity = 'sha512-0.9.0'
+  view.source = { ...view.source, base: '0.9.0' }
+  view._targetIntegrity = null
+  view._codePath = null
+  view.willUpdate(new Map([['integrity', 'sha512-2.0.0']]))
+  assert.equal(view._targetIntegrity, '1.0.0')
+  assert.equal(view._mode, 'code')
+  assert.equal(view._codePath, 'a.js')
+  assert.deepEqual(calls.loads.at(-1), '1.0.0')
 })

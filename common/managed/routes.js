@@ -1,6 +1,7 @@
 // Managed client pages only. API paths and E2E share hashes are not routes.
 import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
+import { isNpmPackageName, isNpmPackageSpec } from './npm-packages.js'
 
 export const MANAGED_PAGES = Object.freeze({
   manage: '/manage',
@@ -25,6 +26,7 @@ function findingPath(id) {
 export function managedRoutePath(route) {
   if (!route) return null
   if (route.view === 'home') return '/'
+  if (route.view === 'npm') return npmPackagePath(route)
   if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
     return /^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') ? `/team/${route.teamSlug}/${route.view.slice(10)}` : null
   }
@@ -67,6 +69,39 @@ export function managedRoutePath(route) {
   return `${team}${report}${route.view === 'files' ? '/files' : ''}`
 }
 
+// The npm viewer: its lookup page, or a package version's Overview, Code,
+// Compare or Treemap tab, `/npm/<name>[@<version or dist-tag>][/<tab>…]`. Code names
+// its file by number and its lines in the fragment, as a bundle's Code
+// does: `/code/<file>#L4`. Compare names the version compared with, then
+// `/code` while it reviews the changes as a diff: `/compare/<version>/code`.
+export const NPM_TABS = new Set(['overview', 'code', 'compare', 'treemap'])
+function npmPackagePath(route) {
+  if (route.packageName == null) return '/npm'
+  const tab = route.bundleTab ?? 'overview'
+  if (!isNpmPackageName(route.packageName) || (route.packageSpec != null && !isNpmPackageSpec(route.packageSpec)) || !NPM_TABS.has(tab)
+      || (route.compareSpec != null && !isNpmPackageSpec(route.compareSpec))) return null
+  const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
+  const lines = file && isLineNumber(route.line)
+    ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
+  const compare = tab === 'compare' && route.compareSpec != null ? `/${route.compareSpec}${route.compareMode === 'code' ? '/code' : ''}` : ''
+  return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
+}
+
+function parseNpmRoute(path, hash) {
+  const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|compare|treemap)(?:\/([^/]+)(?:\/(code))?)?)?)?$/u.exec(path)
+  if (!match) return undefined
+  if (match[1] == null) return { view: 'npm' }
+  if (!isNpmPackageName(match[1]) || (match[2] != null && !isNpmPackageSpec(match[2]))) return null
+  const route = { view: 'npm', packageName: match[1], packageSpec: match[2] ?? null, bundleTab: match[3] ?? 'overview' }
+  if (match[4] == null) return route
+  if (route.bundleTab === 'compare') {
+    return isNpmPackageSpec(match[4]) ? { ...route, compareSpec: match[4], ...(match[5] ? { compareMode: 'code' } : {}) } : null
+  }
+  if (route.bundleTab !== 'code') return null
+  const file = Number(match[4])
+  return !match[5] && /^[1-9]\d*$/u.test(match[4]) && Number.isSafeInteger(file) ? { ...route, file, ...codeLines(hash) } : null
+}
+
 function isLineNumber(value) {
   return Number.isSafeInteger(value) && value > 0
 }
@@ -105,6 +140,8 @@ export function parseManagedRoute(url) {
     if (bundleTab !== 'code' || bundle[5] || !/^[1-9]\d*$/u.test(bundle[4]) || !Number.isSafeInteger(file)) return null
     return { ...route, file, ...codeLines(url.hash) }
   }
+  const npm = parseNpmRoute(path, url.hash)
+  if (npm !== undefined) return npm
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
   const match = /^\/team\/([^/]+)(?:\/report\/([^/]+))?(?:\/(files)|\/finding\/([^/]+))?$/u.exec(path)

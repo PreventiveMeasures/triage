@@ -34,7 +34,8 @@ import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, 
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute } from './npm-package.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -448,7 +449,8 @@ function openBundleWhy(details, query) {
 // `unpackedSize` is the bytes every listed file adds up to once unpacked —
 // what the Packages column totals — shown beside the artifact's own Size.
 // Null leaves the row out.
-function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, unpackedSize = null, resources = null, details = null } = {}) {
+// `leadColumn` replaces the Packages column, as an npm package's Dependencies do.
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
   // the stripped paths are only for displaying the file list.
@@ -577,7 +579,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
     </div>
     <div class="bundles-overview-columns">
-      <section class="bundles-overview-col">
+      ${leadColumn ?? html`<section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
           <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
           <span class="bundles-overview-sort" role="group" aria-label="Package order">
@@ -585,7 +587,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
           </span>
         </header>
         <div class="bundles-overview-col-body">${distTpl}</div>
-      </section>
+      </section>`}
       <section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
           <span class="bundles-overview-col-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
@@ -722,7 +724,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
   const targetLine = target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
   const targetEnd = targetLine == null ? null : Math.max(target.end ?? targetLine, targetLine)
   const digits = String(lineCount).length
-  const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
+  const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined, content)
   const cacheKey = `${details?.integrity ?? ''}\0${path}`
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
@@ -1352,6 +1354,10 @@ function pickDefaultBundleCodeFile(details, sources, issueIndex) {
       if (typeof sources.get(entry) === 'string') return entry
     }
   }
+  // An npm package's `main` (see npmPackageEntries).
+  for (const entry of details.npmEntries ?? []) {
+    if (typeof sources.get(entry) === 'string') return entry
+  }
   let largest = null
   let largestLen = -1
   for (const [file, content] of sources) {
@@ -1475,6 +1481,8 @@ function renderBundleCodeView(details, entry = null) {
   // and the lines marked in it. Its other writers use the same location.
   if (path && entry?.managedId && isManagedUiMode()) {
     managedHistory?.replaceCodeRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'code', managedCodeLocation(state)))
+  } else if (path && entry?.npm && isManagedUiMode()) {
+    managedHistory?.replaceCodeRoute(npmPackageRoute(entry, 'code', managedCodeLocation(state)))
   }
   const content = path ? sources.get(path) : null
   // Per-file findings + line dots — same source-viewer pipeline
@@ -1612,7 +1620,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
     </header>
     <div class="bundle-code-main-body">
       ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
-        Boolean(entry?.managedId) && isManagedUiMode() && !getPublicShare())}
+        Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare())}
     </div>`
 }
 
@@ -1939,6 +1947,10 @@ function renderBundleSearchView(details) {
 // 'reports') fail BUNDLE_TABS validation in view.js's boot restore
 // and fall back to 'overview' there — no migration needed.
 function renderBundleSlide(entry) {
+  // An npm package version shows its Overview, Code, Treemap and Compare,
+  // which compares it with the package's other versions.
+  const npm = Boolean(entry.npm)
+  if (npm && !['overview', 'code', 'compare', 'treemap'].includes(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
   // non-stasis bundles hide immediately, stasis bundles stay
   // optimistically visible across the parse window so a switch
@@ -1950,7 +1962,7 @@ function renderBundleSlide(entry) {
   // the LEFTMOST entry on purpose, so the post-parse stamp-in for
   // a fresh stasis bundle pushes the other tabs right rather than
   // landing in their middle — no in-flight click theft.
-  const showAdvisories = showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
+  const showAdvisories = !npm && showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
   // Coerce a `state.bundleDetailsTab === 'advisories'` value back to
   // 'overview' only without security access, or for a bundle known to have
   // no package versions (see `showAdvisoriesTab`). A sourcemap, or a bundle
@@ -1962,7 +1974,7 @@ function renderBundleSlide(entry) {
   // the open bundle present the picker would have nothing to offer, so
   // the tab is hidden — unless Compare is the open tab: a bundle switch or
   // a link keeps it open, and its body says there is nothing to compare.
-  const canCompare = state.bundleDetailsTab === 'compare'
+  const canCompare = npm || state.bundleDetailsTab === 'compare'
     || bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).length > 0
   // Managed bundles have no Issues tab: Code shows each file's issues. A
   // persisted or routed 'issues' selection coerces back to Overview.
@@ -2009,7 +2021,11 @@ function renderBundleSlide(entry) {
         <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
         <span aria-hidden="true">&gt;</span>
       </span>` : nothing}
-      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(BUNDLE_ICON_SVG)}</span>
+      ${npm ? html`<span class="bundles-slide-breadcrumb">
+        <button type="button" @click=${() => navigateToNpm()}>npm</button>
+        <span aria-hidden="true">&gt;</span>
+      </span>` : nothing}
+      <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
         <div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>
       </div>
@@ -2029,13 +2045,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'issues')}
           role="tab"
         >Issues</button>` : nothing}
-        <button
+        ${npm ? nothing : html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'terminal' })}
           data-bundle-tab="terminal"
           aria-selected=${String(tab === 'terminal')}
           role="tab"
-        >Terminal</button>
+        >Terminal</button>`}
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'treemap' })}
@@ -2043,13 +2059,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'treemap')}
           role="tab"
         >Treemap</button>
-        <button
+        ${npm ? nothing : html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
           data-bundle-tab="graph"
           aria-selected=${String(tab === 'graph')}
           role="tab"
-        >Graph</button>
+        >Graph</button>`}
         <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'code' })}
@@ -2057,13 +2073,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'code')}
           role="tab"
         >Code</button>
-        <button
+        ${npm ? nothing : html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'search' })}
           data-bundle-tab="search"
           aria-selected=${String(tab === 'search')}
           role="tab"
-        >Search</button>
+        >Search</button>`}
         ${canCompare ? html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'compare' })}
@@ -2090,7 +2106,8 @@ function renderBundleSlide(entry) {
               ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details)],
-              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}></bundle-compare>`],
+              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
+                .source=${npm ? npmCompareSource(entry) : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details, render,
                 canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],
@@ -2438,7 +2455,7 @@ function languageBarPointerLeave(e) {
 }
 
 function renderBundleLanguagesBar(details) {
-  if (details?.kind !== 'stasis' || !details.bundle) return nothing
+  if (!(details?.kind === 'stasis' && details.bundle) && !(details?.npm && details.json)) return nothing
   // `bundleSourcesAsMap` includes only textual sources. Stasis resources
   // (images, fonts, and other binary payloads) are intentionally absent,
   // so they cannot distort the language shares or get a fake extension.
@@ -2533,6 +2550,7 @@ function bundleUnpackedSize(sizes) {
 // bundle with no parsed `bundle`, gets the metadata row plus a
 // placeholder line.
 function renderBundleDetails(entry, details) {
+  if (entry.npm) return renderNpmPackageOverview(entry, details)
   const loaded = details?.integrity === entry.integrity
   // Until a managed bundle's metadata arrives, its catalogue entry stands in
   // for the stamp: a summary records a commit only from a stamped repository.
@@ -2633,4 +2651,26 @@ function renderBundleDetails(entry, details) {
   // wrapped in the same shell so layout is consistent.
   return renderBundleOverviewFallback(meta('', true), exportsCol,
     html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>`)
+}
+
+// An npm package version's Overview: its manifest beside the files its
+// tarball holds, with the tarball to download. Its details arrive with it,
+// whole, so there is no loading state to show.
+function renderNpmPackageOverview(entry, details) {
+  const download = `/api/npm/download?${new URLSearchParams({ name: entry.npm.name, version: entry.npm.version })}`
+  const exportsCol = html`<div class="bundles-overview-exports">
+    <div class="bundles-overview-exports-row">
+      <a class="bundles-download-btn" href=${download}>${DOWNLOAD_ICON}<span>Download tarball</span></a>
+    </div>
+    ${renderBundleLanguagesBar(details)}
+  </div>`
+  if (details?.integrity !== entry.integrity || !details.json) {
+    return renderBundleOverviewFallback(npmOverviewMeta(entry), exportsCol)
+  }
+  const sources = details.json.sources
+  const sizeMap = bundleFileSizes(details)
+  const sizes = sources.map(path => sizeMap.get(path) ?? null)
+  const resources = new Set(sources.filter((_, i) => typeof details.json.sourcesContent[i] !== 'string'))
+  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix), npmOverviewExtras(entry), sources, sizes, null, exportsCol,
+    { bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources, leadColumn: npmDependenciesColumn(entry) })
 }

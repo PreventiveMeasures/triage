@@ -21,6 +21,9 @@ import { randomUUID } from 'node:crypto'
 import { reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
+import { NpmPackageError, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
+import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -376,6 +379,54 @@ async function createBundleFixture(req: IncomingMessage, res: ServerResponse, me
   } catch (error) { sendJson(res, 400, { error: error instanceof BundleBuildError ? error.code : 'bad-body' }) }
 }
 
+// Teams' npm scopes, in memory. The fixture has no npm token: its viewer opens
+// public packages alone, read from the registry as the real server reads them.
+const teamNpmScopes = new Map<string, string[]>()
+
+async function setFixtureNpmScopes(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let raw = ''
+  for await (const chunk of req) raw += String(chunk)
+  const body = JSON.parse(raw) as { teamId?: string; scopes?: unknown }
+  if (!teamFixtures.some(team => team.id === body.teamId)) { sendJson(res, 404, { error: 'no-team' }); return }
+  let scopes
+  try { scopes = parseTeamNpmScopes(body.scopes) } catch (err) { sendJson(res, 400, { error: (err as Error).message }); return }
+  teamNpmScopes.set(body.teamId!, scopes)
+  sendJson(res, 200, { ok: true, scopes })
+}
+
+// The npm viewer's routes, and the Teams page's scope edits (admin only).
+function serveNpmFixture(req: IncomingMessage, url: URL, method: string, res: ServerResponse): boolean {
+  const done = (work: Promise<void>) => { work.catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-request' }) }); return true }
+  if (url.pathname === '/api/admin/teams/set-npm-scopes') {
+    if (method !== 'POST' || role !== 'admin') { sendJson(res, method === 'POST' ? 403 : 405, { error: method === 'POST' ? 'forbidden' : 'method-not-allowed' }); return true }
+    return done(setFixtureNpmScopes(req, res))
+  }
+  if (!['/api/npm/package', '/api/npm/versions', '/api/npm/download'].includes(url.pathname)) return false
+  if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+  return done(serveFixtureNpm(url, res))
+}
+
+async function serveFixtureNpm(url: URL, res: ServerResponse): Promise<void> {
+  const name = url.searchParams.get('name') ?? '', spec = url.searchParams.get('version') ?? 'latest'
+  const signal = AbortSignal.timeout(60_000)
+  try {
+    if (url.pathname === '/api/npm/versions') {
+      const versions = await readNpmVersions(name, false, signal)
+      sendJson(res, versions ? 200 : 404, versions ?? { error: 'package-not-found' }); return
+    }
+    const doc = await readNpmVersion(name, spec, false, signal)
+    if (!doc) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    const download = url.pathname === '/api/npm/download'
+    const load = download ? loadNpmTarball(doc) : loadNpmPackageBody(doc)
+    res.once('close', load.release)
+    const bytes = await load.result
+    res.writeHead(200, { ...download ? { 'content-type': 'application/gzip' } : { 'content-type': 'application/json', 'content-encoding': 'br' }, 'cache-control': 'no-store' })
+    res.end(bytes)
+  } catch (err) {
+    sendJson(res, err instanceof NpmPackageError ? err.status : 502, { error: err instanceof NpmPackageError ? err.message : 'upstream-unavailable' })
+  }
+}
+
 async function setFixtureVisible(req: IncomingMessage, res: ServerResponse, bundle: boolean): Promise<void> {
   let raw = ''
   for await (const chunk of req) raw += String(chunk)
@@ -472,7 +523,7 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
   }
   if (url.pathname === '/api/admin/teams') {
     sendJson(res, 200, {
-      teams: adminTeams(),
+      teams: adminTeams().map(team => ({ ...team, npmScopes: teamNpmScopes.get(team.id) ?? [] })),
       users,
       repos: repositories.filter((repo) => repo.selected).map((repo) => ({ repoId: repo.id, fullName: repo.fullName })),
       permissions: ['dependencies', 'security'],
@@ -670,7 +721,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     const teams = currentTeams()
     sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) }); return
   }
-  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url, res)) return
+  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res)) return
   if (url.pathname === '/api/reports/query') {
     if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })
