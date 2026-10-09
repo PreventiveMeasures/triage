@@ -251,3 +251,28 @@ test('a package installed under an npm alias keeps one row, its versions joined 
   assert.deepEqual(packageRows.changed, [{ pkg: 'alias', baseBytes: 3, otherBytes: 8, delta: 5,
     baseVersions: ['1.0.0'], otherVersions: ['1.1.0'], direction: 'up' }])
 })
+
+test('a request picks the bundle and mode to compare with; the user\'s picks and mode switches are reported', () => {
+  const view = new Compare()
+  const reported = []
+  view.addEventListener('bundle-compare-change', event => reported.push(event.detail))
+  view.integrity = 'base'
+  view.details = details('base', 'a.js')
+  view.request = { bundle: 'base', target: 'other', mode: 'code' }
+  const before = loads
+  view.willUpdate(new Map([['integrity', undefined], ['details', undefined], ['request', undefined]]))
+  assert.equal(view._targetIntegrity, 'other')
+  assert.equal(view._mode, 'code')
+  assert.equal(view._status, 'loading')
+  assert.equal(loads, before + 1)
+  view.request = { ...view.request }
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(loads, before + 1, 'the bundle already compared with is not read again')
+  view.request = { bundle: 'elsewhere', target: 'base', mode: 'overview' }
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(view._targetIntegrity, 'other', 'another bundle\'s request is not this one\'s')
+  assert.deepEqual(reported, [], 'what was asked for is not reported back')
+  view._openFile('a.js')
+  view._pick(null)
+  assert.deepEqual(reported, [{ base: 'base', target: 'other', mode: 'code' }, { base: 'base', target: null, mode: 'code' }])
+})

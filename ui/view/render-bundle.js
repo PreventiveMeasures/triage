@@ -2089,7 +2089,7 @@ function renderBundleSlide(entry) {
               ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details)],
-              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity}></bundle-compare>`],
+              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details, render,
                 canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],

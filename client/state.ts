@@ -137,6 +137,9 @@ export interface State {
   // A file for the Code tab to open once its sources load: a link's, by
   // number, or the one open in the bundle before, by path.
   bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
+  // The bundle the Compare tab compares the open one with, and its mode: a
+  // managed link's, or as Compare last reported it.
+  bundleCompare: { bundle: string; target: string; mode: 'overview' | 'code' } | null
   bundleOverviewFilesSort: 'name' | 'size'
   bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
@@ -649,6 +652,8 @@ export const state: State = store<State>({
   // has the sources to read it from, and dropped with any other bundle or
   // tab.
   bundleCodeFileRequest: null,
+  // Dropped with any other bundle or tab, like the Code request.
+  bundleCompare: null,
   bundleOverviewFilesSort: 'name',
   bundleOverviewPackagesSort: 'size',
   bundleCodeHistory: null,

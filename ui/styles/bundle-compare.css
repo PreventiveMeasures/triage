@@ -220,7 +220,7 @@
 /* Every row one fixed line high, and each list stops halfway through a
    row, so the cut-off row says the list scrolls. */
 .bundle-compare-rows--scroll {
-  --compare-row: 1.5rem;
+  --compare-row: 1.375rem;
 
   max-height: calc(15.5 * var(--compare-row));
   overflow-y: auto;
@@ -319,7 +319,7 @@
   align-items: center;
   gap: .5rem;
   width: 100%;
-  padding: .2rem .35rem;
+  padding: .15rem .2rem;
   font-size: .72rem;
   text-align: left;
   color: var(--text);

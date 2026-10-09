@@ -9,7 +9,7 @@ import { clearPreviewRole, fetchManagedBundleCatalog, getPreviewRole, loadManage
 import { resetManagedFixes } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
-import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from './managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedCompareLocation, managedTeamBundleEntries } from './managed-bundle-navigation.js'
 import { managedReportViewChanged } from './managed-report-catalog.js'
 import { refreshManagedBundleView } from './managed-bundle-refresh.js'
 import { openManagedBundle } from './managed-bundle-open.js'
@@ -2245,7 +2245,9 @@ async function restoreManagedPageContent(route, isCurrent) {
   if (route.view === 'bundles') {
     const entries = route.teamId == null ? adminBundles.map(managedBundleEntry) : managedTeamBundleEntries(state.managedTeams)
     if (!(await openManagedBundle(route, entries, isCurrent, renderSidebar))) return false
-    return managedRouteForIds({ ...route, bundleTab: state.bundleDetailsTab }, state.managedTeams, adminBundles)
+    // The compared bundle stays only as Compare took it.
+    const { compareId: _compareId, compareMode: _compareMode, ...opened } = route
+    return managedRouteForIds({ ...opened, bundleTab: state.bundleDetailsTab, ...managedCompareLocation(state) }, state.managedTeams, adminBundles)
   }
   if (route.view === 'home') return goHome({ history: false })
   if (route.view === 'manage-deduplication' && route.linkId) {

@@ -22,6 +22,9 @@
 // how the treemap owns its drill-in: a re-render from elsewhere (the
 // finding-index subscription) keeps the element mounted and so keeps
 // the comparison; switching the base bundle resets it via willUpdate.
+// `request` (`state.bundleCompare`, from a managed link) picks the bundle
+// and mode to start from; a pick, clear, or mode switch the user makes
+// is reported as `bundle-compare-change`, which keeps a managed URL on it.
 import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -102,6 +105,9 @@ class BundleCompare extends LitElement {
   static properties = {
     details: { attribute: false },
     integrity: { attribute: false },
+    // `{ bundle, target, mode }`: compare `bundle` (when it's the one open)
+    // with `target`, in `mode`.
+    request: { attribute: false },
     // Integrity of the bundle picked to compare against (null = none
     // chosen yet), the parsed bytes of that bundle once loaded, and a
     // coarse load status the body switches on.
@@ -128,6 +134,7 @@ class BundleCompare extends LitElement {
     super()
     this.details = null
     this.integrity = null
+    this.request = null
     this._targetIntegrity = null
     this._otherDetails = null
     this._status = 'idle'
@@ -151,7 +158,18 @@ class BundleCompare extends LitElement {
     // landing after a navigation, or fileHashes attaching in place — is
     // the same content, so the comparison stays valid; resetting there
     // would wipe the target the instant the base finished loading.
-    if (!changed.has('integrity')) return
+    if (changed.has('integrity')) this._rebase()
+    // A link's bundle and mode, or the ones Compare reported, idle when
+    // already shown.
+    if ((changed.has('request') || changed.has('integrity')) && this.integrity && this.request?.bundle === this.integrity) {
+      if (this.request.target !== this._targetIntegrity) this._choose(this.request.target)
+      this._mode = this.request.mode === 'code' ? 'code' : 'overview'
+    }
+  }
+
+  // The base bundle changed: compare it afresh, or after a swap, with the
+  // old base.
+  _rebase() {
     // A swap navigates to the old comparison target as the new base; in
     // that single case restore the old base as the new target instead
     // of clearing it (the module-level handoff survives the prop
@@ -207,7 +225,7 @@ class BundleCompare extends LitElement {
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,
-      detail: { integrity: newBase, bundles },
+      detail: { integrity: newBase, bundles, mode: this._mode },
     }))
   }
 
@@ -219,11 +237,27 @@ class BundleCompare extends LitElement {
     return entry?.name ?? `${integrity.slice(0, 'sha512-'.length + 8)}…`
   }
 
-  // Picker change. Empty value clears the comparison; otherwise kick
-  // the state-free parse of the chosen bundle and re-render through
-  // each status. The parsed other-bundle is dropped immediately so a
-  // stale diff doesn't linger under the spinner.
+  // Picker change, reported.
   _pick(value) {
+    this._choose(value)
+    this._notify()
+  }
+
+  // The user's comparison — the bundle compared with and the mode — for the
+  // URL of a managed bundle (events.js).
+  _notify() {
+    this.dispatchEvent(new CustomEvent('bundle-compare-change', {
+      bubbles: true,
+      composed: true,
+      detail: { base: this.integrity, target: this._targetIntegrity, mode: this._mode },
+    }))
+  }
+
+  // Empty value clears the comparison; otherwise kick the state-free
+  // parse of the chosen bundle and re-render through each status. The
+  // parsed other-bundle is dropped immediately so a stale diff doesn't
+  // linger under the spinner.
+  _choose(value) {
     const integrity = value || null
     this._targetIntegrity = integrity
     this._otherDetails = null
@@ -237,7 +271,7 @@ class BundleCompare extends LitElement {
 
   async _loadOther(integrity) {
     const entry = bundleComparisonCandidates(state.bundles ?? [], this.integrity).find(b => b.integrity === integrity)
-    if (!entry) { this._status = 'idle'; this._targetIntegrity = null; return }
+    if (!entry) { this._status = 'idle'; this._targetIntegrity = null; this._notify(); return }
     let details
     try { details = await buildBundleDetails(integrity, entry) }
     catch (err) { if (err.name === 'AbortError') return; throw err }
@@ -264,6 +298,7 @@ class BundleCompare extends LitElement {
   _openFile(path) {
     this._codePath = path
     this._mode = 'code'
+    this._notify()
   }
 
   _fileRow(path, label, sizeTpl) {
@@ -511,7 +546,7 @@ class BundleCompare extends LitElement {
       </div></div>
       <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
         ${[['overview', 'Overview'], ['code', 'Code']].map(([mode, label]) => html`<button type="button" role="tab"
-          aria-selected=${String(this._mode === mode)} @click=${() => { this._mode = mode }}>${label}</button>`)}
+          aria-selected=${String(this._mode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
       </div>
     </div>`
   }

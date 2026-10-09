@@ -30,7 +30,7 @@ export function managedRoutePath(route) {
   }
   if (route.view === 'bundles') {
     if (!/^[A-Za-z0-9_-]+$/u.test(route.bundleSlug ?? '')
-        || (route.teamSlug != null && !/^[A-Za-z0-9_-]+$/u.test(route.teamSlug))) return null
+        || [route.teamSlug, route.compareSlug].some(slug => slug != null && !/^[A-Za-z0-9_-]+$/u.test(slug))) return null
     const tab = route.bundleTab ?? 'overview'
     if (!BUNDLE_TABS.has(tab)) return null
     const parent = route.teamSlug ? `/team/${route.teamSlug}` : '/manage'
@@ -40,7 +40,11 @@ export function managedRoutePath(route) {
     const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
     const lines = file && isLineNumber(route.line)
       ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
-    return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}${file}${lines}`
+    // Compare names the bundle compared with by its slug, then `/code` while
+    // it reviews the changes as a diff.
+    const compare = tab === 'compare' && route.compareSlug != null
+      ? `/${route.compareSlug}${route.compareMode === 'code' ? '/code' : ''}` : ''
+    return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
   }
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
@@ -90,12 +94,16 @@ export function parseManagedRoute(url) {
           ...(url.searchParams.get('mode') === 'dependencies' ? { scanMode: 'dependencies' } : {}) } : {} : {}),
     }
   }
-  const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+)(?:\/([1-9]\d*))?)?$/u.exec(path)
+  const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+)(?:\/([A-Za-z0-9_-]+)(?:\/(code))?)?)?$/u.exec(path)
   if (bundle) {
     const bundleTab = bundle[3] ?? 'overview'
-    const file = bundle[4] == null ? null : Number(bundle[4])
-    if (!BUNDLE_TABS.has(bundleTab) || file != null && (bundleTab !== 'code' || !Number.isSafeInteger(file))) return null
-    return { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab, ...(file == null ? {} : { file, ...codeLines(url.hash) }) }
+    if (!BUNDLE_TABS.has(bundleTab)) return null
+    const route = { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab }
+    if (bundle[4] == null) return route
+    if (bundleTab === 'compare') return { ...route, compareSlug: bundle[4], ...(bundle[5] ? { compareMode: 'code' } : {}) }
+    const file = Number(bundle[4])
+    if (bundleTab !== 'code' || bundle[5] || !/^[1-9]\d*$/u.test(bundle[4]) || !Number.isSafeInteger(file)) return null
+    return { ...route, file, ...codeLines(url.hash) }
   }
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
@@ -120,14 +128,20 @@ export function resolveManagedRoute(route, teams, adminBundles = []) {
     return matches.length === 1 ? { view: route.view, teamId: matches[0].id } : null
   }
   if (route.view === 'bundles') {
-    const { teamSlug, bundleSlug, ...rest } = route
+    const { teamSlug, bundleSlug, compareSlug, compareMode, ...rest } = route
     const matches = teamSlug == null ? [] : teams.filter(team => team.slug === teamSlug)
     if (teamSlug != null && matches.length !== 1) return null
     const team = matches[0]
     const candidates = teamSlug == null ? adminBundles : teams.flatMap(entry => entry.bundles ?? [])
-    const ids = new Set(candidates.filter(bundle => bundle.slug === bundleSlug).map(bundle => bundle.id))
+    const idsOf = slug => new Set(candidates.filter(bundle => bundle.slug === slug).map(bundle => bundle.id))
+    const ids = idsOf(bundleSlug)
     const bundle = (team?.bundles ?? adminBundles).find(entry => entry.slug === bundleSlug)
-    return bundleSlug && bundle && ids.size === 1 ? { ...rest, teamId: team?.id ?? null, bundleId: bundle.id } : null
+    if (!bundleSlug || !bundle || ids.size !== 1) return null
+    // The bundle compared with, by the same rule; one no longer listed drops
+    // out, leaving Compare to pick again.
+    const compared = compareSlug == null ? null : idsOf(compareSlug)
+    const compare = compared?.size === 1 ? { compareId: [...compared][0], ...(compareMode === 'code' ? { compareMode } : {}) } : {}
+    return { ...rest, teamId: team?.id ?? null, bundleId: bundle.id, ...compare }
   }
   if (!['findings', 'files'].includes(route.view)) return route
   const { teamSlug, reportSlug, ...rest } = route
@@ -148,13 +162,23 @@ export function managedRouteForIds(route, teams, adminBundles = []) {
     return team?.slug && resolveManagedRoute(result, teams) ? result : null
   }
   if (route.view === 'bundles') {
-    const { teamId, bundleId, ...rest } = route
+    const { teamId, bundleId, compareId, compareMode, ...rest } = route
     const team = teams.find(entry => entry.id === teamId)
     if (teamId != null && !team?.slug) return null
     const bundle = (team?.bundles ?? adminBundles).find(entry => entry.id === bundleId)
     if (!bundle?.slug) return null
-    const result = { ...rest, teamSlug: team?.slug ?? null, bundleSlug: bundle.slug }
-    return resolveManagedRoute(result, teams, adminBundles) ? result : null
+    const compared = compareId == null ? null
+      : (teamId == null ? adminBundles : teams.flatMap(entry => entry.bundles ?? [])).find(entry => entry.id === compareId)
+    const result = { ...rest, teamSlug: team?.slug ?? null, bundleSlug: bundle.slug,
+      ...(compared?.slug ? { compareSlug: compared.slug, ...(compareMode === 'code' ? { compareMode } : {}) } : {}) }
+    const resolved = resolveManagedRoute(result, teams, adminBundles)
+    if (!resolved) return null
+    // A compared bundle whose slug doesn't name it alone leaves the route.
+    if (result.compareSlug != null && resolved.compareId !== compareId) {
+      const { compareSlug: _slug, compareMode: _mode, ...bare } = result
+      return bare
+    }
+    return result
   }
   if (!['findings', 'files'].includes(route.view)) return route
   const { teamId, reportId, ...rest } = route
