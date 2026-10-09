@@ -381,7 +381,7 @@ export class ManagedCreateBundle extends LitElement {
       const bundle = await this.createBundle({ repoId: this._repoId, commit: this._commit,
         entries: [...this._selected], conditions: this._bundleConditions }, request.signal)
       if (!request.signal.aborted) {
-        // Navigation loads bundle metadata before replacing this form.
+        // Navigation replaces this form with the bundle as it opens it.
         this._opening = true
         this.dispatchEvent(new CustomEvent('bundle-created', { detail: bundle, bubbles: true, composed: true }))
       }

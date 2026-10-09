@@ -103,6 +103,37 @@ async function fixture(t) {
   return { browser, history, landings, opening, page, refresh, requests }
 }
 
+test('a bundle shows its catalogue entry at once and its files once the metadata arrives', async t => {
+  const f = await fixture(t)
+  assert.equal(state.currentView, 'bundles', 'shown before its metadata')
+  assert.equal(state.selectedBundle, bundle.integrity)
+  assert.equal(state.bundleDetails, null)
+  assert.equal(f.browser.location.pathname, '/manage/bundle', 'the URL follows once the open succeeds')
+  f.requests[0].resolve(Response.json(metadata))
+  assert.equal(await f.opening, true)
+  assert.equal(state.bundleDetails.managedId, bundle.id)
+  assert.deepEqual([...state.bundleDetails.fileSizes.keys()], ['index.js'])
+  assert.equal(f.browser.location.pathname, '/manage/bundle/created')
+})
+
+test('a tab picked while the metadata loads still gets the files, or says why there are none', async t => {
+  for (const response of [() => Response.json(metadata), () => new Response('', { status: 503 })]) {
+    await t.test(String(response().status), async st => {
+      const f = await fixture(st)
+      state.bundleDetailsTab = 'code'
+      f.history.pushRoute(managedRouteForIds({ view: 'bundles', teamId: null, bundleId: bundle.id, bundleTab: 'code' }, [], [bundle]))
+      f.requests[0].resolve(response())
+      assert.equal(await f.opening, false, 'the tab change took over the navigation')
+      assert.equal(f.browser.location.pathname, '/manage/bundle/created/code')
+      assert.equal(state.currentView, 'bundles')
+      assert.deepEqual(f.landings, [])
+      if (response().ok) assert.equal(state.bundleDetails.fileSizes.get('index.js'), 16)
+      else assert.match(state.bundleDetails.error, /503/u)
+      assert.equal(state.bundleDetails.managedId, bundle.id)
+    })
+  }
+})
+
 test('creation opens the bundle when its first team refresh cancels the metadata request during Opening', async t => {
   const f = await fixture(t)
   assert.ok(f.refresh('first').has('bundle:created'))

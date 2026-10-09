@@ -2532,7 +2532,13 @@ function bundleUnpackedSize(sizes) {
 // bundle with no parsed `bundle`, gets the metadata row plus a
 // placeholder line.
 function renderBundleDetails(entry, details) {
-  const origin = details?.integrity === entry.integrity && !details.error && details.kind === 'stasis' ? details.bundle : null
+  const loaded = details?.integrity === entry.integrity
+  // Until a managed bundle's metadata arrives, its catalogue entry stands in
+  // for the stamp: a summary records a commit only from a stamped repository.
+  const commit = entry.summary?.commit
+  const origin = loaded ? !details.error && details.kind === 'stasis' ? details.bundle : null
+    : entry.managedId && entry.repoFullName && commit ? { repo: { github: entry.repoFullName, directory: entry.repoDirectory ?? '', commit } } : null
+  const size = loaded ? details.size : entry.managedId ? entry.size : null
   const meta = (prefix = '', includeSize = false) => html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
@@ -2543,12 +2549,10 @@ function renderBundleDetails(entry, details) {
     </dd>`)}
     <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
-    ${origin?.entries.size > 0 ? html`<dt>${origin.entries.size === 1 ? 'Entry' : 'Entries'}</dt><dd class="mono"><ul class="bundles-entry-points">
+    ${origin?.entries?.size > 0 ? html`<dt>${origin.entries.size === 1 ? 'Entry' : 'Entries'}</dt><dd class="mono"><ul class="bundles-entry-points">
       ${[...origin.entries].map(file => html`<li><button type="button" class="bundle-entry-point" data-bundle-view-source=${file}>${stripPathPrefix(file, prefix)}</button></li>`)}
     </ul></dd>` : nothing}
-    ${includeSize && details && details.integrity === entry.integrity
-      ? html`<dt>Size</dt><dd>${formatBytes(details.size)}</dd>`
-      : nothing}
+    ${includeSize && Number.isSafeInteger(size) ? html`<dt>Size</dt><dd>${formatBytes(size)}</dd>` : nothing}
   </dl>`
   // The bundle's bytes live on disk regardless of whether the parse
   // below succeeds (or has even finished), so the exports column
@@ -2564,7 +2568,7 @@ function renderBundleDetails(entry, details) {
   // loading branch shows just the metadata (name + integrity are
   // already known); a "Loading…" placeholder flickered too briefly
   // to be useful and pushed the columns down on every open.
-  if (!details || details.integrity !== entry.integrity) return renderBundleOverviewFallback(meta('', true), exportsCol)
+  if (!loaded) return renderBundleOverviewFallback(meta('', true), exportsCol)
   if (details.error) {
     return renderBundleOverviewFallback(meta('', true), exportsCol,
       html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>`)

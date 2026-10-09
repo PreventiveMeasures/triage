@@ -8,6 +8,14 @@ export function managedBundleEntry(bundle) {
     name: bundle.filename, size: bundle.byteSize, repoId: bundle.repoId, repoFullName: bundle.repoFullName, repoDirectory: bundle.repoDirectory ?? '' }
 }
 
+// The managed bundle the bundles view shows: its details', or until its
+// metadata arrives, the catalogue entry it opened from.
+export function shownManagedBundleId(state) {
+  if (state.currentView !== 'bundles') return null
+  if (state.bundleDetails) return state.bundleDetails.managedId ?? null
+  return state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.managedId ?? null
+}
+
 // Keep the clicked team when a bundle belongs to several teams. Manage can
 // also open an upload that has no accessible team (including unattached ones).
 // `location` places the tab: Code's open file, `{ file, line, endLine }`,

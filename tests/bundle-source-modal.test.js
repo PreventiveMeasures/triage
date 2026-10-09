@@ -567,6 +567,25 @@ test('a managed bundle Overview puts its cached tags after the commit and gives 
   }
 })
 
+test('a managed bundle Overview shows its catalogue entry before its metadata arrives', () => {
+  const commit = 'c'.repeat(40)
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-catalogue', managedId: 'managed-catalogue', size: 2048,
+    repoId: 7, repoFullName: 'org/repo', repoDirectory: 'packages/app', summary: { files: 3, codeFiles: 2, lines: 12, commit },
+    commitInfo: { sha: commit, github: 'org/repo', tags: ['v1.0.0'], details: null } }
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'overview', selectedBundle: entry.integrity, bundles: [entry], bundleDetails: null })
+  const markup = renderText(renderBundlesList([entry]))
+  const githubRow = markup.match(/<dt>GitHub<\/dt><dd class="bundle-origin-row">(.*?)<\/dd>/su)[1]
+  assert.ok(githubRow.includes(`href=https://github.com/org/repo/tree/${commit}/packages/app`))
+  assert.ok(githubRow.includes(`href=https://github.com/org/repo/commit/${commit}`))
+  assert.ok(githubRow.includes('href=https://github.com/org/repo/releases/tag/v1.0.0'))
+  assert.match(markup, /<dt>Size<\/dt><dd>2\.0 KiB<\/dd>/u)
+  assert.match(markup, /<dt>Directory<\/dt><dd class="mono">\/packages\/app<\/dd>/u)
+  assert.doesNotMatch(markup, /bundle-overview-files|bundles-overview-col/u, 'its files wait for the metadata')
+  const unstamped = { ...entry, summary: { files: 3, codeFiles: 2, lines: 12 } }
+  state.bundles = [unstamped]
+  assert.doesNotMatch(renderText(renderBundlesList([unstamped])), /<dt>GitHub<\/dt>/u, 'a summary without a commit has no stamped repository to stand in for')
+})
+
 test('bundle Overview lists entries on the left and puts Size under Sources for local and managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-entries' }
   const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({

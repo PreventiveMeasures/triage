@@ -1,5 +1,6 @@
 import { displayName } from '../../common/report-display-name.js'
 import { formatBytes } from '../scan/metrics.js'
+import { shownManagedBundleId } from './managed-bundle-navigation.js'
 
 export function managedRepositoryPath(item) {
   return item.repoFullName ? `${item.repoFullName}${item.repoDirectory ? `/${item.repoDirectory}` : ''}` : ''
@@ -36,7 +37,7 @@ export class ManagedTeamSections {
     if (owner !== this.owner) { this.expanded.clear(); this.focus = ''; this.owner = owner }
     const teams = state.managedTeams ?? []
     for (const id of this.expanded.keys()) if (!teams.some(team => team.id === id)) this.expanded.delete(id)
-    const bundle = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
+    const bundle = shownManagedBundleId(state)
     const report = ['findings', 'files', 'links'].includes(state.currentView) ? state.currentManagedReport : null
     const section = bundle ? 'bundles' : 'reports'
     const team = teams.find(candidate => candidate.id === state.currentManagedTeam

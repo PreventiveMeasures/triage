@@ -976,6 +976,12 @@ sees bundles at `/foo` and `/foo/*`, excluding root and `/foobar`. This applies
 to team catalogs, public workspace links, direct bundle access, advisories and
 manager activity. Directory edits also refresh open clients' catalogs.
 
+Opening a bundle shows what its catalog entry already holds (name, location,
+size, and its GitHub origin, commit and tags) at once, and its files once its
+metadata arrives; its URL follows a successful open, and a failed one still
+lands on the home page. A tab picked meanwhile keeps the bundle and still
+receives its files, or the reason it has none.
+
 Opening a bundle downloads its metadata into managed app memory. Code,
 Terminal, source search and source comparison request contents when needed;
 the browser handles HTTP Brotli decoding. Neither payload enters OPFS, IndexedDB
