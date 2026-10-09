@@ -45,6 +45,18 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, 
   const early = state.bundleDetails
   const shown = () => isManagedUiMode() && state.currentView === 'bundles' && state.selectedBundle === entry.integrity
     && state.bundles.includes(entry) && state.bundleDetails === early
+  // A failed open lands on the home page; a bundle shown by a later
+  // navigation, as one of its tabs, says why it has no files instead.
+  const failed = (err, toast) => {
+    if (err?.name === 'AbortError') return false
+    if (isCurrent()) {
+      if (toast) showToast(`Couldn't open bundle: ${err.message}`, { kind: 'error' })
+    } else if (shown()) {
+      state.bundleDetails = { integrity: entry.integrity, kind: entry.kind, size: entry.size, managedId: id, error: err.message }
+      render()
+    }
+    return false
+  }
   const generation = currentViewGeneration()
   let metadata
   for (;;) {
@@ -53,17 +65,11 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, 
     catch (err) {
       // Leaving a source tab stops its downloads, this read among them.
       if (err?.name === 'AbortError' && signal.aborted && shown()) continue
-      // A failed open lands on the home page; a bundle shown by a later
-      // navigation, as one of its tabs, says why it has no files instead.
-      if (!isCurrent() && err?.name !== 'AbortError' && shown()) {
-        state.bundleDetails = { integrity: entry.integrity, kind: entry.kind, size: entry.size, managedId: id, error: err.message }
-        render()
-      }
-      return false
+      return failed(err, false) // The managed state reports request errors.
     }
   }
   try {
-    if (metadata.integrity !== entry.integrity) return false
+    if (metadata.integrity !== entry.integrity) throw new Error('the metadata is for another version of this bundle')
     if (shown()) {
       const indexed = parseBundleMetadata(metadata, metadata.integrity)
       // Compare's swap hands over the bundle it opens, already parsed in full;
@@ -77,8 +83,5 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, 
       render({ animate: false })
     }
     return isCurrent() && generation === currentViewGeneration() && state.bundleDetails?.managedId === id && state.selectedBundle === entry.integrity
-  } catch (err) {
-    if (isCurrent() && err.name !== 'AbortError') showToast(`Couldn't open bundle: ${err.message}`, { kind: 'error' })
-    return false
-  }
+  } catch (err) { return failed(err, true) }
 }

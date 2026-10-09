@@ -117,8 +117,14 @@ test('a bundle shows its catalogue entry at once and its files once the metadata
 })
 
 test('a tab picked while the metadata loads still gets the files, or says why there are none', async t => {
-  for (const response of [() => Response.json(metadata), () => new Response('', { status: 503 })]) {
-    await t.test(String(response().status), async st => {
+  const responses = [
+    ['files', () => Response.json(metadata)],
+    [/503/u, () => new Response('', { status: 503 })],
+    [/another version/u, () => Response.json({ ...metadata, integrity: 'sha512-other' })],
+    [/Invalid bundle metadata/u, () => Response.json({ ...metadata, files: null })],
+  ]
+  for (const [outcome, response] of responses) {
+    await t.test(String(outcome), async st => {
       const f = await fixture(st)
       state.bundleDetailsTab = 'code'
       f.history.pushRoute(managedRouteForIds({ view: 'bundles', teamId: null, bundleId: bundle.id, bundleTab: 'code' }, [], [bundle]))
@@ -127,8 +133,8 @@ test('a tab picked while the metadata loads still gets the files, or says why th
       assert.equal(f.browser.location.pathname, '/manage/bundle/created/code')
       assert.equal(state.currentView, 'bundles')
       assert.deepEqual(f.landings, [])
-      if (response().ok) assert.equal(state.bundleDetails.fileSizes.get('index.js'), 16)
-      else assert.match(state.bundleDetails.error, /503/u)
+      if (outcome === 'files') assert.equal(state.bundleDetails.fileSizes.get('index.js'), 16)
+      else assert.match(state.bundleDetails.error, outcome)
       assert.equal(state.bundleDetails.managedId, bundle.id)
     })
   }
