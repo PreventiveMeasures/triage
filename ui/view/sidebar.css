@@ -788,6 +788,14 @@ sidebar-delete-current button {
   border-color: transparent; color: var(--muted);
 }
 #manage-status:hover { border-color: transparent; background: rgb(from var(--text) r g b / .07); }
+/* A public link's footer: status text, not a control. */
+#public-status {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: .2rem 0;
+  color: var(--muted); font-size: .72rem;
+  user-select: none;
+}
+#public-status[hidden] { display: none; }
 .auth-login {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--text); font: inherit; font-size: .72rem; font-weight: 400;
