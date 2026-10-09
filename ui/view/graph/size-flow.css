@@ -60,6 +60,8 @@ button:focus-visible { outline: 2px solid var(--accent); }
 .flow-panel {
   grid-area: right; overflow: auto; min-height: 0; padding: 14px;
   border-left: 1px solid var(--border); background: var(--surface);
+  /* Global no-drag rules cannot reach the Versions summary in this shadow root. */
+  -webkit-app-region: no-drag; app-region: no-drag;
 }
 .flow-panel h3 { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
 .flow-panel h4 { margin: 20px 0 8px; color: var(--muted); font-size: 11px; }
@@ -70,7 +72,7 @@ button:focus-visible { outline: 2px solid var(--accent); }
 .flow-metrics span { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
 .flow-versions { list-style: none; padding: 0; margin: 0 0 18px; font-size: 12px; }
 .flow-versions-details { margin: 18px 0; }
-.flow-versions-details summary { color: var(--muted); font-size: 11px; cursor: pointer; }
+.flow-versions-details summary { color: var(--muted); font-size: 11px; cursor: default; }
 .flow-versions li + li { margin-top: 10px; }
 .flow-versions li > div { display: flex; justify-content: space-between; gap: 8px; }
 .flow-versions small { display: block; color: var(--muted); overflow-wrap: anywhere; margin-top: 3px; }
