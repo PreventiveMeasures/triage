@@ -29,6 +29,9 @@ export const NODEJS_MARK_PATH = 'M11.998 24c-.321 0-.641-.084-.922-.247l-2.936-1
 // up to 20px in CSS.
 export const BUNDLE_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 2 5v6l6 3 6-3V5L8 2Z"/><path d="M2 5l6 3 6-3"/><path d="M8 8v6"/></svg>'
 
+// npm's mark: the `n` in its square, filled like the package icon in the Code tree.
+export const NPM_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M1 1h14v14H1Zm3 3v8h4V6h2v6h2V4Z"/></svg>'
+
 // Workspace glyph — a labelled folder / tray. Same stroke treatment
 // as `BUNDLE_ICON_SVG` so workspace rows in the sidebar read as a
 // peer to bundle rows.

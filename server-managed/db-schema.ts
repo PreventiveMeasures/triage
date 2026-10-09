@@ -1,6 +1,7 @@
 import { LINK_REPORT_SCHEMA } from './link-reports.ts'
 import { REPOSITORY_ALIAS_SCHEMA } from './repository-aliases.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
+import { TEAM_NPM_SCOPE_SCHEMA } from './team-npm-scopes.ts'
 
 // Created after the column migration, which predates it on older databases.
 export const VIEW_SESSION_INDEX = 'CREATE INDEX IF NOT EXISTS managed_session_viewer_idx ON managed_session(viewer_session);'
@@ -221,4 +222,4 @@ CREATE TABLE IF NOT EXISTS managed_team_user (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS team_user_user_idx ON managed_team_user(user_id);
-` + WORKSPACE_SHARE_SCHEMA + LINK_REPORT_SCHEMA + REPOSITORY_ALIAS_SCHEMA
+` + WORKSPACE_SHARE_SCHEMA + LINK_REPORT_SCHEMA + REPOSITORY_ALIAS_SCHEMA + TEAM_NPM_SCOPE_SCHEMA

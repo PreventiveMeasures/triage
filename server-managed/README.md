@@ -175,6 +175,8 @@ window also navigate to their managed page URL.
 | `/manage/users` | Users (admin) |
 | `/manage/team` | Teams (admin) |
 | `/manage/history` | Activity history; optional `?actor=<login>` |
+| `/npm` | npm package lookup |
+| `/npm/:name[@:version][/code[/:file]]` | npm package version; `:version` may be a dist-tag |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
 unique, otherwise the full ID, with the same allocation rules for teams, reports,
@@ -1001,6 +1003,57 @@ Terminal, source search and source comparison request contents when needed;
 the browser handles HTTP Brotli decoding. Neither payload enters OPFS, IndexedDB
 or localStorage. Session/role changes clear managed caches and terminal state.
 
+
+# npm package viewer
+
+Every role but `none` can open a published npm package version from the
+landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
+in the bundle view with two tabs: **Overview** (the manifest's description,
+license, author, GitHub repository and publish commit, entry points, engines,
+install scripts and dependencies, which open in the viewer at their latest
+version, beside the tarball's file inventory and a tarball download) and
+**Code** (the file tree and source viewer, opening on what `main` names). The
+version picker lists the package's versions and dist-tags. A dist-tag link,
+such as `/npm/lodash`, is committed to history at the exact version it opened.
+Code links name files by number and lines in the fragment, as for bundles.
+
+`GET /api/npm/package?name=&version=` returns `{ name, version, private,
+integrity, tarballSize, manifest, files }`, where each file row is `[path,
+bytes, text]` (text null for a file that is not UTF-8). `version` defaults to
+`latest`. `GET /api/npm/versions?name=` returns `{ name, private, distTags,
+versions }`, newest first, and `GET /api/npm/download?name=&version=` the
+tarball. Responses are `private, no-store`, and nothing derived from a package
+is kept on the server.
+
+Anyone with workspace access can read public packages. Private packages need
+the server's `NPM_TOKEN`, the same one bundle builds use, and a reader with
+access to them: an admin or manager, or a member of a visible team that lists
+the package's scope. Admins list scopes per team in **Manage → Teams → npm
+scopes** (`POST /api/admin/teams/set-npm-scopes` with `{ teamId, scopes }`,
+replacing the team's list); `GET /api/admin/teams` returns each team's
+`npmScopes`. Scopes are lowercase, with `@` added when typed without one.
+Changes are recorded in the activity history, and scopes are removed with
+their team.
+
+For everyone else, a version is public only when the registry answers for it
+without credentials. That request is made on every read and never answered
+from a cache: tarballs that an admin's read or a bundle build fetched with the
+token can remain in upstream's caches, readable without one, so leaving the
+token out is not enough. The tarball is then checked against the integrity
+that anonymous answer gives, wherever it is read from. Readers with private
+access also try the registry anonymously first, and retry a scoped package
+with the token; their answer says `private: true` when only the token could
+read it. Access is checked again after the registry answers, and a reader who
+lost private access meanwhile gets 404. A version npm doesn't have, and a
+private one the reader cannot open, are both 404 `package-not-found`.
+
+Packages unpack in memory, bounded at 64 MiB of files, 20,000 files and a
+96 MiB tar stream; larger ones return 413 `package-too-large`, before download
+when the registry's `dist.unpackedSize` or `dist.fileCount` says so. Directories,
+links, and paths that would leave the package are not extracted. At most four
+tarballs load at once per process (429 `npm-busy`); concurrent reads of one
+share its download. Off Vercel, upstream keeps downloaded tarballs in its disk
+cache, as for builds. Public workspace links cannot reach these endpoints.
 
 # Report access and blocked accounts
 

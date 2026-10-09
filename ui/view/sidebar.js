@@ -13,6 +13,7 @@ import { managedBundleEntry, managedBundleRoute, managedCompareLocation, managed
 import { managedReportViewChanged } from './managed-report-catalog.js'
 import { refreshManagedBundleView } from './managed-bundle-refresh.js'
 import { openManagedBundle } from './managed-bundle-open.js'
+import { openNpmRoute } from './npm-package.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
 import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
@@ -519,7 +520,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   if (isManagedUiMode()) {
     teamSections.sync(state, revealSelection)
     if (!managedSessionPending && !managedTeamsPending && !managedSessionRefresh && !managedNavigationPending) startManagedTeamFeed({ catalogOnly: true })
-    state.bundles = (state.bundles ?? []).filter(entry => entry.managedId)
+    state.bundles = (state.bundles ?? []).filter(entry => entry.managedId || entry.npm)
     state.storedFiles = []
     renderLandingWorkspaces([])
     if (!root) return
@@ -2250,6 +2251,7 @@ async function restoreManagedPageContent(route, isCurrent) {
     return managedRouteForIds({ ...opened, bundleTab: state.bundleDetailsTab, ...managedCompareLocation(state) }, state.managedTeams, adminBundles)
   }
   if (route.view === 'home') return goHome({ history: false })
+  if (route.view === 'npm') return openNpmRoute(route, isCurrent, renderSidebar)
   if (route.view === 'manage-deduplication' && route.linkId) {
     return canAccessManagedPage(route.view) && await switchToManagedDeduplication(route.linkId)
   }

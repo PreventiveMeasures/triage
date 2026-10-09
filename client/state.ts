@@ -37,7 +37,7 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'workspace-reports' | 'workspace-bundles' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'workspace-reports' | 'workspace-bundles' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams' | 'npm'
 
 // The links file the 'links' view is showing: its OPFS name and the
 // links it declares, one `string[]` of finding ids per link (see
@@ -137,6 +137,9 @@ export interface State {
   // A file for the Code tab to open once its sources load: a link's, by
   // number, or the one open in the bundle before, by path.
   bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
+  // The npm lookup page: what it was asked for, whether that is opening,
+  // and why it did not.
+  npmLookup: { input: string; pending: boolean; error: string | null }
   // The bundle the Compare tab compares the open one with, and its mode: a
   // managed link's, or as Compare last reported it.
   bundleCompare: { bundle: string; target: string; mode: 'overview' | 'code' } | null
@@ -652,6 +655,7 @@ export const state: State = store<State>({
   // has the sources to read it from, and dropped with any other bundle or
   // tab.
   bundleCodeFileRequest: null,
+  npmLookup: { input: '', pending: false, error: null },
   // Dropped with any other bundle or tab, like the Code request.
   bundleCompare: null,
   bundleOverviewFilesSort: 'name',

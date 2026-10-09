@@ -3447,3 +3447,71 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
   .bundle-advisory-cwes { margin-left: 0; }
   .bundle-advisory-cvss-vector { text-align: left; }
 }
+
+/* npm package Overview (view/npm-package.js): its dependencies open in the
+   viewer, at their latest version. */
+.bundles-detail-meta {
+  & dt:has(+ dd > .npm-dependency-list) { align-self: start; }
+  & dd:has(> .npm-dependency-list) { word-break: normal; }
+  & .npm-dependency-list {
+    display: flex; flex-wrap: wrap; gap: .2rem .9rem;
+    max-height: 7.5rem; overflow: auto;
+    margin: 0; padding: 0; list-style: none;
+  }
+  & .npm-dependency-list li { display: inline-flex; align-items: baseline; gap: .35rem; }
+  & .npm-dependency {
+    padding: 0; border: 0; border-bottom: 1px dotted transparent;
+    color: inherit; background: none; font: inherit; cursor: default;
+  }
+  & button.npm-dependency:is(:hover, :focus-visible) { color: var(--accent); border-bottom-color: currentcolor; outline: none; }
+  & .npm-dependency-range { color: var(--muted); font-size: .68rem; }
+  & .npm-deprecated { color: var(--critical); }
+  & .npm-version-select {
+    max-width: 100%; padding: .1rem .3rem;
+    color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem;
+  }
+}
+
+/* The npm viewer's lookup page. */
+.npm-lookup {
+  max-width: 40rem;
+  margin: 3rem auto;
+  padding: 0 1rem;
+}
+.npm-lookup-head {
+  display: flex; align-items: center; gap: .6rem;
+  margin-bottom: .5rem;
+
+  & h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+}
+.npm-lookup-icon {
+  display: grid; place-items: center;
+  color: var(--critical);
+
+  & svg { width: 20px; height: 20px; }
+}
+.npm-lookup-intro { margin: 0 0 1rem; color: var(--muted); font-size: .875rem; line-height: 1.5; }
+.npm-lookup-form {
+  display: flex; gap: .5rem;
+
+  & input {
+    flex: 1; min-width: 0; padding: .5rem .65rem;
+    color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem;
+  }
+  & input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  & button {
+    flex-shrink: 0; padding: .5rem 1rem;
+    color: var(--bg); background: var(--accent);
+    border: 0; border-radius: var(--ui-radius, 6px);
+    font: inherit; font-size: .85rem; font-weight: 600; cursor: default;
+  }
+  & :disabled { opacity: .6; }
+}
+.npm-lookup-status,
+.npm-lookup-error { margin: .75rem 0 0; font-size: .85rem; }
+.npm-lookup-status { color: var(--muted); }
+.npm-lookup-error { color: var(--critical); }

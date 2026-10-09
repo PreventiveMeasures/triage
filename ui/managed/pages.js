@@ -8,6 +8,7 @@ import { ManagedPage, loadingRows } from './page.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { ROLES, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
+import { normalizeNpmScope } from '../../common/managed/npm-packages.js'
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { displayName } from '../../common/report-display-name.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
@@ -1480,8 +1481,46 @@ class ManagedAdminTeams extends ManagedPage {
           : html`<ul class="links">${team.members.map((m) => this._memberRow(team, m))}</ul>`}
         ${this._addMemberRow(team)}
       </div>
+      ${this._npmScopes(team)}
       </div>
     </section>`
+  }
+
+  // Scopes whose private packages members open in the npm viewer, as admins
+  // and managers open any the server's token can read.
+  _npmScopes(team) {
+    const scopes = Array.isArray(team.npmScopes) ? team.npmScopes : []
+    return html`<div class="sub npm-scopes">
+      <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span></h3>
+      <p class="muted ui-hint">Members can open private packages in these scopes. Everyone can open public packages.</p>
+      ${scopes.length === 0 ? nothing : html`<ul class="npm-scope-list">${scopes.map(scope => html`<li class="npm-scope">
+        <span>${scope}</span>
+        <button class="icon-btn danger" aria-label=${`Remove ${scope} from ${team.name}`} ?disabled=${this._busy}
+          @click=${() => this._setNpmScopes(team, scopes.filter(other => other !== scope))}>${ADMIN_REMOVE_ICON}</button>
+      </li>`)}</ul>`}
+      <div class="add-row">
+        <input class="add-npm-scope" type="text" placeholder="@scope" aria-label=${`npm scope to add to ${team.name}`} maxlength="215" ?disabled=${this._busy}
+          @keydown=${(e) => { if (e.key === 'Enter') this._addNpmScope(team, e) }}>
+        <button class="btn" aria-label=${`Add npm scope to ${team.name}`} ?disabled=${this._busy} @click=${(e) => this._addNpmScope(team, e)}>${ADMIN_PLUS_ICON} Add</button>
+      </div>
+    </div>`
+  }
+
+  _addNpmScope(team, e) {
+    const input = e.target.closest('.add-row')?.querySelector('.add-npm-scope')
+    if (!input?.value.trim()) return
+    const scope = normalizeNpmScope(input.value)
+    if (scope === null) { this._error = `“${input.value.trim()}” is not an npm scope. Scopes look like @example.`; return }
+    const scopes = Array.isArray(team.npmScopes) ? team.npmScopes : []
+    if (scopes.includes(scope)) { input.value = ''; return }
+    void this._setNpmScopes(team, [...scopes, scope], () => { input.value = '' })
+  }
+
+  _setNpmScopes(team, scopes, done = () => {}) {
+    return this._do(async () => {
+      await postTeam('/api/admin/teams/set-npm-scopes', this._csrf, { teamId: team.id, scopes })
+      done()
+    })
   }
 
   _repoRow(team, r) {

@@ -28,5 +28,5 @@ export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-da
 export { fetchManagedLinkWorkspace } from './managed/deduplication-data.js'
 export { getPreviewRole, setPreviewRole } from '../client/managed/request.js'
 export { resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './managed/state.js'
-export { fetchBundleMetadata, fetchBundleContents, fetchBundleAdvisories, fetchManagedBundleCatalog } from './managed/bundle-data.js'
+export { fetchBundleMetadata, fetchBundleContents, fetchBundleAdvisories, fetchManagedBundleCatalog, fetchNpmPackage, fetchNpmVersions } from './managed/bundle-data.js'
 export { fetchReportSources, readReportSources, clearReportSources } from './managed/report-sources.js'

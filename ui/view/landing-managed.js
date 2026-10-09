@@ -1,7 +1,7 @@
 import { html, nothing, render } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, MANAGE_ICON_SVG, NPM_ICON_SVG, REPORT_ICON_SVG, SCAN_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
 
 let pendingLanding = null
@@ -76,19 +76,23 @@ export function updateManagedLanding(options) {
         `)}
       </nav>
     ` : html`<p class="managed-landing-empty">No team reports are available yet.</p>`}
-    ${canManage ? html`
-      <nav class="managed-content-links" aria-label="Content and activity">
-        ${[
+    <nav class="managed-content-links" aria-label="Content and activity">
+      ${[
+        ...canManage ? [
           ['manage-bundles', 'Bundles', BUNDLE_ICON_SVG],
           ['manage-scans', 'Scans', SCAN_ICON_SVG],
           ['manage-reports', 'Reports', REPORT_ICON_SVG],
-        ].map(([view, label, icon]) => html`
-          <button type="button" class="managed-content-card" data-managed-page=${view}>
-            <span class="managed-content-icon" aria-hidden="true">${unsafeHTML(icon)}</span>
-            <span>${label}</span>
-          </button>
-        `)}
-      </nav>
+        ] : [],
+        // The npm viewer is open to every role; what it can open is not.
+        ['npm', 'npm packages', NPM_ICON_SVG],
+      ].map(([view, label, icon]) => html`
+        <button type="button" class="managed-content-card" data-managed-page=${view}>
+          <span class="managed-content-icon" aria-hidden="true">${unsafeHTML(icon)}</span>
+          <span>${label}</span>
+        </button>
+      `)}
+    </nav>
+    ${canManage ? html`
       <div class="managed-landing-actions">
         <button type="button" class="managed-manage-button" data-managed-page="manage"><span aria-hidden="true">${unsafeHTML(MANAGE_ICON_SVG)}</span><span>Manage</span></button>
       </div>

@@ -47,6 +47,10 @@
 //   POST /api/admin/teams/delete → admin deletes a team | 401/403/404
 //   POST /api/admin/teams/{set,remove}-repo   → admin links/unlinks a repo (+path) | 401/403/404
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
+//   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
+//   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/502
+//   GET  /api/npm/versions?name= → its dist-tags and versions | 400/401/404/502
+//   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -110,6 +114,9 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
+import { NpmPackageError, type NpmReader, canReadPrivateNpm, loadNpmPackage, npmFileText, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
+import { encodeBrotli } from './brotli.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -149,11 +156,15 @@ const TEAM_SET_REPO_PATH = '/api/admin/teams/set-repo'
 const TEAM_REMOVE_REPO_PATH = '/api/admin/teams/remove-repo'
 const TEAM_SET_MEMBER_PATH = '/api/admin/teams/set-member'
 const TEAM_REMOVE_MEMBER_PATH = '/api/admin/teams/remove-member'
+const TEAM_SET_NPM_SCOPES_PATH = '/api/admin/teams/set-npm-scopes'
+const NPM_PACKAGE_PATH = '/api/npm/package'
+const NPM_VERSIONS_PATH = '/api/npm/versions'
+const NPM_DOWNLOAD_PATH = '/api/npm/download'
 const MAX_TEAM_NAME = 100
 // Managed data routes, and with them the authentication routes, which an
 // admin's view as another user covers. Other paths fall through to a combined
 // e2e server, whose own authentication a view never touches.
-const MANAGED_DATA_PREFIXES = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github']
+const MANAGED_DATA_PREFIXES = ['/api/admin', '/api/reports', '/api/bundles', '/api/teams', '/api/avatar', '/api/github', '/api/npm']
 const VIEW_PREFIXES = [...MANAGED_DATA_PREFIXES, '/api/auth', '/api/oauth']
 const underPrefix = (path: string, prefixes: readonly string[]) => prefixes.some(prefix => path === prefix || path.startsWith(prefix + '/'))
 
@@ -2167,8 +2178,9 @@ async function handleReportComments(req: IncomingMessage, res: ServerResponse, d
 async function handleListTeams(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readAdminSession(res, deps, cookie)
   if (s == null) return
+  const scopes = await deps.db.listTeamNpmScopes()
   sendJson(res, 200, {
-    teams: await deps.db.listTeams(),
+    teams: (await deps.db.listTeams()).map(team => ({ ...team, npmScopes: scopes[team.id] ?? [] })),
     users: await deps.db.listUserOptions(),
     repos: selectableRepos(await deps.db.listSelectedRepos()),
     permissions: VISIBILITY_PERMISSIONS,
@@ -2327,6 +2339,87 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   const user = (await deps.db.listUserOptions()).find(row => row.id === userId)
   await activity(deps, s.user, 'access', `removed ${user?.login ?? userId} from team ${team?.name ?? teamId}`)
   sendJson(res, 200, { ok: true })
+}
+
+// POST /api/admin/teams/set-npm-scopes — replace the npm scopes whose private
+// packages the team's members may read. Body { teamId, scopes: ['@scope'] }.
+async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  const s = await adminMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: unknown
+  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const teamId = (body as { teamId?: unknown } | null)?.teamId
+  if (typeof teamId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
+  const team = await deps.db.getTeam(teamId)
+  const changed = await deps.db.setTeamNpmScopes(s.session.id, teamId, (body as { scopes?: unknown }).scopes)
+  if (changed == null) { sendJson(res, 404, { error: 'no-team' }); return }
+  const parts = [changed.added.length > 0 ? `added ${changed.added.join(', ')}` : '', changed.removed.length > 0 ? `removed ${changed.removed.join(', ')}` : ''].filter(Boolean)
+  if (parts.length > 0) await activity(deps, s.user, 'access', `changed team ${team?.name ?? teamId}'s npm scopes: ${parts.join('; ')}`)
+  sendJson(res, 200, { ok: true, scopes: (await deps.db.listTeamNpmScopes())[teamId] ?? [] })
+}
+
+// Who reads npm packages now: a session with workspace access, its role and
+// the npm scopes of its visible teams. Null for none.
+async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Promise<NpmReader | null> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null || !roleAtLeast(s.user.role, 'view')) return null
+  return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)) }
+}
+
+// GET /api/npm/{package,versions,download}. Only readers with private access
+// (canReadPrivateNpm) can be answered from the server's npm token; the rest get
+// what the registry answers anonymously, every time (see npm-packages.ts).
+// Access is checked again after the registry's answer.
+async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
+  if (req.method !== 'GET') { send405(res, 'GET'); return }
+  const name = params.get('name'), spec = params.get('version') ?? 'latest'
+  if (!isNpmPackageName(name) || (path !== NPM_VERSIONS_PATH && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
+  const reader = await npmReader(deps, cookie)
+  if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const controller = new AbortController()
+  const onClose = () => { if (!res.writableEnded) controller.abort() }
+  res.on('close', onClose)
+  // A reader who lost their session, or their private access to an answer
+  // that needed it, while the registry was asked gets nothing.
+  const recheck = async (isPrivate: boolean) => {
+    const current = await npmReader(deps, cookie)
+    if (current == null) { sendJson(res, 401, { error: 'unauthenticated' }); return false }
+    if (isPrivate && !canReadPrivateNpm(current, name)) { sendJson(res, 404, { error: 'package-not-found' }); return false }
+    return !res.destroyed
+  }
+  try {
+    const privileged = canReadPrivateNpm(reader, name)
+    if (path === NPM_VERSIONS_PATH) {
+      const versions = await readNpmVersions(name, privileged, controller.signal)
+      if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      if (await recheck(versions.private)) sendJson(res, 200, versions)
+      return
+    }
+    const doc = await readNpmVersion(name, spec, privileged, controller.signal)
+    if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    const { tarball, files } = await loadNpmPackage(doc)
+    if (!(await recheck(doc.private))) return
+    if (path === NPM_DOWNLOAD_PATH) {
+      res.writeHead(200, { 'content-type': 'application/gzip', 'content-length': String(tarball.byteLength),
+        'content-disposition': attachmentDisposition(npmTarballFilename(doc.name, doc.version)), 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
+      writeResponse(res, Buffer.from(tarball.buffer, tarball.byteOffset, tarball.byteLength)); return
+    }
+    // A row is `[path, bytes, text]`: text null for a file that is not UTF-8.
+    const body = await encodeBrotli(Buffer.from(JSON.stringify({
+      name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
+      manifest: doc.manifest, files: files.map(file => [file.path, file.bytes.byteLength, npmFileText(file.bytes)]),
+    })))
+    if (res.destroyed) return
+    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(body.length),
+      'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
+    writeResponse(res, body)
+  } catch (err) {
+    if (err instanceof NpmPackageError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.status, { error: err.message }); return }
+    if (controller.signal.aborted) return
+    throw err
+  } finally {
+    res.off('close', onClose)
+  }
 }
 
 async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string, id?: string) {
@@ -2678,6 +2771,13 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (path === TEAM_REMOVE_REPO_PATH) { await handleRemoveTeamRepo(req, res, deps, cookie); return }
       if (path === TEAM_SET_MEMBER_PATH) { await handleSetTeamMember(req, res, deps, cookie); return }
       await handleRemoveTeamMember(req, res, deps, cookie); return
+    }
+    if (path === TEAM_SET_NPM_SCOPES_PATH) {
+      if (method !== 'POST') { send405(res, 'POST'); return }
+      await handleSetTeamNpmScopes(req, res, deps, cookie); return
+    }
+    if (path === NPM_PACKAGE_PATH || path === NPM_VERSIONS_PATH || path === NPM_DOWNLOAD_PATH) {
+      await handleNpm(req, res, deps, cookie, path, url.searchParams); return
     }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
     if (deps.serveStatic?.(req, res)) return
