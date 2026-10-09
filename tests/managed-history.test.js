@@ -498,3 +498,50 @@ test('marked lines replace the entry, and a pasted line link to the open file ke
   assert.equal(restores, 2, 'any fragment over the open file keeps the page')
   assert.equal(browser.location.pathname + browser.location.hash, managedRoutePath(code), 'and marks no lines')
 })
+
+test('switching a bundle\'s tab adds an entry, so Back returns to the tab before it', async () => {
+  const list = { view: 'workspace-bundles', teamSlug: 'team' }
+  const bundle = slug => ({ view: 'bundles', teamSlug: 'team', bundleSlug: slug, bundleTab: 'overview' })
+  const { browser, entries } = browserAt(managedRoutePath(list))
+  const nav = createManagedHistory(browser)
+  const shown = []
+  await nav.start(route => { shown.push(managedRoutePath(route)); return true })
+  await nav.navigate(bundle('a'))
+  await nav.navigate(bundle('b'))
+  nav.pushRoute({ ...bundle('b'), bundleTab: 'code' })
+  nav.replaceCodeRoute({ ...bundle('b'), bundleTab: 'code', file: 3 })
+  assert.deepEqual(entries.map(entry => entry.url.pathname), ['/team/team/bundles', '/team/team/bundle/a', '/team/team/bundle/b', '/team/team/bundle/b/code/3'])
+  nav.pushRoute({ ...bundle('b'), bundleTab: 'code', file: 3 })
+  assert.equal(entries.length, 4, 'the tab shown adds nothing')
+  await browser.move(-1)
+  assert.equal(browser.location.pathname, '/team/team/bundle/b')
+  assert.equal(shown.at(-1), '/team/team/bundle/b')
+  await browser.move(-1)
+  assert.equal(browser.location.pathname, '/team/team/bundle/a')
+  await browser.move(2)
+  assert.equal(browser.location.pathname, '/team/team/bundle/b/code/3')
+})
+
+test('a write while a navigation loads cannot take the entry it leaves, and a tab switch supersedes the load', async () => {
+  const a = { view: 'bundles', teamSlug: 'team', bundleSlug: 'a', bundleTab: 'overview' }
+  const b = { ...a, bundleSlug: 'b' }
+  const { browser, entries } = browserAt(managedRoutePath(a))
+  const nav = createManagedHistory(browser)
+  let pending = null
+  await nav.start(async () => { if (pending) await pending.promise; return true })
+  pending = Promise.withResolvers()
+  let navigation = nav.navigate(b)
+  nav.replaceRoute({ ...b, bundleTab: 'code' })
+  assert.equal(browser.location.pathname, '/team/team/bundle/a', 'the departing entry keeps its page')
+  pending.resolve()
+  assert.equal(await navigation, true)
+  assert.deepEqual(entries.map(entry => entry.url.pathname), ['/team/team/bundle/a', '/team/team/bundle/b'], 'and the new page still gets its own')
+  await browser.move(-1)
+  pending = Promise.withResolvers()
+  navigation = nav.navigate(b)
+  nav.pushRoute({ ...a, bundleTab: 'code' })
+  pending.resolve()
+  assert.equal(await navigation, false, 'the tab clicked on the page shown wins')
+  assert.deepEqual(entries.map(entry => entry.url.pathname), ['/team/team/bundle/a', '/team/team/bundle/a/code'])
+})
+

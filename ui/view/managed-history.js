@@ -204,7 +204,24 @@ export function createManagedHistory(browser) {
     replaceRoute(route) {
       if (!active || !route || shareChanged()) return
       const path = managedRoutePath(route)
-      if (path != null) replace(path)
+      // A navigation still loading commits its own URL, from the state it
+      // ends in. Written now, this one would land on the entry it leaves,
+      // and match the entry it was about to push.
+      if (path != null && !restoring) replace(path)
+    },
+    // A page the user moved to within the one shown, as a bundle's tab: an
+    // entry of its own, so Back returns to the page before. The latest
+    // navigation, so one still loading gives way to it.
+    pushRoute(route) {
+      if (!active || !route || shareChanged()) return
+      let path = managedRoutePath(route)
+      if (path == null) return
+      ++revision
+      restoring = null
+      path = publicSharePath(path, publicShare)
+      if (path === currentPath) return
+      browser.history.pushState({ [KEY]: generation }, '', path)
+      currentPath = path
     },
     reset({ force = false } = {}) {
       ++revision
