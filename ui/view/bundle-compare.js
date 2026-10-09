@@ -422,19 +422,25 @@ class BundleCompare extends LitElement {
   }
 
   // A section that opens on demand, its heading the disclosure; its
-  // contents render only while it is open.
+  // contents render only while it is open. A click on the heading opens it
+  // through the render, contents and all: left to the browser, it opened a
+  // frame before its contents arrived. A toggle the browser makes on its
+  // own (find in page) still lands.
   _collapsible(id, title, count, content) {
     const open = this._openSections.has(id)
-    return html`<details class="bundle-compare-section bundle-compare-collapsible" .open=${live(open)} @toggle=${event => {
-      if (event.currentTarget.open === this._openSections.has(id)) return
-      const sections = new Set(this._openSections)
-      if (event.currentTarget.open) sections.add(id)
-      else sections.delete(id)
-      this._openSections = sections
-    }}>
-      <summary class="bundle-compare-section-head">${title} <span class="bundle-compare-section-count">${count.toLocaleString()}</span></summary>
+    return html`<details class="bundle-compare-section bundle-compare-collapsible" .open=${live(open)}
+      @toggle=${event => this._setSection(id, event.currentTarget.open)}>
+      <summary class="bundle-compare-section-head" @click=${event => { event.preventDefault(); this._setSection(id, !open) }}>${title} <span class="bundle-compare-section-count">${count.toLocaleString()}</span></summary>
       ${open ? content() : nothing}
     </details>`
+  }
+
+  _setSection(id, open) {
+    if (open === this._openSections.has(id)) return
+    const sections = new Set(this._openSections)
+    if (open) sections.add(id)
+    else sections.delete(id)
+    this._openSections = sections
   }
 
   // Repointed imports as a table, File | Import | Before | After |

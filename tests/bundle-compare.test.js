@@ -54,7 +54,7 @@ test('the summary row offers Overview and Code, Overview first, and a file row o
 test('Differences renders resolution-only changes as a collapsed File | Import | Before | After | Conditions table and a summary count', () => {
   const view = compare()
   const collapsed = renderText(view._renderDiff())
-  assert.match(collapsed, /<summary class="bundle-compare-section-head">Import resolutions <span class="bundle-compare-section-count">1/u)
+  assert.match(collapsed, /<summary class="bundle-compare-section-head"[^]*?>Import resolutions <span class="bundle-compare-section-count">1/u)
   assert.doesNotMatch(collapsed, /<table/u, 'collapsed by default')
   view._openSections = new Set(['resolutions'])
   const markup = renderText(view._renderDiff())
@@ -160,7 +160,7 @@ test('the Files section is collapsed until opened, then lists Removed | Added | 
   view._otherDetails.bundle.modules.get('.').files['a.js'] = 'changed'
   view._diffKey = null
   const collapsed = renderText(view._renderDiff())
-  assert.match(collapsed, /<summary class="bundle-compare-section-head">Files <span class="bundle-compare-section-count">1/u)
+  assert.match(collapsed, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
   assert.doesNotMatch(collapsed, /bundle-compare-cols--files/u)
   view._openSections = new Set(['files'])
   assert.match(renderText(view._renderDiff()), /bundle-compare-cols--files[^]*bundle-compare-changed/u)
@@ -294,4 +294,18 @@ test('a withdrawn request â€” the same bundle reopened on a bare Compare route â
   view._choose('other')
   view.willUpdate(new Map([['request', null]]))
   assert.equal(view._targetIntegrity, 'other')
+})
+
+test('a section heading opens and closes its section through the render, contents with it', () => {
+  const view = compare()
+  const summaryClick = () => view._collapsible('files', 'Files', 1, () => 'rows').values.find(value => typeof value === 'function' && /preventDefault/u.test(String(value)))
+  let prevented = 0
+  summaryClick()({ preventDefault() { prevented++ } })
+  assert.equal(prevented, 1, 'the browser does not open it a frame ahead of its contents')
+  assert.ok(view._openSections.has('files'))
+  assert.match(renderText(view._collapsible('files', 'Files', 1, () => 'rows')), /rows/u)
+  summaryClick()({ preventDefault() { prevented++ } })
+  assert.ok(!view._openSections.has('files'))
+  view._setSection('files', true)
+  assert.ok(view._openSections.has('files'), 'a toggle the browser makes on its own still lands')
 })
