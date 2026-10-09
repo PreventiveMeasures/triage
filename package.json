@@ -136,6 +136,7 @@
     "server-managed/object-storage-disk.ts",
     "server-managed/object-storage-vercel.ts",
     "server-managed/index.ts",
+    "server-managed/npm-loads.ts",
     "server-managed/npm-packages.ts",
     "server-managed/package-entry-points.ts",
     "server-managed/public-workspace.ts",

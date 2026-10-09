@@ -1081,13 +1081,15 @@ is written, as escaping can grow a text sixfold; larger ones return 413
 `package-too-large`, before download when the registry's `dist.unpackedSize`
 or `dist.fileCount` says so. Directories, links, and paths that would leave
 the package are not extracted. At most four loads run at once per process (429
-`npm-busy`), each until its response is encoded; concurrent reads of one
-version share its download and its encoded response. A download is the tarball
-as the registry has it, not unpacked, and a tarball is refused once past 96
-MiB as it arrives, whatever sizes its document declares. Registry documents
-being read at once are held to 256 MiB, each counted at its limit until it is
-parsed (8 MiB for a version, 64 MiB for a version list); a read past that is
-429 `npm-busy` too. Public workspace links cannot reach these endpoints.
+`npm-busy`), each until its response is encoded and every response holding it
+is written or abandoned, a response left unread for a minute being dropped;
+concurrent reads of one version share its download and its encoded response. A
+download is the tarball as the registry has it, not unpacked, and a tarball is
+refused once past 96 MiB as it arrives, whatever sizes its document declares.
+Registry documents being read at once are held to 256 MiB, each counted at its
+limit until it is parsed (8 MiB for a version, 64 MiB for a version list); a
+read past that is 429 `npm-busy` too. Public workspace links cannot reach
+these endpoints.
 
 # Report access and blocked accounts
 

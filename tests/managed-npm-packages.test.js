@@ -10,7 +10,8 @@ import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_TAR_BYTES, NpmPackageError, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
+import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball } from '../server-managed/npm-loads.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -318,7 +319,7 @@ test('oversized, malformed and unreachable packages are refused without their fi
   assert.deepEqual((await h.send(packagePath('down', '1.0.0'))).json(), { error: 'upstream-unavailable' })
 })
 
-test('reads of a version share its load and its encoded body, and four load at once, encoding included', async t => {
+test('reads of a version share its load and its encoded body; four load at once, each held until its readers are done', async t => {
   const pkgs = ['a', 'b', 'c', 'd', 'e'].map(name => packageOf(`shared-${name}`, '1.0.0', { 'index.js': `module.exports = '${name}'\n` }))
   registry(t, pkgs)
   // Tarballs answer once released, holding their loads in flight meanwhile.
@@ -328,40 +329,80 @@ test('reads of a version share its load and its encoded body, and four load at o
     return gate.promise.then(() => answer(input, init))
   })
   const version = ({ doc }) => ({ name: doc.name, version: doc.version, private: false, dist: doc.dist, manifest: { description: doc.description } })
+  const downloadsOf = pkg => downloads.filter(url => url === pkg.doc.dist.tarball).length
   const reads = Array.from({ length: 6 }, () => loadNpmPackageBody(version(pkgs[0])))
   const others = pkgs.slice(1, 4).map(pkg => loadNpmPackageBody(version(pkg)))
-  await assert.rejects(loadNpmPackageBody(version(pkgs[4])), /npm-busy/u)
-  await assert.rejects(loadNpmTarball(version(pkgs[4])), /npm-busy/u, 'downloads count among them')
+  await assert.rejects(loadNpmPackageBody(version(pkgs[4])).result, /npm-busy/u)
+  await assert.rejects(loadNpmTarball(version(pkgs[4])).result, /npm-busy/u, 'downloads count among them')
   gate.resolve()
-  const bodies = await Promise.all(reads)
+  const bodies = await Promise.all(reads.map(read => read.result))
   assert.ok(bodies.every(body => body === bodies[0]), 'one encoded body for every reader')
-  assert.equal(downloads.filter(url => url === pkgs[0].doc.dist.tarball).length, 1)
+  assert.equal(downloadsOf(pkgs[0]), 1)
   assert.deepEqual(JSON.parse(brotliDecompressSync(bodies[0])), { name: 'shared-a', version: '1.0.0', private: false, integrity: pkgs[0].doc.dist.integrity,
     tarballSize: pkgs[0].tgz.length, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]] })
-  await Promise.all(others)
-  assert.deepEqual(Buffer.from(await loadNpmTarball(version(pkgs[4]))), pkgs[4].tgz, 'a place frees once its body is done')
+  await Promise.all(others.map(other => other.result))
+  // Done, but their readers are still writing them out.
+  await assert.rejects(loadNpmTarball(version(pkgs[4])).result, /npm-busy/u, 'a body still being written keeps its place')
+  const late = loadNpmPackageBody(version(pkgs[0]))
+  assert.equal(await late.result, bodies[0], 'a reader meanwhile shares it')
+  reads[0].release()
+  reads[0].release()
+  for (const read of reads.slice(1)) read.release()
+  const again = loadNpmPackageBody(version(pkgs[0]))
+  await again.result
+  assert.equal(downloadsOf(pkgs[0]), 1, 'held while one reader remains, however often another releases')
+  late.release()
+  again.release()
+  for (const other of others) other.release()
+  const fifth = loadNpmTarball(version(pkgs[4]))
+  assert.deepEqual(Buffer.from(await fifth.result), pkgs[4].tgz, 'a place frees once its readers are done')
+  fifth.release()
+  const fresh = loadNpmPackageBody(version(pkgs[0]))
+  await fresh.result
+  fresh.release()
+  assert.equal(downloadsOf(pkgs[0]), 2, 'and nothing is kept after')
+})
+
+test('a load its readers abandon keeps its place until its work is done', async t => {
+  const pkgs = ['a', 'b', 'c', 'd', 'e'].map(name => packageOf(`abandoned-${name}`, '1.0.0', { 'index.js': '' }))
+  registry(t, pkgs)
+  const answer = globalThis.fetch, gate = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', (input, init) => gate.promise.then(() => answer(input, init)))
+  const version = ({ doc }) => ({ name: doc.name, version: doc.version, private: false, dist: doc.dist, manifest: {} })
+  const loads = pkgs.slice(0, 4).map(pkg => loadNpmTarball(version(pkg)))
+  for (const load of loads) load.release()
+  await assert.rejects(loadNpmTarball(version(pkgs[4])).result, /npm-busy/u)
+  gate.resolve()
+  await Promise.all(loads.map(load => load.result))
+  const fifth = loadNpmTarball(version(pkgs[4]))
+  assert.deepEqual(Buffer.from(await fifth.result), pkgs[4].tgz)
+  fifth.release()
 })
 
 test('a tarball is read from the package\'s own path on the registry, bounded as it arrives and held to its sha512', async t => {
   const pkg = packageOf('bounded', '1.0.0', { 'index.js': 'x' })
   const version = (dist = {}) => ({ name: 'bounded', version: '1.0.0', private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null, ...dist }, manifest: {} })
+  const tarballOf = async doc => {
+    const load = loadNpmTarball(doc)
+    try { return await load.result } finally { load.release() }
+  }
   let answer = () => new Response(pkg.tgz), pulled = 0
   const calls = []
   t.mock.method(globalThis, 'fetch', (input, init) => { calls.push([String(input), new Headers(init.headers).get('authorization')]); return Promise.resolve(answer()) })
-  assert.deepEqual(Buffer.from(await loadNpmTarball(version())), pkg.tgz)
+  assert.deepEqual(Buffer.from(await tarballOf(version())), pkg.tgz)
   assert.deepEqual(calls, [[pkg.doc.dist.tarball, null]], 'a public tarball is asked for without credentials')
   // Sizes the document leaves out, or understates, bound nothing: the bytes do.
   answer = () => new Response(new ReadableStream({ pull(controller) { pulled++; controller.enqueue(new Uint8Array(1024 * 1024)) } }))
-  await assert.rejects(loadNpmTarball(version()), /package-too-large/u)
+  await assert.rejects(tarballOf(version()), /package-too-large/u)
   assert.ok(pulled > MAX_TAR_BYTES / (1024 * 1024) && pulled < MAX_TAR_BYTES / (1024 * 1024) + 8, `stopped at the limit, after ${pulled} MiB`)
   answer = () => new Response('', { headers: { 'content-length': String(MAX_TAR_BYTES + 1) } })
-  await assert.rejects(loadNpmTarball(version()), /package-too-large/u, 'a declared length past it is refused unread')
+  await assert.rejects(tarballOf(version()), /package-too-large/u, 'a declared length past it is refused unread')
   answer = () => new Response(gzipSync('other'))
-  await assert.rejects(loadNpmTarball(version()), /upstream-invalid/u, 'bytes the integrity does not name')
+  await assert.rejects(tarballOf(version()), /upstream-invalid/u, 'bytes the integrity does not name')
   calls.length = 0
   for (const dist of [{ tarball: 'https://example.com/bounded/-/bounded-1.0.0.tgz' }, { tarball: `${REGISTRY}/other/-/other-1.0.0.tgz` },
     { tarball: `${REGISTRY}/bounded/-/../../other.tgz` }, { integrity: 'sha1-abc=' }]) {
-    await assert.rejects(loadNpmTarball(version(dist)), /upstream-invalid/u, JSON.stringify(dist))
+    await assert.rejects(tarballOf(version(dist)), /upstream-invalid/u, JSON.stringify(dist))
   }
   assert.deepEqual(calls, [], 'nothing off the package\'s path is asked for')
 })

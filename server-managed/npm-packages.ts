@@ -11,38 +11,26 @@
 // the integrity that anonymous answer gives.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { promisify } from 'node:util'
-import { gunzip } from 'node:zlib'
 import { getRepo } from '@preventive/upstream/package.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
-import { encodeBrotli } from './brotli.ts'
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
 // Abbreviated packuments of packages with thousands of versions run to tens of MiB.
 const PACKUMENT_BYTES = 64 * 1024 * 1024
 const REGISTRY_TIMEOUT_MS = 30_000
-const TARBALL_TIMEOUT_MS = 120_000
 // What registry documents being read at once may hold, each counted at its
 // limit until it is read and parsed: four packuments, or 32 version documents.
 const MAX_DOCUMENT_BYTES = 4 * PACKUMENT_BYTES
-// What a package may unpack to: the files' bytes, their count, and the tar
-// stream holding them, headers and padding included. A tarball larger than
-// that tar cannot unpack within it, so it is refused as it arrives.
+// What a package may unpack to: the files' bytes and their count; the tar
+// stream holding them is bounded in npm-loads.ts.
 export const MAX_NPM_PACKAGE_BYTES = 64 * 1024 * 1024
 export const MAX_NPM_PACKAGE_FILES = 20_000
-export const MAX_TAR_BYTES = 96 * 1024 * 1024
 // What the files may take as the viewer's JSON. Escaping grows a text up to
 // six times (a control character becomes `\u0001`), so it is counted before
 // anything is serialized.
 export const MAX_NPM_JSON_LENGTH = 96 * 1024 * 1024
-// Loads in flight per process; each can hold a tarball, its tar, its files
-// and their encoded JSON.
-const MAX_ACTIVE_LOADS = 4
-
-const gunzipAsync = promisify(gunzip)
-
 export class NpmPackageError extends Error {
   status: number
   constructor(status: number, code: string) { super(code); this.status = status }
@@ -59,13 +47,13 @@ export function canReadPrivateNpm(reader: NpmReader, name: string): boolean {
   return scope !== null && reader.scopes.has(scope)
 }
 
-const npmToken = () => process.env['NPM_TOKEN'] || null
+export const npmToken = () => process.env['NPM_TOKEN'] || null
 
 function registryUrl(name: string, spec?: string): string {
   return `${NPM_REGISTRY}/${name}${spec === undefined ? '' : `/${encodeURIComponent(spec)}`}`
 }
 
-async function readLimited(res: Response, limit: number): Promise<Buffer> {
+export async function readLimited(res: Response, limit: number): Promise<Buffer> {
   const declared = Number(res.headers.get('content-length'))
   if (declared > limit) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-too-large') }
   const chunks: Uint8Array[] = []
@@ -272,81 +260,6 @@ export function readNpmTar(tar: Uint8Array): NpmPackageFile[] {
     if (files.size > MAX_NPM_PACKAGE_FILES || total > MAX_NPM_PACKAGE_BYTES) throw new NpmPackageError(413, 'package-too-large')
   }
   return [...files].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
-}
-
-// Work in flight, by what it reads; readers asking for the same share it.
-const loads = new Map<string, Promise<unknown>>()
-
-function shared<T>(key: string, doc: NpmVersionDocument, work: () => Promise<T>): Promise<T> {
-  const { unpackedSize, fileCount } = doc.dist
-  if ((unpackedSize ?? 0) > MAX_NPM_PACKAGE_BYTES || (fileCount ?? 0) > MAX_NPM_PACKAGE_FILES) {
-    return Promise.reject(new NpmPackageError(413, 'package-too-large'))
-  }
-  const pending = loads.get(key)
-  if (pending) return pending as Promise<T>
-  if (loads.size >= MAX_ACTIVE_LOADS) return Promise.reject(new NpmPackageError(429, 'npm-busy'))
-  const job = work()
-  loads.set(key, job)
-  job.finally(() => loads.delete(key)).catch(() => {})
-  return job
-}
-
-// The sha512 an integrity names, in base64, or null where it names none.
-const sha512Of = (integrity: string) => /(?:^|\s)sha512-([\d+/A-Za-z]{86}==)(?=\s|$)/u.exec(integrity)?.[1] ?? null
-
-// The version's tarball, from the registry alone, at the package's own path:
-// with the token only for a private version, its size bounded as it arrives,
-// and its bytes held to the document's sha512.
-async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
-  const expected = sha512Of(doc.dist.integrity), url = doc.dist.tarball
-  if (!url.startsWith(`${NPM_REGISTRY}/${doc.name}/-/`) || URL.parse(url)?.href !== url || expected === null) throw new NpmPackageError(502, 'upstream-invalid')
-  const token = doc.private ? npmToken() : null
-  let res: Response
-  try {
-    res = await fetch(url, { headers: token ? { authorization: `Bearer ${token}` } : {}, redirect: 'error', signal: AbortSignal.timeout(TARBALL_TIMEOUT_MS) })
-  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
-  if ([401, 403, 404].includes(res.status)) { await res.body?.cancel(); throw new NpmPackageError(404, 'package-not-found') }
-  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
-  let bytes: Buffer
-  try { bytes = await readLimited(res, MAX_TAR_BYTES) }
-  catch (err) {
-    if (err instanceof NpmPackageError) throw new NpmPackageError(413, 'package-too-large')
-    throw new NpmPackageError(502, 'upstream-unavailable')
-  }
-  if (createHash('sha512').update(bytes).digest('base64') !== expected) throw new NpmPackageError(502, 'upstream-invalid')
-  return bytes
-}
-
-async function readFiles(tarball: Uint8Array): Promise<NpmPackageFile[]> {
-  let tar: Buffer
-  try { tar = await gunzipAsync(tarball, { maxOutputLength: MAX_TAR_BYTES }) }
-  catch (err) {
-    throw new NpmPackageError((err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 413 : 422,
-      (err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 'package-too-large' : 'bad-tarball')
-  }
-  return readNpmTar(tar)
-}
-
-// The version's tarball, for download.
-export function loadNpmTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
-  return shared(`tarball ${doc.dist.integrity} ${doc.dist.tarball}`, doc, () => readTarball(doc))
-}
-
-// The version as the viewer reads it, as brotli-encoded JSON: `{ name,
-// version, private, integrity, tarballSize, manifest, files }`, its files as
-// npmFileRows gives them. Encoding is where a load holds the most, so it
-// takes its place among the active loads until its body is done, and readers
-// asking meanwhile share that body, the first one's manifest in it; nothing
-// is kept after.
-export function loadNpmPackageBody(doc: NpmVersionDocument): Promise<Buffer> {
-  return shared(`package ${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`, doc, async () => {
-    const tarball = await readTarball(doc)
-    const files = await readFiles(tarball)
-    return encodeBrotli(Buffer.from(JSON.stringify({
-      name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
-      manifest: doc.manifest, files: npmFileRows(files),
-    })))
-  })
 }
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })

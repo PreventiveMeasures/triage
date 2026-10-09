@@ -114,7 +114,8 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -159,6 +160,8 @@ const TEAM_SET_NPM_SCOPES_PATH = '/api/admin/teams/set-npm-scopes'
 const NPM_PACKAGE_PATH = '/api/npm/package'
 const NPM_VERSIONS_PATH = '/api/npm/versions'
 const NPM_DOWNLOAD_PATH = '/api/npm/download'
+// How long an npm response may go unread before its connection is dropped.
+const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
 // Managed data routes, and with them the authentication routes, which an
 // admin's view as another user covers. Other paths fall through to a combined
@@ -2396,18 +2399,23 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     }
     const doc = await readNpmVersion(name, spec, privileged, controller.signal)
     if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-    if (path === NPM_DOWNLOAD_PATH) {
-      const tarball = await loadNpmTarball(doc)
-      if (!(await recheck(doc.private))) return
-      res.writeHead(200, { 'content-type': 'application/gzip', 'content-length': String(tarball.byteLength),
-        'content-disposition': attachmentDisposition(npmTarballFilename(doc.name, doc.version)), 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
-      writeResponse(res, Buffer.from(tarball.buffer, tarball.byteOffset, tarball.byteLength)); return
-    }
-    const body = await loadNpmPackageBody(doc)
+    // The load stays held until this response is written or abandoned, and
+    // a reader who stops reading it gives it up after a while. One already
+    // gone takes none, as its close has passed.
+    if (res.destroyed) return
+    const download = path === NPM_DOWNLOAD_PATH
+    const load = download ? loadNpmTarball(doc) : loadNpmPackageBody(doc)
+    res.once('close', load.release)
+    const bytes = await load.result
     if (!(await recheck(doc.private))) return
-    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(body.length),
-      'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
-    writeResponse(res, body)
+    res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+    res.writeHead(200, {
+      ...download
+        ? { 'content-type': 'application/gzip', 'content-disposition': attachmentDisposition(npmTarballFilename(doc.name, doc.version)) }
+        : { 'content-type': 'application/json', 'content-encoding': 'br' },
+      'content-length': String(bytes.byteLength), 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
+    })
+    writeResponse(res, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
   } catch (err) {
     if (err instanceof NpmPackageError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.status, { error: err.message }); return }
     if (controller.signal.aborted) return
