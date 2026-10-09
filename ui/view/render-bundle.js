@@ -26,7 +26,8 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
-import { sourceCargoIcon, sourceComposerIcon, sourceFileIcon, sourceNpmIcon, sourceSoldeerIcon } from './source-file-icon.js'
+import { sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
+import { LONG_LINE, TEXT_NODE_MAX, textNodes } from './source-text.js'
 import { bundleFileGithub } from './bundle-file-github.js'
 import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
@@ -619,9 +620,6 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
 const _bundleHighlightCache = new Map()
 const _bundleHighlightPending = new Set()
 
-// A package's icon in the Code slide, by its ecosystem.
-const packageIconFor = ecosystem => ecosystem === 'composer' ? sourceComposerIcon : ecosystem === 'cargo' ? sourceCargoIcon : ecosystem === 'soldeer' ? sourceSoldeerIcon : sourceNpmIcon
-
 // Copy glyph for the Code slide's copy-path button — same two-rect
 // shape and stroke weight as the finding card's copy action.
 // Wrap toggle for a source viewer's bar. Hidden until source-wrap.js finds
@@ -681,16 +679,11 @@ function _topSeverityOf(findings) {
   return findings[0]?.severity ?? null
 }
 
-// Plain text for the source viewer, as Chromium can show it. It paints
-// none of a run of text over 2^21 characters, so the text goes in as text
-// nodes of at most 2^20, one line still where it spans several. It lays out
-// nothing wider than 2^25px either: at the viewer's ch of about 7.5px, two
-// for a tab or a wide glyph, a line over 2^25 / 15 characters may not fit,
-// so it wraps whether the viewer wraps lines or not, in a block of its own
-// (see `.bundle-source-long-line`). Highlighted sources, 1 MiB at most, have
-// no line that long.
-const TEXT_NODE_MAX = 2 ** 20
-const LONG_LINE = Math.floor(2 ** 25 / 15)
+// Plain text for the source viewer, as Chromium can show it (see
+// source-text.js): text nodes of at most TEXT_NODE_MAX, one line still where
+// it spans several, and a line over LONG_LINE wrapped whether the viewer
+// wraps lines or not, in a block of its own (see `.bundle-source-long-line`).
+// Highlighted sources, 1 MiB at most, have no line that long.
 let _plainSource = { content: '', parts: '' }
 function plainSource(content) {
   if (content.length <= TEXT_NODE_MAX) return content
@@ -709,18 +702,6 @@ function plainSource(content) {
   parts.push(...textNodes(content.slice(plain)))
   _plainSource = { content, parts }
   return parts
-}
-
-// Text as nodes of at most TEXT_NODE_MAX characters, a surrogate pair in one.
-function textNodes(text) {
-  const nodes = []
-  for (let from = 0; from < text.length;) {
-    let to = Math.min(from + TEXT_NODE_MAX, text.length)
-    if (to < text.length && text.codePointAt(to - 1) > 0xffff) to--
-    nodes.push(text.slice(from, to))
-    from = to
-  }
-  return nodes
 }
 
 // Per-line rendering for the source viewer. Renders a sticky

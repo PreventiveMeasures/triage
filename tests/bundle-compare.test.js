@@ -7,9 +7,7 @@ mock.module('../client/index.js', { namedExports: { state: { bundles: [
   { integrity: 'base', name: 'Before' }, { integrity: 'other', name: 'After' },
 ] } } })
 mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails() {} } })
-let fileDialogProps
-mock.module('../ui/view/dialogs/bundle-file-dialog.js', { namedExports: { openBundleFileDialog(props) { fileDialogProps = props; return Promise.resolve() } } })
-mock.module('../ui/view/toast.js', { namedExports: { showToast() {} } })
+mock.module('../ui/view/bundle-compare-code.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
@@ -37,14 +35,16 @@ function compare() {
   return view
 }
 
-test('file previews receive the format from the displayed side of the comparison', () => {
+test('the summary row offers Overview and Code, Overview first, and a file row opens its diff in Code', () => {
   const view = compare()
-  view.details.bundle.formats.set('app.js', 'commonjs')
-  view._otherDetails.bundle.formats.set('app.js', 'commonjs-typescript')
-  view._openFile('app.js', 'added')
-  assert.equal(fileDialogProps.format, 'commonjs-typescript')
-  view._openFile('app.js', 'removed')
-  assert.equal(fileDialogProps.format, 'commonjs')
+  view._status = 'ready'
+  const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
+  assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false'])
+  assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
+  assert.match(renderText(view.render()), /class="bundle-compare-body"/u)
+  view._openFile('app.js')
+  assert.equal(view._mode, 'code')
+  assert.equal(view._codePath, 'app.js')
 })
 
 test('Differences renders resolution-only changes with before/after targets and a summary count', () => {

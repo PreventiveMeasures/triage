@@ -2620,11 +2620,13 @@ body.report-fullscreen {
    (keyword / string / …) and Y an optional sub-modifier; we target X
    only (the kind alone gives enough signal). Shared between the
    bundle source viewer modal (`.bundle-source-code`), the focus
-   view's inline Code panel (`.focus-code-source`), and the fenced
-   code blocks a finding description carries (`.code-block`). */
+   view's inline Code panel (`.focus-code-source`), the fenced
+   code blocks a finding description carries (`.code-block`), and
+   the Compare slide's diff (`.bundle-compare-diff-table`). */
 .bundle-source-code,
 .focus-code-source,
-.code-block {
+.code-block,
+.bundle-compare-diff-table {
   & .token.comment,
   & .token.prolog,
   & .token.cdata { color: var(--code-comment); font-style: italic; }

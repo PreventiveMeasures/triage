@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { applyChangeSet, parseDiff } from '@preventive/diff'
 import { bundleCompareFiles, bundleCompareScopes } from '../ui/view/bundle-compare-inputs.js'
-import { bundleFileDiff } from '../ui/view/bundle-file-diff.js'
+import { diffRows, lineDiff } from '../ui/view/bundle-compare-code-model.js'
 import { bundlePackageVersions } from '../ui/view/bundle-sources.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
@@ -53,20 +52,17 @@ test('dependency versions follow the selected tree, including multiple installed
   assert.deepEqual([...bundlePackageVersions(bundle, bundleCompareFiles(bundle, 'reason:run').keys()).get('dep')], ['1.0.0'])
   assert.equal(bundlePackageVersions(bundle, []).size, 0)
 })
-test('file popup diffs reconstruct the new contents, preserve whitespace, and classify colored changes', () => {
+test('Code view diffs list every line of both sides in order, whitespace included', () => {
   for (const [before, after] of [
     ['const x = 1;\n', 'const x = 2;\n'],
     ['a\nb', 'a\nb\n'],
     ['é\n  first\n', 'é\n first\n<script>alert(1)</script>\n'],
     ['', 'new\n'], ['removed\n', ''],
   ]) {
-    const lines = bundleFileDiff(before, after)
-    const text = lines.map(line => line.text).join('\n')
-    assert.equal(applyChangeSet(before, parseDiff(text)[0].blocks), after)
-    assert.ok(lines.some(line => ['add', 'del'].includes(line.kind)))
+    const model = lineDiff(before, after)
+    const rows = diffRows(model, new Map(Array.from({ length: model.blocks.length + 1 }, (_, run) => [run, { all: true }])))
+    assert.deepEqual(rows.filter(row => row.kind !== 'add').map(row => model.a[row.a]), model.a)
+    assert.deepEqual(rows.filter(row => row.kind !== 'del').map(row => model.b[row.b]), model.b)
+    assert.ok(rows.some(row => ['add', 'del'].includes(row.kind)))
   }
-})
-test('binary resources are not diffed as their base64 representation', () => {
-  assert.equal(bundleFileDiff({ format: 'base64', data: 'AA==' }, { format: 'base64', data: 'AQ==' }), null)
-  assert.equal(bundleFileDiff('text', { format: 'base64', data: 'AA==' }), null)
 })
