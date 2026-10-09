@@ -188,14 +188,19 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
       label.textContent = commit.slice(0, 7)
       reference.append(label)
       row.append(reference)
-      for (const tag of commitInfo?.tags ?? []) {
-        const chip = document.createElement('span')
-        chip.className = 'tooltip-tag'
-        chip.innerHTML = TAG_ICON_SVG
-        const name = document.createElement('span')
-        name.textContent = tag
-        chip.append(name)
-        row.append(chip)
+      if (commitInfo?.tags.length) {
+        const tags = document.createElement('span')
+        tags.className = 'tooltip-tags'
+        for (const tag of commitInfo.tags) {
+          const chip = document.createElement('span')
+          chip.className = 'tooltip-tag'
+          chip.innerHTML = TAG_ICON_SVG
+          const name = document.createElement('span')
+          name.textContent = tag
+          chip.append(name)
+          tags.append(chip)
+        }
+        row.append(tags)
       }
     }
     node.append(row)

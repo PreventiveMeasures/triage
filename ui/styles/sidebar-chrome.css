@@ -64,14 +64,22 @@
 }
 /* Half the row gap again between a repository and its commit. */
 #styled-tooltip .tooltip-repo > span + .tooltip-commit { margin-left: .2rem; }
-/* The tags that point to the commit follow it on its line. */
+/* The tags that point to the commit follow it on its line, wrapping in the
+   width the repository and commit leave (a monorepo can tag many packages). */
+#styled-tooltip .tooltip-tags {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: wrap;
+  gap: .2rem .6rem;
+  min-width: min(100%, 8rem);
+}
+/* A tag longer than its box breaks rather than running past the tooltip. */
 #styled-tooltip .tooltip-tag {
   display: inline-flex;
   align-items: baseline;
-  flex-shrink: 0;
+  max-width: 100%;
   gap: .3rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: nowrap;
 }
 #styled-tooltip .tooltip-commit-details {
   display: flex;

@@ -9,9 +9,12 @@ function catalogTags(commitInfo, hash) {
 
 // The `data-tooltip-commit-info` value (see tooltip.js) for `hash`, from the
 // `commitInfo` a managed catalog sends with a bundle, when it is for that
-// commit: its tags, and the message's first line, author and date.
-export function bundleCommitTooltip(commitInfo, hash) {
-  const tags = catalogTags(commitInfo, hash)
+// commit: the message's first line, author and date, and its tags when the
+// tooltip names `repository`, the one they were cached for. A commit is the
+// same in every repository that has it (a fork's network); its tags are not.
+export function bundleCommitTooltip(commitInfo, hash, repository = null) {
+  const cachedFor = typeof commitInfo?.github === 'string' && typeof repository === 'string' && repository.toLowerCase() === commitInfo.github.toLowerCase()
+  const tags = cachedFor ? catalogTags(commitInfo, hash) : []
   const details = hash && commitInfo?.sha === hash && typeof commitInfo.details?.message === 'string' ? commitInfo.details : null
   if (!details && tags.length === 0) return undefined
   return JSON.stringify({ tags, ...(details ? { title: details.message.split('\n').map(line => line.trim()).find(Boolean) ?? '',

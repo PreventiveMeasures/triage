@@ -1596,7 +1596,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
         data-tooltip=${github.path}
         data-tooltip-repo=${github.github}
         data-tooltip-commit=${github.commit ?? nothing}
-        data-tooltip-commit-info=${bundleCommitTooltip(entry?.commitInfo, github.commit) ?? nothing}
+        data-tooltip-commit-info=${bundleCommitTooltip(entry?.commitInfo, github.commit, github.github) ?? nothing}
         data-tooltip-package=${github.package?.name ?? nothing}
         data-tooltip-ecosystem=${github.package?.ecosystem ?? nothing}
         data-tooltip-version=${github.package?.version ?? nothing}

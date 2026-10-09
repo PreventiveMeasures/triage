@@ -74,11 +74,18 @@ test('a managed catalog adds the cached tags of the recorded commit after it, li
 test('commit tooltips carry only what they show of the catalog details, for their own commit', () => {
   const sha = 'a'.repeat(40)
   const details = { message: '\n  Fix the parser  \n\n'.concat('Body '.repeat(1000)), authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2 }
-  assert.deepEqual(JSON.parse(bundleCommitTooltip({ sha, tags: ['v1', ''], details }, sha)),
+  const info = { sha, github: 'Org/Repo', tags: ['v1', ''], details }
+  assert.deepEqual(JSON.parse(bundleCommitTooltip(info, sha, 'org/repo')),
     { tags: ['v1'], title: 'Fix the parser', authorName: 'Alice', authorLogin: 'alice', date: 2 })
-  assert.deepEqual(JSON.parse(bundleCommitTooltip({ sha, tags: ['v1'], details: null }, sha)), { tags: ['v1'] })
-  assert.equal(JSON.parse(bundleCommitTooltip({ sha, tags: [], details: { ...details, committedAt: null } }, sha)).date, 1)
-  for (const [info, hash] of [[{ sha, tags: ['v1'], details }, 'b'.repeat(40)], [{ sha, tags: [], details: null }, sha], [null, sha], [{ sha, tags: ['v1'] }, undefined]]) {
-    assert.equal(bundleCommitTooltip(info, hash), undefined)
+  assert.deepEqual(JSON.parse(bundleCommitTooltip({ ...info, details: null }, sha, 'Org/Repo')), { tags: ['v1'] })
+  assert.equal(JSON.parse(bundleCommitTooltip({ ...info, tags: [], details: { ...details, committedAt: null } }, sha)).date, 1)
+  for (const repository of [undefined, 'upstream/repo']) {
+    assert.deepEqual(JSON.parse(bundleCommitTooltip(info, sha, repository)).tags, [],
+      'tags show only beside the repository they were cached for; the commit details are the same in any')
+  }
+  assert.equal(bundleCommitTooltip({ ...info, details: null }, sha, 'upstream/repo'), undefined)
+  assert.equal(bundleCommitTooltip({ ...info, github: undefined, details: null }, sha, 'org/repo'), undefined)
+  for (const [commitInfo, hash] of [[info, 'b'.repeat(40)], [{ sha, tags: [], details: null }, sha], [null, sha], [{ ...info, details: null }, undefined]]) {
+    assert.equal(bundleCommitTooltip(commitInfo, hash, 'org/repo'), undefined)
   }
 })

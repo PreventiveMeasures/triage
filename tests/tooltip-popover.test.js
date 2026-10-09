@@ -83,16 +83,18 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
       assert.equal(node.children[0].children.length, 1, 'missing or malformed commits have no placeholder')
     }
     const sha = 'a'.repeat(40)
-    const info = { sha, tags: ['v1.0.0', '<img onerror=alert(1)>'],
+    const info = { sha, github: 'Org/Repo', tags: ['v1.0.0', '<img onerror=alert(1)>'],
       details: { message: '\n  Fix the parser  \n\nBody', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: Date.UTC(2026, 9, 1, 12) } }
     assert.equal(bundleCommitTooltip(info, 'b'.repeat(40)), undefined, 'catalog info only describes its own commit')
     assert.equal(bundleCommitTooltip({ sha, tags: [], details: null }, sha), undefined)
     assert.equal(bundleCommitTooltip(null, sha), undefined)
     target.dataset.tooltipCommit = sha
-    target.dataset.tooltipCommitInfo = bundleCommitTooltip(info, sha)
+    target.dataset.tooltipCommitInfo = bundleCommitTooltip(info, sha, 'org/repo')
     showTooltip(target)
-    assert.deepEqual(node.children[0].children.slice(2).map(tag => [tag.className, tag.innerHTML, tag.children[0].textContent]),
-      [['tooltip-tag', TAG_ICON_SVG, 'v1.0.0'], ['tooltip-tag', TAG_ICON_SVG, '<img onerror=alert(1)>']], 'tags follow the commit on its line as literal text')
+    const tags = node.children[0].children[2]
+    assert.equal(tags.className, 'tooltip-tags', 'tags follow the commit on its line, in a box of their own')
+    assert.deepEqual(tags.children.map(tag => [tag.className, tag.innerHTML, tag.children[0].textContent]),
+      [['tooltip-tag', TAG_ICON_SVG, 'v1.0.0'], ['tooltip-tag', TAG_ICON_SVG, '<img onerror=alert(1)>']], 'tag names stay literal text')
     const details = node.children[1]
     assert.equal(details.className, 'tooltip-commit-details')
     assert.equal(details.children[0].textContent, 'Fix the parser', 'the message shows its first line')

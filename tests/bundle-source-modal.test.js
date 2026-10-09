@@ -491,6 +491,25 @@ test('Code own files in a managed bundle without a stamp link to its stored repo
   assert.ok(!header({ name: 'local.stasis', integrity: 'sha512-local-github', ...stored }).includes('bundle-code-github-link'), 'only managed bundles have one')
 })
 
+test('the Code file link tooltip shows cached tags only beside the repository they were cached for', () => {
+  const commit = 'c'.repeat(40)
+  const bundle = Bundle.parse(new Bundle({ repo: { github: 'upstream/app', commit },
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/index.js': 'app' } }]]) }).serialize())
+  const details = { message: 'Release', authorName: 'Alice', authorLogin: null, authoredAt: 1, committedAt: 2 }
+  const tooltip = github => {
+    const entry = { name: 'tagged.stasis', integrity: `sha512-tagged-${github}`, managedId: 'b1', repoId: 7, repoFullName: github, repoDirectory: '',
+      commitInfo: { sha: commit, github, tags: ['v1.0.0'], details } }
+    Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry], bundleSourceFile: 'src/index.js',
+      bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+    const header = renderText(renderBundlesList([entry])).match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
+    assert.ok(header.includes('data-tooltip-repo=upstream/app'), 'the link follows the stamp')
+    return JSON.parse(header.match(/data-tooltip-commit-info=(\{.*?\})\s/su)[1])
+  }
+  assert.deepEqual(tooltip('upstream/app').tags, ['v1.0.0'])
+  assert.deepEqual(tooltip('fork/app'), { tags: [], title: 'Release', authorName: 'Alice', authorLogin: null, date: 2 },
+    'a fork\'s tags never show beside the upstream link; the commit details do')
+})
+
 test('bundle Overview displays origin links from full contents and cached managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-origin' }
   const commit = '0123456789abcdef'.repeat(3).slice(0, 40)
@@ -539,7 +558,8 @@ test('a managed bundle Overview puts its cached tags after the commit and gives 
   const many = githubRow({ ...commitInfo, tags: Array.from({ length: 30 }, (_, i) => `pkg-${i}@1.0.0`) })
   assert.equal(many.match(/<span class="bundle-origin-tags">/gu).length, 1, 'many tags share one wrapping box')
   assert.equal(many.match(/bundle-tag-link/gu).length, 30)
-  assert.ok(tagged.includes(`data-tooltip=${commit} data-tooltip-commit-info=${JSON.stringify({ tags: ['v1.0.0'], title: 'Release', authorName: 'Alice', authorLogin: null, date: 2 })}`))
+  assert.ok(tagged.includes(`data-tooltip=${commit} data-tooltip-commit-info=${JSON.stringify({ tags: [], title: 'Release', authorName: 'Alice', authorLogin: null, date: 2 })}`),
+    'the commit link tooltip shows the details; its row shows the tags')
   for (const info of [null, { ...commitInfo, sha: 'd'.repeat(40) }]) {
     const plain = githubRow(info)
     assert.doesNotMatch(plain, /bundle-tag-link|data-tooltip-commit-info=\S/u, 'only the recorded commit takes catalog details')

@@ -318,7 +318,7 @@ function teamBundleTemplate(team, bundle) {
   return html`<li class=${`file-item indented team-bundle-item${bundle.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
     <button type="button" class="file-name" aria-label=${bundle.visible === false ? `${bundle.filename} (hidden from teams)` : nothing} data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}
       data-tooltip-bundle=${bundle.kind || nothing} data-tooltip-built=${bundle.provenance === 'build' ? 'true' : nothing} data-tooltip-stats=${managedBundleStats(bundle) || nothing} data-tooltip-commit=${bundle.summary?.commit || nothing}
-      data-tooltip-commit-info=${bundleCommitTooltip(bundle.commitInfo, bundle.summary?.commit) ?? nothing} data-tooltip-placement="right-start">
+      data-tooltip-commit-info=${bundleCommitTooltip(bundle.commitInfo, bundle.summary?.commit, bundle.repoFullName) ?? nothing} data-tooltip-placement="right-start">
       ${BUNDLE_ICON}<span class="file-label">${bundle.filename}</span>
     </button>
   </li>`
