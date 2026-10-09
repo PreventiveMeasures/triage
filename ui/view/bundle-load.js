@@ -139,6 +139,7 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.bundleSourceFile = null
   state.bundleCodeHistory = null
   state.bundleCodeFileRequest = carried ? { bundle: integrity, path: carried } : null
+  state.bundleCompare = null
   state.bundleSourceFindingIdx = null
   state.bundleCodeSearchQuery = ''
   state.bundleCodeSearchMode = 'files'
@@ -159,6 +160,7 @@ export function selectBundleTab(tab, { preserveSource = false } = {}) {
   if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab, preserveSource ? state.bundleSourceFile : null)) beginViewNavigation()
   state.bundleDetailsTab = tab
   state.bundleCodeFileRequest = null
+  state.bundleCompare = null
   if (!preserveSource) {
     state.bundleSourceFile = null
     state.bundleCodeHistory = null

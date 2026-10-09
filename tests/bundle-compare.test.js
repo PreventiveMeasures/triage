@@ -54,7 +54,7 @@ test('the summary row offers Overview and Code, Overview first, and a file row o
 test('Differences renders resolution-only changes as a collapsed File | Import | Before | After | Conditions table and a summary count', () => {
   const view = compare()
   const collapsed = renderText(view._renderDiff())
-  assert.match(collapsed, /<summary class="bundle-compare-section-head">Import resolutions <span class="bundle-compare-section-count">1/u)
+  assert.match(collapsed, /<summary class="bundle-compare-section-head"[^]*?>Import resolutions <span class="bundle-compare-section-count">1/u)
   assert.doesNotMatch(collapsed, /<table/u, 'collapsed by default')
   view._openSections = new Set(['resolutions'])
   const markup = renderText(view._renderDiff())
@@ -160,10 +160,11 @@ test('the Files section is collapsed until opened, then lists Removed | Added | 
   view._otherDetails.bundle.modules.get('.').files['a.js'] = 'changed'
   view._diffKey = null
   const collapsed = renderText(view._renderDiff())
-  assert.match(collapsed, /<summary class="bundle-compare-section-head">Files <span class="bundle-compare-section-count">1/u)
-  assert.doesNotMatch(collapsed, /bundle-compare-cols--files/u)
+  assert.match(collapsed, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
+  const filesPart = markup => markup.slice(markup.indexOf('>Files <span'))
+  assert.doesNotMatch(filesPart(collapsed), /bundle-compare-cols/u)
   view._openSections = new Set(['files'])
-  assert.match(renderText(view._renderDiff()), /bundle-compare-cols--files[^]*bundle-compare-changed/u)
+  assert.match(filesPart(renderText(view._renderDiff())), /bundle-compare-cols[^]*bundle-compare-changed/u)
 })
 
 test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {
@@ -250,4 +251,90 @@ test('a package installed under an npm alias keeps one row, its versions joined 
   assert.deepEqual(packageRows.added, [])
   assert.deepEqual(packageRows.changed, [{ pkg: 'alias', baseBytes: 3, otherBytes: 8, delta: 5,
     baseVersions: ['1.0.0'], otherVersions: ['1.1.0'], direction: 'up' }])
+})
+
+test('a request picks the bundle and mode to compare with; the user\'s picks and mode switches are reported', () => {
+  const view = new Compare()
+  const reported = []
+  view.addEventListener('bundle-compare-change', event => reported.push(event.detail))
+  view.integrity = 'base'
+  view.details = details('base', 'a.js')
+  view.request = { bundle: 'base', target: 'other', mode: 'code' }
+  const before = loads
+  view.willUpdate(new Map([['integrity', undefined], ['details', undefined], ['request', undefined]]))
+  assert.equal(view._targetIntegrity, 'other')
+  assert.equal(view._mode, 'code')
+  assert.equal(view._status, 'loading')
+  assert.equal(loads, before + 1)
+  view.request = { ...view.request }
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(loads, before + 1, 'the bundle already compared with is not read again')
+  view.request = { bundle: 'elsewhere', target: 'base', mode: 'overview' }
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(view._targetIntegrity, 'other', 'another bundle\'s request is not this one\'s')
+  assert.deepEqual(reported, [], 'what was asked for is not reported back')
+  view._openFile('a.js')
+  view._pick(null)
+  assert.deepEqual(reported, [{ base: 'base', target: 'other', mode: 'code' }, { base: 'base', target: null, mode: 'code' }])
+})
+
+test('a withdrawn request — the same bundle reopened on a bare Compare route — clears the comparison', () => {
+  const view = new Compare()
+  view.integrity = 'base'
+  view.details = details('base', 'a.js')
+  view.request = { bundle: 'base', target: 'other', mode: 'code' }
+  view.willUpdate(new Map([['integrity', undefined], ['details', undefined], ['request', undefined]]))
+  assert.equal(view._targetIntegrity, 'other')
+  const previous = view.request
+  view.request = null
+  view.willUpdate(new Map([['request', previous]]))
+  assert.equal(view._targetIntegrity, null)
+  assert.equal(view._mode, 'overview')
+  assert.equal(view._status, 'idle')
+  // A comparison picked with no request (local bundles) is left alone.
+  view._choose('other')
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(view._targetIntegrity, 'other')
+})
+
+test('a section heading opens and closes its section through the render, contents with it', () => {
+  const view = compare()
+  const summaryClick = () => view._collapsible('files', 'Files', 1, () => 'rows').values.find(value => typeof value === 'function' && /preventDefault/u.test(String(value)))
+  let prevented = 0
+  summaryClick()({ preventDefault() { prevented++ } })
+  assert.equal(prevented, 1, 'the browser does not open it a frame ahead of its contents')
+  assert.ok(view._openSections.has('files'))
+  assert.match(renderText(view._collapsible('files', 'Files', 1, () => 'rows')), /rows/u)
+  summaryClick()({ preventDefault() { prevented++ } })
+  assert.ok(!view._openSections.has('files'))
+  view._setSection('files', true)
+  assert.ok(view._openSections.has('files'), 'a toggle the browser makes on its own still lands')
+})
+
+test('no "Changes from" caption; the root the file rows leave out rides on the Files heading', () => {
+  const side = (integrity, code) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/app.js': code, 'src/util.js': code } }]]),
+  }) })
+  const view = compare()
+  view.details = side('base', 'one')
+  view._otherDetails = side('other', 'one, two')
+  view._diffKey = null
+  const markup = renderText(view._renderDiff())
+  assert.doesNotMatch(markup, /Changes from/u)
+  assert.match(markup, /Files <span class="bundle-compare-section-count">2<\/span><span class="bundle-compare-section-note" data-tooltip-truncated data-tooltip=src\/>src\/<\/span><\/summary>/u)
+})
+
+test('Packages and Files share their lanes: the kinds either lists, so their columns line up', () => {
+  const side = (integrity, files) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files }]]),
+  }) })
+  const view = compare()
+  view.details = side('base', { 'src/app.js': 'one', 'src/old.js': 'old' })
+  view._otherDetails = side('other', { 'src/app.js': 'one, two' })
+  view._diffKey = null
+  view._openSections = new Set(['files'])
+  const markup = renderText(view._renderDiff())
+  assert.deepEqual(view._diffFor().packageRows.removed, [], 'no package was removed, only a file')
+  assert.deepEqual([...markup.matchAll(/class="bundle-compare-cols" data-lanes=(\d)/gu)].map(m => m[1]), ['2', '2'],
+    'Packages keeps an empty Removed lane, as Files lists one')
 })

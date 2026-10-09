@@ -2710,7 +2710,11 @@ report.addEventListener('bundle-swap', (e) => {
   const held = handOffBundles(e.detail.bundles ?? [])
   const release = () => { setTimeout(() => releaseHandoff(held)) }
   if (entry.managedId) {
-    void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare')).finally(release)
+    // The link names the old base as the bundle compared with, in the mode
+    // Compare was in.
+    const base = state.bundles.find(b => b.integrity === state.selectedBundle)
+    const compare = base?.managedId ? { compareId: base.managedId, ...(e.detail.mode === 'code' ? { compareMode: 'code' } : {}) } : null
+    void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare', compare, state.bundles)).finally(release)
     return
   }
   selectBundle(integrity, 'compare')
@@ -2718,6 +2722,15 @@ report.addEventListener('bundle-swap', (e) => {
   render()
   renderSidebar()
   void openBundle(integrity).finally(release)
+})
+// `<bundle-compare>` picked a bundle, cleared it, or switched mode: a
+// managed bundle's URL names the bundle compared with and the mode (see
+// managedCompareLocation), replaced in place as Code's open file is.
+report.addEventListener('bundle-compare-change', (e) => {
+  const { base, target, mode } = e.detail ?? {}
+  if (!isManagedUiMode() || !base || base !== state.selectedBundle || state.bundleDetailsTab !== 'compare') return
+  state.bundleCompare = target ? { bundle: base, target, mode: mode === 'code' ? 'code' : 'overview' } : null
+  persistLastBundle(base, 'compare')
 })
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
 // "packages"|"repositories") both dispatch this on native change.

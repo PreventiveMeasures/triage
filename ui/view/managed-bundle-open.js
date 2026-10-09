@@ -2,12 +2,13 @@ import { isManagedUiMode, state } from '#client/index.js'
 import { fetchBundleMetadata } from './client-managed.js'
 import { parseBundleMetadata } from './bundle-metadata.js'
 import { selectBundle, takeHandedOffBundle } from './bundle-load.js'
+import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { render } from './render.js'
 import { showToast } from './toast.js'
 import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
 
-export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, file, line, endLine }, entries, isCurrent, renderSidebar) {
+export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, file, line, endLine, compareId, compareMode }, entries, isCurrent, renderSidebar) {
   const generation = currentViewGeneration()
   const listed = entries.find(bundle => bundle.managedId === id)
   const handed = listed ? takeHandedOffBundle(listed.integrity, details => details.managedId === id) : null
@@ -31,6 +32,10 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, 
     if (tab === 'code' && file != null) {
       state.bundleCodeFileRequest = { bundle: entry.integrity, file, ...(line == null ? {} : { line }), ...(endLine == null ? {} : { endLine }) }
     }
+    // A Compare link's bundle, when Compare would offer it.
+    const compared = tab === 'compare' && compareId != null
+      ? bundleComparisonCandidates(entries, entry.integrity).find(bundle => bundle.managedId === compareId) : null
+    if (compared) state.bundleCompare = { bundle: entry.integrity, target: compared.integrity, mode: compareMode === 'code' ? 'code' : 'overview' }
     state.bundleDetails = details
     state.currentManagedTeam = teamId
     state.currentManagedReport = null

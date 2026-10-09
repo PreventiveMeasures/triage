@@ -183,44 +183,31 @@
   letter-spacing: .05em;
   color: var(--muted);
 }
-/* Added | Removed | Changed are flex columns that wrap by their own
-   minimums, so the row only adds a column when there's genuine room for
-   it. Packages (short names): Added/Removed want >=400px, Changed wants
-   >=500px — all three share a row once 400+400+500 (+ gaps) fits; below
-   that Changed wraps full-width under a 400+400 Added|Removed row; below
-   that everything stacks. Files (long paths) use wider minimums (see
-   the --files override). flex-grow fills the row, min-width sets the
-   wrap point and never overflows a narrow pane; empty groups drop out
-   with no leftover gap. Self-measuring off the container's own width,
-   so it tracks the slide pane regardless of the sidebar. */
+/* Removed | Added | Changed lanes, shared by Packages and Files so their
+   columns line up (`--compare-lanes`, `data-lanes`: the kinds either one
+   lists; each card's `--compare-lane`). Lanes sit side by side once each
+   has ~400px (Changed ~500px) of the pane; three lanes in between keep
+   Removed | Added on a row with Changed under them; below that they stack. */
 .bundle-compare-cols {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: .6rem 1.5rem;
-  align-items: flex-start;
+  align-items: start;
 }
-.bundle-compare-cols > .bundle-compare-group {
-  flex: 1 1 400px;
-  min-width: min(400px, 100%);
+@container (min-width: 830px) {
+  .bundle-compare-cols[data-lanes='2'] { grid-template-columns: var(--compare-lanes); }
+  .bundle-compare-cols[data-lanes='3'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bundle-compare-cols:is([data-lanes='2'], [data-lanes='3']) > .bundle-compare-group { grid-column: var(--compare-lane); }
+  .bundle-compare-cols[data-lanes='3'] > .bundle-compare-changed { grid-column: 1 / -1; }
 }
-.bundle-compare-cols > .bundle-compare-changed {
-  flex: 1 1 500px;
-  min-width: min(500px, 100%);
-}
-/* Files sit three abreast where there is room, paths ellipsized: Changed
-   takes the most. Each lists every file, scrolling within its card. */
-.bundle-compare-cols--files > .bundle-compare-group {
-  flex: 1 1 360px;
-  min-width: min(360px, 100%);
-}
-.bundle-compare-cols--files > .bundle-compare-changed {
-  flex: 1 1 440px;
-  min-width: min(440px, 100%);
+@container (min-width: 1350px) {
+  .bundle-compare-cols[data-lanes='3'] { grid-template-columns: var(--compare-lanes); }
+  .bundle-compare-cols[data-lanes='3'] > .bundle-compare-changed { grid-column: var(--compare-lane); }
 }
 /* Every row one fixed line high, and each list stops halfway through a
    row, so the cut-off row says the list scrolls. */
 .bundle-compare-rows--scroll {
-  --compare-row: 1.5rem;
+  --compare-row: 1.375rem;
 
   max-height: calc(15.5 * var(--compare-row));
   overflow-y: auto;
@@ -232,10 +219,10 @@
   & .bundle-compare-row { height: var(--compare-row); }
 }
 /* Packages take the pane but for what sits around their lists — the
-   caption, the section and card heads, and the Files / Import resolutions
-   headings below, kept in view — still stopping halfway through a row. */
+   section and card heads, and the Files / Import resolutions headings
+   below, kept in view — still stopping halfway through a row. */
 .bundle-compare-rows--fill {
-  max-height: max(5.5 * var(--compare-row), round(down, 100cqh - 10rem, var(--compare-row)) - var(--compare-row) / 2);
+  max-height: max(5.5 * var(--compare-row), round(down, 100cqh - 8.25rem, var(--compare-row)) - var(--compare-row) / 2);
 }
 /* Sections that open on demand (Files, Import resolutions), the heading
    the disclosure. */
@@ -244,6 +231,7 @@
   align-items: center;
   gap: .35rem;
   width: fit-content;
+  max-width: 100%;
   list-style: none;
   cursor: default;
   user-select: none;
@@ -269,6 +257,20 @@
   text-transform: none;
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
+}
+/* The shared root the file rows leave out, after the Files count. */
+.bundle-compare-section-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+
+  &::before { content: '· '; }
 }
 
 /* Each group sits on a very faint, kind-tinted card so Added | Removed
@@ -319,7 +321,7 @@
   align-items: center;
   gap: .5rem;
   width: 100%;
-  padding: .2rem .35rem;
+  padding: .15rem .2rem;
   font-size: .72rem;
   text-align: left;
   color: var(--text);
