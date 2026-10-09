@@ -401,6 +401,9 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // mutable context while keeping the original added_by/added_at; deselectRepo
   // resolves true iff a row was removed.
   selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
+  // Record the visibility of a repo selected before it was recorded, unless
+  // it was renamed or recorded since; a private or internal one becomes private.
+  recordRepoVisibility(repo: { repoId: number; fullName: string }, visibility: NonNullable<SelectedRepo['visibility']>): Promise<boolean>
   cacheRepoDefaultBranch(repo: SelectedRepo, branch: string | null): Promise<boolean>
   connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean>
   deselectRepo(repoId: number): Promise<boolean>
@@ -658,6 +661,8 @@ function prepareStatements(db: ManagedSql) {
       WHERE repo_id = ? AND full_name = ? AND added_at = ? AND installation_id IS NULL
         AND EXISTS (SELECT 1 FROM managed_session s JOIN managed_user u ON u.id = s.user_id
           WHERE s.id = ? AND s.expires_at > ? AND u.role = 'admin')`),
+    recordRepoVisibilityStmt: db.prepare(`UPDATE managed_selected_repo SET visibility = ?, is_private = CASE WHEN ? = 1 THEN 1 ELSE is_private END
+      WHERE repo_id = ? AND full_name = ? AND visibility IS NULL`),
     cacheRepoDefaultBranchStmt: db.prepare(`UPDATE managed_selected_repo SET cached_default_branch = ?
       WHERE repo_id = ? AND full_name = ? AND added_at = ? AND active = 1`),
     deleteRepoStmt: db.prepare(`DELETE FROM managed_selected_repo WHERE repo_id = ?`),
@@ -1033,6 +1038,9 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
         repo.repoId, repo.fullName, repo.private || repo.visibility === 'internal' ? 1 : 0, repo.visibility ?? null, repo.installationId,
         repo.defaultBranch, repo.htmlUrl, repo.addedBy, now, now,
       )
+    },
+    async recordRepoVisibility(repo: { repoId: number; fullName: string }, visibility: NonNullable<SelectedRepo['visibility']>): Promise<boolean> {
+      return Number((await stmts.recordRepoVisibilityStmt.run(visibility, visibility === 'public' ? 0 : 1, repo.repoId, repo.fullName)).changes) > 0
     },
     async cacheRepoDefaultBranch(repo: SelectedRepo, branch: string | null): Promise<boolean> {
       return Number((await stmts.cacheRepoDefaultBranchStmt.run(branch, repo.repoId, repo.fullName, repo.addedAt)).changes) > 0

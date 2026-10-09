@@ -284,7 +284,7 @@ export async function listInstalledRepos(config: ManagedConfig, fetchImpl: typeo
 
 // Bound fan-out while keeping independent installations/permission checks off
 // one long serial critical path. Preserve input order for deterministic merges.
-async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>): Promise<U[]> {
+export async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>): Promise<U[]> {
   const results: U[] = []
   let next = 0
   await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
@@ -349,6 +349,19 @@ export async function repoAccessToken(config: ManagedConfig, installationId: num
   const { githubAppId, githubAppPrivateKey } = config
   if (installationId == null || githubAppId == null || githubAppPrivateKey == null) return null
   return await installationAccessToken(githubAppId, githubAppPrivateKey, installationId, fetchImpl)
+}
+
+// GitHub's visibility of a repository reached through an App installation, read
+// with that installation's token: null where the App has no token, GitHub names
+// none, or the id no longer names that repository.
+export async function installedRepositoryVisibility(config: ManagedConfig, repo: { repoId: number; fullName: string; installationId: number }, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo['visibility']> {
+  const token = await repoAccessToken(config, repo.installationId, fetchImpl)
+  if (!token) return null
+  const path = repo.fullName.split('/').map(encodeURIComponent).join('/')
+  const body = await githubJson(`${GITHUB_API}/repos/${path}`, token, fetchImpl) as { id?: unknown; private?: unknown; visibility?: unknown } | null
+  if (body?.id !== repo.repoId) return null
+  if (body.visibility === 'public' || body.visibility === 'private' || body.visibility === 'internal') return body.visibility
+  return body.private === true ? 'private' : null
 }
 
 // ── merged listing ──

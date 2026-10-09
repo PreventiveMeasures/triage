@@ -90,16 +90,21 @@ class ManagedShareDialog extends AppDialog {
     </dialog>`
   }
 }
-// The private repositories a link would open to anyone, named up to a few.
-// Internal ones are private too, but named as internal.
+// The repositories a link would open to anyone although they aren't public,
+// named up to a few. Internal ones are private too, but named as internal; ones
+// GitHub couldn't be asked about (no visibility) may not be public.
 const PRIVATE_NAMED = 5
 function privateWarning(repositories) {
   if (repositories.length === 0) return nothing
-  const internal = repositories.filter(repo => repo.internal).length
-  const mixed = internal > 0 && internal < repositories.length
-  const kind = internal === 0 ? 'private' : mixed ? 'private or internal' : 'internal'
-  const count = repositories.length === 1 ? `a${kind === 'internal' ? 'n' : ''} ${kind} repository` : `${repositories.length} ${kind} repositories`
-  const named = repositories.slice(0, PRIVATE_NAMED).map(repo => mixed && repo.internal ? `${repo.fullName} (internal)` : repo.fullName).join(', ')
+  const internal = repositories.filter(repo => repo.visibility === 'internal').length
+  const unknown = repositories.some(repo => repo.visibility == null)
+  const mixed = unknown || (internal > 0 && internal < repositories.length)
+  const kind = unknown ? null : internal === 0 ? 'private' : mixed ? 'private or internal' : 'internal'
+  const count = kind == null
+    ? `${repositories.length === 1 ? 'a repository that' : `${repositories.length} repositories that`} may not be public`
+    : repositories.length === 1 ? `a${kind === 'internal' ? 'n' : ''} ${kind} repository` : `${repositories.length} ${kind} repositories`
+  const label = repo => repo.visibility == null ? ' (visibility unknown)' : mixed && repo.visibility === 'internal' ? ' (internal)' : ''
+  const named = repositories.slice(0, PRIVATE_NAMED).map(repo => `${repo.fullName}${label(repo)}`).join(', ')
   const more = repositories.length - PRIVATE_NAMED
   return html`<p class="share-private">This workspace includes ${count}: ${named}${more > 0 ? ` and ${more} more` : ''}. Anyone with a public link can read their published reports and source files.</p>`
 }

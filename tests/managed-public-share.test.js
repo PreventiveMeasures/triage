@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { generateKeyPairSync } from 'node:crypto'
 import { Readable, Writable } from 'node:stream'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
@@ -94,7 +95,7 @@ test('link listings name the private repositories in the team\'s scope for its m
   const h = await fixture(t)
   const listing = (team, role = 'manage') => h.request(`/api/teams/${team}/share`, { role })
   const repo = (repoId, fields) => h.db.selectRepo({ repoId, fullName: `org/repo${repoId}`, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId, ...fields }, Date.now())
-  const repo1 = { fullName: 'org/repo1', internal: false }, repo2 = { fullName: 'org/repo2', internal: false }
+  const repo1 = { fullName: 'org/repo1', visibility: 'private' }, repo2 = { fullName: 'org/repo2', visibility: 'private' }
   assert.deepEqual((await listing('team')).body, { shares: [], privateRepositories: [repo1] }, 'a directory scope names its whole repository')
   assert.deepEqual((await listing('other', 'admin')).body.privateRepositories, [repo2])
   await h.db.setTeamRepo('team', 2, '')
@@ -102,15 +103,40 @@ test('link listings name the private repositories in the team\'s scope for its m
   // GitHub calls an internal repository not private; it is stored as private all the same.
   await repo(2, { private: false, visibility: 'internal' })
   assert.equal((await h.db.listAllRepos()).find(entry => entry.repoId === 2).private, true)
-  assert.deepEqual((await listing('team')).body.privateRepositories, [repo1, { ...repo2, internal: true }])
+  assert.deepEqual((await listing('team')).body.privateRepositories, [repo1, { ...repo2, visibility: 'internal' }])
   await repo(1, { private: false, visibility: 'public' })
-  assert.deepEqual((await listing('team')).body.privateRepositories, [{ ...repo2, internal: true }])
+  assert.deepEqual((await listing('team')).body.privateRepositories, [{ ...repo2, visibility: 'internal' }])
   assert.deepEqual((await listing('whole')).body.privateRepositories, [])
   for (const role of ['triage', 'view', 'none', 'outsider']) {
     const response = await listing('other', role)
     assert.notEqual(response.status, 200, role)
     assert.equal(response.body.privateRepositories, undefined, role)
   }
+})
+
+test('link listings ask GitHub once for repositories selected before visibility was recorded', async t => {
+  const h = await fixture(t)
+  Object.assign(h.config, { githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) })
+  // Selected through the App before visibility was recorded: GitHub's private flag alone.
+  for (const repoId of [1, 2]) await h.db.selectRepo({ repoId, fullName: `org/repo${repoId}`, private: false, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId }, Date.now())
+  await h.db.setTeamRepo('team', 2, '')
+  const answers = { 1: [{ id: 1, private: false, visibility: 'internal' }], 2: [null, { id: 2, private: false, visibility: 'public' }] }, requests = []
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url).pathname
+    if (path === '/app/installations/7/access_tokens') return Response.json({ token: 'installation', expires_at: new Date(Date.now() + 3600000).toISOString() })
+    requests.push(path)
+    const repoAnswers = answers[path.at(-1)]
+    const answer = repoAnswers.length > 1 ? repoAnswers.shift() : repoAnswers[0]
+    return answer ? Response.json(answer) : new Response('unavailable', { status: 503 })
+  })
+  const listing = async () => (await h.request('/api/teams/team/share', { role: 'manage' })).body.privateRepositories
+  assert.deepEqual(await listing(), [{ fullName: 'org/repo1', visibility: 'internal' }, { fullName: 'org/repo2', visibility: null }],
+    'an internal repository is recorded, and one GitHub could not answer for is named as unchecked')
+  assert.deepEqual((await h.db.listAllRepos()).map(repo => [repo.repoId, repo.private, repo.visibility]), [[1, true, 'internal'], [2, false, null]])
+  assert.deepEqual(await listing(), [{ fullName: 'org/repo1', visibility: 'internal' }], 'the unchecked one is asked again, and is public')
+  assert.deepEqual(requests, ['/repos/org/repo1', '/repos/org/repo2', '/repos/org/repo2'], 'a recorded visibility is not asked for again')
+  assert.deepEqual(await listing(), [{ fullName: 'org/repo1', visibility: 'internal' }])
+  assert.equal(requests.length, 3)
 })
 
 test('public sharing is opt-in, requires team management and CSRF; the token is not a login session', async t => {

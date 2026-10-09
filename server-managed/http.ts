@@ -83,7 +83,7 @@ import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
-import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
+import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, installedRepositoryVisibility, mapGithubRequests, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
@@ -2298,6 +2298,18 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true })
 }
 
+// Ask GitHub once for the visibility of the team's repositories selected before
+// it was recorded, so an internal one is warned about and a public one isn't.
+// One GitHub can't answer for stays unrecorded, warned about as unchecked.
+async function recordRepositoryVisibility(deps: ManagedHttpDeps, sessionId: string, now: number, teamId: string): Promise<void> {
+  await mapGithubRequests(await deps.db.listWorkspaceUnrecordedRepositories(sessionId, now, teamId) ?? [], async repo => {
+    try {
+      const visibility = await installedRepositoryVisibility(deps.config, repo)
+      if (visibility) await deps.db.recordRepoVisibility(repo, visibility)
+    } catch (err) { if (!(err instanceof GithubApiError)) throw err }
+  })
+}
+
 async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string, id?: string) {
   if (!deps.config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
   const method = req.method ?? 'GET'
@@ -2311,6 +2323,7 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
     const now = Date.now()
     const shares = await db.listWorkspaceShares(s.session.id, now, teamId)
     if (!shares) { sendJson(res, 404, { error: 'no-team' }); return }
+    await recordRepositoryVisibility(deps, s.session.id, now, teamId)
     sendJson(res, 200, { shares, privateRepositories: await db.listWorkspacePrivateRepositories(s.session.id, now, teamId) ?? [] }); return
   }
   let body
