@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
-import { setTimeout as delay, setImmediate } from 'node:timers/promises'
+import { setImmediate } from 'node:timers/promises'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
@@ -290,7 +290,6 @@ test('an older overlapping tag listing cannot restore tags a newer one deleted',
   })
   const older = request({ repoId: '1' }, { route: 'refs' })
   await started
-  await delay(2)
   assert.equal((await request({ repoId: '1' }, { route: 'refs' })).status, 200)
   release()
   assert.equal((await older).status, 200)

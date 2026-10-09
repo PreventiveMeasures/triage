@@ -67,13 +67,13 @@ export async function checkGithubCommitStore(db) {
   ], 'a partial listing moves the tags it names and keeps the others')
   await db.refreshGithubTags(7, [{ name: 'v1', sha }], true, 30)
   assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [{ key: commit.key, name: 'v1' }], 'a complete listing drops deleted tags')
-  for (const [complete, observedAt] of [[true, 29], [false, 29]]) {
-    await db.refreshGithubTags(7, [{ name: 'v1', sha: other }, { name: 'old', sha: other }], complete, observedAt)
+  for (const [complete, observedUs] of [[true, 29], [false, 29], [true, 30], [false, 30]]) {
+    await db.refreshGithubTags(7, [{ name: 'v1', sha: other }, { name: 'old', sha: other }], complete, observedUs)
     assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [{ key: commit.key, name: 'v1' }],
-      'a listing observed before the last one applied cannot restore or move tags')
+      'a listing observed no later than the last one applied cannot restore or move tags')
   }
-  await db.refreshGithubTags(7, [], true, 30)
-  assert.deepEqual(await db.listGithubCommitTags([commit.key]), [], 'a listing observed at the same time still applies')
+  await db.refreshGithubTags(7, [], true, 31)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key]), [], 'a later listing applies')
   assert.deepEqual(await db.listGithubCommitTags([]), [])
   await db.refreshGithubTags(7, [{ name: 'v1', sha }], false, 40)
   return commit

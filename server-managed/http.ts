@@ -1207,7 +1207,8 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   try {
     const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id))
     const reader = await browser.reader(access.repo)
-    const observedAt = Date.now()
+    // Microseconds, so overlapping browses practically never share a listing time.
+    const observedUs = Math.round((performance.timeOrigin + performance.now()) * 1000)
     const revisions = refs ? await readRepositoryRefs(deps.db, reader, access.repo, withDefault, access.virtualEntries) : null
     const contents = refs ? null : await readRepositoryContents(reader, ref, path, access.virtualEntries)
     const { tagCommits, tagsComplete, ...listed } = revisions ?? { tagCommits: [], tagsComplete: false }
@@ -1216,7 +1217,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     // Like other GitHub caches, written before the access fence below.
     const tags = refs ? tagCommits : ref.length > 5 && ref.startsWith('tags/') && contents ? [{ name: ref.slice(5), sha: contents.commit }] : []
     if (refs || tags.length > 0) {
-      await deps.db.refreshGithubTags(access.repo.repoId, tags, refs && tagsComplete, observedAt).catch(err => { console.warn('managed: tag cache refresh failed:', err) })
+      await deps.db.refreshGithubTags(access.repo.repoId, tags, refs && tagsComplete, observedUs).catch(err => { console.warn('managed: tag cache refresh failed:', err) })
     }
     await reader.recheckAccess()
     const current = await authorize()

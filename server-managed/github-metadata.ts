@@ -44,8 +44,9 @@ export interface GithubCommitStore {
   listGithubCommitTags(keys: readonly string[]): Promise<{ key: string; name: string }[]>
   // `complete` is a listing of every tag the repository has: tags it leaves
   // out were deleted. Otherwise only the listed tags are updated. A listing
-  // observed before the last one applied for the repository is ignored.
-  refreshGithubTags(repoId: number, tags: readonly GithubTag[], complete: boolean, observedAt: number): Promise<void>
+  // observed (in microseconds) no later than the last one applied for the
+  // repository is ignored.
+  refreshGithubTags(repoId: number, tags: readonly GithubTag[], complete: boolean, observedUs: number): Promise<void>
 }
 
 // A stable repository ID survives renames, as in the PR metadata keys.
@@ -98,7 +99,7 @@ CREATE TABLE IF NOT EXISTS managed_github_tag (
 CREATE INDEX IF NOT EXISTS managed_github_tag_commit_idx ON managed_github_tag(commit_key);
 CREATE TABLE IF NOT EXISTS managed_github_tag_listing (
   repo_id INTEGER PRIMARY KEY REFERENCES managed_selected_repo(repo_id) ON DELETE CASCADE,
-  observed_at INTEGER NOT NULL
+  observed_us INTEGER NOT NULL
 ) STRICT;
 `
 
@@ -163,12 +164,12 @@ export function githubCommitMethods(db: ManagedSql): GithubCommitStore {
     ON CONFLICT (cache_key) DO NOTHING`)
   const commitTags = db.prepare(`SELECT commit_key AS key, name FROM managed_github_tag
     WHERE commit_key IN (SELECT value FROM json_each(?)) ORDER BY commit_key, name`)
-  // Overlapping browses can finish out of order. A listing observed before
-  // the last one applied is skipped, so it cannot restore tags a newer one
-  // deleted or moved; listings observed at the same time are equally current.
-  const claimListing = db.prepare(`INSERT INTO managed_github_tag_listing (repo_id, observed_at) VALUES (?, ?)
-    ON CONFLICT (repo_id) DO UPDATE SET observed_at = excluded.observed_at
-    WHERE managed_github_tag_listing.observed_at <= excluded.observed_at`)
+  // Overlapping browses can finish out of order. A listing observed no later
+  // than the last one applied is skipped, so it cannot restore tags a newer
+  // one deleted or moved; on an exact tie the first applied stays.
+  const claimListing = db.prepare(`INSERT INTO managed_github_tag_listing (repo_id, observed_us) VALUES (?, ?)
+    ON CONFLICT (repo_id) DO UPDATE SET observed_us = excluded.observed_us
+    WHERE managed_github_tag_listing.observed_us < excluded.observed_us`)
   const deleteTags = db.prepare('DELETE FROM managed_github_tag WHERE repo_id = ? AND name NOT IN (SELECT value FROM json_each(?))')
   const setTags = db.prepare(`INSERT INTO managed_github_tag (repo_id, name, commit_key)
     SELECT CAST(json_extract(e.value, '$.repoId') AS BIGINT), json_extract(e.value, '$.name'), json_extract(e.value, '$.key')
@@ -188,8 +189,8 @@ export function githubCommitMethods(db: ManagedSql): GithubCommitStore {
       const rows = await commitTags.all(JSON.stringify(keys)) as { key: string; name: string }[]
       return rows.map(row => ({ ...row }))
     },
-    async refreshGithubTags(repoId, tags, complete, observedAt) {
-      if (Number((await claimListing.run(repoId, observedAt)).changes) === 0) return
+    async refreshGithubTags(repoId, tags, complete, observedUs) {
+      if (Number((await claimListing.run(repoId, observedUs)).changes) === 0) return
       // Postgres refuses an upsert that names one row twice.
       const unique = [...new Map(tags.map(tag => [tag.name, tag])).values()]
       if (complete) await deleteTags.run(repoId, JSON.stringify(unique.map(tag => tag.name)))
