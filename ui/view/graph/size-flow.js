@@ -130,12 +130,25 @@ class SizeFlow extends LitElement {
     if (graph2.graphState === this.bridge) graph2.graphState = null
   }
 
-  select(node, edge = null) { this.selection = node ? { node, edge } : null; this.requestUpdate() }
+  select(node, edge = null) {
+    if (!node && this.focus) { this.follow(null); return }
+    this.selection = node ? { node, edge } : null; this.requestUpdate()
+  }
 
   follow(node) {
-    // Count the full file/package model before either focus or Large filtering.
+    // Count this import subtree before Large filtering, stopping at the cutoff.
     // Apply this on navigation only, so a manual Large override still works.
-    if (node && this.model.byId.has(node) && this.model.byId.size < 200) this.largeOnly = false
+    if (node && this.model.byId.has(node)) {
+      const pending = [node], seen = new Set([node])
+      for (const id of pending) {
+        if (seen.size >= 200) break
+        for (const { to } of this.model.byId.get(id).outgoing) {
+          if (!seen.has(to)) { seen.add(to); pending.push(to) }
+          if (seen.size >= 200) break
+        }
+      }
+      if (seen.size < 200) this.largeOnly = false
+    }
     this.focus = node; this.selection = node ? { node, edge: null } : null; this.needsFit = true; this.requestUpdate()
   }
 
@@ -251,7 +264,7 @@ class SizeFlow extends LitElement {
     if (zoomOut) zoomOut.disabled = this.zoom <= min * 1.0001
   }
 
-  matches(node) {
+  matchesNode(node) {
     if (sizeFlowFilterSize(node) < this.minSize) return false
     const query = graph2.pathFilter.trim().toLowerCase()
     if (query && !`${node.label} ${node.pkg}`.toLowerCase().includes(query)) return false
@@ -287,7 +300,7 @@ class SizeFlow extends LitElement {
       <h4>${this.model.inferred ? 'Inferred roots (no entry points in this view)' : 'Entry points'}</h4>
       ${this.model.roots.slice(0, 100).map(id => { const n = this.model.byId.get(id); return flowRow(n, n.removable, () => this.select(id)) })}
       ${this.model.roots.length > 100 ? html`<p>Showing the first 100 entry points. Search to find another.</p>` : null}`}
-    return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => { if (this.focus) this.follow(null); else this.select(null) }}>×</button></div>
+    return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => this.select(null)}>×</button></div>
       ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
       <div class="flow-metrics"><b>${shortSize(node.removable)}</b><span>unique size · removed if deleted · bar width</span><b>${shortSize(node.size)}</b><span>reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
       ${this.renderVersions(node)}

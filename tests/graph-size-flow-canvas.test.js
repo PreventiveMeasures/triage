@@ -75,7 +75,7 @@ function mounted(t, { dense = false } = {}) {
   const layout = layoutSizeFlow(model)
   if (dense) layout.edges = Array.from({ length: 1000 }, (_, i) => layout.edges.map(edge => ({ ...edge, id: i ? `${edge.id}:${i}` : edge.id }))).flat()
   const host = { model, graph, width: 1100, height: 600, pan: { x: 0, y: 0 }, zoom: 1, minSize: 0,
-    layout, matches: () => true, renderRoot: root,
+    layout, matchesNode: () => true, renderRoot: root,
     select(node, edge) { this.selection = node ? { node, edge } : null }, follow(node) { this.focus = node },
   }
   const chart = new SizeFlowCanvas(host)

@@ -53,7 +53,7 @@ test('hover and selection retain geometry and update only affected highlights', 
   const { host, chart, root, nodes, edges, outline, writes } = mounted(t)
   const geometry = chart.render()
   const renderEdge = t.mock.method(chart, 'renderEdge'), renderNode = t.mock.method(chart, 'renderNode')
-  const matching = t.mock.method(host, 'matches'), updates = t.mock.method(host, 'requestUpdate')
+  const matching = t.mock.method(host, 'matchesNode'), updates = t.mock.method(host, 'requestUpdate')
   const [first, second] = host.model.edges
   const before = writes()
   chart.setHover(first.id)
@@ -84,7 +84,7 @@ test('hover and selection retain geometry and update only affected highlights', 
 test('filter changes refresh highlights and cached search results without replacing geometry', t => {
   const { host, chart, root, nodes, edges } = mounted(t)
   const geometry = chart.render()
-  const matching = t.mock.method(host, 'matches')
+  const matching = t.mock.method(host, 'matchesNode')
   graph2.pathFilter = 'shared'
   const results = chart.searchMatches()
   assert.deepEqual(results.map(n => n.id), ['f:shared.js'])

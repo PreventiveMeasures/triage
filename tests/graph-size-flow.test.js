@@ -84,6 +84,13 @@ test('package flows use actual target files and preserve internal file reachabil
   assert.ok(model.edges.every(e => e.from !== e.to), 'internal imports are represented by package totals')
 })
 
+test('Size flow preserves native selector matching used by delegated app clicks', () => {
+  const Flow = customElements.get('size-flow'), flow = new Flow()
+  // The report's composed-path delegate calls Element.matches(selector).
+  // A graph filter with the same name made every click a finding-preview click.
+  assert.equal(flow.matches, Object.getPrototypeOf(Flow.prototype).matches)
+})
+
 test('package sidebar lists every reachable install with its own bytes, including repeated versions', () => {
   const installs = new Map([
     ['one', { directory: 'node_modules/dep', version: '1.0.0' }],
@@ -331,7 +338,7 @@ test('Large chooses a cutoff using the current and next step counts', () => {
   assert.equal(threshold([101, 0, 4095], [50, 4096, 0]), 4096, 'removal impact can meet the threshold independently')
 })
 
-test('Follow imports disables Large below 200 unfiltered nodes, counting the current file/package mode', () => {
+test('Follow imports disables Large below 200 unfiltered descendants in the current file/package mode', () => {
   const Flow = customElements.get('size-flow')
   for (const packages of [false, true]) { for (const count of [199, 200, 201]) {
     const tree = Object.fromEntries(Array.from({ length: count - 1 }, (_, i) =>
@@ -354,16 +361,42 @@ test('Follow imports disables Large below 200 unfiltered nodes, counting the cur
       flow.toggleLarge(); flow.willUpdate(new Map()); flow.willUpdate(new Map())
       assert.equal(flow.largeOnly, true, 'manual re-enabling survives later renders in Follow imports')
       assert.equal(flow.layout.nodes.length, 61)
-    } else {
-      flow.follow(packages ? 'p:pkg0' : 'f:pkg0/index.js'); flow.willUpdate(new Map())
-      assert.equal(flow.layout.nodes.length, 1)
-      assert.equal(flow.largeOnly, true, 'a small focused view does not replace the full-model count')
     }
     flow.follow(null); flow.willUpdate(new Map())
     assert.equal(flow.largeOnly, true, 'leaving Follow imports does not change the switch')
     flow.toggleLarge(); flow.follow(root); flow.willUpdate(new Map())
     assert.equal(flow.largeOnly, false, 'navigation never turns an explicit off setting on')
   } }
+})
+
+test('following a small subtree in a large bundle reveals every node and deselecting exits it', () => {
+  for (const packages of [false, true]) {
+    const tree = Object.fromEntries(Array.from({ length: 250 }, (_, i) =>
+      [`unrelated${i}/index.js`, { size: i < 60 ? 8192 : 512, imports: [] }]))
+    for (let i = 0; i < 10; i++) tree[`dep${i}/index.js`] = { size: i === 0 ? 8192 : 512, imports: [] }
+    tree['dep1/index.js'].imports = ['dep2/index.js']
+    tree['dep2/index.js'].imports = ['dep1/index.js']
+    tree['follow/index.js'] = { size: 8192, imports: Array.from({ length: 10 }, (_, i) => `dep${i}/index.js`) }
+    tree['entry.js'] = { size: 1, imports: [...Object.keys(tree).filter(id => id.startsWith('unrelated')), 'follow/index.js'] }
+    const Flow = customElements.get('size-flow'), flow = new Flow()
+    flow.graph = fixture(tree); flow.packages = packages; flow.willUpdate(new Map([['graph', null]]))
+    assert.ok(flow.model.byId.size > 200)
+    assert.ok(flow.minSize > 0)
+    const root = packages ? 'p:follow' : 'f:follow/index.js'
+    assert.equal(layoutSizeFlow(flow.model, { focus: root, minSize: flow.minSize }).nodes.length, 2)
+    flow.follow(root); flow.willUpdate(new Map())
+    assert.equal(flow.largeOnly, false)
+    assert.equal(flow.layout.nodes.length, 11, 'count shared descendants once and terminate cycles')
+    flow.toggleLarge(); flow.willUpdate(new Map())
+    assert.equal(flow.layout.nodes.length, 2, 'the user can still manually re-enable Large')
+    flow.toggleLarge(); flow.willUpdate(new Map())
+    flow.needsFit = false
+    flow.select(null); flow.willUpdate(new Map())
+    assert.equal(flow.selection, null)
+    assert.equal(flow.focus, null, 'empty-space clicks and the panel close action both exit Follow imports')
+    assert.equal(flow.layout.nodes.length, flow.model.byId.size)
+    assert.equal(flow.needsFit, true)
+  }
 })
 
 test('Large uses removal impact and own code, adapts to files/packages and preserves manual off', () => {
@@ -387,14 +420,14 @@ test('Large uses removal impact and own code, adapts to files/packages and prese
   assert.deepEqual(new Set(flow.layout.nodes.map(n => n.id)), new Set([...Object.keys(large).map(file => `f:${file}`), 'f:entry.js', 'f:via.js', 'f:shared.js', 'f:boundary.js']))
   assert.equal(flow.model.byId.get('f:via.js').removable, 1)
   assert.equal(flow.model.byId.get('f:via.js').size, 5001)
-  assert.equal(flow.matches(flow.model.byId.get('f:via.js')), true, 'keep one connector to the significant dependency')
-  assert.equal(flow.matches(flow.model.byId.get('f:other.js')), false, 'reachable size alone does not qualify a redundant wrapper')
-  assert.equal(flow.matches(flow.model.byId.get('f:below.js')), false)
+  assert.equal(flow.matchesNode(flow.model.byId.get('f:via.js')), true, 'keep one connector to the significant dependency')
+  assert.equal(flow.matchesNode(flow.model.byId.get('f:other.js')), false, 'reachable size alone does not qualify a redundant wrapper')
+  assert.equal(flow.matchesNode(flow.model.byId.get('f:below.js')), false)
   const model = flow.model
   flow.toggleLarge(); flow.willUpdate(new Map())
   assert.equal(flow.model, model, 'filtering never recomputes reachability on a pruned graph')
   assert.equal(flow.layout.nodes.length, 173)
-  assert.equal(flow.matches(flow.model.byId.get('f:below.js')), true)
+  assert.equal(flow.matchesNode(flow.model.byId.get('f:below.js')), true)
   flow.follow('f:other.js'); flow.toggleLarge(); flow.willUpdate(new Map())
   assert.equal(flow.focus, null, 'clear a focused node when both its own size and removal impact fall below the cutoff')
   assert.equal(flow.selection, null, 'hide the selection when it no longer passes the filter')
