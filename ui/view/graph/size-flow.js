@@ -132,7 +132,12 @@ class SizeFlow extends LitElement {
 
   select(node, edge = null) { this.selection = node ? { node, edge } : null; this.requestUpdate() }
 
-  follow(node) { this.focus = node; this.selection = node ? { node, edge: null } : null; this.needsFit = true; this.requestUpdate() }
+  follow(node) {
+    // Count the full file/package model before either focus or Large filtering.
+    // Apply this on navigation only, so a manual Large override still works.
+    if (node && this.model.byId.has(node) && this.model.byId.size < 200) this.largeOnly = false
+    this.focus = node; this.selection = node ? { node, edge: null } : null; this.needsFit = true; this.requestUpdate()
+  }
 
   fitScale() {
     return this.layout && this.width > 0 && this.height > 0

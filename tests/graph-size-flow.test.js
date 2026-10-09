@@ -331,6 +331,41 @@ test('Large chooses a cutoff using the current and next step counts', () => {
   assert.equal(threshold([101, 0, 4095], [50, 4096, 0]), 4096, 'removal impact can meet the threshold independently')
 })
 
+test('Follow imports disables Large below 200 unfiltered nodes, counting the current file/package mode', () => {
+  const Flow = customElements.get('size-flow')
+  for (const packages of [false, true]) { for (const count of [199, 200, 201]) {
+    const tree = Object.fromEntries(Array.from({ length: count - 1 }, (_, i) =>
+      [`pkg${i}/index.js`, { size: i < 60 ? 8192 : 512, imports: [] }]))
+    if (packages) { for (let i = 0; i < count - 1; i++) tree[`pkg${i}/helper.js`] = { size: 512, imports: [] } }
+    tree['entry.js'] = { size: 1, imports: Object.keys(tree) }
+    tree['unreachable.js'] = { size: 9999, imports: [] }
+    const flow = new Flow()
+    flow.graph = fixture(tree); flow.packages = packages; flow.willUpdate(new Map([['graph', null]]))
+    assert.equal(flow.model.byId.size, count)
+    assert.ok(flow.minSize > 0)
+    assert.equal(flow.layout.nodes.length, 61, 'Large initially hides small nodes')
+    const root = flow.model.roots[0]
+    flow.follow(root); flow.willUpdate(new Map())
+    assert.equal(flow.largeOnly, count >= 200, 'the automatic switch-off boundary is strictly below 200')
+    assert.equal(flow.focus, root)
+    assert.equal(flow.layout.nodes.length, count < 200 ? count : 61)
+    assert.equal(flow.needsFit, true)
+    if (count < 200) {
+      flow.toggleLarge(); flow.willUpdate(new Map()); flow.willUpdate(new Map())
+      assert.equal(flow.largeOnly, true, 'manual re-enabling survives later renders in Follow imports')
+      assert.equal(flow.layout.nodes.length, 61)
+    } else {
+      flow.follow(packages ? 'p:pkg0' : 'f:pkg0/index.js'); flow.willUpdate(new Map())
+      assert.equal(flow.layout.nodes.length, 1)
+      assert.equal(flow.largeOnly, true, 'a small focused view does not replace the full-model count')
+    }
+    flow.follow(null); flow.willUpdate(new Map())
+    assert.equal(flow.largeOnly, true, 'leaving Follow imports does not change the switch')
+    flow.toggleLarge(); flow.follow(root); flow.willUpdate(new Map())
+    assert.equal(flow.largeOnly, false, 'navigation never turns an explicit off setting on')
+  } }
+})
+
 test('Large uses removal impact and own code, adapts to files/packages and preserves manual off', () => {
   const small = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`small-${i}.js`, { size: 1, imports: [] }]))
   const medium = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`medium-${i}.js`, { size: 1024, imports: [] }]))
