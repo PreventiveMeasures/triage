@@ -56,6 +56,8 @@ import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } fro
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
+import { COMBINED_DIFF_MAX, combinedDiffRows } from './bundle-compare-all.js'
+import { compareModeOf } from '../../common/managed/routes.js'
 
 // Cap the repointed-imports table's rendered rows so a pathological
 // compare can't stamp out tens of thousands of DOM nodes. The counts are
@@ -137,8 +139,8 @@ class BundleCompare extends LitElement {
     // Sections that open on demand (Files, Import resolutions): a large
     // comparison lists thousands of rows.
     _openSections: { state: true },
-    // 'overview' | 'code', and the file the Code view shows (null: its
-    // first changed file).
+    // 'overview' | 'code' | 'diff' (COMPARE_MODES), and the file the Code
+    // view shows (null: its first changed file).
     _mode: { state: true },
     _codePath: { state: true },
   }
@@ -182,7 +184,7 @@ class BundleCompare extends LitElement {
     // Compare route — takes the comparison with it.
     if ((changed.has('request') || changed.has('integrity')) && this.integrity && this.request?.bundle === this.integrity) {
       if (this.request.target !== this._targetIntegrity) this._choose(this.request.target)
-      this._mode = this.request.mode === 'code' ? 'code' : 'overview'
+      this._mode = compareModeOf(this.request.mode)
     } else if (changed.has('request') && !changed.has('integrity') && changed.get('request')?.bundle === this.integrity) {
       if (this._targetIntegrity) this._choose(null)
       this._mode = 'overview'
@@ -618,6 +620,23 @@ class BundleCompare extends LitElement {
   // bucket chips, wrapping on their own so the Overview | Code tabs keep
   // to the right of the first line. Sits under the picker once a
   // comparison is live.
+  // How many rows the Diff view would list, counted up to COMBINED_DIFF_MAX,
+  // with the line models found on the way, once a comparison.
+  _combinedFor() {
+    const diff = this._diffFor()
+    if (this._combinedKey !== this._diffKey || !this._combined) {
+      this._combinedKey = this._diffKey
+      this._combined = combinedDiffRows(this.details, this._otherDetails, diff.files)
+    }
+    return this._combined
+  }
+
+  // The mode shown: Diff only while its list is short enough to read whole;
+  // a link to a longer one shows the Overview.
+  get _shownMode() {
+    return this._mode === 'diff' && !(this._combinedFor().rows < COMBINED_DIFF_MAX) ? 'overview' : this._mode
+  }
+
   _renderSummary(diff) {
     const totals = diff.totals
     const vt = diff.versionUpdates.totals
@@ -651,8 +670,9 @@ class BundleCompare extends LitElement {
         ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
       </div></div>
       <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
-        ${[['overview', 'Overview'], ['code', 'Code']].map(([mode, label]) => html`<button type="button" role="tab"
-          aria-selected=${String(this._mode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
+        ${[['overview', 'Overview'], ['code', 'Code'], ...this._combinedFor().rows < COMBINED_DIFF_MAX ? [['diff', 'Diff']] : []]
+          .map(([mode, label]) => html`<button type="button" role="tab"
+          aria-selected=${String(this._shownMode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
       </div>
     </div>`
   }
@@ -764,15 +784,17 @@ class BundleCompare extends LitElement {
       body = this._renderDiff()
     }
 
-    const code = this._baseReady && ready && this._mode === 'code'
+    const mode = this._baseReady && ready ? this._shownMode : 'overview'
     return html`<div class="bundle-compare">
       <header class="bundle-compare-head">
         ${picker}
         ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
       </header>
-      ${code ? html`<bundle-compare-code .base=${this.details} .other=${this._otherDetails} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
+      ${mode === 'code' ? html`<bundle-compare-code .base=${this.details} .other=${this._otherDetails} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
           .path=${this._codePath} baseName=${this._nameFor(this.integrity)} otherName=${this._nameFor(this._targetIntegrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
+        : mode === 'diff' ? html`<bundle-compare-all .base=${this.details} .other=${this._otherDetails} .files=${this._diffFor().files}
+          .models=${this._combinedFor().models} baseName=${this._nameFor(this.integrity)} otherName=${this._nameFor(this._targetIntegrity)}></bundle-compare-all>`
         : html`<div class="bundle-compare-body">${body}</div>`}
     </div>`
   }

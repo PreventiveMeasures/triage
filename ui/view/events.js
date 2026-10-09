@@ -1,5 +1,5 @@
 import { setFindingTriage } from '../../client/ignored-triage.js'
-import { managedRouteForIds, parseManagedRoute } from '../../common/managed/routes.js'
+import { COMPARE_MODES, compareModeOf, managedRouteForIds, parseManagedRoute } from '../../common/managed/routes.js'
 import { getPublicShare } from '../../client/managed/public-share.js'
 import { managedBundleRoute, managedCodeLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
@@ -2715,7 +2715,7 @@ report.addEventListener('bundle-swap', (e) => {
     // the mode Compare was in.
     const target = e.detail.target === undefined ? state.selectedBundle : e.detail.target
     const compared = state.bundles.find(b => b.integrity === target)
-    const compare = compared?.managedId ? { compareId: compared.managedId, ...(e.detail.mode === 'code' ? { compareMode: 'code' } : {}) } : null
+    const compare = compared?.managedId ? { compareId: compared.managedId, ...(COMPARE_MODES.has(e.detail.mode) ? { compareMode: e.detail.mode } : {}) } : null
     void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare', compare, state.bundles)).finally(release)
     return
   }
@@ -2731,7 +2731,7 @@ report.addEventListener('bundle-swap', (e) => {
 report.addEventListener('bundle-compare-change', (e) => {
   const { base, target, mode } = e.detail ?? {}
   if (!isManagedUiMode() || !base || base !== state.selectedBundle || state.bundleDetailsTab !== 'compare') return
-  state.bundleCompare = target ? { bundle: base, target, mode: mode === 'code' ? 'code' : 'overview' } : null
+  state.bundleCompare = target ? { bundle: base, target, mode: compareModeOf(mode) } : null
   persistLastBundle(base, 'compare')
 })
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=

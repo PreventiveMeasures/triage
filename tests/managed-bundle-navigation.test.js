@@ -63,7 +63,7 @@ test('all bundle tabs round-trip exact slugs and the clicked team, including Man
     [...teams, { id: 'ambiguous', slug: 'ambiguous', bundles: [{ id: 'different', slug: a.slug }] }]), null)
   assert.equal(resolveManagedRoute({ view: 'bundles', teamSlug: null, bundleSlug: a.slug }, teams), null, 'Manage requires its own authorized catalogue')
   for (const path of ['/team/first/bundle/a/invalid', '/team/first/bundle/%2F/code', '/team/first/bundle/a/code/extra', '/bundle/uuid-a',
-    '/team/first/bundle/a/code/04', '/team/first/bundle/a/code/4/code', '/team/first/bundle/a/graph/b', '/team/first/bundle/a/compare/b/diff']) {
+    '/team/first/bundle/a/code/04', '/team/first/bundle/a/code/4/code', '/team/first/bundle/a/graph/b', '/team/first/bundle/a/compare/b/split']) {
     assert.equal(parseManagedRoute(new URL(path, 'https://triage.test')), null)
   }
 })
@@ -148,7 +148,7 @@ test('route rewrites locate the Code tab\'s file shown and its marked lines, or 
     'a file asked for by path has no number while sources load, and its path never goes in a route')
 })
 
-test('Compare links name the bundle compared with by slug, then /code while it reviews the diff', () => {
+test('Compare links name the bundle compared with by slug, then /code or /diff while it reviews the changes', () => {
   const entries = [managedBundleEntry(a), managedBundleEntry(b)]
   for (const team of [teams[0], null]) {
     const prefix = team ? `/team/${team.slug}` : '/manage'
@@ -157,6 +157,10 @@ test('Compare links name the bundle compared with by slug, then /code while it r
     assert.equal(managedRoutePath(route({ compareMode: 'code' })), `${prefix}/bundle/a/compare/b/code`)
     assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(`${prefix}/bundle/a/compare/b/code`, 'https://triage.test')), teams, [a, b]),
       { view: 'bundles', bundleTab: 'compare', teamId: team?.id ?? null, bundleId: a.id, compareId: b.id, compareMode: 'code' })
+    assert.equal(managedRoutePath(route({ compareMode: 'diff' })), `${prefix}/bundle/a/compare/b/diff`)
+    assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(`${prefix}/bundle/a/compare/b/diff`, 'https://triage.test')), teams, [a, b]),
+      { view: 'bundles', bundleTab: 'compare', teamId: team?.id ?? null, bundleId: a.id, compareId: b.id, compareMode: 'diff' })
+    assert.equal(managedRoutePath(route({ compareMode: 'split' })), `${prefix}/bundle/a/compare/b`, 'no mode it does not know')
   }
   assert.equal(managedRoutePath(managedBundleRoute(teams, entries[0], 'uuid-first', 'graph', { compareId: b.id }, entries)), '/team/first/bundle/a/graph',
     'only Compare names one')
@@ -179,6 +183,7 @@ test('route rewrites locate Compare\'s bundle and mode for the open bundle only'
     bundleCompare: { bundle: a.integrity, target: b.integrity, mode: 'overview' } }
   assert.deepEqual(managedCompareLocation(state), { compareId: b.id })
   assert.deepEqual(managedCompareLocation({ ...state, bundleCompare: { ...state.bundleCompare, mode: 'code' } }), { compareId: b.id, compareMode: 'code' })
+  assert.deepEqual(managedCompareLocation({ ...state, bundleCompare: { ...state.bundleCompare, mode: 'diff' } }), { compareId: b.id, compareMode: 'diff' })
   assert.deepEqual(managedTabLocation(state), { compareId: b.id })
   assert.equal(managedCompareLocation(state, 'code'), null, 'only Compare names one')
   assert.equal(managedCompareLocation({ ...state, selectedBundle: b.integrity }), null, 'never another bundle\'s')

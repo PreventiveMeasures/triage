@@ -167,6 +167,7 @@ window also navigate to their managed page URL.
 | `/team/:teamSlug/report/:reportSlug/finding/:findingId` | Finding in a report |
 | `/team/:teamSlug/bundle/:bundleSlug[/:tab]` | Team bundle; active tab is part of the URL |
 | `/manage/bundle/:bundleSlug[/:tab]` | Bundle opened without an accessible team (manager/admin) |
+| `…/bundle/:bundleSlug/compare[/:otherSlug[/code\|/diff]]` | Its Compare tab, with another bundle, in its Code or Diff mode |
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/scans` | Scans |
@@ -178,7 +179,7 @@ window also navigate to their managed page URL.
 | `/npm` | npm package lookup |
 | `/npm/:name[@:version][/:tab]` | npm package version; `:version` may be a dist-tag |
 | `/npm/:name@:version/code[/:file]` | Its Code tab, at a file |
-| `/npm/:name@:version/compare[/:otherVersion[/code]]` | Its Compare tab, with another version |
+| `/npm/:name@:version/compare[/:otherVersion[/code\|/diff]]` | Its Compare tab, with another version, in its Code or Diff mode |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
 unique, otherwise the full ID, with the same allocation rules for teams, reports,
@@ -199,7 +200,12 @@ both pickers: the open bundle's opens the bundle picked, compared with the same
 one (picking that one swaps the two), and the other's picks what to compare
 with. Compare offers accessible
 bundles assigned to the same repository, including bundles not previously opened.
-Unattached bundles cannot be compared with each other.
+Unattached bundles cannot be compared with each other. Past its Overview,
+Compare reviews the changes in **Code**, a file at a time beside the tree of
+changed files, or in **Diff**, every changed file's diff one after another in
+a single list, each under its name. Diff is offered only while that list is
+under 8,000 rows, its folded unchanged runs and each file's head counted; a
+link to a longer one opens the Overview.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require
 the current user's team access. Unavailable pages return to the landing page;
@@ -1043,7 +1049,8 @@ in the bundle view with four tabs:
   that changed. Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
   are pickers, as for bundles: picking the open side's opens that version
-  compared with the same one, and picking the other side's swaps them.
+  compared with the same one, and picking the other side's swaps them. Code
+  and Diff review the changes as for bundles.
 
 A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
 version it opened. Code links name files by number and lines in the fragment,

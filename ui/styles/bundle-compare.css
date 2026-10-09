@@ -476,6 +476,47 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
   & button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 }
 
+/* ── Diff mode ─────────────────────────────────────────────────────
+   Every changed file's diff in one list (bundle-compare-all.js), each
+   under a head that stays in view while its diff scrolls past. */
+.bundle-compare > bundle-compare-all {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.bundle-compare-all {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+.bundle-compare-all-title { flex-shrink: 0; font-size: .78rem; font-weight: 600; }
+.bundle-compare-all-prefix {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bundle-compare-all-file + .bundle-compare-all-file { margin-top: .75rem; }
+.bundle-compare-all-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .35rem .75rem;
+  background: var(--surface);
+  border-block: 1px solid var(--border);
+
+  & .bundle-code-main-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+.bundle-compare-all-file:first-child .bundle-compare-all-file-head { border-top: 0; }
+
 /* ── Code mode ─────────────────────────────────────────────────────
    The Code tab's rail + splitter + main column (report.css), here over
    the files that differ, with a review diff in the main column. */

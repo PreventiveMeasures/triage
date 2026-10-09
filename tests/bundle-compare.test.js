@@ -12,6 +12,11 @@ mock.module('../ui/view/bundle-load.js', { namedExports: {
   takeHandedOffBundle(integrity) { const parsed = handedOff?.bundles.get(integrity) ?? null; handedOff?.bundles.delete(integrity); return parsed },
 } })
 mock.module('../ui/view/bundle-compare-code.js', { namedExports: {} })
+// The rows the Diff view would list, as each test sets them.
+let combinedRows = 10
+mock.module('../ui/view/bundle-compare-all.js', { namedExports: {
+  COMBINED_DIFF_MAX: 8000, combinedDiffRows: () => ({ rows: combinedRows, models: new Map() }),
+} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
@@ -40,16 +45,31 @@ function compare() {
   return view
 }
 
-test('the summary row offers Overview and Code, Overview first, and a file row opens its diff in Code', () => {
+test('the summary row offers Overview, Code and Diff, Overview first, and a file row opens its diff in Code', () => {
   const view = compare()
   view._status = 'ready'
   const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
-  assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false'])
-  assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
+  assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false', 'false'])
+  assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code', 'Diff'])
   assert.match(renderText(view.render()), /class="bundle-compare-body"/u)
   view._openFile('app.js')
   assert.equal(view._mode, 'code')
   assert.equal(view._codePath, 'app.js')
+})
+
+test('Diff is offered only while its list is under 8000 rows; a link to a longer one shows the Overview', t => {
+  t.after(() => { combinedRows = 10 })
+  const view = compare()
+  view._status = 'ready'
+  view._mode = 'diff'
+  assert.match(renderText(view.render()), /<bundle-compare-all /u)
+  combinedRows = 8000
+  view._combined = null
+  const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
+  assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
+  assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false'])
+  assert.match(renderText(view.render()), /class="bundle-compare-body"/u)
+  assert.equal(view._mode, 'diff', 'the mode asked for stands, for when it fits')
 })
 
 test('Differences renders resolution-only changes as a collapsed File | Import | Before | After | Conditions table and a summary count', () => {

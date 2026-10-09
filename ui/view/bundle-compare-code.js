@@ -41,7 +41,7 @@ const KINDS = [
   // Same contents, but some of its imports resolve elsewhere.
   { kind: 'repointed', label: 'Repointed', letter: 'R' },
 ]
-const KIND = Object.fromEntries(KINDS.map(entry => [entry.kind, entry]))
+export const KIND = Object.fromEntries(KINDS.map(entry => [entry.kind, entry]))
 
 // Rows a diff renders before asking to show more; each ask adds as many.
 const ROW_LIMIT = 2000
@@ -57,20 +57,23 @@ const MAX_IMPORT_LINES = 3
 // tree is too long to scan that way.
 const OPEN_ALL_MAX = 300
 
-// View preferences shared by every comparison, reset on page reload like
-// the rail's width.
-const prefs = { layout: 'unified', ignoreWhitespace: false }
+// View preferences shared by every comparison, and by the Diff view
+// (bundle-compare-all.js), reset on page reload like the rail's width.
+export const prefs = { layout: 'unified', ignoreWhitespace: false }
 
 // `${integrity}\0${path}` → the file's highlighted lines, or null when Prism
 // has no grammar for it or it is too large to color.
 const highlightCache = new Map()
 const highlightPending = new Set()
 
-function countLines(text) {
+export function countLines(text) {
   let count = 0
   for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) count++
   return count
 }
+
+// A diff too large to compute before it is asked for.
+export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
 function dirOrder([a, an], [b, bn]) {
   return sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path)
@@ -104,7 +107,7 @@ function containsFile(node, path) {
   return false
 }
 
-class BundleCompareCode extends LitElement {
+export class BundleCompareCode extends LitElement {
   static properties = {
     base: { attribute: false },
     other: { attribute: false },
@@ -397,8 +400,7 @@ class BundleCompareCode extends LitElement {
     const { kind } = entry
     const { before, after } = this._contents(path, entry)
     const textual = typeof before === 'string' && typeof after === 'string'
-    const large = textual && !this._forced.has(path)
-      && (before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES)
+    const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     const model = textual && !large ? this._model(path, before, after) : null
     // A file whose only change is a repointed import — moved there by a
     // rename or not — reads as its source, whatever the whitespace setting:
@@ -459,7 +461,18 @@ class BundleCompareCode extends LitElement {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg>
           </button>
         </span>` : nothing}
-        ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
+        ${this._toggles(diffable, textual)}
+      </header>
+      <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
+        ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
+        ${body}
+      </div>`
+  }
+
+  // The diff's layout, whitespace and wrap toggles, as a file has use for
+  // them: a diff all three, a text the wrap alone.
+  _toggles(diffable, textual) {
+    return html`${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
         </span>
         <button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace)} aria-label="Hide whitespace changes" data-tooltip="Hide whitespace changes"
@@ -469,12 +482,7 @@ class BundleCompareCode extends LitElement {
         ${textual ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(!!state.bundleSourceWrap)} aria-label="Wrap lines" data-tooltip="Wrap lines" ?hidden=${diffable && prefs.layout === 'split'}
           @click=${() => this._toggleWrap()}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3.5h12M2 8h9a2.5 2.5 0 0 1 0 5H8.5M10 11.5 8.5 13l1.5 1.5M2 13h3.5"/></svg>
-        </button>` : nothing}
-      </header>
-      <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
-        ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
-        ${body}
-      </div>`
+        </button>` : nothing}`
   }
 
   // Every line quoting each repointed specifier. Rows for one specifier

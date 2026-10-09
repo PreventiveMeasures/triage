@@ -221,3 +221,25 @@ test('a renamed file whose contents are the same but whose import was repointed 
   assert.match(markup, /class=diff-row ctx is-import role="row" data-line=1>/u)
   assert.doesNotMatch(markup, /Unified<\/button>/u, 'no diff layout to choose')
 })
+
+test('the Diff view lists every changed file\'s diff in one list, and counts the rows it would show', async () => {
+  const { COMBINED_DIFF_MAX, combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const CompareAll = customElements.get('bundle-compare-all')
+  const code = view()
+  const all = new CompareAll()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  const counted = combinedDiffRows(code.base, code.other, code.files)
+  all.models = counted.models
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  const markup = renderText(all.render())
+  const heads = [...markup.matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+)>/gu)].map(m => m[1])
+  assert.deepEqual(heads, ['assets/logo.png', 'node_modules/left-pad/index.js', 'node_modules/zod/index.js', 'src/api.js', 'src/features/search.js', 'src/legacy.js'],
+    'every added, removed and changed file, by path; a repointed importer has no text that changed')
+  assert.match(markup, /6 files changed/u)
+  assert.match(markup, /Binary file changed/u)
+  assert.equal([...markup.matchAll(/class=bundle-compare-diff-table/gu)].length, 5, 'a diff for every text file')
+  assert.ok(counted.rows > heads.length && counted.rows < COMBINED_DIFF_MAX)
+  assert.deepEqual([...counted.models.keys()].toSorted(), heads.filter(path => path !== 'assets/logo.png'), 'the line models found counting')
+  // Counted only until it passes the limit.
+  assert.equal(combinedDiffRows(code.base, code.other, code.files, 3).rows, 4)
+})

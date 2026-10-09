@@ -8,6 +8,7 @@ import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-packages.js'
+import { COMPARE_MODES, compareModeOf } from '../../common/managed/routes.js'
 import { fetchNpmPackage, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -197,7 +198,7 @@ export function npmCompareSource(entry) {
     open: (base, target, mode) => {
       if (!isManagedUiMode() || !managedHistory?.active) return
       void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: base, bundleTab: 'compare',
-        ...(target ? { compareSpec: target, ...(mode === 'code' ? { compareMode: 'code' } : {}) } : {}) })
+        ...(target ? { compareSpec: target, ...(COMPARE_MODES.has(mode) ? { compareMode: mode } : {}) } : {}) })
     },
   }
 }
@@ -256,7 +257,7 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
       ...(route.line == null ? {} : { line: route.line }), ...(route.endLine == null ? {} : { endLine: route.endLine }) }
   }
   if (tab === 'compare' && route.compareSpec != null) {
-    state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: route.compareMode === 'code' ? 'code' : 'overview' }
+    state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: compareModeOf(route.compareMode) }
   }
   state.bundleDetails = details
   state.npmLookup = { input: entry.name, pending: false, error: null }

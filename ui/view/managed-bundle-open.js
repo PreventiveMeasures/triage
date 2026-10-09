@@ -1,4 +1,5 @@
 import { isManagedUiMode, state } from '#client/index.js'
+import { compareModeOf } from '../../common/managed/routes.js'
 import { fetchBundleMetadata } from './client-managed.js'
 import { parseBundleMetadata } from './bundle-metadata.js'
 import { selectBundle, takeHandedOffBundle } from './bundle-load.js'
@@ -29,7 +30,7 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, 
     // A Compare link's bundle, when Compare would offer it.
     const compared = tab === 'compare' && compareId != null
       ? bundleComparisonCandidates(entries, entry.integrity).find(bundle => bundle.managedId === compareId) : null
-    if (compared) state.bundleCompare = { bundle: entry.integrity, target: compared.integrity, mode: compareMode === 'code' ? 'code' : 'overview' }
+    if (compared) state.bundleCompare = { bundle: entry.integrity, target: compared.integrity, mode: compareModeOf(compareMode) }
     state.bundleDetails = handed ?? kept
     state.currentManagedTeam = teamId
     state.currentManagedReport = null
