@@ -100,13 +100,22 @@
 }
 .bundle-compare-swap-icon { font-size: .95rem; line-height: 1; }
 
-/* Summary band — file + size metrics, then the four bucket chips. */
+/* Summary band — file + size metrics and the bucket chips, then the
+   mode tabs, which stay at the right while the stats wrap. */
 .bundle-compare-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+.bundle-compare-stats {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: .6rem 2rem;
   flex-wrap: wrap;
-  font-variant-numeric: tabular-nums;
+  min-height: 1.45rem;
 }
 .bundle-compare-metric {
   display: inline-flex;
@@ -385,3 +394,459 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
   font-size: .9em;
 }
 .bundle-compare-identical { color: var(--green); }
+
+/* Overview | Code — the summary row's mode tabs, at its right end. */
+.bundle-compare-modes {
+  flex: none;
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 5px);
+  overflow: hidden;
+  font-size: .7rem;
+  font-weight: 500;
+
+  & button { padding: .15rem .65rem; border: 0; background: transparent; color: var(--muted); font: inherit; }
+  & button + button { border-left: 1px solid var(--border); }
+  & button:hover:not([aria-selected='true']) { color: var(--text); }
+  & button[aria-selected='true'] { background: var(--surface-active); color: var(--text); }
+  & button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+
+/* ── Code mode ─────────────────────────────────────────────────────
+   The Code tab's rail + splitter + main column (report.css), here over
+   the files that differ, with a review diff in the main column. */
+.bundle-compare > bundle-compare-code {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+bundle-compare-code > .bundle-code-view {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+.bundle-compare-code-filter {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  padding: .35rem .5rem;
+  border-bottom: 1px solid var(--border);
+}
+.bundle-compare-code-search {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: 0 .45rem;
+  color: var(--muted);
+  background: rgb(from var(--text) r g b / .04);
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 5px);
+
+  &:has(input:focus) { border-color: var(--accent); background: rgb(from var(--text) r g b / .06); }
+  & input {
+    flex: 1;
+    min-width: 0;
+    padding: .3rem 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: .75rem;
+  }
+}
+.bundle-compare-code-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+}
+/* Kind filters read as the summary's chips; a hidden kind fades. */
+.bundle-compare-code-kind {
+  padding: .1rem .4rem;
+  border: 0;
+  border-radius: 3px;
+  font-size: .64rem;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+
+  &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
+  &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
+  &.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &[aria-pressed='false'] {
+    color: var(--muted);
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--border);
+    text-decoration: line-through;
+  }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+/* Tree rows: a status letter at the right, removed names struck through. */
+.bundle-compare-code-letter {
+  flex: none;
+  width: 1rem;
+  text-align: center;
+  font-size: .64rem;
+  font-weight: 700;
+
+  &.added { color: var(--green); }
+  &.removed { color: var(--critical); }
+  &.changed { color: var(--medium); }
+}
+.bundle-compare-code-name.removed {
+  text-decoration: line-through;
+  text-decoration-color: rgb(from var(--critical) r g b / .6);
+}
+.bundle-compare-code-dir-count {
+  flex: none;
+  color: var(--muted);
+  font-size: .62rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* File bar: status pill, path, line counts, sizes, change steps, layout. */
+.bundle-compare-code-pill {
+  flex: none;
+  padding: .05rem .4rem;
+  border-radius: 3px;
+  font-size: .64rem;
+  font-weight: 600;
+
+  &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
+  &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
+  &.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+}
+.bundle-compare-code-counts {
+  flex: none;
+  display: inline-flex;
+  gap: .35rem;
+  font-size: .72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+
+  & .add { color: var(--green); }
+  & .del { color: var(--critical); }
+}
+.bundle-compare-code-layout { flex: none; }
+.bundle-compare-code-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius, 4px);
+  background: transparent;
+  color: var(--muted);
+
+  &:hover { background: var(--bg); color: var(--text); }
+  &[aria-pressed='true'] { color: var(--accent); }
+  &[hidden] { display: none; }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+@container bundle-code (max-width: 560px) {
+  .bundle-compare-code-bar .bundle-code-main-stats,
+  .bundle-compare-code-pill { display: none; }
+}
+
+/* The diff: one row per line, number columns sticky while the code
+   scrolls sideways. Unwrapped, the table is as wide as its widest line,
+   so every row's colour runs the full width. */
+.bundle-compare-diff {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: none;
+  background: var(--bg);
+  -webkit-app-region: no-drag; app-region: no-drag;
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+.bundle-compare-diff-table {
+  --diff-num-col: calc(var(--diff-num-width, 4ch) + .9rem);
+  --diff-add: color-mix(in oklch, var(--green) 11%, var(--bg));
+  --diff-add-num: color-mix(in oklch, var(--green) 20%, var(--bg));
+  --diff-add-word: rgb(from var(--green) r g b / .32);
+  --diff-del: color-mix(in oklch, var(--critical) 11%, var(--bg));
+  --diff-del-num: color-mix(in oklch, var(--critical) 20%, var(--bg));
+  --diff-del-word: rgb(from var(--critical) r g b / .32);
+  --diff-fold: color-mix(in oklch, var(--accent) 8%, var(--bg));
+  width: max-content;
+  min-width: 100%;
+  padding-bottom: .5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem;
+  line-height: 1.45;
+  color: var(--text);
+  tab-size: 2;
+
+  &.wrapped { width: 100%; }
+}
+.diff-row {
+  display: flex;
+  align-items: stretch;
+  scroll-margin-top: 2.5rem;
+}
+.diff-num {
+  flex: none;
+  box-sizing: border-box;
+  width: var(--diff-num-col);
+  padding: 0 .45rem;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  background: var(--bg);
+  user-select: none;
+}
+.unified .diff-num,
+.single .diff-num {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+.unified .diff-num + .diff-num { left: var(--diff-num-col); border-right: 1px solid var(--border); }
+.single .diff-num { border-right: 1px solid var(--border); }
+.single .diff-code { padding-left: .75rem; }
+/* An unchanged file's lines importing a repointed specifier. */
+.diff-row.is-import {
+  background: rgb(from var(--accent) r g b / .1);
+  & .diff-num { background: color-mix(in oklch, var(--accent) 20%, var(--bg)); color: var(--text); }
+}
+.diff-sign {
+  flex: none;
+  width: 1.6ch;
+  padding-left: .35rem;
+  color: var(--muted);
+  user-select: none;
+}
+.diff-code {
+  flex: 1;
+  padding-right: 1rem;
+  white-space: pre;
+}
+.wrapped .diff-code,
+.diff-code.diff-long {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-code.diff-long { contain: inline-size; }
+.diff-row.add,
+.diff-half.add {
+  background: var(--diff-add);
+  & .diff-num { background: var(--diff-add-num); color: var(--text); }
+  & .diff-sign { color: var(--green); }
+  & .diff-word { background: var(--diff-add-word); }
+}
+.diff-row.del,
+.diff-half.del {
+  background: var(--diff-del);
+  & .diff-num { background: var(--diff-del-num); color: var(--text); }
+  & .diff-sign { color: var(--critical); }
+  & .diff-word { background: var(--diff-del-word); }
+}
+.diff-word {
+  color: inherit;
+  border-radius: 2px;
+}
+.diff-no-eol {
+  margin-left: .4ch;
+  color: var(--critical);
+  font-size: .9em;
+  user-select: none;
+}
+/* Split: the two sides as halves of one row, wrapped so neither needs a
+   scrollbar of its own. */
+.split .diff-row:not(.diff-fold) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.diff-half {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  & + .diff-half { border-left: 1px solid var(--border); }
+  &.blank { background: repeating-linear-gradient(-45deg, transparent 0 4px, rgb(from var(--muted) r g b / .07) 4px 5px); }
+}
+.diff-split-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  font-family: var(--font-ui, system-ui);
+  font-size: .68rem;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+
+  & .diff-half { gap: .35rem; padding: .3rem .6rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  & strong { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+}
+/* A fold of unchanged lines: expand controls in the gutter, the count
+   beside them, both kept in view while the code scrolls sideways. */
+.diff-fold {
+  align-items: center;
+  min-height: 1.75rem;
+  background: var(--diff-fold);
+  color: var(--muted);
+  font-family: var(--font-ui, system-ui);
+  font-size: .7rem;
+}
+.diff-fold-actions {
+  position: sticky;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .1rem;
+  box-sizing: border-box;
+  width: calc(2 * var(--diff-num-col));
+  align-self: stretch;
+  background: color-mix(in oklch, var(--accent) 14%, var(--bg));
+
+  & button {
+    display: grid;
+    place-items: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ui-radius, 4px);
+    background: transparent;
+    color: var(--accent);
+  }
+  & button:hover { background: rgb(from var(--accent) r g b / .18); }
+  & button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+.diff-fold-label {
+  position: sticky;
+  left: calc(2 * var(--diff-num-col));
+  padding: 0 .75rem;
+  white-space: nowrap;
+}
+.bundle-compare-code-more {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .75rem;
+  color: var(--muted);
+  font-size: .72rem;
+  position: sticky;
+  left: 0;
+}
+.bundle-compare-code-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .75rem;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: .82rem;
+
+  & p { margin: 0; }
+}
+.bundle-compare-code-action {
+  padding: .3rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 5px);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: .75rem;
+
+  &:hover { border-color: var(--accent); color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+.bundle-compare-code-letter.repointed,
+.bundle-compare-code-pill.repointed,
+.bundle-compare-code-kind.repointed { color: var(--accent); }
+.bundle-compare-code-pill.repointed,
+.bundle-compare-code-kind.repointed[aria-pressed='true'] { background: rgb(from var(--accent) r g b / .14); }
+
+/* Repointed imports of the open file, above its diff: the specifier, the
+   old and new target, and the line importing it. */
+.bundle-compare-code-repointed {
+  margin: .75rem;
+  padding: .55rem .7rem;
+  border: 1px solid rgb(from var(--accent) r g b / .35);
+  border-radius: var(--ui-radius, 6px);
+  background: rgb(from var(--accent) r g b / .05);
+  font-size: .72rem;
+
+  & h4 {
+    margin: 0 0 .4rem;
+    font-size: .66rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+    & b { color: var(--text); }
+  }
+  & ul { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+  & li { display: grid; gap: .2rem; min-width: 0; }
+  & li + li { padding-top: .5rem; border-top: 1px solid var(--border); }
+  & code {
+    min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+}
+.bundle-compare-code-repointed-spec,
+.bundle-compare-code-repointed-targets,
+.bundle-compare-code-repointed-targets > span {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  min-width: 0;
+}
+.bundle-compare-code-repointed-spec {
+  & code { color: var(--text); font-weight: 600; }
+  & span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+}
+.bundle-compare-code-repointed-targets {
+  color: var(--muted);
+  & > span { flex: 0 1 auto; }
+  & > span > span { flex: none; font-size: .62rem; text-transform: uppercase; letter-spacing: .04em; }
+  & .before code { color: var(--critical); }
+  & .after code { color: var(--green); }
+}
+.bundle-compare-code-repointed-line.bundle-compare-diff-table {
+  display: flex;
+  width: auto;
+  min-width: 0;
+  padding: .15rem 0;
+  border: 0;
+  border-radius: var(--ui-radius, 4px);
+  background: var(--bg);
+  text-align: left;
+  font-size: .72rem;
+
+  &:not(:disabled):hover { box-shadow: inset 0 0 0 1px var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  & .diff-num { background: transparent; }
+  & code { flex: 1; padding-right: .5rem; white-space: pre; }
+}
+/* An Overview resolution's importer opens it in the Code view. */
+.bundle-compare-resolution-parent {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+
+  &:hover { color: var(--accent); text-decoration: underline; }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+.bundle-compare-code-repointed-more {
+  color: var(--muted);
+  font-size: .66rem;
+}

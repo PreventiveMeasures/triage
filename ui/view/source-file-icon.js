@@ -81,3 +81,8 @@ export const sourceCargoIcon = html`<svg class="bundle-code-tree-cargo" width="1
   <path d="M0 16.309h22.926v9.971L45.72 13.139 22.926 0v9.97H0z" fill="#231f20" transform="matrix(0 -.029 .022 .013 10.451 11.138)"/>
   <path d="M0 16.309h22.926v9.971L45.72 13.139 22.926 0v9.97H0z" fill="#231f20" transform="matrix(0 -.029 .022 .013 15.013 12.984)"/>
 </svg>`
+
+// A package's icon in the Code views' trees, by its ecosystem.
+export function sourcePackageIcon(ecosystem) {
+  return ecosystem === 'composer' ? sourceComposerIcon : ecosystem === 'cargo' ? sourceCargoIcon : ecosystem === 'soldeer' ? sourceSoldeerIcon : sourceNpmIcon
+}

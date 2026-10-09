@@ -6,9 +6,9 @@
 // builds of the same artifact ("what did this dependency bump pull
 // in?"), but it works on any two bundles the user has on disk.
 //
-// Removed source files use the existing source viewer. Added files and changed
-// file diffs open against the already-loaded comparison pair in a modal, without
-// switching the active bundle or changing its source-viewer state.
+// Two modes share the summary row's tabs: Overview (the default) lists what
+// changed, and Code (bundle-compare-code.js) reviews the files that differ
+// as a diff. A file row in the Overview opens that file in Code.
 //
 // The comparison is framed git-style: the open bundle is the "base"
 // (before), the picked bundle is "other" (after), and added / removed
@@ -29,15 +29,14 @@ import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
-import { bundleFileKinds, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
+import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
-import { openBundleFileDialog } from './dialogs/bundle-file-dialog.js'
-import { showToast } from './toast.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
+import './bundle-compare-code.js'
 
 // Cap each file group's rendered rows so a pathological compare (a
 // stasis bundle vendoring thousands of files against an unrelated
@@ -106,6 +105,10 @@ class BundleCompare extends LitElement {
     _status: { state: true },
     _scope: { state: true },
     _fileSort: { state: true },
+    // 'overview' | 'code', and the file the Code view shows (null: its
+    // first changed file).
+    _mode: { state: true },
+    _codePath: { state: true },
   }
 
   // Light DOM so report.css applies + file-row clicks bubble to the
@@ -121,6 +124,8 @@ class BundleCompare extends LitElement {
     this._status = 'idle'
     this._scope = ''
     this._fileSort = { removed: 'name', added: 'name', changed: 'name' }
+    this._mode = 'overview'
+    this._codePath = null
     // Diff memo — recomputed only when the (base, other) integrity
     // pair changes, so unrelated re-renders don't re-walk every file.
     this._diff = null
@@ -143,6 +148,8 @@ class BundleCompare extends LitElement {
     if (_pendingSwap && this.integrity === _pendingSwap.base) {
       const target = _pendingSwap.target
       this._scope = _pendingSwap.scope
+      this._mode = _pendingSwap.mode
+      this._codePath = _pendingSwap.codePath
       _pendingSwap = null
       this._targetIntegrity = target
       this._otherDetails = null
@@ -156,6 +163,7 @@ class BundleCompare extends LitElement {
     this._otherDetails = null
     this._status = 'idle'
     this._scope = ''
+    this._codePath = null
     this._diff = null
     this._diffKey = null
   }
@@ -169,7 +177,7 @@ class BundleCompare extends LitElement {
     const newBase = this._targetIntegrity
     if (!newBase || newBase === this.integrity) return
     if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
-    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope }
+    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath }
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,
@@ -193,6 +201,7 @@ class BundleCompare extends LitElement {
     const integrity = value || null
     this._targetIntegrity = integrity
     this._otherDetails = null
+    this._codePath = null
     this._diff = null
     this._diffKey = null
     if (!integrity) { this._status = 'idle'; this._scope = ''; return }
@@ -225,20 +234,16 @@ class BundleCompare extends LitElement {
     )
   }
 
-  _openFile(path, kind) {
-    const details = kind === 'removed' ? this.details : this._otherDetails
-    void openBundleFileDialog({
-      path, kind, baseName: this._nameFor(this.integrity), otherName: this._nameFor(this._targetIntegrity),
-      format: details?.kind === 'stasis' ? details.bundle.formats?.get(path) : undefined,
-      before: bundleFilesAsMap(this.details).get(path), after: bundleFilesAsMap(this._otherDetails).get(path),
-    }).catch(err => showToast(err.message, { kind: 'error' }))
+  // Review a file's changes in the Code view.
+  _openFile(path) {
+    this._codePath = path
+    this._mode = 'code'
   }
 
-  _fileRow(path, label, kind, sizeTpl) {
-    const inner = html`<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${path}>${label}</span>${sizeTpl}`
-    return kind === 'removed' && bundleFileKinds(this.details).get(path) !== 'resource'
-      ? html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" data-bundle-view-source=${path}>${inner}</button></li>`
-      : html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path, kind)}>${inner}</button></li>`
+  _fileRow(path, label, sizeTpl) {
+    return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
+      <span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${path}>${label}</span>${sizeTpl}
+    </button></li>`
   }
 
   // Card shell shared by every file / package / dependency group: the
@@ -283,7 +288,7 @@ class BundleCompare extends LitElement {
       ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(sort === value)} @click=${() => { this._fileSort = { ...this._fileSort, [kind]: value } }}>${label}</button>`)}
     </span>`
     return this._group(title, sorted, kind, (r) => r.path,
-      (r) => this._fileRow(r.path, displayOf(r.path), kind, this._sizeCells(r)), actions)
+      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), actions)
   }
 
   // One package group. Same accent scheme as the file groups; rows
@@ -360,7 +365,7 @@ class BundleCompare extends LitElement {
       const context = `${r.conditions}${r.platform === null ? '' : ` · Platform: ${r.platform}`}`
       return html`<li class="bundle-compare-resolution">
         <div class="bundle-compare-resolution-source">
-          <code data-tooltip-truncated data-tooltip=${r.parent}>${r.parent}</code>
+          <button type="button" class="bundle-compare-resolution-parent" data-tooltip-truncated data-tooltip=${r.parent} @click=${() => this._openFile(r.parent)}>${r.parent}</button>
           <span aria-hidden="true">→</span>
           <code data-tooltip-truncated data-tooltip=${r.specifier}>${r.specifier}</code>
           <span class="bundle-compare-resolution-context" data-tooltip-truncated data-tooltip=${context}>${context}</span>
@@ -421,7 +426,9 @@ class BundleCompare extends LitElement {
   }
 
   // Summary band — file + size (+ dependency) deltas plus the four
-  // bucket chips. Sits under the picker once a comparison is live.
+  // bucket chips, wrapping on their own so the Overview | Code tabs keep
+  // to the right of the first line. Sits under the picker once a
+  // comparison is live.
   _renderSummary(diff) {
     const totals = diff.totals
     const vt = diff.versionUpdates.totals
@@ -431,7 +438,7 @@ class BundleCompare extends LitElement {
     const showDeps = vt.baseDeps > 0 || vt.otherDeps > 0
     const depDelta = vt.otherDeps - vt.baseDeps
     const pct = formatPct(totals.byteDelta, totals.baseBytes)
-    return html`<div class="bundle-compare-summary">
+    return html`<div class="bundle-compare-summary"><div class="bundle-compare-stats">
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Files</span>
         <span class="bundle-compare-metric-value">${totals.baseFiles.toLocaleString()} → ${totals.otherFiles.toLocaleString()}</span>
@@ -453,6 +460,10 @@ class BundleCompare extends LitElement {
         <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed</span>
         <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
         ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
+      </div></div>
+      <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
+        ${[['overview', 'Overview'], ['code', 'Code']].map(([mode, label]) => html`<button type="button" role="tab"
+          aria-selected=${String(this._mode === mode)} @click=${() => { this._mode = mode }}>${label}</button>`)}
       </div>
     </div>`
   }
@@ -535,12 +546,16 @@ class BundleCompare extends LitElement {
       body = this._renderDiff()
     }
 
+    const code = this._baseReady && ready && this._mode === 'code'
     return html`<div class="bundle-compare">
       <header class="bundle-compare-head">
         ${picker}
         ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
       </header>
-      <div class="bundle-compare-body">${body}</div>
+      ${code ? html`<bundle-compare-code .base=${this.details} .other=${this._otherDetails} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
+          .path=${this._codePath} baseName=${this._nameFor(this.integrity)} otherName=${this._nameFor(this._targetIntegrity)}
+          @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
+        : html`<div class="bundle-compare-body">${body}</div>`}
     </div>`
   }
 
