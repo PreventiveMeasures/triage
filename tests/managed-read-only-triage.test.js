@@ -6,9 +6,18 @@ import '../ui/view/frontend-install.js'
 // Render the actual card without the page renderer and source-preview DOM.
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: null } })
+// The console façade, without the sidebar, sync client and dialogs it re-exports.
+mock.module('../ui/view/sidebar.js', { namedExports: { forceManagedMode() {} } })
+mock.module('../ui/view/client-sync.js', { namedExports: { triageSync: {} } })
+mock.module('../ui/view/theme.js', { namedExports: { getTheme() {}, setTheme() {} } })
+mock.module('../ui/view/dialogs/triage-export-dialog.js', { namedExports: { openTriageExportDialog() {} } })
+mock.module('../ui/view/dialogs/report-compare-dialog.js', { namedExports: { openReportCompareDialog() {} } })
 const { state } = await import('../client/state.ts')
 const { canApplyFixToGroup, canEditTriage, canTriageFinding, fixApplies, syncGroupTriage, triageActionPlan, triageScope, triageEntry } = await import('../ui/view/group.js')
 const { findingCardInnerTemplate } = await import('../ui/view/render-finding.js')
+// Only now: the modules above would take a `window` for a browser page.
+globalThis.window ??= globalThis
+await import('../ui/view/api.js')
 
 const SESSIONS = {
   'a public link': { id: 'share', role: 'view', publicShare: true, csrfToken: 'csrf' },
@@ -93,6 +102,16 @@ for (const [who, session] of Object.entries(EDITORS)) {
     assert.equal(syncGroupTriage(group), true)
   })
 }
+
+test('the console triage API refuses where the controls are disabled', async t => {
+  use(t, SESSIONS['a public link'])
+  const f = finding({ triage: 'inprogress' })
+  await assert.rejects(window.DeepView.triage.set(f.id, { triage: 'fixed' }), /read-only/u)
+  assert.equal(state.triage.get(f.id).triage, 'inprogress')
+  state.managedSession = EDITORS['the Triage role']
+  assert.equal(await window.DeepView.triage.set(f.id, { triage: 'fixed' }), true)
+  assert.equal(state.triage.get(f.id).triage, 'fixed')
+})
 
 test('outside the managed surface a Viewer session does not lock local triage', t => {
   use(t, SESSIONS['the Viewer role'], { localMode: true })
