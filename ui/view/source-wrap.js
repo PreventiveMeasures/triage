@@ -10,8 +10,8 @@
 
 const VIEWERS = '.bundle-code-main, .bundle-source-modal, .bundle-search-side'
 const watched = new Map()
-// Per viewer: the gutter rows given breaks, the code width they were
-// measured at, and whether wrapping made a difference there.
+// Per viewer: the gutter rows given breaks, by the rows each takes, and the
+// code width they were measured at.
 const synced = new WeakMap()
 let canvas = null
 
@@ -67,18 +67,20 @@ function syncSourceWrap(lines) {
   const width = codeWidth(lines)
   if (!pre || !gutter || !lines.isConnected || width <= 0) return
   const wrapped = lines.classList.contains('is-wrapped')
+  const previous = synced.get(lines)?.rows ?? new Map()
   // Rows are as tall as laid out: the line height rounded to the layout's
   // units, which over a line of thousands of rows adds up to more than a
-  // row. A gutter row given no breaks takes one. Its computed height gives
-  // that to six digits, where its rectangle loses precision far down a
-  // long file.
-  let pitch = parseFloat(getComputedStyle(pre).lineHeight)
+  // row. A gutter row takes as many as it was given, and its computed
+  // height gives them to six digits, where its rectangle loses precision
+  // far down a long file. The row taking fewest gives the most.
+  let sample = null
   for (const row of gutter.children) {
-    if (!row.style.getPropertyValue('--wrap-breaks')) { pitch = parseFloat(getComputedStyle(row).height); break }
+    if (!sample || (previous.get(row) ?? 1) < previous.get(sample)) sample = row
+    if (!previous.has(row)) break
   }
+  const pitch = sample ? parseFloat(getComputedStyle(sample).height) / (previous.get(sample) ?? 1) : parseFloat(getComputedStyle(pre).lineHeight)
   const { rows, toggles } = measureLines(pre, width, wrapped, pitch)
-  const previous = synced.get(lines)?.rows ?? new Set()
-  const current = new Set()
+  const current = new Map()
   for (const [line, count] of rows) {
     const row = gutter.children[line]
     if (!row) continue
@@ -86,9 +88,9 @@ function syncSourceWrap(lines) {
     // space opens the final one, which a trailing break alone would not.
     const breaks = `"${'\\A '.repeat(count - 1)} "`
     if (row.style.getPropertyValue('--wrap-breaks') !== breaks) row.style.setProperty('--wrap-breaks', breaks)
-    current.add(row)
+    current.set(row, count)
   }
-  for (const row of previous) if (!current.has(row)) row.style.removeProperty('--wrap-breaks')
+  for (const row of previous.keys()) if (!current.has(row)) row.style.removeProperty('--wrap-breaks')
   synced.set(lines, { rows: current, width })
   const toggle = lines.closest(VIEWERS)?.querySelector('[data-bundle-source-wrap]')
   if (toggle) toggle.hidden = !toggles
