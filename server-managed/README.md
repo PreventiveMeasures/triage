@@ -332,6 +332,25 @@ authorized isolated preview when scoped to a team and recheck access after cold
 reads. Triage and comments remain shared by finding ID across teams; the team is
 only the authorization context.
 
+# Team App classification
+
+Each team in `GET /api/teams`, and the team in a public link's bootstrap, carries
+`app`: `{ appMode: true, appFindings }` when its published workspace has a basic
+App view, `{ appMode: false }` otherwise, or `null` when it cannot be classified
+right now. The sidebar opens App teams collapsed to their finding count from the
+first paint, and keeps other teams expanded. The server classifies the same
+filtered workspace the team view loads, with the classifier the view uses
+(`common/managed/team-app.js`), before the catalog is sent.
+
+A classification is keyed by the team's catalog cache key and its published
+reports' cache keys, so an unchanged catalog reuses it and accounts with the same
+access share it. Publishing, hiding, moving or uploading a report, a grant or
+scope change, or a link change produces a new key and a new catalog revision, so
+open sidebars refetch the catalog and collapse or expand the team live.
+Classification reads the team's published reports once per key, in memory per
+server instance. Oversized or unreadable workspaces have no App view. Unavailable
+storage leaves the team `null` (expanded) until a later catalog read succeeds.
+
 # Live team updates
 
 `GET /api/teams/:id/feed` is a read-only SSE subscription for an approved

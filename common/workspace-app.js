@@ -1,5 +1,5 @@
 import { revalidateKindOf } from '@preventive/report'
-import { canLockConfirmed } from './filters.js'
+import { canLockConfirmed } from './finding-filters.js'
 import { mergeReportGroups } from './workspace-groups.js'
 import { mergeLinkedWorkspaceGroups } from './linked-workspace-groups.js'
 

@@ -152,6 +152,17 @@
     },
     {
       "files": [
+        "common/finding-filters.js",
+        "common/linked-workspace-groups.js",
+        "common/workspace-groups.js"
+      ],
+      "rules": {
+        "max-depth": "off",
+        "max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": [
         "ui/logs.js"
       ],
       "rules": {

@@ -53,6 +53,14 @@ export async function probeSession({ fallback = null } = {}) {
   }
 }
 
+// The server's App classification of a team's published workspace: App teams
+// open collapsed to their findings. An unknown one is left out (expanded).
+function teamApp(app) {
+  if (app?.appMode === false) return { appMode: false }
+  return app?.appMode === true && Number.isSafeInteger(app.appFindings) && app.appFindings >= 0
+    ? { appMode: true, appFindings: app.appFindings } : null
+}
+
 // GET /api/teams → the signed-in user's teams, each with the reports and bundles
 // attached to the team's repos ([{ id, slug, name, reports: [{ id, slug, filename, analyzer, repoFullName, repoDirectory }],
 // bundles: [{ id, slug, integrity, filename, byteSize, repoId, repoDirectory, repoFullName }] }]), or [] when
@@ -75,6 +83,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
       name: t.name,
       ...(t.permissions ? { permissions: { dependencies: t.permissions.dependencies === true, security: t.permissions.security === true } } : {}),
       ...(typeof t.cacheKey === 'string' ? { cacheKey: t.cacheKey } : {}),
+      ...(teamApp(t.app) ? { app: teamApp(t.app) } : {}),
       reports: Array.isArray(t.reports)
         ? t.reports
           .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')

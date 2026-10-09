@@ -1,6 +1,5 @@
-import { revalidateKindOf } from '@preventive/report'
+import { effectiveSeverity, revalidateKindOf } from '@preventive/report'
 import { recordRevalidationCopies } from './revalidation-conflicts.js'
-import { effectiveSeverity } from './format.js'
 
 // Gap-fill a derived finding only within a mergeable row. Raw report copies
 // remain intact so App and code modes can use different row partitions.

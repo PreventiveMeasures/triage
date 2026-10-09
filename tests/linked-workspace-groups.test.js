@@ -4,7 +4,7 @@ import './_polyfills.js'
 
 globalThis[Symbol.for('@rray/frontend')] ??= { html: () => null, nothing: null, LitElement: class {}, StateElement: class {} }
 
-const { mergeLinkedWorkspaceGroups } = await import('../ui/view/linked-workspace-groups.js')
+const { mergeLinkedWorkspaceGroups } = await import('../common/linked-workspace-groups.js')
 const { collectDuplicates, LINKS_KIND } = await import('../client/linked-findings.js')
 const { configureRevalidation, canDropRevalidation } = await import('../ui/view/format.js')
 const { state, patchEntry, saveFile, deleteFile, ensureLinkedFindingsIndexed, subscribeToLinkedFindings } = await import('../client/index.js')

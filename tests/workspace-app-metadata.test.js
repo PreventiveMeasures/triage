@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
 globalThis[Symbol.for('@rray/frontend')] ??= { html: () => null, nothing: null, LitElement: class {}, StateElement: class {} }
-const { workspaceAppMetadata } = await import('../ui/view/workspace-app.js')
+const { workspaceAppMetadata } = await import('../common/workspace-app.js')
 const { configureRevalidation } = await import('../ui/view/format.js')
 const { state } = await import('../client/state.ts')
 const { collectDuplicates } = await import('../client/linked-findings.js')
