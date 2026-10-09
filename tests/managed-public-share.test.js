@@ -133,7 +133,9 @@ test('link listings check each repository with GitHub and record what changed', 
     await h.db.selectRepo({ repoId: +repoId, fullName: `org/repo${repoId}`, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId, ...fields }, Date.now())
     await h.db.setTeamRepo('many', +repoId, '')
   }
-  const requests = []
+  const requests = [], start = Date.now()
+  let elapsed = 0
+  t.mock.method(Date, 'now', () => start + elapsed)
   t.mock.method(globalThis, 'fetch', (url, init) => {
     const path = new URL(url).pathname
     if (path === '/app/installations/7/access_tokens') return Response.json({ token: 'installation', expires_at: new Date(Date.now() + 3600000).toISOString() })
@@ -153,11 +155,22 @@ test('link listings check each repository with GitHub and record what changed', 
     [[1, true, 'internal'], [2, true, 'private'], [3, false, 'public'], [4, false, 'public'], [5, false, 'public'], [6, false, 'public']],
     'what GitHub says is recorded both ways; what it does not answer is kept')
   assert.equal(writes, 3)
-  assert.deepEqual(requests.toSorted(([a], [b]) => a - b), [[1, 'Bearer installation'], [2, 'Bearer installation'], [3, 'Bearer installation'], [4, null], [5, null], [6, 'Bearer installation']],
-    'repositories selected without the App are read without credentials')
-  assert.deepEqual(await listing(), expected, 'every listing asks again')
-  assert.equal(requests.length, 12)
+  const asked = from => requests.slice(from).toSorted(([a], [b]) => a - b)
+  assert.deepEqual(asked(0), [[1, 'Bearer installation'], [2, 'Bearer installation'], [3, 'Bearer installation'], [4, null], [5, null], [6, 'Bearer installation']],
+    'without a token of the manager\'s, repositories selected without the App are read without credentials')
+  assert.deepEqual(await listing(), expected)
+  assert.deepEqual(asked(6), [[4, null], [6, 'Bearer installation']], 'listing again soon asks only about what went unanswered')
+  await h.db.setUserTokens(h.sessions.manage.userId, { accessToken: 'gho_manager', refreshToken: null, expiresAt: null })
+  elapsed = 11 * 60_000
+  assert.deepEqual(await listing(), expected)
+  assert.deepEqual(asked(8), [[1, 'Bearer installation'], [2, 'Bearer installation'], [3, 'Bearer installation'], [4, 'Bearer gho_manager'], [5, 'Bearer gho_manager'], [6, 'Bearer installation']],
+    'minutes later every repository is asked about again, with the manager\'s token where there is no App')
   assert.equal(writes, 3, 'an unchanged visibility is not written again')
+  // Another live check finding a repository no longer public counts as recent.
+  await h.db.setGithubRepositoryVisibility([{ repoId: 5, github: 'org/repo5', public: false, checkedAt: start + 12 * 60_000 }])
+  elapsed = 13 * 60_000
+  assert.deepEqual(await listing(), [...expected.slice(0, 3), { fullName: 'org/repo5', visibility: 'private' }, expected[3]])
+  assert.deepEqual(asked(14), [[4, 'Bearer gho_manager'], [6, 'Bearer installation']])
 })
 
 test('public sharing is opt-in, requires team management and CSRF; the token is not a login session', async t => {
