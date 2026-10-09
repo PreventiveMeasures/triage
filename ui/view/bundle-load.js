@@ -92,8 +92,17 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
 // (events.js) and the boot restore (view.js) — each then persists /
 // repaints / calls `openBundle` on its own. Keep the active detail tab
 // between bundles; entering from another view starts on Overview. An explicit
-// tab still takes priority for boot restore and Compare's swap action.
+// tab still takes priority for boot restore and Compare's swap action. From
+// one Code tab to another, ask for the file open there, or asked for in the
+// bundle open while its sources load: the Code view opens it where the bundle
+// has the same path, and makes its usual pick otherwise. Sources that loaded
+// or failed and opened no file leave none to ask for, as does a bundle no
+// longer open, deleted say.
 export function selectBundle(integrity, tab = state.currentView === 'bundles' ? state.bundleDetailsTab : 'overview', { workspaceId = null } = {}) {
+  const details = state.bundleDetails, request = state.bundleCodeFileRequest
+  const pending = request?.bundle === state.selectedBundle && (!details || (details.metadataOnly === true && !details.sourceError))
+  const carried = state.currentView === 'bundles' && state.bundleDetailsTab === 'code' && tab === 'code'
+    ? state.bundleSourceFile ?? (pending ? request.path : null) : null
   beginViewNavigation()
   state.currentView = 'bundles'
   state.selectedBundle = integrity
@@ -101,7 +110,7 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   state.bundleDetails = null
   state.bundleSourceFile = null
   state.bundleCodeHistory = null
-  state.bundleCodeFileRequest = null
+  state.bundleCodeFileRequest = carried ? { bundle: integrity, path: carried } : null
   state.bundleSourceFindingIdx = null
   state.bundleCodeSearchQuery = ''
   state.bundleCodeSearchMode = 'files'

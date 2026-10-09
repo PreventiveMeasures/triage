@@ -143,4 +143,6 @@ test('route rewrites locate the Code tab\'s file shown and its marked lines, or 
   const request = { bundle: 'sha512-a', file: 7, line: 2, endLine: 5 }
   assert.deepEqual(managedCodeLocation({ ...state, bundleSourceFile: null, bundleDetails: { ...details, metadataOnly: true }, bundleCodeFileRequest: request }), { file: 7, line: 2, endLine: 5 })
   assert.deepEqual(managedCodeLocation({ ...state, bundleCodeFileRequest: { ...request, bundle: 'sha512-b' } }), { file: 3 })
+  assert.equal(managedCodeLocation({ ...state, bundleSourceFile: null, bundleDetails: { ...details, metadataOnly: true }, bundleCodeFileRequest: { bundle: 'sha512-a', path: 'src/z.js' } }), null,
+    'a file asked for by path has no number while sources load, and its path never goes in a route')
 })

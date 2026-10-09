@@ -1429,12 +1429,13 @@ function renderBundleCodeView(details, entry = null) {
     : issueIndex
   let path = state.bundleSourceFile
   // A managed link's file and lines, now that the sources it numbers have
-  // loaded. A number past the last file falls back to the usual pick; lines
-  // past the file's last mark none.
+  // loaded, or the file open in the bundle before. A number past the last
+  // file, or a path this bundle doesn't have, falls back to the usual pick;
+  // lines past the file's last mark none.
   const request = state.bundleCodeFileRequest
   if (request?.bundle === state.selectedBundle) {
     state.bundleCodeFileRequest = null
-    const linked = allPaths[request.file - 1]
+    const linked = request.path == null ? allPaths[request.file - 1] : sources.has(request.path) ? request.path : null
     if (linked) {
       path = linked
       state.bundleSourceFile = linked

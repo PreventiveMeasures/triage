@@ -198,6 +198,41 @@ it('keeps detail tabs between bundles and clears bundle-specific source/search s
   }
 })
 
+it('asks the next bundle\'s Code tab for the file open in the last one', () => {
+  selectBundle(entry.integrity, 'code')
+  state.bundleSourceFile = 'src/main.js'
+  selectBundle('second-bundle')
+  assert.equal(state.bundleSourceFile, null)
+  assert.deepEqual(state.bundleCodeFileRequest, { bundle: 'second-bundle', path: 'src/main.js' })
+  selectBundle('third-bundle')
+  assert.deepEqual(state.bundleCodeFileRequest, { bundle: 'third-bundle', path: 'src/main.js' }, 'still asked for while sources load')
+  state.bundleDetails = { integrity: 'third-bundle', metadataOnly: true }
+  selectBundle('second-bundle')
+  assert.deepEqual(state.bundleCodeFileRequest, { bundle: 'second-bundle', path: 'src/main.js' }, 'still asked for while contents load')
+  for (const details of [{ integrity: 'second-bundle', json: { sources: [] } }, { integrity: 'second-bundle', metadataOnly: true, sourceError: 'offline' }, { integrity: 'second-bundle', error: 'corrupt' }]) {
+    state.bundleCodeFileRequest = { bundle: 'second-bundle', path: 'src/main.js' }
+    state.bundleDetails = details
+    selectBundle('third-bundle')
+    assert.equal(state.bundleCodeFileRequest, null, 'sources that loaded or failed and opened no file leave none to ask for')
+    selectBundle('second-bundle', 'code')
+  }
+  // Deleting the open bundle leaves its request behind, for no bundle.
+  state.bundleCodeFileRequest = { bundle: 'second-bundle', path: 'src/main.js' }
+  state.selectedBundle = null
+  selectBundle('third-bundle')
+  assert.equal(state.bundleCodeFileRequest, null, 'a request for a bundle no longer open asks for nothing')
+  state.bundleCodeFileRequest = { bundle: 'third-bundle', file: 3 }
+  selectBundle('second-bundle')
+  assert.equal(state.bundleCodeFileRequest, null, 'a link\'s number names no file in another bundle')
+  for (const [view, from, to] of [['bundles', 'code', 'overview'], ['bundles', 'search', 'code'], ['findings', 'code', 'code']]) {
+    selectBundle(entry.integrity, from)
+    state.bundleSourceFile = 'src/main.js'
+    state.currentView = view
+    selectBundle('second-bundle', to)
+    assert.equal(state.bundleCodeFileRequest, null, `${view} ${from} to ${to}`)
+  }
+})
+
 it('resets to Overview after a non-bundle view, but honors explicit tab restores', () => {
   for (const view of ['findings', 'links', 'packages', 'repositories']) {
     selectBundle(entry.integrity, 'graph')

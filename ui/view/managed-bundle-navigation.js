@@ -21,11 +21,13 @@ export function managedBundleRoute(teams, entry, teamId, bundleTab = 'overview',
 
 // Where a route for the open bundle puts its Code tab, so a rewrite of that
 // route keeps it: the file shown, by number, with its marked lines, or while
-// the sources a link numbers still load, the file and lines it asked for.
+// the sources a link numbers still load, the file and lines it asked for. A
+// file asked for by path has no number until they do.
 export function managedCodeLocation(state, tab = state.bundleDetailsTab) {
   if (tab !== 'code') return null
   const request = state.bundleCodeFileRequest
   if (request?.bundle === state.selectedBundle) {
+    if (request.file == null) return null
     const { bundle: _bundle, ...location } = request
     return location
   }
