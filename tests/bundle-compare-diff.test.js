@@ -425,7 +425,10 @@ describe('renames', () => {
   })
 
   it('labels a rename the way git diff --stat does', () => {
-    assert.equal(renameLabel('src/a.js', 'src/a.ts'), 'src/{a.js → a.ts}')
+    assert.equal(renameLabel('src/a.js', 'src/a.ts'), 'src/a{.js → .ts}', 'down to the extension when that is all')
+    assert.equal(renameLabel('server/db.js', 'server/db.ts'), 'server/db{.js → .ts}')
+    assert.equal(renameLabel('a.css', 'a.scss'), 'a{.css → .scss}')
+    assert.equal(renameLabel('src/a.test.js', 'src/a.test.ts'), 'src/a.test{.js → .ts}')
     assert.equal(renameLabel('src/a.js', 'lib/a.js'), '{src → lib}/a.js')
     assert.equal(renameLabel('x/src/y/a.js', 'x/lib/y/a.js'), 'x/{src → lib}/y/a.js')
     assert.equal(renameLabel('node_modules/a/src/x.ts', 'node_modules/a/lib/x.js'), 'node_modules/a/{src/x.ts → lib/x.js}')

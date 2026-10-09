@@ -135,21 +135,29 @@ export function detectRenames(removed, added, pkgOf) {
 }
 
 // A rename the way `git diff --stat` writes one: the directories both
-// paths share, then the part that changed (`src/{a.js → a.ts}`,
-// `{src → lib}/a.js`) — as `{ head, from, to, tail }`, `head` ending and
-// `tail` starting with a slash where there is one, for a view to color.
-export function renameParts(from, to) {
+// paths share, then the part that changed (`{src → lib}/a.js`), down to
+// the extension when that is all (`src/a{.js → .ts}`; `extension: false`
+// keeps whole names, `src/{a.js → a.ts}`) — as `{ head, from, to, tail }`
+// for a view to color.
+export function renameParts(from, to, { extension = true } = {}) {
   const a = from.split('/'), b = to.split('/')
   let head = 0
   while (head < a.length - 1 && head < b.length - 1 && a[head] === b[head]) head++
   let tail = 0
   while (tail < a.length - head - 1 && tail < b.length - head - 1 && a.at(-1 - tail) === b.at(-1 - tail)) tail++
-  return {
+  const parts = {
     head: head ? `${a.slice(0, head).join('/')}/` : '',
     from: a.slice(head, a.length - tail).join('/'),
     to: b.slice(head, b.length - tail).join('/'),
     tail: tail ? `/${a.slice(-tail).join('/')}` : '',
   }
+  // One name on each side, and only its extension differs.
+  const dot = parts.from.lastIndexOf('.')
+  if (extension && !parts.from.includes('/') && !parts.to.includes('/') && dot > 0
+      && parts.to.lastIndexOf('.') === dot && parts.from.slice(0, dot) === parts.to.slice(0, dot)) {
+    return { ...parts, head: parts.head + parts.from.slice(0, dot), from: parts.from.slice(dot), to: parts.to.slice(dot) }
+  }
+  return parts
 }
 
 export function renameLabel(from, to) {

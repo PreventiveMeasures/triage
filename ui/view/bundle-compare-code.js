@@ -337,7 +337,7 @@ class BundleCompareCode extends LitElement {
           <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
-            ${basePath ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${basePath}`}>← ${renameParts(basePath, full).from}</span>` : nothing}
+            ${basePath ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${basePath}`}>← ${renameParts(basePath, full, { extension: false }).from}</span>` : nothing}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
             <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
               data-tooltip=${kind === 'repointed' ? imports : basePath ? `Renamed${modified ? ' and modified' : ''} from ${basePath}` : KIND[kind].label}>${KIND[kind].letter}</span>

@@ -184,7 +184,10 @@ test('a renamed file lists once at its new path, diffed against its old one; a p
   assert.match(pure, /class=bundle-compare-code-letter renamed pure\s+data-tooltip=Renamed from src\/same\.js>→</u, 'a pure rename reads blue')
   assert.match(pure, /class=bundle-compare-code-pill renamed pure>Renamed/u)
   const ext = renderText(view(null, [{ 'src/a.js': 'x\n' }, { 'src/a.ts': 'x\n' }]).render())
-  assert.match(ext, />a\.ts<\/span>\s*<span class="bundle-compare-code-oldname"[^>]*>← a\.js</u, 'as much of the old name as changed')
+  assert.match(ext, />a\.ts<\/span>\s*<span class="bundle-compare-code-oldname"[^>]*>← a\.js</u, 'the old name, whole')
+  const bar = renderText(view('src/a.ts', [{ 'src/a.js': 'x\n' }, { 'src/a.ts': 'x\n' }]).render())
+  assert.match(bar, />src\/a\{<span class="bundle-compare-rename-from">\.js<\/span> → <span class="bundle-compare-rename-to">\.ts<\/span>\}</u,
+    'the bar narrows an extension change to the extension')
 })
 
 test('a renamed file modified too shows under Modified as well as Renamed; a pure rename under Renamed alone', () => {
