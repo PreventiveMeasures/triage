@@ -319,7 +319,7 @@ class BundleCompare extends LitElement {
     </div></li>`)
   }
 
-  // One "Version changes" row: package dot + name, then `old → new`
+  // One Updated row: package dot + name, then `old → new`
   // with the new side colored by direction (↑ green / ↓ red / changed
   // amber) and a matching glyph. The direction is also spelled out in
   // accessible label for screen readers.
@@ -356,24 +356,15 @@ class BundleCompare extends LitElement {
   _renderVersionUpdates(vu, baseName, otherName) {
     const { updated, added, removed } = vu
     if (updated.length === 0 && added.length === 0 && removed.length === 0) return nothing
-    const shownUpdated = updated.slice(0, MAX_ROWS)
-    const hiddenUpdated = updated.length - shownUpdated.length
+    // Updated | Removed | Added share one row of columns, wrapping by the
+    // groups' minimum width like the Packages and Files sections.
     return html`<section class="bundle-compare-section">
       <h3 class="bundle-compare-section-head">Dependency updates</h3>
-      ${updated.length > 0 ? html`<div class="bundle-compare-ver-changes">
-        <header class="bundle-compare-group-head">
-          <span class="bundle-compare-group-title">Updated</span>
-          <span class="bundle-compare-group-count">${updated.length}</span>
-        </header>
-        <ul class="bundle-compare-rows">
-          ${repeat(shownUpdated, (r) => r.pkg, (r) => this._versionRow(r))}
-        </ul>
-        ${hiddenUpdated > 0 ? html`<div class="bundle-compare-more">and ${hiddenUpdated.toLocaleString()} more…</div>` : nothing}
-      </div>` : nothing}
-      ${added.length > 0 || removed.length > 0 ? html`<div class="bundle-compare-cols">
+      <div class="bundle-compare-cols">
+        ${this._group('Updated', updated, 'updated', (r) => r.pkg, (r) => this._versionRow(r))}
         ${this._depGroup(`Removed · only in ${baseName}`, removed, 'removed')}
         ${this._depGroup(`Added · only in ${otherName}`, added, 'added')}
-      </div>` : nothing}
+      </div>
     </section>`
   }
 

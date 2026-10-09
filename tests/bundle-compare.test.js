@@ -171,3 +171,16 @@ test('a swap that lands on another bundle is dropped, not resumed later', () => 
   view.willUpdate(new Map([['integrity', 'third']]))
   assert.equal(view._targetIntegrity, null, 'opening the swap\'s bundle afterwards starts a fresh comparison')
 })
+
+test('dependency updates list Updated, Removed and Added side by side in one row of columns', () => {
+  const view = compare()
+  const markup = renderText(view._renderVersionUpdates({
+    updated: [{ pkg: 'lodash', baseVersions: ['4.17.20'], otherVersions: ['4.17.21'], direction: 'up' }],
+    removed: [{ pkg: 'left-pad', versions: ['1.3.0'] }],
+    added: [{ pkg: 'zod', versions: ['3.23.8'] }],
+    totals: {},
+  }, 'Before', 'After'))
+  const cols = markup.slice(markup.indexOf('class="bundle-compare-cols"'))
+  assert.deepEqual([...cols.matchAll(/class=bundle-compare-group bundle-compare-(\w+)/gu)].map(m => m[1]), ['updated', 'removed', 'added'])
+  assert.equal(markup.match(/class="bundle-compare-cols"/gu).length, 1)
+})

@@ -337,13 +337,9 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
    row's `old → new` already carries the up / down / changed color, so
    the container stays untinted rather than fight the per-row accent.
    Added / removed dependencies reuse the tinted group cards. */
-.bundle-compare-ver-changes {
-  margin-bottom: .6rem;
-  padding: .45rem .6rem;
-  border-radius: var(--ui-radius, 6px);
-  background: rgb(from var(--muted) r g b / .06);
-}
-.bundle-compare-ver-changes .bundle-compare-group-title { color: var(--text); }
+.bundle-compare-group.bundle-compare-updated { background: rgb(from var(--muted) r g b / .06); }
+.bundle-compare-updated .bundle-compare-dot { background: var(--muted); }
+.bundle-compare-updated .bundle-compare-group-title { color: var(--text); }
 /* `old → new` cell, pinned right of the package name like the size
    columns; mono + tabular so version numbers line up across rows. */
 .bundle-compare-ver {
