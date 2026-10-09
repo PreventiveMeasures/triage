@@ -545,7 +545,8 @@ bundle-compare-code > .bundle-code-view {
 
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed, &.renamed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.renamed { color: var(--info); background: rgb(from var(--info) r g b / .16); }
   &[aria-pressed='false'] {
     color: var(--muted);
     background: transparent;
@@ -565,6 +566,22 @@ bundle-compare-code > .bundle-code-view {
   &.added { color: var(--green); }
   &.removed { color: var(--critical); }
   &.changed, &.renamed { color: var(--medium); }
+  /* A rename with its contents as they were. */
+  &.renamed.pure { color: var(--info); }
+}
+/* A rename's changed part, `{old → new}`: the old red, the new green. */
+.bundle-compare-rename-from { color: var(--critical); }
+.bundle-compare-rename-to { color: var(--green); }
+/* A renamed file's old name, as much of it as changed, after the new. */
+.bundle-compare-code-name.renamed { flex: 0 1 auto; }
+.bundle-compare-code-oldname {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: .9em;
 }
 .bundle-compare-code-name.removed {
   text-decoration: line-through;
@@ -588,6 +605,7 @@ bundle-compare-code > .bundle-code-view {
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
   &.changed, &.renamed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.renamed.pure { color: var(--info); background: rgb(from var(--info) r g b / .16); }
 }
 .bundle-compare-code-counts {
   flex: none;

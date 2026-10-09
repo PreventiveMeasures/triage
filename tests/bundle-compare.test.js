@@ -356,6 +356,6 @@ test('the Overview lists a renamed file under Changed as `{old → new}`, and th
   const markup = renderText(view._renderDiff())
   assert.doesNotMatch(markup, /bundle-compare-group bundle-compare-(?:removed|added)/u, 'neither removed nor added')
   const changed = markup.slice(markup.lastIndexOf('bundle-compare-group bundle-compare-changed'))
-  assert.match(changed, /data-tooltip=src\/util\.js → lib\/util\.ts>\{src\/util\.js → lib\/util\.ts\}</u)
+  assert.match(changed, /data-tooltip=src\/util\.js → lib\/util\.ts>\{<span class="bundle-compare-rename-from">src\/util\.js<\/span> → <span class="bundle-compare-rename-to">lib\/util\.ts<\/span>\}</u)
   assert.match(renderText(view._renderSummary(view._diffFor())), /1 changed \(1 renamed\)/u)
 })

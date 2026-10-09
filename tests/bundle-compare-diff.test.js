@@ -409,7 +409,7 @@ describe('renames', () => {
     const base = m({ 'own/src/a.js': 'aaaa', 'own/keep.js': 'k', 'own/gone.js': 'g' })
     const other = m({ 'own/lib/a.ts': 'aaaaaa', 'own/keep.js': 'k', 'own/new.js': 'n' })
     const { totals, files, packages } = computeBundleDiff(base, other, firstSeg)
-    assert.deepEqual(files.changed, [{ path: 'own/lib/a.ts', basePath: 'own/src/a.js', baseBytes: 4, otherBytes: 6, delta: 2 }])
+    assert.deepEqual(files.changed, [{ path: 'own/lib/a.ts', basePath: 'own/src/a.js', baseBytes: 4, otherBytes: 6, delta: 2, modified: true }])
     assert.deepEqual(files.onlyBase.map(row => row.path), ['own/gone.js'])
     assert.deepEqual(files.onlyOther.map(row => row.path), ['own/new.js'])
     assert.equal(totals.changedFiles, 1)
@@ -420,7 +420,7 @@ describe('renames', () => {
     assert.equal(totals.identical, false)
     assert.deepEqual(packages.changed.map(row => row.pkg), ['own'])
     const pure = computeBundleDiff(m({ 'own/src/a.js': 'a' }), m({ 'own/lib/a.js': 'a' }), firstSeg)
-    assert.deepEqual(pure.files.changed, [{ path: 'own/lib/a.js', basePath: 'own/src/a.js', baseBytes: 1, otherBytes: 1, delta: 0 }])
+    assert.deepEqual(pure.files.changed, [{ path: 'own/lib/a.js', basePath: 'own/src/a.js', baseBytes: 1, otherBytes: 1, delta: 0, modified: false }])
     assert.equal(pure.totals.identical, false, 'a rename alone is a change')
   })
 

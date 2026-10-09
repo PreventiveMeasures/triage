@@ -36,7 +36,8 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates, renameLabel } from './bundle-compare-diff.js'
+import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
+import { renameTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
@@ -363,9 +364,9 @@ class BundleCompare extends LitElement {
     const sort = this._fileSort[kind]
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
-    // A renamed file reads `src/{a.js → a.ts}`.
+    // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
     const row = r => r.basePath == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r))
-      : this._fileRow(r.path, renameLabel(displayOf(r.basePath), displayOf(r.path)), this._sizeCells(r), `${r.basePath} → ${r.path}`)
+      : this._fileRow(r.path, renameTemplate(displayOf(r.basePath), displayOf(r.path)), this._sizeCells(r), `${r.basePath} → ${r.path}`)
     return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file'), { lanes })
   }
 

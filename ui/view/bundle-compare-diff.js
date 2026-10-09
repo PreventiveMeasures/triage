@@ -136,16 +136,25 @@ export function detectRenames(removed, added, pkgOf) {
 
 // A rename the way `git diff --stat` writes one: the directories both
 // paths share, then the part that changed (`src/{a.js → a.ts}`,
-// `{src → lib}/a.js`).
-export function renameLabel(from, to) {
+// `{src → lib}/a.js`) — as `{ head, from, to, tail }`, `head` ending and
+// `tail` starting with a slash where there is one, for a view to color.
+export function renameParts(from, to) {
   const a = from.split('/'), b = to.split('/')
   let head = 0
   while (head < a.length - 1 && head < b.length - 1 && a[head] === b[head]) head++
   let tail = 0
   while (tail < a.length - head - 1 && tail < b.length - head - 1 && a.at(-1 - tail) === b.at(-1 - tail)) tail++
-  const prefix = a.slice(0, head).join('/'), suffix = tail ? a.slice(-tail).join('/') : ''
-  const middle = `{${a.slice(head, a.length - tail).join('/')} → ${b.slice(head, b.length - tail).join('/')}}`
-  return `${prefix ? `${prefix}/` : ''}${middle}${suffix ? `/${suffix}` : ''}`
+  return {
+    head: head ? `${a.slice(0, head).join('/')}/` : '',
+    from: a.slice(head, a.length - tail).join('/'),
+    to: b.slice(head, b.length - tail).join('/'),
+    tail: tail ? `/${a.slice(-tail).join('/')}` : '',
+  }
+}
+
+export function renameLabel(from, to) {
+  const { head, from: before, to: after, tail } = renameParts(from, to)
+  return `${head}{${before} → ${after}}${tail}`
 }
 
 // Per-package accumulator factory. Tracks each side's byte total plus
@@ -172,7 +181,7 @@ function emptyPkgAcc() {
 //     files: {
 //       onlyBase:  [{ path, bytes }],
 //       onlyOther: [{ path, bytes }],
-//       changed:   [{ path, baseBytes, otherBytes, delta, basePath? }],
+//       changed:   [{ path, baseBytes, otherBytes, delta, basePath?, modified? }],
 //     },
 //     packages: {
 //       onlyBase:  [{ pkg, bytes }],
@@ -184,7 +193,8 @@ function emptyPkgAcc() {
 // `delta` is always `other − base` (positive = the compared bundle is
 // larger). A file clearly renamed (see detectRenames) is changed, not
 // removed and added: its row's `path` is the other side's, `basePath` the
-// base's, and it counts in `renamedFiles` too, its contents moved or not.
+// base's, `modified` whether its contents changed too, and it counts in
+// `renamedFiles` as well, its contents moved or not.
 // `identical` is true when the two bundles carry the exact same set of
 // paths with byte-identical content, resources included.
 export function computeBundleDiff(base, other, pkgOf) {
@@ -252,10 +262,11 @@ export function computeBundleDiff(base, other, pkgOf) {
     const renamedTo = new Set(renames.values())
     for (const [from, to] of renames) {
       const bC = base.get(from), oC = other.get(to)
-      const bB = byteLen(bC), oB = sameContent(bC, oC) ? bB : byteLen(oC)
+      const same = sameContent(bC, oC)
+      const bB = byteLen(bC), oB = same ? bB : byteLen(oC)
       onlyBaseBytes -= bB
       onlyOtherBytes -= oB
-      changed.push({ path: to, basePath: from, baseBytes: bB, otherBytes: oB, delta: oB - bB })
+      changed.push({ path: to, basePath: from, baseBytes: bB, otherBytes: oB, delta: oB - bB, modified: !same })
       changedDelta += oB - bB
       // Both in one package (its key is in the rename's).
       const acc = pkgAcc(from)

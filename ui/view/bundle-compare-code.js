@@ -27,12 +27,14 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, TEXT_NODE_MAX, textNodes } from './source-text.js'
 import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
-import { renameLabel } from './bundle-compare-diff.js'
+import { renameParts } from './bundle-compare-diff.js'
+import { renameTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
-  // Moved or re-extensioned, its contents changed or not (see detectRenames).
+  // Moved or re-extensioned (see detectRenames); one whose contents changed
+  // too shows under Modified as well.
   { kind: 'renamed', label: 'Renamed', letter: '→' },
   { kind: 'added', label: 'Added', letter: 'A' },
   { kind: 'removed', label: 'Removed', letter: 'D' },
@@ -161,10 +163,10 @@ class BundleCompareCode extends LitElement {
     }
   }
 
-  // path → { kind, baseBytes, otherBytes, basePath, repointed } for every
-  // file that differs or imports something that now resolves elsewhere;
-  // `basePath` names a renamed file on the base side, `repointed` lists
-  // those imports.
+  // path → { kind, baseBytes, otherBytes, basePath, modified, repointed }
+  // for every file that differs or imports something that now resolves
+  // elsewhere; `basePath` names a renamed file on the base side, `modified`
+  // says whether its contents changed too, `repointed` lists those imports.
   _buildEntries() {
     const entries = new Map()
     if (!this.files) return entries
@@ -172,7 +174,7 @@ class BundleCompareCode extends LitElement {
     for (const row of this.files.onlyOther) entries.set(row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes })
     for (const row of this.files.changed) {
       entries.set(row.path, row.basePath == null ? { kind: 'changed', baseBytes: row.baseBytes, otherBytes: row.otherBytes }
-        : { kind: 'renamed', basePath: row.basePath, baseBytes: row.baseBytes, otherBytes: row.otherBytes })
+        : { kind: 'renamed', basePath: row.basePath, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes })
     }
     for (const row of this.resolutions ?? []) {
       if (!entries.has(row.parent)) {
@@ -186,9 +188,11 @@ class BundleCompareCode extends LitElement {
   }
 
   // A file shows while any of its kinds of change does: a modified file with
-  // repointed imports stays under either filter.
+  // repointed imports stays under either filter, a renamed one modified too
+  // under Renamed or Modified.
   _shown(entry) {
-    return this._kinds.has(entry.kind) || (!!entry.repointed && this._kinds.has('repointed'))
+    return this._kinds.has(entry.kind) || (!!entry.modified && this._kinds.has('changed'))
+      || (!!entry.repointed && this._kinds.has('repointed'))
   }
 
   _modules() {
@@ -240,6 +244,7 @@ class BundleCompareCode extends LitElement {
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
       if (entry.kind !== 'repointed') counts[entry.kind]++
+      if (entry.modified) counts.changed++
       if (entry.repointed) counts.repointed++
     }
     return html`<div class="bundle-code-view bundle-compare-code">
@@ -326,14 +331,16 @@ class BundleCompareCode extends LitElement {
         </li>`
       })}
       ${repeat(files, ([, full]) => full, ([name, full]) => {
-        const { kind, repointed, basePath } = this._entries.get(full)
+        const { kind, repointed, basePath, modified } = this._entries.get(full)
         const imports = repointed ? `${repointed.length} repointed ${repointed.length === 1 ? 'import' : 'imports'}` : ''
         return html`<li class="bundle-code-tree-file">
           <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
+            ${basePath ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${basePath}`}>← ${renameParts(basePath, full).from}</span>` : nothing}
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
-            <span class=${`bundle-compare-code-letter ${kind}`} data-tooltip=${kind === 'repointed' ? imports : basePath ? `Renamed from ${basePath}` : KIND[kind].label}>${KIND[kind].letter}</span>
+            <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
+              data-tooltip=${kind === 'repointed' ? imports : basePath ? `Renamed${modified ? ' and modified' : ''} from ${basePath}` : KIND[kind].label}>${KIND[kind].letter}</span>
           </button>
         </li>`
       })}
@@ -431,9 +438,9 @@ class BundleCompareCode extends LitElement {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
           </button>
         </span>
-        <span class=${`bundle-compare-code-pill ${kind}`}>${KIND[kind].label}</span>
+        <span class=${classMap({ 'bundle-compare-code-pill': true, [kind]: true, pure: kind === 'renamed' && !entry.modified })}>${KIND[kind].label}</span>
         ${sourceFileIcon(path, this._format(path))}
-        <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.basePath ? `${entry.basePath} → ${path}` : path}>${entry.basePath ? renameLabel(strip(entry.basePath), display) : display}</span>
+        <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.basePath ? `${entry.basePath} → ${path}` : path}>${entry.basePath ? renameTemplate(strip(entry.basePath), display) : display}</span>
         <button type="button" class="bundle-code-copy-path" data-copy-path=${path} aria-label="Copy file path">
           <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
         </button>

@@ -172,11 +172,29 @@ test('a renamed file lists once at its new path, diffed against its old one; a p
   const marks = fileMarks(markup)
   assert.deepEqual(marks['lib/util.ts'], ['renamed'])
   assert.equal(marks['src/util.js'], undefined, 'not also removed')
-  assert.match(markup, /data-tooltip=Renamed from src\/util\.js>→</u)
+  assert.match(markup, /class=bundle-compare-code-letter renamed\s+data-tooltip=Renamed and modified from src\/util\.js>→</u)
+  assert.match(markup, />util\.ts<\/span>\s*<span class="bundle-compare-code-oldname"[^>]*>← src\/util\.js</u, 'the tree shows the old name too')
   const diff = renderText(view('lib/util.ts', renamed).render())
   assert.match(diff, /bundle-compare-code-pill renamed>Renamed/u)
-  assert.match(diff, /data-tooltip=src\/util\.js → lib\/util\.ts>\{src\/util\.js → lib\/util\.ts\}</u)
+  assert.match(diff, /data-tooltip=src\/util\.js → lib\/util\.ts>\{<span class="bundle-compare-rename-from">src\/util\.js<\/span> → <span class="bundle-compare-rename-to">lib\/util\.ts<\/span>\}</u,
+    'the old part red, the new green')
   assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u, 'the old contents are the before side')
   const pure = renderText(view('lib/same.js', [{ 'src/same.js': 'x\n' }, { 'lib/same.js': 'x\n' }]).render())
   assert.match(pure, /Renamed without changes\./u)
+  assert.match(pure, /class=bundle-compare-code-letter renamed pure\s+data-tooltip=Renamed from src\/same\.js>→</u, 'a pure rename reads blue')
+  assert.match(pure, /class=bundle-compare-code-pill renamed pure>Renamed/u)
+  const ext = renderText(view(null, [{ 'src/a.js': 'x\n' }, { 'src/a.ts': 'x\n' }]).render())
+  assert.match(ext, />a\.ts<\/span>\s*<span class="bundle-compare-code-oldname"[^>]*>← a\.js</u, 'as much of the old name as changed')
+})
+
+test('a renamed file modified too shows under Modified as well as Renamed; a pure rename under Renamed alone', () => {
+  const both = [{ 'src/util.js': 'a\n', 'src/same.js': 'x\n' }, { 'lib/util.js': 'b\n', 'lib/same.js': 'x\n' }]
+  const shown = (...hidden) => {
+    const element = view(null, both)
+    for (const kind of hidden) element._toggleKind(kind)
+    return Object.keys(fileMarks(renderText(element.render()))).filter(path => path.startsWith('lib/'))
+  }
+  assert.deepEqual(shown('renamed'), ['lib/util.js'])
+  assert.deepEqual(shown('changed'), ['lib/same.js', 'lib/util.js'])
+  assert.deepEqual(shown('changed', 'renamed'), [])
 })
