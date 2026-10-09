@@ -71,7 +71,7 @@ export function updateManagedLanding(options) {
             <span class="managed-team-icon" aria-hidden="true">${unsafeHTML(WORKSPACE_ICON_SVG)}</span>
             <span class="managed-team-copy">
               <strong>${team.name}</strong>
-              <span>${team.reports.length} ${team.reports.length === 1 ? 'report' : 'reports'} · Open findings</span>
+              <span>${team.app?.appMode ? `${team.app.appFindings.toLocaleString()} ${team.app.appFindings === 1 ? 'finding' : 'findings'} · ` : ''}${team.reports.length} ${team.reports.length === 1 ? 'report' : 'reports'} · Open findings</span>
             </span>
             <svg class="managed-team-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 4 4 4-4 4"/></svg>
           </button>

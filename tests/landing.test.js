@@ -147,6 +147,20 @@ test('managed landing omits empty teams and handles all-empty accounts', () => {
   assert.match(managedText(), /No team reports are available yet/u)
 })
 
+test('managed landing rows show the App finding count the server classified', () => {
+  updateManagedLanding({ serverMode: 'managed', session, teams: [
+    { id: 'app', name: 'App team', reports: ['a', 'b'], app: { appMode: true, appFindings: 1234 } },
+    { id: 'one', name: 'One finding', reports: ['a'], app: { appMode: true, appFindings: 1 } },
+    { id: 'plain', name: 'Plain team', reports: ['a'], app: { appMode: false } },
+    { id: 'unknown', name: 'Unknown team', reports: ['a', 'b', 'c'] },
+  ] })
+  const text = managedText()
+  assert.match(text, /App team<\/strong>\s*<span>1,234 findings · 2 reports · Open findings/u)
+  assert.match(text, /One finding<\/strong>\s*<span>1 finding · 1 report · Open findings/u)
+  assert.match(text, /Plain team<\/strong>\s*<span>1 report · Open findings/u)
+  assert.match(text, /Unknown team<\/strong>\s*<span>3 reports · Open findings/u)
+})
+
 test('workspace quick links omit empty workspaces and retain bundle-only workspaces', () => {
   const workspaces = [
     { id: 'empty', name: 'Empty workspace', reports: [], bundles: [] },
