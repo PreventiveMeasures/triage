@@ -138,3 +138,30 @@ test('Next change past the rows shown brings the next change in instead of leavi
   assert.equal(element._limits.get(key), next + 2000)
   assert.equal(selected, null, 'stays on the file')
 })
+
+test('a specifier repointed under several conditions links and marks every line that imports it', () => {
+  const source = "import pick from 'lodash/pick'\nexport const start = () => pick\nconst again = require('lodash/pick')\n"
+  const side = (integrity, target) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/server.js': source } }]]),
+    imports: new Map(['node, import', 'node, require'].map(conditions => [conditions, new Map([['src/server.js', new Map([['lodash/pick', target]])]])])),
+  }) })
+  const base = side('base', 'node_modules/lodash/pick.cjs'), other = side('other', 'node_modules/lodash/pick.js')
+  const element = new CompareCode()
+  Object.assign(element, { base, other, path: 'src/server.js',
+    files: computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files,
+    resolutions: computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other)).changed })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const markup = renderText(element.render())
+  const panel = markup.slice(0, markup.indexOf('aria-label="Source"'))
+  assert.equal([...panel.matchAll(/aria-label=Go to line 1 @click/gu)].length, 2, 'each condition set links the first import')
+  assert.equal([...panel.matchAll(/aria-label=Go to line 3 @click/gu)].length, 2, 'and the second')
+  const marked = [...markup.matchAll(/class=diff-row ctx is-import role="row" data-line=(\d+)>/gu)].map(m => m[1])
+  assert.deepEqual(marked, ['1', '3'])
+})
+
+test('an importer only one bundle carries is highlighted under that bundle', () => {
+  const element = view()
+  assert.equal(element._textSide('src/legacy.js'), element.base)
+  assert.equal(element._textSide('src/features/search.js'), element.other)
+  assert.equal(element._textSide('src/api.js'), element.other)
+})

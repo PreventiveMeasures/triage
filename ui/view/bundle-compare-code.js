@@ -46,6 +46,8 @@ const LARGE_LINES = 100_000
 const LARGE_CHARS = 16 * 1024 * 1024
 // Models kept for files viewed recently, so going back to one is instant.
 const MODEL_CACHE = 24
+// Importing lines a repointed import lists before summing up the rest.
+const MAX_IMPORT_LINES = 3
 // Directories all start open (a review reads every change) unless the
 // tree is too long to scan that way.
 const OPEN_ALL_MAX = 300
@@ -453,35 +455,43 @@ class BundleCompareCode extends LitElement {
         </button>` : nothing}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
-        ${entry.repointed ? this._renderRepointed(path, entry.repointed, typeof after === 'string' ? after : null, textual && !diffable) : nothing}
+        ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
         ${body}
       </div>`
   }
 
-  // The line importing each repointed specifier, by where it is quoted.
+  // Every line quoting each repointed specifier. Rows for one specifier
+  // under different conditions (an `import` and a `require`) can't be told
+  // apart by their lines, so each lists them all.
   _importLines(rows, lines) {
-    return new Map(rows.map(row => {
-      const quoted = ['\'', '"', '`'].map(quote => `${quote}${row.specifier}${quote}`)
-      return [row.specifier, lines.findIndex(line => quoted.some(needle => line.includes(needle)))]
-    }))
+    const found = new Map()
+    for (const { specifier } of rows) {
+      if (found.has(specifier)) continue
+      const quoted = ['\'', '"', '`'].map(quote => `${quote}${specifier}${quote}`)
+      found.set(specifier, lines.flatMap((line, i) => quoted.some(needle => line.includes(needle)) ? [i] : []))
+    }
+    return found
+  }
+
+  // The bundle an unchanged importer's text comes from: the newer one, or
+  // the base when only it carries the file. Highlights are cached by it.
+  _textSide(path) {
+    return bundleFilesAsMap(this.other).has(path) ? this.other : this.base
   }
 
   // The file's repointed imports: the specifier and its conditions, the
-  // target it resolved to before and after, and the line importing it —
-  // a link to that line when the source shows below.
+  // target it resolved to before and after, and the lines importing it —
+  // links to them when the source shows below.
   _renderRepointed(path, rows, text, linked) {
     const lines = text ? text.split('\n') : []
-    const markup = text ? this._highlighted(this.other, path, text) : null
+    const markup = text ? this._highlighted(this._textSide(path), path, text) : null
     const importLines = this._importLines(rows, lines)
     const target = value => value || '(empty target)'
     return html`<section class="bundle-compare-code-repointed" aria-label="Repointed imports">
       <h4>Repointed ${rows.length === 1 ? 'import' : 'imports'} <b>${rows.length}</b></h4>
       <ul>${rows.map(row => {
-        const line = importLines.get(row.specifier)
+        const at = importLines.get(row.specifier)
         const context = `${row.conditions}${row.platform === null ? '' : ` · Platform: ${row.platform}`}`
-        const source = line === -1 ? '' : lines[line]
-        // A long (minified) line shows the part around the import.
-        const at = source.length > 240 ? Math.max(0, source.indexOf(row.specifier) - 80) : 0
         return html`<li>
           <div class="bundle-compare-code-repointed-spec">
             <code data-tooltip-truncated data-tooltip=${row.specifier}>${row.specifier}</code>
@@ -492,14 +502,22 @@ class BundleCompareCode extends LitElement {
             <span aria-hidden="true">→</span>
             <span class="after"><span>After</span><code data-tooltip-truncated data-tooltip=${target(row.otherTarget)}>${target(row.otherTarget)}</code></span>
           </div>
-          ${line === -1 ? nothing : html`<button type="button" class="bundle-compare-code-repointed-line bundle-compare-diff-table" ?disabled=${!linked}
-            aria-label=${`Go to line ${line + 1}`} @click=${() => this._goToLine(line + 1)}>
-            <span class="diff-num">${line + 1}</span>
-            <code>${source.length <= 240 && typeof markup?.[line] === 'string' ? unsafeHTML(markup[line]) : `${at > 0 ? '…' : ''}${source.slice(at, at + 240)}${source.length > at + 240 ? '…' : ''}`}</code>
-          </button>`}
+          ${at.slice(0, MAX_IMPORT_LINES).map(line => this._importLine(line, lines[line], markup?.[line], row.specifier, linked))}
+          ${at.length > MAX_IMPORT_LINES ? html`<span class="bundle-compare-code-repointed-more">and ${at.length - MAX_IMPORT_LINES} more ${at.length - MAX_IMPORT_LINES === 1 ? 'line' : 'lines'}</span>` : nothing}
         </li>`
       })}</ul>
     </section>`
+  }
+
+  // One importing line as a link to it; a long (minified) line shows the
+  // part around the import.
+  _importLine(line, source, markup, specifier, linked) {
+    const at = source.length > 240 ? Math.max(0, source.indexOf(specifier) - 80) : 0
+    return html`<button type="button" class="bundle-compare-code-repointed-line bundle-compare-diff-table" ?disabled=${!linked}
+      aria-label=${`Go to line ${line + 1}`} @click=${() => this._goToLine(line + 1)}>
+      <span class="diff-num">${line + 1}</span>
+      <code>${source.length <= 240 && typeof markup === 'string' ? unsafeHTML(markup) : `${at > 0 ? '…' : ''}${source.slice(at, at + 240)}${source.length > at + 240 ? '…' : ''}`}</code>
+    </button>`
   }
 
   _goToLine(line) {
@@ -516,8 +534,8 @@ class BundleCompareCode extends LitElement {
   // numbered lines, the ones importing a repointed specifier marked.
   _renderSource(path, text, repointed) {
     const model = this._model(path, text, text)
-    const lit = { model, b: this._highlighted(this.other, path, text) }
-    const marked = new Set(this._importLines(repointed, model.b).values())
+    const lit = { model, b: this._highlighted(this._textSide(path), path, text) }
+    const marked = new Set([...this._importLines(repointed, model.b).values()].flat())
     const key = `${path}\0source`
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const lines = model.b.length > limit ? model.b.slice(0, limit) : model.b
