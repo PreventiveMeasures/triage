@@ -1063,15 +1063,16 @@ their team.
 
 For everyone else, a version is public only when the registry answers for it
 without credentials. That request is made on every read and never answered
-from a cache: tarballs that an admin's read or a bundle build fetched with the
-token can remain in upstream's caches, readable without one, so leaving the
-token out is not enough. The tarball is then checked against the integrity
-that anonymous answer gives, wherever it is read from. Readers with private
-access also try the registry anonymously first, and retry a scoped package
-with the token; their answer says `private: true` when only the token could
-read it. Access is checked again after the registry answers, and a reader who
-lost private access meanwhile gets 404. A version npm doesn't have, and a
-private one the reader cannot open, are both 404 `package-not-found`.
+from a cache: tarballs that a bundle build fetched with the token can remain
+in upstream's caches, readable without one, so leaving the token out is not
+enough. The viewer never reads those caches: the tarball comes from the
+registry, at the package's own path, without credentials for a public version,
+and is checked against the sha512 that anonymous answer gives. Readers with
+private access also try the registry anonymously first, and retry a scoped
+package with the token; their answer says `private: true` when only the token
+could read it. Access is checked again after the registry answers, and a
+reader who lost private access meanwhile gets 404. A version npm doesn't have,
+and a private one the reader cannot open, are both 404 `package-not-found`.
 
 Packages unpack in memory, bounded at 64 MiB of files, 20,000 files and a 96
 MiB tar stream, and their files at 96 Mi characters of JSON, counted before it
@@ -1081,11 +1082,11 @@ or `dist.fileCount` says so. Directories, links, and paths that would leave
 the package are not extracted. At most four loads run at once per process (429
 `npm-busy`), each until its response is encoded; concurrent reads of one
 version share its download and its encoded response. A download is the tarball
-as the registry has it, not unpacked. Registry documents being read at once
-are held to 256 MiB, each counted at its limit until it is parsed (8 MiB for a
-version, 64 MiB for a version list); a read past that is 429 `npm-busy` too.
-Off Vercel, upstream keeps downloaded tarballs in its disk cache, as for
-builds. Public workspace links cannot reach these endpoints.
+as the registry has it, not unpacked, and a tarball is refused once past 96
+MiB as it arrives, whatever sizes its document declares. Registry documents
+being read at once are held to 256 MiB, each counted at its limit until it is
+parsed (8 MiB for a version, 64 MiB for a version list); a read past that is
+429 `npm-busy` too. Public workspace links cannot reach these endpoints.
 
 # Report access and blocked accounts
 

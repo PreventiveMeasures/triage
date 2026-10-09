@@ -6,14 +6,13 @@
 // manager, or a member of a visible team listing its scope (team-npm-scopes.ts).
 // For everyone else, a version is public only when the registry answers for
 // it without credentials, asked on every request and never from a cache:
-// upstream reads tarballs from caches an admin's read or a bundle build may
-// have filled using the token, so the absence of a token proves nothing. The
-// tarball is then held to the integrity that anonymous answer gives.
+// upstream's caches, which bundle builds fill using the token, are never
+// read here. The tarball is then read without credentials too, and held to
+// the integrity that anonymous answer gives.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { gunzip } from 'node:zlib'
-import { HttpError, getTarball } from '@preventive/upstream/npm.js'
 import { getRepo } from '@preventive/upstream/package.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
@@ -24,14 +23,16 @@ const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
 // Abbreviated packuments of packages with thousands of versions run to tens of MiB.
 const PACKUMENT_BYTES = 64 * 1024 * 1024
 const REGISTRY_TIMEOUT_MS = 30_000
+const TARBALL_TIMEOUT_MS = 120_000
 // What registry documents being read at once may hold, each counted at its
 // limit until it is read and parsed: four packuments, or 32 version documents.
 const MAX_DOCUMENT_BYTES = 4 * PACKUMENT_BYTES
 // What a package may unpack to: the files' bytes, their count, and the tar
-// stream holding them, headers and padding included.
+// stream holding them, headers and padding included. A tarball larger than
+// that tar cannot unpack within it, so it is refused as it arrives.
 export const MAX_NPM_PACKAGE_BYTES = 64 * 1024 * 1024
 export const MAX_NPM_PACKAGE_FILES = 20_000
-const MAX_TAR_BYTES = 96 * 1024 * 1024
+export const MAX_TAR_BYTES = 96 * 1024 * 1024
 // What the files may take as the viewer's JSON. Escaping grows a text up to
 // six times (a control character becomes `\u0001`), so it is counted before
 // anything is serialized.
@@ -290,14 +291,30 @@ function shared<T>(key: string, doc: NpmVersionDocument, work: () => Promise<T>)
   return job
 }
 
-// Upstream checks the bytes against the dist's integrity wherever it reads
-// them from.
+// The sha512 an integrity names, in base64, or null where it names none.
+const sha512Of = (integrity: string) => /(?:^|\s)sha512-([\d+/A-Za-z]{86}==)(?=\s|$)/u.exec(integrity)?.[1] ?? null
+
+// The version's tarball, from the registry alone, at the package's own path:
+// with the token only for a private version, its size bounded as it arrives,
+// and its bytes held to the document's sha512.
 async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
-  try { return await getTarball(doc.name, doc.version, { tarball: doc.dist.tarball, integrity: doc.dist.integrity }) }
+  const expected = sha512Of(doc.dist.integrity), url = doc.dist.tarball
+  if (!url.startsWith(`${NPM_REGISTRY}/${doc.name}/-/`) || URL.parse(url)?.href !== url || expected === null) throw new NpmPackageError(502, 'upstream-invalid')
+  const token = doc.private ? npmToken() : null
+  let res: Response
+  try {
+    res = await fetch(url, { headers: token ? { authorization: `Bearer ${token}` } : {}, redirect: 'error', signal: AbortSignal.timeout(TARBALL_TIMEOUT_MS) })
+  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
+  if ([401, 403, 404].includes(res.status)) { await res.body?.cancel(); throw new NpmPackageError(404, 'package-not-found') }
+  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
+  let bytes: Buffer
+  try { bytes = await readLimited(res, MAX_TAR_BYTES) }
   catch (err) {
-    if (err instanceof HttpError && err.status === 404) throw new NpmPackageError(404, 'package-not-found')
+    if (err instanceof NpmPackageError) throw new NpmPackageError(413, 'package-too-large')
     throw new NpmPackageError(502, 'upstream-unavailable')
   }
+  if (createHash('sha512').update(bytes).digest('base64') !== expected) throw new NpmPackageError(502, 'upstream-invalid')
+  return bytes
 }
 
 async function readFiles(tarball: Uint8Array): Promise<NpmPackageFile[]> {

@@ -6,11 +6,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
-import { setCacheDir } from '@preventive/upstream/npm.js'
+import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_TAR_BYTES, NpmPackageError, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -228,9 +228,11 @@ test('a private version is read with the token for admins and managers only, eve
     assert.equal(res.json().private, true)
     assert.deepEqual(res.json().files, [['index.js', 13, 'secret source']])
   }
-  assert.ok(calls.some(call => call.url === pkg.doc.dist.tarball), 'the tarball was fetched, and cached by upstream')
-  // The tarball is now in upstream's cache, readable without any token. A
-  // reader without private access is answered by the anonymous registry.
+  assert.ok(calls.some(call => call.url === pkg.doc.dist.tarball), 'the tarball was fetched with the token')
+  // A bundle build fills upstream's cache using the token, which leaves it
+  // readable without one. A reader without private access is answered by the
+  // anonymous registry all the same.
+  await getTarball('@acme/secret', '2.0.0', { tarball: pkg.doc.dist.tarball, integrity: pkg.doc.dist.integrity })
   for (const who of ['view', 'triage']) {
     calls.length = 0
     for (const path of [packagePath('@acme/secret', '2.0.0'), packagePath('@acme/secret'), '/api/npm/download?name=%40acme%2Fsecret&version=2.0.0', '/api/npm/versions?name=%40acme%2Fsecret']) {
@@ -338,6 +340,30 @@ test('reads of a version share its load and its encoded body, and four load at o
     tarballSize: pkgs[0].tgz.length, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]] })
   await Promise.all(others)
   assert.deepEqual(Buffer.from(await loadNpmTarball(version(pkgs[4]))), pkgs[4].tgz, 'a place frees once its body is done')
+})
+
+test('a tarball is read from the package\'s own path on the registry, bounded as it arrives and held to its sha512', async t => {
+  const pkg = packageOf('bounded', '1.0.0', { 'index.js': 'x' })
+  const version = (dist = {}) => ({ name: 'bounded', version: '1.0.0', private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null, ...dist }, manifest: {} })
+  let answer = () => new Response(pkg.tgz), pulled = 0
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (input, init) => { calls.push([String(input), new Headers(init.headers).get('authorization')]); return Promise.resolve(answer()) })
+  assert.deepEqual(Buffer.from(await loadNpmTarball(version())), pkg.tgz)
+  assert.deepEqual(calls, [[pkg.doc.dist.tarball, null]], 'a public tarball is asked for without credentials')
+  // Sizes the document leaves out, or understates, bound nothing: the bytes do.
+  answer = () => new Response(new ReadableStream({ pull(controller) { pulled++; controller.enqueue(new Uint8Array(1024 * 1024)) } }))
+  await assert.rejects(loadNpmTarball(version()), /package-too-large/u)
+  assert.ok(pulled > MAX_TAR_BYTES / (1024 * 1024) && pulled < MAX_TAR_BYTES / (1024 * 1024) + 8, `stopped at the limit, after ${pulled} MiB`)
+  answer = () => new Response('', { headers: { 'content-length': String(MAX_TAR_BYTES + 1) } })
+  await assert.rejects(loadNpmTarball(version()), /package-too-large/u, 'a declared length past it is refused unread')
+  answer = () => new Response(gzipSync('other'))
+  await assert.rejects(loadNpmTarball(version()), /upstream-invalid/u, 'bytes the integrity does not name')
+  calls.length = 0
+  for (const dist of [{ tarball: 'https://example.com/bounded/-/bounded-1.0.0.tgz' }, { tarball: `${REGISTRY}/other/-/other-1.0.0.tgz` },
+    { tarball: `${REGISTRY}/bounded/-/../../other.tgz` }, { integrity: 'sha1-abc=' }]) {
+    await assert.rejects(loadNpmTarball(version(dist)), /upstream-invalid/u, JSON.stringify(dist))
+  }
+  assert.deepEqual(calls, [], 'nothing off the package\'s path is asked for')
 })
 
 test('registry documents read at once are held to a budget: four version lists, or their bytes in versions', async t => {
