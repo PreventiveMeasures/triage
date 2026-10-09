@@ -76,5 +76,13 @@ export async function checkGithubCommitStore(db) {
   assert.deepEqual(await db.listGithubCommitTags([commit.key]), [], 'a later listing applies')
   assert.deepEqual(await db.listGithubCommitTags([]), [])
   await db.refreshGithubTags(7, [{ name: 'v1', sha }], false, 40)
+  await db.refreshGithubTags(7, [{ name: 'gone', sha }], false, 45)
+  await db.refreshGithubTags(7, [{ name: 'fresh', sha: other }, { name: 'v1', sha: other }], false, 60)
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }, { name: 'fresh', sha }], true, 50)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [{ key: `7:${other}`, name: 'fresh' }, { key: `7:${other}`, name: 'v1' }],
+    'a complete listing that finishes after a newer partial one still deletes, and keeps what the newer one observed')
+  await db.refreshGithubTags(7, [{ name: 'gone', sha }], false, 49)
+  assert.deepEqual((await db.listGithubCommitTags([commit.key])).map(tag => tag.name), [], 'a partial update older than a complete listing cannot restore a tag')
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }], false, 70)
   return commit
 }

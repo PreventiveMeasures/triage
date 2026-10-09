@@ -2557,7 +2557,7 @@ function renderBundleDetails(entry, details) {
     ${bundleOriginLinks(origin, prefix, entry.commitInfo).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
       <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
       ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} data-tooltip-commit-info=${bundleCommitTooltip(entry.commitInfo, link.commit.hash) ?? nothing} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
-      ${link.commit?.tags?.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag.name}</span></a>`) ?? nothing}
+      ${link.commit?.tags ? html`<span class="bundle-origin-tags">${link.commit.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag.name}</span></a>`)}</span>` : nothing}
     </dd>`)}
     <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}

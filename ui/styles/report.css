@@ -1842,6 +1842,9 @@ bundle-search {
       &:hover > span, &:focus-visible > span { border-bottom-color: currentcolor; }
     }
     & :is(.bundle-commit-link, .bundle-tag-link) { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    /* A commit can have many tags (a monorepo's packages): they wrap in the
+       width the repository and commit leave, at least 10rem, never squeezing them. */
+    & .bundle-origin-tags { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: .25rem .75rem; min-width: min(100%, 10rem); }
     & .bundles-entry-points {
       display: flex; flex-wrap: wrap; gap: .25rem .75rem;
       list-style: none; margin: 0; padding: 0;

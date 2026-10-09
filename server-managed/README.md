@@ -798,10 +798,13 @@ suggestions use: a listing shorter than the 100-tag page lists every tag, so
 tags it leaves out are deleted, while a full page only updates the tags it
 names. A tag the revision input resolves through `contents` is stored even when
 it is beyond that page. Each write happens before the request's access recheck,
-like other GitHub caches. `managed_github_tag_listing` records the microsecond
-the last applied listing for a repository was observed (its request's start),
-and a listing observed no later is skipped, so an overlapping browse that
-finishes late cannot restore tags a newer one deleted or moved. Tags are removed with
+like other GitHub caches. Each refresh carries the microsecond its request
+started. A tag keeps the time it was last observed and only a later
+observation moves it; a complete listing deletes only tags observed before it,
+so tags a newer partial update observed stay. `managed_github_tag_listing`
+holds the last complete listing applied for a repository, and any refresh
+observed no later is skipped, so an overlapping browse that finishes late
+cannot restore tags a newer one deleted or moved. Tags are removed with
 their repository. SQLite and PostgreSQL create these tables for existing
 installations.
 

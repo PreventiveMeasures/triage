@@ -534,8 +534,11 @@ test('a managed bundle Overview puts its cached tags after the commit and gives 
   const commitInfo = { sha: commit, github: 'org/repo', tags: ['v1.0.0'], details: { message: 'Release', authorName: 'Alice', authorLogin: null, authoredAt: 1, committedAt: 2 } }
   const githubRow = info => renderText(renderBundlesList([{ ...entry, commitInfo: info }])).match(/<dt>GitHub<\/dt><dd class="bundle-origin-row">(.*?)<\/dd>/su)[1]
   const tagged = githubRow(commitInfo)
-  assert.match(tagged, /class="bundle-origin-link bundle-commit-link"[^>]*>.*?<\/a>\s*<a class="bundle-origin-link bundle-tag-link" href=https:\/\/github\.com\/org\/repo\/releases\/tag\/v1\.0\.0 target="_blank" rel="noopener noreferrer">.*?<span>v1\.0\.0<\/span><\/a>/su,
-    'GitHub: repository, commit, then tag')
+  assert.match(tagged, /class="bundle-origin-link bundle-commit-link"[^>]*>.*?<\/a>\s*<span class="bundle-origin-tags"><a class="bundle-origin-link bundle-tag-link" href=https:\/\/github\.com\/org\/repo\/releases\/tag\/v1\.0\.0 target="_blank" rel="noopener noreferrer">.*?<span>v1\.0\.0<\/span><\/a><\/span>/su,
+    'GitHub: repository, commit, then its tags in a box of their own')
+  const many = githubRow({ ...commitInfo, tags: Array.from({ length: 30 }, (_, i) => `pkg-${i}@1.0.0`) })
+  assert.equal(many.match(/<span class="bundle-origin-tags">/gu).length, 1, 'many tags share one wrapping box')
+  assert.equal(many.match(/bundle-tag-link/gu).length, 30)
   assert.ok(tagged.includes(`data-tooltip=${commit} data-tooltip-commit-info=${JSON.stringify({ tags: ['v1.0.0'], title: 'Release', authorName: 'Alice', authorLogin: null, date: 2 })}`))
   for (const info of [null, { ...commitInfo, sha: 'd'.repeat(40) }]) {
     const plain = githubRow(info)
