@@ -30,7 +30,7 @@ import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
-import { buildBundleDetails, handOffBundleDetails } from './bundle-load.js'
+import { buildBundleDetails, handOffBundles, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
@@ -51,8 +51,10 @@ const MAX_ROWS = 400
 // the comparison in willUpdate; this module-level slot carries the
 // intended new target (the old base) across the prop teardown — a
 // component-internal field wouldn't survive the navigation. Shape:
-// `{ base, target }`, consumed once by willUpdate when integrity flips
-// to `base`.
+// `{ base, target, scope, mode, codePath }`, consumed once by willUpdate
+// when integrity flips to `base`, or dropped when another bundle opens.
+// It holds no parsed bundle: those go through handOffBundles, which keeps
+// them no longer than the swap's own view.
 let _pendingSwap = null
 
 // Signed count for a summary metric delta: `+3` / `−2` / `±0`. Uses a
@@ -144,9 +146,11 @@ class BundleCompare extends LitElement {
     // A swap navigates to the old comparison target as the new base; in
     // that single case restore the old base as the new target instead
     // of clearing it (the module-level handoff survives the prop
-    // teardown the navigation triggers).
+    // teardown the navigation triggers). A swap that landed elsewhere
+    // (another bundle opened first) is over.
+    if (_pendingSwap && this.integrity && this.integrity !== _pendingSwap.base) _pendingSwap = null
     if (_pendingSwap && this.integrity === _pendingSwap.base) {
-      const { target, targetDetails } = _pendingSwap
+      const { target } = _pendingSwap
       this._scope = _pendingSwap.scope
       this._mode = _pendingSwap.mode
       this._codePath = _pendingSwap.codePath
@@ -155,8 +159,9 @@ class BundleCompare extends LitElement {
       this._diff = null
       this._diffKey = null
       // The old base is still parsed: compare against it as it stands.
-      if (targetDetails?.integrity === target) {
-        this._otherDetails = targetDetails
+      const handed = takeHandedOffBundle(target, details => Boolean(details.json || details.bundle))
+      if (handed) {
+        this._otherDetails = handed
         this._status = 'ready'
       } else {
         this._otherDetails = null
@@ -185,9 +190,11 @@ class BundleCompare extends LitElement {
     const newBase = this._targetIntegrity
     if (!newBase || newBase === this.integrity) return
     if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
-    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath,
-      targetDetails: this._baseReady && !this.details.error ? this.details : null }
-    if (this._otherDetails?.integrity === newBase && (this._otherDetails.json || this._otherDetails.bundle)) handOffBundleDetails(this._otherDetails)
+    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath }
+    handOffBundles(newBase, [
+      this._otherDetails?.integrity === newBase && (this._otherDetails.json || this._otherDetails.bundle) ? this._otherDetails : null,
+      this._baseReady ? this.details : null,
+    ])
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,

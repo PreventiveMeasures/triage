@@ -7,7 +7,11 @@ mock.module('../client/index.js', { namedExports: { state: { bundles: [
   { integrity: 'base', name: 'Before' }, { integrity: 'other', name: 'After' },
 ] } } })
 let handedOff = null, loads = 0
-mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails() { loads++; return new Promise(() => {}) }, handOffBundleDetails(parsed) { handedOff = parsed } } })
+mock.module('../ui/view/bundle-load.js', { namedExports: {
+  buildBundleDetails() { loads++; return new Promise(() => {}) },
+  handOffBundles(opening, bundles) { handedOff = { opening, bundles: new Map(bundles.filter(Boolean).map(parsed => [parsed.integrity, parsed])) } },
+  takeHandedOffBundle(integrity) { const parsed = handedOff?.bundles.get(integrity) ?? null; handedOff?.bundles.delete(integrity); return parsed },
+} })
 mock.module('../ui/view/bundle-compare-code.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
@@ -143,7 +147,8 @@ test('Swap hands both parsed bundles to their new roles instead of loading them 
   view.addEventListener('bundle-swap', event => { swapped = event.detail.integrity })
   view._swap()
   assert.equal(swapped, 'other')
-  assert.equal(handedOff, other, 'the target opens as the new base without a read')
+  assert.equal(handedOff.opening, 'other')
+  assert.equal(handedOff.bundles.get('other'), other, 'the target opens as the new base without a read')
   // The app opens the old target; the comparison flips onto the old base.
   view.integrity = 'other'
   view.details = other
@@ -152,4 +157,17 @@ test('Swap hands both parsed bundles to their new roles instead of loading them 
   assert.equal(view._otherDetails, base)
   assert.equal(view._status, 'ready')
   assert.equal(loads, 0, 'nothing is read again')
+  assert.deepEqual([...handedOff.bundles.keys()], ['other'], 'the old base was taken; the new one waits for its open')
+})
+
+test('a swap that lands on another bundle is dropped, not resumed later', () => {
+  const view = compare()
+  view._status = 'ready'
+  view._swap()
+  view.integrity = 'third'
+  view.willUpdate(new Map([['integrity', 'base']]))
+  assert.equal(view._targetIntegrity, null)
+  view.integrity = 'other'
+  view.willUpdate(new Map([['integrity', 'third']]))
+  assert.equal(view._targetIntegrity, null, 'opening the swap\'s bundle afterwards starts a fresh comparison')
 })

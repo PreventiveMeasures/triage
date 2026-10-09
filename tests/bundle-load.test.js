@@ -39,7 +39,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     return JSON.stringify(json)
   },
 } })
-const { buildBundleDetails, ensureBundleSources, handOffBundleDetails, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle, selectBundleTab } = await import('../ui/view/bundle-load.js')
+const { buildBundleDetails, ensureBundleSources, handOffBundles, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle, selectBundleTab } = await import('../ui/view/bundle-load.js')
 const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: 123, json })
 beforeEach(() => {
   decodes = 0; managed = false
@@ -465,7 +465,7 @@ it('closing a metadata source overlay aborts its download and clears the source 
 
 it('opens a bundle handed over already parsed without reading it again, once', async () => {
   const parsed = { integrity: entry.integrity, kind: 'sourcemap', json, size: 123 }
-  handOffBundleDetails(parsed)
+  handOffBundles(entry.integrity, [parsed])
   selectBundle(entry.integrity, 'compare')
   await openBundle(entry.integrity)
   assert.equal(state.bundleDetails, parsed)
@@ -476,10 +476,13 @@ it('opens a bundle handed over already parsed without reading it again, once', a
   assert.equal(reads, 1)
 })
 
-it('drops a handed-over bundle when another bundle opens instead', async () => {
-  handOffBundleDetails({ integrity: entry.integrity, kind: 'sourcemap', json, size: 123 })
-  selectBundle('sha512-other', 'overview')
-  selectBundle(entry.integrity, 'compare')
-  await openBundle(entry.integrity)
-  assert.equal(reads, 1, 'read from storage, not the stale handoff')
+it('drops handed-over bundles when another bundle or view opens instead', async () => {
+  for (const leave of [() => selectBundle('sha512-other', 'overview'), () => beginViewNavigation()]) {
+    reads = 0
+    handOffBundles(entry.integrity, [{ integrity: entry.integrity, kind: 'sourcemap', json, size: 123 }])
+    leave()
+    selectBundle(entry.integrity, 'compare')
+    await openBundle(entry.integrity)
+    assert.equal(reads, 1, 'read from storage, nothing kept from the abandoned swap')
+  }
 })

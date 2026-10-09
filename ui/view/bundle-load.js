@@ -30,13 +30,29 @@ async function cachedMetadata(integrity) {
   } catch { return null }
 }
 
-// A parsed bundle handed to its next open: Compare's swap already holds
-// both sides parsed, so opening the other one needn't read and parse it
-// again. Only ever the one bundle about to open (selectBundle drops it for
-// any other), and taken by that open, so nothing more stays in memory.
+// Parsed bundles handed to the navigation that opens `opening`: Compare's
+// swap holds both sides parsed, so neither the bundle it opens nor the one
+// it then compares against needs reading and parsing again. Each is taken
+// by its first use, and whatever is left goes with the view (any later
+// navigation), so a swap that never lands keeps nothing in memory.
 let handoff = null
-export function handOffBundleDetails(details) {
-  handoff = details && !details.error ? details : null
+function keepHandoff(next) {
+  handoff = next
+  currentViewSignal().addEventListener('abort', () => { if (handoff === next) handoff = null }, { once: true })
+}
+
+export function handOffBundles(opening, bundles) {
+  const parsed = new Map(bundles.filter(details => details && !details.error).map(details => [details.integrity, details]))
+  if (parsed.size > 0) keepHandoff({ opening, bundles: parsed })
+}
+
+// A handed-over bundle, if `accept` takes it; it is then no longer held.
+export function takeHandedOffBundle(integrity, accept = () => true) {
+  const details = handoff?.bundles.get(integrity)
+  if (!details || !accept(details)) return null
+  handoff.bundles.delete(integrity)
+  if (handoff.bundles.size === 0) handoff = null
+  return details
 }
 
 // In-flight deduplication only: completed source bodies are owned by their
@@ -50,12 +66,9 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   // links and comparison/code consumers, without retaining another bundle.
   if (active?.integrity === integrity && active.kind === kind && active.managedId === entry.managedId && !active.error
       && (!sources || !active.metadataOnly)) return Promise.resolve(active)
-  if (handoff?.integrity === integrity && handoff.kind === kind && handoff.managedId === entry.managedId
-      && (!sources || !handoff.metadataOnly)) {
-    const details = handoff
-    handoff = null
-    return Promise.resolve(details)
-  }
+  const handed = takeHandedOffBundle(integrity, details => details.kind === kind && details.managedId === entry.managedId
+    && (!sources || !details.metadataOnly))
+  if (handed) return Promise.resolve(handed)
   const key = `${entry.managedId ?? 'local'}:${integrity}:${kind}`
   const signal = entry.managedId && sources ? currentViewSignal() : undefined
   const pending = loads.get(key)
@@ -118,8 +131,10 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   const pending = request?.bundle === state.selectedBundle && (!details || (details.metadataOnly === true && !details.sourceError))
   const carried = state.currentView === 'bundles' && state.bundleDetailsTab === 'code' && tab === 'code'
     ? state.bundleSourceFile ?? (pending ? request.path : null) : null
+  // A swap's bundles go with it into the view it opens, and no further.
+  const kept = handoff?.opening === integrity ? handoff : null
   beginViewNavigation()
-  if (handoff?.integrity !== integrity) handoff = null
+  if (kept) keepHandoff(kept)
   state.currentView = 'bundles'
   state.selectedBundle = integrity
   state.selectedBundleWorkspace = workspaceId
