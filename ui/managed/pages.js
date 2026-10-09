@@ -331,7 +331,7 @@ class ManagedAdminUsers extends ManagedPage {
         </span>
       </span>
       <span class="memberships">
-        ${roleAtLeast(u.role, 'manage') ? html`<span class="team-access"><strong>${u.role === 'admin' ? 'All reports' : 'Owned and team reports'}</strong><span class="team-perms"><span class="permission-granted">+ Deps</span><span class="permission-granted">+ Security</span></span></span>` : memberships.length === 0 ? html`<span class="no-team">No team access</span>` : memberships.map(({ team, member }) => {
+        ${roleAtLeast(u.role, 'manage') ? html`<span class="team-access"><strong class="team-access-role">${u.role === 'admin' ? 'All reports' : 'Owned and team reports'}</strong><span class="team-perms"><span class="permission-granted">+ Deps</span><span class="permission-granted">+ Security</span></span></span>` : memberships.length === 0 ? html`<span class="no-team">No team access</span>` : memberships.map(({ team, member }) => {
           return html`<span class="team-access"><strong>${adminIcon('team')}<span>${team.name}</span></strong><span class="team-perms">${['dependencies', 'security'].map((permission) => html`<span class=${member[permission] === true ? 'permission-granted' : 'permission-denied'}>${member[permission] === true ? '+' : '−'} ${permission === 'dependencies' ? 'Deps' : 'Security'}</span>`)}</span></span>`
         })}
       </span>

@@ -142,12 +142,12 @@
 }
 .list-head,
 .users {
-  min-width: 51rem;
+  min-width: 53rem;
 }
 .list-head,
 .users li {
   display: grid;
-  grid-template-columns: minmax(11rem, 1fr) minmax(14rem, 1.2fr) 6.2rem 6.2rem 6.5rem 2rem;
+  grid-template-columns: minmax(11rem, 1fr) minmax(16rem, 1.2fr) 6.2rem 6.2rem 6.5rem 2rem;
   gap: .7rem;
   padding: .5rem .85rem;
   align-items: center;
@@ -202,6 +202,13 @@
   font-weight: 500;
   min-width: 0;
   max-width: 8rem;
+}
+/* A manager's or admin's access is one phrase, not a team name to cut short:
+   one line beside its permissions, which the column's minimum width fits. */
+.team-access strong.team-access-role {
+  flex-shrink: 0;
+  max-width: none;
+  white-space: nowrap;
 }
 .team-access strong svg {
   width: .8rem;
