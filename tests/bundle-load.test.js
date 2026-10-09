@@ -216,8 +216,11 @@ it('asks the next bundle\'s Code tab for the file open in the last one', () => {
     assert.equal(state.bundleCodeFileRequest, null, 'sources that loaded or failed and opened no file leave none to ask for')
     selectBundle('second-bundle', 'code')
   }
+  // Deleting the open bundle leaves its request behind, for no bundle.
   state.bundleCodeFileRequest = { bundle: 'second-bundle', path: 'src/main.js' }
+  state.selectedBundle = null
   selectBundle('third-bundle')
+  assert.equal(state.bundleCodeFileRequest, null, 'a request for a bundle no longer open asks for nothing')
   state.bundleCodeFileRequest = { bundle: 'third-bundle', file: 3 }
   selectBundle('second-bundle')
   assert.equal(state.bundleCodeFileRequest, null, 'a link\'s number names no file in another bundle')
