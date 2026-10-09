@@ -1037,7 +1037,8 @@ version it opened. Code links name files by number and lines in the
 fragment, and Compare links the version compared with and its mode, as for
 bundles. The browser keeps the last three versions it read, and the
 package's version list, in memory for the session and role that read them,
-so a swap or Back reopens one without another request.
+so a swap or Back reopens one without another request. A version list that
+failed is asked for again on a render ten seconds or more later.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
 integrity, tarballSize, manifest, files }`, where each file row is `[path,
@@ -1071,8 +1072,10 @@ lost private access meanwhile gets 404. A version npm doesn't have, and a
 private one the reader cannot open, are both 404 `package-not-found`.
 
 Packages unpack in memory, bounded at 64 MiB of files, 20,000 files and a
-96 MiB tar stream; larger ones return 413 `package-too-large`, before download
-when the registry's `dist.unpackedSize` or `dist.fileCount` says so. Directories,
+96 MiB tar stream, and their files at 96 Mi characters of JSON, counted before
+it is written, as escaping can grow a text sixfold; larger ones return 413
+`package-too-large`, before download when the registry's `dist.unpackedSize`
+or `dist.fileCount` says so. Directories,
 links, and paths that would leave the package are not extracted. At most four
 tarballs load at once per process (429 `npm-busy`); concurrent reads of one
 share its download. Off Vercel, upstream keeps downloaded tarballs in its disk

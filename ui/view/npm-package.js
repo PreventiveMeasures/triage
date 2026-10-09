@@ -89,6 +89,9 @@ export function npmPackageRoute(entry, tab = 'overview', location = null) {
 const KEPT_VERSIONS = 3
 const keptVersions = new Map()
 const versionLists = new Map()
+// A list that failed is asked for again on a render this long after, not on
+// every render, which each answer brings.
+const VERSION_LIST_RETRY_MS = 10_000
 let keptFor = null
 
 function sessionKept() {
@@ -125,16 +128,17 @@ export async function loadNpmVersion(name, spec, options) {
 
 // A package's versions, newest first, and dist-tags: `{ status }` while the
 // server is asked ('loading', then 'ready' with `versions` and `distTags`,
-// or 'error'), each a new object, so the view repaints when it arrives.
+// or 'error' until a retry), each a new object, so the view repaints when it
+// arrives.
 export function npmVersionList(name) {
   sessionKept()
   const known = versionLists.get(name)
-  if (known) return known
+  if (known && !(known.status === 'error' && Date.now() - known.at >= VERSION_LIST_RETRY_MS)) return known
   const loading = { status: 'loading' }
   versionLists.set(name, loading)
   fetchNpmVersions(name).then(
     data => ({ status: 'ready', versions: data.versions ?? [], distTags: data.distTags ?? {} }),
-    () => ({ status: 'error' }),
+    () => ({ status: 'error', at: Date.now() }),
   ).then(list => {
     if (versionLists.get(name) !== loading) return null
     versionLists.set(name, list)

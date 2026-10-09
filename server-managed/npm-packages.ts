@@ -28,6 +28,10 @@ const REGISTRY_TIMEOUT_MS = 30_000
 export const MAX_NPM_PACKAGE_BYTES = 64 * 1024 * 1024
 export const MAX_NPM_PACKAGE_FILES = 20_000
 const MAX_TAR_BYTES = 96 * 1024 * 1024
+// What the files may take as the viewer's JSON. Escaping grows a text up to
+// six times (a control character becomes `\u0001`), so it is counted before
+// anything is serialized.
+export const MAX_NPM_JSON_LENGTH = 96 * 1024 * 1024
 // Loads in flight per process; each can hold a tarball, its tar and its files.
 const MAX_ACTIVE_LOADS = 4
 
@@ -293,12 +297,30 @@ export function npmFileText(bytes: Uint8Array): string | null {
   try { return utf8.decode(bytes) } catch { return null }
 }
 
+// A string's length in JSON: quotes, backslashes and the control characters
+// with a short escape take two characters, the other control characters six.
+function jsonLength(text: string): number {
+  let length = text.length + 2
+  for (let i = 0; i < text.length; i++) {
+    const code = text.codePointAt(i)!
+    if (code === 0x22 || code === 0x5c) length += 1
+    else if (code < 0x20) length += code >= 0x08 && code <= 0x0d && code !== 0x0b ? 1 : 5
+  }
+  return length
+}
+
+// A row's brackets, size, null and digest, past its strings.
+const ROW_LENGTH = 80
+
 // The files as the viewer gets them: `[path, bytes, text]`, text null for a
 // file that is not UTF-8, which instead carries its bytes' sha256, so a
 // comparison of two versions tells a changed one from an unchanged one.
 export function npmFileRows(files: NpmPackageFile[]): ([string, number, string] | [string, number, null, string])[] {
+  let length = 0
   return files.map(({ path, bytes }) => {
     const text = npmFileText(bytes)
+    length += ROW_LENGTH + jsonLength(path) + (text === null ? 0 : jsonLength(text))
+    if (length > MAX_NPM_JSON_LENGTH) throw new NpmPackageError(413, 'package-too-large')
     return text === null ? [path, bytes.byteLength, null, `sha256-${createHash('sha256').update(bytes).digest('base64')}`] : [path, bytes.byteLength, text]
   })
 }

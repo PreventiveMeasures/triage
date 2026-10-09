@@ -10,7 +10,7 @@ import { setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar } from '../server-managed/npm-packages.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -294,9 +294,14 @@ test('oversized, malformed and unreachable packages are refused without their fi
   big.doc.dist.unpackedSize = MAX_NPM_PACKAGE_BYTES + 1
   const wrong = packageOf('wrong', '1.0.0', { 'a.js': 'a' })
   wrong.doc = { ...wrong.doc, name: 'other' }
-  const calls = registry(t, [big, wrong])
+  // Within the unpacked limit, but six times larger once escaped as JSON.
+  const controls = packageOf('controls', '1.0.0', { 'a.txt': Buffer.alloc(Math.floor(MAX_NPM_JSON_LENGTH / 6) + 1, 1) })
+  const plain = packageOf('plain', '1.0.0', { 'a.txt': Buffer.alloc(Math.floor(MAX_NPM_JSON_LENGTH / 6) + 1, 'a') })
+  const calls = registry(t, [big, wrong, controls, plain])
   assert.deepEqual((await h.send(packagePath('big', '1.0.0'))).json(), { error: 'package-too-large' })
   assert.ok(!calls.some(call => call.url === big.doc.dist.tarball), 'a declared size refuses before download')
+  assert.deepEqual((await h.send(packagePath('controls', '1.0.0'))).json(), { error: 'package-too-large' })
+  assert.equal((await h.send(packagePath('plain', '1.0.0'))).status, 200, 'the same bytes as plain text fit')
   assert.equal((await h.send(packagePath('wrong', '1.0.0'))).status, 404, 'the registry answering for another name')
   for (const path of [packagePath('../x', '1.0.0'), packagePath('ok', '^1.0.0'), '/api/npm/package', '/api/npm/versions?name=.x']) {
     assert.deepEqual((await h.send(path)).json(), { error: 'bad-package' }, path)
