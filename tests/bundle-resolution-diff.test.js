@@ -108,3 +108,16 @@ test('empty and sourcemap inputs have no recorded resolutions', () => {
     assert.equal(diff(value, value).totalChanges, 0)
   }
 })
+
+test('a renamed importer pairs its resolutions with its new path\'s, and a renamed target is the same target', () => {
+  const resolutions = parents => bundleCompareResolutions(details([['node, import', parents]]))
+  const base = resolutions([['src/a.js', [['dep', 'node_modules/dep/v1.js'], ['./b.js', 'src/b.js']]], ['main.js', [['./src/b.js', 'src/b.js']]]])
+  const other = resolutions([['lib/a.js', [['dep', 'node_modules/dep/v2.js'], ['./b.js', 'lib/b.js']]], ['main.js', [['./src/b.js', 'lib/b.js']]]])
+  const renames = new Map([['src/a.js', 'lib/a.js'], ['src/b.js', 'lib/b.js']])
+  assert.deepEqual(computeResolutionDiff(base, other, renames).changed.map(({ key: _key, ...row }) => row), [{
+    parent: 'lib/a.js', specifier: 'dep', conditions: 'node, import', platform: null,
+    baseTarget: 'node_modules/dep/v1.js', otherTarget: 'node_modules/dep/v2.js',
+  }], 'reported under the new path; imports that follow a rename are not repointed')
+  assert.deepEqual(computeResolutionDiff(base, other).changed.map(row => `${row.parent} ${row.specifier}`), ['main.js ./src/b.js'],
+    'without the renames, the moved importer pairs with nothing')
+})

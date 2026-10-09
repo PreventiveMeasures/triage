@@ -20,18 +20,23 @@
 // is ambiguous without knowing which side is newer.
 
 import { bundleFileByteLength } from './bundle-sources.js'
+import { resolutionKey } from './bundle-compare-inputs.js'
 
 // Resolutions compare independently from file bytes: identical files can be
 // wired together differently. Inputs are keyed by importer, specifier,
 // conditions (including import attributes), and platform. Only existing
 // resolutions whose targets changed are reported; additions/removals are omitted.
-export function computeResolutionDiff(base, other) {
+// `renames` (base path → other path, see detectRenames) names base files as
+// the other bundle does: a renamed importer's resolutions pair with its new
+// path's, reported under it, and a target renamed is the same target.
+export function computeResolutionDiff(base, other, renames = new Map()) {
+  const renamed = path => renames.get(path) ?? path
   const changed = []
-  for (const [key, before] of base) {
-    const after = other.get(key)
-    if (after && before.target !== after.target) {
-      const { target: baseTarget, ...identity } = before
-      changed.push({ ...identity, baseTarget, otherTarget: after.target })
+  for (const before of base.values()) {
+    const after = other.get(resolutionKey(renamed(before.parent), before.specifier, before.conditions, before.platform))
+    if (after && renamed(before.target) !== after.target) {
+      const { target: otherTarget, ...identity } = after
+      changed.push({ ...identity, baseTarget: before.target, otherTarget })
     }
   }
   changed.sort((a, b) => a.key.localeCompare(b.key))

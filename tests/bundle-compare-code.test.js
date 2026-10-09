@@ -201,3 +201,23 @@ test('a renamed file modified too shows under Modified as well as Renamed; a pur
   assert.deepEqual(shown('changed'), ['lib/same.js', 'lib/util.js'])
   assert.deepEqual(shown('changed', 'renamed'), [])
 })
+
+test('a renamed file whose contents are the same but whose import was repointed reads as its source, its import marked', () => {
+  const source = "import pick from 'lodash/pick'\nexport const start = () => pick\n"
+  const side = (integrity, parent, target) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { [parent]: source } }]]),
+    imports: new Map([['node, import', new Map([[parent, new Map([['lodash/pick', target]])]])]]),
+  }) })
+  const base = side('base', 'src/server.js', 'node_modules/lodash/pick.cjs'), other = side('other', 'lib/server.js', 'node_modules/lodash/pick.js')
+  const files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+  const element = new CompareCode()
+  Object.assign(element, { base, other, path: 'lib/server.js', files,
+    resolutions: computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other),
+      new Map(files.changed.map(row => [row.basePath, row.path]))).changed })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const markup = renderText(element.render())
+  assert.deepEqual(fileMarks(markup)['lib/server.js'], ['repointed', 'renamed'])
+  assert.doesNotMatch(markup, /Renamed without changes/u)
+  assert.match(markup, /class=diff-row ctx is-import role="row" data-line=1>/u)
+  assert.doesNotMatch(markup, /Unified<\/button>/u, 'no diff layout to choose')
+})

@@ -400,9 +400,11 @@ class BundleCompareCode extends LitElement {
     const large = textual && !this._forced.has(path)
       && (before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES)
     const model = textual && !large ? this._model(path, before, after) : null
-    // A file whose only change is a repointed import reads as its source,
-    // whatever the whitespace setting: its two sides are one text.
-    const diffable = textual && (kind !== 'repointed' || model?.blocks.length > 0)
+    // A file whose only change is a repointed import — moved there by a
+    // rename or not — reads as its source, whatever the whitespace setting:
+    // its two sides are one text.
+    const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed)
+    const diffable = textual && (!asSource || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
     const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
     const display = strip(path)
@@ -419,7 +421,7 @@ class BundleCompareCode extends LitElement {
         <p>This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.</p>
         <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
       </div>`
-    } else if (kind === 'repointed' && model.blocks.length === 0) {
+    } else if (asSource && model.blocks.length === 0) {
       body = this._renderSource(path, after, entry.repointed)
     } else if (model.blocks.length === 0) {
       body = html`<div class="bundle-compare-code-message">

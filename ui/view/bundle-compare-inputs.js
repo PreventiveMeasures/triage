@@ -31,6 +31,12 @@ export function bundleCompareFiles(details, scope = '') {
   return new Map([...files].filter(([path]) => selected.has(path)))
 }
 
+// A resolution's identity: its importer, specifier, conditions (import
+// attributes included), and Metro platform.
+export function resolutionKey(parent, specifier, conditions, platform) {
+  return JSON.stringify([parent, specifier, conditions, platform])
+}
+
 // Keep the full resolution identity: collapsing to graph edges would lose
 // specifier, condition/import-attribute, and Metro platform changes.
 export function bundleCompareResolutions(details, scope = '') {
@@ -46,7 +52,7 @@ export function bundleCompareResolutions(details, scope = '') {
           // Include imports from scoped files, plus imports into the scope
           // from uncaptured parents (e.g. an app in a dependencies-only bundle).
           if (selected && !selected.has(parent) && (files.has(parent) || !selected.has(target))) continue
-          const key = JSON.stringify([parent, specifier, conditions, platform])
+          const key = resolutionKey(parent, specifier, conditions, platform)
           result.set(key, { key, parent, specifier, conditions, platform, target })
         }
       }
