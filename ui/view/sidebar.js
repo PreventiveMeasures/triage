@@ -1278,7 +1278,10 @@ function renderAuthStatus() {
   hostEl?.toggleAttribute('data-authenticated', session != null)
   hostEl?.toggleAttribute('data-workspace-access', session != null && session.role !== 'none')
   renderViewAsStatus(session)
-  authBtn.hidden = session == null
+  // A public link has no account to open, so it says what it is in plain text.
+  const publicStatus = root?.querySelector('#public-status')
+  if (publicStatus) publicStatus.hidden = !session?.publicShare
+  authBtn.hidden = session == null || session.publicShare === true
   if (session == null) {
     if (manageBtn) manageBtn.hidden = true
     authBtn.dataset.authed = '0'
@@ -1291,7 +1294,6 @@ function renderAuthStatus() {
   if (session.publicShare) {
     if (manageBtn) manageBtn.hidden = true
     authBtn.removeAttribute('popovertarget')
-    litRender(html`<span class="auth-login">Public workspace · Read only</span>`, authBtn)
     if (menu) litRender(nothing, menu)
     return
   }
@@ -1395,6 +1397,7 @@ function applyCollapsibility() {
     root?.querySelector('#encryption-toggle')?.removeAttribute('hidden')
     root?.querySelector('#manage-status')?.setAttribute('hidden', '')
     root?.querySelector('#auth-status')?.setAttribute('hidden', '')
+    root?.querySelector('#public-status')?.setAttribute('hidden', '')
     root?.querySelector('#view-as-status')?.setAttribute('hidden', '')
   }
   // Mode also drives the encryption toggle's visibility (managed data is
@@ -1412,6 +1415,7 @@ function renderSyncStatus(status) {
     triageSync.setForcedOff(true)
     const localAuthBtn = root?.querySelector('#auth-status')
     if (localAuthBtn) localAuthBtn.hidden = true
+    root?.querySelector('#public-status')?.setAttribute('hidden', '')
     return
   }
   // Managed mode replaces the offline/online toggle with login/logout (sync
@@ -2520,6 +2524,7 @@ class AppSidebar extends LitElement {
           <span class="sync-label">Sync off</span>
         </button>
         <button id="auth-status" type="button" hidden></button>
+        <span id="public-status" hidden>Public access link · Read only</span>
         <button id="manage-status" type="button" hidden data-action="manage" aria-label="Manage">${unsafeHTML(MANAGE_ICON_SVG)}</button>
       </div>
       <div id="user-menu" popover class="user-menu"></div>
