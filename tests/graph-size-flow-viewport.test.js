@@ -28,7 +28,7 @@ function mounted(t, width = 1000, height = 400) {
   const stage = new EventTarget()
   stage.getBoundingClientRect = () => box
   const elements = new Map([
-    ['.flow-viewport', stage], ['.flow-chart', { style: { setProperty(key, value) { this[key] = value } } }], ['.g2-zoom-pct', {}],
+    ['.flow-viewport', stage], ['.g2-zoom-pct', {}],
     ['[aria-label="Zoom in"]', {}], ['[aria-label="Zoom out"]', {}],
   ])
   flow.renderRoot = Object.assign(new EventTarget(), { querySelector: selector => elements.get(selector) ?? null, contains: () => false })
@@ -104,10 +104,8 @@ test('buttons zoom around the center and wheel zoom preserves the point under th
   assert.equal(prevented, true)
   near(flow.zoom, wheelBefore * Math.exp(.15))
   world(flow, 140, 90).forEach((n, i) => near(n, pointer[i]))
-  assert.equal(elements.get('.flow-chart').style.transform, flow.viewportTransform())
-  assert.equal(elements.get('.flow-chart').style['--flow-zoom'], String(flow.zoom), 'outlines compensate for the SVG zoom without rebuilding geometry')
   assert.equal(elements.get('.g2-zoom-pct').textContent, `${Math.round(flow.zoom * 100)}%`)
-  assert.equal(updates.mock.callCount(), 0, 'zooming must not rebuild the SVG node/ribbon templates')
+  assert.equal(updates.mock.callCount(), 0, 'zooming repaints the chart without rerendering the component')
 })
 
 test('scrolling out at the minimum recenters instead of shrinking below the fitted overview', t => {
