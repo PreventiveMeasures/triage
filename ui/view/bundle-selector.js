@@ -33,7 +33,9 @@ class BundleSelector extends SearchableSelector {
   static properties = { bundles: { attribute: false }, noun: {}, ordered: { type: Boolean } }
   static styles = [SearchableSelector.styles, css`
     .bundle-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 1.05rem; width: 1.05rem; height: 1.05rem; color: var(--muted); }
-    .bundle-icon img, .bundle-icon svg { display: block; width: 100%; height: 100%; opacity: 1; }
+    /* The icon keeps its muted color in the list: the base selector colors an
+       option's svg, its check mark, with the accent. */
+    .bundle-icon img, .bundle-icon svg { display: block; width: 100%; height: 100%; opacity: 1; color: inherit; }
     .option { gap: .5rem; padding-block: .25rem; }
     .option-copy { gap: 0; }
     .option .name { line-height: 1.3; }
