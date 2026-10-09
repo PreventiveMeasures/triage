@@ -47,7 +47,7 @@ function view(path = null, extra = [{}, {}]) {
   const element = new CompareCode()
   element.base = base
   element.other = other
-  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), file => /^node_modules\/[^/]+/u.exec(file)?.[0] ?? '__own__').files
   element.resolutions = computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other)).changed
   element.baseName = 'Before'
   element.otherName = 'After'
@@ -164,4 +164,19 @@ test('an importer only one bundle carries is highlighted under that bundle', () 
   assert.equal(element._textSide('src/legacy.js'), element.base)
   assert.equal(element._textSide('src/features/search.js'), element.other)
   assert.equal(element._textSide('src/api.js'), element.other)
+})
+
+test('a renamed file lists once at its new path, diffed against its old one; a pure rename says so', () => {
+  const renamed = [{ 'src/util.js': 'export const u = 1\nexport const v = 2\n' }, { 'lib/util.ts': 'export const u: number = 1\nexport const v = 2\n' }]
+  const markup = renderText(view(null, renamed).render())
+  const marks = fileMarks(markup)
+  assert.deepEqual(marks['lib/util.ts'], ['renamed'])
+  assert.equal(marks['src/util.js'], undefined, 'not also removed')
+  assert.match(markup, /data-tooltip=Renamed from src\/util\.js>→</u)
+  const diff = renderText(view('lib/util.ts', renamed).render())
+  assert.match(diff, /bundle-compare-code-pill renamed>Renamed/u)
+  assert.match(diff, /data-tooltip=src\/util\.js → lib\/util\.ts>\{src\/util\.js → lib\/util\.ts\}</u)
+  assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u, 'the old contents are the before side')
+  const pure = renderText(view('lib/same.js', [{ 'src/same.js': 'x\n' }, { 'lib/same.js': 'x\n' }]).render())
+  assert.match(pure, /Renamed without changes\./u)
 })

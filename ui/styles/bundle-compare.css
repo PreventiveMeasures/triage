@@ -545,7 +545,7 @@ bundle-compare-code > .bundle-code-view {
 
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.changed, &.renamed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
   &[aria-pressed='false'] {
     color: var(--muted);
     background: transparent;
@@ -564,7 +564,7 @@ bundle-compare-code > .bundle-code-view {
 
   &.added { color: var(--green); }
   &.removed { color: var(--critical); }
-  &.changed { color: var(--medium); }
+  &.changed, &.renamed { color: var(--medium); }
 }
 .bundle-compare-code-name.removed {
   text-decoration: line-through;
@@ -587,7 +587,7 @@ bundle-compare-code > .bundle-code-view {
 
   &.added { color: var(--green); background: rgb(from var(--green) r g b / .16); }
   &.removed { color: var(--critical); background: rgb(from var(--critical) r g b / .16); }
-  &.changed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
+  &.changed, &.renamed { color: var(--medium); background: rgb(from var(--medium) r g b / .18); }
 }
 .bundle-compare-code-counts {
   flex: none;

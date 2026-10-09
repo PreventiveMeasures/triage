@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, renameLabel, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
 
 // All fixtures use ASCII content so a string's byte length equals its
 // `.length` — keeps the expected-bytes assertions readable.
@@ -371,5 +371,63 @@ describe('comparePackages', () => {
       { pkg: '__own__', baseBytes: 10, otherBytes: 12, delta: 2, baseVersions: [], otherVersions: [], direction: null },
       { pkg: 'bumped', baseBytes: 5, otherBytes: 5, delta: 0, baseVersions: ['1.0.0'], otherVersions: ['1.1.0'], direction: 'up' },
     ])
+  })
+})
+
+describe('renames', () => {
+  // The package a path is in: the one after its last node_modules, or own source.
+  const pkgOf = path => /^(?:.*\/)?node_modules\/(?:@[^/]+\/)?[^/]+/u.exec(path)?.[0] ?? '__own__'
+  const renames = (removed, added) => Object.fromEntries(detectRenames(removed, added, pkgOf))
+
+  it('pairs an extension change, a directory swapped, and both', () => {
+    assert.deepEqual(renames(['src/a.js'], ['src/a.ts']), { 'src/a.js': 'src/a.ts' })
+    assert.deepEqual(renames(['src/a.js'], ['lib/a.js']), { 'src/a.js': 'lib/a.js' })
+    assert.deepEqual(renames(['src/a.ts'], ['lib/a.js']), { 'src/a.ts': 'lib/a.js' })
+    assert.deepEqual(renames(['x/src/y/a.css'], ['x/lib/y/a.scss']), { 'x/src/y/a.css': 'x/lib/y/a.scss' }, 'at any depth')
+    assert.deepEqual(renames(['node_modules/a/src/x.ts'], ['node_modules/a/lib/x.js']), { 'node_modules/a/src/x.ts': 'node_modules/a/lib/x.js' })
+  })
+
+  it('pairs only a clear rename', () => {
+    assert.deepEqual(renames(['src/a.js'], ['lib/a.js', 'src/a.ts']), {}, 'two files it could be')
+    assert.deepEqual(renames(['src/a.js', 'lib/a.ts'], ['lib/a.js']), {}, 'two files it could be from')
+    assert.deepEqual(renames(['src/a.js', 'src/a.css'], ['lib/a.js', 'lib/a.css']), { 'src/a.js': 'lib/a.js', 'src/a.css': 'lib/a.css' },
+      'a script and a style of one name move apart')
+    assert.deepEqual(renames(['src/a.css'], ['src/a.js']), {}, 'a style does not become a script')
+    assert.deepEqual(renames(['src/a.json'], ['src/a.yaml']), {}, 'other files keep their extension')
+    assert.deepEqual(renames(['src/a.js'], ['src/b.js']), {}, 'nor change their name')
+    assert.deepEqual(renames(['src/x/a.js'], ['lib/y/a.js']), {}, 'one directory swaps, not two')
+    assert.deepEqual(renames(['src/a.js'], ['src/lib/a.js']), {}, 'nor moves deeper')
+  })
+
+  it('stays within a package, past its last node_modules', () => {
+    assert.deepEqual(renames(['node_modules/left-pad/index.js'], ['node_modules/zod/index.js']), {})
+    assert.deepEqual(renames(['a/node_modules/b/x.js'], ['c/node_modules/b/x.js']), {})
+    assert.deepEqual(renames(['node_modules/a/index.js'], ['src/index.js']), {})
+  })
+
+  it('counts a renamed file as changed, at its new path, not as removed and added', () => {
+    const base = m({ 'own/src/a.js': 'aaaa', 'own/keep.js': 'k', 'own/gone.js': 'g' })
+    const other = m({ 'own/lib/a.ts': 'aaaaaa', 'own/keep.js': 'k', 'own/new.js': 'n' })
+    const { totals, files, packages } = computeBundleDiff(base, other, firstSeg)
+    assert.deepEqual(files.changed, [{ path: 'own/lib/a.ts', basePath: 'own/src/a.js', baseBytes: 4, otherBytes: 6, delta: 2 }])
+    assert.deepEqual(files.onlyBase.map(row => row.path), ['own/gone.js'])
+    assert.deepEqual(files.onlyOther.map(row => row.path), ['own/new.js'])
+    assert.equal(totals.changedFiles, 1)
+    assert.equal(totals.renamedFiles, 1)
+    assert.equal(totals.onlyBaseBytes, 1)
+    assert.equal(totals.onlyOtherBytes, 1)
+    assert.equal(totals.changedDelta, 2)
+    assert.equal(totals.identical, false)
+    assert.deepEqual(packages.changed.map(row => row.pkg), ['own'])
+    const pure = computeBundleDiff(m({ 'own/src/a.js': 'a' }), m({ 'own/lib/a.js': 'a' }), firstSeg)
+    assert.deepEqual(pure.files.changed, [{ path: 'own/lib/a.js', basePath: 'own/src/a.js', baseBytes: 1, otherBytes: 1, delta: 0 }])
+    assert.equal(pure.totals.identical, false, 'a rename alone is a change')
+  })
+
+  it('labels a rename the way git diff --stat does', () => {
+    assert.equal(renameLabel('src/a.js', 'src/a.ts'), 'src/{a.js → a.ts}')
+    assert.equal(renameLabel('src/a.js', 'lib/a.js'), '{src → lib}/a.js')
+    assert.equal(renameLabel('x/src/y/a.js', 'x/lib/y/a.js'), 'x/{src → lib}/y/a.js')
+    assert.equal(renameLabel('node_modules/a/src/x.ts', 'node_modules/a/lib/x.js'), 'node_modules/a/{src/x.ts → lib/x.js}')
   })
 })

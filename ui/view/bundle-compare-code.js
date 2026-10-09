@@ -27,10 +27,13 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, TEXT_NODE_MAX, textNodes } from './source-text.js'
 import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
+import { renameLabel } from './bundle-compare-diff.js'
 import './bundle-code-splitter.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
+  // Moved or re-extensioned, its contents changed or not (see detectRenames).
+  { kind: 'renamed', label: 'Renamed', letter: '→' },
   { kind: 'added', label: 'Added', letter: 'A' },
   { kind: 'removed', label: 'Removed', letter: 'D' },
   // Same contents, but some of its imports resolve elsewhere.
@@ -158,15 +161,19 @@ class BundleCompareCode extends LitElement {
     }
   }
 
-  // path → { kind, baseBytes, otherBytes, repointed } for every file that
-  // differs or imports something that now resolves elsewhere; `repointed`
-  // lists those imports.
+  // path → { kind, baseBytes, otherBytes, basePath, repointed } for every
+  // file that differs or imports something that now resolves elsewhere;
+  // `basePath` names a renamed file on the base side, `repointed` lists
+  // those imports.
   _buildEntries() {
     const entries = new Map()
     if (!this.files) return entries
     for (const row of this.files.onlyBase) entries.set(row.path, { kind: 'removed', baseBytes: row.bytes, otherBytes: null })
     for (const row of this.files.onlyOther) entries.set(row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes })
-    for (const row of this.files.changed) entries.set(row.path, { kind: 'changed', baseBytes: row.baseBytes, otherBytes: row.otherBytes })
+    for (const row of this.files.changed) {
+      entries.set(row.path, row.basePath == null ? { kind: 'changed', baseBytes: row.baseBytes, otherBytes: row.otherBytes }
+        : { kind: 'renamed', basePath: row.basePath, baseBytes: row.baseBytes, otherBytes: row.otherBytes })
+    }
     for (const row of this.resolutions ?? []) {
       if (!entries.has(row.parent)) {
         const bytes = bundleFileByteLength(bundleFilesAsMap(this.other).get(row.parent) ?? bundleFilesAsMap(this.base).get(row.parent))
@@ -319,14 +326,14 @@ class BundleCompareCode extends LitElement {
         </li>`
       })}
       ${repeat(files, ([, full]) => full, ([name, full]) => {
-        const { kind, repointed } = this._entries.get(full)
+        const { kind, repointed, basePath } = this._entries.get(full)
         const imports = repointed ? `${repointed.length} repointed ${repointed.length === 1 ? 'import' : 'imports'}` : ''
         return html`<li class="bundle-code-tree-file">
           <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
             ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
-            <span class=${`bundle-compare-code-letter ${kind}`} data-tooltip=${kind === 'repointed' ? imports : KIND[kind].label}>${KIND[kind].letter}</span>
+            <span class=${`bundle-compare-code-letter ${kind}`} data-tooltip=${kind === 'repointed' ? imports : basePath ? `Renamed from ${basePath}` : KIND[kind].label}>${KIND[kind].letter}</span>
           </button>
         </li>`
       })}
@@ -335,8 +342,8 @@ class BundleCompareCode extends LitElement {
 
   // ── The selected file ────────────────────────────────────────────
 
-  _contents(path, kind) {
-    let before = kind === 'added' ? '' : bundleFilesAsMap(this.base).get(path)
+  _contents(path, { kind, basePath = path }) {
+    let before = kind === 'added' ? '' : bundleFilesAsMap(this.base).get(basePath)
     let after = kind === 'removed' ? '' : bundleFilesAsMap(this.other).get(path)
     // An importer captured on one side only (or neither) is no change of
     // contents; what there is of it shows as unchanged.
@@ -381,7 +388,7 @@ class BundleCompareCode extends LitElement {
   _renderFile(path, prefix) {
     const entry = this._entries.get(path)
     const { kind } = entry
-    const { before, after } = this._contents(path, kind)
+    const { before, after } = this._contents(path, entry)
     const textual = typeof before === 'string' && typeof after === 'string'
     const large = textual && !this._forced.has(path)
       && (before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES)
@@ -390,7 +397,8 @@ class BundleCompareCode extends LitElement {
     // whatever the whitespace setting: its two sides are one text.
     const diffable = textual && (kind !== 'repointed' || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
-    const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+    const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
+    const display = strip(path)
     const size = value => formatBytes(value ?? 0)
     let body
     if (kind === 'repointed' && before === undefined) {
@@ -398,7 +406,7 @@ class BundleCompareCode extends LitElement {
     } else if (!textual) {
       const bytes = kind === 'added' ? `${size(bundleFileByteLength(after))}` : kind === 'removed' ? `${size(bundleFileByteLength(before))}`
         : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
-      body = html`<div class="bundle-compare-code-message">Binary file ${kind === 'changed' ? 'changed' : kind} · ${bytes}. A text diff is not available.</div>`
+      body = html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.</div>`
     } else if (large) {
       body = html`<div class="bundle-compare-code-message">
         <p>This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.</p>
@@ -408,11 +416,11 @@ class BundleCompareCode extends LitElement {
       body = this._renderSource(path, after, entry.repointed)
     } else if (model.blocks.length === 0) {
       body = html`<div class="bundle-compare-code-message">
-        <p>${prefs.ignoreWhitespace ? 'Only whitespace changed in this file.' : 'The contents are the same.'}</p>
+        <p>${prefs.ignoreWhitespace ? 'Only whitespace changed in this file.' : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
         ${prefs.ignoreWhitespace ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
       </div>`
     } else {
-      body = this._renderDiff(path, kind, model, before, after)
+      body = this._renderDiff(path, entry, model, before, after)
     }
     return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
         <span class="bundle-code-file-nav">
@@ -425,7 +433,7 @@ class BundleCompareCode extends LitElement {
         </span>
         <span class=${`bundle-compare-code-pill ${kind}`}>${KIND[kind].label}</span>
         ${sourceFileIcon(path, this._format(path))}
-        <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${path}>${display}</span>
+        <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.basePath ? `${entry.basePath} → ${path}` : path}>${entry.basePath ? renameLabel(strip(entry.basePath), display) : display}</span>
         <button type="button" class="bundle-code-copy-path" data-copy-path=${path} aria-label="Copy file path">
           <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
         </button>
@@ -604,7 +612,7 @@ class BundleCompareCode extends LitElement {
     this._select(this._order[index + direction])
   }
 
-  _renderDiff(path, kind, model, before, after) {
+  _renderDiff(path, { kind, basePath = path }, model, before, after) {
     const key = `${path}\0${prefs.ignoreWhitespace}`
     const expansion = this._expansions.get(key) ?? new Map()
     const split = prefs.layout === 'split'
@@ -614,7 +622,7 @@ class BundleCompareCode extends LitElement {
     this._shownRows = { path, key, rows, limit }
     const lit = {
       model,
-      a: kind === 'added' ? null : this._highlighted(this.base, path, before),
+      a: kind === 'added' ? null : this._highlighted(this.base, basePath, before),
       b: kind === 'removed' ? null : this._highlighted(this.other, path, after),
       expand: (run, change) => {
         const next = new Map(expansion)
