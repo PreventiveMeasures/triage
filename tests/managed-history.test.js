@@ -527,8 +527,8 @@ test('a write while a navigation loads cannot take the entry it leaves, and a ta
   const b = { ...a, bundleSlug: 'b' }
   const { browser, entries } = browserAt(managedRoutePath(a))
   const nav = createManagedHistory(browser)
-  let pending = null
-  await nav.start(async () => { if (pending) await pending.promise; return true })
+  let cancels = 0, pending = null
+  await nav.start(async () => { if (pending) await pending.promise; return true }, { onCancel: () => cancels++ })
   pending = Promise.withResolvers()
   let navigation = nav.navigate(b)
   nav.replaceRoute({ ...b, bundleTab: 'code' })
@@ -539,9 +539,13 @@ test('a write while a navigation loads cannot take the entry it leaves, and a ta
   await browser.move(-1)
   pending = Promise.withResolvers()
   navigation = nav.navigate(b)
+  assert.equal(cancels, 0)
   nav.pushRoute({ ...a, bundleTab: 'code' })
+  assert.equal(cancels, 1, 'its owner hears of the cancellation at once, before the load settles')
   pending.resolve()
   assert.equal(await navigation, false, 'the tab clicked on the page shown wins')
   assert.deepEqual(entries.map(entry => entry.url.pathname), ['/team/team/bundle/a', '/team/team/bundle/a/code'])
+  nav.pushRoute({ ...a, bundleTab: 'graph' })
+  assert.equal(cancels, 1, 'a tab switch with nothing loading cancels nothing')
 })
 

@@ -28,6 +28,7 @@ export function createManagedHistory(browser) {
   let listening = false
   let findingUrl = null
   let restoring = null
+  let cancelled = null
 
   // A changed public fragment triggers a document reload. Do not let an old
   // popstate handler or pending navigation restore the previous credential.
@@ -149,10 +150,13 @@ export function createManagedHistory(browser) {
       const path = route.view === 'home' ? `/#${encodeFindingRef(route.finding)}` : managedRoutePath(route)
       try { browser.sessionStorage?.setItem(LOGIN_FINDING, path) } catch {}
     },
-    start(navigateToPage) {
+    // `onCancel` hears that a navigation still loading was cancelled with no
+    // navigation of its own to follow it (see pushRoute).
+    start(navigateToPage, { onCancel = null } = {}) {
       if (active) return
       active = true
       restore = navigateToPage
+      cancelled = onCancel
       generation = typeof browser.history.state?.[KEY] === 'string' ? browser.history.state[KEY] : browser.crypto.randomUUID()
       if (!listening) {
         browser.addEventListener('popstate', onPop)
@@ -216,12 +220,15 @@ export function createManagedHistory(browser) {
       if (!active || !route || shareChanged()) return
       let path = managedRoutePath(route)
       if (path == null) return
+      const loading = restoring !== null
       ++revision
       restoring = null
       path = publicSharePath(path, publicShare)
-      if (path === currentPath) return
-      browser.history.pushState({ [KEY]: generation }, '', path)
-      currentPath = path
+      if (path !== currentPath) {
+        browser.history.pushState({ [KEY]: generation }, '', path)
+        currentPath = path
+      }
+      if (loading) cancelled?.()
     },
     reset({ force = false } = {}) {
       ++revision
