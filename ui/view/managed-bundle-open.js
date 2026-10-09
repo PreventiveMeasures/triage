@@ -43,8 +43,9 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, 
     return false
   }
   const early = state.bundleDetails
+  // A catalogue refresh replaces the entries, and can rehome the bundle.
   const shown = () => isManagedUiMode() && state.currentView === 'bundles' && state.selectedBundle === entry.integrity
-    && state.bundles.includes(entry) && state.bundleDetails === early
+    && state.bundles.some(bundle => bundle.managedId === id && bundle.integrity === entry.integrity) && state.bundleDetails === early
   // A failed open lands on the home page; a bundle shown by a later
   // navigation, as one of its tabs, says why it has no files instead.
   const failed = (err, toast) => {

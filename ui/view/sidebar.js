@@ -2075,7 +2075,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
   state.managedTeams = teams
   const update = fresh === null ? managedTeamsUpdate : ++managedTeamsUpdate
   managedTeamsPending = false
-  const bundleId = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
+  const bundleId = shownManagedBundleId(state)
   // Route restoration validates its destination itself. A background refresh
   // must never replace that destination with the previously displayed bundle.
   if (fresh !== null && bundleId && !managedNavigationPending) {
@@ -2083,7 +2083,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
     const bundleIsCurrent = () => isCurrent() && !signal.aborted && !managedNavigationPending
       && update === managedTeamsUpdate && navigation === currentViewGeneration() && generation === clientModeGeneration
       && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role && isManagedUiMode()
-      && state.currentView === 'bundles' && state.bundleDetails?.managedId === bundleId
+      && shownManagedBundleId(state) === bundleId
     let accessible
     try {
       accessible = await refreshManagedBundleView(state, teams, {

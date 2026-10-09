@@ -8,6 +8,7 @@ import { managedRouteForIds, resolveManagedRoute } from '../common/managed/route
 import { managedAppState } from '../ui/managed/state.js'
 import { fetchBundleMetadata } from '../ui/managed/bundle-data.js'
 import { managedBundleEntry, managedBundleRoute, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
+import { refreshManagedBundleView } from '../ui/view/managed-bundle-refresh.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 import { browserAt } from './_managed-browser.js'
@@ -138,6 +139,21 @@ test('a tab picked while the metadata loads still gets the files, or says why th
       assert.equal(state.bundleDetails.managedId, bundle.id)
     })
   }
+})
+
+test('a catalogue refresh while the metadata loads rehomes the bundle, which still gets its files', async t => {
+  const f = await fixture(t)
+  state.bundleDetailsTab = 'code'
+  f.history.pushRoute(managedRouteForIds({ view: 'bundles', teamId: null, bundleId: bundle.id, bundleTab: 'code' }, [], [bundle]))
+  const teams = [team('moved')]
+  assert.equal(await refreshManagedBundleView(state, teams, { fetchCatalog: () => assert.fail('the team catalogue confirms access'),
+    isCurrent: () => true, render() {}, replaceRoute: route => f.history.replaceRoute(route) }), true)
+  assert.equal(state.currentManagedTeam, 'team')
+  assert.equal(f.browser.location.pathname, '/team/team/bundle/created/code')
+  f.requests[0].resolve(Response.json(metadata))
+  assert.equal(await f.opening, false, 'the tab change took over the navigation')
+  assert.equal(state.bundleDetails.fileSizes.get('index.js'), 16)
+  assert.equal(state.bundleDetails.managedId, bundle.id)
 })
 
 test('creation opens the bundle when its first team refresh cancels the metadata request during Opening', async t => {

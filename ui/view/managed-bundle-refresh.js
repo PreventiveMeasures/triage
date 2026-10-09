@@ -1,9 +1,10 @@
-import { managedBundleEntry, managedBundleRoute, managedTabLocation, managedTeamBundleEntries } from './managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedTabLocation, managedTeamBundleEntries, shownManagedBundleId } from './managed-bundle-navigation.js'
 
 // Bundle contents are immutable. Refresh their authorized catalogue entries
-// without resetting the loaded sources, tab, search, graph or file history.
+// without resetting the loaded sources, tab, search, graph or file history,
+// for a bundle still loading its metadata too.
 export async function refreshManagedBundleView(state, teams, { fetchCatalog, isCurrent, render, replaceRoute }) {
-  const id = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
+  const id = shownManagedBundleId(state)
   if (!id || !isCurrent()) return true
   const canManage = ['admin', 'manage'].includes(state.managedSession?.role)
   let entries, team = null
