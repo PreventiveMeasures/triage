@@ -46,7 +46,7 @@ test('a session loaded within one second never paints the login prompt', t => {
   updateManagedLanding({ ...pending, session, sessionPending: false })
   assert.match(managedText(), /Your team's findings/u)
   t.mock.timers.tick(2000)
-  assert.doesNotMatch(managedText(), /Log in to DeepView/u)
+  assert.doesNotMatch(managedText(), /Continue with GitHub/u)
 })
 
 test('fast session and team responses paint the populated landing without an empty flash', t => {
@@ -93,12 +93,12 @@ test('an unresolved session shows login after one second, without resetting on r
   t.mock.timers.tick(249)
   assert.equal(managedText(), '')
   t.mock.timers.tick(1)
-  assert.match(managedText(), /Log in to DeepView/u)
+  assert.match(managedText(), /Continue with GitHub/u)
   assert.match(managedText(), /e2e mode/u)
   updateManagedLanding(pending)
-  assert.match(managedText(), /Log in to DeepView/u)
+  assert.match(managedText(), /Continue with GitHub/u)
   updateManagedLanding(loadingTeams)
-  assert.doesNotMatch(managedText(), /Log in to DeepView/u)
+  assert.doesNotMatch(managedText(), /Continue with GitHub/u)
   assert.match(managedText(), /Your team's findings/u, 'slow session checks do not start a second grace period for teams')
 })
 
@@ -106,7 +106,7 @@ test('a confirmed anonymous session offers login immediately', t => {
   updateManagedLanding(pending)
   t.mock.timers.tick(100)
   updateManagedLanding({ ...pending, sessionPending: false })
-  assert.match(managedText(), /Log in to DeepView/u)
+  assert.match(managedText(), /Continue with GitHub/u)
 })
 
 test('mode changes cancel the old timer and give a new session its own grace period', t => {
@@ -121,7 +121,7 @@ test('mode changes cancel the old timer and give a new session its own grace per
   t.mock.timers.tick(999)
   assert.equal(managedText(), '')
   t.mock.timers.tick(1)
-  assert.match(managedText(), /Log in to DeepView/u)
+  assert.match(managedText(), /Continue with GitHub/u)
 })
 
 test('background checks preserve known sessions and no-access screens', () => {
@@ -130,7 +130,7 @@ test('background checks preserve known sessions and no-access screens', () => {
   updateManagedLanding({ ...loadingTeams, session: { role: 'none' } })
   assert.match(managedText(), /No workspace access/u)
   updateManagedLanding({ ...loadingTeams, session: null })
-  assert.match(managedText(), /Log in to DeepView/u, 'anonymous users need not wait for teams')
+  assert.match(managedText(), /Continue with GitHub/u, 'anonymous users need not wait for teams')
 })
 
 test('managed landing omits empty teams and handles all-empty accounts', () => {

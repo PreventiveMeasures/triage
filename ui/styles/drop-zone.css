@@ -134,6 +134,7 @@
   cursor: default;
   transition: background .12s;
 
+  &:first-child { margin-top: 0; }
   & svg { flex-shrink: 0; }
   &:hover { background: color-mix(in srgb, var(--text) 88%, var(--bg)); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
