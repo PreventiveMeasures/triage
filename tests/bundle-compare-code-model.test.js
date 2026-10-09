@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, diffRows, lineDiff, markHighlighted, markSegments, textLines, wordRanges } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, changeStart, diffRows, lineDiff, markHighlighted, markSegments, textLines, wordRanges } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -92,4 +92,13 @@ test('marks go around the changed characters without crossing highlight tags', (
   assert.deepEqual(markSegments('abcdef', [[1, 3], [4, 5]]), [
     { text: 'a', marked: false }, { text: 'bc', marked: true }, { text: 'd', marked: false }, { text: 'e', marked: true }, { text: 'f', marked: false },
   ])
+})
+
+test('changeStart finds the first row of the next change block', () => {
+  const before = lines(30)
+  const rows = diffRows(lineDiff(text(before), text(before.toSpliced(4, 2, 'x', 'y').toSpliced(20, 1, 'z'))))
+  const starts = rows.flatMap((row, i) => changeStart(rows, i) === i ? [i] : [])
+  assert.deepEqual(starts.map(i => [rows[i].kind, rows[i].change]), [['del', 0], ['del', 1]])
+  assert.equal(changeStart(rows, starts[0] + 1), starts[1], 'a block\'s later rows are not starts')
+  assert.equal(changeStart(rows, starts[1] + 1), -1)
 })

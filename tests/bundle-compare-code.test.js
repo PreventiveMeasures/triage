@@ -26,9 +26,10 @@ function renderText(value) {
   return value == null || typeof value === 'symbol' || typeof value === 'function' ? '' : String(value)
 }
 
-function details(integrity, version) {
+function details(integrity, version, extra = {}) {
   const v2 = version === 2
   const own = {
+    ...extra,
     'src/api.js': v2 ? 'export const a = 2\nexport const b = 1\n' : 'export const a = 1\nexport const b = 1\n',
     'src/server.js': "import pick from 'lodash/pick'\nexport const start = () => pick\n",
     'assets/logo.png': v2 ? 'AQ==' : 'AA==',
@@ -41,8 +42,8 @@ function details(integrity, version) {
   return { integrity, kind: 'stasis', bundle: new Bundle({ modules, imports, formats: new Map([['assets/logo.png', 'resource:base64']]) }) }
 }
 
-function view(path = null) {
-  const base = details('base', 1), other = details('other', 2)
+function view(path = null, extra = [{}, {}]) {
+  const base = details('base', 1, extra[0]), other = details('other', 2, extra[1])
   const element = new CompareCode()
   element.base = base
   element.other = other
@@ -109,4 +110,31 @@ test('the kind filters hide files, keeping a modified file under Repointed when 
   element._toggleKind('added')
   element._toggleKind('removed')
   assert.deepEqual(Object.keys(fileMarks(renderText(element.render()))), ['src/server.js'])
+})
+
+test('a repointed file stays a source view with its line links while whitespace changes are hidden', t => {
+  const element = view('src/server.js')
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  const markup = renderText(element.render())
+  assert.match(markup, /\?disabled=false\s+aria-label=Go to line 1/u)
+  assert.match(markup, /aria-label="Source"/u)
+  assert.doesNotMatch(markup, /Unified<\/button>/u)
+})
+
+test('Next change past the rows shown brings the next change in instead of leaving the file', () => {
+  const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
+  const big = list => `${list.join('\n')}\n`
+  const element = view('src/big.js', [{ 'src/big.js': big(lines) }, { 'src/big.js': big(lines.map((line, i) => i % 2 ? `${line} changed` : line)) }])
+  renderText(element.render())
+  const { key, rows, limit } = element._shownRows
+  assert.ok(rows.length > limit, 'more rows than one page')
+  // Every rendered change is above the viewport top.
+  element.querySelector = () => ({ getBoundingClientRect: () => ({ top: 0 }), querySelectorAll: () => [] })
+  let selected = null
+  element.addEventListener('compare-code-select', event => { selected = event.detail.path })
+  element._stepChange(1)
+  const next = rows.findIndex((row, i) => i >= limit && row.change !== undefined && rows[i - 1].change !== row.change)
+  assert.equal(element._limits.get(key), next + 2000)
+  assert.equal(selected, null, 'stays on the file')
 })

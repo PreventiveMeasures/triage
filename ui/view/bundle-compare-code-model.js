@@ -90,6 +90,16 @@ export function diffRows(model, expansion = new Map(), { context = DIFF_CONTEXT,
   return rows
 }
 
+// The index of the first row at or after `from` that starts a change
+// block, or -1 when none does.
+export function changeStart(rows, from) {
+  for (let i = Math.max(from, 0); i < rows.length; i++) {
+    const { change } = rows[i]
+    if (change !== undefined && rows[i - 1]?.change !== change) return i
+  }
+  return -1
+}
+
 // Words, runs of whitespace, and single symbols: the units a changed line
 // is compared by, so `foo(a)` → `foo(b)` marks `a` and `b` alone.
 const TOKEN = /[\p{L}\p{N}_$]+|\s+|[^\p{L}\p{N}_$\s]/gu

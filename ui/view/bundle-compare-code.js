@@ -26,7 +26,7 @@ import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, 
 import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, TEXT_NODE_MAX, textNodes } from './source-text.js'
-import { EXPAND_STEP, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import './bundle-code-splitter.js'
 
 const KINDS = [
@@ -384,8 +384,9 @@ class BundleCompareCode extends LitElement {
     const large = textual && !this._forced.has(path)
       && (before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES)
     const model = textual && !large ? this._model(path, before, after) : null
-    // A file whose only change is a repointed import reads as its source.
-    const diffable = textual && (kind !== 'repointed' || model?.blocks.length > 0 || prefs.ignoreWhitespace)
+    // A file whose only change is a repointed import reads as its source,
+    // whatever the whitespace setting: its two sides are one text.
+    const diffable = textual && (kind !== 'repointed' || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
     const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
     const size = value => formatBytes(value ?? 0)
@@ -544,16 +545,41 @@ class BundleCompareCode extends LitElement {
   }
 
   // Scroll to the next change below the top of the diff (or the last one
-  // above it); past the file's last change, step on to the next file.
+  // above it); past the file's last change, step on to the next file. At
+  // either end of the scroll, where a change can't reach the top, step past
+  // the change last stepped to instead, while it is still in view. A change past the rows shown brings
+  // them in first.
   _stepChange(direction) {
     const body = this.querySelector('.bundle-compare-diff')
     if (!body) return
     const top = body.getBoundingClientRect().top
     const starts = [...body.querySelectorAll('[data-change-start]')]
     const offset = el => el.getBoundingClientRect().top - top
-    const target = direction > 0 ? starts.find(el => offset(el) > 8) : starts.findLast(el => offset(el) < -8)
+    const changeOf = el => Number(el.dataset.changeStart)
+    // A change stepped to rests its scroll margin below the top.
+    const rest = starts.length > 0 ? parseFloat(getComputedStyle(starts[0]).scrollMarginTop) || 0 : 0
+    let target = direction > 0 ? starts.find(el => offset(el) > rest + 8) : starts.findLast(el => offset(el) < rest - 8)
+    const stuck = direction > 0 ? body.scrollTop + body.clientHeight >= body.scrollHeight - 2 : body.scrollTop <= 1
+    // Only while that change is still on screen: a scroll since moves on.
+    const last = this._stepped?.path === this._current ? this._stepped.change : null
+    const lastStart = last === null ? null : starts.find(el => changeOf(el) === last)
+    if (stuck && lastStart && offset(lastStart) >= 0 && offset(lastStart) <= body.clientHeight) {
+      target = direction > 0 ? starts.find(el => changeOf(el) > last) : starts.findLast(el => changeOf(el) < last)
+    }
+    const reach = change => {
+      this._stepped = { path: this._current, change }
+      this.querySelector(`.bundle-compare-diff [data-change-start="${change}"]`)?.scrollIntoView({ block: 'start' })
+    }
     if (target) {
-      target.scrollIntoView({ block: 'start' })
+      reach(changeOf(target))
+      return
+    }
+    const shown = this._shownRows
+    const hidden = direction > 0 && shown?.path === this._current ? changeStart(shown.rows, shown.limit) : -1
+    if (hidden !== -1) {
+      this._limits.set(shown.key, hidden + ROW_LIMIT)
+      this.requestUpdate()
+      void this.updateComplete.then(() => reach(shown.rows[hidden].change))
       return
     }
     const index = this._order.indexOf(this._current)
@@ -567,6 +593,7 @@ class BundleCompareCode extends LitElement {
     const rows = diffRows(model, expansion, { split })
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const shown = rows.length > limit ? rows.slice(0, limit) : rows
+    this._shownRows = { path, key, rows, limit }
     const lit = {
       model,
       a: kind === 'added' ? null : this._highlighted(this.base, path, before),
