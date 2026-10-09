@@ -208,15 +208,16 @@ function packagePath(raw: string): string | null {
   return parts.length === 0 || parts.includes('..') ? null : parts.join('/')
 }
 
+// A pax header's path. Each record is `<length> <key>=<value>\n`, its length
+// in bytes, so records are walked as bytes and only their values decoded.
 function paxPath(data: Uint8Array): string | null {
   let path = null
   let at = 0
-  const text = Buffer.from(data).toString('utf8')
-  while (at < text.length) {
-    const space = text.indexOf(' ', at)
-    const length = Number.parseInt(text.slice(at, space), 10)
+  while (at < data.length) {
+    const space = data.indexOf(0x20, at)
+    const length = Number.parseInt(Buffer.from(data.subarray(at, space)).toString('latin1'), 10)
     if (space === -1 || !Number.isSafeInteger(length) || length <= 0) break
-    const record = text.slice(space + 1, at + length - 1)
+    const record = Buffer.from(data.subarray(space + 1, at + length - 1)).toString('utf8')
     if (record.startsWith('path=')) path = record.slice(5)
     at += length
   }

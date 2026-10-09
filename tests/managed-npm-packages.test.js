@@ -45,7 +45,9 @@ function tar(entries) {
   return Buffer.concat([...blocks, Buffer.alloc(1024)])
 }
 
-const pax = path => { const record = ` path=${path}\n`; let length = record.length; length += String(length + String(length).length).length; return `${length}${record}` }
+// A pax record, its length counting its bytes, the length's own digits among them.
+const paxRecord = (key, value) => { const record = ` ${key}=${value}\n`; let length = Buffer.byteLength(record); length += String(length + String(length).length).length; return `${length}${record}` }
+const pax = path => paxRecord('path', path)
 
 function packageOf(name, version, files, extra = {}) {
   const tgz = gzipSync(tar(Object.entries(files).map(([path, data]) => ({ name: `package/${path}`, data }))))
@@ -161,6 +163,8 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
     { name: 'deep/name.js', prefix: 'package/very/long', data: 'prefixed' },
     { name: 'PaxHeader', type: 'x', data: pax('package/from-pax.js') },
     { name: 'package/short', data: 'pax' },
+    { name: 'PaxHeader', type: 'x', data: pax('package/文档/说明.md') + paxRecord('mtime', '1700000000') },
+    { name: 'package/short-utf8', data: 'utf8' },
     { name: '././@LongLink', type: 'L', data: 'package/from-gnu.js\0' },
     { name: 'package/trunc', data: 'gnu' },
     { name: 'package/index.js', data: 'replaced' },
@@ -168,7 +172,8 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
   ]))
   assert.deepEqual(files.map(file => [file.path, Buffer.from(file.bytes).toString()]), [
     ['a/b.js', 'b'], ['bin.dat', '\0\u0001\u0002'], ['from-gnu.js', 'gnu'], ['from-pax.js', 'pax'], ['index.js', 'replaced'], ['very/long/deep/name.js', 'prefixed'],
-  ])
+    ['文档/说明.md', 'utf8'],
+  ], 'pax lengths count bytes, not characters')
   assert.equal(npmFileText(files[1].bytes), null, 'binary has no text')
   assert.equal(npmFileText(Buffer.from([0xff, 0xfe])), null)
   assert.equal(npmFileText(Buffer.from('﻿text')), '﻿text', 'a BOM is kept, as the bytes have it')

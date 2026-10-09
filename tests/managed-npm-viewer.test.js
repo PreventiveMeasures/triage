@@ -24,7 +24,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
 const { npmCompareSource, npmDependencies, npmDependencyChanges, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
 
 const data = {
-  name: '@scope/pkg', version: '1.2.3', private: true, integrity: 'sha512-pkg', tarballSize: 99,
+  name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
   manifest: { main: './lib/index', description: 'A package' },
   files: [['README.md', 6, '# pkg\n'], ['lib/index.js', 10, 'module.x=1'], ['logo.png', 4, null], ['package.json', 2, '{}']],
 }
@@ -155,7 +155,7 @@ test('Code opens on what main names, resolved as require would', () => {
 test('a version shows as a bundle of its files, sized by their bytes, text alone as source', () => {
   const entry = npmPackageEntry(data)
   assert.deepEqual(entry, { integrity: 'sha512-pkg', kind: 'sourcemap', name: '@scope/pkg@1.2.3', size: 99,
-    npm: { name: '@scope/pkg', version: '1.2.3', private: true, manifest: data.manifest } })
+    npm: { name: '@scope/pkg', version: '1.2.3', private: false, manifest: data.manifest } })
   assert.equal(entry.managedId, undefined, 'never read through the bundle routes')
   const details = npmPackageDetails(entry, data)
   assert.deepEqual([...bundleSourcesAsMap(details).keys()], ['README.md', 'lib/index.js', 'package.json'])
@@ -220,4 +220,19 @@ test('history commits a dist-tag link at the version it opened', async () => {
   assert.equal(browser.location.pathname, '/npm/@scope/pkg@1.2.3/code')
   assert.equal(requests.length, 1, 'a version read in this session opens again without asking')
   assert.equal(entries.length, 2)
+})
+
+test('a private version is asked for each time it opens, as access may be lost meanwhile', async () => {
+  answer = () => Promise.resolve({ ...data, private: true })
+  const { browser } = browserAt('/npm/@scope/pkg@1.2.3')
+  const nav = createManagedHistory(browser)
+  await nav.start((route, isCurrent) => route.view === 'npm' ? openNpmRoute(route, isCurrent, () => {}) : true)
+  assert.equal(state.bundles[0].npm.private, true)
+  await nav.navigate({ view: 'npm' })
+  // The team listing its scope dropped the reader since.
+  answer = () => Promise.reject(Object.assign(new Error('No such package version, or it is not available to you.'), { status: 404 }))
+  await browser.move(-1)
+  assert.equal(requests.length, 2)
+  assert.equal(state.currentView, 'npm')
+  assert.equal(state.npmLookup.error, 'No such package version, or it is not available to you.')
 })

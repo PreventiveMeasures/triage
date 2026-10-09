@@ -84,8 +84,10 @@ export function npmPackageRoute(entry, tab = 'overview', location = null) {
 }
 
 // Versions read and version lists, for the session and role that read them:
-// the version shown and those compared with it, so swapping the two, or
-// returning to one, opens it at once.
+// the public version shown and those compared with it, so swapping the two,
+// or returning to one, opens it at once. A private version is asked for each
+// time it opens, so the server checks again access the reader may have lost
+// since, as to a team's npm scopes.
 const KEPT_VERSIONS = 3
 const keptVersions = new Map()
 const versionLists = new Map()
@@ -122,7 +124,7 @@ export async function loadNpmVersion(name, spec, options) {
   const data = await fetchNpmPackage(name, spec, options)
   const entry = npmPackageEntry(data)
   const details = npmPackageDetails(entry, data)
-  keep(entry, details)
+  if (!entry.npm.private) keep(entry, details)
   return { entry, details }
 }
 
