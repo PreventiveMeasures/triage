@@ -3,8 +3,10 @@
 // (see `.bundle-source-lineno-row`), so a wrapped line, which takes more
 // than one row, would pull the two apart. Measure how many rows each line
 // takes and give its gutter row as many line boxes, from generated line
-// breaks: the rows still follow text flow, line for line. The same pass
-// shows the bar's wrap toggle only where wrapping makes a difference.
+// breaks: the rows still follow text flow, line for line. A line too long
+// to lay out unwrapped wraps in either mode (`.bundle-source-long-line`).
+// The same pass shows the bar's wrap toggle only where wrapping makes a
+// difference.
 
 const VIEWERS = '.bundle-code-main, .bundle-source-modal, .bundle-search-side'
 const watched = new Map()
@@ -65,7 +67,16 @@ function syncSourceWrap(lines) {
   const width = codeWidth(lines)
   if (!pre || !gutter || !lines.isConnected || width <= 0) return
   const wrapped = lines.classList.contains('is-wrapped')
-  const { rows, overflows } = measureLines(pre, width, wrapped)
+  // Rows are as tall as laid out: the line height rounded to the layout's
+  // units, which over a line of thousands of rows adds up to more than a
+  // row. A gutter row given no breaks takes one. Its computed height gives
+  // that to six digits, where its rectangle loses precision far down a
+  // long file.
+  let pitch = parseFloat(getComputedStyle(pre).lineHeight)
+  for (const row of gutter.children) {
+    if (!row.style.getPropertyValue('--wrap-breaks')) { pitch = parseFloat(getComputedStyle(row).height); break }
+  }
+  const { rows, toggles } = measureLines(pre, width, wrapped, pitch)
   const previous = synced.get(lines)?.rows ?? new Set()
   const current = new Set()
   for (const [line, count] of rows) {
@@ -79,20 +90,19 @@ function syncSourceWrap(lines) {
   }
   for (const row of previous) if (!current.has(row)) row.style.removeProperty('--wrap-breaks')
   synced.set(lines, { rows: current, width })
-  // Wrapping makes a difference only where a line needs it. A docs link's
-  // label or trailing spaces past the edge never wrap a line.
   const toggle = lines.closest(VIEWERS)?.querySelector('[data-bundle-source-wrap]')
-  if (toggle) toggle.hidden = !(wrapped ? rows.size > 0 : overflows)
+  if (toggle) toggle.hidden = !toggles
 }
 
-// Wrapped, the rows each wrapped line takes, by its 0-based index;
-// unwrapped, whether any line is wider than the code wraps at. Only a line
-// that could be is measured: no glyph is wider than 2ch, tabs included at
-// the viewer's tab size of 2. Trailing whitespace hangs, so a line ends at
-// its last other character.
-function measureLines(pre, width, wrapped) {
+// The rows each wrapped line takes, by its 0-based index, and whether
+// wrapping lines makes a difference: whether a line that wraps only when
+// lines do is wider than the code wraps at. Only a line that could be is
+// measured: no glyph is wider than 2ch, tabs included at the viewer's tab
+// size of 2. Trailing whitespace hangs, so a line ends at its last other
+// character, and a docs link's label or trailing spaces past the edge never
+// wrap a line.
+function measureLines(pre, width, wrapped, pitch) {
   const style = getComputedStyle(pre)
-  const lineHeight = parseFloat(style.lineHeight)
   canvas ??= document.createElement('canvas').getContext('2d')
   canvas.font = `${style.fontSize} ${style.fontFamily}`
   const limit = width / (2 * canvas.measureText('0').width)
@@ -131,17 +141,20 @@ function measureLines(pre, width, wrapped) {
     range.setEnd(node, to)
     return range.getBoundingClientRect()
   }
-  if (!wrapped) {
-    const left = pre.getBoundingClientRect().left + pre.clientLeft + parseFloat(style.paddingLeft)
-    // Within half a pixel: the widths come rounded differently.
-    return { rows, overflows: candidates.some(({ last: finish }) => rect(finish).right - left > width + 0.5) }
-  }
-  // The first and last characters sit on the line's first and last rows.
+  const left = pre.getBoundingClientRect().left + pre.clientLeft + parseFloat(style.paddingLeft)
+  let toggles = false
   for (const { line: index, first: start, last: finish } of candidates) {
-    const count = Math.round((rect(finish).top - rect(start).top) / lineHeight) + 1
-    if (count > 1) rows.set(index, count)
+    const long = !!start.node.parentElement.closest('.bundle-source-long-line')
+    if (wrapped || long) {
+      // The first and last characters sit on the line's first and last rows.
+      const count = Math.round((rect(finish).top - rect(start).top) / pitch) + 1
+      if (count > 1) rows.set(index, count)
+      if (count > 1 && !long) toggles = true
+    }
+    // Within half a pixel: the widths come rounded differently.
+    else if (!toggles && rect(finish).right - left > width + 0.5) toggles = true
   }
-  return { rows, overflows: rows.size > 0 }
+  return { rows, toggles }
 }
 
 // The line at the top of a viewer's code, to put back in place once its
