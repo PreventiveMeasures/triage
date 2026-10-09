@@ -192,7 +192,7 @@ test('full dependency paths are visible and following a dependency retains all i
   }
 })
 
-test('ribbons use the available bar width without crossing when their endpoints fit', () => {
+test('ribbons that fit sit side by side from the left edge of the bar', () => {
   const layout = layoutSizeFlow(buildSizeFlow(fixture({
     'entry.js': { size: 500, imports: ['small.js', 'large.js', 'medium.js'] },
     'small.js': { size: 100 }, 'large.js': { size: 300 }, 'medium.js': { size: 200 },
@@ -200,8 +200,8 @@ test('ribbons use the available bar width without crossing when their endpoints 
   const root = layout.byId.get('f:entry.js')
   const outgoing = layout.edges.toSorted((a, b) => layout.byId.get(a.to).x - layout.byId.get(b.to).x)
   assert.equal(outgoing[0].x1, root.x)
-  assert.ok(Math.abs(outgoing.at(-1).x1 + outgoing.at(-1).width1 - root.x - root.width) < 1e-8)
-  for (let i = 1; i < outgoing.length; i++) assert.ok(outgoing[i].x1 >= outgoing[i - 1].x1 + outgoing[i - 1].width1)
+  for (let i = 1; i < outgoing.length; i++) assert.ok(Math.abs(outgoing[i].x1 - outgoing[i - 1].x1 - outgoing[i - 1].width1) < 1e-8, 'no gap between ribbons')
+  assert.ok(outgoing.at(-1).x1 + outgoing.at(-1).width1 < root.x + root.width - 1, 'the rest of the bar stays free')
 
   const packages = layoutSizeFlow(buildSizeFlow(fixture({
     'a/index.js': { size: 200, imports: ['lib/a.js'] },
@@ -211,8 +211,11 @@ test('ribbons use the available bar width without crossing when their endpoints 
   const lib = packages.byId.get('p:lib')
   const incoming = packages.edges.toSorted((a, b) => packages.byId.get(a.from).x - packages.byId.get(b.from).x)
   assert.equal(incoming[0].x2, lib.x)
-  assert.ok(incoming[0].x2 + incoming[0].width2 <= incoming[1].x2)
-  assert.ok(Math.abs(incoming.at(-1).x2 + incoming.at(-1).width2 - lib.x - lib.width) < 1e-8)
+  assert.ok(Math.abs(incoming[1].x2 - incoming[0].x2 - incoming[0].width2) < 1e-8)
+  assert.ok(incoming.at(-1).x2 + incoming.at(-1).width2 < lib.x + lib.width - 1)
+  const a = packages.byId.get('p:a'), only = packages.edges.find(e => e.from === a.id)
+  assert.ok(only.width1 < a.width - 1)
+  assert.equal(only.x1, a.x, 'a single ribbon starts at the left edge, not the center')
 })
 
 test('oversubscribed ribbons spread across the bar while retaining their overlapping widths', () => {

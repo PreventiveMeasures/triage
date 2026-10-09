@@ -176,9 +176,10 @@ function flowLevels(model, roots, minSize) {
   return new Map(pending.map(id => [id, ranks[componentOf.get(id)]]))
 }
 
-// Use the whole bar for each set of ports, ordered by the opposite endpoints.
-// Pack without overlap when possible; otherwise spread overlapping intervals
-// while keeping their centers ordered and their endpoints inside the bar.
+// Lay each set of ports along its bar, ordered by the opposite endpoints.
+// Ribbons that fit sit side by side from the bar's left edge; otherwise spread
+// overlapping intervals across the bar while keeping their centers ordered and
+// their endpoints inside it.
 function spreadFlowPorts(nodes, edges, byId) {
   const ports = new Map(nodes.map(n => [n.id, { from: [], to: [] }]))
   for (const edge of edges) { ports.get(edge.from).from.push(edge); ports.get(edge.to).to.push(edge) }
@@ -187,12 +188,10 @@ function spreadFlowPorts(nodes, edges, byId) {
     const oppositeCenter = edge => { const other = byId.get(incoming ? edge.from : edge.to); return other.x + other.width / 2 }
     const list = ports.get(node.id)[side].toSorted((a, b) => oppositeCenter(a) - oppositeCenter(b) || a.id.localeCompare(b.id))
     if (list.length === 0) continue
-    if (list.length === 1) { list[0][position] = node.x + (node.width - list[0][width]) / 2; continue }
     const total = list.reduce((sum, edge) => sum + edge[width], 0)
     let offset = 0
     if (total <= node.width) {
-      const gap = (node.width - total) / (list.length - 1)
-      for (const edge of list) { edge[position] = node.x + offset; offset += edge[width] + gap }
+      for (const edge of list) { edge[position] = node.x + offset; offset += edge[width] }
       continue
     }
     const first = list[0][width] / 2, last = list.at(-1)[width] / 2
