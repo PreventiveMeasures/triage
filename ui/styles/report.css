@@ -3460,6 +3460,7 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
   & .npm-deprecated { color: var(--critical); }
   & .npm-version-select {
     max-width: 100%; padding: .1rem .3rem;
+    &:disabled { opacity: 1; }
     color: var(--text); background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem;

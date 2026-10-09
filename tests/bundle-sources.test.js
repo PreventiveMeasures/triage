@@ -475,3 +475,13 @@ describe('bundleFileKinds — what the Overview lists, and which rows open a sou
     assert.deepEqual([...bundleFileKinds(odd).keys()], [...bundleFilesAsMap(odd).keys()])
   })
 })
+
+describe('npm package binaries', () => {
+  it('are files with a size and digest, resources rather than sources', () => {
+    const details = { kind: 'sourcemap', json: { version: 3, sources: ['a.js', 'logo.png'], sourcesContent: ['x', null] },
+      fileSizes: new Map([['a.js', 1], ['logo.png', 9]]), npmBinaries: new Map([['logo.png', { size: 9, digest: 'sha256-abc' }]]) }
+    assert.deepEqual([...bundleSourcesAsMap(details)], [['a.js', 'x']])
+    assert.deepEqual([...bundleFilesAsMap(details)], [['a.js', 'x'], ['logo.png', { format: 'digest', size: 9, digest: 'sha256-abc' }]])
+    assert.deepEqual([...bundleFileKinds(details)], [['a.js', 'source'], ['logo.png', 'resource']])
+  })
+})

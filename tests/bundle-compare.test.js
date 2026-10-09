@@ -359,3 +359,70 @@ test('the Overview lists a renamed file under Changed as `{old → new}`, and th
   assert.match(changed, /data-tooltip=src\/util\.js → lib\/util\.ts>\{<span class="bundle-compare-rename-from">src\/util\.js<\/span> → <span class="bundle-compare-rename-to">lib\/util\.ts<\/span>\}</u)
   assert.match(renderText(view._renderSummary(view._diffFor())), /1 changed \(1 renamed\)/u)
 })
+
+// A `source` offers what to compare with in place of the bundles on hand, as
+// an npm package version offers the package's other versions.
+function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', format: 'npm', detail: 'old' }], pending = false, error = null } = {}) {
+  const npm = (integrity, text) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: ['a.js'], sourcesContent: [text] } })
+  const calls = { loads: [], swaps: [] }
+  const source = base => ({
+    noun: 'version', base, pending, error, options,
+    name: id => `pkg@${id.replace(/^sha512-/u, '')}`,
+    load: id => { calls.loads.push(id); return Promise.resolve(npm(`sha512-${id}`, id)) },
+    swap: (id, mode) => calls.swaps.push([id, mode]),
+    dependencies: () => ({ removed: [], added: [{ key: '\0dep', name: 'dep', kind: 'peer', range: '^1.0.0' }], changed: [] }),
+  })
+  const view = new Compare()
+  view.integrity = 'sha512-2.0.0'
+  view.details = npm('sha512-2.0.0', '2.0.0')
+  view.source = source('2.0.0')
+  return { view, calls, source, npm }
+}
+
+test('a source\'s options, names and loads stand in for the bundles on hand', async () => {
+  const { view, calls } = sourced()
+  assert.deepEqual(view._otherOptions(), [{ id: '1.0.0', integrity: '1.0.0', kind: 'npm', format: 'npm', detail: 'old', filename: 'pkg@1.0.0', size: '—', summary: null }])
+  view.request = { bundle: 'sha512-2.0.0', target: '1.0.0', mode: 'code' }
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(view._targetIntegrity, '1.0.0')
+  assert.equal(view._mode, 'code')
+  await Promise.resolve()
+  assert.deepEqual(calls.loads, ['1.0.0'])
+  assert.equal(view._otherDetails.integrity, 'sha512-1.0.0')
+  assert.equal(view._status, 'ready')
+  const diff = renderText(view._renderDiff())
+  assert.match(diff, /<h3 class="bundle-compare-section-head">Dependencies<\/h3>/u, 'its dependencies in place of Packages')
+  assert.doesNotMatch(diff, />Packages</u)
+  assert.match(diff, /Added · only in pkg@1\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
+})
+
+test('a source opens the other side to swap, which compares with the old base once it arrives', async () => {
+  const { view, calls, source, npm } = sourced()
+  view._targetIntegrity = '1.0.0'
+  view._otherDetails = npm('sha512-1.0.0', '1.0.0')
+  view._status = 'ready'
+  view._swap()
+  assert.deepEqual(calls.swaps, [['1.0.0', 'overview']])
+  const old = view.details
+  view.integrity = 'sha512-1.0.0'
+  view.details = view._otherDetails
+  view.source = source('1.0.0')
+  view.willUpdate(new Map([['integrity', 'sha512-2.0.0'], ['details', old]]))
+  assert.equal(view._targetIntegrity, '2.0.0', 'the old base, by its id')
+  await Promise.resolve()
+  assert.deepEqual(calls.loads, ['2.0.0'])
+  assert.equal(view._otherDetails.integrity, 'sha512-2.0.0')
+})
+
+test('a source says when its options are loading, missing or failed, and a failed load why', async () => {
+  const text = options => { const { view } = sourced(options); return renderText(view.render()) }
+  assert.match(text({ pending: true, options: [] }), /Loading versions…/u)
+  assert.match(text({ options: [] }), /No other versions to compare <strong>pkg@2\.0\.0<\/strong> with\./u)
+  assert.match(text({ error: "Couldn't list the versions of pkg.", options: [] }), /is-error[^]*Couldn't list the versions of pkg\./u)
+  assert.match(text(), /Pick a version above to compare against/u)
+  const { view } = sourced()
+  view.source = { ...view.source, load: () => Promise.reject(new Error('No such package version, or it is not available to you.')) }
+  view._choose('9.9.9')
+  await Promise.resolve(); await Promise.resolve()
+  assert.match(renderText(view.render()), /Couldn't read the selected version: No such package version/u)
+})

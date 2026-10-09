@@ -1,8 +1,9 @@
 // The managed npm viewer. A published package version opens in the bundle
-// view, as a bundle whose files are its tarball's, with the Overview and Code
-// tabs; `/npm` alone is a lookup page for one. The server decides which
-// packages a reader may open (server-managed/npm-packages.ts) and is asked on
-// every open: nothing here is kept beyond the version shown.
+// view, as a bundle whose files are its tarball's, with the Overview, Code,
+// Compare and Treemap tabs; `/npm` alone is a lookup page for one. The server decides
+// which packages a reader may open (server-managed/npm-packages.ts). What it
+// answered is kept in memory only for the versions shown and compared, and
+// for no longer than the session and role it answered.
 import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
@@ -11,7 +12,7 @@ import { fetchNpmPackage, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from './icons.js'
-import { managedCodeLocation } from './managed-bundle-navigation.js'
+import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
 import { currentViewSignal } from './view-navigation.js'
@@ -59,7 +60,8 @@ export function npmPackageEntry(data) {
 
 // Its parsed details, in the shape of a sourcemap carrying its sources: one
 // source per file, text inline, and every file's size from its bytes, so a
-// file that is not text still lists with its size.
+// file that is not text still lists with its size. Those carry a digest of
+// their bytes instead (`npmBinaries`), which Compare compares them by.
 export function npmPackageDetails(entry, data) {
   const files = Array.isArray(data.files) ? data.files : []
   const sources = files.map(([path]) => path)
@@ -67,14 +69,111 @@ export function npmPackageDetails(entry, data) {
     integrity: entry.integrity, kind: 'sourcemap', size: entry.size, npm: entry.npm,
     json: { version: 3, sources, sourcesContent: files.map(([, , text]) => typeof text === 'string' ? text : null) },
     fileSizes: new Map(files.map(([path, size]) => [path, size])),
+    npmBinaries: new Map(files.filter(([, , text, digest]) => typeof text !== 'string' && typeof digest === 'string')
+      .map(([path, size, , digest]) => [path, { size, digest }])),
     npmEntries: npmPackageEntries(entry.npm.manifest, sources),
   }
 }
 
+const NPM_ROUTE_TABS = new Set(['overview', 'code', 'compare', 'treemap'])
+
 // The route of the version an entry names, on `tab`, at `location`.
 export function npmPackageRoute(entry, tab = 'overview', location = null) {
   if (!entry?.npm) return null
-  return { view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: tab === 'code' ? 'code' : 'overview', ...location }
+  return { view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: NPM_ROUTE_TABS.has(tab) ? tab : 'overview', ...location }
+}
+
+// Versions read and version lists, for the session and role that read them:
+// the version shown and those compared with it, so swapping the two, or
+// returning to one, opens it at once.
+const KEPT_VERSIONS = 3
+const keptVersions = new Map()
+const versionLists = new Map()
+let keptFor = null
+
+function sessionKept() {
+  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
+  if (session !== keptFor) {
+    keptVersions.clear()
+    versionLists.clear()
+    keptFor = session
+  }
+  return keptVersions
+}
+
+function keep(entry, details) {
+  const kept = sessionKept()
+  kept.delete(entry.name)
+  kept.set(entry.name, { entry, details })
+  while (kept.size > KEPT_VERSIONS) kept.delete(kept.keys().next().value)
+}
+
+// A version, as read before in this session or else from the server: `spec`
+// an exact version or a dist-tag, which only the server resolves.
+export async function loadNpmVersion(name, spec, options) {
+  const kept = sessionKept().get(`${name}@${spec}`)
+  if (kept) {
+    keep(kept.entry, kept.details)
+    return kept
+  }
+  const data = await fetchNpmPackage(name, spec, options)
+  const entry = npmPackageEntry(data)
+  const details = npmPackageDetails(entry, data)
+  keep(entry, details)
+  return { entry, details }
+}
+
+// A package's versions, newest first, and dist-tags: `{ status }` while the
+// server is asked ('loading', then 'ready' with `versions` and `distTags`,
+// or 'error'), each a new object, so the view repaints when it arrives.
+export function npmVersionList(name) {
+  sessionKept()
+  const known = versionLists.get(name)
+  if (known) return known
+  const loading = { status: 'loading' }
+  versionLists.set(name, loading)
+  fetchNpmVersions(name).then(
+    data => ({ status: 'ready', versions: data.versions ?? [], distTags: data.distTags ?? {} }),
+    () => ({ status: 'error' }),
+  ).then(list => {
+    if (versionLists.get(name) !== loading) return null
+    versionLists.set(name, list)
+    render()
+    return null
+  }).catch(() => {})
+  return loading
+}
+
+function tagsByVersion(distTags = {}) {
+  const tags = new Map()
+  for (const [tag, version] of Object.entries(distTags)) tags.set(version, [...tags.get(version) ?? [], tag])
+  return tags
+}
+
+// What Compare offers a package version (bundle-compare.js `source`): the
+// package's other versions, newest first, compared with by their numbers.
+export function npmCompareSource(entry) {
+  const { name, version } = entry.npm
+  const list = npmVersionList(name)
+  const tags = tagsByVersion(list.distTags)
+  return {
+    noun: 'version',
+    base: version,
+    pending: list.status === 'loading',
+    error: list.status === 'error' ? `Couldn't list the versions of ${name}.` : null,
+    options: (list.versions ?? []).filter(other => other !== version).map(other => ({
+      id: other, name: `${name}@${other}`, format: 'npm', detail: tags.get(other)?.join(', ') ?? '',
+    })),
+    name: id => id === entry.integrity || id === version ? entry.name : `${name}@${id}`,
+    load: async id => (await loadNpmVersion(name, id)).details,
+    // In place of Packages, which a single package has no use for.
+    dependencies: (base, other) => npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest),
+    // Swapping opens the version compared with, comparing it with this one.
+    swap: (id, mode) => {
+      if (!isManagedUiMode() || !managedHistory?.active) return
+      void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: id, bundleTab: 'compare', compareSpec: version, ...(mode === 'code' ? { compareMode: 'code' } : {}) })
+    },
+  }
 }
 
 export function navigateToNpm(packageName = null, packageSpec = null) {
@@ -110,20 +209,18 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   let details = entry ? state.bundleDetails : null
   if (!entry) {
     // Another version keeps the one shown until it opens.
-    if (!shown) {
+    const kept = spec != null && sessionKept().has(`${name}@${spec}`)
+    if (!shown && !kept) {
       showLookup({ input, pending: true, error: null })
       renderSidebar()
     }
-    let data
-    try { data = await fetchNpmPackage(name, spec ?? 'latest', { signal: currentViewSignal() }) }
+    try { ({ entry, details } = await loadNpmVersion(name, spec ?? 'latest', { signal: currentViewSignal() })) }
     catch (err) {
       if (err?.name === 'AbortError' || !isCurrent()) return false
       showLookup({ input, pending: false, error: err.message })
       return { view: 'npm' }
     }
     if (!isCurrent() || !isManagedUiMode()) return false
-    entry = npmPackageEntry(data)
-    details = npmPackageDetails(entry, data)
   }
   cleanupGraph2()
   state.bundles = [entry]
@@ -131,6 +228,9 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   if (tab === 'code' && route.file != null) {
     state.bundleCodeFileRequest = { bundle: entry.integrity, file: route.file,
       ...(route.line == null ? {} : { line: route.line }), ...(route.endLine == null ? {} : { endLine: route.endLine }) }
+  }
+  if (tab === 'compare' && route.compareSpec != null) {
+    state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: route.compareMode === 'code' ? 'code' : 'overview' }
   }
   state.bundleDetails = details
   state.npmLookup = { input: entry.name, pending: false, error: null }
@@ -141,7 +241,7 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   render({ animate: false })
   renderSidebar()
   document.querySelector('#main-content')?.scrollTo({ top: 0 })
-  return npmPackageRoute(entry, state.bundleDetailsTab, managedCodeLocation(state))
+  return npmPackageRoute(entry, state.bundleDetailsTab, managedTabLocation(state))
 }
 
 function submitLookup(event) {
@@ -195,6 +295,21 @@ export function npmDependencies(manifest) {
   return rows.toSorted((a, b) => a.name.localeCompare(b.name) || (a.kind ?? '').localeCompare(b.kind ?? ''))
 }
 
+// What two versions' dependencies differ in, by name and kind: those only
+// `base` has, those only `other` has, and those whose range changed.
+export function npmDependencyChanges(base, other) {
+  const index = manifest => new Map(npmDependencies(manifest).map(row => [`${row.kind ?? ''}\0${row.name}`, row]))
+  const after = index(other), before = index(base)
+  const added = [], changed = [], removed = []
+  for (const [key, { name, kind, range }] of before) {
+    const next = after.get(key)
+    if (!next) removed.push({ key, name, kind, range })
+    else if (next.range !== range) changed.push({ key, name, kind, from: range, to: next.range })
+  }
+  for (const [key, { name, kind, range }] of after) if (!before.has(key)) added.push({ key, name, kind, range })
+  return { removed, added, changed }
+}
+
 // The Overview's Dependencies column, in place of the Packages one a single
 // package has no use for. Each dependency opens in the viewer, at its latest.
 export function npmDependenciesColumn(entry) {
@@ -229,7 +344,7 @@ export function npmOverviewMeta(entry, prefix = '') {
     : github ? `https://github.com/${github}` : null
   return html`<dl class="bundles-detail-meta">
     <dt>Package</dt><dd class="mono">${name}</dd>
-    <dt>Version</dt><dd><npm-version-select .name=${name} .version=${version}></npm-version-select></dd>
+    <dt>Version</dt><dd><npm-version-select .name=${name} .version=${version} .list=${npmVersionList(name)}></npm-version-select></dd>
     ${entry.npm.private ? html`<dt>Access</dt><dd>Private</dd>` : nothing}
     ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${manifest.deprecated}</dd>` : nothing}
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
@@ -259,11 +374,12 @@ export function npmOverviewExtras(entry) {
       data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}`
 }
 
-// The version shown, with the package's other versions to switch to, read
-// once it renders. Without them, as when the registry can't be reached, it
-// is just the version.
+// The version shown, with the package's other versions to switch to
+// (npmVersionList). Until they arrive, or without them, as when the registry
+// can't be reached, the same select holds just the version, disabled, so the
+// row keeps its height when they do.
 class NpmVersionSelect extends LitElement {
-  static properties = { name: {}, version: {}, _versions: { state: true } }
+  static properties = { name: {}, version: {}, list: { attribute: false } }
 
   createRenderRoot() { return this }
 
@@ -271,28 +387,15 @@ class NpmVersionSelect extends LitElement {
     super()
     this.name = ''
     this.version = ''
-    this._versions = null
-    this._loaded = null
-  }
-
-  updated() {
-    if (!this.name || this._loaded === this.name) return
-    const name = this._loaded = this.name
-    this._versions = null
-    fetchNpmVersions(name).then(data => {
-      if (this.name === name) this._versions = data
-      return null
-    }).catch(() => {})
+    this.list = null
   }
 
   render() {
-    const data = this._versions
-    if (!data || data.versions.length <= 1) return html`<span class="mono">${this.version}</span>`
-    const tags = new Map()
-    for (const [tag, version] of Object.entries(data.distTags ?? {})) tags.set(version, [...tags.get(version) ?? [], tag])
+    const data = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
+    const tags = tagsByVersion(data.distTags)
     const versions = data.versions.includes(this.version) ? data.versions : [this.version, ...data.versions]
-    return html`<select class="npm-version-select mono" aria-label=${`Version of ${this.name}`}
-      @change=${event => navigateToNpm(this.name, event.target.value)}>
+    return html`<select class="npm-version-select mono" aria-label=${`Version of ${this.name}`} ?disabled=${versions.length <= 1}
+      aria-busy=${this.list?.status === 'loading' ? 'true' : nothing} @change=${event => navigateToNpm(this.name, event.target.value)}>
       ${versions.map(version => html`<option value=${version} ?selected=${version === this.version}>${version}${tags.has(version) ? ` (${tags.get(version).join(', ')})` : ''}</option>`)}
     </select>`
   }

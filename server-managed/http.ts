@@ -114,7 +114,7 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, canReadPrivateNpm, loadNpmPackage, npmFileText, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, canReadPrivateNpm, loadNpmPackage, npmFileRows, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 import { encodeBrotli } from './brotli.ts'
 
@@ -2404,10 +2404,9 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
         'content-disposition': attachmentDisposition(npmTarballFilename(doc.name, doc.version)), 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
       writeResponse(res, Buffer.from(tarball.buffer, tarball.byteOffset, tarball.byteLength)); return
     }
-    // A row is `[path, bytes, text]`: text null for a file that is not UTF-8.
     const body = await encodeBrotli(Buffer.from(JSON.stringify({
       name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
-      manifest: doc.manifest, files: files.map(file => [file.path, file.bytes.byteLength, npmFileText(file.bytes)]),
+      manifest: doc.manifest, files: npmFileRows(files),
     })))
     if (res.destroyed) return
     res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(body.length),

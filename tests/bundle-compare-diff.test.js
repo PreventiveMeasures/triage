@@ -26,6 +26,16 @@ const m = (obj) => new Map(Object.entries(obj))
 const firstSeg = (p) => p.split('/')[0]
 
 describe('computeBundleDiff', () => {
+  it('compares npm package binaries by digest, sized by their bytes', () => {
+    const file = (digest, size) => ({ format: 'digest', digest, size })
+    const base = m({ 'a/same.bin': file('sha256-a', 10), 'a/moved.bin': file('sha256-b', 10), 'a/gone.bin': file('sha256-c', 4) })
+    const other = m({ 'a/same.bin': file('sha256-a', 10), 'a/moved.bin': file('sha256-d', 30) })
+    const diff = computeBundleDiff(base, other, firstSeg)
+    assert.equal(diff.totals.unchangedFiles, 1)
+    assert.deepEqual(diff.files.changed.map(row => [row.path, row.baseBytes, row.otherBytes]), [['a/moved.bin', 10, 30]])
+    assert.deepEqual(diff.files.onlyBase.map(row => [row.path, row.bytes]), [['a/gone.bin', 4]])
+  })
+
   it('flags identical bundles and counts every file as unchanged', () => {
     const base = m({ 'a/x.js': 'aaaa', 'a/y.js': 'bb' })
     const other = m({ 'a/x.js': 'aaaa', 'a/y.js': 'bb' })

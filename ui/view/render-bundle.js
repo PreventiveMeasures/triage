@@ -35,7 +35,7 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
-import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute } from './npm-package.js'
+import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute } from './npm-package.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -1947,9 +1947,10 @@ function renderBundleSearchView(details) {
 // 'reports') fail BUNDLE_TABS validation in view.js's boot restore
 // and fall back to 'overview' there — no migration needed.
 function renderBundleSlide(entry) {
-  // An npm package version shows its Overview and Code alone.
+  // An npm package version shows its Overview, Code, Treemap and Compare,
+  // which compares it with the package's other versions.
   const npm = Boolean(entry.npm)
-  if (npm && !['overview', 'code'].includes(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
+  if (npm && !['overview', 'code', 'compare', 'treemap'].includes(state.bundleDetailsTab)) state.bundleDetailsTab = 'overview'
   // Advisories tab — tri-state visibility (see `showAdvisoriesTab`):
   // non-stasis bundles hide immediately, stasis bundles stay
   // optimistically visible across the parse window so a switch
@@ -1973,8 +1974,8 @@ function renderBundleSlide(entry) {
   // the open bundle present the picker would have nothing to offer, so
   // the tab is hidden — unless Compare is the open tab: a bundle switch or
   // a link keeps it open, and its body says there is nothing to compare.
-  const canCompare = !npm && (state.bundleDetailsTab === 'compare'
-    || bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).length > 0)
+  const canCompare = npm || state.bundleDetailsTab === 'compare'
+    || bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).length > 0
   // Managed bundles have no Issues tab: Code shows each file's issues. A
   // persisted or routed 'issues' selection coerces back to Overview.
   const showIssues = !isManagedUiMode()
@@ -2051,13 +2052,13 @@ function renderBundleSlide(entry) {
           aria-selected=${String(tab === 'terminal')}
           role="tab"
         >Terminal</button>`}
-        ${npm ? nothing : html`<button
+        <button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'treemap' })}
           data-bundle-tab="treemap"
           aria-selected=${String(tab === 'treemap')}
           role="tab"
-        >Treemap</button>`}
+        >Treemap</button>
         ${npm ? nothing : html`<button
           type="button"
           class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
@@ -2105,7 +2106,8 @@ function renderBundleSlide(entry) {
               ['treemap', () => html`<bundle-treemap .details=${details}></bundle-treemap>`],
               ['code', () => renderBundleCodeView(details, entry)],
               ['search', () => renderBundleSearchView(details)],
-              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}></bundle-compare>`],
+              ['compare', () => html`<bundle-compare .details=${details} .integrity=${entry.integrity} .request=${state.bundleCompare}
+                .source=${npm ? npmCompareSource(entry) : null}></bundle-compare>`],
               ['issues', () => renderBundleIssuesList(details)],
               ['advisories', () => renderBundleAdvisoriesTab(details, render,
                 canScanBundle(entry) ? () => void openScan(entry, { mode: 'dependencies' }) : null)],

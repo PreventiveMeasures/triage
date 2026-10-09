@@ -10,6 +10,7 @@
 // have filled using the token, so the absence of a token proves nothing. The
 // tarball is then held to the integrity that anonymous answer gives.
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { gunzip } from 'node:zlib'
 import { HttpError, getTarball } from '@preventive/upstream/npm.js'
@@ -290,6 +291,16 @@ const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 export function npmFileText(bytes: Uint8Array): string | null {
   if (bytes.includes(0)) return null
   try { return utf8.decode(bytes) } catch { return null }
+}
+
+// The files as the viewer gets them: `[path, bytes, text]`, text null for a
+// file that is not UTF-8, which instead carries its bytes' sha256, so a
+// comparison of two versions tells a changed one from an unchanged one.
+export function npmFileRows(files: NpmPackageFile[]): ([string, number, string] | [string, number, null, string])[] {
+  return files.map(({ path, bytes }) => {
+    const text = npmFileText(bytes)
+    return text === null ? [path, bytes.byteLength, null, `sha256-${createHash('sha256').update(bytes).digest('base64')}`] : [path, bytes.byteLength, text]
+  })
 }
 
 // The tarball's filename as `npm pack` writes it.

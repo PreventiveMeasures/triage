@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { setImmediate } from 'node:timers/promises'
 import { beforeEach, mock, test } from 'node:test'
 import { bundleFileSizes, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { managedRoutePath } from '../common/managed/routes.js'
@@ -7,8 +8,8 @@ import { beginViewNavigation } from '../ui/view/view-navigation.js'
 import { browserAt } from './_managed-browser.js'
 
 const state = {}
-const requests = []
-let answer = null
+const requests = [], versionRequests = []
+let answer = null, versionsAnswer = () => Promise.resolve({ versions: [] })
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
@@ -17,10 +18,10 @@ mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
-  fetchNpmVersions() { return Promise.resolve({ versions: [] }) },
+  fetchNpmVersions(name) { versionRequests.push(name); return versionsAnswer(name) },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmDependencies, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
+const { npmCompareSource, npmDependencies, npmDependencyChanges, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: true, integrity: 'sha512-pkg', tarballSize: 99,
@@ -28,10 +29,15 @@ const data = {
   files: [['README.md', 6, '# pkg\n'], ['lib/index.js', 10, 'module.x=1'], ['logo.png', 4, null], ['package.json', 2, '{}']],
 }
 
+let session = 0
 beforeEach(() => {
   beginViewNavigation()
   requests.length = 0
+  versionRequests.length = 0
   answer = () => Promise.resolve(data)
+  versionsAnswer = () => Promise.resolve({ versions: [] })
+  // A session of its own each, so nothing kept from another test answers.
+  state.managedSession = { id: `session-${++session}`, role: 'view' }
   Object.assign(state, { currentView: 'findings', bundles: [], bundleDetails: null, selectedBundle: null, bundleDetailsTab: 'overview',
     bundleSourceFile: null, bundleCodeFileRequest: null, npmLookup: { input: '', pending: false, error: null }, reports: [], currentManagedTeam: 'team' })
   globalThis.document = { body: { classList: { remove() {} } }, querySelector: () => null }
@@ -64,6 +70,67 @@ test('Dependencies list every kind by name, and an alias opens the package it na
   assert.deepEqual(npmDependencies({}), [])
 })
 
+test('two versions differ in the dependencies they name and the ranges they ask for', () => {
+  assert.deepEqual(npmDependencyChanges(
+    { dependencies: { kept: '^1.0.0', moved: '^1.0.0', gone: '^1.0.0' }, peerDependencies: { react: '>=17' } },
+    { dependencies: { kept: '^1.0.0', moved: '^2.0.0', fresh: '^1.0.0' }, peerDependencies: { react: '>=18' }, optionalDependencies: { gone: '^1.0.0' } },
+  ), {
+    removed: [{ key: '\0gone', name: 'gone', kind: null, range: '^1.0.0' }],
+    added: [{ key: '\0fresh', name: 'fresh', kind: null, range: '^1.0.0' }, { key: 'optional\0gone', name: 'gone', kind: 'optional', range: '^1.0.0' }],
+    changed: [{ key: '\0moved', name: 'moved', kind: null, from: '^1.0.0', to: '^2.0.0' }, { key: 'peer\0react', name: 'react', kind: 'peer', from: '>=17', to: '>=18' }],
+  })
+})
+
+test('Compare offers the package\'s other versions, read once a session, and loads them as versions', async () => {
+  let release
+  versionsAnswer = () => new Promise(resolve => { release = () => resolve({ versions: ['1.2.3', '1.2.2', '1.0.0'], distTags: { latest: '1.2.3', old: '1.0.0', gone: '9.9.9' } }) })
+  const entry = npmPackageEntry(data)
+  const pending = npmCompareSource(entry)
+  assert.equal(pending.pending, true)
+  assert.deepEqual(pending.options, [])
+  npmCompareSource(entry)
+  assert.deepEqual(versionRequests, ['@scope/pkg'], 'one listing while it loads')
+  release()
+  await setImmediate()
+  const source = npmCompareSource(entry)
+  assert.equal(source.pending, false)
+  assert.deepEqual(source.options, [
+    { id: '1.2.2', name: '@scope/pkg@1.2.2', format: 'npm', detail: '' },
+    { id: '1.0.0', name: '@scope/pkg@1.0.0', format: 'npm', detail: 'old' },
+  ], 'newest first, the version shown left out')
+  assert.equal(source.name('sha512-pkg'), '@scope/pkg@1.2.3')
+  assert.equal(source.name('1.0.0'), '@scope/pkg@1.0.0')
+  answer = (name, version) => Promise.resolve({ ...data, version, integrity: `sha512-${version}` })
+  const other = await source.load('1.0.0')
+  assert.equal(other.integrity, 'sha512-1.0.0')
+  assert.equal(await source.load('1.0.0').then(details => details === other), true, 'kept for the session')
+  assert.deepEqual(requests, [['@scope/pkg', '1.0.0']])
+  assert.deepEqual(source.dependencies(npmPackageDetails(entry, data), other), { removed: [], added: [], changed: [] })
+  // A new session or role lists and loads afresh.
+  state.managedSession = { ...state.managedSession, role: 'triage' }
+  assert.equal(npmVersionList('@scope/pkg').status, 'loading')
+  await source.load('1.0.0')
+  assert.equal(requests.length, 2)
+})
+
+test('a version that fails to list says so, without a picker of nothing', async () => {
+  versionsAnswer = () => Promise.reject(new Error('down'))
+  npmVersionList('@scope/pkg')
+  await setImmediate()
+  const source = npmCompareSource(npmPackageEntry(data))
+  assert.equal(source.error, "Couldn't list the versions of @scope/pkg.")
+  assert.deepEqual(source.options, [])
+})
+
+test('a Compare link opens the version with the one it compares with', async () => {
+  const route = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'compare', compareSpec: '1.0.0', compareMode: 'code' }, () => true, () => {})
+  assert.deepEqual(state.bundleCompare, { bundle: 'sha512-pkg', target: '1.0.0', mode: 'code' })
+  assert.equal(managedRoutePath(route), '/npm/@scope/pkg@1.2.3/compare/1.0.0/code')
+  const treemap = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'treemap' }, () => true, () => {})
+  assert.equal(managedRoutePath(treemap), '/npm/@scope/pkg@1.2.3/treemap')
+  assert.equal(state.bundleCompare, null)
+})
+
 test('Code opens on what main names, resolved as require would', () => {
   const paths = ['index.js', 'lib/index.js', 'lib/util.cjs', 'esm/index.mjs']
   assert.deepEqual(npmPackageEntries({ main: './lib/index' }, paths), ['lib/index.js', 'index.js'])
@@ -80,6 +147,8 @@ test('a version shows as a bundle of its files, sized by their bytes, text alone
   const details = npmPackageDetails(entry, data)
   assert.deepEqual([...bundleSourcesAsMap(details).keys()], ['README.md', 'lib/index.js', 'package.json'])
   assert.deepEqual([...bundleFileSizes(details)], [['README.md', 6], ['lib/index.js', 10], ['logo.png', 4], ['package.json', 2]])
+  const withDigest = npmPackageDetails(entry, { ...data, files: [['logo.png', 4, null, 'sha256-x'], ['old.png', 2, null]] })
+  assert.deepEqual([...withDigest.npmBinaries], [['logo.png', { size: 4, digest: 'sha256-x' }]], 'a binary with no digest has nothing to compare by')
   assert.deepEqual(details.npmEntries, ['lib/index.js'])
   assert.deepEqual(npmPackageRoute(entry, 'code', { file: 2, line: 3 }),
     { view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'code', file: 2, line: 3 })
@@ -136,6 +205,6 @@ test('history commits a dist-tag link at the version it opened', async () => {
   assert.equal(browser.location.pathname, '/npm')
   await browser.move(-1)
   assert.equal(browser.location.pathname, '/npm/@scope/pkg@1.2.3/code')
-  assert.equal(requests.length, 2, 'a page left for the lookup opens its version again')
+  assert.equal(requests.length, 1, 'a version read in this session opens again without asking')
   assert.equal(entries.length, 2)
 })

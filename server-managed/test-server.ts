@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto'
 import { reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
-import { NpmPackageError, loadNpmPackage, npmFileText, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, loadNpmPackage, npmFileRows, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
@@ -421,7 +421,7 @@ async function serveFixtureNpm(url: URL, res: ServerResponse): Promise<void> {
       res.end(tarball); return
     }
     sendJson(res, 200, { name: doc.name, version: doc.version, private: false, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
-      manifest: doc.manifest, files: files.map(file => [file.path, file.bytes.byteLength, npmFileText(file.bytes)]) })
+      manifest: doc.manifest, files: npmFileRows(files) })
   } catch (err) {
     sendJson(res, err instanceof NpmPackageError ? err.status : 502, { error: err instanceof NpmPackageError ? err.message : 'upstream-unavailable' })
   }

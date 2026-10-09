@@ -176,7 +176,9 @@ window also navigate to their managed page URL.
 | `/manage/team` | Teams (admin) |
 | `/manage/history` | Activity history; optional `?actor=<login>` |
 | `/npm` | npm package lookup |
-| `/npm/:name[@:version][/code[/:file]]` | npm package version; `:version` may be a dist-tag |
+| `/npm/:name[@:version][/:tab]` | npm package version; `:version` may be a dist-tag |
+| `/npm/:name@:version/code[/:file]` | Its Code tab, at a file |
+| `/npm/:name@:version/compare[/:otherVersion[/code]]` | Its Compare tab, with another version |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
 unique, otherwise the full ID, with the same allocation rules for teams, reports,
@@ -1008,23 +1010,38 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 
 Every role but `none` can open a published npm package version from the
 landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
-in the bundle view with two tabs: **Overview** (the manifest's description,
-license, author, GitHub repository and publish commit, entry points, engines
-and install scripts, a tarball download, and two columns: Dependencies,
-peer and optional ones included, which open in the viewer at their latest
-version, an `npm:` alias at the package it names, and the tarball's Files) and
-**Code** (the file tree and source viewer, opening on what `main` names). The
-version picker lists the package's versions and dist-tags. A dist-tag link,
-such as `/npm/lodash`, is committed to history at the exact version it opened.
-Code links name files by number and lines in the fragment, as for bundles.
+in the bundle view with four tabs:
+
+- **Overview**: the manifest's description, license, author, GitHub
+  repository and publish commit, entry points, engines and install scripts,
+  a tarball download, and two columns: Dependencies, peer and optional ones
+  included, which open in the viewer at their latest version (an `npm:`
+  alias at the package it names), and the tarball's Files. The version
+  picker lists the package's versions and dist-tags; it holds the version
+  shown, disabled, until they arrive.
+- **Code**: the file tree and source viewer, opening on what `main` names.
+- **Treemap**: the files by size, as for bundles.
+- **Compare**: the bundle Compare, with another version of the same package,
+  picked from its versions newest first. Its Dependencies section, in place
+  of Packages, lists the dependencies only one version has and the ranges
+  that changed. Files that are not text compare by digest. **Swap** opens
+  the version compared with, comparing it with the one before.
+
+A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
+version it opened. Code links name files by number and lines in the
+fragment, and Compare links the version compared with and its mode, as for
+bundles. The browser keeps the last three versions it read, and the
+package's version list, in memory for the session and role that read them,
+so a swap or Back reopens one without another request.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
 integrity, tarballSize, manifest, files }`, where each file row is `[path,
-bytes, text]` (text null for a file that is not UTF-8). `version` defaults to
-`latest`. `GET /api/npm/versions?name=` returns `{ name, private, distTags,
-versions }`, newest first, and `GET /api/npm/download?name=&version=` the
-tarball. Responses are `private, no-store`, and nothing derived from a package
-is kept on the server.
+bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
+'sha256-<base64>']`. `version` defaults to `latest`. `GET
+/api/npm/versions?name=` returns `{ name, private, distTags, versions }`,
+newest first, and `GET /api/npm/download?name=&version=` the tarball.
+Responses are `private, no-store`, and nothing derived from a package is kept
+on the server.
 
 Anyone with workspace access can read public packages. Private packages need
 the server's `NPM_TOKEN`, the same one bundle builds use, and a reader with
