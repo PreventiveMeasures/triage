@@ -166,8 +166,7 @@ export function renderNpmLookup() {
       <h1 id="npm-lookup-title">npm packages</h1>
     </header>
     <p class="npm-lookup-intro">Open a published version to read its files, as its tarball has them.
-      ${privileged ? 'You can open public packages, and private ones the server’s npm token can read.'
-        : 'You can open public packages, and private ones in npm scopes your teams list.'}</p>
+      ${privileged ? nothing : 'You can open public packages, and private ones in npm scopes your teams list.'}</p>
     <form class="npm-lookup-form" @submit=${submitLookup}>
       <input name="package" type="text" aria-label="Package" autocomplete="off" spellcheck="false" maxlength="500"
         placeholder="lodash, @scope/name@1.2.3 or an npmjs.com link" .value=${lookup.input ?? ''} ?disabled=${lookup.pending}>
@@ -178,11 +177,43 @@ export function renderNpmLookup() {
   </section>`
 }
 
-const DEPENDENCY_FIELDS = [['dependencies', 'Dependencies'], ['peerDependencies', 'Peer dependencies'], ['optionalDependencies', 'Optional dependencies']]
+const DEPENDENCY_KINDS = [['dependencies', null], ['peerDependencies', 'peer'], ['optionalDependencies', 'optional']]
 
-function openDependency(event) {
-  const name = event.currentTarget.dataset.npmDependency
-  if (name) navigateToNpm(name)
+// A version's dependencies, each `{ name, range, kind, opens }`, in name
+// order: `kind` null for a plain dependency, else 'peer' or 'optional';
+// `opens` the package the viewer opens for it, the one an `npm:` alias
+// names, or null when it names none.
+export function npmDependencies(manifest) {
+  const rows = []
+  for (const [field, kind] of DEPENDENCY_KINDS) {
+    for (const [name, range] of Object.entries(manifest?.[field] ?? {})) {
+      const alias = /^npm:((?:@[^/@]+\/)?[^/@]+)(?:@|$)/u.exec(range)?.[1]
+      const opens = alias ?? name
+      rows.push({ name, range, kind, opens: isNpmPackageName(opens) ? opens : null })
+    }
+  }
+  return rows.toSorted((a, b) => a.name.localeCompare(b.name) || (a.kind ?? '').localeCompare(b.kind ?? ''))
+}
+
+// The Overview's Dependencies column, in place of the Packages one a single
+// package has no use for. Each dependency opens in the viewer, at its latest.
+export function npmDependenciesColumn(entry) {
+  const rows = npmDependencies(entry.npm.manifest)
+  return html`<section class="bundles-overview-col">
+    <header class="bundles-overview-col-head">
+      <span class="bundles-overview-col-title">Dependencies <span class="bundles-overview-col-count">${rows.length}</span></span>
+    </header>
+    <div class="bundles-overview-col-body bundles-overview-col-body--list">${rows.length === 0
+      ? html`<p class="bundles-overview-col-empty">No dependencies.</p>`
+      : html`<ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
+        const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
+          ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
+          <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
+        return html`<li>${opens
+          ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${row}</button>`
+          : html`<div class="bundles-source-row npm-dependency-row is-resource">${row}</div>`}</li>`
+      })}</ul>`}</div>
+  </section>`
 }
 
 // The Overview's metadata for a package version, beside the file inventory
@@ -225,16 +256,7 @@ export function npmOverviewExtras(entry) {
     ${bins.length > 0 ? html`<dt>Bin</dt><dd class="mono">${bins.join(', ')}</dd>` : nothing}
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="mono npm-install-scripts"
-      data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}
-    ${DEPENDENCY_FIELDS.filter(([field]) => manifest[field]).map(([field, label]) => {
-      const deps = Object.entries(manifest[field])
-      return html`<dt>${label}</dt><dd><ul class="npm-dependency-list">${deps.map(([dep, range]) => html`<li>
-        ${isNpmPackageName(dep)
-          ? html`<button type="button" class="npm-dependency" data-npm-dependency=${dep} data-tooltip=${`Open ${dep} (latest)`} @click=${openDependency}>${dep}</button>`
-          : html`<span class="npm-dependency">${dep}</span>`}
-        <span class="npm-dependency-range mono">${range}</span>
-      </li>`)}</ul></dd>`
-    })}`
+      data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}`
 }
 
 // The version shown, with the package's other versions to switch to, read

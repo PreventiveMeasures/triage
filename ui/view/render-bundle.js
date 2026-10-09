@@ -35,7 +35,7 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
-import { navigateToNpm, npmOverviewExtras, npmOverviewMeta, npmPackageRoute } from './npm-package.js'
+import { navigateToNpm, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute } from './npm-package.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -449,7 +449,8 @@ function openBundleWhy(details, query) {
 // `unpackedSize` is the bytes every listed file adds up to once unpacked —
 // what the Packages column totals — shown beside the artifact's own Size.
 // Null leaves the row out.
-function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, unpackedSize = null, resources = null, details = null } = {}) {
+// `leadColumn` replaces the Packages column, as an npm package's Dependencies do.
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
   // the stripped paths are only for displaying the file list.
@@ -578,7 +579,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
     </div>
     <div class="bundles-overview-columns">
-      <section class="bundles-overview-col">
+      ${leadColumn ?? html`<section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
           <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
           <span class="bundles-overview-sort" role="group" aria-label="Package order">
@@ -586,7 +587,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
           </span>
         </header>
         <div class="bundles-overview-col-body">${distTpl}</div>
-      </section>
+      </section>`}
       <section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
           <span class="bundles-overview-col-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
@@ -2669,5 +2670,5 @@ function renderNpmPackageOverview(entry, details) {
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
   const resources = new Set(sources.filter((_, i) => typeof details.json.sourcesContent[i] !== 'string'))
   return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix), npmOverviewExtras(entry), sources, sizes, null, exportsCol,
-    { bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources })
+    { bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources, leadColumn: npmDependenciesColumn(entry) })
 }

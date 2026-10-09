@@ -1009,9 +1009,10 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 Every role but `none` can open a published npm package version from the
 landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
 in the bundle view with two tabs: **Overview** (the manifest's description,
-license, author, GitHub repository and publish commit, entry points, engines,
-install scripts and dependencies, which open in the viewer at their latest
-version, beside the tarball's file inventory and a tarball download) and
+license, author, GitHub repository and publish commit, entry points, engines
+and install scripts, a tarball download, and two columns: Dependencies,
+peer and optional ones included, which open in the viewer at their latest
+version, an `npm:` alias at the package it names, and the tarball's Files) and
 **Code** (the file tree and source viewer, opening on what `main` names). The
 version picker lists the package's versions and dist-tags. A dist-tag link,
 such as `/npm/lodash`, is committed to history at the exact version it opened.

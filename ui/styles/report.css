@@ -3448,23 +3448,15 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
   .bundle-advisory-cvss-vector { text-align: left; }
 }
 
-/* npm package Overview (view/npm-package.js): its dependencies open in the
-   viewer, at their latest version. */
+/* npm package Overview (view/npm-package.js). Its Dependencies column lists
+   rows as Files does, each opening in the viewer at its latest version. */
+.npm-dependency-row .bundles-source-size { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.npm-dependency-kind {
+  flex-shrink: 0; padding: 0 .3rem;
+  color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
+  font-family: system-ui, sans-serif; font-size: .62rem; line-height: 1.3;
+}
 .bundles-detail-meta {
-  & dt:has(+ dd > .npm-dependency-list) { align-self: start; }
-  & dd:has(> .npm-dependency-list) { word-break: normal; }
-  & .npm-dependency-list {
-    display: flex; flex-wrap: wrap; gap: .2rem .9rem;
-    max-height: 7.5rem; overflow: auto;
-    margin: 0; padding: 0; list-style: none;
-  }
-  & .npm-dependency-list li { display: inline-flex; align-items: baseline; gap: .35rem; }
-  & .npm-dependency {
-    padding: 0; border: 0; border-bottom: 1px dotted transparent;
-    color: inherit; background: none; font: inherit; cursor: default;
-  }
-  & button.npm-dependency:is(:hover, :focus-visible) { color: var(--accent); border-bottom-color: currentcolor; outline: none; }
-  & .npm-dependency-range { color: var(--muted); font-size: .68rem; }
   & .npm-deprecated { color: var(--critical); }
   & .npm-version-select {
     max-width: 100%; padding: .1rem .3rem;

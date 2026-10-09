@@ -20,7 +20,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmVersions() { return Promise.resolve({ versions: [] }) },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
+const { npmDependencies, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: true, integrity: 'sha512-pkg', tarballSize: 99,
@@ -45,6 +45,23 @@ test('package input takes a name, a version or tag, or an npmjs.com link', () =>
   assert.deepEqual(parseNpmPackageInput('https://www.npmjs.com/package/@babel/core/v/7.24.0'), { name: '@babel/core', spec: '7.24.0' })
   assert.deepEqual(parseNpmPackageInput('https://npmjs.com/package/lodash?activeTab=code'), { name: 'lodash', spec: null })
   for (const bad of ['', '@babel', 'lodash@^4', 'a b', '../x', 'https://example.com/package/lodash', null]) assert.equal(parseNpmPackageInput(bad), null, String(bad))
+})
+
+test('Dependencies list every kind by name, and an alias opens the package it names', () => {
+  assert.deepEqual(npmDependencies({
+    dependencies: { zod: '^3.0.0', alias: 'npm:@scope/real@^1.0.0', bare: 'npm:other', local: 'file:../x' },
+    peerDependencies: { react: '>=18', zod: '^3.0.0' },
+    optionalDependencies: { fsevents: '^2.0.0' },
+  }), [
+    { name: 'alias', range: 'npm:@scope/real@^1.0.0', kind: null, opens: '@scope/real' },
+    { name: 'bare', range: 'npm:other', kind: null, opens: 'other' },
+    { name: 'fsevents', range: '^2.0.0', kind: 'optional', opens: 'fsevents' },
+    { name: 'local', range: 'file:../x', kind: null, opens: 'local' },
+    { name: 'react', range: '>=18', kind: 'peer', opens: 'react' },
+    { name: 'zod', range: '^3.0.0', kind: null, opens: 'zod' },
+    { name: 'zod', range: '^3.0.0', kind: 'peer', opens: 'zod' },
+  ])
+  assert.deepEqual(npmDependencies({}), [])
 })
 
 test('Code opens on what main names, resolved as require would', () => {
