@@ -161,9 +161,10 @@ test('the Files section is collapsed until opened, then lists Removed | Added | 
   view._diffKey = null
   const collapsed = renderText(view._renderDiff())
   assert.match(collapsed, /<summary class="bundle-compare-section-head"[^]*?>Files <span class="bundle-compare-section-count">1/u)
-  assert.doesNotMatch(collapsed, /bundle-compare-cols--files/u)
+  const filesPart = markup => markup.slice(markup.indexOf('>Files <span'))
+  assert.doesNotMatch(filesPart(collapsed), /bundle-compare-cols/u)
   view._openSections = new Set(['files'])
-  assert.match(renderText(view._renderDiff()), /bundle-compare-cols--files[^]*bundle-compare-changed/u)
+  assert.match(filesPart(renderText(view._renderDiff())), /bundle-compare-cols[^]*bundle-compare-changed/u)
 })
 
 test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {
@@ -308,4 +309,32 @@ test('a section heading opens and closes its section through the render, content
   assert.ok(!view._openSections.has('files'))
   view._setSection('files', true)
   assert.ok(view._openSections.has('files'), 'a toggle the browser makes on its own still lands')
+})
+
+test('no "Changes from" caption; the root the file rows leave out rides on the Files heading', () => {
+  const side = (integrity, code) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/app.js': code, 'src/util.js': code } }]]),
+  }) })
+  const view = compare()
+  view.details = side('base', 'one')
+  view._otherDetails = side('other', 'one, two')
+  view._diffKey = null
+  const markup = renderText(view._renderDiff())
+  assert.doesNotMatch(markup, /Changes from/u)
+  assert.match(markup, /Files <span class="bundle-compare-section-count">2<\/span><span class="bundle-compare-section-note" data-tooltip-truncated data-tooltip=src\/>src\/<\/span><\/summary>/u)
+})
+
+test('Packages and Files share their lanes: the kinds either lists, so their columns line up', () => {
+  const side = (integrity, files) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files }]]),
+  }) })
+  const view = compare()
+  view.details = side('base', { 'src/app.js': 'one', 'src/old.js': 'old' })
+  view._otherDetails = side('other', { 'src/app.js': 'one, two' })
+  view._diffKey = null
+  view._openSections = new Set(['files'])
+  const markup = renderText(view._renderDiff())
+  assert.deepEqual(view._diffFor().packageRows.removed, [], 'no package was removed, only a file')
+  assert.deepEqual([...markup.matchAll(/class="bundle-compare-cols" data-lanes=(\d)/gu)].map(m => m[1]), ['2', '2'],
+    'Packages keeps an empty Removed lane, as Files lists one')
 })

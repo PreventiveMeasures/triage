@@ -49,6 +49,8 @@ import './bundle-compare-code.js'
 const MAX_ROWS = 400
 // Widest version column in Removed / Added; a longer list ellipsizes.
 const MAX_VERSION_CHARS = 24
+// The Overview's column order, Packages and Files alike.
+const LANES = ['removed', 'added', 'changed']
 
 // Swap handoff. The swap button switches the active bundle to the
 // current comparison target (so A and B trade places, and the app
@@ -313,13 +315,14 @@ class BundleCompare extends LitElement {
 
   // Card shell shared by every file / package group: the kind-tinted
   // section, dot + title + exact count header, and every row in a list
-  // that scrolls — as tall as the pane allows with `fill`. `style` sets
-  // custom properties on the card. Returns `nothing` for an empty group
-  // so a section only shows what actually moved. `keyOf` / `rowOf` are
-  // the `repeat` key + row template.
-  _group(title, rows, kind, keyOf, rowOf, actions = nothing, { fill = false, style = {} } = {}) {
+  // that scrolls — as tall as the pane allows with `fill`. It sits in its
+  // kind's lane of `lanes` (see _cols); `style` sets more custom
+  // properties on the card. Returns `nothing` for an empty group so a
+  // section only shows what actually moved. `keyOf` / `rowOf` are the
+  // `repeat` key + row template.
+  _group(title, rows, kind, keyOf, rowOf, actions = nothing, { fill = false, lanes = LANES, style = {} } = {}) {
     if (rows.length === 0) return nothing
-    return html`<section class=${`bundle-compare-group bundle-compare-${kind}`} style=${styleMap(style)}>
+    return html`<section class=${`bundle-compare-group bundle-compare-${kind}`} style=${styleMap({ '--compare-lane': String(lanes.indexOf(kind) + 1), ...style })}>
       <header class="bundle-compare-group-head">
         <span class="bundle-compare-dot" aria-hidden="true"></span>
         <span class="bundle-compare-group-title" data-tooltip-truncated data-tooltip=${title}>${title}</span>
@@ -356,12 +359,12 @@ class BundleCompare extends LitElement {
   // One file group, every row listed (the list scrolls); the kind selects
   // its accent. Size order is the largest first, or for Changed the
   // largest change in size, name order breaking ties.
-  _fileGroup(title, rows, kind, displayOf) {
+  _fileGroup(title, rows, kind, displayOf, lanes) {
     const sort = this._fileSort[kind]
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     return this._group(title, sorted, kind, (r) => r.path,
-      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), this._sortActions('_fileSort', kind, 'file'))
+      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), this._sortActions('_fileSort', kind, 'file'), { lanes })
   }
 
   // One package group: a package each, with its versions and its size —
@@ -371,7 +374,7 @@ class BundleCompare extends LitElement {
   // largest first, or the largest move for Changed. Removed / Added size
   // their version column to the longest list (monospace, so in `ch`), so
   // versions and sizes line up row to row.
-  _pkgGroup(title, rows, kind) {
+  _pkgGroup(title, rows, kind, lanes) {
     const sort = this._pkgSort[kind]
     // A side without a size sorts last.
     const weight = r => { const value = kind === 'changed' ? r.delta : r.bytes; return value == null ? -1 : Math.abs(value) }
@@ -383,7 +386,7 @@ class BundleCompare extends LitElement {
       ${kind === 'changed' ? this._versionCell(r) : versionChars > 0 ? html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${versionList(r.versions)}>${versionList(r.versions)}</span>` : nothing}
       ${this._sizeCells(kind === 'changed' ? r : { bytes: r.bytes })}
     </div></li>`, this._sortActions('_pkgSort', kind, 'package'),
-    { fill: true, style: versionChars > 0 ? { '--compare-version-width': `${versionChars}ch` } : {} })
+    { fill: true, lanes, style: versionChars > 0 ? { '--compare-version-width': `${versionChars}ch` } : {} })
   }
 
   // A changed package's versions: `old → new` with the new side colored by
@@ -409,28 +412,35 @@ class BundleCompare extends LitElement {
   // Packages section: removed | added | changed, each package once, from
   // its files' sizes and the versions each bundle records. Returns
   // `nothing` when no package moved.
-  _renderPackages(rows, baseName, otherName) {
+  _renderPackages(rows, baseName, otherName, lanes = LANES) {
     if (rows.removed.length === 0 && rows.added.length === 0 && rows.changed.length === 0) return nothing
     return html`<section class="bundle-compare-section">
       <h3 class="bundle-compare-section-head">Packages</h3>
-      <div class="bundle-compare-cols">
-        ${this._pkgGroup(`Removed · only in ${baseName}`, rows.removed, 'removed')}
-        ${this._pkgGroup(`Added · only in ${otherName}`, rows.added, 'added')}
-        ${this._pkgGroup('Changed', rows.changed, 'changed')}
-      </div>
+      ${this._cols(lanes, html`
+        ${this._pkgGroup(`Removed · only in ${baseName}`, rows.removed, 'removed', lanes)}
+        ${this._pkgGroup(`Added · only in ${otherName}`, rows.added, 'added', lanes)}
+        ${this._pkgGroup('Changed', rows.changed, 'changed', lanes)}`)}
     </section>`
   }
 
-  // A section that opens on demand, its heading the disclosure; its
-  // contents render only while it is open. A click on the heading opens it
-  // through the render, contents and all: left to the browser, it opened a
-  // frame before its contents arrived. A toggle the browser makes on its
-  // own (find in page) still lands.
-  _collapsible(id, title, count, content) {
+  // Removed | Added | Changed columns. Packages and Files share `lanes` —
+  // the kinds either lists — so their columns line up, a kind one section
+  // lacks leaving its lane empty there. Changed's lane is the widest.
+  _cols(lanes, groups) {
+    const template = lanes.map(kind => kind === 'changed' ? 'minmax(0, 5fr)' : 'minmax(0, 4fr)').join(' ')
+    return html`<div class="bundle-compare-cols" data-lanes=${lanes.length} style=${styleMap({ '--compare-lanes': template })}>${groups}</div>`
+  }
+
+  // A section that opens on demand, its heading the disclosure (with an
+  // optional path `note`); its contents render only while it is open. A
+  // click on the heading opens it through the render, contents and all:
+  // left to the browser, it opened a frame before its contents arrived. A
+  // toggle the browser makes on its own (find in page) still lands.
+  _collapsible(id, title, count, content, note = '') {
     const open = this._openSections.has(id)
     return html`<details class="bundle-compare-section bundle-compare-collapsible" .open=${live(open)}
       @toggle=${event => this._setSection(id, event.currentTarget.open)}>
-      <summary class="bundle-compare-section-head" @click=${event => { event.preventDefault(); this._setSection(id, !open) }}>${title} <span class="bundle-compare-section-count">${count.toLocaleString()}</span></summary>
+      <summary class="bundle-compare-section-head" @click=${event => { event.preventDefault(); this._setSection(id, !open) }}>${title} <span class="bundle-compare-section-count">${count.toLocaleString()}</span>${note ? html`<span class="bundle-compare-section-note" data-tooltip-truncated data-tooltip=${note}>${note}</span>` : nothing}</summary>
       ${open ? content() : nothing}
     </details>`
   }
@@ -670,22 +680,22 @@ class BundleCompare extends LitElement {
     const displayOf = (p) => displayMap.get(p) ?? p
 
     const fileCount = diff.files.onlyBase.length + diff.files.onlyOther.length + diff.files.changed.length
+    const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
+    const listsFiles = !diff.totals.identical
+    const lanes = LANES.filter(kind => diff.packageRows[kind].length > 0 || (listsFiles && files[kind].length > 0))
 
+    // The header and the group titles already say which bundle is which;
+    // the shared root the file rows drop rides on the Files heading.
     return html`
-      <div class="bundle-compare-caption">
-        Changes from <strong>${baseName}</strong> to <strong>${otherName}</strong>
-        ${prefix ? html` · <span class="mono">${prefix}</span>` : nothing}
-      </div>
-      ${this._renderPackages(diff.packageRows, baseName, otherName)}
+      ${this._renderPackages(diff.packageRows, baseName, otherName, lanes)}
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
           : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
-        : this._collapsible('files', 'Files', fileCount, () => html`<div class="bundle-compare-cols bundle-compare-cols--files">
-            ${this._fileGroup(`Removed · only in ${baseName}`, diff.files.onlyBase, 'removed', displayOf)}
-            ${this._fileGroup(`Added · only in ${otherName}`, diff.files.onlyOther, 'added', displayOf)}
-            ${this._fileGroup('Changed', diff.files.changed, 'changed', displayOf)}
-          </div>`)}
+        : this._collapsible('files', 'Files', fileCount, () => this._cols(lanes, html`
+            ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, lanes)}
+            ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, lanes)}
+            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, lanes)}`), prefix)}
       ${this._renderResolutions(diff.resolutions)}
     `
   }
