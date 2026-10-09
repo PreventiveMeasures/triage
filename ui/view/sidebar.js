@@ -2174,14 +2174,21 @@ function canAccessManagedPage(view) {
   return ['admin', 'manage'].includes(role) && (!ADMIN_ONLY_PAGES.has(view) || role === 'admin')
 }
 
+// The latest restoration started owns the pending flag. One a newer
+// restoration superseded leaves it to that one; one cancelled with no
+// successor, as by a tab switch on the page shown, must still release it,
+// or the catalogue and feed work it holds back would stay skipped.
+let managedRestoration = 0
+
 // Navigate to one of the admin / manage pages: load the admin bundle
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 async function restoreManagedPage(route, isCurrent) {
+  const restoration = ++managedRestoration
   managedNavigationPending = true
   try { return await restoreManagedPageContent(route, isCurrent) }
   finally {
-    if (isCurrent()) {
+    if (restoration === managedRestoration) {
       managedNavigationPending = false
       void renderSidebar()
     }
