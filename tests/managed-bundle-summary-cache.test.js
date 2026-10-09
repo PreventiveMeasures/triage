@@ -18,20 +18,31 @@ function fixture() {
   return { storage, records, files }
 }
 
-test('legacy count-only summaries are backfilled with commit metadata outside catalog reads', async () => {
-  const { storage, records } = fixture()
-  const record = { ...records[0], kind: 'stasis' }
+test('older summaries are backfilled with the commit and Stasis version outside catalog reads', async () => {
   const counts = { files: 1, codeFiles: 1, lines: 2 }
-  const summary = { ...counts, commit: 'a'.repeat(40) }
-  await storage.put(record.id, 'v2-summary.json', Buffer.from(JSON.stringify(counts)))
-  let builds = 0
-  const cache = createBundleSummaryCache(storage, () => { builds++; return Promise.resolve(summary) }, () => Promise.resolve(true))
-  assert.equal(await cache.summary(record), null)
-  assert.equal(builds, 0, 'a catalog read must not parse the bundle')
-  await cache.backfill([record])
-  assert.equal(builds, 1)
-  const cold = createBundleSummaryCache(storage, () => assert.fail('read the small persisted summary'), () => Promise.resolve(true))
-  assert.deepEqual(await cold.summary(record), summary)
+  for (const [legacy, stored, served] of [['v2-summary.json', counts, null], ['v4-summary.json', { ...counts, commit: 'b'.repeat(40) }, { ...counts, commit: 'b'.repeat(40) }]]) {
+    const { storage, records } = fixture()
+    const record = { ...records[0], kind: 'stasis' }
+    const summary = { ...counts, commit: 'a'.repeat(40), stasisVersion: 0 }
+    await storage.put(record.id, legacy, Buffer.from(JSON.stringify(stored)))
+    let builds = 0
+    const cache = createBundleSummaryCache(storage, () => { builds++; return Promise.resolve(summary) }, () => Promise.resolve(true))
+    assert.deepEqual(await cache.summary(record), served, 'a version 4 summary stands in until its upgrade')
+    assert.equal(builds, 0, 'a catalog read must not parse the bundle')
+    await cache.backfill([record])
+    assert.equal(builds, 1)
+    const cold = createBundleSummaryCache(storage, () => assert.fail('read the small persisted summary'), () => Promise.resolve(true))
+    assert.deepEqual(await cold.summary(record), summary)
+  }
+})
+
+test('a stored summary\'s Stasis version is a non-negative integer', async () => {
+  const { storage } = fixture()
+  for (const stasisVersion of [-1, 1.5, '1', null]) {
+    await storage.put('bad', SUMMARY_FILENAME, Buffer.from(JSON.stringify({ files: 1, codeFiles: 1, lines: 2, stasisVersion })))
+    const cache = createBundleSummaryCache(storage, () => assert.fail('catalog reads never build'), () => Promise.resolve(true))
+    await assert.rejects(cache.summary({ id: 'bad', integrity: 'bad', kind: 'stasis' }), /Invalid bundle summary/u)
+  }
 })
 
 test('catalog reads never build; backfill has one bounded batch and resumes remaining hashes later', async () => {
@@ -176,7 +187,8 @@ for (const failure of ['missing', 'outage', 'malformed']) {
     let reads = 0
     const streams = []
     const cache = createBundleSummaryCache({
-      async open() {
+      async open(_id, file) {
+        if (file !== SUMMARY_FILENAME) throw new CacheMissError() // No version 4 summary to stand in.
         const first = ++reads === 1
         await setImmediate()
         if (first && failure === 'missing') throw new CacheMissError()

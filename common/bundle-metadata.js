@@ -114,7 +114,9 @@ export function createBundleSummary(details, metadata) {
   const commit = details.kind === 'stasis' ? bundleCommitHash(details.bundle.repo?.commit) : null
   return { files: files.length, lines,
     codeFiles: files.filter(([path]) => !['resource:base64', 'directory'].includes(formats?.get(path))).length,
-    ...(commit ? { commit } : {}) }
+    ...(commit ? { commit } : {}),
+    // The Stasis format version: 0 for legacy bundles, which record no package versions.
+    ...(details.kind === 'stasis' ? { stasisVersion: details.bundle.version } : {}) }
 }
 
 // `stale` marks an index this version did not write: its hashes still

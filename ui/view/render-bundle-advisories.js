@@ -104,7 +104,12 @@ function managedBundleHasNoDependencies(details) {
   return audit?.state === 'ok' && audit.query.size === 0 && audit.skipped.length === 0
 }
 
-// Managed Stasis bundles require security access. Visibility is tri-state:
+// Managed Stasis bundles require security access. A bundle known to have no
+// package versions to audit never shows it, even as the open tab: a Stasis
+// bundle before format version 1, by its parsed bundle or its catalogue
+// summary, or one whose summary counts no versioned packages (the server's
+// count of what its audit covers, audited or skipped). A managed bundle's
+// summary says so before it opens. Otherwise visibility is tri-state:
 //   * non-stasis filename → hide immediately (no parse needed; we
 //     already know there'll be no version metadata).
 //   * stasis filename, no matching parsed details yet → keep visible
@@ -127,11 +132,19 @@ function managedBundleHasNoDependencies(details) {
 // rather than falling back to Overview, and its body says why it is empty.
 export function showAdvisoriesTab(entry, details, selected = false) {
   if (!entry || (entry.managedId && !canReadManagedAdvisories(entry))) return false
+  if (stasisVersion(entry, details) < 1 || entry.summary?.versionedPackages === 0) return false
   if (selected) return true
   if (bundleKind(entry.name) !== 'stasis') return false
   if (!details || details.integrity !== entry.integrity) return true
   if (entry.managedId) return !details.bundle || bundleHasDependencyPackages(details)
   return bundleHasAdvisoryCandidates(details)
+}
+
+// The bundle's Stasis format version, by its parsed details or its catalogue
+// summary; Infinity while neither says.
+function stasisVersion(entry, details) {
+  const version = details?.integrity === entry.integrity && details.bundle ? details.bundle.version : entry.summary?.stasisVersion
+  return Number.isSafeInteger(version) ? version : Infinity
 }
 
 function canReadManagedAdvisories(entry) {

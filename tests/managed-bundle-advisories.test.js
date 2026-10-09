@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleAdvisoryInventory } from '../server-managed/bundle-advisory-inventory.ts'
 import { fetchBundleAdvisories } from '../server-managed/bundle-advisories.ts'
+import { bundleSummary } from '../server-managed/bundle-cache.ts'
 
 const ghsa = 'GHSA-2345-6789-cfgh'
 const signal = () => new AbortController().signal
@@ -112,6 +113,19 @@ test('audit presence and reason scopes require code evidence, including version-
   ], skipped: [] })
   assert.deepEqual(inventoryOf(modules, ['node_modules/ws/package.json', 'node_modules/ws/browser.js']), { packages: [], skipped: [] })
   assert.deepEqual(inventoryOf(modules, ['node_modules/ws/lib/websocket.js']), { packages: [{ ecosystem: 'npm', name: 'ws', versions: ['8.21.1'] }], skipped: [] })
+})
+
+test('bundle summaries count the name@version pairs the unscoped audit covers, audited or skipped', () => {
+  const count = modules => bundleSummary({ integrity: 'hash', kind: 'stasis', size: 1,
+    bundle: Bundle.parse(new Bundle({ modules: new Map(modules) }).serialize()) }).versionedPackages
+  assert.equal(bundleSummary({ ...mixedBundle(), integrity: 'hash', size: 1 }).versionedPackages, 6,
+    'each npm log version counts; the GitHub copies on one branch, and modules with no evidence or ecosystem, do not')
+  assert.equal(count([
+    ['release/vendor/pkg', { ecosystem: 'composer', name: 'vendor/pkg', version: '1.2.3', files: { 'file.php': 'release source' } }],
+    ['vendor/private-crate', { ecosystem: 'cargo-git', name: 'private-crate', version: '1.0.0', files: { 'src/lib.rs': 'private source' } }],
+  ]), 2, 'a skipped package is listed by Advisories too')
+  assert.equal(count([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'app' } }]]), 0, 'the bundle\'s own package is never audited')
+  assert.equal(bundleSummary({ integrity: 'hash', kind: 'sourcemap', size: 1, json: { version: 3, sources: [] } }).versionedPackages, undefined)
 })
 
 test('Composer dev versions and unregistered crates are reported without preventing release audits', async t => {

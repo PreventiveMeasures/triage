@@ -6,14 +6,26 @@ import { bundleCommitHash } from '../common/bundle-commit.js'
 import type { BundleCacheRecord, BundleCacheStorage, BundleSummary } from './bundle-cache.ts'
 
 // Version 3 adds the optional source commit; version 4 counts lines of code
-// without blank lines. Older bundles use bounded backfill.
-export const SUMMARY_FILENAME = 'v4-summary.json'
+// without blank lines; version 5 adds a Stasis bundle's format version and
+// versioned package count. Older bundles use bounded backfill; until it
+// reaches one, catalogs serve its version 4 summary, which lacks only those.
+export const SUMMARY_FILENAME = 'v5-summary.json'
+const PREVIOUS_SUMMARY_FILENAME = 'v4-summary.json'
 const RETRY_MS = 5 * 60_000
 const BACKFILL_LIMIT = 4
-type CachedSummary = BundleSummary | { retryAt: number }
+type CachedSummary = BundleSummary | { retryAt: number } | { previous: BundleSummary }
 
-async function readSummary(storage: BundleCacheStorage, id: string): Promise<CachedSummary> {
-  const cached = await storage.open(id, SUMMARY_FILENAME)
+async function readCurrentSummary(storage: BundleCacheStorage, id: string): Promise<CachedSummary> {
+  try { return await readSummary(storage, id, SUMMARY_FILENAME) }
+  catch (error) {
+    if (!(error instanceof CacheMissError)) throw error
+    const previous = await readSummary(storage, id, PREVIOUS_SUMMARY_FILENAME)
+    return 'retryAt' in previous ? previous : { previous }
+  }
+}
+
+async function readSummary(storage: BundleCacheStorage, id: string, file: string): Promise<BundleSummary | { retryAt: number }> {
+  const cached = await storage.open(id, file)
   try {
     const chunks: Buffer[] = []
     let size = 0
@@ -22,11 +34,12 @@ async function readSummary(storage: BundleCacheStorage, id: string): Promise<Cac
       if (size > 1024) throw new Error('Invalid bundle summary')
       chunks.push(Buffer.from(chunk))
     }
-    const summary = JSON.parse(decodeUtf8(Buffer.concat(chunks))) as CachedSummary
+    const summary = JSON.parse(decodeUtf8(Buffer.concat(chunks))) as BundleSummary | { retryAt: number }
     if (summary && 'retryAt' in summary && Number.isSafeInteger(summary.retryAt) && summary.retryAt > 0) return summary
     const counts = summary as BundleSummary
     if (!counts || ![counts.files, counts.codeFiles, counts.lines].every(value => Number.isSafeInteger(value) && value >= 0)
-        || counts.codeFiles > counts.files || (counts.commit !== undefined && !bundleCommitHash(counts.commit))) throw new Error('Invalid bundle summary')
+        || counts.codeFiles > counts.files || (counts.commit !== undefined && !bundleCommitHash(counts.commit))
+        || [counts.stasisVersion, counts.versionedPackages].some(value => value !== undefined && !(Number.isSafeInteger(value) && value >= 0))) throw new Error('Invalid bundle summary')
     return counts
   } finally { cached.stream.destroy() }
 }
@@ -51,7 +64,7 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
     if (existing) return existing.job
     // Concurrent catalogs share the decoded summary, never the response stream.
     // Only in-flight work is shared: misses and failures remain retryable.
-    const job: Promise<CachedSummary | null> = readSummary(storage, record.id).then(value => {
+    const job: Promise<CachedSummary | null> = readCurrentSummary(storage, record.id).then(value => {
       if (reads.get(record.integrity)?.job === job) remember(record, value)
       return entries.get(record.integrity)?.value ?? value
     }).catch(error => {
@@ -73,7 +86,7 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
   }
   async function summaryStatus(record: BundleCacheRecord) {
     const value = ['stasis', 'sourcemap'].includes(record.kind ?? '') ? await read(record) : null
-    return { summary: value && !('retryAt' in value) ? value : null,
+    return { summary: !value || 'retryAt' in value ? null : 'previous' in value ? value.previous : value,
       summaryRetryAt: value && 'retryAt' in value ? value.retryAt : null }
   }
   async function backfill(records: readonly BundleCacheRecord[]) {
@@ -84,7 +97,7 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
     for (const record of records) {
       if (!['stasis', 'sourcemap'].includes(record.kind ?? '')) continue
       const cached = await read(record).catch(() => null)
-      if (cached && (!('retryAt' in cached) || cached.retryAt > Date.now())) continue
+      if (cached && !('previous' in cached) && (!('retryAt' in cached) || cached.retryAt > Date.now())) continue
       if (!await exists(record.id)) continue
       if (attempts++ >= BACKFILL_LIMIT) break
       const job = buildOne(record)

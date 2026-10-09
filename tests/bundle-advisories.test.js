@@ -160,6 +160,33 @@ test('public advisory tabs use share permissions; managers retain access outside
   assert.equal(showAdvisoriesTab(entry, null, true), false, 'access applies to the open tab too')
 })
 
+test('Stasis bundles before version 1 never show Advisories, by their catalogue summary or their parsed bundle', () => {
+  const entry = { managedId: 'bundle-id', integrity: 'hash', name: 'bundle.br' }
+  const legacy = Bundle.parse(JSON.stringify({ version: 0, config: { scope: 'node_modules' }, formats: {}, imports: {},
+    sources: { 'node_modules/dep/a.js': 'dep' } }))
+  const parsed = bundle => ({ integrity: entry.integrity, kind: 'stasis', bundle })
+  for (const selected of [false, true]) {
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 0 } }, null, selected), false, 'hidden before the bundle opens')
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 1 } }, null, selected), true)
+    assert.equal(showAdvisoriesTab(entry, parsed(legacy), selected), false, 'or once parsed, without a summary')
+    assert.equal(showAdvisoriesTab({ ...entry, managedId: undefined }, parsed(legacy), selected), false, 'local bundles too')
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 1 } }, parsed(legacy), selected), false, 'the parsed bundle has the last word')
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 0 } }, { ...parsed(new Bundle()), integrity: 'other' }, selected), false,
+      'another bundle\'s details do not count')
+  }
+})
+
+test('a bundle whose catalogue summary counts no versioned packages never shows Advisories', () => {
+  const entry = { managedId: 'bundle-id', integrity: 'hash', name: 'bundle.br' }
+  for (const selected of [false, true]) {
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 1, versionedPackages: 0 } }, null, selected), false)
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 1, versionedPackages: 0 } }, { integrity: entry.integrity, kind: 'stasis' }, selected), false,
+      'the server\'s count, by the audit\'s own rule, stands once the bundle opens')
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 1, versionedPackages: 2 } }, null, selected), true)
+    assert.equal(showAdvisoriesTab({ ...entry, summary: { stasisVersion: 1 } }, null, selected), true, 'a summary from before the count keeps the earlier rules')
+  }
+})
+
 test('skipped dependencies remain visible when none of the bundle could be audited', async () => {
   const details = { managedId: 'skipped-bundle', integrity: 'skipped-bundle', kind: 'stasis' }
   result = { packages: [], advisories: [], skipped: [

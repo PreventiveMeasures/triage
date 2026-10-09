@@ -1952,8 +1952,9 @@ function renderBundleSlide(entry) {
   // landing in their middle — no in-flight click theft.
   const showAdvisories = showAdvisoriesTab(entry, state.bundleDetails, state.bundleDetailsTab === 'advisories')
   // Coerce a `state.bundleDetailsTab === 'advisories'` value back to
-  // 'overview' only without security access. A sourcemap, or a bundle
-  // with nothing to audit, keeps the open tab.
+  // 'overview' only without security access, or for a bundle known to have
+  // no package versions (see `showAdvisoriesTab`). A sourcemap, or a bundle
+  // found to have nothing to audit once it opens, keeps the open tab.
   if (state.bundleDetailsTab === 'advisories' && !showAdvisories) {
     state.bundleDetailsTab = 'overview'
   }

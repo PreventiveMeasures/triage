@@ -109,13 +109,13 @@ test('catalog summaries reuse one cached count per hash across teams, uploads an
   const coldCatalog = (await h.send('/api/teams', 'viewer')).json()
   assert.ok(coldCatalog.teams.every(team => team.bundles.every(bundle => bundle.summary === null)))
   await Promise.all([...h.pending])
-  assert.deepEqual(await readdir(join(h.cacheDir, archive.id)), ['v4-summary.json'], 'backfill does not generate or hash full metadata')
+  assert.deepEqual(await readdir(join(h.cacheDir, archive.id)), ['v5-summary.json'], 'backfill does not generate or hash full metadata')
   const teamCatalog = (await h.send('/api/teams', 'viewer')).json()
   const listed = teamCatalog.teams.flatMap(team => team.bundles)
   assert.equal(listed.length, 2)
   for (const bundle of listed) {
     assert.equal(bundle.kind, 'stasis')
-    assert.deepEqual(bundle.summary, { files: 3, codeFiles: 2, lines: 2 })
+    assert.deepEqual(bundle.summary, { files: 3, codeFiles: 2, lines: 2, stasisVersion: 1, versionedPackages: 1 })
   }
   assert.equal(reads.mock.callCount(), 1, 'shared bundles are decoded once')
   await h.send('/api/admin/bundles')
@@ -131,7 +131,7 @@ test('catalog summaries reuse one cached count per hash across teams, uploads an
   assert.equal(reads.mock.callCount(), 3, 'the upload builds full metadata once; repeat catalogs only read counts')
   const cold = createBundleCache(h.cacheStorage, h.db, { ...h.store, get() { throw new Error('must use summary cache') } })
   await writeFile(join(h.cacheDir, archive.id, 'v5-metadata.json.br'), 'summary must not decode the full metadata')
-  assert.deepEqual(await cold.summary(archive), { files: 3, codeFiles: 2, lines: 2 })
+  assert.deepEqual(await cold.summary(archive), { files: 3, codeFiles: 2, lines: 2, stasisVersion: 1, versionedPackages: 1 })
   await h.db.deleteBundle(archive.id)
   await cold.delete(archive.id)
   await assert.rejects(readdir(join(h.cacheDir, archive.id)), { code: 'ENOENT' })
@@ -287,7 +287,7 @@ test('catalogs sharing a cold summary still recheck each caller independently', 
   assert.deepEqual((await viewer).json().teams, [])
   const bundles = (await manager).json().bundles
   assert.deepEqual(bundles.map(bundle => bundle.id), [record.id])
-  assert.deepEqual(bundles[0].summary, { files: 3, codeFiles: 2, lines: 2 })
+  assert.deepEqual(bundles[0].summary, { files: 3, codeFiles: 2, lines: 2, stasisVersion: 1, versionedPackages: 1 })
   assert.equal(reads, 1)
 })
 
@@ -612,7 +612,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v4-summary.json', 'v5-metadata.json.br', 'v6-advisory-inventory.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v5-metadata.json.br', 'v5-summary.json', 'v6-advisory-inventory.json'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -669,7 +669,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v4-summary.json', 'v5-metadata.json.br', 'v6-advisory-inventory.json'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v5-metadata.json.br', 'v5-summary.json', 'v6-advisory-inventory.json'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -692,7 +692,7 @@ test('sourcemap uploads retain their identity while storing and serving only Bro
   assert.equal(contents.headers['content-encoding'], 'br')
   assert.deepEqual(contents.bytes, encoded)
   await Promise.allSettled([...h.pending])
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v4-summary.json', 'v5-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v5-metadata.json.br', 'v5-summary.json'])
   const duplicate = await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)
   assert.equal(duplicate.status, 200)
   assert.equal(duplicate.json().id, id)

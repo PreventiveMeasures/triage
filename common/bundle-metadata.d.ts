@@ -7,4 +7,4 @@ export interface BundleMetadata extends Record<string, unknown> {
   codeStats: { files: number; lines: number; bytes: number }
 }
 export function createBundleMetadata(details: BundleDetails): Promise<BundleMetadata>
-export function createBundleSummary(details: BundleDetails, metadata?: BundleMetadata): { files: number; codeFiles: number; lines: number; commit?: string }
+export function createBundleSummary(details: BundleDetails, metadata?: BundleMetadata): { files: number; codeFiles: number; lines: number; commit?: string; stasisVersion?: number }

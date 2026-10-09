@@ -872,7 +872,12 @@ Once a bundle's modules are loaded, the tab is hidden when none is a dependency
 package (a non-root module with an ecosystem, name and version), unless it is the
 open tab: switching bundles (to a sourcemap too) or following a link keeps
 Advisories open, as it keeps Compare open without another bundle to compare.
-Only losing security access returns the viewer to Overview. Neither button
+Only losing security access, or a bundle known to have no package versions to
+audit, returns the viewer to Overview. Such a bundle never shows the tab: a
+Stasis bundle before format version 1, or one whose catalog summary counts no
+versioned packages (`versionedPackages`). Catalogs send both in its summary, so
+the tab is hidden before the bundle opens; a parsed v0 bundle without a summary
+yet hides it too. Neither button
 is shown when the bundle's unscoped audit finds no packages, audited or skipped.
 Managed bundles have no Issues tab: the Code tab shows each file's issues.
 For both initial audits and repository rechecks, GitHub requests use the current
@@ -981,6 +986,15 @@ size, and its GitHub origin, commit and tags) at once, and its files once its
 metadata arrives; its URL follows a successful open, and a failed one still
 lands on the home page. A tab picked meanwhile keeps the bundle and still
 receives its files, or the reason it has none.
+
+A catalog bundle's `summary` holds its file, code file and LoC counts, the
+commit its Stasis stamp records (`commit`), and for a Stasis bundle its format
+version (`stasisVersion`, 0 for legacy bundles) and `versionedPackages`: the
+name@version pairs its unscoped advisory audit covers, audited or skipped, by
+the same inventory (evidence files included) the advisories route uses. Summaries are cached per bundle as
+`v5-summary.json`, and the bounded backfill rebuilds missing and older ones. Until
+it reaches a bundle, catalogs send its `v4-summary.json` as is (no
+`stasisVersion`); a bundle with only an older summary has none until then.
 
 Opening a bundle downloads its metadata into managed app memory. Code,
 Terminal, source search and source comparison request contents when needed;

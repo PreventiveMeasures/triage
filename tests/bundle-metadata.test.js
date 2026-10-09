@@ -27,7 +27,8 @@ it('bundle summaries retain the source commit without the inventory or file hash
   assert.equal(summary.commit, full.bundle.repo.commit)
   assert.equal(full.fileHashes, undefined)
   assert.deepEqual(createBundleSummary(full, await createBundleMetadata(full)), summary)
-  assert.deepEqual(Object.keys(summary).toSorted(), ['codeFiles', 'commit', 'files', 'lines'])
+  assert.deepEqual(Object.keys(summary).toSorted(), ['codeFiles', 'commit', 'files', 'lines', 'stasisVersion'])
+  assert.equal(summary.stasisVersion, 1)
 })
 
 it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, and entries without source bodies', async () => {
@@ -65,8 +66,10 @@ it('supports legacy Stasis bundles and sourcemaps with absent source content', a
   const legacy = { integrity: 'legacy', kind: 'stasis', size: 123, bundle: Bundle.parse(JSON.stringify({
     version: 0, config: { scope: 'node_modules' }, formats: {}, imports: {}, sources: { 'node_modules/dep/a.js': 'secret' },
   })) }
-  const cachedLegacy = parseBundleMetadata(await createBundleMetadata(legacy), 'legacy')
+  const legacyMetadata = await createBundleMetadata(legacy)
+  const cachedLegacy = parseBundleMetadata(legacyMetadata, 'legacy')
   assert.equal(cachedLegacy.bundle.version, 0)
+  assert.equal(createBundleSummary(legacy, legacyMetadata).stasisVersion, 0, 'catalogues learn the format version without the metadata')
   assert.deepEqual(cachedLegacy.fileHashes, legacy.fileHashes)
   assert.deepEqual(bundlePackageDirs(cachedLegacy), bundlePackageDirs(legacy))
   const map = { integrity: 'map', kind: 'sourcemap', size: 200, json: { version: 3, file: 'app.js', sourceRoot: 'root', names: ['foo'], sources: ['a.js', 'b.js', 'c.js'], sourcesContent: ['秘密', null, ''] } }

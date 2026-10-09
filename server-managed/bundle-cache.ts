@@ -19,7 +19,7 @@ const MAX_DECODED_BYTES = 512 * 1024 * 1024
 export const MAX_PACKAGE_INVENTORY_BYTES = 1024 * 1024
 export type BundleCachePart = 'metadata' | 'contents'
 export type BundleCacheRecord = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'kind' | 'byteSize'>
-export interface BundleSummary { files: number; codeFiles: number; lines: number; commit?: string }
+export interface BundleSummary { files: number; codeFiles: number; lines: number; commit?: string; stasisVersion?: number; versionedPackages?: number }
 
 export async function readBundleDetails(record: BundleCacheRecord, store: BundleStore) {
   const bytes = await store.get(record.id, record.kind)
@@ -76,6 +76,16 @@ function encodePackageInventory(details: BundleDetails): Buffer {
   return Buffer.from(parts.join(''))
 }
 
+// What a catalog sends of a bundle before it opens. A Stasis bundle's
+// `versionedPackages` counts the name@version pairs its unscoped advisory
+// audit covers, audited or skipped: with none, Advisories has nothing to show.
+export function bundleSummary(details: BundleDetails, metadata?: Parameters<typeof createBundleSummary>[1]): BundleSummary {
+  const summary = createBundleSummary(details, metadata)
+  if (details.kind !== 'stasis') return summary
+  const { packages, skipped } = bundleAdvisoryInventory(details)
+  return { ...summary, versionedPackages: packages.reduce((count, pkg) => count + pkg.versions.length, 0) + skipped.length }
+}
+
 async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
   const details = await readBundleDetails(record, store)
   if (!details) throw new Error('Bundle bytes unavailable')
@@ -84,7 +94,7 @@ async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db:
   if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')
   await storage.put(record.id, filename, body)
   if (record.kind === 'stasis') await storage.put(record.id, packagesFilename, encodePackageInventory(details))
-  const summary = createBundleSummary(details, metadata)
+  const summary = bundleSummary(details, metadata)
   await storage.put(record.id, SUMMARY_FILENAME, Buffer.from(JSON.stringify(summary)))
   // A different instance may have deleted the row while these writes ran.
   // Reconcile after publishing so its cleanup cannot be undone by us.
@@ -102,7 +112,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
   const summaries = createBundleSummaryCache(storage, async record => {
     const details = await readBundleDetails(record, store)
     if (!details) throw new Error('Bundle bytes unavailable')
-    return createBundleSummary(details)
+    return bundleSummary(details)
   }, id => db.getBundle(id))
   let queue = Promise.resolve()
   async function ensure(record: BundleCacheRecord): Promise<void> {

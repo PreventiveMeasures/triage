@@ -83,7 +83,7 @@ test('Brotli metadata persists across cold starts while contents use stored bund
   assert.equal(JSON.parse(brotliDecompressSync(await consume(cached))).id, id)
   assert.deepEqual(brotliDecompressSync(await consume(await cold.open(record, 'contents'))), body)
   assert.deepEqual(await cold.summary(record), { files: 1, codeFiles: 1, lines: 1 })
-  assert.deepEqual([...objects.keys()].filter(path => path.includes('/cache/')), [`.managed/cache/bundles/${id}/v5-metadata.json.br`, `.managed/cache/bundles/${id}/v4-summary.json`])
+  assert.deepEqual([...objects.keys()].filter(path => path.includes('/cache/')), [`.managed/cache/bundles/${id}/v5-metadata.json.br`, `.managed/cache/bundles/${id}/v5-summary.json`])
   await cold.delete(id)
   assert.deepEqual(brotliDecompressSync(await consume(await cold.open(record, 'contents'))), body, 'contents work without metadata')
   await cache.prebuild(record)
