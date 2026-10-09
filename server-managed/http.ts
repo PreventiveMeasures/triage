@@ -83,7 +83,8 @@ import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
-import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
+import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, mapGithubRequests, publicRepositoryName, repositoryInstallation, selectedRepositoryVisibility } from './github-app.ts'
+import type { WorkspaceRepository } from './workspace-shares.ts'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
@@ -537,7 +538,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   let repositories
   if (scope === 'connected') {
     repositories = allRows.map((r) => ({
-      id: r.repoId, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
+      id: r.repoId, fullName: r.fullName, private: r.private, visibility: r.visibility, htmlUrl: r.htmlUrl,
       installed: r.installationId != null, selected: r.active, active: r.active,
     }))
   } else {
@@ -609,7 +610,7 @@ async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user
 async function connectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repo: ConnectedRepo): Promise<void> {
   const alreadySelected = (await deps.db.listSelectedRepos()).some(row => row.repoId === repo.id)
   await deps.db.selectRepo({
-    repoId: repo.id, fullName: repo.fullName, private: repo.private,
+    repoId: repo.id, fullName: repo.fullName, private: repo.private, visibility: repo.visibility,
     installationId: repo.installationId, defaultBranch: repo.defaultBranch,
     htmlUrl: repo.htmlUrl, addedBy: user.id,
   }, Date.now())
@@ -2298,6 +2299,52 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true })
 }
 
+// The team's repositories whose content its links open to anyone although they
+// aren't public, as GitHub has them now: a visibility recorded at selection can
+// change since. GitHub's answer is recorded, and a repository checked in the
+// last few minutes, by this or another live check, isn't asked about again:
+// the dialog lists again after every change. One selected public without the
+// App is read with the user's token, keeping off the shared anonymous limit. A
+// repository GitHub doesn't answer for keeps its recorded privacy, or recorded
+// public, may not be public any more (visibility null). Internal ones are
+// private, named as internal.
+const VISIBILITY_RECHECK_MS = 10 * 60_000
+async function workspacePrivateRepositories(deps: ManagedHttpDeps, sessionId: string, userId: string, now: number, teamId: string): Promise<{ fullName: string; visibility: 'private' | 'internal' | null }[]> {
+  const repositories = await deps.db.listWorkspaceRepositories(sessionId, now, teamId) ?? []
+  const checked = new Map((await deps.db.listGithubRepositoryVisibility(repositories.map(repo => repo.repoId)))
+    .filter(entry => entry.checkedAt > now - VISIBILITY_RECHECK_MS).map(entry => [entry.repoId, entry]))
+  const recent = (repo: WorkspaceRepository) => checked.get(repo.repoId)?.github.toLowerCase() === repo.fullName.toLowerCase()
+  const stale = repositories.filter(repo => !recent(repo))
+  const userToken = stale.some(repo => repo.installationId == null) ? await ensureUserAccessToken(deps.config, deps.db, userId, now) : null
+  const answers = new Map<number, NonNullable<WorkspaceRepository['visibility']>>()
+  await mapGithubRequests(stale, async repo => {
+    try {
+      const visibility = await selectedRepositoryVisibility(deps.config, repo, userToken)
+      if (visibility) answers.set(repo.repoId, visibility)
+    } catch (err) { if (!(err instanceof GithubApiError)) throw err }
+  })
+  await deps.db.setGithubRepositoryVisibility(stale.filter(repo => answers.has(repo.repoId))
+    .map(repo => ({ repoId: repo.repoId, github: repo.fullName, public: answers.get(repo.repoId) === 'public', checkedAt: now })))
+  // A recent check says only whether it's public: what isn't keeps a recorded
+  // internal visibility.
+  const current = (repo: WorkspaceRepository): WorkspaceRepository['visibility'] => {
+    const answer = answers.get(repo.repoId)
+    if (answer) return answer
+    if (!recent(repo)) return null
+    return checked.get(repo.repoId)!.public ? 'public' : repo.visibility === 'internal' ? 'internal' : 'private'
+  }
+  const warned: { fullName: string; visibility: 'private' | 'internal' | null }[] = []
+  for (const repo of repositories) {
+    const visibility = current(repo)
+    const answer = answers.get(repo.repoId)
+    if (answer) await deps.db.recordRepoVisibility(repo, answer)
+    if (visibility ? visibility !== 'public' : repo.private) {
+      warned.push({ fullName: repo.fullName, visibility: (visibility ?? repo.visibility) === 'internal' ? 'internal' : 'private' })
+    } else if (!visibility) warned.push({ fullName: repo.fullName, visibility: null })
+  }
+  return warned
+}
+
 async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string, id?: string) {
   if (!deps.config.allowShare) { sendJson(res, 404, { error: 'sharing-disabled' }); return }
   const method = req.method ?? 'GET'
@@ -2308,8 +2355,10 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
   if (!requireManageRole(res, s.user)) return
   const { db } = deps
   if (method === 'GET') {
-    const shares = await db.listWorkspaceShares(s.session.id, Date.now(), teamId)
-    sendJson(res, shares ? 200 : 404, shares ? { shares } : { error: 'no-team' }); return
+    const now = Date.now()
+    const shares = await db.listWorkspaceShares(s.session.id, now, teamId)
+    if (!shares) { sendJson(res, 404, { error: 'no-team' }); return }
+    sendJson(res, 200, { shares, privateRepositories: await workspacePrivateRepositories(deps, s.session.id, s.user.id, now, teamId) }); return
   }
   let body
   if (method === 'POST' || method === 'PATCH') {

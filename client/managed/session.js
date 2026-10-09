@@ -327,10 +327,13 @@ export async function stopViewing(csrfToken) {
   location.assign(MANAGED_PAGES['admin-users'])
 }
 
+// A team's public links, and the private repositories in its scope that they
+// open to anyone.
 export async function listWorkspaceShares(teamId) {
   const response = await managedFetch(`/api/teams/${encodeURIComponent(teamId)}/share`, { credentials: 'same-origin' })
   if (!response.ok) throw new Error(`Could not load public links (${response.status})`)
-  return (await response.json()).shares
+  const { shares, privateRepositories = [] } = await response.json()
+  return { shares, privateRepositories }
 }
 
 export async function changeWorkspaceShare(teamId, csrfToken, { id, revoke = false, dependencies = false, security = false } = {}) {

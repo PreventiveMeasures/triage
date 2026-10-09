@@ -292,6 +292,32 @@ test('Postgres upgrades and persists nullable repository default caches without 
   assert.equal((await reopened.listSelectedRepos())[0].cachedDefaultBranch, null)
 })
 
+test('Postgres upgrades repositories to record their visibility, internal ones stored as private', async t => {
+  const { db, connect } = await database(t)
+  const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: null }
+  await db.selectRepo(repo, 1)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_selected_repo DROP COLUMN visibility; DELETE FROM managed_schema_version WHERE version = 25;') }
+  finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  let [stored] = await upgraded.listSelectedRepos()
+  assert.deepEqual([stored.private, stored.visibility], [false, null], 'a repository selected before stays unrecorded')
+  assert.equal(await upgraded.recordRepoVisibility({ repoId: 1, fullName: 'org/renamed' }, 'internal'), false, 'not under another name')
+  assert.equal(await upgraded.recordRepoVisibility(repo, 'internal'), true)
+  ;[stored] = await upgraded.listSelectedRepos()
+  assert.deepEqual([stored.private, stored.visibility], [true, 'internal'])
+  assert.equal(await upgraded.recordRepoVisibility(repo, 'internal'), false, 'an unchanged visibility is not written')
+  assert.equal(await upgraded.recordRepoVisibility(repo, 'public'), true)
+  ;[stored] = await upgraded.listSelectedRepos()
+  assert.deepEqual([stored.private, stored.visibility], [false, 'public'], 'public clears the private flag')
+  await upgraded.selectRepo({ ...repo, visibility: 'public' }, 2)
+  await upgraded.selectRepo({ ...repo, visibility: 'internal' }, 3)
+  ;[stored] = await upgraded.listSelectedRepos()
+  assert.deepEqual([stored.private, stored.visibility], [true, 'internal'])
+})
+
 test('Postgres management catalogs preserve permission and linked-bundle filtering', async t => {
   const { db } = await database(t)
   await checkManagementCatalog(db)

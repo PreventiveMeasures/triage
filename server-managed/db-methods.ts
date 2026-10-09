@@ -85,7 +85,10 @@ export interface ManagedViewer {
 export interface SelectedRepo {
   repoId: number
   fullName: string
+  // Private to its owners, or to its enterprise where `visibility` is
+  // 'internal': GitHub's visibility at selection, null where unrecorded.
   private: boolean
+  visibility: 'public' | 'private' | 'internal' | null
   installationId: number | null
   defaultBranch: string
   // Last live default observed by the repository browser, independent of the
@@ -105,7 +108,7 @@ export interface ManagedRepo extends SelectedRepo {
 
 // What a caller supplies to select (upsert) a repo; the store stamps the
 // timestamps.
-export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt' | 'cachedDefaultBranch'>
+export type SelectedRepoInput = Omit<SelectedRepo, 'addedAt' | 'cachedDefaultBranch' | 'visibility'> & { visibility?: SelectedRepo['visibility'] }
 
 // A stored report's metadata. The bytes live in the blob-store keyed by `id`;
 // `contentType` + `filename` ride here so a download can label them, `sha256`
@@ -398,6 +401,10 @@ export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataSt
   // mutable context while keeping the original added_by/added_at; deselectRepo
   // resolves true iff a row was removed.
   selectRepo(repo: SelectedRepoInput, now: number): Promise<void>
+  // Record a selected repo's visibility as GitHub has it now, unless it was
+  // renamed since: private or internal makes it private, public not. True when
+  // that changed what was recorded; an unchanged row isn't written.
+  recordRepoVisibility(repo: { repoId: number; fullName: string }, visibility: NonNullable<SelectedRepo['visibility']>): Promise<boolean>
   cacheRepoDefaultBranch(repo: SelectedRepo, branch: string | null): Promise<boolean>
   connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean>
   deselectRepo(repoId: number): Promise<boolean>
@@ -642,10 +649,10 @@ function prepareStatements(db: ManagedSql) {
     deleteSessionStmt: db.prepare(`DELETE FROM managed_session WHERE id = ?`),
     deleteExpiredStmt: db.prepare(`DELETE FROM managed_session WHERE expires_at <= ?`),
     upsertRepoStmt: db.prepare(
-      `INSERT INTO managed_selected_repo (repo_id, full_name, is_private, installation_id, default_branch, html_url, added_by, added_at, updated_at, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      `INSERT INTO managed_selected_repo (repo_id, full_name, is_private, visibility, installation_id, default_branch, html_url, added_by, added_at, updated_at, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
        ON CONFLICT(repo_id) DO UPDATE SET
-         full_name = excluded.full_name, is_private = excluded.is_private,
+         full_name = excluded.full_name, is_private = excluded.is_private, visibility = excluded.visibility,
          installation_id = excluded.installation_id, default_branch = excluded.default_branch,
          html_url = excluded.html_url, updated_at = excluded.updated_at, active = 1`,
     ),
@@ -655,6 +662,8 @@ function prepareStatements(db: ManagedSql) {
       WHERE repo_id = ? AND full_name = ? AND added_at = ? AND installation_id IS NULL
         AND EXISTS (SELECT 1 FROM managed_session s JOIN managed_user u ON u.id = s.user_id
           WHERE s.id = ? AND s.expires_at > ? AND u.role = 'admin')`),
+    recordRepoVisibilityStmt: db.prepare(`UPDATE managed_selected_repo SET visibility = ?, is_private = ?
+      WHERE repo_id = ? AND full_name = ? AND (visibility IS NULL OR visibility <> ? OR is_private <> ?)`),
     cacheRepoDefaultBranchStmt: db.prepare(`UPDATE managed_selected_repo SET cached_default_branch = ?
       WHERE repo_id = ? AND full_name = ? AND added_at = ? AND active = 1`),
     deleteRepoStmt: db.prepare(`DELETE FROM managed_selected_repo WHERE repo_id = ?`),
@@ -673,13 +682,13 @@ function prepareStatements(db: ManagedSql) {
       UNION SELECT finding_id FROM managed_finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
       UNION SELECT finding_id FROM managed_finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))) AS annotations`),
     selectReposStmt: db.prepare(
-      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
+      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv, visibility,
               installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
               added_by AS addedBy, added_at AS addedAt, active AS active
          FROM managed_selected_repo WHERE active = 1 ORDER BY full_name ASC`,
     ),
     selectAllReposStmt: db.prepare(
-      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
+      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv, visibility,
               installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
               added_by AS addedBy, added_at AS addedAt, active AS active
          FROM managed_selected_repo ORDER BY full_name ASC`,
@@ -1009,7 +1018,7 @@ function prepareStatements(db: ManagedSql) {
 }
 
 type RepoRow = {
-  repoId: number; fullName: string; priv: number; installId: number | null
+  repoId: number; fullName: string; priv: number; visibility: SelectedRepo['visibility']; installId: number | null
   branch: string; cachedDefaultBranch: string | null; htmlUrl: string; addedBy: string | null; addedAt: number; active: number
 }
 
@@ -1019,7 +1028,7 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
   const { upsertRepoStmt, deleteRepoStmt, deactivateRepoStmt, reactivateRepoStmt, selectReposStmt, selectAllReposStmt,
     selectReportsForRepoStmt, selectBundlesForRepoStmt, deleteReportsForRepoStmt, deleteBundlesForRepoStmt } = stmts
   const readRepo = (r: RepoRow): SelectedRepo => ({
-    repoId: r.repoId, fullName: r.fullName, private: r.priv === 1,
+    repoId: r.repoId, fullName: r.fullName, private: r.priv === 1, visibility: r.visibility ?? null,
     installationId: r.installId, defaultBranch: r.branch, cachedDefaultBranch: r.cachedDefaultBranch, htmlUrl: r.htmlUrl,
     addedBy: r.addedBy, addedAt: r.addedAt,
   })
@@ -1027,9 +1036,13 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
   return {
     async selectRepo(repo: SelectedRepoInput, now: number): Promise<void> {
       await upsertRepoStmt.run(
-        repo.repoId, repo.fullName, repo.private ? 1 : 0, repo.installationId,
+        repo.repoId, repo.fullName, repo.private || repo.visibility === 'internal' ? 1 : 0, repo.visibility ?? null, repo.installationId,
         repo.defaultBranch, repo.htmlUrl, repo.addedBy, now, now,
       )
+    },
+    async recordRepoVisibility(repo: { repoId: number; fullName: string }, visibility: NonNullable<SelectedRepo['visibility']>): Promise<boolean> {
+      const flag = visibility === 'public' ? 0 : 1
+      return Number((await stmts.recordRepoVisibilityStmt.run(visibility, flag, repo.repoId, repo.fullName, visibility, flag)).changes) > 0
     },
     async cacheRepoDefaultBranch(repo: SelectedRepo, branch: string | null): Promise<boolean> {
       return Number((await stmts.cacheRepoDefaultBranchStmt.run(branch, repo.repoId, repo.fullName, repo.addedAt)).changes) > 0

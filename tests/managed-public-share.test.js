@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { generateKeyPairSync } from 'node:crypto'
 import { Readable, Writable } from 'node:stream'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createSession } from '../server-managed/session.ts'
@@ -88,6 +89,88 @@ test('directory team links include bundles at or below their scope and immediate
   for (const suffix of ['metadata', 'contents', 'download', 'advisories']) {
     assert.equal((await h.request(`/api/bundles/bundle/${suffix}`, { token })).status, 404)
   }
+})
+
+test('link listings name the private repositories in the team\'s scope for its managers, as recorded where GitHub can\'t say', async t => {
+  const h = await fixture(t)
+  t.mock.method(globalThis, 'fetch', () => new Response('unavailable', { status: 503 }))
+  const listing = (team, role = 'manage') => h.request(`/api/teams/${team}/share`, { role })
+  const repo = (repoId, fields) => h.db.selectRepo({ repoId, fullName: `org/repo${repoId}`, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId, ...fields }, Date.now())
+  const repo1 = { fullName: 'org/repo1', visibility: 'private' }, repo2 = { fullName: 'org/repo2', visibility: 'private' }
+  assert.deepEqual((await listing('team')).body, { shares: [], privateRepositories: [repo1] }, 'a directory scope names its whole repository')
+  assert.deepEqual((await listing('other', 'admin')).body.privateRepositories, [repo2])
+  await h.db.setTeamRepo('team', 2, '')
+  assert.deepEqual((await listing('team')).body.privateRepositories, [repo1, repo2])
+  // GitHub calls an internal repository not private; it is stored as private all the same.
+  await repo(2, { private: false, visibility: 'internal' })
+  assert.equal((await h.db.listAllRepos()).find(entry => entry.repoId === 2).private, true)
+  assert.deepEqual((await listing('team')).body.privateRepositories, [repo1, { ...repo2, visibility: 'internal' }])
+  await repo(1, { private: false, visibility: 'public' })
+  assert.deepEqual((await listing('team')).body.privateRepositories, [{ ...repo1, visibility: null }, { ...repo2, visibility: 'internal' }],
+    'one recorded public that GitHub can\'t confirm may not be public any more')
+  for (const role of ['triage', 'view', 'none', 'outsider']) {
+    const response = await listing('other', role)
+    assert.notEqual(response.status, 200, role)
+    assert.equal(response.body.privateRepositories, undefined, role)
+  }
+})
+
+test('link listings check each repository with GitHub and record what changed', async t => {
+  const h = await fixture(t)
+  Object.assign(h.config, { githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) })
+  const recorded = {
+    1: { private: false, installationId: 7 }, // selected through the App before visibility was recorded
+    2: { private: false, visibility: 'public', installationId: 7 },
+    3: { private: true, installationId: 7 }, // GitHub's private flag alone
+    4: { private: false, visibility: 'public', installationId: null }, // selected public without the App
+    5: { private: false, visibility: 'public', installationId: null },
+    6: { private: false, visibility: 'public', installationId: 7 },
+  }
+  const now = { 1: 'internal', 2: 'private', 3: 'public', 4: 404, 5: 'public', 6: 503 }
+  await h.db.createTeam('many', 'many', Date.now())
+  await h.db.setTeamMember('many', h.sessions.manage.userId, { dependencies: true, security: true })
+  for (const [repoId, fields] of Object.entries(recorded)) {
+    await h.db.selectRepo({ repoId: +repoId, fullName: `org/repo${repoId}`, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId, ...fields }, Date.now())
+    await h.db.setTeamRepo('many', +repoId, '')
+  }
+  const requests = [], start = Date.now()
+  let elapsed = 0
+  t.mock.method(Date, 'now', () => start + elapsed)
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    const path = new URL(url).pathname
+    if (path === '/app/installations/7/access_tokens') return Response.json({ token: 'installation', expires_at: new Date(Date.now() + 3600000).toISOString() })
+    const repoId = +path.at(-1)
+    const answer = now[repoId]
+    requests.push([repoId, init.headers.authorization ?? null])
+    return typeof answer === 'number' ? new Response('', { status: answer }) : Response.json({ id: repoId, private: answer !== 'public', visibility: answer })
+  })
+  const record = h.db.recordRepoVisibility
+  let writes = 0
+  h.db.recordRepoVisibility = async (...args) => { const changed = await record.apply(h.db, args); writes += changed ? 1 : 0; return changed }
+  const listing = async () => (await h.request('/api/teams/many/share', { role: 'manage' })).body.privateRepositories
+  const expected = [{ fullName: 'org/repo1', visibility: 'internal' }, { fullName: 'org/repo2', visibility: 'private' },
+    { fullName: 'org/repo4', visibility: null }, { fullName: 'org/repo6', visibility: null }]
+  assert.deepEqual(await listing(), expected, 'now internal or private; no longer readable publicly, or unanswered, may not be public')
+  assert.deepEqual((await h.db.listAllRepos()).filter(repo => repo.repoId in recorded).map(repo => [repo.repoId, repo.private, repo.visibility]),
+    [[1, true, 'internal'], [2, true, 'private'], [3, false, 'public'], [4, false, 'public'], [5, false, 'public'], [6, false, 'public']],
+    'what GitHub says is recorded both ways; what it does not answer is kept')
+  assert.equal(writes, 3)
+  const asked = from => requests.slice(from).toSorted(([a], [b]) => a - b)
+  assert.deepEqual(asked(0), [[1, 'Bearer installation'], [2, 'Bearer installation'], [3, 'Bearer installation'], [4, null], [5, null], [6, 'Bearer installation']],
+    'without a token of the manager\'s, repositories selected without the App are read without credentials')
+  assert.deepEqual(await listing(), expected)
+  assert.deepEqual(asked(6), [[4, null], [6, 'Bearer installation']], 'listing again soon asks only about what went unanswered')
+  await h.db.setUserTokens(h.sessions.manage.userId, { accessToken: 'gho_manager', refreshToken: null, expiresAt: null })
+  elapsed = 11 * 60_000
+  assert.deepEqual(await listing(), expected)
+  assert.deepEqual(asked(8), [[1, 'Bearer installation'], [2, 'Bearer installation'], [3, 'Bearer installation'], [4, 'Bearer gho_manager'], [5, 'Bearer gho_manager'], [6, 'Bearer installation']],
+    'minutes later every repository is asked about again, with the manager\'s token where there is no App')
+  assert.equal(writes, 3, 'an unchanged visibility is not written again')
+  // Another live check finding a repository no longer public counts as recent.
+  await h.db.setGithubRepositoryVisibility([{ repoId: 5, github: 'org/repo5', public: false, checkedAt: start + 12 * 60_000 }])
+  elapsed = 13 * 60_000
+  assert.deepEqual(await listing(), [...expected.slice(0, 3), { fullName: 'org/repo5', visibility: 'private' }, expected[3]])
+  assert.deepEqual(asked(14), [[4, 'Bearer gho_manager'], [6, 'Bearer installation']])
 })
 
 test('public sharing is opt-in, requires team management and CSRF; the token is not a login session', async t => {

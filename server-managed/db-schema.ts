@@ -49,11 +49,14 @@ CREATE INDEX IF NOT EXISTS managed_session_expires_idx ON managed_session(expire
 -- (Contents: Read) for PRIVATE repos — NULL means a PUBLIC repo readable without
 -- the App — and full_name + default_branch locate the contents. added_by is the
 -- selector, nulled (not cascaded) if that user is removed so the selection
--- survives.
+-- survives. visibility is GitHub's at selection ('public', 'private' or
+-- 'internal'; NULL where it went unrecorded): an internal repo is private to
+-- its enterprise, so is_private holds for it too.
 CREATE TABLE IF NOT EXISTS managed_selected_repo (
   repo_id         INTEGER PRIMARY KEY,
   full_name       TEXT NOT NULL,
   is_private      INTEGER NOT NULL,
+  visibility      TEXT,
   installation_id INTEGER,
   default_branch  TEXT NOT NULL,
   -- Live browser hint; independent of the default discovered at selection.
