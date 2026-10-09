@@ -221,3 +221,19 @@ test('packages list Removed | Added | Changed, each package once with its versio
   rows.changed.push({ pkg: 'axios', baseBytes: 5, otherBytes: 15, delta: 10, baseVersions: [], otherVersions: [], direction: null })
   assert.deepEqual(changedOrder(), ['Own source', 'axios', 'lodash', 'react'], 'the largest change first, name breaking ties')
 })
+
+test('a package installed under an npm alias keeps one row, its versions joined to its sizes', () => {
+  const side = (integrity, version, code) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'app' } }],
+      ['node_modules/alias', { name: 'actual-package', version, files: { 'index.js': code } }]]),
+  }) })
+  const view = compare()
+  view.details = side('base', '1.0.0', 'one')
+  view._otherDetails = side('other', '1.1.0', 'one, two')
+  view._diffKey = null
+  const { packageRows } = view._diffFor()
+  assert.deepEqual(packageRows.removed, [])
+  assert.deepEqual(packageRows.added, [])
+  assert.deepEqual(packageRows.changed, [{ pkg: 'alias', baseBytes: 3, otherBytes: 8, delta: 5,
+    baseVersions: ['1.0.0'], otherVersions: ['1.1.0'], direction: 'up' }])
+})

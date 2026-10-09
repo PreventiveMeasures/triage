@@ -456,8 +456,10 @@ class BundleCompare extends LitElement {
       // join them to the sizes, the summary counts them. Empty for
       // sourcemap / v0 pairs (no version metadata), whose rows carry sizes
       // alone.
-      const baseVersions = bundlePackageVersions(this.details, this._scope ? baseSources.keys() : null)
-      const otherVersions = bundlePackageVersions(this._otherDetails, this._scope ? otherSources.keys() : null)
+      // Keyed by install directory, as the sizes are (`bundlePkgOf`).
+      const versionKey = dir => bundlePkgOf('', { packageDir: dir })
+      const baseVersions = bundlePackageVersions(this.details, this._scope ? baseSources.keys() : null, versionKey)
+      const otherVersions = bundlePackageVersions(this._otherDetails, this._scope ? otherSources.keys() : null, versionKey)
       this._diff.versionUpdates = computeVersionUpdates(baseVersions, otherVersions)
       this._diff.packageRows = comparePackages(this._diff.packages, baseVersions, otherVersions)
       this._diffKey = key
