@@ -39,7 +39,19 @@ const FORMAT_TO_LANG = {
   'podfile-lock': 'yaml', xml: 'markup',
 }
 
-export function langForPath(path, format) {
+// Whether a text is a JSON object by its ends: `{` first and `}` last,
+// whitespace aside. Read from both ends, never the whole of a large file.
+function objectText(content) {
+  if (typeof content !== 'string') return false
+  let end = content.length - 1, start = 0
+  while (start < end && /\s/u.test(content[start])) start++
+  while (end > start && /\s/u.test(content[end])) end--
+  return start < end && content[start] === '{' && content[end] === '}'
+}
+
+// `content`, where the caller has it, settles what the name alone cannot: a
+// `.map` file is a source map, JSON, when its text is an object.
+export function langForPath(path, format, content) {
   if (typeof format === 'string' && FORMAT_TO_LANG[format]) return FORMAT_TO_LANG[format]
   if (typeof path !== 'string') return null
   // Only the filename can contribute an extension. A dotted directory such
@@ -47,5 +59,7 @@ export function langForPath(path, format) {
   const basename = path.slice(path.lastIndexOf('/') + 1)
   const dot = basename.lastIndexOf('.')
   if (dot <= 0) return null
-  return EXT_TO_LANG[basename.slice(dot + 1).toLowerCase()] ?? null
+  const ext = basename.slice(dot + 1).toLowerCase()
+  if (ext === 'map') return objectText(content) ? 'json' : null
+  return EXT_TO_LANG[ext] ?? null
 }

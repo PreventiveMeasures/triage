@@ -30,7 +30,7 @@ const managedLoads = new Set()
 function kickHighlight(integrity, file, content, format, resolveString, cache = highlightCache, pending = highlightPending) {
   const key = `${integrity}\0${file}`
   if (cache.has(key) || pending.has(key)) return
-  const lang = langForPath(file, format)
+  const lang = langForPath(file, format, content)
   if (!lang) {
     cache.set(key, null)
     return

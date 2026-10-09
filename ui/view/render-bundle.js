@@ -724,7 +724,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
   const targetLine = target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
   const targetEnd = targetLine == null ? null : Math.max(target.end ?? targetLine, targetLine)
   const digits = String(lineCount).length
-  const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
+  const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined, content)
   const cacheKey = `${details?.integrity ?? ''}\0${path}`
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
