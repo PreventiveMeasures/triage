@@ -647,9 +647,9 @@ export const state: State = store<State>({
   // Managed Code can mark a range, `line` to `end`, from a shift-click
   // that extends it from `anchor`, the line clicked first.
   bundleSourceTargetLine: null,
-  // Whether the source viewer wraps long lines. A reading preference,
-  // persisted like kanbanDetailFullscreen.
-  bundleSourceWrap: readSavedBundleSourceWrap() ?? false,
+  // Whether the source viewer wraps long lines: on unless turned off. A
+  // reading preference, persisted like kanbanDetailFullscreen.
+  bundleSourceWrap: readSavedBundleSourceWrap() ?? true,
   // The file a managed link opens the Code tab on, by its 1-based number in
   // the bundle's sorted sources, and the lines it marks. Kept until the tab
   // has the sources to read it from, and dropped with any other bundle or
