@@ -161,6 +161,25 @@ test('dependency findings do not block a later automatic update to own-file find
   assert.equal(state.bundleSourceFile, 'src/issue.js')
 })
 
+test('a file open in the last bundle opens where this one has the same path, or the usual pick does', () => {
+  findings('src/main.js', ['low'])
+  for (const [carried, opened] of [['node_modules/dep/index.js', 'node_modules/dep/index.js'], ['src/gone.js', 'src/main.js']]) {
+    state.bundleSourceFile = null
+    state.bundleCodeFileRequest = { bundle: `sha512-code-${bundleId + 1}`, path: carried }
+    openBundle(stasis({ 'src/main.js': 'own' }, { 'index.js': 'dep' }, ['src/main.js']))
+    assert.equal(state.bundleSourceFile, opened)
+    assert.equal(state.bundleCodeFileRequest, null)
+  }
+  // Findings arriving later don't swap it for theirs, as they would the usual pick.
+  findingsByHash.clear()
+  state.bundleSourceFile = null
+  state.bundleCodeFileRequest = { bundle: `sha512-code-${bundleId + 1}`, path: 'node_modules/dep/index.js' }
+  const render = openBundle(stasis({ 'src/main.js': 'own' }, { 'index.js': 'dep' }, ['src/main.js']))
+  findings('src/main.js', ['high'])
+  render()
+  assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js')
+})
+
 test('findings arriving after a manual selection keep the selected file', () => {
   const render = openBundle(stasis({ 'src/entry.js': 'entry', 'src/issue.js': 'issue' }, { 'index.js': 'dep' }, ['src/entry.js']))
   state.bundleSourceFile = 'node_modules/dep/index.js'

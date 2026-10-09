@@ -134,7 +134,9 @@ export interface State {
   bundleSourceFindingIdx: number | null
   bundleSourceTargetLine: { bundle: string | null; path: string; line: number; end?: number; anchor?: number } | null
   bundleSourceWrap: boolean
-  bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | null
+  // A file for the Code tab to open once its sources load: a link's, by
+  // number, or the one open in the bundle before, by path.
+  bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
   bundleOverviewFilesSort: 'name' | 'size'
   bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
