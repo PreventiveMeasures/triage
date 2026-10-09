@@ -681,6 +681,48 @@ function _topSeverityOf(findings) {
   return findings[0]?.severity ?? null
 }
 
+// Plain text for the source viewer, as Chromium can show it. It paints
+// none of a run of text over 2^21 characters, so the text goes in as text
+// nodes of at most 2^20, one line still where it spans several. It lays out
+// nothing wider than 2^25px either: at the viewer's ch of about 7.5px, two
+// for a tab or a wide glyph, a line over 2^25 / 15 characters may not fit,
+// so it wraps whether the viewer wraps lines or not, in a block of its own
+// (see `.bundle-source-long-line`). Highlighted sources, 1 MiB at most, have
+// no line that long.
+const TEXT_NODE_MAX = 2 ** 20
+const LONG_LINE = Math.floor(2 ** 25 / 15)
+let _plainSource = { content: '', parts: '' }
+function plainSource(content) {
+  if (content.length <= TEXT_NODE_MAX) return content
+  if (_plainSource.content === content) return _plainSource.parts
+  const parts = []
+  let plain = 0
+  for (let from = 0; from < content.length;) {
+    const at = content.indexOf('\n', from)
+    const end = at === -1 ? content.length : at + 1
+    if ((at === -1 ? end : at) - from > LONG_LINE) {
+      parts.push(...textNodes(content.slice(plain, from)), html`<span class="bundle-source-long-line">${textNodes(content.slice(from, end))}</span>`)
+      plain = end
+    }
+    from = end
+  }
+  parts.push(...textNodes(content.slice(plain)))
+  _plainSource = { content, parts }
+  return parts
+}
+
+// Text as nodes of at most TEXT_NODE_MAX characters, a surrogate pair in one.
+function textNodes(text) {
+  const nodes = []
+  for (let from = 0; from < text.length;) {
+    let to = Math.min(from + TEXT_NODE_MAX, text.length)
+    if (to < text.length && text.codePointAt(to - 1) > 0xffff) to--
+    nodes.push(text.slice(from, to))
+    from = to
+  }
+  return nodes
+}
+
 // Per-line rendering for the source viewer. Renders a sticky
 // gutter (one row per line) next to a single `<pre>` holding the
 // full source. Two columns rather than per-line interleaving so
@@ -745,7 +787,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
     </aside>
     <pre class="bundle-source-code" tabindex="-1" aria-label=${path}><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
-      : content}</code></pre>
+      : plainSource(content)}</code></pre>
   </div>`
 }
 

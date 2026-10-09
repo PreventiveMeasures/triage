@@ -196,6 +196,34 @@ test('the source popup shows loading through a cold open and metadata upgrade, t
   assert.doesNotMatch(markup, /Loading source|Source content not bundled/u)
 })
 
+test('plain sources stay in text nodes Chromium paints, and a line too wide to lay out wraps in a block of its own', () => {
+  // The source as the popup's `<code>` holds it, and its text nodes.
+  const code = content => {
+    state.bundleDetails = { kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent: [content] } }
+    return templates(renderBundleSourceModal()).find(t => t.strings.at(-1).includes('</code></pre>')).values.at(-1)
+  }
+  const textNodes = value => Array.isArray(value) ? value.flatMap(textNodes) : value?.strings ? textNodes(value.values) : [value]
+  const small = 'x'.repeat(2 ** 20)
+  assert.ok(code(small) === small, 'a source of up to 2^20 characters stays one text node')
+  // A line past the 2^21 characters Chromium paints in one run, with an
+  // emoji across the first 2^20, and a line past 2^25 / 15 characters.
+  const first = 'const short = 1\n'
+  const painted = `${'a'.repeat(2 ** 20 - first.length - 1)}😀${'b'.repeat(1_100_000)}\n`
+  const wide = `${'c'.repeat(Math.floor(2 ** 25 / 15) + 1)}\n`
+  const content = `${first}${painted}${wide}const tail = 2`
+  const parts = code(content)
+  const nodes = textNodes(parts)
+  assert.ok(nodes.join('') === content, 'the text nodes hold the source')
+  assert.ok(nodes.every(node => node.length <= 2 ** 20), 'no text node over 2^20 characters')
+  assert.ok(nodes.some(node => node.startsWith('😀')), 'a surrogate pair stays in one text node')
+  const blocks = parts.filter(part => typeof part !== 'string')
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0].strings.join(''), '<span class="bundle-source-long-line"></span>')
+  assert.ok(textNodes(blocks[0]).join('') === wide, 'the block holds the line and its line break')
+  // A line of 2^25 / 15 characters fits.
+  assert.ok(code(`${first}${wide.slice(1)}`).every(part => typeof part === 'string'))
+})
+
 test('only a loaded bundle without the file content shows the missing-source message', () => {
   for (const sourcesContent of [[], [null]]) {
     state.bundleDetails = { kind: 'sourcemap', json: { sources: ['src/main.js'], sourcesContent } }

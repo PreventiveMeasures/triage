@@ -2500,6 +2500,15 @@ body.report-fullscreen {
   & .bundle-source-lineno-row { align-items: flex-start; }
   & :is(.bundle-source-dot, .bundle-source-dot-placeholder) { font: inherit; margin-top: calc((1lh - .65rem) / 2); }
 }
+/* A line too long to lay out unwrapped (see render-bundle.js plainSource)
+   wraps either way, at the code's width. It takes no width of its own, so
+   the other lines still set that width. */
+.bundle-source-long-line {
+  display: block;
+  contain: inline-size;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* Search-matched line — tint the gutter row + accent the number so
    hits stand out while scrolling the full file in the Search
    sidebar, the way finding lines carry a gutter dot. */
