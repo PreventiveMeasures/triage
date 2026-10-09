@@ -10,7 +10,7 @@ import { setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmFileText, npmTarballFilename, readNpmTar } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -338,6 +338,21 @@ test('reads of a version share its load and its encoded body, and four load at o
     tarballSize: pkgs[0].tgz.length, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]] })
   await Promise.all(others)
   assert.deepEqual(Buffer.from(await loadNpmTarball(version(pkgs[4]))), pkgs[4].tgz, 'a place frees once its body is done')
+})
+
+test('registry documents read at once are held to a budget: four version lists, or their bytes in versions', async t => {
+  const pkgs = ['a', 'b', 'c', 'd', 'e'].map(name => packageOf(`listed-${name}`, '1.0.0', { 'index.js': '' }))
+  registry(t, pkgs)
+  // The registry answers once released, holding the reads in flight meanwhile.
+  const answer = globalThis.fetch, gate = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', (input, init) => gate.promise.then(() => answer(input, init)))
+  const { signal } = new AbortController()
+  const lists = pkgs.slice(0, 4).map(pkg => readNpmVersions(pkg.doc.name, false, signal))
+  await assert.rejects(readNpmVersions('listed-e', false, signal), /npm-busy/u)
+  await assert.rejects(readNpmVersion('listed-e', '1.0.0', false, signal), /npm-busy/u, 'version documents count among them')
+  gate.resolve()
+  assert.deepEqual((await Promise.all(lists)).map(list => list.versions), [['1.0.0'], ['1.0.0'], ['1.0.0'], ['1.0.0']])
+  assert.equal((await readNpmVersion('listed-e', '1.0.0', false, signal)).version, '1.0.0', 'a read frees its bytes once done')
 })
 
 test('team npm scopes are admin-only, normalized, listed with teams and recorded', async t => {

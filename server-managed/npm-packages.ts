@@ -24,6 +24,9 @@ const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
 // Abbreviated packuments of packages with thousands of versions run to tens of MiB.
 const PACKUMENT_BYTES = 64 * 1024 * 1024
 const REGISTRY_TIMEOUT_MS = 30_000
+// What registry documents being read at once may hold, each counted at its
+// limit until it is read and parsed: four packuments, or 32 version documents.
+const MAX_DOCUMENT_BYTES = 4 * PACKUMENT_BYTES
 // What a package may unpack to: the files' bytes, their count, and the tar
 // stream holding them, headers and padding included.
 export const MAX_NPM_PACKAGE_BYTES = 64 * 1024 * 1024
@@ -111,6 +114,14 @@ async function readDocument(name: string, url: string, privileged: boolean, opti
   return json ? { json, private: true } : null
 }
 
+let documentBytes = 0
+
+async function withDocumentBudget<T>(limit: number, read: () => Promise<T>): Promise<T> {
+  if (documentBytes + limit > MAX_DOCUMENT_BYTES) throw new NpmPackageError(429, 'npm-busy')
+  documentBytes += limit
+  try { return await read() } finally { documentBytes -= limit }
+}
+
 export interface NpmVersionDocument {
   name: string
   version: string
@@ -155,32 +166,36 @@ const count = (value: unknown) => Number.isSafeInteger(value) && (value as numbe
 
 // The version a spec names, a dist-tag resolved by the registry, with its
 // dist. Null where the registry has none for this reader.
-export async function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal): Promise<NpmVersionDocument | null> {
-  if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) throw new NpmPackageError(400, 'bad-package')
-  const found = await readDocument(name, registryUrl(name, spec), privileged, { accept: 'application/json', limit: VERSION_DOCUMENT_BYTES, signal })
-  if (!found) return null
-  const { json } = found
-  const dist = json['dist']
-  if (json['name'] !== name || typeof json['version'] !== 'string' || !isNpmPackageSpec(json['version']) || !plainObject(dist)
-      || typeof dist['tarball'] !== 'string' || typeof dist['integrity'] !== 'string') throw new NpmPackageError(502, 'upstream-invalid')
-  return {
-    name, version: json['version'], private: found.private,
-    dist: { tarball: dist['tarball'], integrity: dist['integrity'], unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
-    manifest: manifestOf(json),
-  }
+export function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal): Promise<NpmVersionDocument | null> {
+  if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
+  return withDocumentBudget(VERSION_DOCUMENT_BYTES, async () => {
+    const found = await readDocument(name, registryUrl(name, spec), privileged, { accept: 'application/json', limit: VERSION_DOCUMENT_BYTES, signal })
+    if (!found) return null
+    const { json } = found
+    const dist = json['dist']
+    if (json['name'] !== name || typeof json['version'] !== 'string' || !isNpmPackageSpec(json['version']) || !plainObject(dist)
+        || typeof dist['tarball'] !== 'string' || typeof dist['integrity'] !== 'string') throw new NpmPackageError(502, 'upstream-invalid')
+    return {
+      name, version: json['version'], private: found.private,
+      dist: { tarball: dist['tarball'], integrity: dist['integrity'], unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
+      manifest: manifestOf(json),
+    }
+  })
 }
 
 // The package's dist-tags and versions, newest published first, from its
 // abbreviated document. Null where the registry has none for this reader.
-export async function readNpmVersions(name: string, privileged: boolean, signal: AbortSignal) {
-  if (!isNpmPackageName(name)) throw new NpmPackageError(400, 'bad-package')
-  const found = await readDocument(name, registryUrl(name), privileged, { accept: 'application/vnd.npm.install-v1+json', limit: PACKUMENT_BYTES, signal })
-  if (!found) return null
-  const { json } = found
-  if (json['name'] !== name || !plainObject(json['versions'])) throw new NpmPackageError(502, 'upstream-invalid')
-  const versions = Object.keys(json['versions']).filter(isNpmPackageSpec).toReversed()
-  const distTags = Object.fromEntries(Object.entries(stringRecord(json['dist-tags']) ?? {}).filter(([, version]) => versions.includes(version)))
-  return { name, private: found.private, distTags, versions }
+export function readNpmVersions(name: string, privileged: boolean, signal: AbortSignal) {
+  if (!isNpmPackageName(name)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
+  return withDocumentBudget(PACKUMENT_BYTES, async () => {
+    const found = await readDocument(name, registryUrl(name), privileged, { accept: 'application/vnd.npm.install-v1+json', limit: PACKUMENT_BYTES, signal })
+    if (!found) return null
+    const { json } = found
+    if (json['name'] !== name || !plainObject(json['versions'])) throw new NpmPackageError(502, 'upstream-invalid')
+    const versions = Object.keys(json['versions']).filter(isNpmPackageSpec).toReversed()
+    const distTags = Object.fromEntries(Object.entries(stringRecord(json['dist-tags']) ?? {}).filter(([, version]) => versions.includes(version)))
+    return { name, private: found.private, distTags, versions }
+  })
 }
 
 export interface NpmPackageFile { path: string; bytes: Uint8Array }

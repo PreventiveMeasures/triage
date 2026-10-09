@@ -1073,15 +1073,17 @@ read it. Access is checked again after the registry answers, and a reader who
 lost private access meanwhile gets 404. A version npm doesn't have, and a
 private one the reader cannot open, are both 404 `package-not-found`.
 
-Packages unpack in memory, bounded at 64 MiB of files, 20,000 files and a
-96 MiB tar stream, and their files at 96 Mi characters of JSON, counted before
-it is written, as escaping can grow a text sixfold; larger ones return 413
+Packages unpack in memory, bounded at 64 MiB of files, 20,000 files and a 96
+MiB tar stream, and their files at 96 Mi characters of JSON, counted before it
+is written, as escaping can grow a text sixfold; larger ones return 413
 `package-too-large`, before download when the registry's `dist.unpackedSize`
-or `dist.fileCount` says so. Directories,
-links, and paths that would leave the package are not extracted. At most four
-loads run at once per process (429 `npm-busy`), each until its response is
-encoded; concurrent reads of one version share its download and its encoded
-response. A download is the tarball as the registry has it, not unpacked.
+or `dist.fileCount` says so. Directories, links, and paths that would leave
+the package are not extracted. At most four loads run at once per process (429
+`npm-busy`), each until its response is encoded; concurrent reads of one
+version share its download and its encoded response. A download is the tarball
+as the registry has it, not unpacked. Registry documents being read at once
+are held to 256 MiB, each counted at its limit until it is parsed (8 MiB for a
+version, 64 MiB for a version list); a read past that is 429 `npm-busy` too.
 Off Vercel, upstream keeps downloaded tarballs in its disk cache, as for
 builds. Public workspace links cannot reach these endpoints.
 
