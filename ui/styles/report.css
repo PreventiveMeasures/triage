@@ -961,6 +961,32 @@ bundle-code-search {
   border-radius: var(--ui-radius, 3px);
 }
 .bundle-code-search-file-name:hover { background: var(--bg); }
+/* Largest-mode rows — one file each: its path, then its size. */
+.bundle-code-largest { list-style: none; margin: 0; padding: 0; }
+.bundle-code-largest-file {
+  display: flex; align-items: baseline; gap: .5rem;
+  width: 100%;
+  padding: .2rem .35rem;
+  border: 0; border-radius: var(--ui-radius, 3px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: .72rem;
+  text-align: left;
+}
+.bundle-code-largest-file:hover { background: var(--bg); }
+.bundle-code-largest-file.current { background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg)); }
+.bundle-code-largest-path {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.bundle-code-largest-size {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+}
 .bundle-code-search-file.current .bundle-code-search-file-name {
   background: color-mix(in oklch, var(--accent, #2563eb) 18%, var(--bg));
 }

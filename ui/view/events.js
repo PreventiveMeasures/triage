@@ -2652,15 +2652,21 @@ report.addEventListener('upstream-only-change', (e) => {
   render()
 })
 // `<bundle-code-search>` dispatches this when a Files / Code /
-// Issues mode tab is clicked in the bundle code rail's search row.
-// Switching back to Files rebuilds the tree at its remembered
-// scroll-top, which may be far from the open file — reveal it.
+// Issues / Largest mode tab is clicked in the bundle code rail's search
+// row. Switching back to Files rebuilds the tree at its remembered
+// scroll-top, which may be far from the open file — reveal it. The rail
+// keeps its scroll-top across modes, so Largest starts at its top, where
+// the largest files are.
 report.addEventListener('bundle-search-mode-change', (e) => {
   const mode = e.detail?.mode
-  if (mode !== 'files' && mode !== 'code' && mode !== 'issues') return
+  if (!['files', 'code', 'issues', 'largest'].includes(mode)) return
   state.bundleCodeSearchMode = mode
   render()
   if (mode === 'files') revealBundleCodeCurrent()
+  else if (mode === 'largest') {
+    const body = document.querySelector('.bundle-code-rail-body')
+    if (body) body.scrollTop = 0
+  }
 })
 // Native select changes do not cross shadow roots; graph-layout emits this
 // composed event so the main and lazy graph bundles share one selection.

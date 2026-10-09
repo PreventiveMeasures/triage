@@ -332,6 +332,33 @@ test('Code and Search tab code search list own source before dependencies', t =>
   assert.deepEqual([...search.matchAll(/class="bundle-search-file-name mono"\s+data-bundle-view-source=(\S+)/gu)].map(m => m[1]), expected)
 })
 
+test('Largest lists the rail\'s files by size, filters them by path, and stops at 1000', t => {
+  t.after(() => Object.assign(state, { bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '' }))
+  const entry = { name: 'largest.stasis', integrity: 'sha512-largest-files' }
+  const filler = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`gen/f${String(i).padStart(4, '0')}.js`, 'x']))
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/big.js': 'x'.repeat(3000), 'src/mid.js': 'x'.repeat(200), 'src/tie.js': 'x'.repeat(200), ...filler } }],
+    ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'x'.repeat(2500) } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleSourceFile: 'src/mid.js', bundleCodeSearchMode: 'largest', bundleCodeSearchQuery: '',
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const rail = () => renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
+  const rows = text => [...text.matchAll(/data-bundle-view-source=(\S+)/gu)].map(m => m[1])
+  let text = rail()
+  assert.deepEqual(rows(text).slice(0, 5), ['src/big.js', 'node_modules/dep/index.js', 'src/mid.js', 'src/tie.js', 'gen/f0000.js'], 'largest first, ties by path')
+  assert.equal(rows(text).length, 1000)
+  assert.match(text, /1,000 largest of 1,005 files/u)
+  assert.match(text, /<span class="bundle-code-largest-size">2\.9 KiB<\/span>/u)
+  assert.equal([...text.matchAll(/aria-current=true/gu)].length, 1, 'the open file is marked')
+  state.bundleCodeSearchQuery = 'SRC/'
+  text = rail()
+  assert.deepEqual(rows(text), ['src/big.js', 'src/mid.js', 'src/tie.js'])
+  assert.match(text, /3 files by size/u)
+  state.bundleCodeSearchQuery = 'nothing-like-this'
+  assert.match(rail(), /No files match\./u)
+})
+
 test('the source viewer marks the line a search result opened, only in that bundle and file', t => {
   t.after(() => { state.bundleSourceTargetLine = null })
   const entry = { name: 'target.stasis', integrity: 'sha512-target-line' }

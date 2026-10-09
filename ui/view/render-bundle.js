@@ -1113,6 +1113,38 @@ function bundleSearchOrder(details, sources) {
 // marked as in the Search tab. Case-insensitive substring search (the
 // Search tab's matcher with both toggles off), own source before
 // dependencies; empty query shows a hint.
+// Largest mode: the rail's sources as a flat list, largest first, sized as
+// the Overview sizes them and filtered like Files, by path. Sorted once per
+// bundle; capped, since rows past the first thousand stop being "largest".
+const LARGEST_FILES_LIMIT = 1000
+const _largestFiles = new WeakMap()
+function renderBundleCodeLargestResults(details, sources, query, currentPath, prefix = '') {
+  const sizes = bundleSourceSizes(details)
+  let ranked = _largestFiles.get(sources)
+  if (!ranked) {
+    ranked = [...sources.keys()].filter(p => sizes.get(p) != null)
+      .toSorted((a, b) => sizes.get(b) - sizes.get(a) || a.localeCompare(b))
+    _largestFiles.set(sources, ranked)
+  }
+  const q = query.toLowerCase()
+  const files = q ? ranked.filter(p => stripPathPrefix(p, prefix).toLowerCase().includes(q)) : ranked
+  if (files.length === 0) return html`<div class="bundle-code-search-empty">No files match.</div>`
+  const shown = files.length > LARGEST_FILES_LIMIT ? files.slice(0, LARGEST_FILES_LIMIT) : files
+  return html`<div class="bundle-code-search-results">
+    <div class="bundle-code-search-summary">${shown.length < files.length
+      ? `${shown.length.toLocaleString()} largest of ${files.length.toLocaleString()} files`
+      : `${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'} by size`}</div>
+    <ul class="bundle-code-largest">
+      ${repeat(shown, p => p, p => html`<li><button
+        type="button"
+        class=${classMap({ 'bundle-code-largest-file': true, current: p === currentPath })}
+        data-bundle-view-source=${p}
+        aria-current=${p === currentPath ? 'true' : nothing}
+      ><span class="bundle-code-largest-path" data-tooltip-truncated data-tooltip=${p}>${stripPathPrefix(p, prefix)}</span><span class="bundle-code-largest-size">${formatBytes(sizes.get(p))}</span></button></li>`)}
+    </ul>
+  </div>`
+}
+
 function renderBundleCodeContentResults(details, sources, query, currentPath, prefix = '') {
   if (!query) {
     return html`<div class="bundle-code-search-hint">Type to search across every source in this bundle.</div>`
@@ -1431,8 +1463,8 @@ function renderBundleCodeView(details, entry = null) {
   // selector falls back to Files automatically.
   const hasAnyIssues = issueIndex.size > 0
   const searchModes = hasAnyIssues
-    ? ['files', 'code', 'issues']
-    : ['files', 'code']
+    ? ['files', 'code', 'issues', 'largest']
+    : ['files', 'code', 'largest']
   const searchMode = searchModes.includes(state.bundleCodeSearchMode)
     ? state.bundleCodeSearchMode
     : 'files'
@@ -1460,6 +1492,7 @@ function renderBundleCodeView(details, entry = null) {
           ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix, details.kind === 'stasis' ? details.bundle.formats : null, sources)],
           ['code', () => renderBundleCodeContentResults(details, sources, query, path, prefix)],
           ['issues', () => renderBundleCodeIssuesResults(details, query, path, prefix)],
+          ['largest', () => renderBundleCodeLargestResults(details, sources, query, path, prefix)],
         ])}
       </div>
     </aside>
