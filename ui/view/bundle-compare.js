@@ -30,7 +30,7 @@ import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
-import { buildBundleDetails } from './bundle-load.js'
+import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
@@ -51,8 +51,11 @@ const MAX_ROWS = 400
 // the comparison in willUpdate; this module-level slot carries the
 // intended new target (the old base) across the prop teardown — a
 // component-internal field wouldn't survive the navigation. Shape:
-// `{ base, target }`, consumed once by willUpdate when integrity flips
-// to `base`.
+// `{ base, target, scope, mode, codePath }`, consumed once by willUpdate
+// when integrity flips to `base`, or dropped when another bundle opens.
+// It holds no parsed bundle: those ride the swap event to the navigation,
+// which hands them over (bundle-load.js handOffBundles) for as long as it
+// runs.
 let _pendingSwap = null
 
 // Signed count for a summary metric delta: `+3` / `−2` / `±0`. Uses a
@@ -144,19 +147,28 @@ class BundleCompare extends LitElement {
     // A swap navigates to the old comparison target as the new base; in
     // that single case restore the old base as the new target instead
     // of clearing it (the module-level handoff survives the prop
-    // teardown the navigation triggers).
+    // teardown the navigation triggers). A swap that landed elsewhere
+    // (another bundle opened first) is over.
+    if (_pendingSwap && this.integrity && this.integrity !== _pendingSwap.base) _pendingSwap = null
     if (_pendingSwap && this.integrity === _pendingSwap.base) {
-      const target = _pendingSwap.target
+      const { target } = _pendingSwap
       this._scope = _pendingSwap.scope
       this._mode = _pendingSwap.mode
       this._codePath = _pendingSwap.codePath
       _pendingSwap = null
       this._targetIntegrity = target
-      this._otherDetails = null
-      this._status = 'loading'
       this._diff = null
       this._diffKey = null
-      this._loadOther(target)
+      // The old base is still parsed: compare against it as it stands.
+      const handed = takeHandedOffBundle(target, details => Boolean(details.json || details.bundle))
+      if (handed) {
+        this._otherDetails = handed
+        this._status = 'ready'
+      } else {
+        this._otherDetails = null
+        this._status = 'loading'
+        this._loadOther(target)
+      }
       return
     }
     this._targetIntegrity = null
@@ -172,16 +184,22 @@ class BundleCompare extends LitElement {
   // bundle (so the app navigates to it) and flip the comparison to the
   // old base. The pending-swap slot carries the new target across the
   // base change; events.js handles the actual bundle switch off the
-  // dispatched event (same path the sidebar row click takes).
+  // dispatched event (same path the sidebar row click takes). Both sides
+  // are already parsed, so each is handed to its new role rather than
+  // read from storage and parsed again.
   _swap() {
     const newBase = this._targetIntegrity
     if (!newBase || newBase === this.integrity) return
     if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
     _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath }
+    const bundles = [
+      this._otherDetails?.integrity === newBase && (this._otherDetails.json || this._otherDetails.bundle) ? this._otherDetails : null,
+      this._baseReady ? this.details : null,
+    ].filter(Boolean)
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,
-      detail: { integrity: newBase },
+      detail: { integrity: newBase, bundles },
     }))
   }
 
@@ -302,7 +320,7 @@ class BundleCompare extends LitElement {
     </div></li>`)
   }
 
-  // One "Version changes" row: package dot + name, then `old → new`
+  // One Updated row: package dot + name, then `old → new`
   // with the new side colored by direction (↑ green / ↓ red / changed
   // amber) and a matching glyph. The direction is also spelled out in
   // accessible label for screen readers.
@@ -332,31 +350,22 @@ class BundleCompare extends LitElement {
     </div></li>`)
   }
 
-  // Dependency-update section: version bumps for deps on both sides
-  // (the headline — "what did this bump pull in?"), then any deps added
-  // / removed wholesale. Returns `nothing` when nothing changed so the
-  // section only shows for stasis pairs with real version movement.
+  // Dependency-update section: deps removed / added wholesale, then the
+  // version bumps for deps on both sides ("what did this bump pull in?").
+  // Returns `nothing` when nothing changed so the section only shows for
+  // stasis pairs with real version movement.
   _renderVersionUpdates(vu, baseName, otherName) {
     const { updated, added, removed } = vu
     if (updated.length === 0 && added.length === 0 && removed.length === 0) return nothing
-    const shownUpdated = updated.slice(0, MAX_ROWS)
-    const hiddenUpdated = updated.length - shownUpdated.length
+    // Removed | Added | Updated share one row of columns, in the Packages
+    // and Files sections' order, wrapping by the groups' minimum width.
     return html`<section class="bundle-compare-section">
       <h3 class="bundle-compare-section-head">Dependency updates</h3>
-      ${updated.length > 0 ? html`<div class="bundle-compare-ver-changes">
-        <header class="bundle-compare-group-head">
-          <span class="bundle-compare-group-title">Updated</span>
-          <span class="bundle-compare-group-count">${updated.length}</span>
-        </header>
-        <ul class="bundle-compare-rows">
-          ${repeat(shownUpdated, (r) => r.pkg, (r) => this._versionRow(r))}
-        </ul>
-        ${hiddenUpdated > 0 ? html`<div class="bundle-compare-more">and ${hiddenUpdated.toLocaleString()} more…</div>` : nothing}
-      </div>` : nothing}
-      ${added.length > 0 || removed.length > 0 ? html`<div class="bundle-compare-cols">
+      <div class="bundle-compare-cols">
         ${this._depGroup(`Removed · only in ${baseName}`, removed, 'removed')}
         ${this._depGroup(`Added · only in ${otherName}`, added, 'added')}
-      </div>` : nothing}
+        ${this._group('Updated', updated, 'updated', (r) => r.pkg, (r) => this._versionRow(r))}
+      </div>
     </section>`
   }
 

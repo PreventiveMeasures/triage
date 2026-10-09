@@ -39,7 +39,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     return JSON.stringify(json)
   },
 } })
-const { buildBundleDetails, ensureBundleSources, openBundle, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle, selectBundleTab } = await import('../ui/view/bundle-load.js')
+const { buildBundleDetails, ensureBundleSources, handOffBundles, openBundle, releaseHandoff, prefetchBundleHashes, prefetchBundleHashesAfterPaint, selectBundle, selectBundleTab } = await import('../ui/view/bundle-load.js')
 const index = await createBundleMetadata({ integrity: entry.integrity, kind: 'sourcemap', size: 123, json })
 beforeEach(() => {
   decodes = 0; managed = false
@@ -461,4 +461,34 @@ it('closing a metadata source overlay aborts its download and clears the source 
   assert.equal(state.bundleSourceFile, null)
   assert.equal(state.bundleSourceFindingIdx, null)
   gate.resolve()
+})
+
+it('opens a bundle handed over already parsed without reading it again, once', async () => {
+  const parsed = { integrity: entry.integrity, kind: 'sourcemap', json, size: 123 }
+  const held = handOffBundles([parsed])
+  selectBundle(entry.integrity, 'compare')
+  await openBundle(entry.integrity)
+  assert.equal(state.bundleDetails, parsed)
+  assert.equal(reads, 0, 'no storage read or parse')
+  selectBundle(entry.integrity, 'compare')
+  await openBundle(entry.integrity)
+  assert.notEqual(state.bundleDetails, parsed, 'the handoff serves one open')
+  assert.equal(reads, 1)
+  releaseHandoff(held)
+})
+
+it('keeps a handoff across the navigation\'s own view changes until it is released', async () => {
+  const parsed = { integrity: entry.integrity, kind: 'sourcemap', json, size: 123 }
+  const held = handOffBundles([parsed])
+  beginViewNavigation()
+  selectBundle('sha512-other', 'overview')
+  selectBundle(entry.integrity, 'compare')
+  await openBundle(entry.integrity)
+  assert.equal(state.bundleDetails, parsed, 'a managed route starts its own navigation before opening')
+  releaseHandoff(held)
+  const abandoned = handOffBundles([{ ...parsed }])
+  releaseHandoff(abandoned)
+  selectBundle(entry.integrity, 'compare')
+  await openBundle(entry.integrity)
+  assert.equal(reads, 1, 'nothing is held once the swap lets go')
 })

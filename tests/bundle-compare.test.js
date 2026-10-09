@@ -6,7 +6,11 @@ import '../ui/view/frontend-install.js'
 mock.module('../client/index.js', { namedExports: { state: { bundles: [
   { integrity: 'base', name: 'Before' }, { integrity: 'other', name: 'After' },
 ] } } })
-mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails() {} } })
+let handedOff = null, loads = 0
+mock.module('../ui/view/bundle-load.js', { namedExports: {
+  buildBundleDetails() { loads++; return new Promise(() => {}) },
+  takeHandedOffBundle(integrity) { const parsed = handedOff?.bundles.get(integrity) ?? null; handedOff?.bundles.delete(integrity); return parsed },
+} })
 mock.module('../ui/view/bundle-compare-code.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
@@ -132,4 +136,54 @@ test('file size sorting happens before the visible row limit', () => {
   assert.equal(paths.at(-1), 'file-005.js')
   assert.match(markup, /bundle-compare-group-count">405/u)
   assert.match(markup, /and 5 more/u)
+})
+
+test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {
+  const view = compare()
+  view._status = 'ready'
+  const base = view.details, other = view._otherDetails
+  let swapped = null
+  view.addEventListener('bundle-swap', event => {
+    swapped = event.detail.integrity
+    // What events.js does: hand both over for the swap's navigation.
+    handedOff = { bundles: new Map(event.detail.bundles.map(parsed => [parsed.integrity, parsed])) }
+  })
+  view._swap()
+  assert.equal(swapped, 'other')
+  assert.equal(handedOff.bundles.get('other'), other, 'the target opens as the new base without a read')
+  assert.equal(handedOff.bundles.get('base'), base, 'and the old base rides along to be compared against')
+  // The app opens the old target; the comparison flips onto the old base.
+  view.integrity = 'other'
+  view.details = other
+  view.willUpdate(new Map([['integrity', 'base'], ['details', base]]))
+  assert.equal(view._targetIntegrity, 'base')
+  assert.equal(view._otherDetails, base)
+  assert.equal(view._status, 'ready')
+  assert.equal(loads, 0, 'nothing is read again')
+  assert.deepEqual([...handedOff.bundles.keys()], ['other'], 'the old base was taken; the new one waits for its open')
+})
+
+test('a swap that lands on another bundle is dropped, not resumed later', () => {
+  const view = compare()
+  view._status = 'ready'
+  view._swap()
+  view.integrity = 'third'
+  view.willUpdate(new Map([['integrity', 'base']]))
+  assert.equal(view._targetIntegrity, null)
+  view.integrity = 'other'
+  view.willUpdate(new Map([['integrity', 'third']]))
+  assert.equal(view._targetIntegrity, null, 'opening the swap\'s bundle afterwards starts a fresh comparison')
+})
+
+test('dependency updates list Removed, Added and Updated side by side in one row of columns', () => {
+  const view = compare()
+  const markup = renderText(view._renderVersionUpdates({
+    updated: [{ pkg: 'lodash', baseVersions: ['4.17.20'], otherVersions: ['4.17.21'], direction: 'up' }],
+    removed: [{ pkg: 'left-pad', versions: ['1.3.0'] }],
+    added: [{ pkg: 'zod', versions: ['3.23.8'] }],
+    totals: {},
+  }, 'Before', 'After'))
+  const cols = markup.slice(markup.indexOf('class="bundle-compare-cols"'))
+  assert.deepEqual([...cols.matchAll(/class=bundle-compare-group bundle-compare-(\w+)/gu)].map(m => m[1]), ['removed', 'added', 'updated'])
+  assert.equal(markup.match(/class="bundle-compare-cols"/gu).length, 1)
 })

@@ -212,7 +212,7 @@ function renderSearchNextFrame() {
     render()
   })
 }
-import { ensureBundleSources, openBundle, prefetchBundleHashes, selectBundle, selectBundleTab } from './bundle-load.js'
+import { ensureBundleSources, handOffBundles, openBundle, prefetchBundleHashes, releaseHandoff, selectBundle, selectBundleTab } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, persistLastBundle, switchToFile, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
@@ -2704,15 +2704,20 @@ report.addEventListener('bundle-swap', (e) => {
   const integrity = e.detail?.integrity
   if (!integrity || !(state.bundles ?? []).some((b) => b.integrity === integrity)) return
   const entry = state.bundles.find(b => b.integrity === integrity)
+  // Both sides arrive parsed: the navigation opens one and compares against
+  // the other without reading either again, and lets go of what is left
+  // once it settles (a task later, after the views it painted updated).
+  const held = handOffBundles(e.detail.bundles ?? [])
+  const release = () => { setTimeout(() => releaseHandoff(held)) }
   if (entry.managedId) {
-    void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare'))
+    void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare')).finally(release)
     return
   }
   selectBundle(integrity, 'compare')
   persistLastBundle(integrity, 'compare')
   render()
   renderSidebar()
-  openBundle(integrity)
+  void openBundle(integrity).finally(release)
 })
 // `<findings-sort>` (kind="findings") and `<entity-sort>` (kind=
 // "packages"|"repositories") both dispatch this on native change.

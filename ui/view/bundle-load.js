@@ -30,6 +30,31 @@ async function cachedMetadata(integrity) {
   } catch { return null }
 }
 
+// Parsed bundles handed to a swap's navigation: Compare holds both sides
+// parsed, so neither the bundle the swap opens nor the one it then compares
+// against needs reading and parsing again. Each is taken by its first use;
+// the navigation (events.js `bundle-swap`) releases whatever is left once it
+// settles, so a swap that is abandoned or fails keeps nothing in memory.
+let handoff = null
+export function handOffBundles(bundles) {
+  const parsed = new Map(bundles.filter(details => details && !details.error).map(details => [details.integrity, details]))
+  handoff = parsed.size > 0 ? { bundles: parsed } : null
+  return handoff
+}
+
+export function releaseHandoff(held) {
+  if (handoff === held) handoff = null
+}
+
+// A handed-over bundle, if `accept` takes it; it is then no longer held.
+export function takeHandedOffBundle(integrity, accept = () => true) {
+  const details = handoff?.bundles.get(integrity)
+  if (!details || !accept(details)) return null
+  handoff.bundles.delete(integrity)
+  if (handoff.bundles.size === 0) handoff = null
+  return details
+}
+
 // In-flight deduplication only: completed source bodies are owned by their
 // active view, never retained in a process-wide preload/cache of bundles.
 export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
@@ -41,6 +66,9 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   // links and comparison/code consumers, without retaining another bundle.
   if (active?.integrity === integrity && active.kind === kind && active.managedId === entry.managedId && !active.error
       && (!sources || !active.metadataOnly)) return Promise.resolve(active)
+  const handed = takeHandedOffBundle(integrity, details => details.kind === kind && details.managedId === entry.managedId
+    && (!sources || !details.metadataOnly))
+  if (handed) return Promise.resolve(handed)
   const key = `${entry.managedId ?? 'local'}:${integrity}:${kind}`
   const signal = entry.managedId && sources ? currentViewSignal() : undefined
   const pending = loads.get(key)

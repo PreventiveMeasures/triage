@@ -1,7 +1,7 @@
 import { isManagedUiMode, state } from '#client/index.js'
 import { fetchBundleMetadata } from './client-managed.js'
 import { parseBundleMetadata } from './bundle-metadata.js'
-import { selectBundle } from './bundle-load.js'
+import { selectBundle, takeHandedOffBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { render } from './render.js'
 import { showToast } from './toast.js'
@@ -9,11 +9,19 @@ import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
 
 export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, file, line, endLine }, entries, isCurrent, renderSidebar) {
   const generation = currentViewGeneration()
+  const listed = entries.find(bundle => bundle.managedId === id)
+  const handed = listed ? takeHandedOffBundle(listed.integrity, details => details.managedId === id) : null
   let metadata
   try { metadata = await fetchBundleMetadata(id, { signal: currentViewSignal() }) } catch { return false } // The managed state reports request errors.
   try {
     if (!isCurrent() || generation !== currentViewGeneration() || !isManagedUiMode()) return false
-    const details = parseBundleMetadata(metadata, metadata.integrity)
+    const indexed = parseBundleMetadata(metadata, metadata.integrity)
+    // Compare's swap hands over the bundle it opens, already parsed in full;
+    // the metadata lends it the hashes and sizes the server indexed, as a
+    // metadata open's sources upgrade (ensureBundleSources) does.
+    const details = handed?.integrity === indexed.integrity
+      ? Object.assign(handed, { fileHashes: indexed.fileHashes, fileSizes: indexed.fileSizes, lineCounts: indexed.lineCounts, codeStats: indexed.codeStats })
+      : indexed
     details.managedId = id
     const entry = entries.find(bundle => bundle.managedId === id)
     if (!entry || entry.integrity !== metadata.integrity) return false
