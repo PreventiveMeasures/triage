@@ -1,0 +1,79 @@
+:host { display: contents; }
+* { box-sizing: border-box; }
+button {
+  font: inherit;
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--ui-radius, 4px);
+  padding: 4px 7px;
+  cursor: default;
+}
+button:hover { background: var(--graph-hover-bg); }
+button:disabled { opacity: .4; cursor: default; }
+button:focus-visible { outline: 2px solid var(--accent); }
+.flow-stage {
+  grid-area: stage; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  background: var(--flow-background);
+}
+.flow-viewport {
+  flex: 1; position: relative; overflow: hidden; min-height: 0;
+  touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+}
+.flow-count {
+  position: absolute;
+  bottom: 12px;
+  right: 50px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  z-index: 3;
+  pointer-events: none;
+}
+.flow-chart { display: block; position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.flow-canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+.flow-base, .flow-bars { pointer-events: none; }
+.flow-overlay:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.flow-edge, .flow-node { cursor: default; }
+.flow-edge:focus, .flow-node:focus { outline: none; }
+/* Compensate for SVG zoom, but never cover more than half a bar with its
+   borders. Clip strokes to their own fill box so a wide neighbor's border
+   cannot cover a thin bar. Neither border nor selection adds layout space. */
+.flow-node rect {
+  stroke-width: min(calc(1px / var(--flow-zoom, 1)), calc(var(--flow-bar-width) / 2));
+  clip-path: inset(0) fill-box;
+}
+.flow-node:focus-visible rect {
+  stroke: var(--text); stroke-width: min(calc(1.5px / var(--flow-zoom, 1)), calc(var(--flow-bar-width) / 2));
+}
+.flow-selection {
+  fill: none; stroke: var(--text);
+  stroke-width: min(calc(1.5px / var(--flow-zoom, 1)), calc(var(--flow-bar-width) / 2));
+  pointer-events: none;
+}
+.flow-edge { stroke-width: calc(.7px / var(--flow-zoom, 1)); }
+.flow-edge:focus { stroke: var(--text); stroke-width: calc(1.5px / var(--flow-zoom, 1)); }
+.flow-node text {
+  font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  pointer-events: none; stroke: none; text-shadow: none;
+}
+.flow-panel {
+  grid-area: right; overflow: auto; min-height: 0; padding: 14px;
+  border-left: 1px solid var(--border); background: var(--surface);
+}
+.flow-panel h3 { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.flow-panel h4 { margin: 20px 0 8px; color: var(--muted); font-size: 11px; }
+.flow-panel p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.flow-panel-heading { display: flex; align-items: start; gap: 10px; justify-content: space-between; }
+.flow-metrics { display: grid; gap: 5px; margin: 18px 0; }
+.flow-metrics b { font-size: 20px; font-weight: 500; }
+.flow-metrics span { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.flow-versions { list-style: none; padding: 0; margin: 0 0 18px; font-size: 12px; }
+.flow-versions-details { margin: 18px 0; }
+.flow-versions-details summary { color: var(--muted); font-size: 11px; cursor: default; }
+.flow-versions li + li { margin-top: 10px; }
+.flow-versions li > div { display: flex; justify-content: space-between; gap: 8px; }
+.flow-versions small { display: block; color: var(--muted); overflow-wrap: anywhere; margin-top: 3px; }
+.flow-direction { overflow-wrap: anywhere; }
+.flow-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.flow-link { grid-template-columns: 8px minmax(0, 1fr) auto; }

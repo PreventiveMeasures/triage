@@ -39,6 +39,7 @@ import { renderRightPanel, renderStage, renderTopBar } from './render.js'
 import { installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import './dependency-matrix.js'
+import './size-flow.js'
 import '../mode-switch.js'
 
 class GraphLayout extends LitElement {
@@ -46,6 +47,7 @@ class GraphLayout extends LitElement {
     graph:   { attribute: false },
     options: { attribute: false },
     matrixControls: { state: true },
+    flowControls: { state: true },
     // Bundle Issues switch moved from the end of the first row to the
     // start of the issue row (see _placeIssues).
     issuesWrapped: { state: true },
@@ -58,6 +60,7 @@ class GraphLayout extends LitElement {
     this.graph = null
     this.options = {}
     this.matrixControls = null
+    this.flowControls = null
     this.issuesWrapped = false
     this._topbarObserver = null
     this._observedControls = null
@@ -82,8 +85,9 @@ class GraphLayout extends LitElement {
 
   willUpdate(changed) {
     if (!this.options.showBundleLayouts || graph2.bundleLayout !== 'matrix') this.matrixControls = null
+    if (!this.options.showBundleLayouts || graph2.bundleLayout !== 'flow') this.flowControls = null
     // New first-row contents may make room for the Issues switch again.
-    if (changed.has('graph') || changed.has('options') || changed.has('matrixControls')) this._issuesWrapWidth = 0
+    if (changed.has('graph') || changed.has('options') || changed.has('matrixControls') || changed.has('flowControls')) this._issuesWrapWidth = 0
   }
 
   updated() {
@@ -123,6 +127,12 @@ class GraphLayout extends LitElement {
 
   render() {
     if (!this.graph) return html``
+    if (this.options.showBundleLayouts && graph2.bundleLayout === 'flow') {
+      return html`<div class="graph2-layout">
+        ${renderTopBar(this.graph, this.options, this.flowControls, { issuesWrapped: this.issuesWrapped })}
+        <size-flow .graph=${this.graph} .packages=${graph2.flowPackagesView} @flow-controls-change=${e => { this.flowControls = e.detail }}></size-flow>
+      </div>`
+    }
     if (this.options.showBundleLayouts && graph2.bundleLayout === 'matrix') {
       return html`<div class="graph2-layout g2-matrix-layout">
         ${renderTopBar(this.graph, this.options, this.matrixControls, { issuesWrapped: this.issuesWrapped })}

@@ -42,11 +42,12 @@ function createImpl() {
     // Fourth view: small bundles start at file level; larger ones always
     // aggregate packages. Independent of the first Graph view's switch.
     dependencyPackagesView: false,
+    flowPackagesView: false,
     // Bundle graph "Issues" switch, offered when the bundle has matched
     // findings. Off by default: the bundle graph opens as a plain map of
     // the code, and issue markers, counts and filters appear when on.
     bundleIssues: false,
-    bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix' | 'dependencies'; bundle-only
+    bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix' | 'dependencies' | 'flow'; bundle-only
     bundleReason: null, // null = all reasons; shared by graph and layers
     bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
     selected: null,        // file path or null

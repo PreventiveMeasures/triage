@@ -57,6 +57,7 @@ function raise(node) {
 let currentTarget = null
 let currentContent = ''
 let showTimer = null
+let pendingTarget = null
 
 // Last known cursor position — captured by the passive mousemove
 // listener below. The default 'cursor' placement anchors to this so
@@ -65,10 +66,22 @@ let showTimer = null
 // geometry.
 let lastClientX = 0
 let lastClientY = 0
-document.addEventListener('mousemove', (e) => {
-  lastClientX = e.clientX
-  lastClientY = e.clientY
-}, { passive: true })
+let lifecycleInstalled = false
+function installTooltipLifecycle() {
+  if (lifecycleInstalled) return
+  lifecycleInstalled = true
+  document.addEventListener('mousemove', (e) => {
+    lastClientX = e.clientX
+    lastClientY = e.clientY
+  }, { passive: true })
+  // A click, drag, zoom, or scroll invalidates the hovered location, even
+  // when the browser doesn't send mouseout (for example after a rerender).
+  for (const type of ['pointerdown', 'wheel', 'scroll']) {
+    document.addEventListener(type, () => hideTooltip(), { capture: true, passive: true })
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hideTooltip() })
+  window.addEventListener('blur', () => hideTooltip())
+}
 
 const SHOW_DELAY_MS = 100
 // Vertical offset between the cursor and the top of the tooltip.
@@ -80,6 +93,10 @@ const RIGHT_GAP_PX = 8
 const VIEWPORT_MARGIN_PX = 8
 
 export function showTooltip(el, { placement = 'cursor' } = {}) {
+  installTooltipLifecycle()
+  clearTimeout(showTimer)
+  showTimer = null
+  pendingTarget = null
   el.prepareTooltip?.(el)
   placement = el.dataset.tooltipPlacement ?? placement
   const node = ensureEl()
@@ -96,7 +113,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const loc = el.dataset.tooltipLoc ?? ''
   const size = el.dataset.tooltipSize ?? ''
   const content = JSON.stringify([text, repo, commit, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
-  if (!text) return
+  if (!text) { hideTooltip(); return }
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
   // segments. Reuse the visible node in that case instead of hiding and
@@ -188,9 +205,13 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   currentContent = content
 }
 
-export function hideTooltip() {
+export function hideTooltip(root) {
+  // Components can invalidate their own tooltip without closing one that
+  // belongs to a different surface during an unrelated background update.
+  if (root && !root.contains(currentTarget) && !root.contains(pendingTarget)) return
   clearTimeout(showTimer)
   showTimer = null
+  pendingTarget = null
   if (tipEl) {
     tipEl.classList.remove('visible')
     // Close the popover as well: an open-but-invisible one still matches
@@ -205,10 +226,21 @@ export function hideTooltip() {
 // suppress (e.g., sidebar's truncation gate). Default: always show.
 // `placement` is forwarded to `showTooltip` when the timer fires.
 export function scheduleTooltip(el, { gate, placement } = {}) {
-  if (Object.hasOwn(el.dataset, 'tooltipTruncated') && el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight) return
-  if (gate && !gate(el)) return
-  clearTimeout(showTimer)
-  showTimer = setTimeout(() => { showTooltip(el, { placement }) }, SHOW_DELAY_MS)
+  installTooltipLifecycle()
+  const eligible = () => el.isConnected !== false
+    && (!Object.hasOwn(el.dataset, 'tooltipTruncated') || el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight)
+    && (!gate || gate(el))
+  if (!eligible()) { hideTooltip(); return }
+  // Nested roots and child-to-child transitions can report the same hover
+  // repeatedly. They must not restart its delay or keep an old tooltip up.
+  if (el === currentTarget || el === pendingTarget) return
+  hideTooltip()
+  pendingTarget = el
+  showTimer = setTimeout(() => {
+    showTimer = null
+    pendingTarget = null
+    if (eligible()) showTooltip(el, { placement })
+  }, SHOW_DELAY_MS)
 }
 
 // The same wiring, scoped to one shadow root. `closest` stops at the
@@ -240,7 +272,9 @@ function tooltipOwner(e, root) {
 export function installShadowTooltipListener(root, options) {
   if (!root || shadowInstalled.has(root)) return
   shadowInstalled.add(root)
+  if (root.ownerDocument) installTooltipLifecycle()
   root.addEventListener('mouseover', (e) => {
+    if (e.buttons) { hideTooltip(); return }
     const el = tooltipOwner(e, root)
     if (!el) { hideTooltip(); return }
     if (el === currentTarget) return
@@ -254,6 +288,9 @@ export function installShadowTooltipListener(root, options) {
     if (from && from === to) return
     hideTooltip()
   })
+  // Scroll events inside a shadow root are not composed, so the document
+  // listener cannot dismiss tooltips on scrolling graph/sidebar content.
+  root.addEventListener('scroll', () => hideTooltip(root), { capture: true, passive: true })
 }
 
 // Document-level handler — wires once at boot, covers every
@@ -263,6 +300,7 @@ let globalInstalled = false
 export function installGlobalTooltipListener() {
   if (globalInstalled) return
   globalInstalled = true
+  installTooltipLifecycle()
   // Components shared with lazy bundles register their roots through the
   // DOM so every surface uses this module's tooltip node and hover state.
   document.addEventListener('tooltip-root-connected', (e) => {
@@ -270,15 +308,15 @@ export function installGlobalTooltipListener() {
   })
   document.body.addEventListener('mouseover', (e) => {
     if (e.target.closest('[data-tooltip-managed]')) return
+    if (e.buttons) { hideTooltip(); return }
     const el = e.target.closest('[data-tooltip]')
     if (!el || el === currentTarget) return
-    hideTooltip()
     scheduleTooltip(el)
   })
   document.body.addEventListener('mouseout', (e) => {
     if (e.target.closest('[data-tooltip-managed]') || e.relatedTarget?.closest?.('[data-tooltip-managed]')) return
     if (!currentTarget && !showTimer) return
-    if (currentTarget && currentTarget.contains(e.relatedTarget)) return
+    if ((currentTarget ?? pendingTarget)?.contains(e.relatedTarget)) return
     hideTooltip()
   })
 }
