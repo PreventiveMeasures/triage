@@ -11,7 +11,7 @@ import { bundleOptions } from '../ui/view/bundle-selector.js'
 const bundle = { id: 'bundle', integrity: 'hash', filename: 'app.stasis.code.br', kind: 'stasis', repoId: 1,
   byteSize: 2048, summary: { files: 3, codeFiles: 2, lines: 1234, commit: 'a'.repeat(40) } }
 const commitInfo = { sha: 'a'.repeat(40), github: 'org/app', tags: ['v1.0.0'],
-  details: { message: 'Release\n\nNotes', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2 } }
+  details: { subject: 'Release', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2 } }
 
 test('managed catalog counts reach sidebar tooltips and comparison entries without loading inventory', async t => {
   const fetches = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [
@@ -33,7 +33,7 @@ test('catalog commit details and tags survive the team probe into sidebar rows a
   const malformed = [{ ...commitInfo, sha: 7 }, { ...commitInfo, github: null }, { ...commitInfo, tags: 'v1' }, 'commit', null]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [{ id: 'team', name: 'Team', reports: [], bundles: [
     { ...bundle, commitInfo }, ...malformed.map((info, i) => ({ ...bundle, id: `bad-${i}`, commitInfo: info })),
-    { ...bundle, id: 'partial', commitInfo: { ...commitInfo, tags: ['v2', 3], details: { message: 7 } } },
+    { ...bundle, id: 'partial', commitInfo: { ...commitInfo, tags: ['v2', 3], details: { subject: 7 } } },
   ] }] })))
   const [team] = await probeTeams()
   assert.deepEqual(team.bundles[0].commitInfo, commitInfo, 'the sidebar row keeps what its tooltip shows')

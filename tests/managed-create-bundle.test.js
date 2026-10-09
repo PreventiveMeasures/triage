@@ -214,6 +214,7 @@ test('the commit link opens the current directory at the pinned commit on GitHub
   page._commit = commit
   assert.equal(link().values[0], `https://github.com/org/repo/tree/${commit}`)
   assert.match(link().strings.join(''), /target="_blank" rel="noopener noreferrer"/u)
+  assert.match(link().strings.join(''), /data-tooltip-icon="commit"/u, 'its full hash tooltip leads with the commit icon')
   page._path = 'src/a #?%/nested'
   assert.equal(link().values[0], `https://github.com/org/repo/tree/${commit}/src/a%20%23%3F%25/nested`)
   page.changeRevision('tag', 'v1')

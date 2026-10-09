@@ -12,10 +12,12 @@ const BACKFILL_LIMIT = 4
 const RETRY_MS = 5 * 60_000
 
 export type CommitDetails = Omit<GithubCommit, 'key' | 'fetchedAt'>
+// What viewers see of a cached commit: its subject in place of the message.
+export type CatalogCommitDetails = Omit<CommitDetails, 'message'> & { subject: string }
 // What a catalog sends with a bundle whose summary records a commit, when
 // the cache holds its details, tags pointing to it, or both. `github` is the
 // repository they were cached for: the one the bundle is stored at.
-export interface BundleCommitInfo { sha: string; github: string; tags: string[]; details: CommitDetails | null }
+export interface BundleCommitInfo { sha: string; github: string; tags: string[]; details: CatalogCommitDetails | null }
 interface CatalogBundle { integrity: string; repoId: number | null; repoFullName: string | null }
 type Summaries = ReadonlyMap<string, { summary: BundleSummary | null }>
 export interface CatalogCommit { repoId: number; sha: string; key: string }
@@ -54,6 +56,14 @@ export function parseGithubCommit(sha: string, body: unknown): CommitDetails | n
   }
 }
 
+// A commit's subject, as `git log --format=%s` gives it: the message's first
+// paragraph on one line, here without the Claude-Session lines Claude Code
+// adds. Viewers see no more of the message, so catalogs send no more.
+export function commitSubject(message: string): string {
+  const paragraph = message.replaceAll('\r\n', '\n').trim().split(/\n[ \t]*\n/u, 1)[0] ?? ''
+  return paragraph.split('\n').map(line => line.trim()).filter(line => line && !/^Claude-Session:/iu.test(line)).join(' ')
+}
+
 // The commit a bundle's own summary records, in the repository it is stored at.
 function catalogCommit(bundle: CatalogBundle, summaries: Summaries): CatalogCommit | null {
   const sha = bundleCommitHash(summaries.get(bundle.integrity)?.summary?.commit)
@@ -72,10 +82,12 @@ export async function bundleCommits(db: ManagedDb, bundles: readonly CatalogBund
     if (commit) wanted.set(commit.key, commit)
   }
   const keys = [...wanted.keys()]
-  const details = new Map<string, CommitDetails>()
+  const details = new Map<string, CatalogCommitDetails>()
   const tags = new Map<string, string[]>()
   if (keys.length > 0) {
-    for (const { key, fetchedAt: _fetchedAt, ...commit } of await db.listGithubCommits(keys)) details.set(key, commit)
+    for (const { key, fetchedAt: _fetchedAt, message, ...commit } of await db.listGithubCommits(keys)) {
+      details.set(key, { subject: commitSubject(message), ...commit })
+    }
     for (const tag of await db.listGithubCommitTags(keys)) tags.set(tag.key, [...tags.get(tag.key) ?? [], tag.name])
   }
   return {

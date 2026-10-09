@@ -21,10 +21,12 @@
 // a `prepareTooltip(el)` function: the show calls it, once the hover delay
 // has run out, to fill in the target's `data-tooltip-*` attributes.
 //
+// `data-tooltip-icon` puts a built-in icon (`commit`) before the text.
+//
 // A commit a managed bundle records can carry `data-tooltip-commit-info`
 // (see `bundleCommitTooltip` in bundle-origin-links.js): the tags that point
-// to it go under the `data-tooltip-commit` reference, then its message's first
-// line, author and date.
+// to it go under the `data-tooltip-commit` reference, then its subject,
+// author and date.
 //
 // Placement: 'cursor' (default) anchors below the cursor and clamps
 // horizontally to the viewport — natural for in-column rows where
@@ -36,6 +38,8 @@
 
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
+
+const TEXT_ICONS = { commit: COMMIT_ICON_SVG }
 
 // The tooltip ignores the pointer, so it cannot scroll: a commit with many
 // tags (a monorepo's packages) shows the first few and counts the rest. The
@@ -53,7 +57,7 @@ function readCommitInfo(value) {
   }
 }
 
-// The message's first line, then its author and commit date.
+// The commit's subject, then its author and commit date.
 function commitDetailsRow({ title, authorName, authorLogin, date }) {
   const row = document.createElement('div')
   row.className = 'tooltip-commit-details'
@@ -64,7 +68,7 @@ function commitDetailsRow({ title, authorName, authorLogin, date }) {
   meta.className = 'tooltip-commit-meta'
   const author = authorName && authorLogin && authorName !== authorLogin ? `${authorName} (@${authorLogin})` : authorName ?? (authorLogin && `@${authorLogin}`)
   meta.textContent = [author, date === null ? '' : new Date(date).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · ')
-  row.append(headline, meta)
+  row.append(...title ? [headline] : [], meta)
   return row
 }
 
@@ -137,6 +141,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   placement = el.dataset.tooltipPlacement ?? placement
   const node = ensureEl()
   const text = el.dataset.tooltip ?? ''
+  const textIcon = Object.hasOwn(TEXT_ICONS, el.dataset.tooltipIcon ?? '') ? el.dataset.tooltipIcon : ''
   const repo = el.dataset.tooltipRepo ?? ''
   const commit = bundleCommitHash(el.dataset.tooltipCommit)
   const commitInfo = readCommitInfo(el.dataset.tooltipCommitInfo)
@@ -149,14 +154,24 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const files = el.dataset.tooltipFiles ?? ''
   const loc = el.dataset.tooltipLoc ?? ''
   const size = el.dataset.tooltipSize ?? ''
-  const content = JSON.stringify([text, repo, commit, commitInfo, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
+  const content = JSON.stringify([text, textIcon, repo, commit, commitInfo, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
   if (!text) { hideTooltip(); return }
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
   // segments. Reuse the visible node in that case instead of hiding and
   // re-showing it for every child.
   if (currentTarget === el && currentContent === content) return
-  node.textContent = text
+  node.textContent = textIcon ? '' : text
+  if (textIcon) {
+    // Only the built-in icon is markup; the text stays literal.
+    const line = document.createElement('span')
+    line.className = 'tooltip-text'
+    line.innerHTML = TEXT_ICONS[textIcon]
+    const label = document.createElement('span')
+    label.textContent = text
+    line.append(label)
+    node.append(line)
+  }
   if (packageName) {
     const row = document.createElement('div')
     row.className = 'tooltip-package'

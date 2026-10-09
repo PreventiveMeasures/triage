@@ -84,7 +84,7 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     }
     const sha = 'a'.repeat(40)
     const info = { sha, github: 'Org/Repo', tags: ['v1.0.0', '<img onerror=alert(1)>'],
-      details: { message: '\n  Fix the parser  \n\nBody', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: Date.UTC(2026, 9, 1, 12) } }
+      details: { subject: 'Fix the parser', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: Date.UTC(2026, 9, 1, 12) } }
     assert.equal(bundleCommitTooltip(info, 'b'.repeat(40)), undefined, 'catalog info only describes its own commit')
     assert.equal(bundleCommitTooltip({ sha, tags: [], details: null }, sha), undefined)
     assert.equal(bundleCommitTooltip(null, sha), undefined)
@@ -106,10 +106,10 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     showTooltip(target)
     const details = node.children[2]
     assert.equal(details.className, 'tooltip-commit-details')
-    assert.equal(details.children[0].textContent, 'Fix the parser', 'the message shows its first line')
+    assert.equal(details.children[0].textContent, 'Fix the parser', 'the subject leads the details')
     assert.equal(details.children[1].textContent, `Alice (@alice) · ${new Date(Date.UTC(2026, 9, 1, 12)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`)
     assert.equal(node.children[3].className, 'tooltip-bundle')
-    target.dataset.tooltipCommitInfo = bundleCommitTooltip({ sha, tags: [], details: { message: 'Only', authorName: null, authorLogin: 'bot', authoredAt: Date.UTC(2026, 0, 1), committedAt: null } }, sha)
+    target.dataset.tooltipCommitInfo = bundleCommitTooltip({ sha, tags: [], details: { subject: 'Only', authorName: null, authorLogin: 'bot', authoredAt: Date.UTC(2026, 0, 1), committedAt: null } }, sha)
     showTooltip(target)
     assert.deepEqual(node.children.map(child => child.className), ['tooltip-repo', 'tooltip-commit-details', 'tooltip-bundle'], 'a visible tooltip follows tag changes')
     assert.equal(node.children[1].children[1].textContent, `@bot · ${new Date(Date.UTC(2026, 0, 1)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`, 'the author date stands in for a missing commit date')
@@ -119,6 +119,14 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     showTooltip({ dataset: { tooltip: sha, tooltipCommitInfo: bundleCommitTooltip(info, sha) } })
     assert.equal(node.textContent, sha)
     assert.deepEqual(node.children.map(child => child.className), ['tooltip-commit-details'], 'a commit link shows its details without a repository row')
+    showTooltip({ dataset: { tooltip: sha, tooltipIcon: 'commit', tooltipCommitInfo: bundleCommitTooltip(info, sha) } })
+    const [hashLine, commitDetails] = node.children
+    assert.deepEqual([node.textContent, hashLine.className, hashLine.innerHTML, hashLine.children[0].textContent, commitDetails.className],
+      ['', 'tooltip-text', COMMIT_ICON_SVG, sha, 'tooltip-commit-details'], 'the commit icon leads the hash, which stays literal text')
+    for (const tooltipIcon of ['unknown', '__proto__', 'toString', '']) {
+      showTooltip({ dataset: { tooltip: '<b>text</b>', tooltipIcon } })
+      assert.deepEqual([node.textContent, node.children.length], ['<b>text</b>', 0], `no icon for ${JSON.stringify(tooltipIcon)}`)
+    }
     delete target.dataset.tooltipCommitInfo
     delete target.dataset.tooltipRepo
     target.dataset.tooltipCommit = 'a'.repeat(40)

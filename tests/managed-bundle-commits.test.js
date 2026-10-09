@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { backfillBundleCommits, bundleCommits, cacheCommitDetails, parseGithubCommit } from '../server-managed/bundle-commits.ts'
+import { backfillBundleCommits, bundleCommits, cacheCommitDetails, commitSubject, parseGithubCommit } from '../server-managed/bundle-commits.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 
 const sha = 'a'.repeat(40)
@@ -35,6 +35,15 @@ test('commit details come only from the listed commit itself, validated and boun
   assert.equal(parseGithubCommit(sha, listed({}, { author: { name: 'n'.repeat(300) } })).authorName.length, 256)
 })
 
+test('catalogs send a commit\'s subject: its first paragraph on one line, without Claude-Session lines', () => {
+  assert.equal(commitSubject('Fix the parser\n\nLonger body\n\nClaude-Session: https://claude.ai/code/session_1'), 'Fix the parser')
+  assert.equal(commitSubject('\n  Fix the parser\r\n  across two lines  \r\n \t\r\nBody'), 'Fix the parser across two lines')
+  assert.equal(commitSubject('Release\nClaude-Session: https://claude.ai/code/session_1\nclaude-session: x\n\nBody'), 'Release')
+  assert.equal(commitSubject('Claude-Session: https://claude.ai/code/session_1'), '')
+  assert.equal(commitSubject('Keep Claude-Session: mid-line\n\nBody'), 'Keep Claude-Session: mid-line')
+  assert.equal(commitSubject(''), '')
+})
+
 test('catalogs read the cached details and tags of each bundle summary commit in its stored repository', async t => {
   const db = await database(t)
   const other = 'b'.repeat(40)
@@ -51,8 +60,10 @@ test('catalogs read the cached details and tags of each bundle summary commit in
   const read = [bundle('hash-a', 1), bundle('hash-a', 1), bundle('hash-b', 2), bundle('hash-b', 1), bundle('hash-a', null),
     bundle('hash-c', 1), bundle('hash-d', 1), bundle('hash-cold', 1)]
   const { commitInfo, missing } = await bundleCommits(db, read, summaries)
+  const { message: _message, ...sent } = details
+  const subjectDetails = { subject: 'Fix the parser', ...sent }
   assert.deepEqual(read.map(commitInfo), [
-    { sha, github: 'org/repo1', tags: ['v1.0.0'], details }, { sha, github: 'org/repo1', tags: ['v1.0.0'], details },
+    { sha, github: 'org/repo1', tags: ['v1.0.0'], details: subjectDetails }, { sha, github: 'org/repo1', tags: ['v1.0.0'], details: subjectDetails },
     { sha: other, github: 'org/repo2', tags: ['v2.0.0'], details: null }, null, null, null, null, null,
   ])
   assert.deepEqual(missing, [{ repoId: 2, sha: other, key: `2:${other}` }, { repoId: 1, sha: other, key: `1:${other}` }],
