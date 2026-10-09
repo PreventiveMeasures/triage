@@ -338,7 +338,7 @@ test('Large chooses a cutoff using the current and next step counts', () => {
   assert.equal(threshold([101, 0, 4095], [50, 4096, 0]), 4096, 'removal impact can meet the threshold independently')
 })
 
-test('Follow imports disables Large below 200 unfiltered descendants in the current file/package mode', () => {
+test('Follow imports temporarily hides Large below 200 unfiltered descendants in the current file/package mode', () => {
   const Flow = customElements.get('size-flow')
   for (const packages of [false, true]) { for (const count of [199, 200, 201]) {
     const tree = Object.fromEntries(Array.from({ length: count - 1 }, (_, i) =>
@@ -353,19 +353,20 @@ test('Follow imports disables Large below 200 unfiltered descendants in the curr
     assert.equal(flow.layout.nodes.length, 61, 'Large initially hides small nodes')
     const root = flow.model.roots[0]
     flow.follow(root); flow.willUpdate(new Map())
-    assert.equal(flow.largeOnly, count >= 200, 'the automatic switch-off boundary is strictly below 200')
+    assert.equal(flow.largeOnly, true, 'following does not change the saved setting')
+    assert.equal(flow.renderControls() === null, count < 200, 'hide the switch strictly below 200')
+    assert.equal(flow.minSize, count < 200 ? 0 : flow.largeThreshold)
     assert.equal(flow.focus, root)
     assert.equal(flow.layout.nodes.length, count < 200 ? count : 61)
     assert.equal(flow.needsFit, true)
-    if (count < 200) {
-      flow.toggleLarge(); flow.willUpdate(new Map()); flow.willUpdate(new Map())
-      assert.equal(flow.largeOnly, true, 'manual re-enabling survives later renders in Follow imports')
-      assert.equal(flow.layout.nodes.length, 61)
-    }
     flow.follow(null); flow.willUpdate(new Map())
     assert.equal(flow.largeOnly, true, 'leaving Follow imports does not change the switch')
+    assert.notEqual(flow.renderControls(), null)
+    assert.equal(flow.layout.nodes.length, 61, 'restore Large filtering on exit')
     flow.toggleLarge(); flow.follow(root); flow.willUpdate(new Map())
     assert.equal(flow.largeOnly, false, 'navigation never turns an explicit off setting on')
+    flow.follow(null); flow.willUpdate(new Map())
+    assert.equal(flow.minSize, 0, 'an explicit off setting remains off after exit')
   } }
 })
 
@@ -384,18 +385,26 @@ test('following a small subtree in a large bundle reveals every node and deselec
     assert.ok(flow.minSize > 0)
     const root = packages ? 'p:follow' : 'f:follow/index.js'
     assert.equal(layoutSizeFlow(flow.model, { focus: root, minSize: flow.minSize }).nodes.length, 2)
-    flow.follow(root); flow.willUpdate(new Map())
-    assert.equal(flow.largeOnly, false)
-    assert.equal(flow.layout.nodes.length, 11, 'count shared descendants once and terminate cycles')
-    flow.toggleLarge(); flow.willUpdate(new Map())
-    assert.equal(flow.layout.nodes.length, 2, 'the user can still manually re-enable Large')
-    flow.toggleLarge(); flow.willUpdate(new Map())
-    flow.needsFit = false
-    flow.select(null); flow.willUpdate(new Map())
-    assert.equal(flow.selection, null)
-    assert.equal(flow.focus, null, 'empty-space clicks and the panel close action both exit Follow imports')
-    assert.equal(flow.layout.nodes.length, flow.model.byId.size)
-    assert.equal(flow.needsFit, true)
+    for (const enabled of [true, false]) {
+      if (flow.largeOnly !== enabled) flow.toggleLarge()
+      flow.willUpdate(new Map())
+      const count = flow.layout.nodes.length
+      flow.follow(root); flow.willUpdate(new Map())
+      assert.equal(flow.largeOnly, enabled)
+      assert.equal(flow.minSize, 0)
+      assert.equal(flow.renderControls(), null, 'hide Large while its filtering is temporarily bypassed')
+      assert.equal(flow.layout.nodes.length, 11, 'count shared descendants once and terminate cycles')
+      flow.willUpdate(new Map())
+      assert.equal(flow.renderControls(), null, 'suppression survives ordinary rerenders')
+      flow.needsFit = false
+      flow.select(null); flow.willUpdate(new Map())
+      assert.equal(flow.selection, null)
+      assert.equal(flow.focus, null, 'empty-space clicks and the panel close action both exit Follow imports')
+      assert.equal(flow.largeOnly, enabled)
+      assert.notEqual(flow.renderControls(), null)
+      assert.equal(flow.layout.nodes.length, count, 'restore the original Large setting and visible nodes')
+      assert.equal(flow.needsFit, true)
+    }
   }
 })
 
@@ -428,9 +437,11 @@ test('Large uses removal impact and own code, adapts to files/packages and prese
   assert.equal(flow.model, model, 'filtering never recomputes reachability on a pruned graph')
   assert.equal(flow.layout.nodes.length, 173)
   assert.equal(flow.matchesNode(flow.model.byId.get('f:below.js')), true)
-  flow.follow('f:other.js'); flow.toggleLarge(); flow.willUpdate(new Map())
-  assert.equal(flow.focus, null, 'clear a focused node when both its own size and removal impact fall below the cutoff')
-  assert.equal(flow.selection, null, 'hide the selection when it no longer passes the filter')
+  flow.follow('f:other.js'); flow.willUpdate(new Map())
+  assert.equal(flow.focus, 'f:other.js')
+  assert.equal(flow.minSize, 0)
+  flow.select(null); flow.toggleLarge(); flow.willUpdate(new Map())
+  assert.equal(flow.selection, null)
   flow.packages = true; flow.willUpdate(new Map([['packages', false]]))
   assert.equal(flow.layout.nodes.length, 1)
   assert.equal(flow.minSize, 0, 'recount packages rather than using the underlying number of files')

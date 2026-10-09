@@ -36,6 +36,7 @@ class SizeFlow extends LitElement {
     this.needsFit = true
     this.fitted = true
     this.largeOnly = true
+    this.largeSuppressed = false
     this.largeThreshold = 0
     this.models = new Map()
     this.chart = new SizeFlowChart(this)
@@ -57,6 +58,7 @@ class SizeFlow extends LitElement {
       if (this.selection && !this.model.byId.has(this.selection.node)) this.selection = null
       this.hover = null
     }
+    if (rebuild || this.layoutFocus !== this.focus) this.largeSuppressed = this.isSmallFocus()
     if (this.focus && sizeFlowFilterSize(this.model.byId.get(this.focus)) < this.minSize) this.focus = null
     if (rebuild || this.layoutFocus !== this.focus || this.layoutMinSize !== this.minSize) {
       if (this.renderRoot) hideTooltip(this.renderRoot)
@@ -72,18 +74,18 @@ class SizeFlow extends LitElement {
     }
   }
 
-  get minSize() { return this.largeOnly ? this.largeThreshold : 0 }
+  get minSize() { return this.largeOnly && !this.largeSuppressed ? this.largeThreshold : 0 }
 
   toggleLarge() { this.largeOnly = !this.largeOnly; this.needsFit = true; this.requestUpdate() }
 
   renderControls() {
-    return this.largeThreshold ? html`<mode-switch label=${`Large · ${this.largeThreshold / 1024}+ KiB`} .checked=${this.largeOnly}
+    return this.largeThreshold && !this.largeSuppressed ? html`<mode-switch label=${`Large · ${this.largeThreshold / 1024}+ KiB`} .checked=${this.largeOnly}
       @click=${() => this.toggleLarge()}></mode-switch>` : null
   }
 
   updated() {
     graph2.graphState = this.bridge
-    const controlsKey = `${this.largeThreshold}:${this.largeOnly}`
+    const controlsKey = `${this.largeThreshold}:${this.largeOnly}:${this.largeSuppressed}`
     if (controlsKey !== this.controlsKey) {
       this.controlsKey = controlsKey
       this.dispatchEvent(new CustomEvent('flow-controls-change', { detail: this.renderControls(), bubbles: true, composed: true }))
@@ -136,20 +138,22 @@ class SizeFlow extends LitElement {
   }
 
   follow(node) {
-    // Count this import subtree before Large filtering, stopping at the cutoff.
-    // Apply this on navigation only, so a manual Large override still works.
-    if (node && this.model.byId.has(node)) {
-      const pending = [node], seen = new Set([node])
-      for (const id of pending) {
-        if (seen.size >= 200) break
-        for (const { to } of this.model.byId.get(id).outgoing) {
-          if (!seen.has(to)) { seen.add(to); pending.push(to) }
-          if (seen.size >= 200) break
-        }
-      }
-      if (seen.size < 200) this.largeOnly = false
-    }
     this.focus = node; this.selection = node ? { node, edge: null } : null; this.needsFit = true; this.requestUpdate()
+  }
+
+  isSmallFocus() {
+    if (!this.focus) return false
+    // Count the import subtree before Large filtering, stopping at the cutoff.
+    // Suppress Large for this view without changing the user's saved setting.
+    const pending = [this.focus], seen = new Set(pending)
+    for (const id of pending) {
+      if (seen.size >= 200) break
+      for (const { to } of this.model.byId.get(id).outgoing) {
+        if (!seen.has(to)) { seen.add(to); pending.push(to) }
+        if (seen.size >= 200) break
+      }
+    }
+    return seen.size < 200
   }
 
   fitScale() {
@@ -308,7 +312,7 @@ class SizeFlow extends LitElement {
       ${node.removableMissing ? html`<p>${node.removableMissing} removed files have unknown sizes; removal totals include known bytes only.</p>` : null}
       ${node.missing ? html`<p>${node.missing} reachable file sizes are unknown.</p>` : null}
       ${node.virtual ? html`<p>Entry source is absent from this bundle; only its recorded imports are counted.</p>` : null}
-      <div class="flow-actions"><button @click=${() => this.follow(node.id)}>Follow imports</button>
+      <div class="flow-actions"><button aria-pressed=${!!this.focus} @click=${() => this.follow(this.focus ? null : node.id)}>Follow imports</button>
       ${!this.packages && !node.virtual ? html`<button data-bundle-view-source=${this.model.files.get(node.files[0]).origFile ?? node.files[0]}>View source</button>` : null}</div>
       <h4>Imports · ${node.outgoing.length}</h4>${this.renderLinks(node.outgoing)}
       <h4>Imported by · ${node.incoming.length}</h4>${this.renderLinks(node.incoming, true)}
