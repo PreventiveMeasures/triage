@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto'
 import { reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
-import { NpmPackageError, loadNpmPackage, npmFileRows, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, loadNpmPackageBody, loadNpmTarball, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
@@ -415,13 +415,14 @@ async function serveFixtureNpm(url: URL, res: ServerResponse): Promise<void> {
     }
     const doc = await readNpmVersion(name, spec, false, signal)
     if (!doc) { sendJson(res, 404, { error: 'package-not-found' }); return }
-    const { tarball, files } = await loadNpmPackage(doc)
     if (url.pathname === '/api/npm/download') {
+      const tarball = await loadNpmTarball(doc)
       res.writeHead(200, { 'content-type': 'application/gzip', 'cache-control': 'no-store' })
       res.end(tarball); return
     }
-    sendJson(res, 200, { name: doc.name, version: doc.version, private: false, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
-      manifest: doc.manifest, files: npmFileRows(files) })
+    const body = await loadNpmPackageBody(doc)
+    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'br', 'cache-control': 'no-store' })
+    res.end(body)
   } catch (err) {
     sendJson(res, err instanceof NpmPackageError ? err.status : 502, { error: err instanceof NpmPackageError ? err.message : 'upstream-unavailable' })
   }

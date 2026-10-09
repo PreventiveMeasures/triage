@@ -10,7 +10,7 @@ import { setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmFileText, npmTarballFilename, readNpmTar } from '../server-managed/npm-packages.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -314,6 +314,30 @@ test('oversized, malformed and unreachable packages are refused without their fi
   assert.equal((await h.send(packagePath('ok', '1.0.0'), 'view', { method: 'POST' })).status, 405)
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response('oops', { status: 503 })))
   assert.deepEqual((await h.send(packagePath('down', '1.0.0'))).json(), { error: 'upstream-unavailable' })
+})
+
+test('reads of a version share its load and its encoded body, and four load at once, encoding included', async t => {
+  const pkgs = ['a', 'b', 'c', 'd', 'e'].map(name => packageOf(`shared-${name}`, '1.0.0', { 'index.js': `module.exports = '${name}'\n` }))
+  registry(t, pkgs)
+  // Tarballs answer once released, holding their loads in flight meanwhile.
+  const answer = globalThis.fetch, downloads = [], gate = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', (input, init) => {
+    downloads.push(String(input))
+    return gate.promise.then(() => answer(input, init))
+  })
+  const version = ({ doc }) => ({ name: doc.name, version: doc.version, private: false, dist: doc.dist, manifest: { description: doc.description } })
+  const reads = Array.from({ length: 6 }, () => loadNpmPackageBody(version(pkgs[0])))
+  const others = pkgs.slice(1, 4).map(pkg => loadNpmPackageBody(version(pkg)))
+  await assert.rejects(loadNpmPackageBody(version(pkgs[4])), /npm-busy/u)
+  await assert.rejects(loadNpmTarball(version(pkgs[4])), /npm-busy/u, 'downloads count among them')
+  gate.resolve()
+  const bodies = await Promise.all(reads)
+  assert.ok(bodies.every(body => body === bodies[0]), 'one encoded body for every reader')
+  assert.equal(downloads.filter(url => url === pkgs[0].doc.dist.tarball).length, 1)
+  assert.deepEqual(JSON.parse(brotliDecompressSync(bodies[0])), { name: 'shared-a', version: '1.0.0', private: false, integrity: pkgs[0].doc.dist.integrity,
+    tarballSize: pkgs[0].tgz.length, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]] })
+  await Promise.all(others)
+  assert.deepEqual(Buffer.from(await loadNpmTarball(version(pkgs[4]))), pkgs[4].tgz, 'a place frees once its body is done')
 })
 
 test('team npm scopes are admin-only, normalized, listed with teams and recorded', async t => {

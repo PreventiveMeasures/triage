@@ -1079,9 +1079,11 @@ it is written, as escaping can grow a text sixfold; larger ones return 413
 `package-too-large`, before download when the registry's `dist.unpackedSize`
 or `dist.fileCount` says so. Directories,
 links, and paths that would leave the package are not extracted. At most four
-tarballs load at once per process (429 `npm-busy`); concurrent reads of one
-share its download. Off Vercel, upstream keeps downloaded tarballs in its disk
-cache, as for builds. Public workspace links cannot reach these endpoints.
+loads run at once per process (429 `npm-busy`), each until its response is
+encoded; concurrent reads of one version share its download and its encoded
+response. A download is the tarball as the registry has it, not unpacked.
+Off Vercel, upstream keeps downloaded tarballs in its disk cache, as for
+builds. Public workspace links cannot reach these endpoints.
 
 # Report access and blocked accounts
 

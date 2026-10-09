@@ -114,9 +114,8 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, canReadPrivateNpm, loadNpmPackage, npmFileRows, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, canReadPrivateNpm, loadNpmPackageBody, loadNpmTarball, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
-import { encodeBrotli } from './brotli.ts'
 
 const SESSION_PATH = '/api/auth/session'
 const AVATAR_PREFIX = '/api/avatar/'
@@ -2397,18 +2396,15 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     }
     const doc = await readNpmVersion(name, spec, privileged, controller.signal)
     if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-    const { tarball, files } = await loadNpmPackage(doc)
-    if (!(await recheck(doc.private))) return
     if (path === NPM_DOWNLOAD_PATH) {
+      const tarball = await loadNpmTarball(doc)
+      if (!(await recheck(doc.private))) return
       res.writeHead(200, { 'content-type': 'application/gzip', 'content-length': String(tarball.byteLength),
         'content-disposition': attachmentDisposition(npmTarballFilename(doc.name, doc.version)), 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
       writeResponse(res, Buffer.from(tarball.buffer, tarball.byteOffset, tarball.byteLength)); return
     }
-    const body = await encodeBrotli(Buffer.from(JSON.stringify({
-      name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
-      manifest: doc.manifest, files: npmFileRows(files),
-    })))
-    if (res.destroyed) return
+    const body = await loadNpmPackageBody(doc)
+    if (!(await recheck(doc.private))) return
     res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(body.length),
       'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
     writeResponse(res, body)

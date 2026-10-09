@@ -17,6 +17,7 @@ import { HttpError, getTarball } from '@preventive/upstream/npm.js'
 import { getRepo } from '@preventive/upstream/package.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
+import { encodeBrotli } from './brotli.ts'
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
@@ -32,7 +33,8 @@ const MAX_TAR_BYTES = 96 * 1024 * 1024
 // six times (a control character becomes `\u0001`), so it is counted before
 // anything is serialized.
 export const MAX_NPM_JSON_LENGTH = 96 * 1024 * 1024
-// Loads in flight per process; each can hold a tarball, its tar and its files.
+// Loads in flight per process; each can hold a tarball, its tar, its files
+// and their encoded JSON.
 const MAX_ACTIVE_LOADS = 4
 
 const gunzipAsync = promisify(gunzip)
@@ -256,38 +258,63 @@ export function readNpmTar(tar: Uint8Array): NpmPackageFile[] {
   return [...files].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
 }
 
-const loads = new Map<string, Promise<{ tarball: Uint8Array; files: NpmPackageFile[] }>>()
+// Work in flight, by what it reads; readers asking for the same share it.
+const loads = new Map<string, Promise<unknown>>()
 
-// The version's tarball and files. Upstream checks the bytes against the
-// dist's integrity wherever it reads them from; loads of one tarball share
-// the work while it is in flight, and nothing is kept after.
-export function loadNpmPackage(doc: NpmVersionDocument): Promise<{ tarball: Uint8Array; files: NpmPackageFile[] }> {
+function shared<T>(key: string, doc: NpmVersionDocument, work: () => Promise<T>): Promise<T> {
   const { unpackedSize, fileCount } = doc.dist
   if ((unpackedSize ?? 0) > MAX_NPM_PACKAGE_BYTES || (fileCount ?? 0) > MAX_NPM_PACKAGE_FILES) {
     return Promise.reject(new NpmPackageError(413, 'package-too-large'))
   }
-  const key = `${doc.dist.integrity} ${doc.dist.tarball}`
   const pending = loads.get(key)
-  if (pending) return pending
+  if (pending) return pending as Promise<T>
   if (loads.size >= MAX_ACTIVE_LOADS) return Promise.reject(new NpmPackageError(429, 'npm-busy'))
-  const job = (async () => {
-    let tarball: Uint8Array
-    try { tarball = await getTarball(doc.name, doc.version, { tarball: doc.dist.tarball, integrity: doc.dist.integrity }) }
-    catch (err) {
-      if (err instanceof HttpError && err.status === 404) throw new NpmPackageError(404, 'package-not-found')
-      throw new NpmPackageError(502, 'upstream-unavailable')
-    }
-    let tar: Buffer
-    try { tar = await gunzipAsync(tarball, { maxOutputLength: MAX_TAR_BYTES }) }
-    catch (err) {
-      throw new NpmPackageError((err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 413 : 422,
-        (err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 'package-too-large' : 'bad-tarball')
-    }
-    return { tarball, files: readNpmTar(tar) }
-  })()
+  const job = work()
   loads.set(key, job)
   job.finally(() => loads.delete(key)).catch(() => {})
   return job
+}
+
+// Upstream checks the bytes against the dist's integrity wherever it reads
+// them from.
+async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
+  try { return await getTarball(doc.name, doc.version, { tarball: doc.dist.tarball, integrity: doc.dist.integrity }) }
+  catch (err) {
+    if (err instanceof HttpError && err.status === 404) throw new NpmPackageError(404, 'package-not-found')
+    throw new NpmPackageError(502, 'upstream-unavailable')
+  }
+}
+
+async function readFiles(tarball: Uint8Array): Promise<NpmPackageFile[]> {
+  let tar: Buffer
+  try { tar = await gunzipAsync(tarball, { maxOutputLength: MAX_TAR_BYTES }) }
+  catch (err) {
+    throw new NpmPackageError((err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 413 : 422,
+      (err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 'package-too-large' : 'bad-tarball')
+  }
+  return readNpmTar(tar)
+}
+
+// The version's tarball, for download.
+export function loadNpmTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
+  return shared(`tarball ${doc.dist.integrity} ${doc.dist.tarball}`, doc, () => readTarball(doc))
+}
+
+// The version as the viewer reads it, as brotli-encoded JSON: `{ name,
+// version, private, integrity, tarballSize, manifest, files }`, its files as
+// npmFileRows gives them. Encoding is where a load holds the most, so it
+// takes its place among the active loads until its body is done, and readers
+// asking meanwhile share that body, the first one's manifest in it; nothing
+// is kept after.
+export function loadNpmPackageBody(doc: NpmVersionDocument): Promise<Buffer> {
+  return shared(`package ${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`, doc, async () => {
+    const tarball = await readTarball(doc)
+    const files = await readFiles(tarball)
+    return encodeBrotli(Buffer.from(JSON.stringify({
+      name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
+      manifest: doc.manifest, files: npmFileRows(files),
+    })))
+  })
 }
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
