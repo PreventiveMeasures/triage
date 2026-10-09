@@ -2488,7 +2488,6 @@ function bundleExportsColumn(entry, details) {
   // size container (CSS): the buttons right-align while the column sits
   // narrow and flip to a left-aligned row once it spans its own line.
   return html`<div class="bundles-overview-exports">
-    ${languages}
     <div class="bundles-overview-exports-row">
       ${entry.managedId ? getPublicShare()
         ? html`<button type="button" class="bundles-download-btn" @click=${() => void downloadPublicBundle(entry)}>${DOWNLOAD_ICON}<span>Download bundle</span></button>`
@@ -2500,6 +2499,7 @@ function bundleExportsColumn(entry, details) {
         <button type="button" class="bundles-download-btn" data-bundle-export-sbom="spdx" data-tooltip="Export an SPDX SBOM (.spdx.json)">${SPDX_ICON}<span>SPDX</span></button>
       </div>` : nothing}
     </div>
+    ${languages}
   </div>`
 }
 
