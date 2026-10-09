@@ -6,7 +6,8 @@ import '../ui/view/frontend-install.js'
 mock.module('../client/index.js', { namedExports: { state: { bundles: [
   { integrity: 'base', name: 'Before' }, { integrity: 'other', name: 'After' },
 ] } } })
-mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails() {} } })
+let handedOff = null, loads = 0
+mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails() { loads++; return new Promise(() => {}) }, handOffBundleDetails(parsed) { handedOff = parsed } } })
 mock.module('../ui/view/bundle-compare-code.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
@@ -132,4 +133,23 @@ test('file size sorting happens before the visible row limit', () => {
   assert.equal(paths.at(-1), 'file-005.js')
   assert.match(markup, /bundle-compare-group-count">405/u)
   assert.match(markup, /and 5 more/u)
+})
+
+test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {
+  const view = compare()
+  view._status = 'ready'
+  const base = view.details, other = view._otherDetails
+  let swapped = null
+  view.addEventListener('bundle-swap', event => { swapped = event.detail.integrity })
+  view._swap()
+  assert.equal(swapped, 'other')
+  assert.equal(handedOff, other, 'the target opens as the new base without a read')
+  // The app opens the old target; the comparison flips onto the old base.
+  view.integrity = 'other'
+  view.details = other
+  view.willUpdate(new Map([['integrity', 'base'], ['details', base]]))
+  assert.equal(view._targetIntegrity, 'base')
+  assert.equal(view._otherDetails, base)
+  assert.equal(view._status, 'ready')
+  assert.equal(loads, 0, 'nothing is read again')
 })

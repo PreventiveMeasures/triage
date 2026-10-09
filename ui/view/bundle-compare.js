@@ -30,7 +30,7 @@ import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
-import { buildBundleDetails } from './bundle-load.js'
+import { buildBundleDetails, handOffBundleDetails } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
@@ -146,17 +146,23 @@ class BundleCompare extends LitElement {
     // of clearing it (the module-level handoff survives the prop
     // teardown the navigation triggers).
     if (_pendingSwap && this.integrity === _pendingSwap.base) {
-      const target = _pendingSwap.target
+      const { target, targetDetails } = _pendingSwap
       this._scope = _pendingSwap.scope
       this._mode = _pendingSwap.mode
       this._codePath = _pendingSwap.codePath
       _pendingSwap = null
       this._targetIntegrity = target
-      this._otherDetails = null
-      this._status = 'loading'
       this._diff = null
       this._diffKey = null
-      this._loadOther(target)
+      // The old base is still parsed: compare against it as it stands.
+      if (targetDetails?.integrity === target) {
+        this._otherDetails = targetDetails
+        this._status = 'ready'
+      } else {
+        this._otherDetails = null
+        this._status = 'loading'
+        this._loadOther(target)
+      }
       return
     }
     this._targetIntegrity = null
@@ -172,12 +178,16 @@ class BundleCompare extends LitElement {
   // bundle (so the app navigates to it) and flip the comparison to the
   // old base. The pending-swap slot carries the new target across the
   // base change; events.js handles the actual bundle switch off the
-  // dispatched event (same path the sidebar row click takes).
+  // dispatched event (same path the sidebar row click takes). Both sides
+  // are already parsed, so each is handed to its new role rather than
+  // read from storage and parsed again.
   _swap() {
     const newBase = this._targetIntegrity
     if (!newBase || newBase === this.integrity) return
     if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
-    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath }
+    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath,
+      targetDetails: this._baseReady && !this.details.error ? this.details : null }
+    if (this._otherDetails?.integrity === newBase && (this._otherDetails.json || this._otherDetails.bundle)) handOffBundleDetails(this._otherDetails)
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,

@@ -30,6 +30,15 @@ async function cachedMetadata(integrity) {
   } catch { return null }
 }
 
+// A parsed bundle handed to its next open: Compare's swap already holds
+// both sides parsed, so opening the other one needn't read and parse it
+// again. Only ever the one bundle about to open (selectBundle drops it for
+// any other), and taken by that open, so nothing more stays in memory.
+let handoff = null
+export function handOffBundleDetails(details) {
+  handoff = details && !details.error ? details : null
+}
+
 // In-flight deduplication only: completed source bodies are owned by their
 // active view, never retained in a process-wide preload/cache of bundles.
 export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
@@ -41,6 +50,12 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   // links and comparison/code consumers, without retaining another bundle.
   if (active?.integrity === integrity && active.kind === kind && active.managedId === entry.managedId && !active.error
       && (!sources || !active.metadataOnly)) return Promise.resolve(active)
+  if (handoff?.integrity === integrity && handoff.kind === kind && handoff.managedId === entry.managedId
+      && (!sources || !handoff.metadataOnly)) {
+    const details = handoff
+    handoff = null
+    return Promise.resolve(details)
+  }
   const key = `${entry.managedId ?? 'local'}:${integrity}:${kind}`
   const signal = entry.managedId && sources ? currentViewSignal() : undefined
   const pending = loads.get(key)
@@ -104,6 +119,7 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   const carried = state.currentView === 'bundles' && state.bundleDetailsTab === 'code' && tab === 'code'
     ? state.bundleSourceFile ?? (pending ? request.path : null) : null
   beginViewNavigation()
+  if (handoff?.integrity !== integrity) handoff = null
   state.currentView = 'bundles'
   state.selectedBundle = integrity
   state.selectedBundleWorkspace = workspaceId
