@@ -30,20 +30,20 @@ async function cachedMetadata(integrity) {
   } catch { return null }
 }
 
-// Parsed bundles handed to the navigation that opens `opening`: Compare's
-// swap holds both sides parsed, so neither the bundle it opens nor the one
-// it then compares against needs reading and parsing again. Each is taken
-// by its first use, and whatever is left goes with the view (any later
-// navigation), so a swap that never lands keeps nothing in memory.
+// Parsed bundles handed to a swap's navigation: Compare holds both sides
+// parsed, so neither the bundle the swap opens nor the one it then compares
+// against needs reading and parsing again. Each is taken by its first use;
+// the navigation (events.js `bundle-swap`) releases whatever is left once it
+// settles, so a swap that is abandoned or fails keeps nothing in memory.
 let handoff = null
-function keepHandoff(next) {
-  handoff = next
-  currentViewSignal().addEventListener('abort', () => { if (handoff === next) handoff = null }, { once: true })
+export function handOffBundles(bundles) {
+  const parsed = new Map(bundles.filter(details => details && !details.error).map(details => [details.integrity, details]))
+  handoff = parsed.size > 0 ? { bundles: parsed } : null
+  return handoff
 }
 
-export function handOffBundles(opening, bundles) {
-  const parsed = new Map(bundles.filter(details => details && !details.error).map(details => [details.integrity, details]))
-  if (parsed.size > 0) keepHandoff({ opening, bundles: parsed })
+export function releaseHandoff(held) {
+  if (handoff === held) handoff = null
 }
 
 // A handed-over bundle, if `accept` takes it; it is then no longer held.
@@ -131,10 +131,7 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
   const pending = request?.bundle === state.selectedBundle && (!details || (details.metadataOnly === true && !details.sourceError))
   const carried = state.currentView === 'bundles' && state.bundleDetailsTab === 'code' && tab === 'code'
     ? state.bundleSourceFile ?? (pending ? request.path : null) : null
-  // A swap's bundles go with it into the view it opens, and no further.
-  const kept = handoff?.opening === integrity ? handoff : null
   beginViewNavigation()
-  if (kept) keepHandoff(kept)
   state.currentView = 'bundles'
   state.selectedBundle = integrity
   state.selectedBundleWorkspace = workspaceId

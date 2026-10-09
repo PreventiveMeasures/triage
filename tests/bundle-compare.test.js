@@ -9,7 +9,6 @@ mock.module('../client/index.js', { namedExports: { state: { bundles: [
 let handedOff = null, loads = 0
 mock.module('../ui/view/bundle-load.js', { namedExports: {
   buildBundleDetails() { loads++; return new Promise(() => {}) },
-  handOffBundles(opening, bundles) { handedOff = { opening, bundles: new Map(bundles.filter(Boolean).map(parsed => [parsed.integrity, parsed])) } },
   takeHandedOffBundle(integrity) { const parsed = handedOff?.bundles.get(integrity) ?? null; handedOff?.bundles.delete(integrity); return parsed },
 } })
 mock.module('../ui/view/bundle-compare-code.js', { namedExports: {} })
@@ -144,11 +143,15 @@ test('Swap hands both parsed bundles to their new roles instead of loading them 
   view._status = 'ready'
   const base = view.details, other = view._otherDetails
   let swapped = null
-  view.addEventListener('bundle-swap', event => { swapped = event.detail.integrity })
+  view.addEventListener('bundle-swap', event => {
+    swapped = event.detail.integrity
+    // What events.js does: hand both over for the swap's navigation.
+    handedOff = { bundles: new Map(event.detail.bundles.map(parsed => [parsed.integrity, parsed])) }
+  })
   view._swap()
   assert.equal(swapped, 'other')
-  assert.equal(handedOff.opening, 'other')
   assert.equal(handedOff.bundles.get('other'), other, 'the target opens as the new base without a read')
+  assert.equal(handedOff.bundles.get('base'), base, 'and the old base rides along to be compared against')
   // The app opens the old target; the comparison flips onto the old base.
   view.integrity = 'other'
   view.details = other

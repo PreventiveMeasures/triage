@@ -265,3 +265,18 @@ test('a Code link carries its marked lines with its file number', async t => {
   assert.deepEqual(state.bundleCodeFileRequest, { bundle: bundle.integrity, file: 1, line: 42, endLine: 69 })
   assert.equal(f.browser.location.pathname + f.browser.location.hash, '/manage/bundle/created/code/1#L42-L69')
 })
+
+test('a bundle Compare\'s swap hands over opens in full, lent the hashes and sizes the server indexed', async t => {
+  const { handOffBundles, releaseHandoff } = await import('../ui/view/bundle-load.js')
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json(metadata)))
+  const parsed = { integrity: bundle.integrity, kind: 'stasis', size: bundle.byteSize, managedId: bundle.id, bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1', files: { 'index.js': 'export default 1' } }]]),
+  }) }
+  const held = handOffBundles([parsed])
+  t.after(() => releaseHandoff(held))
+  assert.equal(await openManagedBundle({ bundleId: bundle.id, teamId: null, bundleTab: 'compare' }, [managedBundleEntry(bundle)], () => true, () => {}), true)
+  assert.equal(state.bundleDetails, parsed, 'the parsed bundle itself, not the metadata-only one')
+  assert.equal(parsed.metadataOnly, undefined)
+  assert.deepEqual([...parsed.fileHashes.keys()], ['index.js'])
+  assert.equal(parsed.fileSizes.get('index.js'), 16)
+})

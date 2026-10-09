@@ -30,7 +30,7 @@ import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
-import { buildBundleDetails, handOffBundles, takeHandedOffBundle } from './bundle-load.js'
+import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
@@ -53,8 +53,9 @@ const MAX_ROWS = 400
 // component-internal field wouldn't survive the navigation. Shape:
 // `{ base, target, scope, mode, codePath }`, consumed once by willUpdate
 // when integrity flips to `base`, or dropped when another bundle opens.
-// It holds no parsed bundle: those go through handOffBundles, which keeps
-// them no longer than the swap's own view.
+// It holds no parsed bundle: those ride the swap event to the navigation,
+// which hands them over (bundle-load.js handOffBundles) for as long as it
+// runs.
 let _pendingSwap = null
 
 // Signed count for a summary metric delta: `+3` / `−2` / `±0`. Uses a
@@ -191,14 +192,14 @@ class BundleCompare extends LitElement {
     if (!newBase || newBase === this.integrity) return
     if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
     _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath }
-    handOffBundles(newBase, [
+    const bundles = [
       this._otherDetails?.integrity === newBase && (this._otherDetails.json || this._otherDetails.bundle) ? this._otherDetails : null,
       this._baseReady ? this.details : null,
-    ])
+    ].filter(Boolean)
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,
-      detail: { integrity: newBase },
+      detail: { integrity: newBase, bundles },
     }))
   }
 
