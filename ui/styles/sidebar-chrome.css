@@ -39,7 +39,7 @@
 }
 
 /* Compact detail tooltips retain the muted reference style of issue/PR previews. */
-#styled-tooltip:has(.tooltip-repo, .tooltip-bundle, .tooltip-package) {
+#styled-tooltip:has(.tooltip-repo, .tooltip-bundle, .tooltip-package, .tooltip-commit-details) {
   padding: 7px;
   line-height: 1.4;
 }
@@ -64,6 +64,33 @@
 }
 /* Half the row gap again between a repository and its commit. */
 #styled-tooltip .tooltip-repo > span + .tooltip-commit { margin-left: .2rem; }
+/* The tags that point to the commit go under it and wrap in the tooltip's
+   width (a monorepo can tag many packages). */
+#styled-tooltip .tooltip-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .2rem .6rem;
+  margin-top: 4px;
+  color: var(--muted);
+  font: 12px/1.4 system-ui, sans-serif;
+}
+/* A tag longer than its box breaks rather than running past the tooltip. */
+#styled-tooltip .tooltip-tag {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  gap: .3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#styled-tooltip .tooltip-tag-more { white-space: nowrap; }
+#styled-tooltip .tooltip-commit-details {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  font: 12px/1.4 system-ui, sans-serif;
+  white-space: normal;
+}
+#styled-tooltip .tooltip-commit-meta { color: var(--muted); }
 #styled-tooltip:has(.tooltip-package) :is(.tooltip-package, .tooltip-repo) { margin-top: 12px; }
 #styled-tooltip .tooltip-package-details { display: flex; flex-wrap: wrap; column-gap: .75rem; }
 #styled-tooltip .tooltip-repo svg,

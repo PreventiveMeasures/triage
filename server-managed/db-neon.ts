@@ -6,7 +6,7 @@ import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './d
 import { revisionSchema } from './revisions.ts'
 import { MANAGED_SCHEMA, VIEW_SESSION_INDEX } from './db-schema.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
-import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
+import { GITHUB_COMMIT_SCHEMA, GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { BUNDLE_BUILD_LEASE_SCHEMA } from './bundle-build-leases.ts'
 import { UPSTREAM_CACHE_SCHEMA } from './upstream-cache.ts'
@@ -34,7 +34,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 24 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 25 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -121,6 +121,12 @@ async function migrateViewSessions(db: PgConnection): Promise<void> {
   await db.query('INSERT INTO managed_schema_version VALUES (24)')
 }
 
+async function migrateGithubCommits(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 25')).rows.length > 0) return
+  await db.query(postgresSchema(GITHUB_COMMIT_SCHEMA))
+  await db.query('INSERT INTO managed_schema_version VALUES (25)')
+}
+
 async function initialize(db: PgConnection): Promise<void> {
   if (await currentSchema(db)) return
   await db.query('BEGIN')
@@ -194,7 +200,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

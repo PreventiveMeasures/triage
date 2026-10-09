@@ -21,6 +21,11 @@
 // a `prepareTooltip(el)` function: the show calls it, once the hover delay
 // has run out, to fill in the target's `data-tooltip-*` attributes.
 //
+// A commit a managed bundle records can carry `data-tooltip-commit-info`
+// (see `bundleCommitTooltip` in bundle-origin-links.js): the tags that point
+// to it go under the `data-tooltip-commit` reference, then its message's first
+// line, author and date.
+//
 // Placement: 'cursor' (default) anchors below the cursor and clamps
 // horizontally to the viewport — natural for in-column rows where
 // right-of-element would overlap the next column. 'right' anchors to
@@ -29,8 +34,39 @@
 // 'right-start' aligns to the row's top instead. A target can override
 // its listener's placement with `data-tooltip-placement`.
 
-import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
+
+// The tooltip ignores the pointer, so it cannot scroll: a commit with many
+// tags (a monorepo's packages) shows the first few and counts the rest. The
+// Overview lists them all.
+const MAX_TOOLTIP_TAGS = 8
+
+function readCommitInfo(value) {
+  let info
+  try { info = value ? JSON.parse(value) : null } catch { return null }
+  const text = field => typeof field === 'string' && field ? field : null
+  return info && {
+    tags: Array.isArray(info.tags) ? info.tags.filter(text) : [],
+    details: typeof info.title === 'string' ? { title: info.title, authorName: text(info.authorName),
+      authorLogin: text(info.authorLogin), date: Number.isSafeInteger(info.date) ? info.date : null } : null,
+  }
+}
+
+// The message's first line, then its author and commit date.
+function commitDetailsRow({ title, authorName, authorLogin, date }) {
+  const row = document.createElement('div')
+  row.className = 'tooltip-commit-details'
+  const headline = document.createElement('span')
+  headline.className = 'tooltip-commit-message'
+  headline.textContent = title
+  const meta = document.createElement('span')
+  meta.className = 'tooltip-commit-meta'
+  const author = authorName && authorLogin && authorName !== authorLogin ? `${authorName} (@${authorLogin})` : authorName ?? (authorLogin && `@${authorLogin}`)
+  meta.textContent = [author, date === null ? '' : new Date(date).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · ')
+  row.append(headline, meta)
+  return row
+}
 
 let tipEl
 function ensureEl() {
@@ -103,6 +139,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const text = el.dataset.tooltip ?? ''
   const repo = el.dataset.tooltipRepo ?? ''
   const commit = bundleCommitHash(el.dataset.tooltipCommit)
+  const commitInfo = readCommitInfo(el.dataset.tooltipCommitInfo)
   const bundle = ['stasis', 'sourcemap'].includes(el.dataset.tooltipBundle) ? el.dataset.tooltipBundle : ''
   const stats = el.dataset.tooltipStats ?? ''
   const built = el.dataset.tooltipBuilt === 'true'
@@ -112,7 +149,7 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
   const files = el.dataset.tooltipFiles ?? ''
   const loc = el.dataset.tooltipLoc ?? ''
   const size = el.dataset.tooltipSize ?? ''
-  const content = JSON.stringify([text, repo, commit, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
+  const content = JSON.stringify([text, repo, commit, commitInfo, bundle, stats, built, packageName, ecosystem, version, files, loc, size])
   if (!text) { hideTooltip(); return }
   // Some compound controls (for example the language bar) keep one
   // tooltip owner while changing its text as the pointer crosses child
@@ -158,7 +195,30 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
       row.append(reference)
     }
     node.append(row)
+    // Beside a repository path the tags would wrap in whatever width it left;
+    // under it they take the tooltip's.
+    if (commit && commitInfo?.tags.length) {
+      const tags = document.createElement('div')
+      tags.className = 'tooltip-tags'
+      for (const tag of commitInfo.tags.slice(0, MAX_TOOLTIP_TAGS)) {
+        const chip = document.createElement('span')
+        chip.className = 'tooltip-tag'
+        chip.innerHTML = TAG_ICON_SVG
+        const name = document.createElement('span')
+        name.textContent = tag
+        chip.append(name)
+        tags.append(chip)
+      }
+      if (commitInfo.tags.length > MAX_TOOLTIP_TAGS) {
+        const more = document.createElement('span')
+        more.className = 'tooltip-tag-more'
+        more.textContent = `+${(commitInfo.tags.length - MAX_TOOLTIP_TAGS).toLocaleString()} more`
+        tags.append(more)
+      }
+      node.append(tags)
+    }
   }
+  if (commitInfo?.details) node.append(commitDetailsRow(commitInfo.details))
   if (bundle || stats || built) {
     const row = document.createElement('div')
     row.className = 'tooltip-bundle'

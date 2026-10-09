@@ -29,14 +29,15 @@ test('repository reader pins branches/tags to commits and only returns directory
     if (url === 'https://api.github.com/repos/org/repo') return Response.json(publicMetadata)
     if (url.includes('/commits/')) return Response.json({ sha: commit })
     if (url.includes('/branches?')) return Response.json([{ name: 'main' }, { name: 'feature/a' }])
-    if (url.includes('/tags?')) return Response.json([{ name: 'v1' }])
+    if (url.includes('/tags?')) return Response.json([{ name: 'v1', commit: { sha: commit } }, { name: 'v0', commit: { sha: 'short' } }, { name: 'bare' }])
     return Response.json([
       { name: 'a.ts', path: 'src/a.ts', type: 'file', content: 'never return source' },
       { name: 'external', path: 'src/external', type: 'file', submodule_git_url: 'https://example.com' },
       { name: 'leak', path: 'private/leak', type: 'file' },
     ])
   }).reader(repo)
-  assert.deepEqual(await reader.refs(), { defaultBranch: 'main', branches: ['main', 'feature/a'], tags: ['v1'] })
+  assert.deepEqual(await reader.refs(), { defaultBranch: 'main', branches: ['main', 'feature/a'], tags: ['v1', 'v0', 'bare'],
+    tagCommits: [{ name: 'v1', sha: commit }], tagsComplete: true })
   assert.equal(await reader.commit('heads/feature/a'), commit)
   assert.equal(await reader.commit('tags/v1'), commit)
   const count = calls.length
@@ -216,6 +217,83 @@ test('refs withDefault populates a cold cache and can clear a missing default', 
   const plain = await request({ repoId: '1', withDefault: 'false' }, { route: 'refs' })
   assert.deepEqual(plain.body, { defaultBranch: '', branches: [], tags: [] })
   assert.equal(commitReads, 2, 'plain refs does not fetch contents')
+})
+
+test('browsing for Create a bundle refreshes the tag cache without returning tag commits', async t => {
+  const { db, request } = await fixture(t, { role: 'admin' })
+  const tagged = 'b'.repeat(40)
+  const keys = [`1:${commit}`, `1:${tagged}`]
+  let tags = [{ name: 'v1', commit: { sha: commit } }, { name: 'v2', commit: { sha: tagged } }]
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url).pathname
+    if (path === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+    if (path.endsWith('/branches')) return Promise.resolve(Response.json([{ name: 'main' }]))
+    if (path.endsWith('/tags')) return Promise.resolve(Response.json(tags))
+    if (path.includes('/commits/')) return Promise.resolve(Response.json({ sha: path.endsWith('/tags%2Fbeyond') ? tagged : commit }))
+    return Promise.resolve(Response.json([]))
+  })
+  const refs = await request({ repoId: '1' }, { route: 'refs' })
+  assert.deepEqual(refs.body, { defaultBranch: 'main', branches: ['main'], tags: ['v1', 'v2'] })
+  assert.deepEqual(await db.listGithubCommitTags(keys), [{ key: keys[0], name: 'v1' }, { key: keys[1], name: 'v2' }])
+
+  tags = Array.from({ length: 100 }, (_, i) => ({ name: `t${i}`, commit: { sha: commit } }))
+  assert.equal((await request({ repoId: '1' }, { route: 'refs' })).status, 200)
+  assert.equal((await db.listGithubCommitTags(keys)).length, 102, 'a full page may leave tags out, so the others stay')
+  assert.equal((await request({ repoId: '1', ref: 'tags/beyond', path: '' })).body.commit, tagged)
+  assert.equal((await request({ repoId: '1', ref: 'heads/main', path: '' })).status, 200)
+  assert.deepEqual((await db.listGithubCommitTags([keys[1]])).map(tag => tag.name), ['beyond', 'v2'], 'a tag the revision input resolves is kept')
+
+  tags = [{ name: 'v1', commit: { sha: tagged } }]
+  await request({ repoId: '1' }, { route: 'refs' })
+  assert.deepEqual(await db.listGithubCommitTags(keys), [{ key: keys[1], name: 'v1' }], 'a complete listing drops deleted tags and moves retagged ones')
+})
+
+test('browser responses recheck managed access after refreshing the tag cache', async t => {
+  const { db, request, userId } = await fixture(t)
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url).pathname
+    if (path === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+    if (path.endsWith('/tags')) return Promise.resolve(Response.json([{ name: 'v1', commit: { sha: commit } }]))
+    if (path.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
+    return Promise.resolve(Response.json([]))
+  })
+  const refresh = db.refreshGithubTags
+  t.mock.method(db, 'refreshGithubTags', async (...args) => {
+    await refresh(...args)
+    await db.removeTeamMember('team', userId)
+  })
+  for (const query of [[{ repoId: '1' }, { route: 'refs' }], [{ repoId: '1', ref: 'tags/v1', path: 'src/allowed' }]]) {
+    await db.setTeamMember('team', userId, { dependencies: true, security: true })
+    const response = await request(...query)
+    assert.equal(response.status, 404, 'access revoked during the cache write suppresses the result')
+    assert.equal(response.body.tags, undefined)
+    assert.equal(response.body.entries, undefined)
+  }
+  assert.deepEqual(await db.listGithubCommitTags([`1:${commit}`]), [{ key: `1:${commit}`, name: 'v1' }], 'tags read with verified access stay cached')
+})
+
+test('an older overlapping tag listing cannot restore tags a newer one deleted', async t => {
+  const { db, request } = await fixture(t, { role: 'admin' })
+  let listed, release
+  const started = new Promise(resolve => { listed = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  t.mock.method(globalThis, 'fetch', async url => {
+    const path = new URL(url).pathname
+    if (path === '/repos/org/repo') return Response.json(publicMetadata)
+    if (path.endsWith('/tags') && listed) {
+      listed()
+      listed = null
+      await gate
+      return Response.json([{ name: 'deleted', commit: { sha: commit } }])
+    }
+    return Response.json([])
+  })
+  const older = request({ repoId: '1' }, { route: 'refs' })
+  await started
+  assert.equal((await request({ repoId: '1' }, { route: 'refs' })).status, 200)
+  release()
+  assert.equal((await older).status, 200)
+  assert.deepEqual(await db.listGithubCommitTags([`1:${commit}`]), [])
 })
 
 for (const failure of ['refs', 'contents']) {

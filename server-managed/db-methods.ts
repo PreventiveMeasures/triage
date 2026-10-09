@@ -8,7 +8,7 @@ import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { preferredSlug } from './slugs.ts'
 import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
-import { type GithubMetadataStore, githubMetadataMethods } from './github-metadata.ts'
+import { type GithubCommitStore, type GithubMetadataStore, githubCommitMethods, githubMetadataMethods } from './github-metadata.ts'
 import { type ManagedIssueStore, managedIssueMethods } from './managed-issues.ts'
 import type { IssueFixUpdate } from './github-issue-links.ts'
 import { type BundleBuildLeaseStore, bundleBuildLeaseMethods } from './bundle-build-leases.ts'
@@ -360,7 +360,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore {
+export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -1690,6 +1690,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       return row?.githubId ?? null
     },
     ...githubMetadataMethods(db),
+    ...githubCommitMethods(db),
     ...managedIssueMethods(db),
     ...selectedRepoMethods(stmts),
     ...activity,

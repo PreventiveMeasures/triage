@@ -34,7 +34,7 @@ import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, 
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
-import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -46,7 +46,7 @@ import { formatBytes } from '../scan/metrics.js'
 import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceLines, bundleSourceOrder, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleCodeStats } from '../../common/bundle-stats.js'
-import { bundleOriginLinks } from './bundle-origin-links.js'
+import { bundleCommitTooltip, bundleOriginLinks } from './bundle-origin-links.js'
 import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
@@ -1578,6 +1578,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
         data-tooltip=${github.path}
         data-tooltip-repo=${github.github}
         data-tooltip-commit=${github.commit ?? nothing}
+        data-tooltip-commit-info=${bundleCommitTooltip(entry?.commitInfo, github.commit, github.github) ?? nothing}
         data-tooltip-package=${github.package?.name ?? nothing}
         data-tooltip-ecosystem=${github.package?.ecosystem ?? nothing}
         data-tooltip-version=${github.package?.version ?? nothing}
@@ -2535,9 +2536,10 @@ function renderBundleDetails(entry, details) {
   const meta = (prefix = '', includeSize = false) => html`<dl class="bundles-detail-meta">
     <dt>Name</dt><dd>${entry.name}</dd>
     ${entry.managedId ? html`<dt>Repository</dt><dd>${entry.repoFullName || 'Unattached'}</dd>${entry.repoId == null ? nothing : html`<dt>Directory</dt><dd class="mono">/${entry.repoDirectory ?? ''}</dd>`}` : nothing}
-    ${bundleOriginLinks(origin, prefix).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
+    ${bundleOriginLinks(origin, prefix, entry.commitInfo).map(link => html`<dt>${link.label}</dt><dd class="bundle-origin-row">
       <a class="bundle-origin-link" href=${link.href} target="_blank" rel="noopener noreferrer">${link.label === 'GitHub' ? unsafeHTML(GITHUB_ICON_SVG) : nothing}<span>${link.text}</span></a>
-      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
+      ${link.commit ? html`<a class="bundle-origin-link bundle-commit-link" href=${link.commit.href} data-tooltip=${link.commit.hash} data-tooltip-commit-info=${bundleCommitTooltip(entry.commitInfo, link.commit.hash) ?? nothing} target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${link.commit.text}</span></a>` : nothing}
+      ${link.commit?.tags ? html`<span class="bundle-origin-tags">${link.commit.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag.name}</span></a>`)}</span>` : nothing}
     </dd>`)}
     <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}

@@ -18,12 +18,39 @@ export interface GithubRepositoryVisibility {
   public: boolean
   checkedAt: number
 }
+// A commit's details, keyed by githubCommitKey. Commits never change, so an
+// entry is never refreshed or evicted.
+export interface GithubCommit {
+  key: string
+  message: string
+  authorName: string | null
+  authorLogin: string | null
+  authoredAt: number | null
+  committedAt: number | null
+  fetchedAt: number
+}
+export interface GithubTag { name: string; sha: string }
 export interface GithubMetadataStore {
   listGithubMetadata(keys: readonly string[]): Promise<GithubMetadata[]>
   setGithubMetadata(entries: readonly Omit<GithubMetadata, 'attemptedAt'>[]): Promise<void>
   recordGithubMetadataAttempts(keys: readonly string[], attemptedAt: number): Promise<void>
   listGithubRepositoryVisibility(repoIds: readonly number[]): Promise<GithubRepositoryVisibility[]>
   setGithubRepositoryVisibility(entries: readonly GithubRepositoryVisibility[]): Promise<void>
+}
+export interface GithubCommitStore {
+  listGithubCommits(keys: readonly string[]): Promise<GithubCommit[]>
+  setGithubCommits(entries: readonly GithubCommit[]): Promise<void>
+  // The cached tags that point to each commit, by githubCommitKey.
+  listGithubCommitTags(keys: readonly string[]): Promise<{ key: string; name: string }[]>
+  // `complete` is a listing of every tag the repository has: tags it leaves
+  // out were deleted. Otherwise only the listed tags are updated. `observedUs`
+  // orders overlapping refreshes (see githubCommitMethods).
+  refreshGithubTags(repoId: number, tags: readonly GithubTag[], complete: boolean, observedUs: number): Promise<void>
+}
+
+// A stable repository ID survives renames, as in the PR metadata keys.
+export function githubCommitKey(repoId: number, sha: string): string {
+  return `${repoId}:${sha}`
 }
 
 // Successful GitHub reads are shared and retained without eviction. The stable
@@ -46,6 +73,33 @@ CREATE TABLE IF NOT EXISTS managed_github_repository_visibility (
   github TEXT NOT NULL,
   is_public INTEGER NOT NULL CHECK (is_public IN (0, 1)),
   checked_at INTEGER NOT NULL
+) STRICT;
+`
+// Bundles show their commit's details and tags from these tables. Readers rely
+// on bundle access alone; only a GitHub read made with access fills them.
+// Commits are retained without eviction. Create a bundle refreshes a
+// repository's tags, which go with the repository.
+export const GITHUB_COMMIT_SCHEMA = `
+CREATE TABLE IF NOT EXISTS managed_github_commit (
+  cache_key TEXT PRIMARY KEY,
+  message TEXT NOT NULL,
+  author_name TEXT,
+  author_login TEXT,
+  authored_at INTEGER,
+  committed_at INTEGER,
+  fetched_at INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS managed_github_tag (
+  repo_id INTEGER NOT NULL REFERENCES managed_selected_repo(repo_id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  commit_key TEXT NOT NULL,
+  observed_us INTEGER NOT NULL,
+  PRIMARY KEY (repo_id, name)
+) STRICT;
+CREATE INDEX IF NOT EXISTS managed_github_tag_commit_idx ON managed_github_tag(commit_key);
+CREATE TABLE IF NOT EXISTS managed_github_tag_listing (
+  repo_id INTEGER PRIMARY KEY REFERENCES managed_selected_repo(repo_id) ON DELETE CASCADE,
+  observed_us INTEGER NOT NULL
 ) STRICT;
 `
 
@@ -93,6 +147,67 @@ export function githubMetadataMethods(db: ManagedSql): GithubMetadataStore {
     },
     async setGithubRepositoryVisibility(entries) {
       if (entries.length > 0) await setVisibility.run({ contexts: JSON.stringify(entries.map(entry => ({ ...entry, public: entry.public ? 1 : 0 }))) })
+    },
+  }
+}
+
+export function githubCommitMethods(db: ManagedSql): GithubCommitStore {
+  const commits = db.prepare(`SELECT cache_key AS key, message, author_name AS authorName, author_login AS authorLogin,
+      authored_at AS authoredAt, committed_at AS committedAt, fetched_at AS fetchedAt
+    FROM managed_github_commit WHERE cache_key IN (SELECT value FROM json_each(?))`)
+  // Concurrent reads of one commit store the same details; the first stays.
+  const setCommits = db.prepare(`INSERT INTO managed_github_commit (cache_key, message, author_name, author_login, authored_at, committed_at, fetched_at)
+    SELECT json_extract(e.value, '$.key'), json_extract(e.value, '$.message'), json_extract(e.value, '$.authorName'),
+      json_extract(e.value, '$.authorLogin'), CAST(json_extract(e.value, '$.authoredAt') AS BIGINT),
+      CAST(json_extract(e.value, '$.committedAt') AS BIGINT), CAST(json_extract(e.value, '$.fetchedAt') AS BIGINT)
+    FROM json_each(:contexts) e WHERE 1 = 1
+    ON CONFLICT (cache_key) DO NOTHING`)
+  const commitTags = db.prepare(`SELECT commit_key AS key, name FROM managed_github_tag
+    WHERE commit_key IN (SELECT value FROM json_each(?)) ORDER BY commit_key, name`)
+  // Overlapping browses can finish out of order, so every refresh carries
+  // when it was observed (in microseconds). Each tag keeps the time it was
+  // last observed and only a later observation moves it; a complete listing
+  // deletes only the tags observed before it. The listing table holds the
+  // last complete listing applied: one observed no later knew whether every
+  // tag existed, so a refresh it supersedes is skipped (a tie keeps the first).
+  const lastListing = db.prepare('SELECT observed_us AS observedUs FROM managed_github_tag_listing WHERE repo_id = ?')
+  const setListing = db.prepare(`INSERT INTO managed_github_tag_listing (repo_id, observed_us) VALUES (?, ?)
+    ON CONFLICT (repo_id) DO UPDATE SET observed_us = excluded.observed_us`)
+  const deleteTags = db.prepare(`DELETE FROM managed_github_tag WHERE repo_id = ? AND observed_us < ?
+    AND name NOT IN (SELECT value FROM json_each(?))`)
+  const setTags = db.prepare(`INSERT INTO managed_github_tag (repo_id, name, commit_key, observed_us)
+    SELECT CAST(json_extract(e.value, '$.repoId') AS BIGINT), json_extract(e.value, '$.name'), json_extract(e.value, '$.key'),
+      CAST(json_extract(e.value, '$.observedUs') AS BIGINT)
+    FROM json_each(:contexts) e WHERE 1 = 1
+    ON CONFLICT (repo_id, name) DO UPDATE SET commit_key = excluded.commit_key, observed_us = excluded.observed_us
+    WHERE managed_github_tag.observed_us < excluded.observed_us`)
+  return {
+    async listGithubCommits(keys) {
+      if (keys.length === 0) return []
+      const rows = await commits.all(JSON.stringify(keys)) as GithubCommit[]
+      return rows.map(row => ({ ...row }))
+    },
+    async setGithubCommits(entries) {
+      if (entries.length > 0) await setCommits.run({ contexts: JSON.stringify(entries) })
+    },
+    async listGithubCommitTags(keys) {
+      if (keys.length === 0) return []
+      const rows = await commitTags.all(JSON.stringify(keys)) as { key: string; name: string }[]
+      return rows.map(row => ({ ...row }))
+    },
+    async refreshGithubTags(repoId, tags, complete, observedUs) {
+      // Writes hold the store's writer lock: the listing read stays current.
+      const last = (await lastListing.get(repoId) as { observedUs: number } | undefined)?.observedUs
+      if (last !== undefined && last >= observedUs) return
+      // Postgres refuses an upsert that names one row twice.
+      const unique = [...new Map(tags.map(tag => [tag.name, tag])).values()]
+      if (complete) {
+        await setListing.run(repoId, observedUs)
+        await deleteTags.run(repoId, observedUs, JSON.stringify(unique.map(tag => tag.name)))
+      }
+      if (unique.length > 0) {
+        await setTags.run({ contexts: JSON.stringify(unique.map(tag => ({ repoId, name: tag.name, key: githubCommitKey(repoId, tag.sha), observedUs }))) })
+      }
     },
   }
 }

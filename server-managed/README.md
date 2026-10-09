@@ -111,8 +111,8 @@ filters apply to report data, comments, triage/history and cited sources. Future
 published reports in the team's repository paths are included; drafts and
 other workspaces are excluded. Whole-repository team grants also expose their
 bundles; published advisories require the security opt-in. Directory-only grants expose cited source
-files, not entire bundles. GitHub PR metadata and user avatars require account
-access and are not fetched in public views.
+files, not entire bundles. GitHub PR metadata, bundle commit details and tags,
+and user avatars require account access and are not sent in public views.
 
 Tokens contain 256 random bits; only their SHA-256 hashes are stored, separately
 from sessions. They persist across restarts and issuer logout, and stop working
@@ -767,6 +767,52 @@ installation access falls back to anonymous source reads only after GitHub confi
 that the repository is public; private and internal repositories remain gated.
 The GitHub Contents API limits directory listings to
 1,000 entries, and the page displays a notice when that limit is reached.
+
+# Bundle commits and tags
+
+Bundle catalogs (`GET /api/teams` and `GET /api/admin/bundles`) send each
+bundle's `commitInfo`: what the cache holds for the commit its summary records,
+in the repository the bundle is stored at, or null when it holds nothing. It is
+`{ sha, github, tags, details }`, where `github` is that repository, `tags`
+names the cached tags pointing to the commit and `details` is `{ message,
+authorName, authorLogin, authoredAt, committedAt }` or null. There is no
+separate endpoint and no client-supplied commit: catalog access to the bundle
+is the only gate, as for its summary. The cache is read before the catalog's
+final access check, which a bundle moved meanwhile leaves without `commitInfo`.
+The bundle view shows the tags after the commit on the Overview's GitHub row,
+linked in `github` even when the bundle's stamp names another repository, and
+the commit's first message line, author and date in the tooltips that show
+that commit (Overview, Code file link, team bundle rows). A tooltip that names
+that repository also lists the first eight tags under the commit and counts the
+rest; tooltips cannot scroll, so their first line is also cut at 200 characters.
+
+`managed_github_commit` keeps details by stable repository ID and SHA, without
+eviction: commits never change, so a cached one is never read again. A server
+build caches its commit, read with the builder's verified repository access.
+A catalog never waits for GitHub. After it responds, it reads up to four
+commits it lacked with the viewer's own access (the source browser's public,
+user token and App permission checks), so the first catalog can lack them and a
+later one has them. A viewer who cannot read a commit retries it after five
+minutes; another viewer may fill it sooner. Details come from the first entry
+of GitHub's commit list from that SHA, checked against it, without the file
+list `GET /commits/:sha` adds. Messages are kept up to 65,536 characters.
+
+`managed_github_tag` maps a repository's tag names to commits. Only bundle
+creation writes it; catalogs and the bundle view only read it and never request
+tags. Each `refs` read refreshes the repository's tags from the listing its
+suggestions use: a listing shorter than the 100-tag page lists every tag, so
+tags it leaves out are deleted, while a full page only updates the tags it
+names. A tag the revision input resolves through `contents` is stored even when
+it is beyond that page. Each write happens before the request's access recheck,
+like other GitHub caches. Each refresh carries the microsecond its request
+started. A tag keeps the time it was last observed and only a later
+observation moves it; a complete listing deletes only tags observed before it,
+so tags a newer partial update observed stay. `managed_github_tag_listing`
+holds the last complete listing applied for a repository, and any refresh
+observed no later is skipped, so an overlapping browse that finishes late
+cannot restore tags a newer one deleted or moved. Tags are removed with
+their repository. SQLite and PostgreSQL create these tables for existing
+installations.
 
 # Bundle metadata and contents
 

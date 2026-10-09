@@ -9,7 +9,7 @@ import { initActivityMethods } from './activity.ts'
 import { revisionSchema } from './revisions.ts'
 import { MANAGED_SCHEMA, VIEW_SESSION_INDEX } from './db-schema.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
-import { GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
+import { GITHUB_COMMIT_SCHEMA, GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { BUNDLE_BUILD_LEASE_SCHEMA } from './bundle-build-leases.ts'
 import { UPSTREAM_CACHE_SCHEMA } from './upstream-cache.ts'
@@ -69,7 +69,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     db.exec('PRAGMA synchronous = FULL;')
     db.exec('PRAGMA foreign_keys = ON;')
     migrateManagedTableNames(db)
-    db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA + BUNDLE_BUILD_LEASE_SCHEMA + UPSTREAM_CACHE_SCHEMA)
+    db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + GITHUB_COMMIT_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA + BUNDLE_BUILD_LEASE_SCHEMA + UPSTREAM_CACHE_SCHEMA)
     ensureColumn(db, 'managed_selected_repo', 'cached_default_branch', 'TEXT')
     ensureColumn(db, 'managed_session', 'upload_key', 'TEXT')
     ensureColumn(db, 'managed_session', 'viewer_session', 'TEXT REFERENCES managed_session(id) ON DELETE CASCADE')

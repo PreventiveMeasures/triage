@@ -44,3 +44,45 @@ export async function checkGithubMetadataStore(db) {
   await db.setGithubRepositoryVisibility([])
   return merged
 }
+
+// Repository 7 must be selected: tags go with their repository.
+export async function checkGithubCommitStore(db) {
+  const sha = 'a'.repeat(40)
+  const other = 'b'.repeat(40)
+  const commit = { key: `7:${sha}`, message: 'Fix it\n\nBody €😀', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2, fetchedAt: 3 }
+  await db.setGithubCommits([commit, { ...commit, key: `7:${other}`, message: 'Other', authorName: null, authorLogin: null, authoredAt: null, committedAt: null }])
+  await db.setGithubCommits([{ ...commit, message: 'Rewritten', fetchedAt: 4 }])
+  assert.deepEqual(await db.listGithubCommits([commit.key]), [commit], 'commits never change, so the first stored details stay')
+  assert.deepEqual((await db.listGithubCommits([`7:${other}`, 'missing']))[0], { ...commit, key: `7:${other}`, message: 'Other', authorName: null, authorLogin: null, authoredAt: null, committedAt: null })
+  assert.deepEqual(await db.listGithubCommits([]), [])
+  await db.setGithubCommits([])
+
+  await db.refreshGithubTags(7, [{ name: 'v2', sha }, { name: 'v1', sha }, { name: 'old', sha: other }, { name: 'v1', sha }], true, 10)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [
+    { key: commit.key, name: 'v1' }, { key: commit.key, name: 'v2' }, { key: `7:${other}`, name: 'old' },
+  ])
+  await db.refreshGithubTags(7, [{ name: 'v2', sha: other }], false, 20)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [
+    { key: commit.key, name: 'v1' }, { key: `7:${other}`, name: 'old' }, { key: `7:${other}`, name: 'v2' },
+  ], 'a partial listing moves the tags it names and keeps the others')
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }], true, 30)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [{ key: commit.key, name: 'v1' }], 'a complete listing drops deleted tags')
+  for (const [complete, observedUs] of [[true, 29], [false, 29], [true, 30], [false, 30]]) {
+    await db.refreshGithubTags(7, [{ name: 'v1', sha: other }, { name: 'old', sha: other }], complete, observedUs)
+    assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [{ key: commit.key, name: 'v1' }],
+      'a listing observed no later than the last one applied cannot restore or move tags')
+  }
+  await db.refreshGithubTags(7, [], true, 31)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key]), [], 'a later listing applies')
+  assert.deepEqual(await db.listGithubCommitTags([]), [])
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }], false, 40)
+  await db.refreshGithubTags(7, [{ name: 'gone', sha }], false, 45)
+  await db.refreshGithubTags(7, [{ name: 'fresh', sha: other }, { name: 'v1', sha: other }], false, 60)
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }, { name: 'fresh', sha }], true, 50)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [{ key: `7:${other}`, name: 'fresh' }, { key: `7:${other}`, name: 'v1' }],
+    'a complete listing that finishes after a newer partial one still deletes, and keeps what the newer one observed')
+  await db.refreshGithubTags(7, [{ name: 'gone', sha }], false, 49)
+  assert.deepEqual((await db.listGithubCommitTags([commit.key])).map(tag => tag.name), [], 'a partial update older than a complete listing cannot restore a tag')
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }], false, 70)
+  return commit
+}
