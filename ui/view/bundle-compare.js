@@ -39,12 +39,13 @@ import './bundle-selector.js'
 import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
 
-// Cap each file group's rendered rows so a pathological compare (a
-// stasis bundle vendoring thousands of files against an unrelated
-// one) can't stamp out tens of thousands of DOM nodes. The summary
-// counts are always exact; only the per-row listing is trimmed, with
-// an "and N more" footer.
+// Cap the repointed-imports table's rendered rows so a pathological
+// compare can't stamp out tens of thousands of DOM nodes. The counts are
+// always exact; only the listing is trimmed, with an "and N more" footer.
+// (File and package groups list every row in a scrolling list instead.)
 const MAX_ROWS = 400
+// Widest version column in Removed / Added; a longer list ellipsizes.
+const MAX_VERSION_CHARS = 24
 
 // Swap handoff. The swap button switches the active bundle to the
 // current comparison target (so A and B trade places, and the app
@@ -132,7 +133,7 @@ class BundleCompare extends LitElement {
     this._status = 'idle'
     this._scope = ''
     this._fileSort = { removed: 'name', added: 'name', changed: 'name' }
-    this._pkgSort = { removed: 'name', added: 'name', changed: 'name' }
+    this._pkgSort = { removed: 'size', added: 'size', changed: 'size' }
     this._openSections = new Set()
     this._mode = 'overview'
     this._codePath = null
@@ -272,38 +273,36 @@ class BundleCompare extends LitElement {
   }
 
   // Card shell shared by every file / package group: the kind-tinted
-  // section, dot + title + exact count header, the row list capped at
-  // MAX_ROWS, and the "and N more" footer. With `all`, every row is listed
-  // in a list that scrolls instead. Returns `nothing` for an empty group so
-  // a section only shows what actually moved. `keyOf` / `rowOf` are the
-  // `repeat` key + row template.
-  _group(title, rows, kind, keyOf, rowOf, actions = nothing, { all = false } = {}) {
+  // section, dot + title + exact count header, and every row in a list
+  // that scrolls — as tall as the pane allows with `fill`. `style` sets
+  // custom properties on the card. Returns `nothing` for an empty group
+  // so a section only shows what actually moved. `keyOf` / `rowOf` are
+  // the `repeat` key + row template.
+  _group(title, rows, kind, keyOf, rowOf, actions = nothing, { fill = false, style = {} } = {}) {
     if (rows.length === 0) return nothing
-    const shown = all ? rows : rows.slice(0, MAX_ROWS)
-    const hidden = rows.length - shown.length
-    return html`<section class=${`bundle-compare-group bundle-compare-${kind}`}>
+    return html`<section class=${`bundle-compare-group bundle-compare-${kind}`} style=${styleMap(style)}>
       <header class="bundle-compare-group-head">
         <span class="bundle-compare-dot" aria-hidden="true"></span>
         <span class="bundle-compare-group-title" data-tooltip-truncated data-tooltip=${title}>${title}</span>
         <span class="bundle-compare-group-count">${rows.length}</span>
         ${actions}
       </header>
-      <ul class=${all ? 'bundle-compare-rows bundle-compare-rows--scroll' : 'bundle-compare-rows'}>
-        ${repeat(shown, keyOf, rowOf)}
+      <ul class=${fill ? 'bundle-compare-rows bundle-compare-rows--scroll bundle-compare-rows--fill' : 'bundle-compare-rows bundle-compare-rows--scroll'}>
+        ${repeat(rows, keyOf, rowOf)}
       </ul>
-      ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
     </section>`
   }
 
   // Size cells for a file / package row: one byte count for a row that
-  // exists on a single side, `base → other` plus the signed delta for a
-  // changed row. A side with no size to give shows a dash.
+  // exists on a single side, the signed delta for a changed row, with
+  // `base → other` in its tooltip. A side with no size to give shows a
+  // dash, as does the delta it leaves undefined.
   _sizeCells(r) {
     const bytes = value => value == null ? '—' : formatBytes(value)
     return r.delta === undefined
       ? html`<span class="bundle-compare-row-size">${bytes(r.bytes)}</span>`
-      : html`<span class="bundle-compare-row-size">${bytes(r.baseBytes)} → ${bytes(r.otherBytes)}</span>
-          ${r.delta === null ? nothing : html`<span class=${`bundle-compare-row-delta ${dirClass(r.delta)}`}>${formatDelta(r.delta)}</span>`}`
+      : html`<span class=${`bundle-compare-row-delta ${r.delta === null ? '' : dirClass(r.delta)}`}
+          data-tooltip=${`${bytes(r.baseBytes)} → ${bytes(r.otherBytes)}`}>${r.delta === null ? '—' : formatDelta(r.delta)}</span>`
   }
 
   // Name | Size order for one group, kept per kind in the state field
@@ -323,25 +322,29 @@ class BundleCompare extends LitElement {
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     return this._group(title, sorted, kind, (r) => r.path,
-      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), this._sortActions('_fileSort', kind, 'file'), { all: true })
+      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), this._sortActions('_fileSort', kind, 'file'))
   }
 
   // One package group: a package each, with its versions and its size —
   // both sides of each for a changed one — every one listed, scrolling in
-  // its card. Rows carry the package color dot for continuity with the
-  // size distribution + treemap. Size order is the largest first, or the
-  // largest move for Changed.
+  // its card as tall as the pane allows. Rows carry the package color dot
+  // for continuity with the size distribution + treemap. Size order is the
+  // largest first, or the largest move for Changed. Removed / Added size
+  // their version column to the longest list (monospace, so in `ch`), so
+  // versions and sizes line up row to row.
   _pkgGroup(title, rows, kind) {
     const sort = this._pkgSort[kind]
     // A side without a size sorts last.
     const weight = r => { const value = kind === 'changed' ? r.delta : r.bytes; return value == null ? -1 : Math.abs(value) }
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || pkgLabel(a.pkg).localeCompare(pkgLabel(b.pkg)))
+    const versionChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => versionList(r.versions).length)))
     return this._group(title, sorted, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row">
       <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
       <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${pkgLabel(r.pkg)}>${pkgLabel(r.pkg)}</span>
-      ${kind === 'changed' ? this._versionCell(r) : r.versions.length > 0 ? html`<span class="bundle-compare-dep-ver">${versionList(r.versions)}</span>` : nothing}
+      ${kind === 'changed' ? this._versionCell(r) : versionChars > 0 ? html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${versionList(r.versions)}>${versionList(r.versions)}</span>` : nothing}
       ${this._sizeCells(kind === 'changed' ? r : { bytes: r.bytes })}
-    </div></li>`, this._sortActions('_pkgSort', kind, 'package'), { all: true })
+    </div></li>`, this._sortActions('_pkgSort', kind, 'package'),
+    { fill: true, style: versionChars > 0 ? { '--compare-version-width': `${versionChars}ch` } : {} })
   }
 
   // A changed package's versions: `old → new` with the new side colored by
@@ -397,13 +400,16 @@ class BundleCompare extends LitElement {
 
   // Repointed imports as a table, File | Import | Before | After |
   // Conditions, one line a row, in a card like the groups'; a file opens
-  // in Code.
+  // in Code. Conditions drops out when every row reads `*`.
   _renderResolutions(resolutions) {
     if (resolutions.totalChanges === 0) return nothing
     const rows = resolutions.changed
     const shown = rows.slice(0, MAX_ROWS)
     const hidden = rows.length - shown.length
     const cell = (text, className = '') => html`<td class=${className}><code data-tooltip-truncated data-tooltip=${text}>${text}</code></td>`
+    const contextOf = r => `${r.conditions}${r.platform === null ? '' : ` · Platform: ${r.platform}`}`
+    // `*` (any conditions, every platform) on every row tells nothing apart.
+    const showContext = shown.some(r => contextOf(r) !== '*')
     return this._collapsible('resolutions', 'Import resolutions', rows.length, () => html`
       <section class="bundle-compare-group bundle-compare-changed bundle-compare-resolutions">
         <header class="bundle-compare-group-head">
@@ -411,16 +417,16 @@ class BundleCompare extends LitElement {
           <span class="bundle-compare-group-title">Repointed</span>
           <span class="bundle-compare-group-count">${rows.length}</span>
         </header>
-        <table>
-          <thead><tr><th>File</th><th>Import</th><th>Before</th><th>After</th><th>Conditions</th></tr></thead>
+        <table class=${showContext ? '' : 'bundle-compare-resolutions--no-context'}>
+          <thead><tr><th>File</th><th>Import</th><th>Before</th><th>After</th>${showContext ? html`<th>Conditions</th>` : nothing}</tr></thead>
           <tbody>${repeat(shown, r => r.key, r => {
-            const context = `${r.conditions}${r.platform === null ? '' : ` · Platform: ${r.platform}`}`
+            const context = contextOf(r)
             return html`<tr>
               <td><button type="button" class="bundle-compare-resolution-parent" data-tooltip-truncated data-tooltip=${r.parent} @click=${() => this._openFile(r.parent)}>${r.parent}</button></td>
               ${cell(r.specifier)}
               ${cell(r.baseTarget || '(empty target)', 'bundle-compare-resolution-before')}
               ${cell(r.otherTarget || '(empty target)', 'bundle-compare-resolution-after')}
-              <td class="bundle-compare-resolution-context"><span data-tooltip-truncated data-tooltip=${context}>${context}</span></td>
+              ${showContext ? html`<td class="bundle-compare-resolution-context"><span data-tooltip-truncated data-tooltip=${context}>${context}</span></td>` : nothing}
             </tr>`
           })}</tbody>
         </table>

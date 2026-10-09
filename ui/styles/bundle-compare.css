@@ -161,6 +161,9 @@
   overflow-y: auto;
   overscroll-behavior: none;
   scrollbar-gutter: stable;
+
+  /* The package lists size against the pane (`cqh`). */
+  container-type: size;
 }
 .bundle-compare-caption {
   margin-bottom: .6rem;
@@ -204,9 +207,8 @@
   flex: 1 1 500px;
   min-width: min(500px, 100%);
 }
-/* Files sit three abreast where there is room, paths ellipsized: Changed,
-   with its `before → after` sizes, takes the most. Each lists every file,
-   scrolling within its card. */
+/* Files sit three abreast where there is room, paths ellipsized: Changed
+   takes the most. Each lists every file, scrolling within its card. */
 .bundle-compare-cols--files > .bundle-compare-group {
   flex: 1 1 360px;
   min-width: min(360px, 100%);
@@ -215,14 +217,25 @@
   flex: 1 1 440px;
   min-width: min(440px, 100%);
 }
+/* Every row one fixed line high, and each list stops halfway through a
+   row, so the cut-off row says the list scrolls. */
 .bundle-compare-rows--scroll {
-  max-height: 24rem;
+  --compare-row: 1.5rem;
+
+  max-height: calc(15.5 * var(--compare-row));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 
   /* Thousands of rows: lay out only those scrolled into view. */
-  & > li { content-visibility: auto; contain-intrinsic-size: auto 1.6rem; }
+  & > li { content-visibility: auto; contain-intrinsic-size: auto var(--compare-row); }
+  & .bundle-compare-row { height: var(--compare-row); }
+}
+/* Packages take the pane but for what sits around their lists — the
+   caption, the section and card heads, and the Files / Import resolutions
+   headings below, kept in view — still stopping halfway through a row. */
+.bundle-compare-rows--fill {
+  max-height: max(5.5 * var(--compare-row), round(down, 100cqh - 10rem, var(--compare-row)) - var(--compare-row) / 2);
 }
 /* Sections that open on demand (Files, Import resolutions), the heading
    the disclosure. */
@@ -331,7 +344,9 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 }
 .bundle-compare-row-size {
   flex-shrink: 0;
+  min-width: 9ch;
   font-size: .68rem;
+  text-align: right;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -368,6 +383,10 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
   & th:nth-child(1) { width: 26%; }
   & th:nth-child(2) { width: 16%; }
   & th:nth-child(3), & th:nth-child(4) { width: 22%; }
+  &.bundle-compare-resolutions--no-context th:nth-child(1) { width: 30%; }
+  &.bundle-compare-resolutions--no-context th:nth-child(2) { width: 18%; }
+  &.bundle-compare-resolutions--no-context th:nth-child(3),
+  &.bundle-compare-resolutions--no-context th:nth-child(4) { width: 26%; }
   & td {
     padding: .25rem .35rem;
     border-top: 1px solid var(--border);
@@ -410,9 +429,14 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-ver-dir.down { color: var(--critical); }
 .bundle-compare-ver-to.changed,
 .bundle-compare-ver-dir.changed { color: var(--medium); }
-/* Version label on an added / removed dependency row. */
+/* Version label on an added / removed dependency row, as wide as its
+   group's longest (`--compare-version-width`) so the column lines up. */
 .bundle-compare-dep-ver {
   flex-shrink: 0;
+  width: var(--compare-version-width, auto);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: .68rem;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
