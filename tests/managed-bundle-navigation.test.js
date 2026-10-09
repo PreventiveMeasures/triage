@@ -183,6 +183,8 @@ test('route rewrites locate Compare\'s bundle and mode for the open bundle only'
   assert.equal(managedCompareLocation(state, 'code'), null, 'only Compare names one')
   assert.equal(managedCompareLocation({ ...state, selectedBundle: b.integrity }), null, 'never another bundle\'s')
   assert.equal(managedCompareLocation({ ...state, bundles: entries.slice(0, 1) }), null)
+  assert.equal(managedCompareLocation({ ...state, bundles: [entries[0], { ...entries[1], repoId: 2 }] }), null,
+    'nor one a refreshed catalogue moved to another repository, which Compare no longer offers')
   assert.equal(managedCompareLocation({ ...state, bundleCompare: null }), null)
 })
 

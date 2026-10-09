@@ -160,10 +160,14 @@ class BundleCompare extends LitElement {
     // would wipe the target the instant the base finished loading.
     if (changed.has('integrity')) this._rebase()
     // A link's bundle and mode, or the ones Compare reported, idle when
-    // already shown.
+    // already shown. One withdrawn — this bundle reopened on a bare
+    // Compare route — takes the comparison with it.
     if ((changed.has('request') || changed.has('integrity')) && this.integrity && this.request?.bundle === this.integrity) {
       if (this.request.target !== this._targetIntegrity) this._choose(this.request.target)
       this._mode = this.request.mode === 'code' ? 'code' : 'overview'
+    } else if (changed.has('request') && !changed.has('integrity') && changed.get('request')?.bundle === this.integrity) {
+      if (this._targetIntegrity) this._choose(null)
+      this._mode = 'overview'
     }
   }
 

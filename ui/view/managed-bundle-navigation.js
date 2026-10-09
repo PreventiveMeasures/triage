@@ -1,5 +1,6 @@
 import { bundleSourceOrder, bundleSourcesAsMap } from '../../common/bundle-sources.js'
 import { managedRouteForIds } from '../../common/managed/routes.js'
+import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 
 export function managedBundleEntry(bundle) {
   return { managedId: bundle.id, slug: bundle.slug, integrity: bundle.integrity,
@@ -43,11 +44,13 @@ export function managedCodeLocation(state, tab = state.bundleDetailsTab) {
 
 // Where a route for the open bundle puts its Compare tab: the bundle it
 // compares with, as Compare last told (`state.bundleCompare`) or a link asked
-// for, and `code` while it reviews the changes as a diff.
+// for, and `code` while it reviews the changes as a diff. Only while Compare
+// still offers it: a refreshed catalogue can move either bundle to another
+// repository.
 export function managedCompareLocation(state, tab = state.bundleDetailsTab) {
   const compare = state.bundleCompare
   if (tab !== 'compare' || !compare?.target || compare.bundle !== state.selectedBundle) return null
-  const target = (state.bundles ?? []).find(bundle => bundle.integrity === compare.target)
+  const target = bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).find(bundle => bundle.integrity === compare.target)
   if (!target?.managedId) return null
   return { compareId: target.managedId, ...(compare.mode === 'code' ? { compareMode: 'code' } : {}) }
 }

@@ -276,3 +276,22 @@ test('a request picks the bundle and mode to compare with; the user\'s picks and
   view._pick(null)
   assert.deepEqual(reported, [{ base: 'base', target: 'other', mode: 'code' }, { base: 'base', target: null, mode: 'code' }])
 })
+
+test('a withdrawn request — the same bundle reopened on a bare Compare route — clears the comparison', () => {
+  const view = new Compare()
+  view.integrity = 'base'
+  view.details = details('base', 'a.js')
+  view.request = { bundle: 'base', target: 'other', mode: 'code' }
+  view.willUpdate(new Map([['integrity', undefined], ['details', undefined], ['request', undefined]]))
+  assert.equal(view._targetIntegrity, 'other')
+  const previous = view.request
+  view.request = null
+  view.willUpdate(new Map([['request', previous]]))
+  assert.equal(view._targetIntegrity, null)
+  assert.equal(view._mode, 'overview')
+  assert.equal(view._status, 'idle')
+  // A comparison picked with no request (local bundles) is left alone.
+  view._choose('other')
+  view.willUpdate(new Map([['request', null]]))
+  assert.equal(view._targetIntegrity, 'other')
+})
