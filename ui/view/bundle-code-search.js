@@ -1,7 +1,7 @@
 // `<bundle-code-search>` — the search row at the top of the Bundle
 // / Code rail: SVG-prefixed text input (bound to
 // `state.bundleCodeSearchQuery`), an inline clear button shown only
-// while the query is non-empty, and Files / Code / Issues mode tabs
+// while the query is non-empty, and Files / Code / Issues / Largest mode tabs
 // (bound to `state.bundleCodeSearchMode`, which drives both the
 // filtered dataset and the input placeholder).
 //
@@ -12,7 +12,8 @@
 // Properties:
 //   * `modes` — array of available modes, parent-computed. `'issues'`
 //     is offered only when the bundle has issues to search, so the
-//     parent passes `['files','code']` or `['files','code','issues']`.
+//     parent passes `['files','code','largest']` or
+//     `['files','code','issues','largest']`.
 //
 // Events (bubble + composed:true):
 //   * `search-input(detail: { kind: "bundle-code", value })` — on
@@ -36,15 +37,17 @@ import { StateElement, html } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 
 const PLACEHOLDER = {
-  files:  'Filter files…',
-  code:   'Search code…',
-  issues: 'Search issues…',
+  files:   'Filter files…',
+  code:    'Search code…',
+  issues:  'Search issues…',
+  largest: 'Filter largest files…',
 }
 
 const MODE_LABEL = {
-  files:  'Filter files',
-  code:   'Search code',
-  issues: 'Search issues',
+  files:   'Filter files',
+  code:    'Search code',
+  issues:  'Search issues',
+  largest: 'Largest files',
 }
 
 const SEARCH_ICON = html`<svg class="bundle-code-search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -66,6 +69,10 @@ const MODE_ICONS = {
     <circle cx="8" cy="8" r="6"/>
     <path d="M8 4.8v3.6" stroke-linecap="round"/>
     <circle cx="8" cy="11" r=".7" fill="currentColor" stroke="none"/>
+  </svg>`,
+  // largest: bars shortening down the list, largest first.
+  largest: html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+    <path d="M2.5 4h11M2.5 8h7.5M2.5 12h4"/>
   </svg>`,
 }
 

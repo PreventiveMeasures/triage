@@ -2657,7 +2657,7 @@ report.addEventListener('upstream-only-change', (e) => {
 // scroll-top, which may be far from the open file — reveal it.
 report.addEventListener('bundle-search-mode-change', (e) => {
   const mode = e.detail?.mode
-  if (mode !== 'files' && mode !== 'code' && mode !== 'issues') return
+  if (!['files', 'code', 'issues', 'largest'].includes(mode)) return
   state.bundleCodeSearchMode = mode
   render()
   if (mode === 'files') revealBundleCodeCurrent()
