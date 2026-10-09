@@ -10,7 +10,7 @@ import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside, flowVisib
 // individual SVG controls; large graphs use the same model and full geometry.
 export const canvasSizeFlow = layout => layout.nodes.length + layout.edges.length > 1500 && typeof Path2D === 'function'
 const canvasLabel = 'Import paths. Use arrow keys to explore bars, Enter to select, or the sidebar search to find a file or package.'
-const liveRibbonLimit = 500
+const liveRibbonLimit = 2000
 
 export class SizeFlowCanvas extends SizeFlowChart {
   isCanvas = true
