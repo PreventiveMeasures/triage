@@ -583,7 +583,7 @@ test('db: selectRepo upserts (keeps added_at/by), listSelectedRepos reads, desel
   const uid = await db.upsertUser({ githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, 1000)
   await db.selectRepo({ repoId: 42, fullName: 'o/repo', private: true, installationId: 7, defaultBranch: 'main', htmlUrl: 'https://github.com/o/repo', addedBy: uid }, 2000)
   let rows = await db.listSelectedRepos()
-  assert.deepEqual(rows, [{ repoId: 42, fullName: 'o/repo', private: true, installationId: 7, defaultBranch: 'main', cachedDefaultBranch: null, htmlUrl: 'https://github.com/o/repo', addedBy: uid, addedAt: 2000 }])
+  assert.deepEqual(rows, [{ repoId: 42, fullName: 'o/repo', private: true, visibility: null, installationId: 7, defaultBranch: 'main', cachedDefaultBranch: null, htmlUrl: 'https://github.com/o/repo', addedBy: uid, addedAt: 2000 }])
   // Re-select refreshes the mutable context (rename, now public, no install) but
   // keeps the original added_at (audit).
   await db.selectRepo({ repoId: 42, fullName: 'o/renamed', private: false, installationId: null, defaultBranch: 'dev', htmlUrl: 'https://github.com/o/renamed', addedBy: uid }, 5000)
@@ -785,7 +785,7 @@ test('POST /api/admin/repositories/select: admin + CSRF; verifies access, persis
     assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 999, selected: true })).statusCode, 404) // not reachable
     assert.equal((await post(aCk, adminSess.csrfToken, { repoId: 55, selected: true })).statusCode, 200)
     const stored = await db.listSelectedRepos()
-    assert.deepEqual([stored.length, stored[0].fullName, stored[0].addedBy], [1, 'o/pub', admin.id])
+    assert.deepEqual([stored.length, stored[0].fullName, stored[0].addedBy, stored[0].visibility], [1, 'o/pub', admin.id, 'public'])
     // The listing now flags it selected; a public repo (no installation) is not
     // installed, so the default "Manage repositories" tab filters it out.
     const listed = JSON.parse((await get(aCk)).body).repositories.find((r) => r.id === 55)
@@ -3151,6 +3151,7 @@ test('arbitrary public additions require server admin AND WHITEHAT identity, nev
     const catalogue = JSON.parse((await send('GET', '/api/admin/repositories?scope=connected', cookie)).body)
     assert.equal(catalogue.repositories[0].installed, false)
     assert.equal(catalogue.repositories[0].active, true)
+    assert.equal(catalogue.repositories[0].visibility, 'public', 'the catalogue labels a connection by its recorded visibility')
   }
   for (const [githubUserId, login] of [[259122746, 'exo-nikita'], [247161625, 'ex0sec']]) {
     const added = await createSession(config, db, { githubUserId, login: `${login}-renamed`, name: null, avatarUrl: null }, Date.now())

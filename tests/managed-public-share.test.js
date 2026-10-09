@@ -90,15 +90,21 @@ test('directory team links include bundles at or below their scope and immediate
   }
 })
 
-test('link listings name the private repositories in the team\'s scope for its managers', async t => {
+test('link listings name the private repositories in the team\'s scope for its managers, internal ones as such', async t => {
   const h = await fixture(t)
   const listing = (team, role = 'manage') => h.request(`/api/teams/${team}/share`, { role })
-  assert.deepEqual((await listing('team')).body, { shares: [], privateRepositories: ['org/repo1'] }, 'a directory scope names its whole repository')
-  assert.deepEqual((await listing('other', 'admin')).body.privateRepositories, ['org/repo2'])
+  const repo = (repoId, fields) => h.db.selectRepo({ repoId, fullName: `org/repo${repoId}`, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId, ...fields }, Date.now())
+  const repo1 = { fullName: 'org/repo1', internal: false }, repo2 = { fullName: 'org/repo2', internal: false }
+  assert.deepEqual((await listing('team')).body, { shares: [], privateRepositories: [repo1] }, 'a directory scope names its whole repository')
+  assert.deepEqual((await listing('other', 'admin')).body.privateRepositories, [repo2])
   await h.db.setTeamRepo('team', 2, '')
-  assert.deepEqual((await listing('team')).body.privateRepositories, ['org/repo1', 'org/repo2'])
-  await h.db.selectRepo({ repoId: 1, fullName: 'org/repo1', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId }, Date.now())
-  assert.deepEqual((await listing('team')).body.privateRepositories, ['org/repo2'])
+  assert.deepEqual((await listing('team')).body.privateRepositories, [repo1, repo2])
+  // GitHub calls an internal repository not private; it is stored as private all the same.
+  await repo(2, { private: false, visibility: 'internal' })
+  assert.equal((await h.db.listAllRepos()).find(entry => entry.repoId === 2).private, true)
+  assert.deepEqual((await listing('team')).body.privateRepositories, [repo1, { ...repo2, internal: true }])
+  await repo(1, { private: false, visibility: 'public' })
+  assert.deepEqual((await listing('team')).body.privateRepositories, [{ ...repo2, internal: true }])
   assert.deepEqual((await listing('whole')).body.privateRepositories, [])
   for (const role of ['triage', 'view', 'none', 'outsider']) {
     const response = await listing('other', role)

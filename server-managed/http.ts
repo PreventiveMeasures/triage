@@ -537,7 +537,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   let repositories
   if (scope === 'connected') {
     repositories = allRows.map((r) => ({
-      id: r.repoId, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
+      id: r.repoId, fullName: r.fullName, private: r.private, visibility: r.visibility, htmlUrl: r.htmlUrl,
       installed: r.installationId != null, selected: r.active, active: r.active,
     }))
   } else {
@@ -609,7 +609,7 @@ async function selectRepository(res: ServerResponse, deps: ManagedHttpDeps, user
 async function connectRepository(res: ServerResponse, deps: ManagedHttpDeps, user: StoredUser, repo: ConnectedRepo): Promise<void> {
   const alreadySelected = (await deps.db.listSelectedRepos()).some(row => row.repoId === repo.id)
   await deps.db.selectRepo({
-    repoId: repo.id, fullName: repo.fullName, private: repo.private,
+    repoId: repo.id, fullName: repo.fullName, private: repo.private, visibility: repo.visibility,
     installationId: repo.installationId, defaultBranch: repo.defaultBranch,
     htmlUrl: repo.htmlUrl, addedBy: user.id,
   }, Date.now())

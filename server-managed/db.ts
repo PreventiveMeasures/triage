@@ -71,6 +71,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     migrateManagedTableNames(db)
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA + BUNDLE_BUILD_LEASE_SCHEMA + UPSTREAM_CACHE_SCHEMA)
     ensureColumn(db, 'managed_selected_repo', 'cached_default_branch', 'TEXT')
+    ensureColumn(db, 'managed_selected_repo', 'visibility', 'TEXT')
     ensureColumn(db, 'managed_session', 'upload_key', 'TEXT')
     ensureColumn(db, 'managed_session', 'viewer_session', 'TEXT REFERENCES managed_session(id) ON DELETE CASCADE')
     db.exec(VIEW_SESSION_INDEX)

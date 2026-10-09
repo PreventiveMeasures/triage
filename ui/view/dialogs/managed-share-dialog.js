@@ -91,12 +91,17 @@ class ManagedShareDialog extends AppDialog {
   }
 }
 // The private repositories a link would open to anyone, named up to a few.
+// Internal ones are private too, but named as internal.
 const PRIVATE_NAMED = 5
 function privateWarning(repositories) {
   if (repositories.length === 0) return nothing
-  const named = repositories.slice(0, PRIVATE_NAMED).join(', ')
+  const internal = repositories.filter(repo => repo.internal).length
+  const mixed = internal > 0 && internal < repositories.length
+  const kind = internal === 0 ? 'private' : mixed ? 'private or internal' : 'internal'
+  const count = repositories.length === 1 ? `a${kind === 'internal' ? 'n' : ''} ${kind} repository` : `${repositories.length} ${kind} repositories`
+  const named = repositories.slice(0, PRIVATE_NAMED).map(repo => mixed && repo.internal ? `${repo.fullName} (internal)` : repo.fullName).join(', ')
   const more = repositories.length - PRIVATE_NAMED
-  return html`<p class="share-private">${repositories.length === 1 ? 'This workspace includes a private repository' : `This workspace includes ${repositories.length} private repositories`}: ${named}${more > 0 ? ` and ${more} more` : ''}. Anyone with a public link can read their published reports and source files.</p>`
+  return html`<p class="share-private">This workspace includes ${count}: ${named}${more > 0 ? ` and ${more} more` : ''}. Anyone with a public link can read their published reports and source files.</p>`
 }
 
 customElements.define('managed-share-dialog', ManagedShareDialog)

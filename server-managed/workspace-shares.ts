@@ -36,7 +36,7 @@ export type WorkspaceShareFeedState = { grant: string; catalog: number; annotati
 export interface WorkspaceShareStore {
   createWorkspaceShare(sessionId: string, now: number, teamId: string, tokenHash: string, permissions?: TeamUserPermissions): Promise<boolean>
   listWorkspaceShares(sessionId: string, now: number, teamId: string): Promise<WorkspaceShareInfo[] | null>
-  listWorkspacePrivateRepositories(sessionId: string, now: number, teamId: string): Promise<string[] | null>
+  listWorkspacePrivateRepositories(sessionId: string, now: number, teamId: string): Promise<{ fullName: string; internal: boolean }[] | null>
   listManagedWorkspaceShares(sessionId: string, now: number): Promise<ManagedWorkspaceShare[] | null>
   updateWorkspaceShare(sessionId: string, now: number, teamId: string, id: string, permissions: TeamUserPermissions): Promise<boolean>
   revokeWorkspaceShares(sessionId: string, now: number, teamId: string, id?: string): Promise<boolean>
@@ -60,9 +60,9 @@ function shareQueries(db: ManagedSql) {
   // unchanged when their permissions are edited; plaintext tokens aren't kept.
   const list = db.prepare(`SELECT s.token_hash AS id, s.created_at AS createdAt, u.login AS createdBy, s.dependencies, s.security
     FROM managed_workspace_share s JOIN managed_user u ON u.id = s.created_by WHERE s.team_id = ? ORDER BY s.created_at DESC, s.token_hash`)
-  // The private repositories in the team's scope, whose content a link opens
-  // to anyone: the share dialog warns about them.
-  const privateRepositories = db.prepare(`SELECT DISTINCT sr.full_name AS fullName
+  // The private repositories in the team's scope, internal ones among them,
+  // whose content a link opens to anyone: the share dialog warns about them.
+  const privateRepositories = db.prepare(`SELECT DISTINCT sr.full_name AS fullName, sr.visibility
     FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
     WHERE tr.team_id = ? AND sr.is_private = 1 ORDER BY sr.full_name`)
   const session = db.prepare(`SELECT u.id, u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
@@ -124,7 +124,8 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
     },
     async listWorkspacePrivateRepositories(sessionId, now, teamId) {
       if (!await q.manager.get(teamId, sessionId, now)) return null
-      return (await q.privateRepositories.all(teamId) as { fullName: string }[]).map(row => row.fullName)
+      return (await q.privateRepositories.all(teamId) as { fullName: string; visibility: string | null }[])
+        .map(row => ({ fullName: row.fullName, internal: row.visibility === 'internal' }))
     },
     async listManagedWorkspaceShares(sessionId, now) {
       const viewer = await q.session.get(sessionId, now) as { id: string; role: string } | undefined

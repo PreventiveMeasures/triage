@@ -291,6 +291,25 @@ test('SQLite upgrades repository default caches as nullable and preserves select
   assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, null)
 })
 
+test('SQLite upgrades repositories to record their visibility, internal ones stored as private', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'managed-repo-visibility-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const path = join(dir, 'db.sqlite')
+  let db = openSqliteManagedDb(path)
+  await db.selectRepo({ ...repo, private: false }, 1)
+  await db.close()
+  const legacy = new DatabaseSync(path)
+  legacy.exec('ALTER TABLE managed_selected_repo DROP COLUMN visibility')
+  legacy.close()
+  db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  let [selected] = await db.listSelectedRepos()
+  assert.deepEqual([selected.private, selected.visibility], [false, null], 'a repository selected before stays unrecorded')
+  await db.selectRepo({ ...repo, private: false, visibility: 'internal' }, 2)
+  ;[selected] = await db.listSelectedRepos()
+  assert.deepEqual([selected.private, selected.visibility], [true, 'internal'])
+})
+
 test('browser endpoints require manage access, honor path grants, and recheck changes during GitHub reads', async t => {
   const { db, userId, request } = await fixture(t)
   let duringRead = async () => {}

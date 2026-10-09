@@ -52,15 +52,19 @@ test('share dialog creates with both permissions off, lists creators, and edits 
   assert.equal(dialog.links.length, 0)
 })
 
-test('share dialog warns in red when the workspace includes private repositories, naming the first few', async t => {
+test('share dialog warns in red when the workspace includes private repositories, naming the first few and internal ones as such', async t => {
   const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings
     ? value.strings.map((part, i) => part + (i < value.values.length ? text(value.values[i]) : '')).join('') : typeof value === 'string' ? value : ''
   const warning = dialog => text(dialog.render()).match(/<p class="share-private">([^<]*)<\/p>/u)?.[1]
+  const repo = (fullName, internal = false) => ({ fullName, internal })
   for (const [privateRepositories, expected] of [
     [undefined, undefined],
     [[], undefined],
-    [['org/one'], 'This workspace includes a private repository: org/one. Anyone with a public link can read their published reports and source files.'],
-    [['a/1', 'a/2', 'a/3', 'a/4', 'a/5', 'a/6', 'a/7'], 'This workspace includes 7 private repositories: a/1, a/2, a/3, a/4, a/5 and 2 more. Anyone with a public link can read their published reports and source files.'],
+    [[repo('org/one')], 'This workspace includes a private repository: org/one. Anyone with a public link can read their published reports and source files.'],
+    [[repo('org/one', true)], 'This workspace includes an internal repository: org/one. Anyone with a public link can read their published reports and source files.'],
+    [['a/1', 'a/2', 'a/3', 'a/4', 'a/5', 'a/6', 'a/7'].map(name => repo(name)), 'This workspace includes 7 private repositories: a/1, a/2, a/3, a/4, a/5 and 2 more. Anyone with a public link can read their published reports and source files.'],
+    [[repo('a/1', true), repo('a/2', true)], 'This workspace includes 2 internal repositories: a/1, a/2. Anyone with a public link can read their published reports and source files.'],
+    [[repo('a/1'), repo('a/2', true)], 'This workspace includes 2 private or internal repositories: a/1, a/2 (internal). Anyone with a public link can read their published reports and source files.'],
   ]) {
     t.mock.method(globalThis, 'fetch', () => Response.json({ shares: [], ...(privateRepositories ? { privateRepositories } : {}) }))
     const dialog = Object.assign(new Dialog(), { team: { id: 'team', name: 'Team' }, session })

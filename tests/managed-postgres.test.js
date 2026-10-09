@@ -292,6 +292,23 @@ test('Postgres upgrades and persists nullable repository default caches without 
   assert.equal((await reopened.listSelectedRepos())[0].cachedDefaultBranch, null)
 })
 
+test('Postgres upgrades repositories to record their visibility, internal ones stored as private', async t => {
+  const { db, connect } = await database(t)
+  const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: 7, defaultBranch: 'main', htmlUrl: '', addedBy: null }
+  await db.selectRepo(repo, 1)
+  const legacy = await connect()
+  try { await legacy.query('ALTER TABLE managed_selected_repo DROP COLUMN visibility; DELETE FROM managed_schema_version WHERE version = 25;') }
+  finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  let [stored] = await upgraded.listSelectedRepos()
+  assert.deepEqual([stored.private, stored.visibility], [false, null], 'a repository selected before stays unrecorded')
+  await upgraded.selectRepo({ ...repo, visibility: 'internal' }, 2)
+  ;[stored] = await upgraded.listSelectedRepos()
+  assert.deepEqual([stored.private, stored.visibility], [true, 'internal'])
+})
+
 test('Postgres management catalogs preserve permission and linked-bundle filtering', async t => {
   const { db } = await database(t)
   await checkManagementCatalog(db)
