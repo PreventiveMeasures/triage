@@ -10,6 +10,7 @@ import { SEVERITY_ORDER, canDropRevalidation, depsDirName, displayedSeverity, is
 // declarations by the time anything runs.
 import { matchesRunFilters } from './filters.js'
 import { mergeReportGroups } from '../../common/workspace-groups.js'
+import { roleAtLeast } from '../../common/managed/roles.ts'
 import { getLinksPreview } from './links-preview.js'
 import { mergeLinkedWorkspaceGroups } from '../../common/linked-workspace-groups.js'
 import { splitRevalidationInputs } from '../../common/revalidation-input-groups.js'
@@ -73,6 +74,20 @@ function appLayerAvailable() {
 // and code mode expose the dependency's saved annotations without changing them.
 export function canTriageFinding(f) {
   return !f.isUpstream || state.showRevalidation === false || state.upstreamOnly === true || !appLayerAvailable()
+}
+
+// Public links and the Viewer role read triage but can never save it, so their
+// controls stay disabled instead of editing a copy nobody else sees. An admin
+// viewing as another account keeps that account's controls: the server refuses
+// those writes and the client puts the refused state back.
+export function triageReadOnly() {
+  const session = state.managedSession
+  return isManagedUiMode() && (session?.publicShare === true || !roleAtLeast(session?.role, 'triage'))
+}
+
+// Every triage write goes through this; reads keep canTriageFinding.
+export function canEditTriage(f) {
+  return canTriageFinding(f) && !triageReadOnly()
 }
 
 export function triageEntry(f) {
@@ -463,7 +478,7 @@ export function groupState(group) {
 // withhold the offer from a group that agrees.
 export function canApplyFixToGroup(group, current) {
   if (!Array.isArray(group) || group.length < 2) return false
-  const eligible = group.filter(canTriageFinding)
+  const eligible = group.filter(canEditTriage)
   if (eligible.length < 2) return false
   const want = (current ?? '').trim()
   return eligible.every((f) => fixApplies(f, want))
@@ -474,7 +489,7 @@ export function canApplyFixToGroup(group, current) {
 // and a sync peer or another browser tab can land a link on a sibling
 // while it sits there.
 export function fixApplies(f, current) {
-  if (!canTriageFinding(f)) return false
+  if (!canEditTriage(f)) return false
   const fix = (triageEntry(f)?.fix ?? '').trim()
   return fix === '' || fix === (current ?? '').trim()
 }
@@ -498,7 +513,7 @@ export function fixApplies(f, current) {
 export function triageActionPlan(group, action) {
   // Controls belong to the displayed finding, even when their write would
   // otherwise target eligible siblings. Kanban drops use triageScope directly.
-  if (!canTriageFinding(activeTabFor(group))) return { targets: [], clearing: false }
+  if (!canEditTriage(activeTabFor(group))) return { targets: [], clearing: false }
   const st = groupState(group)
   return {
     targets: triageScope(group, st),
@@ -513,7 +528,7 @@ export function triageScope(group, st = groupState(group)) {
   const members = triageTabs(group)
   const targets = group.linkedTabs || (members !== group && group.some((f) => f.isApp))
     ? members : st.hasConflict ? [activeTabFor(group)] : members
-  return targets.every(canTriageFinding) ? targets : targets.filter(canTriageFinding)
+  return targets.every(canEditTriage) ? targets : targets.filter(canEditTriage)
 }
 
 // The state that scope currently shows — what the menu marks active,
@@ -564,7 +579,7 @@ export function syncGroupTriage(group) {
   if (bucket === 'ignored' && !tabs.some(f => triageEntry(f)?.triage === 'ignored')) return false
   let changed = false
   for (const f of tabs) {
-    if (!canTriageFinding(f)) continue
+    if (!canEditTriage(f)) continue
     const key = tabKey(f)
     const entry = state.triage.get(key)
     // Anything still off the bucket here carries no bucket at all — an

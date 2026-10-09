@@ -14,6 +14,7 @@ import {
   parseTriageExportGzip,
 } from '#client/index.js'
 import { downloadBlob } from '../dom.js'
+import { triageReadOnly } from '../group.js'
 import { render as renderApp } from '../render.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import triageExportCSS from './dialog-triage-export.css'
@@ -79,7 +80,7 @@ class TriageExportDialog extends AppDialog {
   _onMode(e) { this.mode = e.target.value }
 
   async _onApply() {
-    if (!this.parsed || this.busy) return
+    if (!this.parsed || this.busy || triageReadOnly()) return
     this.busy = true
     this.status = null
     try {
@@ -112,7 +113,6 @@ class TriageExportDialog extends AppDialog {
   }
 
   render() {
-    const p = this.parsed
     return html`<dialog @close=${this._onClose}>
       <header>
         <h3>Triage backup</h3>
@@ -127,7 +127,23 @@ class TriageExportDialog extends AppDialog {
         </button>
       </section>
 
-      <hr>
+      ${triageReadOnly() ? nothing : this._importTemplate()}
+
+      ${this.status
+        ? html`<div class=${`status status-${this.status.kind}`}>${this.status.text}</div>`
+        : nothing}
+
+      <footer class="actions">
+        <button type="button" @click=${this._onClose}>Close</button>
+      </footer>
+    </dialog>`
+  }
+
+  // A read-only page (public link, Viewer) could only import into a copy
+  // nobody else sees, so it offers the export alone.
+  _importTemplate() {
+    const p = this.parsed
+    return html`<hr>
 
       <section class="section">
         <h4>Import</h4>
@@ -164,16 +180,7 @@ class TriageExportDialog extends AppDialog {
             ${this.busy ? 'Applying…' : 'Apply import'}
           </button>
         ` : nothing}
-      </section>
-
-      ${this.status
-        ? html`<div class=${`status status-${this.status.kind}`}>${this.status.text}</div>`
-        : nothing}
-
-      <footer class="actions">
-        <button type="button" @click=${this._onClose}>Close</button>
-      </footer>
-    </dialog>`
+      </section>`
   }
 }
 

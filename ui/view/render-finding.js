@@ -7,7 +7,7 @@ import { publicSharePath } from '../../client/managed/public-share.js'
 import { reportRepoGithub } from '@preventive/report'
 import { newIssueLabels } from '../../common/github-issue-labels.js'
 import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineRange, listSegments, locationLabel, markdownLinkToken, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
-import { activeTabFor, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
+import { activeTabFor, canEditTriage, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
@@ -862,7 +862,7 @@ function flagButtonTemplate(f, isFocus = false) {
     type="button"
     class=${classMap({ 'mark-flag': true, flagged })}
     data-flag-toggle=${tabKey(f)}
-    ?disabled=${!canTriageFinding(f)}
+    ?disabled=${!canEditTriage(f)}
     aria-label=${title}
     aria-pressed=${String(flagged)}
   >${FLAG_ICON}${isFocus ? html`<span class="mark-btn-label">${flagged ? 'Flagged' : 'Flag'}</span>` : nothing}</button>`
@@ -932,7 +932,10 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // larger card/details surfaces.
   const reportChip = context === 'table' ? nothing : reportChipTemplate(activeTab)
   const activeEntry = triageEntry(activeTab)
+  // Comments open the managed discussion, which reading alone allows; the
+  // other marks are edits.
   const disabled = !canTriageFinding(activeTab)
+  const readOnly = !canEditTriage(activeTab)
   const activeColor = activeEntry?.color ?? null
   const activeComment = activeEntry?.comment ?? ''
   const activeFix = activeEntry?.fix ?? ''
@@ -943,7 +946,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const commentLabel = isManagedUiMode() ? 'Comments' : activeComment ? 'Edit comment' : 'Comment'
   const fixLabel = activeFix ? 'Edit fix link' : 'Fix link'
   const commentBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-comment': true, 'has-comment': activeComment })} data-tooltip=${activeComment && !isManagedUiMode() ? commentTitle : nothing} aria-label=${commentTitle}>${COMMENT_ICON}${showActionLabels ? html`<span class="mark-btn-label">${commentLabel}</span>` : nothing}</button>`
-  const fixBtn = html`<button type="button" ?disabled=${disabled} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${activeFix ? fixTitle : nothing} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
+  const fixBtn = html`<button type="button" ?disabled=${readOnly} class=${classMap({ 'mark-fix': true, 'has-fix': activeFix })} data-tooltip=${activeFix ? fixTitle : nothing} aria-label=${fixTitle}>${FIX_ICON}${showActionLabels ? html`<span class="mark-btn-label">${fixLabel}</span>` : nothing}</button>`
   // Attention flag — third chip in the comment/fix group.
   const flagBtn = flagButtonTemplate(activeTab, showActionLabels)
   // Copy button — writes a labeled `File / Line / Description /
@@ -987,7 +990,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // button writes (prefixed with "Confirm and fix:") to Claude Code
   // via the `claude://code/new?q=…` URL scheme.
   const claudeBtn = html`<button type="button" class="mark-claude" data-tooltip=${showActionLabels ? nothing : 'Open in Claude Code (claude://) with a confirm-and-fix prompt'} aria-label="Open finding in Claude Code">${CLAUDE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Claude</span>` : nothing}</button>`
-  const picker = html`<color-marker .selected=${activeColor} .disabled=${disabled}></color-marker>`
+  const picker = html`<color-marker .selected=${activeColor} .disabled=${readOnly}></color-marker>`
   // Triage menu — chevron button that opens a small popover with
   // Fixed / Invalid / Delete actions. In any triage view (Fixed /
   // Invalid / Deleted), the button's label switches to the current
@@ -1057,7 +1060,7 @@ function positionTriagePopover(e) {
 // resolves them once rather than once per nested helper.
 function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   const gid = groupKey(group)
-  const disabled = !canTriageFinding(activeTab) || triageScope(group, groupSt).length === 0
+  const disabled = !canEditTriage(activeTab) || triageScope(group, groupSt).length === 0
   // What the scope currently shows — the active tab's bucket on a
   // conflicted group, the rollup's otherwise. `scopedTriage` is the
   // one definition `triageActionPlan` also decides set-vs-clear from,

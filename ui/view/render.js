@@ -14,7 +14,7 @@ import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
-import { activeTabFor, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
+import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
@@ -958,7 +958,9 @@ function kanbanCardTemplate(g, opts = {}) {
   if (isKanban && fix) {
     action = isHttpUrl(fix)
       ? html`<managed-fix-link class="kanban-action kanban-fix-link" compact .url=${fix}>${FIX_ICON}</managed-fix-link>`
-      : html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
+      : canEditTriage(activeTab)
+      ? html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
+      : html`<span class="kanban-action kanban-fix-note" role="img" data-tooltip=${`Fix: ${fix}`} aria-label=${`Fix: ${fix}`}>${FIX_ICON}</span>`
   } else if (isKanban && (comment || (isManagedUiMode() && canTriageFinding(activeTab)))) {
     // Keep managed subscriptions mounted even before the first remote comment.
     // Empty previews hide themselves without waiting for a board-wide render.

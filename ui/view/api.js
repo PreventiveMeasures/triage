@@ -4,7 +4,7 @@ import { render } from './render.js'
 import { forceManagedMode } from './sidebar.js'
 import { openTriageExportDialog } from './dialogs/triage-export-dialog.js'
 import { openReportCompareDialog } from './dialogs/report-compare-dialog.js'
-import { getMergedGroups } from './group.js'
+import { getMergedGroups, triageReadOnly } from './group.js'
 import { getTheme, setTheme } from './theme.js'
 
 // `window.DeepView` — a small read-mostly façade over the in-memory
@@ -14,7 +14,8 @@ import { getTheme, setTheme } from './theme.js'
 // iterate without mutating the live store. `triage.set(id, …)` is
 // the one write-through path: updates the observed `state.*`
 // containers, persists via `saveTriage()`, and re-renders so a
-// console-driven edit lights up the UI immediately.
+// console-driven edit lights up the UI immediately. Like the UI's
+// controls, it refuses where triage is read-only (see triageReadOnly).
 //
 // IDs follow the renderer's convention (`tabKey(f)` =
 // `f.id ?? String(f._id)`): non-numeric values are uuid-shaped
@@ -62,6 +63,7 @@ const triage = {
   // anything change" so callers can short-circuit. Async because the
   // saveTriage write is async; the UI render fires after persistence.
   async set(id, { color, triage: triageVal, comment, fix, flagged } = {}) {
+    if (triageReadOnly()) throw new Error('DeepView.triage.set: triage is read-only on this page')
     let changed = false
     if (color !== undefined) {
       if (color === null || color === '') {

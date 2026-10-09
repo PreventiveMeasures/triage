@@ -52,8 +52,10 @@ sidebar banner names the viewed user until the admin selects **Stop**, or
 
 Every write is refused while viewing, with `403 { "error": "view-only" }`,
 before a request body is read: triage, comments, issues, public links,
-uploads and all management changes. The app shows the refusal and restores
-the server's triage. Reads behave as for the viewed user, including the
+uploads and all management changes. Controls stay as the viewed user has them,
+so the admin sees what that user is offered: a Viewer's triage controls are
+disabled, while a Triage user's stay enabled and their edits are refused. The
+app shows the refusal and restores the server's triage. Reads behave as for the viewed user, including the
 read-only `POST /api/reports/query`. Requests never use the viewed user's
 GitHub authorization, so data that needs it is omitted, as for a user who has
 not authorized GitHub: private pull request and issue status, repository
@@ -91,6 +93,8 @@ disabled when unset or set to any other value, including for existing links in
 the database. The dialog creates a read-only link and can
 revoke all public links for that workspace. Anyone holding a link can open it
 without GitHub sign-in, including on combined managed + E2E deployments.
+Like the Viewer role, a link shows saved triage, fix links, flags and colors
+with their controls disabled, and opens comments read-only.
 
 New links use `/team/<team-slug>#public=<link-id>.<token>`. The eight-character
 link ID matches the ID shown in the dropdown and Manage's Links tab, so a URL can
