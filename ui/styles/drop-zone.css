@@ -92,7 +92,7 @@
 #drop-zone[data-server-mode='managed'] > #landing-workspaces { display: none; }
 
 #drop-zone[data-server-mode='managed'] > .managed-landing {
-  display: flex; width: 100%; max-width: 760px;
+  display: flex; width: 100%; max-width: 920px;
   margin-inline: auto;
   flex-direction: column;
 }
