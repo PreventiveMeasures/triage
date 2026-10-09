@@ -1,4 +1,3 @@
-import { guard } from 'lit/directives/guard.js'
 import { keyed } from 'lit/directives/keyed.js'
 import { LitElement, html, unsafeCSS } from '../frontend-global.js'
 import { hideTooltip, installShadowTooltipListener } from '../tooltip.js'
@@ -7,7 +6,6 @@ import { pkgColor } from './utils.js'
 import { graphBackground } from './colors.js'
 import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowConnector, sizeFlowFilterSize, sizeFlowLargeThreshold } from './size-flow-model.js'
 import { SizeFlowChart, shortSize } from './size-flow-chart.js'
-import { SizeFlowCanvas, canvasSizeFlow } from './size-flow-canvas.js'
 import { graphZoomMetrics } from './zoom.js'
 import css from './size-flow.css'
 import sidebarListCSS from './sidebar-list.css'
@@ -67,11 +65,6 @@ class SizeFlow extends LitElement {
       this.layoutMinSize = this.minSize
       if (this.selection && !this.layout.byId.has(this.selection.node)) this.selection = null
     }
-    if (canvasSizeFlow(this.layout) !== !!this.chart.isCanvas) {
-      this.chart.dispose?.()
-      this.chart = canvasSizeFlow(this.layout) ? new SizeFlowCanvas(this) : new SizeFlowChart(this)
-      this.viewportElements = null
-    }
   }
 
   get minSize() { return this.largeOnly && !this.largeSuppressed ? this.largeThreshold : 0 }
@@ -113,8 +106,8 @@ class SizeFlow extends LitElement {
       const dragged = this.suppressClick && e.detail > 0
       this.suppressClick = false
       if (dragged) { e.preventDefault(); e.stopPropagation(); return }
-      if (e.target.closest?.('.flow-canvas')) return
-      if (!e.target.closest?.('[data-flow-node], [data-flow-edge]')) this.select(null)
+      // The chart's own click handler selects whatever it hits.
+      if (!e.target.closest?.('.flow-canvas')) this.select(null)
     }, { capture: true, signal })
     this.resizeObserver = new ResizeObserver(() => this.syncViewport())
     this.resizeObserver.observe(stage)
@@ -126,7 +119,7 @@ class SizeFlow extends LitElement {
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
     this.events?.abort(); this.events = null
-    this.chart.dispose?.()
+    this.chart.dispose()
     this.viewportElements = null
     this.drag = null
     if (graph2.graphState === this.bridge) graph2.graphState = null
@@ -243,25 +236,16 @@ class SizeFlow extends LitElement {
 
   endPan(e) { if (e.pointerId === this.drag?.id) this.drag = null }
 
-  viewportTransform() { return `translate(${this.pan.x}px, ${this.pan.y}px) scale(${this.zoom})` }
-
   drawViewport() {
-    this.chart.viewportChanged?.()
-    // Keep pointer/wheel updates independent of the potentially huge SVG
-    // template: only its transform and the zoom controls need to change.
+    // Pointer and wheel input repaint the chart and the zoom controls only,
+    // never the component.
+    this.chart.viewportChanged()
     this.viewportElements ??= {
-      chart: this.renderRoot.querySelector('.flow-chart'),
       label: this.renderRoot.querySelector('.g2-zoom-pct'),
       zoomIn: this.renderRoot.querySelector('[aria-label="Zoom in"]'),
       zoomOut: this.renderRoot.querySelector('[aria-label="Zoom out"]'),
     }
-    const { chart, label, zoomIn, zoomOut } = this.viewportElements
-    if (chart) {
-      const transform = this.viewportTransform()
-      if (chart.style.transform !== transform) hideTooltip(this.renderRoot)
-      chart.style.transform = transform
-      chart.style.setProperty('--flow-zoom', String(this.zoom))
-    }
+    const { label, zoomIn, zoomOut } = this.viewportElements
     const { min, max, percent } = this.zoomMetrics()
     if (label) label.textContent = `${percent}%`
     if (zoomIn) zoomIn.disabled = this.zoom >= max * .9999
@@ -335,11 +319,9 @@ class SizeFlow extends LitElement {
 
   render() {
     if (!this.layout) return null
-    const { nodes, width, height } = this.layout
+    const { nodes } = this.layout
     return html`<section class="flow-stage" aria-label="Dependency size flow" style=${`--flow-background:${graphBackground()}`}>
-      <div class="flow-viewport">${this.chart.isCanvas ? this.chart.render() : html`<svg class="flow-chart" width=${width} height=${height} style=${`transform:${this.viewportTransform()};--flow-zoom:${this.zoom}`} viewBox=${`0 0 ${width} ${height}`} role="group" aria-label="Import paths with bars weighted by bundle size removed if deleted">
-        ${guard([this.layout, this.chart], () => this.chart.render())}
-      </svg>`}${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${shortSize(this.minSize)}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>
+      <div class="flow-viewport">${this.chart.render()}${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${shortSize(this.minSize)}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>
       <div class="flow-count">${nodes.length} ${this.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</div>
       <div class="g2-zoom-ctrl" role="group" aria-label="Flow zoom">
         <button aria-label="Zoom in" ?disabled=${this.zoom >= this.zoomMetrics().max * .9999} @click=${() => this.zoomBy(1.4)}>+</button>

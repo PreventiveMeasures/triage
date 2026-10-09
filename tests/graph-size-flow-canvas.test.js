@@ -3,7 +3,9 @@ import { test } from 'node:test'
 import '../ui/view/frontend-install.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { buildSizeFlow, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
-import { SizeFlowCanvas, canvasSizeFlow } from '../ui/view/graph/size-flow-canvas.js'
+import { SizeFlowChart } from '../ui/view/graph/size-flow-chart.js'
+import { graphBackground, textOnPackage } from '../ui/view/graph/colors.js'
+import { pkgColor } from '../ui/view/graph/utils.js'
 import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside, flowVisibleRibbons } from '../ui/view/graph/size-flow-hit.js'
 
 test('flow hit index matches exhaustive bounds, preserving draw order and long crossings', () => {
@@ -78,7 +80,7 @@ function mounted(t, { dense = false } = {}) {
     layout, matchesNode: () => true, renderRoot: root,
     select(node, edge) { this.selection = node ? { node, edge } : null }, follow(node) { this.focus = node },
   }
-  const chart = new SizeFlowCanvas(host)
+  const chart = new SizeFlowChart(host)
   host.drawViewport = () => chart.viewportChanged()
   const frame = () => { const pending = [...frames.values()]; frames.clear(); for (const callback of pending) callback() }
   chart.update(root); chart.viewportChanged(); frame()
@@ -86,13 +88,11 @@ function mounted(t, { dense = false } = {}) {
     chart.dispose()
     for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key] }
   })
-  return { chart, host, root, base, bars, overlay, frame, frames, paths: () => paths }
+  return { chart, host, root, base, bars, overlay, frame, frames, paths: () => paths, theme: name => { globalThis.document.body = { classList: { contains: value => value === name } } } }
 }
 
 test('canvas zoom batches frames, caches paths, and hover/selection never repaint the base graph', t => {
   const { chart, host, root, base, bars, overlay, frame, frames, paths } = mounted(t)
-  assert.equal(canvasSizeFlow({ nodes: Array.from({ length: 1501 }), edges: [] }), true)
-  assert.equal(canvasSizeFlow({ nodes: Array.from({ length: 1500 }), edges: [] }), false)
   assert.equal(paths(), host.layout.edges.length)
   assert.equal(base.width, host.width * 2)
   const barPaints = bars.clears(), basePaints = base.clears(), overlayPaints = overlay.clears()
@@ -282,4 +282,20 @@ test('canvas filters invalidate both layers, and borders occupy at most half a b
   host.layout = { ...host.layout, nodes: host.layout.nodes.slice(0, 1), edges: [] }
   chart.update(root); frame()
   assert.equal(chart.paths.length, 0)
+})
+
+test('theme changes repaint both layers with the Layers colors without reparsing ribbons', t => {
+  const { chart, host, root, base, bars, frame, paths, theme } = mounted(t)
+  const parsed = paths()
+  for (const [name, background] of [['theme-light', '#f6f8fa'], ['theme-paper', '#fff'], ['theme-pink', '#fff0f7'], ['', '#0c0c0c']]) {
+    const before = [base.clears(), bars.clears()]
+    theme(name); chart.update(root); frame()
+    assert.equal(graphBackground(), background)
+    assert.equal(chart.background, background)
+    assert.deepEqual([base.clears(), bars.clears()], [before[0] + 1, before[1] + 1], 'ribbons and bars repaint in the new colors')
+    for (const node of host.layout.nodes) assert.equal(chart.colors.get(node.pkg), pkgColor(node.pkg))
+  }
+  assert.equal(paths(), parsed, 'changing colors never rebuilds geometry')
+  assert.equal(textOnPackage('#e15759'), '#000', 'the red bar in the reported dark-theme example needs dark text')
+  assert.equal(textOnPackage('#8a5d40'), '#fff', 'darker bars retain white text')
 })
