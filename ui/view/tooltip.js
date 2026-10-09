@@ -22,9 +22,9 @@
 // has run out, to fill in the target's `data-tooltip-*` attributes.
 //
 // A commit a managed bundle records can carry `data-tooltip-commit-info`
-// (see `bundleCommitTooltip` in bundle-origin-links.js): its message's first
-// line, author and date go below, and the tags that point to it follow the
-// `data-tooltip-commit` reference.
+// (see `bundleCommitTooltip` in bundle-origin-links.js): the tags that point
+// to it go under the `data-tooltip-commit` reference, then its message's first
+// line, author and date.
 //
 // Placement: 'cursor' (default) anchors below the cursor and clamps
 // horizontally to the viewport — natural for in-column rows where
@@ -36,6 +36,11 @@
 
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
+
+// The tooltip ignores the pointer, so it cannot scroll: a commit with many
+// tags (a monorepo's packages) shows the first few and counts the rest. The
+// Overview lists them all.
+const MAX_TOOLTIP_TAGS = 8
 
 function readCommitInfo(value) {
   let info
@@ -188,22 +193,30 @@ export function showTooltip(el, { placement = 'cursor' } = {}) {
       label.textContent = commit.slice(0, 7)
       reference.append(label)
       row.append(reference)
-      if (commitInfo?.tags.length) {
-        const tags = document.createElement('span')
-        tags.className = 'tooltip-tags'
-        for (const tag of commitInfo.tags) {
-          const chip = document.createElement('span')
-          chip.className = 'tooltip-tag'
-          chip.innerHTML = TAG_ICON_SVG
-          const name = document.createElement('span')
-          name.textContent = tag
-          chip.append(name)
-          tags.append(chip)
-        }
-        row.append(tags)
-      }
     }
     node.append(row)
+    // Beside a repository path the tags would wrap in whatever width it left;
+    // under it they take the tooltip's.
+    if (commit && commitInfo?.tags.length) {
+      const tags = document.createElement('div')
+      tags.className = 'tooltip-tags'
+      for (const tag of commitInfo.tags.slice(0, MAX_TOOLTIP_TAGS)) {
+        const chip = document.createElement('span')
+        chip.className = 'tooltip-tag'
+        chip.innerHTML = TAG_ICON_SVG
+        const name = document.createElement('span')
+        name.textContent = tag
+        chip.append(name)
+        tags.append(chip)
+      }
+      if (commitInfo.tags.length > MAX_TOOLTIP_TAGS) {
+        const more = document.createElement('span')
+        more.className = 'tooltip-tag-more'
+        more.textContent = `+${(commitInfo.tags.length - MAX_TOOLTIP_TAGS).toLocaleString()} more`
+        tags.append(more)
+      }
+      node.append(tags)
+    }
   }
   if (commitInfo?.details) node.append(commitDetailsRow(commitInfo.details))
   if (bundle || stats || built) {

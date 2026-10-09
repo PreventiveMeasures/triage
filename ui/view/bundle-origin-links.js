@@ -3,6 +3,15 @@ import { bundleCommitHash } from '../../common/bundle-commit.js'
 
 const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu
 
+// A tooltip cannot scroll, so a message's first line is cut short there.
+const MAX_TOOLTIP_TITLE = 200
+
+function tooltipTitle(message) {
+  const line = message.split('\n').map(text => text.trim()).find(Boolean) ?? ''
+  const chars = [...line]
+  return chars.length > MAX_TOOLTIP_TITLE ? `${chars.slice(0, MAX_TOOLTIP_TITLE - 1).join('').trimEnd()}…` : line
+}
+
 function catalogTags(commitInfo, hash) {
   return hash && commitInfo?.sha === hash && Array.isArray(commitInfo.tags) ? commitInfo.tags.filter(tag => typeof tag === 'string' && tag) : []
 }
@@ -17,7 +26,7 @@ export function bundleCommitTooltip(commitInfo, hash, repository = null) {
   const tags = cachedFor ? catalogTags(commitInfo, hash) : []
   const details = hash && commitInfo?.sha === hash && typeof commitInfo.details?.message === 'string' ? commitInfo.details : null
   if (!details && tags.length === 0) return undefined
-  return JSON.stringify({ tags, ...(details ? { title: details.message.split('\n').map(line => line.trim()).find(Boolean) ?? '',
+  return JSON.stringify({ tags, ...(details ? { title: tooltipTitle(details.message),
     authorName: details.authorName, authorLogin: details.authorLogin, date: details.committedAt ?? details.authoredAt } : {}) })
 }
 

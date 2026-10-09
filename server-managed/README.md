@@ -778,7 +778,9 @@ final access check, which a bundle moved meanwhile leaves without `commitInfo`.
 The bundle view shows the tags after the commit on the Overview's GitHub row,
 linked in `github` even when the bundle's stamp names another repository, and
 the commit's first message line, author and date in the tooltips that show
-that commit (Overview, Code file link, team bundle rows).
+that commit (Overview, Code file link, team bundle rows). A tooltip that names
+that repository also lists the first eight tags under the commit and counts the
+rest; tooltips cannot scroll, so their first line is also cut at 200 characters.
 
 `managed_github_commit` keeps details by stable repository ID and SHA, without
 eviction: commits never change, so a cached one is never read again. A server

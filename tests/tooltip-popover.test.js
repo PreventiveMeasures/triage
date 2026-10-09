@@ -91,18 +91,27 @@ test('tooltips preserve popover lifecycle and keep repository paths inside the v
     target.dataset.tooltipCommit = sha
     target.dataset.tooltipCommitInfo = bundleCommitTooltip(info, sha, 'org/repo')
     showTooltip(target)
-    const tags = node.children[0].children[2]
-    assert.equal(tags.className, 'tooltip-tags', 'tags follow the commit on its line, in a box of their own')
+    const tags = node.children[1]
+    assert.equal(node.children[0].children.length, 2)
+    assert.equal(tags.className, 'tooltip-tags', 'tags go on a line of their own under the commit')
     assert.deepEqual(tags.children.map(tag => [tag.className, tag.innerHTML, tag.children[0].textContent]),
       [['tooltip-tag', TAG_ICON_SVG, 'v1.0.0'], ['tooltip-tag', TAG_ICON_SVG, '<img onerror=alert(1)>']], 'tag names stay literal text')
-    const details = node.children[1]
+    target.dataset.tooltipCommitInfo = bundleCommitTooltip({ ...info, tags: Array.from({ length: 1020 }, (_, i) => `pkg-${i}@1.0.0`) }, sha, 'org/repo')
+    showTooltip(target)
+    const many = node.children[1].children
+    assert.deepEqual(many.slice(0, 8).map(tag => tag.children[0].textContent), Array.from({ length: 8 }, (_, i) => `pkg-${i}@1.0.0`),
+      'a tooltip, which cannot scroll, shows the first few tags')
+    assert.deepEqual([many.length, many.at(-1).className, many.at(-1).textContent], [9, 'tooltip-tag-more', `+${(1012).toLocaleString()} more`])
+    target.dataset.tooltipCommitInfo = bundleCommitTooltip(info, sha, 'org/repo')
+    showTooltip(target)
+    const details = node.children[2]
     assert.equal(details.className, 'tooltip-commit-details')
     assert.equal(details.children[0].textContent, 'Fix the parser', 'the message shows its first line')
     assert.equal(details.children[1].textContent, `Alice (@alice) · ${new Date(Date.UTC(2026, 9, 1, 12)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`)
-    assert.equal(node.children[2].className, 'tooltip-bundle')
+    assert.equal(node.children[3].className, 'tooltip-bundle')
     target.dataset.tooltipCommitInfo = bundleCommitTooltip({ sha, tags: [], details: { message: 'Only', authorName: null, authorLogin: 'bot', authoredAt: Date.UTC(2026, 0, 1), committedAt: null } }, sha)
     showTooltip(target)
-    assert.equal(node.children[0].children.length, 2, 'a visible tooltip follows tag changes')
+    assert.deepEqual(node.children.map(child => child.className), ['tooltip-repo', 'tooltip-commit-details', 'tooltip-bundle'], 'a visible tooltip follows tag changes')
     assert.equal(node.children[1].children[1].textContent, `@bot · ${new Date(Date.UTC(2026, 0, 1)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`, 'the author date stands in for a missing commit date')
     target.dataset.tooltipCommitInfo = '{not json'
     showTooltip(target)

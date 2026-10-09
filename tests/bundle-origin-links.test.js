@@ -83,6 +83,9 @@ test('commit tooltips carry only what they show of the catalog details, for thei
     assert.deepEqual(JSON.parse(bundleCommitTooltip(info, sha, repository)).tags, [],
       'tags show only beside the repository they were cached for; the commit details are the same in any')
   }
+  const long = JSON.parse(bundleCommitTooltip({ ...info, details: { ...details, message: `${'😀'.repeat(300)}\nBody` } }, sha)).title
+  assert.equal(long, `${'😀'.repeat(199)}…`, 'a long first line is cut short, by whole characters')
+  assert.equal(JSON.parse(bundleCommitTooltip({ ...info, details: { ...details, message: 'x'.repeat(200) } }, sha)).title, 'x'.repeat(200))
   assert.equal(bundleCommitTooltip({ ...info, details: null }, sha, 'upstream/repo'), undefined)
   assert.equal(bundleCommitTooltip({ ...info, github: undefined, details: null }, sha, 'org/repo'), undefined)
   for (const [commitInfo, hash] of [[info, 'b'.repeat(40)], [{ sha, tags: [], details: null }, sha], [null, sha], [{ ...info, details: null }, undefined]]) {
