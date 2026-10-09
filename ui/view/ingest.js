@@ -59,10 +59,14 @@ export { BUNDLE_TABS } from '../../common/bundle-tabs.js'
 // Persist a bundle selection to LAST_FILE_KEY as `b:<integrity> <tab>`.
 // The default 'overview' tab is dropped from the suffix so the
 // round-trip lands on a clean `b:<integrity>`.
-export function persistLastBundle(integrity, tab = 'overview') {
+// Managed, a switch to another tab (`push`) adds a history entry; anything
+// else rewrites the current one.
+export function persistLastBundle(integrity, tab = 'overview', { push = false } = {}) {
   if (isManagedUiMode()) {
     const entry = state.bundles.find(bundle => bundle.integrity === integrity)
-    managedHistory.replaceRoute(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, tab, managedCodeLocation(state, tab)))
+    const route = managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, tab, managedCodeLocation(state, tab))
+    if (push) managedHistory.pushRoute(route)
+    else managedHistory.replaceRoute(route)
     return
   }
   const suffix = tab && tab !== 'overview' && BUNDLE_TABS.has(tab) ? ` ${tab}` : ''

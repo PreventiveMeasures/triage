@@ -356,7 +356,7 @@ function handleBundleSourceClick(e) {
     // Continue following source references in Code, with its file tree visible.
     if (state.currentView === 'bundles' && state.bundleDetailsTab === 'search') {
       selectBundleTab('code', { preserveSource: true })
-      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'code')
+      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'code', { push: true })
     }
     selectBundleSourceFile(path)
     state.bundleSourceFindingIdx = null
@@ -735,7 +735,7 @@ report.addEventListener('click', (e) => {
       // re-render the wrong view in the new tab — the modal
       // renders over non-slide tabs whenever the pointer is set.
       selectBundleTab(tab)
-      if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab)
+      if (state.selectedBundle) persistLastBundle(state.selectedBundle, tab, { push: true })
       render()
       // The Code slide auto-opens a default file on entry (see
       // pickDefaultBundleCodeFile); bring its tree row into view —
@@ -1057,7 +1057,7 @@ report.addEventListener('click', (e) => {
     if (state.currentView === 'bundles') {
       if (state.bundleDetailsTab === 'graph') cleanupGraph2()
       selectBundleTab('issues')
-      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'issues')
+      if (state.selectedBundle) persistLastBundle(state.selectedBundle, 'issues', { push: true })
       render()
       return
     }

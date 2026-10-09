@@ -28,6 +28,7 @@ export function createManagedHistory(browser) {
   let listening = false
   let findingUrl = null
   let restoring = null
+  let cancelled = null
 
   // A changed public fragment triggers a document reload. Do not let an old
   // popstate handler or pending navigation restore the previous credential.
@@ -149,10 +150,13 @@ export function createManagedHistory(browser) {
       const path = route.view === 'home' ? `/#${encodeFindingRef(route.finding)}` : managedRoutePath(route)
       try { browser.sessionStorage?.setItem(LOGIN_FINDING, path) } catch {}
     },
-    start(navigateToPage) {
+    // `onCancel` hears that a navigation still loading was cancelled with no
+    // navigation of its own to follow it (see pushRoute).
+    start(navigateToPage, { onCancel = null } = {}) {
       if (active) return
       active = true
       restore = navigateToPage
+      cancelled = onCancel
       generation = typeof browser.history.state?.[KEY] === 'string' ? browser.history.state[KEY] : browser.crypto.randomUUID()
       if (!listening) {
         browser.addEventListener('popstate', onPop)
@@ -204,7 +208,27 @@ export function createManagedHistory(browser) {
     replaceRoute(route) {
       if (!active || !route || shareChanged()) return
       const path = managedRoutePath(route)
-      if (path != null) replace(path)
+      // A navigation still loading commits its own URL, from the state it
+      // ends in. Written now, this one would land on the entry it leaves,
+      // and match the entry it was about to push.
+      if (path != null && !restoring) replace(path)
+    },
+    // A page the user moved to within the one shown, as a bundle's tab: an
+    // entry of its own, so Back returns to the page before. The latest
+    // navigation, so one still loading gives way to it.
+    pushRoute(route) {
+      if (!active || !route || shareChanged()) return
+      let path = managedRoutePath(route)
+      if (path == null) return
+      const loading = restoring !== null
+      ++revision
+      restoring = null
+      path = publicSharePath(path, publicShare)
+      if (path !== currentPath) {
+        browser.history.pushState({ [KEY]: generation }, '', path)
+        currentPath = path
+      }
+      if (loading) cancelled?.()
     },
     reset({ force = false } = {}) {
       ++revision

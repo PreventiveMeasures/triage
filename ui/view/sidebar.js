@@ -2046,7 +2046,7 @@ async function revalidateManagedSession() {
     }
     if (managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)) {
       await managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
-    } else if (session) await managedHistory.start(restoreManagedPage)
+    } else if (session) await managedHistory.start(restoreManagedPage, { onCancel: cancelManagedRestoration })
   } catch (err) {
     console.warn('managed: session probe failed:', err)
   } finally {
@@ -2174,14 +2174,33 @@ function canAccessManagedPage(view) {
   return ['admin', 'manage'].includes(role) && (!ADMIN_ONLY_PAGES.has(view) || role === 'admin')
 }
 
+// The latest restoration started owns the pending flag. One a newer
+// restoration superseded leaves it to that one, and the latest releases it
+// when it ends, unless cancellation released it first.
+let managedRestoration = 0
+
+// A tab switch on the page shown cancelled the restoration still loading,
+// with no navigation of its own to follow it. Stop the restoration's reads
+// and release its hold on catalogue work now, then replay that work for the
+// page kept: catalogue revisions it held back were left for the restoration
+// to validate its destination with, and it never will.
+function cancelManagedRestoration() {
+  ++managedRestoration
+  managedNavigationPending = false
+  beginViewNavigation()
+  const generation = clientModeGeneration
+  void refreshManagedTeams(() => generation === clientModeGeneration && isManagedUiMode(), { reuse: true })
+}
+
 // Navigate to one of the admin / manage pages: load the admin bundle
 // (which defines the element render() paints for `view`), then switch
 // the view + repaint.
 async function restoreManagedPage(route, isCurrent) {
+  const restoration = ++managedRestoration
   managedNavigationPending = true
   try { return await restoreManagedPageContent(route, isCurrent) }
   finally {
-    if (isCurrent()) {
+    if (restoration === managedRestoration) {
       managedNavigationPending = false
       void renderSidebar()
     }
