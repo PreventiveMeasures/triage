@@ -3467,6 +3467,127 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
   }
 }
 
+/* An npm package's figures under its summary (view/npm-overview.js): stat
+   tiles beside its weekly downloads over the last year, one series in the
+   accent over a faint wash of it, on hairline gridlines. */
+.npm-insights {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem;
+  margin-top: .75rem;
+}
+.npm-stats {
+  display: flex; flex-wrap: wrap; gap: .5rem 1.25rem;
+  margin: 0;
+}
+.npm-stat {
+  display: flex; flex-direction: column; gap: .1rem; min-width: 5rem;
+
+  & dt { color: var(--muted); font-size: .7rem; }
+  & dd { margin: 0; color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; }
+}
+.npm-downloads {
+  flex: 1 1 18rem; min-width: 0; max-width: 44rem; margin: 0;
+
+  & figcaption { margin-bottom: .2rem; color: var(--muted); font-size: .7rem; }
+}
+npm-downloads-chart { display: block; }
+.npm-downloads-plot {
+  position: relative;
+
+  &:focus { outline: none; }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  & svg { display: block; overflow: visible; }
+}
+.npm-downloads-grid { stroke: var(--border); stroke-width: 1; shape-rendering: crispedges; }
+.npm-downloads-tick { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.npm-downloads-area { fill: var(--accent); fill-opacity: .1; }
+.npm-downloads-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.npm-downloads-crosshair { stroke: var(--muted); stroke-width: 1; shape-rendering: crispedges; }
+.npm-downloads-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+.npm-downloads-tip {
+  position: absolute; top: 0; z-index: 1;
+  display: flex; flex-direction: column; align-items: center;
+  padding: .2rem .5rem;
+  color: var(--muted); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
+  box-shadow: 0 2px 6px rgb(0 0 0 / .12);
+  font-size: .68rem; white-space: nowrap;
+  transform: translate(-50%, calc(-100% - 4px));
+  pointer-events: none;
+
+  & strong { color: var(--text); font-size: .8rem; }
+}
+/* Its advisories across every version: those affecting the version shown
+   marked, with their status in words too; those it fixes struck through. */
+.npm-advisories-summary { margin: 0 0 .5rem; color: var(--muted); font-size: .72rem; }
+.npm-advisory-list {
+  display: flex; flex-direction: column; gap: .35rem;
+  margin: 0; padding: 0;
+  list-style: none;
+}
+.npm-advisory {
+  display: flex; align-items: flex-start; gap: .5rem;
+  padding: .4rem .5rem;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
+
+  & .bundle-advisory-severity { flex-shrink: 0; margin-top: .1rem; }
+}
+.npm-advisory-body { display: flex; flex-direction: column; gap: .1rem; min-width: 0; font-size: .78rem; }
+.npm-advisory-title { color: var(--text); overflow-wrap: anywhere; }
+a.npm-advisory-title:hover { color: var(--accent); }
+.npm-advisory-meta { color: var(--muted); font-size: .7rem; overflow-wrap: anywhere; }
+.npm-advisory-sep { margin: 0 .3rem; }
+.npm-advisory-status { color: var(--muted); font-size: .68rem; }
+.npm-advisory.is-affects {
+  border-color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 7%, var(--bg));
+
+  & .npm-advisory-status { color: var(--critical); font-weight: 600; }
+}
+.npm-advisory.is-fixed {
+  & .npm-advisory-title { color: var(--muted); text-decoration: line-through; }
+  & .bundle-advisory-severity { opacity: .55; }
+}
+/* Every file extension in an npm package, as chips under its summary
+   (view/npm-overview.js). */
+.npm-extensions {
+  display: flex; flex-wrap: wrap; gap: .3rem;
+  margin: .6rem 0 0; padding: 0;
+  list-style: none;
+}
+.npm-extension {
+  display: inline-flex; align-items: baseline; gap: .35rem;
+  padding: .05rem .4rem;
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
+  font-size: .7rem; line-height: 1.45;
+}
+.npm-extension-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Text holding control characters: marked, its tag naming them. */
+.npm-extension.is-strange,
+.npm-encoding-tag.is-strange {
+  color: var(--text);
+  background: color-mix(in srgb, var(--medium) 22%, var(--bg));
+  border-color: var(--medium);
+}
+.npm-encodings { margin-top: .4rem; }
+.npm-encoding-tag {
+  flex-shrink: 0; padding: 0 .3rem;
+  color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
+  font-family: system-ui, sans-serif; font-size: .6rem; line-height: 1.35; white-space: nowrap;
+}
+.npm-extension-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* An npm package's columns — Dependencies, Advisories, Files, and Binary
+   files where it has any — share the row while it is wide, and below
+   1200px fill a two-column grid in order, a last odd one spanning it. */
+@media (width < 1200px) {
+  .bundles-overview-columns.npm-overview-columns {
+    grid-template-rows: none;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  .npm-overview-columns > .bundles-overview-col:nth-child(n) { grid-column: auto; grid-row: auto; }
+  .npm-overview-columns > .bundles-overview-col:last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+
 /* The npm viewer's lookup page. */
 .npm-lookup {
   max-width: 40rem;

@@ -90,19 +90,21 @@ export function npmPackageRoute(entry, tab = 'overview', location = null) {
 // since, as to a team's npm scopes.
 const KEPT_VERSIONS = 3
 const keptVersions = new Map()
-const versionLists = new Map()
-// A list that failed is asked for again after a pause, twice as long after
-// each failure in a row, on a render scheduled for then: not on every render,
+// What else is read about a package (its version list, figures, advisories),
+// by kind and name.
+const packageData = new Map()
+// What failed is asked for again after a pause, twice as long after each
+// failure in a row, on a render scheduled for then: not on every render,
 // which each answer brings.
-const VERSION_LIST_RETRY_MS = 10_000
-const VERSION_LIST_RETRY_MAX_MS = 5 * 60_000
+const DATA_RETRY_MS = 10_000
+const DATA_RETRY_MAX_MS = 5 * 60_000
 let keptFor = null
 
 function sessionKept() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
   if (session !== keptFor) {
     keptVersions.clear()
-    versionLists.clear()
+    packageData.clear()
     keptFor = session
   }
   return keptVersions
@@ -130,33 +132,39 @@ export async function loadNpmVersion(name, spec, options) {
   return { entry, details }
 }
 
-// A package's versions, newest first, and dist-tags: `{ status }` while the
-// server is asked ('loading', then 'ready' with `versions` and `distTags`,
-// or 'error' until a retry), each a new object, so the view repaints when it
-// arrives.
-export function npmVersionList(name) {
+// Something read about a package for this session, as `ask` answers and
+// `shape` keeps it: `{ status }` while the server is asked ('loading', then
+// 'ready' with what `shape` gives, or 'error' until a retry), each a new
+// object, so the view repaints when it arrives.
+export function npmPackageData(kind, name, ask, shape) {
   sessionKept()
-  const known = versionLists.get(name)
+  const key = `${kind}\0${name}`
+  const known = packageData.get(key)
   if (known && !(known.status === 'error' && Date.now() >= known.retryAt)) return known
   const loading = { status: 'loading', failures: known?.failures ?? 0 }
-  versionLists.set(name, loading)
-  fetchNpmVersions(name).then(
-    data => ({ status: 'ready', versions: data.versions ?? [], distTags: data.distTags ?? {} }),
+  packageData.set(key, loading)
+  ask().then(
+    data => ({ status: 'ready', ...shape(data) }),
     () => {
       const failures = loading.failures + 1
-      const wait = Math.min(VERSION_LIST_RETRY_MS * 2 ** (failures - 1), VERSION_LIST_RETRY_MAX_MS)
+      const wait = Math.min(DATA_RETRY_MS * 2 ** (failures - 1), DATA_RETRY_MAX_MS)
       return { status: 'error', failures, wait, retryAt: Date.now() + wait }
     },
-  ).then(list => {
-    if (versionLists.get(name) !== loading) return null
-    versionLists.set(name, list)
+  ).then(answer => {
+    if (packageData.get(key) !== loading) return null
+    packageData.set(key, answer)
     // A page left open repaints when the retry is due, and asks again if it
     // still shows the package.
-    if (list.status === 'error') setTimeout(() => { if (versionLists.get(name) === list) render() }, list.wait)
+    if (answer.status === 'error') setTimeout(() => { if (packageData.get(key) === answer) render() }, answer.wait)
     render()
     return null
   }).catch(() => {})
   return loading
+}
+
+// A package's versions, newest first, and dist-tags.
+export function npmVersionList(name) {
+  return npmPackageData('versions', name, () => fetchNpmVersions(name), data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {} }))
 }
 
 function tagsByVersion(distTags = {}) {

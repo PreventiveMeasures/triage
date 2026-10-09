@@ -51,6 +51,8 @@
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/502
 //   GET  /api/npm/versions?name= → its dist-tags and versions | 400/401/404/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
+//   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
+//   GET  /api/npm/advisories?name= → its advisories across every published version | 400/401/404/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -116,6 +118,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
+import { npmAdvisories, npmDownloads, npmGithubStats } from './npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -160,6 +163,9 @@ const TEAM_SET_NPM_SCOPES_PATH = '/api/admin/teams/set-npm-scopes'
 const NPM_PACKAGE_PATH = '/api/npm/package'
 const NPM_VERSIONS_PATH = '/api/npm/versions'
 const NPM_DOWNLOAD_PATH = '/api/npm/download'
+const NPM_STATS_PATH = '/api/npm/stats'
+const NPM_ADVISORIES_PATH = '/api/npm/advisories'
+const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -2365,17 +2371,18 @@ async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse,
 async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Promise<NpmReader | null> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null || !roleAtLeast(s.user.role, 'view')) return null
-  return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)) }
+  return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
-// GET /api/npm/{package,versions,download}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
 async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
-  if (!isNpmPackageName(name) || (path !== NPM_VERSIONS_PATH && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
+  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH
+  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
@@ -2395,6 +2402,29 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const versions = await readNpmVersions(name, privileged, controller.signal)
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
       if (await recheck(versions.private)) sendJson(res, 200, versions)
+      return
+    }
+    // Across every published version, as the version list has them, which
+    // each advisory's `affected` indexes.
+    if (path === NPM_ADVISORIES_PATH) {
+      const versions = await readNpmVersions(name, privileged, controller.signal)
+      if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      const advisories = await npmAdvisories(name, versions.versions)
+      if (await recheck(versions.private)) sendJson(res, 200, { name, versions: versions.versions, advisories })
+      return
+    }
+    // The package's, with the repository its latest version names; either
+    // is null where it can't be had.
+    if (path === NPM_STATS_PATH) {
+      const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
+      if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      const repo = (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
+      const token = repo === null || reader.userId === undefined ? null : await ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
+      const [downloads, github] = await Promise.all([
+        npmDownloads(name).catch(() => null),
+        repo === null ? null : npmGithubStats(repo, token).catch(() => null),
+      ])
+      if (await recheck(doc.private)) sendJson(res, 200, { name, downloads, github })
       return
     }
     const doc = await readNpmVersion(name, spec, privileged, controller.signal)
@@ -2779,7 +2809,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetTeamNpmScopes(req, res, deps, cookie); return
     }
-    if (path === NPM_PACKAGE_PATH || path === NPM_VERSIONS_PATH || path === NPM_DOWNLOAD_PATH) {
+    if (NPM_PATHS.has(path)) {
       await handleNpm(req, res, deps, cookie, path, url.searchParams); return
     }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }

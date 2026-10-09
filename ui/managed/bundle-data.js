@@ -101,3 +101,11 @@ export function fetchNpmPackage(name, version, { signal } = {}) {
 export function fetchNpmVersions(name, { signal } = {}) {
   return requestNpm('versions', { name }, signal)
 }
+
+export function fetchNpmStats(name, { signal } = {}) {
+  return requestNpm('stats', { name }, signal)
+}
+
+export function fetchNpmAdvisories(name, { signal } = {}) {
+  return requestNpm('advisories', { name }, signal)
+}

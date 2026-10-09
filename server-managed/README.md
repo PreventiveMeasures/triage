@@ -1017,11 +1017,24 @@ in the bundle view with four tabs:
 
 - **Overview**: the manifest's description, license, author, GitHub
   repository and publish commit, entry points, engines and install scripts,
-  a tarball download, and two columns: Dependencies, peer and optional ones
+  and a tarball download. Under them, the package's figures: weekly
+  downloads and downloads over 12 months, with a chart of its weekly
+  downloads over the last year, and its GitHub repository's stars, forks
+  and open issues and pull requests; then how many files are ASCII, UTF-8,
+  either with control characters, or binary, and every file extension with
+  its count. Then its columns: Dependencies, peer and optional ones
   included, which open in the viewer at their latest version (an `npm:`
-  alias at the package it names), and the tarball's Files. The version
-  picker lists the package's versions and dist-tags; it holds the version
-  shown, disabled, until they arrive.
+  alias at the package it names); Advisories, across every published
+  version, those affecting the version shown first and marked, those fixed
+  in it struck through, and those affecting only later versions plain;
+  Files, each tagged ASCII, UTF-8, either `+ controls`, or Binary; and,
+  where the package has any, its Binary files again on their own. Control
+  characters are the C0 ones but tab, line feed and carriage return, DEL,
+  the C1 ones, and the bidirectional controls (U+202A–U+202E,
+  U+2066–U+2069); a tag names those a file holds. Binary files are those
+  the server could not read as UTF-8, or holding a NUL. The version picker
+  lists the package's versions and dist-tags; it holds the version shown,
+  disabled, until they arrive.
 - **Code**: the file tree and source viewer, opening on what `main` names.
 - **Treemap**: the files by size, as for bundles.
 - **Compare**: the bundle Compare, with another version of the same package,
@@ -1036,12 +1049,13 @@ A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
 version it opened. Code links name files by number and lines in the fragment,
 and Compare links the version compared with and its mode, as for bundles. The
 browser keeps the last three public versions it read, and the package's
-version list, in memory for the session and role that read them, so a swap or
-Back reopens one without another request. A private version is asked for each
-time it opens, so the server checks again access the reader may have lost
-since, as to a team's npm scopes. A version list that failed is asked for
-again after ten seconds, twice as long after each failure in a row up to five
-minutes, on a repaint scheduled for then.
+version list, figures and advisories, in memory for the session and role that
+read them, so a swap or Back reopens one without another request. A private
+version is asked for each time it opens, so the server checks again access the
+reader may have lost since, as to a team's npm scopes. A version list,
+figures or advisories that failed are asked for again after ten seconds, twice
+as long after each failure in a row up to five minutes, on a repaint scheduled
+for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
 integrity, tarballSize, manifest, files }`, where each file row is `[path,
@@ -1049,8 +1063,20 @@ bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 'sha256-<base64>']`. `version` defaults to `latest`. `GET
 /api/npm/versions?name=` returns `{ name, private, distTags, versions }`,
 newest first, and `GET /api/npm/download?name=&version=` the tarball.
-Responses are `private, no-store`, and nothing derived from a package is kept
-on the server.
+`GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
+is `{ start, end, days }`, a count a day over the last year from npm's
+downloads API, and `github` is `{ repo, stars, forks, openIssues, archived,
+pushedAt }` for the repository the latest version's manifest names; either
+is null where it can't be had, `github` for a repository GitHub does not
+say is public. `GET /api/npm/advisories?name=` returns `{ name, versions,
+advisories }`: what `npm audit` asks npm's registry, for every published
+version at once, each advisory `{ id, ghsa?, url?, title?, severity?, cvss?,
+cwe, range?, affected }`, `affected` indexing `versions`. Responses are
+`private, no-store`. Nothing derived from a package's files is kept on the
+server; its figures and advisories, which are public, are kept an hour, asked
+for without the server's npm token, and GitHub with the reader's own token
+where they have one. Access to the package is checked first on every
+request, as for its versions.
 
 Anyone with workspace access can read public packages. Private packages need
 the server's `NPM_TOKEN`, the same one bundle builds use, and a reader with

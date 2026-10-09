@@ -38,7 +38,7 @@ export class NpmPackageError extends Error {
 
 // Who reads, as the session has it now: the role, and the scopes of the
 // visible teams they are a member of.
-export interface NpmReader { role: Role; scopes: ReadonlySet<string> }
+export interface NpmReader { role: Role; scopes: ReadonlySet<string>; userId?: string }
 
 // Whether a reader may have a package read with the server's token.
 export function canReadPrivateNpm(reader: NpmReader, name: string): boolean {

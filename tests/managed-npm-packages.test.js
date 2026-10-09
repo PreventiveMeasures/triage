@@ -422,6 +422,97 @@ test('registry documents read at once are held to a budget: four version lists, 
   assert.equal((await readNpmVersion('listed-e', '1.0.0', false, signal)).version, '1.0.0', 'a read frees its bytes once done')
 })
 
+// npm's downloads API, GitHub and npm's bulk advisories, beside the registry
+// `registry` mocks; what each was asked, with its credentials.
+function insights(t, { downloads = {}, repos = {}, advisories = {} }) {
+  const asked = [], registryFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+    const auth = new Headers(init.headers).get('authorization'), url = String(input)
+    const day = url.match(/^https:\/\/api\.npmjs\.org\/downloads\/range\/last-year\/(.+)$/u)
+    if (day) {
+      asked.push(['downloads', day[1], auth])
+      return Promise.resolve(downloads[day[1]] ? Response.json(downloads[day[1]]) : Response.json({ error: 'not found' }, { status: 404 }))
+    }
+    const repo = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/?]+)$/u)
+    if (repo) {
+      asked.push(['github', repo[1], auth])
+      return Promise.resolve(repos[repo[1]] ? Response.json(repos[repo[1]]) : Response.json({ message: 'Not Found' }, { status: 404 }))
+    }
+    if (url === `${REGISTRY}/-/npm/v1/security/advisories/bulk`) {
+      const body = JSON.parse(init.body)
+      asked.push(['advisories', Object.keys(body), auth])
+      return Promise.resolve(Response.json(Object.fromEntries(Object.keys(body).map(name => [name, advisories[name] ?? []]))))
+    }
+    return registryFetch(input, init)
+  })
+  return asked
+}
+
+test('a package\'s figures: its downloads, and its public repository\'s, asked without credentials', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const pkg = packageOf('@pub/figures', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/figures.git' } })
+  const calls = registry(t, [pkg])
+  const asked = insights(t, {
+    downloads: { '@pub/figures': { start: '2026-01-01', end: '2026-01-04', package: '@pub/figures', downloads: [{ day: '2026-01-01', downloads: 5 }, { day: '2026-01-03', downloads: 7 }, { day: '2026-01-04', downloads: 9 }] } },
+    repos: { 'org/figures': { full_name: 'org/figures', private: false, stargazers_count: 1200, forks_count: 30, open_issues_count: 4, archived: false, pushed_at: '2026-09-01T00:00:00Z' } },
+  })
+  const res = await h.send('/api/npm/stats?name=%40pub%2Ffigures')
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), {
+    name: '@pub/figures',
+    downloads: { start: '2026-01-01', end: '2026-01-04', days: [5, 0, 7, 9] },
+    github: { repo: 'org/figures', stars: 1200, forks: 30, openIssues: 4, archived: false, pushedAt: '2026-09-01T00:00:00Z' },
+  }, 'a day npm leaves out counts none')
+  assert.deepEqual(asked, [['downloads', '@pub/figures', null], ['github', 'org/figures', null]])
+  // Kept an hour; the access check is not.
+  calls.length = 0
+  assert.equal((await h.send('/api/npm/stats?name=%40pub%2Ffigures')).status, 200)
+  assert.equal(asked.length, 2, 'figures are kept')
+  assert.deepEqual(calls.map(call => [call.url, call.auth]), [[`${REGISTRY}/@pub/figures/latest`, null]], 'the registry is asked again, anonymously')
+})
+
+test('a private repository, or a package npm has no downloads for, has no figures', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('quiet-figures', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/hidden.git' } })
+  registry(t, [pkg])
+  insights(t, { repos: { 'org/hidden': { full_name: 'org/hidden', private: true, stargazers_count: 9 } } })
+  assert.deepEqual((await h.send('/api/npm/stats?name=quiet-figures')).json(), { name: 'quiet-figures', downloads: null, github: null })
+})
+
+test('advisories cover every published version, each naming the versions it affects', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('advised', '1.2.0', { 'index.js': '' })
+  registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0', '1.2.0'] }])
+  const asked = insights(t, { advisories: { advised: [
+    { id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', vulnerable_versions: '<1.1.0', cwe: ['CWE-1321'], cvss: { score: 7.5, vectorString: 'CVSS:3.1/AV:N' } },
+    { id: 2, url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', vulnerable_versions: '>=1.1.0 <1.3.0', cwe: [], cvss: { score: 0 } },
+  ] } })
+  const res = await h.send('/api/npm/advisories?name=advised')
+  assert.equal(res.status, 200)
+  const body = res.json()
+  assert.deepEqual(body.versions, ['1.2.0', '1.1.0', '1.0.0'], 'newest first, as the version list has them')
+  assert.deepEqual(body.advisories, [
+    { id: 'GHSA-aaaa-bbbb-cccc', ghsa: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', cvss: 7.5, cwe: ['CWE-1321'], range: '<1.1.0', affected: [2] },
+    { id: 'GHSA-dddd-eeee-ffff', ghsa: 'GHSA-dddd-eeee-ffff', url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', cwe: [], range: '>=1.1.0 <1.3.0', affected: [0, 1] },
+  ])
+  assert.deepEqual(asked, [['advisories', ['advised'], null]], 'every version asked at once, without credentials')
+})
+
+test('figures and advisories of a private package stay closed to readers without private access', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const pkg = { ...packageOf('@acme/insight', '1.0.0', { 'index.js': '' }), private: true }
+  registry(t, [pkg])
+  const asked = insights(t, { downloads: { '@acme/insight': { start: '2026-01-01', end: '2026-01-01', downloads: [] } } })
+  for (const path of ['/api/npm/stats?name=%40acme%2Finsight', '/api/npm/advisories?name=%40acme%2Finsight']) {
+    assert.deepEqual((await h.send(path, 'view')).json(), { error: 'package-not-found' }, path)
+    assert.equal((await h.send(path, 'admin')).status, 200, path)
+  }
+  assert.ok(asked.every(([, , auth]) => auth === null), 'never with the server\'s token')
+  assert.deepEqual((await h.send('/api/npm/stats?name=..%2Fx')).json(), { error: 'bad-package' })
+})
+
 test('team npm scopes are admin-only, normalized, listed with teams and recorded', async t => {
   const h = await setup(t)
   const path = '/api/admin/teams/set-npm-scopes'

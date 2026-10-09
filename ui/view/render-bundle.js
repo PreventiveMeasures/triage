@@ -36,6 +36,7 @@ import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute } from './npm-package.js'
+import { npmAdvisoriesColumn, npmBinaryColumn, npmEncodingTag, npmEncodingsRow, npmExtensionsRow, npmFileEncodings, npmStatsRow } from './npm-overview.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -449,8 +450,13 @@ function openBundleWhy(details, query) {
 // `unpackedSize` is the bytes every listed file adds up to once unpacked —
 // what the Packages column totals — shown beside the artifact's own Size.
 // Null leaves the row out.
-// `leadColumn` replaces the Packages column, as an npm package's Dependencies do.
-function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null } = {}) {
+// `leadColumn` replaces the Packages column, as an npm package's Dependencies do;
+// `trailColumns` follow Files, `summaryExtra` follows the summary's meta, and
+// `columnsClass` names the columns row's layout.
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, {
+  bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing, columnsClass = '',
+  fileTag = null,
+} = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
   // the stripped paths are only for displaying the file list.
@@ -527,6 +533,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       const src = sources[i]
       const size = sizes[i]
       const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${src}>${stripped[i]}</span>
+        ${fileTag ? fileTag(src) : nothing}
         ${size == null ? nothing : html`<span class="bundles-source-size">${formatBytes(size)}</span>`}`
       return html`<li>${resources?.has(src)
         ? html`<div class="bundles-source-row is-resource">${row}</div>`
@@ -577,8 +584,9 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
         ${exportsCol ?? nothing}
       </div>
       ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
+      ${summaryExtra}
     </div>
-    <div class="bundles-overview-columns">
+    <div class="bundles-overview-columns ${columnsClass}">
       ${leadColumn ?? html`<section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
           <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
@@ -603,6 +611,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
         </header>
         <div class="bundles-overview-col-body bundles-overview-col-body--list">${reportsTpl}</div>
       </section>` : nothing}
+      ${trailColumns}
     </div>
   </div>`
 }
@@ -2667,10 +2676,17 @@ function renderNpmPackageOverview(entry, details) {
   if (details?.integrity !== entry.integrity || !details.json) {
     return renderBundleOverviewFallback(npmOverviewMeta(entry), exportsCol)
   }
-  const sources = details.json.sources
+  // Files lists every file, tagged by what its bytes hold; the binary ones,
+  // which have no text to show, are listed again in a column of their own.
+  const { sources, sourcesContent } = details.json
   const sizeMap = bundleFileSizes(details)
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
-  const resources = new Set(sources.filter((_, i) => typeof details.json.sourcesContent[i] !== 'string'))
-  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix), npmOverviewExtras(entry), sources, sizes, null, exportsCol,
-    { bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources, leadColumn: npmDependenciesColumn(entry) })
+  const binaries = sources.filter((_, i) => typeof sourcesContent[i] !== 'string')
+  const encodings = npmFileEncodings(details)
+  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix), npmOverviewExtras(entry), sources, sizes, null, exportsCol, {
+    bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: new Set(binaries),
+    leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
+    summaryExtra: html`${npmStatsRow(entry)}${npmEncodingsRow(details)}${npmExtensionsRow(sources, sizeMap)}`, columnsClass: 'npm-overview-columns',
+    fileTag: path => npmEncodingTag(encodings.get(path)),
+  })
 }
