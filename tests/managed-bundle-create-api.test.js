@@ -34,8 +34,12 @@ async function fixture(t, { role = 'admin', member = true, scope = null } = {}) 
   const handler = createManagedRequestHandler({ config, db, bundleStore,
     originGate: { isOriginAllowed: req => req.headers.origin !== 'https://evil.test' }, isShuttingDown: () => false, track() {} })
   const metadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
-  let reads = 0
+  let commitReads = 0, reads = 0
   t.mock.method(globalThis, 'fetch', url => {
+    if (url === `https://api.github.com/repos/org/repo/commits?sha=${commit}&per_page=1`) {
+      commitReads++
+      return Promise.resolve(Response.json([{ sha: commit, author: null, commit: { message: 'Built commit', author: { name: 'Builder', date: '2026-10-01T10:00:00Z' } } }]))
+    }
     assert.equal(url, 'https://api.github.com/repos/org/repo')
     reads++
     return Promise.resolve(Response.json(metadata))
@@ -54,7 +58,7 @@ async function fixture(t, { role = 'admin', member = true, scope = null } = {}) 
   }
   // A manual upload of the bytes the mocked builder returns.
   const upload = filename => send(result.bytes, { url: '/api/admin/bundles', extraHeaders: { 'x-bundle-filename': filename, 'x-repo-id': '1' } })
-  return { db, session, blobs, builds, send, upload, metadata, reads: () => reads, bundleStore }
+  return { db, session, blobs, builds, send, upload, metadata, reads: () => reads, commitReads: () => commitReads, bundleStore }
 }
 
 const uploads = { page: 1, limit: 100, kind: 'upload', query: '', contexts: null }
@@ -72,11 +76,14 @@ test('creation stores a Stasis bundle with a routable slug and deduplicates retr
   assert.equal(f.builds[0][1].token, null)
   assert.equal(f.builds[0][1].input.commit, commit)
   assert.equal(f.reads(), 2, 'GitHub access is rechecked after building')
+  assert.deepEqual(await f.db.listGithubCommits([`1:${commit}`]), [{ key: `1:${commit}`, message: 'Built commit', authorName: 'Builder', authorLogin: null,
+    authoredAt: Date.parse('2026-10-01T10:00:00Z'), committedAt: null, fetchedAt: (await f.db.listGithubCommits([`1:${commit}`]))[0].fetchedAt }], 'creation caches the commit it builds on')
   const duplicate = await f.send()
   assert.equal(duplicate.status, 200)
   assert.equal(duplicate.body.id, response.body.id)
   assert.equal(duplicate.body.deduped, true)
   assert.equal(f.blobs.size, 1)
+  assert.equal(f.commitReads(), 1, 'a cached commit is not read again')
   for (const created of [response.body, duplicate.body]) {
     assert.equal(created.slug, stored.slug)
     const route = managedBundleRoute([], managedBundleEntry(created), null)

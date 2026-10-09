@@ -101,6 +101,7 @@
     "server-managed/bundle-build-diagnostics.js",
     "server-managed/bundle-build-diagnostics.d.ts",
     "server-managed/bundle-catalog.ts",
+    "server-managed/bundle-commits.ts",
     "server-managed/bundle-store.ts",
     "server-managed/bundle-summary-cache.ts",
     "server-managed/bundle.ts",

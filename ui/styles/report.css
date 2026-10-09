@@ -1841,7 +1841,7 @@ bundle-search {
       & > span { border-bottom: 1px dotted transparent; }
       &:hover > span, &:focus-visible > span { border-bottom-color: currentcolor; }
     }
-    & .bundle-commit-link { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    & :is(.bundle-commit-link, .bundle-tag-link) { flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     & .bundles-entry-points {
       display: flex; flex-wrap: wrap; gap: .25rem .75rem;
       list-style: none; margin: 0; padding: 0;

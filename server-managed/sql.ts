@@ -22,7 +22,8 @@ export interface ManagedSqlDriver extends ManagedSql {
 const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
-  'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry', 'ensureSessionUploadKey'])
+  'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry', 'ensureSessionUploadKey',
+  'listGithubCommits', 'listGithubCommitTags', 'setGithubCommits'])
 // Session presence and upload keys change only their own rows.
 const UNLOCKED_WRITES = new Set(['sessionWithUser', 'viewSessionWithUser', 'ensureSessionUploadKey'])
 

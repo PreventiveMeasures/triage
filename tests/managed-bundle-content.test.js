@@ -137,6 +137,43 @@ test('catalog summaries reuse one cached count per hash across teams, uploads an
   await assert.rejects(readdir(join(h.cacheDir, archive.id)), { code: 'ENOENT' })
 })
 
+test('catalogs send cached commit details and tags, and read missing details with the viewer access after responding', async t => {
+  const h = await setup(t)
+  const sha = 'c'.repeat(40)
+  const bytes = brotliCompressSync(Buffer.from(new Bundle({ repo: { github: 'org/repo1', commit: sha },
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/main.js': source } }]]) }).serialize()))
+  const bundle = await h.seed({ repoId: 1, bytes })
+  await h.cache.prebuild(bundle)
+  await h.db.refreshGithubTags(1, [{ name: 'v1.0.0', sha }, { name: 'v0.9.0', sha: 'd'.repeat(40) }], true)
+  const requests = []
+  t.mock.method(globalThis, 'fetch', url => {
+    const { pathname, search } = new URL(url)
+    requests.push(pathname + search)
+    if (pathname === '/repos/org/repo1') return Promise.resolve(Response.json({ id: 1, full_name: 'org/repo1', private: false, visibility: 'public', default_branch: 'main' }))
+    if (pathname === '/repos/org/repo1/commits') {
+      return Promise.resolve(Response.json([{ sha, author: { login: 'alice' }, commit: { message: 'Release 1.0.0\n\nNotes',
+        author: { name: 'Alice', date: '2026-10-01T10:00:00Z' }, committer: { date: '2026-10-01T12:00:00Z' } } }]))
+    }
+    return Promise.resolve(Response.json({}, { status: 404 }))
+  })
+  const listed = async () => (await h.send('/api/teams', 'viewer')).json().teams.flatMap(team => team.bundles).find(entry => entry.id === bundle.id)
+  const first = await listed()
+  assert.equal(first.summary.commit, sha)
+  assert.deepEqual(first.commitInfo, { sha, tags: ['v1.0.0'], details: null }, 'the first catalog sends cached tags without waiting for GitHub')
+  await Promise.all([...h.pending])
+  assert.deepEqual(requests, ['/repos/org/repo1', `/repos/org/repo1/commits?sha=${sha}&per_page=1`])
+  const details = { message: 'Release 1.0.0\n\nNotes', authorName: 'Alice', authorLogin: 'alice',
+    authoredAt: Date.parse('2026-10-01T10:00:00Z'), committedAt: Date.parse('2026-10-01T12:00:00Z') }
+  assert.deepEqual((await listed()).commitInfo, { sha, tags: ['v1.0.0'], details })
+  const managed = (await h.send('/api/admin/bundles')).json().bundles.find(entry => entry.id === bundle.id)
+  assert.deepEqual(managed.commitInfo, { sha, tags: ['v1.0.0'], details })
+  await Promise.all([...h.pending])
+  assert.equal(requests.length, 2, 'cached commits are never read again, and catalogs never request tags')
+  await h.db.setBundleRepo(bundle.id, 2)
+  assert.equal((await h.send('/api/admin/bundles')).json().bundles.find(entry => entry.id === bundle.id).commitInfo, null,
+    'details and tags belong to the repository a bundle is stored at')
+})
+
 test('unavailable bundle summaries do not hide valid catalog entries or fabricate zero counts', async t => {
   const h = await setup(t)
   const broken = await h.seed({ repoId: 1, kind: 'sourcemap', bytes: Buffer.from('not json') })

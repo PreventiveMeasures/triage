@@ -523,6 +523,27 @@ test('bundle Overview displays origin links from full contents and cached manage
   }
 })
 
+test('a managed bundle Overview puts its cached tags after the commit and gives the commit link its details', async () => {
+  const entry = { name: 'app.stasis.code.br', integrity: 'sha512-tagged', managedId: 'managed-tagged' }
+  const commit = 'c'.repeat(40)
+  const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({
+    repo: { github: 'org/repo', commit }, modules: new Map([['.', { name: 'app', version: '1', files: { 'src/a.js': 'a' } }]]),
+  }) }
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'overview', selectedBundle: entry.integrity, bundles: [entry],
+    bundleDetails: parseBundleMetadata(await createBundleMetadata(full), entry.integrity) })
+  const commitInfo = { sha: commit, tags: ['v1.0.0'], details: { message: 'Release', authorName: 'Alice', authorLogin: null, authoredAt: 1, committedAt: 2 } }
+  const githubRow = info => renderText(renderBundlesList([{ ...entry, commitInfo: info }])).match(/<dt>GitHub<\/dt><dd class="bundle-origin-row">(.*?)<\/dd>/su)[1]
+  const tagged = githubRow(commitInfo)
+  assert.match(tagged, /class="bundle-origin-link bundle-commit-link"[^>]*>.*?<\/a>\s*<a class="bundle-origin-link bundle-tag-link" href=https:\/\/github\.com\/org\/repo\/releases\/tag\/v1\.0\.0 target="_blank" rel="noopener noreferrer">.*?<span>v1\.0\.0<\/span><\/a>/su,
+    'GitHub: repository, commit, then tag')
+  assert.ok(tagged.includes(`data-tooltip=${commit} data-tooltip-commit-info=${JSON.stringify({ tags: ['v1.0.0'], title: 'Release', authorName: 'Alice', authorLogin: null, date: 2 })}`))
+  for (const info of [null, { ...commitInfo, sha: 'd'.repeat(40) }]) {
+    const plain = githubRow(info)
+    assert.doesNotMatch(plain, /bundle-tag-link|data-tooltip-commit-info=\S/u, 'only the recorded commit takes catalog details')
+    assert.match(plain, /bundle-commit-link/u)
+  }
+})
+
 test('bundle Overview lists entries on the left and puts Size under Sources for local and managed metadata', async () => {
   const entry = { name: 'app.stasis.code.br', integrity: 'sha512-entries' }
   const full = { integrity: entry.integrity, kind: 'stasis', size: 123, bundle: new Bundle({

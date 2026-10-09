@@ -3,6 +3,9 @@ import type { SelectedRepo } from './db.ts'
 import { GithubApiError, githubJson, githubRepoReadPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
 import { MAX_PACKAGE_BYTES, readPackageEntryPoints } from './package-entry-points.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
+import { parseGithubCommit } from './bundle-commits.ts'
+
+const REFS_PAGE = 100
 
 export interface RepositoryEntry { name: string; path: string; type: 'dir' | 'file' | 'symlink' | 'submodule' }
 
@@ -102,18 +105,29 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
     readToken: () => token,
     async refs() {
       // Suggestions are bounded; the input also accepts any branch or tag name.
-      const results = await Promise.all(['branches', 'tags'].map(async kind => {
-        const data = await read(`/${kind}?per_page=100`)
+      const list = async (kind: string) => {
+        const data = await read(`/${kind}?per_page=${REFS_PAGE}`)
         if (!Array.isArray(data)) throw new GithubApiError(502, 'github-malformed')
-        return data.flatMap(item => typeof item?.name === 'string' ? [item.name] : [])
-      }))
-      return { defaultBranch, branches: results[0], tags: results[1] }
+        return data
+      }
+      const [branches, tags] = await Promise.all([list('branches'), list('tags')])
+      const names = (items: { name?: unknown }[]) => items.flatMap(item => typeof item?.name === 'string' ? [item.name] : [])
+      // Each tag's commit, for the tag cache. A full page may leave tags
+      // out; only a shorter one lists every tag.
+      const tagCommits = tags.flatMap(item => typeof item?.name === 'string' && item.name && typeof item.commit?.sha === 'string'
+        && /^[a-f\d]{40}$/u.test(item.commit.sha) ? [{ name: item.name, sha: item.commit.sha }] : [])
+      return { defaultBranch, branches: names(branches), tags: names(tags), tagCommits, tagsComplete: tags.length < REFS_PAGE }
     },
     async commit(ref: string) {
       if (/^[a-f\d]{40}$/iu.test(ref)) return ref
       const data = await read(`/commits/${encodeURIComponent(ref || (defaultBranch ? `heads/${defaultBranch}` : 'HEAD'))}`) as { sha?: unknown }
       if (typeof data?.sha !== 'string' || !/^[a-f\d]{40}$/iu.test(data.sha)) throw new GithubApiError(502, 'github-malformed')
       return data.sha
+    },
+    // The first commit a listing from `sha` returns is that commit, without
+    // the files GET /commits/:sha adds.
+    async commitDetails(sha: string) {
+      return /^[a-f\d]{40}$/u.test(sha) ? parseGithubCommit(sha, await read(`/commits?sha=${sha}&per_page=1`)) : null
     },
     async directory(path: string, commit: string) {
       const data = await read(`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(commit)}`)

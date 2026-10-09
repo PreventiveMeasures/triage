@@ -884,6 +884,24 @@ test('Postgres upgrades existing databases and retains GitHub metadata across re
   finally { await reopened.close() }
 })
 
+test('Postgres adds the commit and tag caches to existing databases and retains them across restarts', async t => {
+  const { connect, db } = await database(t)
+  await db.selectRepo({ repoId: 7, fullName: 'Org/Repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, Date.now())
+  await db.close()
+  const connection = await connect()
+  try { await connection.query('DROP TABLE managed_github_tag, managed_github_commit; DELETE FROM managed_schema_version WHERE version = 25;') } finally { await connection.release() }
+  const upgraded = await openPostgresManagedDb(connect)
+  const { checkGithubCommitStore } = await import('./_managed-github-metadata.js')
+  const commit = await checkGithubCommitStore(upgraded)
+  await upgraded.close()
+  const reopened = await openPostgresManagedDb(connect)
+  try {
+    assert.deepEqual(await reopened.listGithubCommits([commit.key]), [commit])
+    assert.deepEqual(await reopened.listGithubCommitTags([commit.key]), [{ key: commit.key, name: 'v1' }])
+  }
+  finally { await reopened.close() }
+})
+
 test('Postgres adds the upstream cache to existing databases and retains it across restarts', async t => {
   const { connect, db } = await database(t)
   await db.close()

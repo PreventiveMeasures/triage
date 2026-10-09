@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { checkGithubMetadataStore } from './_managed-github-metadata.js'
+import { checkGithubCommitStore, checkGithubMetadataStore } from './_managed-github-metadata.js'
 
 test('SQLite upgrades existing databases and retains GitHub metadata across restarts without eviction', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'triage-github-metadata-'))
@@ -51,4 +51,31 @@ test('SQLite adds closure reasons and attempts to an existing metadata table wit
       await upgraded.recordGithubMetadataAttempts([cached.key], cached.attemptedAt)
     } finally { await upgraded.close() }
   }
+})
+
+test('SQLite adds the commit and tag caches to existing databases, keeps commits across restarts and drops tags with their repository', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'triage-github-commits-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'managed.db')
+  await openSqliteManagedDb(path).close()
+  const legacy = new DatabaseSync(path)
+  legacy.exec('DROP TABLE managed_github_tag; DROP TABLE managed_github_commit')
+  legacy.close()
+  const db = openSqliteManagedDb(path)
+  await db.selectRepo({ repoId: 7, fullName: 'Org/Repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, Date.now())
+  const commit = await checkGithubCommitStore(db)
+  await db.close()
+  const reopened = openSqliteManagedDb(path)
+  try {
+    assert.deepEqual(await reopened.listGithubCommits([commit.key]), [commit])
+    assert.deepEqual(await reopened.listGithubCommitTags([commit.key]), [{ key: commit.key, name: 'v1' }])
+  } finally { await reopened.close() }
+  const raw = new DatabaseSync(path)
+  raw.exec('PRAGMA foreign_keys = ON; DELETE FROM managed_selected_repo WHERE repo_id = 7')
+  raw.close()
+  const removed = openSqliteManagedDb(path)
+  try {
+    assert.deepEqual(await removed.listGithubCommitTags([commit.key]), [], 'tags go with their repository')
+    assert.deepEqual(await removed.listGithubCommits([commit.key]), [commit], 'commit details are kept like PR metadata')
+  } finally { await removed.close() }
 })

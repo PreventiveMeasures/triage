@@ -22,6 +22,9 @@ test('managed catalog counts reach sidebar tooltips and comparison entries witho
   const [entry] = managedTeamBundleEntries(teams)
   assert.equal(entry.kind, 'stasis')
   assert.deepEqual(entry.summary, bundle.summary)
+  assert.equal(entry.commitInfo, null)
+  const commitInfo = { sha: bundle.summary.commit, tags: ['v1'], details: null }
+  assert.deepEqual(managedTeamBundleEntries([{ bundles: [{ ...bundle, commitInfo }] }])[0].commitInfo, commitInfo, 'catalog commit details and tags reach the bundle view')
   assert.equal(managedBundleStats({}), '')
   assert.equal(managedBundleStats({ summary: { files: 0, lines: 0 } }), '0 files · 0 LoC')
 })

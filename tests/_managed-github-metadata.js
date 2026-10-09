@@ -44,3 +44,32 @@ export async function checkGithubMetadataStore(db) {
   await db.setGithubRepositoryVisibility([])
   return merged
 }
+
+// Repository 7 must be selected: tags go with their repository.
+export async function checkGithubCommitStore(db) {
+  const sha = 'a'.repeat(40)
+  const other = 'b'.repeat(40)
+  const commit = { key: `7:${sha}`, message: 'Fix it\n\nBody €😀', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2, fetchedAt: 3 }
+  await db.setGithubCommits([commit, { ...commit, key: `7:${other}`, message: 'Other', authorName: null, authorLogin: null, authoredAt: null, committedAt: null }])
+  await db.setGithubCommits([{ ...commit, message: 'Rewritten', fetchedAt: 4 }])
+  assert.deepEqual(await db.listGithubCommits([commit.key]), [commit], 'commits never change, so the first stored details stay')
+  assert.deepEqual((await db.listGithubCommits([`7:${other}`, 'missing']))[0], { ...commit, key: `7:${other}`, message: 'Other', authorName: null, authorLogin: null, authoredAt: null, committedAt: null })
+  assert.deepEqual(await db.listGithubCommits([]), [])
+  await db.setGithubCommits([])
+
+  await db.refreshGithubTags(7, [{ name: 'v2', sha }, { name: 'v1', sha }, { name: 'old', sha: other }, { name: 'v1', sha }], true)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [
+    { key: commit.key, name: 'v1' }, { key: commit.key, name: 'v2' }, { key: `7:${other}`, name: 'old' },
+  ])
+  await db.refreshGithubTags(7, [{ name: 'v2', sha: other }], false)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [
+    { key: commit.key, name: 'v1' }, { key: `7:${other}`, name: 'old' }, { key: `7:${other}`, name: 'v2' },
+  ], 'a partial listing moves the tags it names and keeps the others')
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }], true)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key, `7:${other}`]), [{ key: commit.key, name: 'v1' }], 'a complete listing drops deleted tags')
+  await db.refreshGithubTags(7, [], true)
+  assert.deepEqual(await db.listGithubCommitTags([commit.key]), [])
+  assert.deepEqual(await db.listGithubCommitTags([]), [])
+  await db.refreshGithubTags(7, [{ name: 'v1', sha }], false)
+  return commit
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bundleOriginLinks } from '../ui/view/bundle-origin-links.js'
+import { bundleCommitTooltip, bundleOriginLinks } from '../ui/view/bundle-origin-links.js'
 
 test('bundle origins link GitHub directories at the recorded commit and scoped npm versions', () => {
   const commit = 'a'.repeat(40)
@@ -50,4 +50,30 @@ test('GitHub links use the displayed source prefix relative to the declared repo
   assert.equal(link.commit.href, `https://github.com/org/repo/commit/${commit}`)
   assert.equal(bundleOriginLinks({ repo: { github: 'org/repo' } }, 'packages/my app/')[0].href,
     'https://github.com/org/repo/tree/HEAD/packages/my%20app')
+})
+
+test('a managed catalog adds the cached tags of the recorded commit after it, linked to their GitHub pages', () => {
+  const commit = 'a'.repeat(40)
+  const bundle = { repo: { github: 'org/repo', commit } }
+  const tags = ['v1.0.0', 'release/2026 #1', '', 7]
+  assert.deepEqual(bundleOriginLinks(bundle, '', { sha: commit, tags, details: null })[0].commit.tags, [
+    { name: 'v1.0.0', href: 'https://github.com/org/repo/releases/tag/v1.0.0' },
+    { name: 'release/2026 #1', href: 'https://github.com/org/repo/releases/tag/release/2026%20%231' },
+  ])
+  for (const info of [null, { sha: 'b'.repeat(40), tags }, { sha: commit, tags: [] }, { sha: commit }]) {
+    assert.equal(Object.hasOwn(bundleOriginLinks(bundle, '', info)[0].commit, 'tags'), false)
+  }
+  assert.equal(bundleOriginLinks({ repo: { github: 'org/repo' } }, '', { sha: commit, tags })[0].commit, undefined, 'tags need the recorded commit')
+})
+
+test('commit tooltips carry only what they show of the catalog details, for their own commit', () => {
+  const sha = 'a'.repeat(40)
+  const details = { message: '\n  Fix the parser  \n\n'.concat('Body '.repeat(1000)), authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2 }
+  assert.deepEqual(JSON.parse(bundleCommitTooltip({ sha, tags: ['v1', ''], details }, sha)),
+    { tags: ['v1'], title: 'Fix the parser', authorName: 'Alice', authorLogin: 'alice', date: 2 })
+  assert.deepEqual(JSON.parse(bundleCommitTooltip({ sha, tags: ['v1'], details: null }, sha)), { tags: ['v1'] })
+  assert.equal(JSON.parse(bundleCommitTooltip({ sha, tags: [], details: { ...details, committedAt: null } }, sha)).date, 1)
+  for (const [info, hash] of [[{ sha, tags: ['v1'], details }, 'b'.repeat(40)], [{ sha, tags: [], details: null }, sha], [null, sha], [{ sha, tags: ['v1'] }, undefined]]) {
+    assert.equal(bundleCommitTooltip(info, hash), undefined)
+  }
 })

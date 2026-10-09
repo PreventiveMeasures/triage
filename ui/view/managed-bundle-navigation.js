@@ -3,7 +3,7 @@ import { managedRouteForIds } from '../../common/managed/routes.js'
 
 export function managedBundleEntry(bundle) {
   return { managedId: bundle.id, slug: bundle.slug, integrity: bundle.integrity,
-    kind: bundle.kind, summary: bundle.summary,
+    kind: bundle.kind, summary: bundle.summary, commitInfo: bundle.commitInfo ?? null,
     name: bundle.filename, size: bundle.byteSize, repoId: bundle.repoId, repoFullName: bundle.repoFullName, repoDirectory: bundle.repoDirectory ?? '' }
 }
 
