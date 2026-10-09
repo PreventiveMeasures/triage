@@ -172,7 +172,7 @@ test('a swap that lands on another bundle is dropped, not resumed later', () => 
   assert.equal(view._targetIntegrity, null, 'opening the swap\'s bundle afterwards starts a fresh comparison')
 })
 
-test('dependency updates list Updated, Removed and Added side by side in one row of columns', () => {
+test('dependency updates list Removed, Added and Updated side by side in one row of columns', () => {
   const view = compare()
   const markup = renderText(view._renderVersionUpdates({
     updated: [{ pkg: 'lodash', baseVersions: ['4.17.20'], otherVersions: ['4.17.21'], direction: 'up' }],
@@ -181,6 +181,6 @@ test('dependency updates list Updated, Removed and Added side by side in one row
     totals: {},
   }, 'Before', 'After'))
   const cols = markup.slice(markup.indexOf('class="bundle-compare-cols"'))
-  assert.deepEqual([...cols.matchAll(/class=bundle-compare-group bundle-compare-(\w+)/gu)].map(m => m[1]), ['updated', 'removed', 'added'])
+  assert.deepEqual([...cols.matchAll(/class=bundle-compare-group bundle-compare-(\w+)/gu)].map(m => m[1]), ['removed', 'added', 'updated'])
   assert.equal(markup.match(/class="bundle-compare-cols"/gu).length, 1)
 })

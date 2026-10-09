@@ -349,21 +349,21 @@ class BundleCompare extends LitElement {
     </div></li>`)
   }
 
-  // Dependency-update section: version bumps for deps on both sides
-  // (the headline — "what did this bump pull in?"), then any deps added
-  // / removed wholesale. Returns `nothing` when nothing changed so the
-  // section only shows for stasis pairs with real version movement.
+  // Dependency-update section: deps removed / added wholesale, then the
+  // version bumps for deps on both sides ("what did this bump pull in?").
+  // Returns `nothing` when nothing changed so the section only shows for
+  // stasis pairs with real version movement.
   _renderVersionUpdates(vu, baseName, otherName) {
     const { updated, added, removed } = vu
     if (updated.length === 0 && added.length === 0 && removed.length === 0) return nothing
-    // Updated | Removed | Added share one row of columns, wrapping by the
-    // groups' minimum width like the Packages and Files sections.
+    // Removed | Added | Updated share one row of columns, in the Packages
+    // and Files sections' order, wrapping by the groups' minimum width.
     return html`<section class="bundle-compare-section">
       <h3 class="bundle-compare-section-head">Dependency updates</h3>
       <div class="bundle-compare-cols">
-        ${this._group('Updated', updated, 'updated', (r) => r.pkg, (r) => this._versionRow(r))}
         ${this._depGroup(`Removed · only in ${baseName}`, removed, 'removed')}
         ${this._depGroup(`Added · only in ${otherName}`, added, 'added')}
+        ${this._group('Updated', updated, 'updated', (r) => r.pkg, (r) => this._versionRow(r))}
       </div>
     </section>`
   }
