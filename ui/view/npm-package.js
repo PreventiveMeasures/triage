@@ -91,9 +91,11 @@ export function npmPackageRoute(entry, tab = 'overview', location = null) {
 const KEPT_VERSIONS = 3
 const keptVersions = new Map()
 const versionLists = new Map()
-// A list that failed is asked for again on a render this long after, not on
-// every render, which each answer brings.
+// A list that failed is asked for again after a pause, twice as long after
+// each failure in a row, on a render scheduled for then: not on every render,
+// which each answer brings.
 const VERSION_LIST_RETRY_MS = 10_000
+const VERSION_LIST_RETRY_MAX_MS = 5 * 60_000
 let keptFor = null
 
 function sessionKept() {
@@ -135,15 +137,22 @@ export async function loadNpmVersion(name, spec, options) {
 export function npmVersionList(name) {
   sessionKept()
   const known = versionLists.get(name)
-  if (known && !(known.status === 'error' && Date.now() - known.at >= VERSION_LIST_RETRY_MS)) return known
-  const loading = { status: 'loading' }
+  if (known && !(known.status === 'error' && Date.now() >= known.retryAt)) return known
+  const loading = { status: 'loading', failures: known?.failures ?? 0 }
   versionLists.set(name, loading)
   fetchNpmVersions(name).then(
     data => ({ status: 'ready', versions: data.versions ?? [], distTags: data.distTags ?? {} }),
-    () => ({ status: 'error', at: Date.now() }),
+    () => {
+      const failures = loading.failures + 1
+      const wait = Math.min(VERSION_LIST_RETRY_MS * 2 ** (failures - 1), VERSION_LIST_RETRY_MAX_MS)
+      return { status: 'error', failures, wait, retryAt: Date.now() + wait }
+    },
   ).then(list => {
     if (versionLists.get(name) !== loading) return null
     versionLists.set(name, list)
+    // A page left open repaints when the retry is due, and asks again if it
+    // still shows the package.
+    if (list.status === 'error') setTimeout(() => { if (versionLists.get(name) === list) render() }, list.wait)
     render()
     return null
   }).catch(() => {})

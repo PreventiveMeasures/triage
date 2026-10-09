@@ -8,13 +8,13 @@ import { beginViewNavigation } from '../ui/view/view-navigation.js'
 import { browserAt } from './_managed-browser.js'
 
 const state = {}
-const requests = [], versionRequests = []
+const renders = [], requests = [], versionRequests = []
 let answer = null, versionsAnswer = () => Promise.resolve({ versions: [] })
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
 } })
-mock.module('../ui/view/render.js', { exports: { render() {} } })
+mock.module('../ui/view/render.js', { exports: { render() { renders.push(Date.now()) } } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
@@ -116,23 +116,35 @@ test('Compare offers the package\'s other versions, read once a session, and loa
   assert.equal(requests.length, 2)
 })
 
-test('a version that fails to list says so, without a picker of nothing, and is asked again later', async t => {
-  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 })
+test('a version that fails to list says so, without a picker of nothing, and is asked again later, on a repaint due then', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1_000_000 })
   versionsAnswer = () => Promise.reject(new Error('down'))
   npmVersionList('@scope/pkg')
   await setImmediate()
   const source = npmCompareSource(npmPackageEntry(data))
   assert.equal(source.error, "Couldn't list the versions of @scope/pkg.")
   assert.deepEqual(source.options, [])
+  renders.length = 0
   t.mock.timers.tick(9_999)
   assert.equal(npmVersionList('@scope/pkg').status, 'error', 'not on every render')
   assert.equal(versionRequests.length, 1)
+  assert.deepEqual(renders, [])
+  t.mock.timers.tick(1)
+  assert.deepEqual(renders, [1_010_000], 'a page left open repaints when the retry is due')
+  assert.equal(npmVersionList('@scope/pkg').status, 'loading')
+  await setImmediate()
+  // Failing again, it waits twice as long.
+  renders.length = 0
+  t.mock.timers.tick(19_999)
+  assert.deepEqual(renders, [])
+  assert.equal(npmVersionList('@scope/pkg').status, 'error')
   versionsAnswer = () => Promise.resolve({ versions: ['1.2.3', '1.0.0'] })
   t.mock.timers.tick(1)
+  assert.equal(renders.length, 1)
   assert.equal(npmVersionList('@scope/pkg').status, 'loading')
   await setImmediate()
   assert.deepEqual(npmCompareSource(npmPackageEntry(data)).options.map(option => option.id), ['1.0.0'])
-  assert.equal(versionRequests.length, 2)
+  assert.equal(versionRequests.length, 3)
 })
 
 test('a Compare link opens the version with the one it compares with', async () => {

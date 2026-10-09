@@ -1033,14 +1033,15 @@ in the bundle view with four tabs:
   compared with the same one, and picking the other side's swaps them.
 
 A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
-version it opened. Code links name files by number and lines in the
-fragment, and Compare links the version compared with and its mode, as for
-bundles. The browser keeps the last three public versions it read, and the
-package's version list, in memory for the session and role that read them,
-so a swap or Back reopens one without another request. A private version is
-asked for each time it opens, so the server checks again access the reader
-may have lost since, as to a team's npm scopes. A version list that failed
-is asked for again on a render ten seconds or more later.
+version it opened. Code links name files by number and lines in the fragment,
+and Compare links the version compared with and its mode, as for bundles. The
+browser keeps the last three public versions it read, and the package's
+version list, in memory for the session and role that read them, so a swap or
+Back reopens one without another request. A private version is asked for each
+time it opens, so the server checks again access the reader may have lost
+since, as to a team's npm scopes. A version list that failed is asked for
+again after ten seconds, twice as long after each failure in a row up to five
+minutes, on a repaint scheduled for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
 integrity, tarballSize, manifest, files }`, where each file row is `[path,
