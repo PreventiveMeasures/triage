@@ -256,7 +256,7 @@ class BundleCompareCode extends LitElement {
           <div class="bundle-compare-code-kinds" role="group" aria-label="Show changes">
             ${KINDS.filter(({ kind }) => counts[kind] > 0).map(({ kind, label }) => html`<button type="button" class=${`bundle-compare-code-kind ${kind}`}
               aria-pressed=${String(this._kinds.has(kind))} data-tooltip=${`${this._kinds.has(kind) ? 'Hide' : 'Show'} ${label.toLowerCase()} files`}
-              @click=${() => this._toggleKind(kind)}>${counts[kind].toLocaleString()} ${label.toLowerCase()}</button>`)}
+              @click=${() => this._toggleKind(kind)}>${label.toLowerCase()}</button>`)}
           </div>
         </div>
         <div class="bundle-code-rail-body bundle-compare-code-tree">

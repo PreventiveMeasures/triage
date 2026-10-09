@@ -23,6 +23,7 @@
 // finding-index subscription) keeps the element mounted and so keeps
 // the comparison; switching the base bundle resets it via willUpdate.
 import { LitElement, html, nothing } from 'lit'
+import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { state } from '#client/index.js'
@@ -32,7 +33,7 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
+import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
@@ -108,6 +109,10 @@ class BundleCompare extends LitElement {
     _status: { state: true },
     _scope: { state: true },
     _fileSort: { state: true },
+    _pkgSort: { state: true },
+    // Sections that open on demand (Files, Import resolutions): a large
+    // comparison lists thousands of rows.
+    _openSections: { state: true },
     // 'overview' | 'code', and the file the Code view shows (null: its
     // first changed file).
     _mode: { state: true },
@@ -127,6 +132,8 @@ class BundleCompare extends LitElement {
     this._status = 'idle'
     this._scope = ''
     this._fileSort = { removed: 'name', added: 'name', changed: 'name' }
+    this._pkgSort = { removed: 'name', added: 'name', changed: 'name' }
+    this._openSections = new Set()
     this._mode = 'overview'
     this._codePath = null
     // Diff memo — recomputed only when the (base, other) integrity
@@ -264,14 +271,15 @@ class BundleCompare extends LitElement {
     </button></li>`
   }
 
-  // Card shell shared by every file / package / dependency group: the
-  // kind-tinted section, dot + title + exact count header, the row list
-  // capped at MAX_ROWS, and the "and N more" footer. Returns `nothing`
-  // for an empty group so a section only shows what actually moved.
-  // `keyOf` / `rowOf` are the `repeat` key + row template.
-  _group(title, rows, kind, keyOf, rowOf, actions = nothing) {
+  // Card shell shared by every file / package group: the kind-tinted
+  // section, dot + title + exact count header, the row list capped at
+  // MAX_ROWS, and the "and N more" footer. With `all`, every row is listed
+  // in a list that scrolls instead. Returns `nothing` for an empty group so
+  // a section only shows what actually moved. `keyOf` / `rowOf` are the
+  // `repeat` key + row template.
+  _group(title, rows, kind, keyOf, rowOf, actions = nothing, { all = false } = {}) {
     if (rows.length === 0) return nothing
-    const shown = rows.slice(0, MAX_ROWS)
+    const shown = all ? rows : rows.slice(0, MAX_ROWS)
     const hidden = rows.length - shown.length
     return html`<section class=${`bundle-compare-group bundle-compare-${kind}`}>
       <header class="bundle-compare-group-head">
@@ -280,7 +288,7 @@ class BundleCompare extends LitElement {
         <span class="bundle-compare-group-count">${rows.length}</span>
         ${actions}
       </header>
-      <ul class="bundle-compare-rows">
+      <ul class=${all ? 'bundle-compare-rows bundle-compare-rows--scroll' : 'bundle-compare-rows'}>
         ${repeat(shown, keyOf, rowOf)}
       </ul>
       ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
@@ -289,113 +297,135 @@ class BundleCompare extends LitElement {
 
   // Size cells for a file / package row: one byte count for a row that
   // exists on a single side, `base → other` plus the signed delta for a
-  // changed row.
+  // changed row. A side with no size to give shows a dash.
   _sizeCells(r) {
+    const bytes = value => value == null ? '—' : formatBytes(value)
     return r.delta === undefined
-      ? html`<span class="bundle-compare-row-size">${formatBytes(r.bytes)}</span>`
-      : html`<span class="bundle-compare-row-size">${formatBytes(r.baseBytes)} → ${formatBytes(r.otherBytes)}</span>
-          <span class=${`bundle-compare-row-delta ${dirClass(r.delta)}`}>${formatDelta(r.delta)}</span>`
+      ? html`<span class="bundle-compare-row-size">${bytes(r.bytes)}</span>`
+      : html`<span class="bundle-compare-row-size">${bytes(r.baseBytes)} → ${bytes(r.otherBytes)}</span>
+          ${r.delta === null ? nothing : html`<span class=${`bundle-compare-row-delta ${dirClass(r.delta)}`}>${formatDelta(r.delta)}</span>`}`
   }
 
-  // One file group; the kind selects both its accent and its file action.
+  // Name | Size order for one group, kept per kind in the state field
+  // `field` (`_fileSort` / `_pkgSort`).
+  _sortActions(field, kind, label) {
+    const sort = this[field][kind]
+    return html`<span class="bundles-overview-sort" role="group" aria-label=${`${kind} ${label} order`}>
+      ${[['name', 'Name'], ['size', 'Size']].map(([value, text]) => html`<button type="button" aria-pressed=${String(sort === value)} @click=${() => { this[field] = { ...this[field], [kind]: value } }}>${text}</button>`)}
+    </span>`
+  }
+
+  // One file group, every row listed (the list scrolls); the kind selects
+  // its accent. Size order is the largest first, or for Changed the
+  // largest change in size, name order breaking ties.
   _fileGroup(title, rows, kind, displayOf) {
     const sort = this._fileSort[kind]
-    const sorted = rows.toSorted((a, b) => (sort === 'size' ? (b.bytes ?? b.otherBytes) - (a.bytes ?? a.otherBytes) : 0)
-      || a.path.localeCompare(b.path))
-    const actions = html`<span class="bundles-overview-sort" role="group" aria-label=${`${kind} file order`}>
-      ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(sort === value)} @click=${() => { this._fileSort = { ...this._fileSort, [kind]: value } }}>${label}</button>`)}
-    </span>`
+    const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
+    const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     return this._group(title, sorted, kind, (r) => r.path,
-      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), actions)
+      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), this._sortActions('_fileSort', kind, 'file'), { all: true })
   }
 
-  // One package group. Same accent scheme as the file groups; rows
-  // carry the package color dot for continuity with the size
-  // distribution + treemap.
+  // One package group: a package each, with its versions and its size —
+  // both sides of each for a changed one — every one listed, scrolling in
+  // its card. Rows carry the package color dot for continuity with the
+  // size distribution + treemap. Size order is the largest first, or the
+  // largest move for Changed.
   _pkgGroup(title, rows, kind) {
-    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row">
+    const sort = this._pkgSort[kind]
+    // A side without a size sorts last.
+    const weight = r => { const value = kind === 'changed' ? r.delta : r.bytes; return value == null ? -1 : Math.abs(value) }
+    const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || pkgLabel(a.pkg).localeCompare(pkgLabel(b.pkg)))
+    return this._group(title, sorted, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row">
       <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
       <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${pkgLabel(r.pkg)}>${pkgLabel(r.pkg)}</span>
-      ${this._sizeCells(r)}
-    </div></li>`)
+      ${kind === 'changed' ? this._versionCell(r) : r.versions.length > 0 ? html`<span class="bundle-compare-dep-ver">${versionList(r.versions)}</span>` : nothing}
+      ${this._sizeCells(kind === 'changed' ? r : { bytes: r.bytes })}
+    </div></li>`, this._sortActions('_pkgSort', kind, 'package'), { all: true })
   }
 
-  // One Updated row: package dot + name, then `old → new`
-  // with the new side colored by direction (↑ green / ↓ red / changed
-  // amber) and a matching glyph. The direction is also spelled out in
-  // accessible label for screen readers.
-  _versionRow(r) {
-    const glyph = r.direction === 'up' ? '↑' : r.direction === 'down' ? '↓' : '±'
-    const word = r.direction === 'up' ? 'Upgraded' : r.direction === 'down' ? 'Downgraded' : 'Changed'
-    return html`<li><div class="bundle-compare-row" aria-label=${`${r.pkg} · ${word}`}>
-      <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
-      <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.pkg}>${r.pkg}</span>
-      <span class="bundle-compare-ver">
-        <span class="bundle-compare-ver-from">${versionList(r.baseVersions)}</span>
-        <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
-        <span class=${`bundle-compare-ver-to ${r.direction}`}>${versionList(r.otherVersions)}</span>
-        <span class=${`bundle-compare-ver-dir ${r.direction}`} aria-hidden="true">${glyph}</span>
-      </span>
-    </div></li>`
+  // A changed package's versions: `old → new` with the new side colored by
+  // direction (↑ green / ↓ red / ± amber) and a matching glyph, spelled out
+  // for screen readers; the one list when only its size moved; nothing for
+  // a package without versions (own source, workspace modules).
+  _versionCell(r) {
+    const after = r.otherVersions, before = r.baseVersions
+    if (before.join() === after.join()) {
+      return before.length > 0 ? html`<span class="bundle-compare-dep-ver">${versionList(before)}</span>` : nothing
+    }
+    const direction = r.direction ?? 'changed'
+    const glyph = direction === 'up' ? '↑' : direction === 'down' ? '↓' : '±'
+    const word = direction === 'up' ? 'Upgraded' : direction === 'down' ? 'Downgraded' : 'Changed'
+    return html`<span class="bundle-compare-ver" aria-label=${`${word}: ${versionList(before) || 'none'} to ${versionList(after) || 'none'}`}>
+      <span class="bundle-compare-ver-from">${versionList(before) || '—'}</span>
+      <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
+      <span class=${`bundle-compare-ver-to ${direction}`}>${versionList(after) || '—'}</span>
+      <span class=${`bundle-compare-ver-dir ${direction}`} aria-hidden="true">${glyph}</span>
+    </span>`
   }
 
-  // One added / removed dependency group — package name + the
-  // version(s) it carried on the side it appears on. Same tinted card
-  // and accent scheme as the file / package groups.
-  _depGroup(title, rows, kind) {
-    return this._group(title, rows, kind, (r) => r.pkg, (r) => html`<li><div class="bundle-compare-row">
-      <span class="bundle-compare-pkg-dot" style=${styleMap({ background: pkgColor(r.pkg) })}></span>
-      <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.pkg}>${r.pkg}</span>
-      <span class="bundle-compare-dep-ver">${versionList(r.versions)}</span>
-    </div></li>`)
-  }
-
-  // Dependency-update section: deps removed / added wholesale, then the
-  // version bumps for deps on both sides ("what did this bump pull in?").
-  // Returns `nothing` when nothing changed so the section only shows for
-  // stasis pairs with real version movement.
-  _renderVersionUpdates(vu, baseName, otherName) {
-    const { updated, added, removed } = vu
-    if (updated.length === 0 && added.length === 0 && removed.length === 0) return nothing
-    // Removed | Added | Updated share one row of columns, in the Packages
-    // and Files sections' order, wrapping by the groups' minimum width.
+  // Packages section: removed | added | changed, each package once, from
+  // its files' sizes and the versions each bundle records. Returns
+  // `nothing` when no package moved.
+  _renderPackages(rows, baseName, otherName) {
+    if (rows.removed.length === 0 && rows.added.length === 0 && rows.changed.length === 0) return nothing
     return html`<section class="bundle-compare-section">
-      <h3 class="bundle-compare-section-head">Dependency updates</h3>
+      <h3 class="bundle-compare-section-head">Packages</h3>
       <div class="bundle-compare-cols">
-        ${this._depGroup(`Removed · only in ${baseName}`, removed, 'removed')}
-        ${this._depGroup(`Added · only in ${otherName}`, added, 'added')}
-        ${this._group('Updated', updated, 'updated', (r) => r.pkg, (r) => this._versionRow(r))}
+        ${this._pkgGroup(`Removed · only in ${baseName}`, rows.removed, 'removed')}
+        ${this._pkgGroup(`Added · only in ${otherName}`, rows.added, 'added')}
+        ${this._pkgGroup('Changed', rows.changed, 'changed')}
       </div>
     </section>`
   }
 
-  _resolutionGroup(rows) {
-    return this._group('Repointed', rows, 'changed', r => r.key, r => {
-      const context = `${r.conditions}${r.platform === null ? '' : ` · Platform: ${r.platform}`}`
-      return html`<li class="bundle-compare-resolution">
-        <div class="bundle-compare-resolution-source">
-          <button type="button" class="bundle-compare-resolution-parent" data-tooltip-truncated data-tooltip=${r.parent} @click=${() => this._openFile(r.parent)}>${r.parent}</button>
-          <span aria-hidden="true">→</span>
-          <code data-tooltip-truncated data-tooltip=${r.specifier}>${r.specifier}</code>
-          <span class="bundle-compare-resolution-context" data-tooltip-truncated data-tooltip=${context}>${context}</span>
-        </div>
-        <div class="bundle-compare-resolution-targets">
-          <div class="bundle-compare-resolution-before"><span>Before</span><code data-tooltip-truncated data-tooltip=${r.baseTarget || '(empty target)'}>${r.baseTarget || '(empty target)'}</code></div>
-          <span aria-hidden="true">→</span>
-          <div class="bundle-compare-resolution-after"><span>After</span><code data-tooltip-truncated data-tooltip=${r.otherTarget || '(empty target)'}>${r.otherTarget || '(empty target)'}</code></div>
-        </div>
-      </li>`
-    })
+  // A section that opens on demand, its heading the disclosure; its
+  // contents render only while it is open.
+  _collapsible(id, title, count, content) {
+    const open = this._openSections.has(id)
+    return html`<details class="bundle-compare-section bundle-compare-collapsible" .open=${live(open)} @toggle=${event => {
+      if (event.currentTarget.open === this._openSections.has(id)) return
+      const sections = new Set(this._openSections)
+      if (event.currentTarget.open) sections.add(id)
+      else sections.delete(id)
+      this._openSections = sections
+    }}>
+      <summary class="bundle-compare-section-head">${title} <span class="bundle-compare-section-count">${count.toLocaleString()}</span></summary>
+      ${open ? content() : nothing}
+    </details>`
   }
 
+  // Repointed imports as a table, File | Import | Before | After |
+  // Conditions, one line a row, in a card like the groups'; a file opens
+  // in Code.
   _renderResolutions(resolutions) {
     if (resolutions.totalChanges === 0) return nothing
-    return html`<section class="bundle-compare-section">
-      <h3 class="bundle-compare-section-head">Import resolutions</h3>
-      <div class="bundle-compare-cols bundle-compare-cols--files">
-        ${this._resolutionGroup(resolutions.changed)}
-      </div>
-    </section>`
+    const rows = resolutions.changed
+    const shown = rows.slice(0, MAX_ROWS)
+    const hidden = rows.length - shown.length
+    const cell = (text, className = '') => html`<td class=${className}><code data-tooltip-truncated data-tooltip=${text}>${text}</code></td>`
+    return this._collapsible('resolutions', 'Import resolutions', rows.length, () => html`
+      <section class="bundle-compare-group bundle-compare-changed bundle-compare-resolutions">
+        <header class="bundle-compare-group-head">
+          <span class="bundle-compare-dot" aria-hidden="true"></span>
+          <span class="bundle-compare-group-title">Repointed</span>
+          <span class="bundle-compare-group-count">${rows.length}</span>
+        </header>
+        <table>
+          <thead><tr><th>File</th><th>Import</th><th>Before</th><th>After</th><th>Conditions</th></tr></thead>
+          <tbody>${repeat(shown, r => r.key, r => {
+            const context = `${r.conditions}${r.platform === null ? '' : ` · Platform: ${r.platform}`}`
+            return html`<tr>
+              <td><button type="button" class="bundle-compare-resolution-parent" data-tooltip-truncated data-tooltip=${r.parent} @click=${() => this._openFile(r.parent)}>${r.parent}</button></td>
+              ${cell(r.specifier)}
+              ${cell(r.baseTarget || '(empty target)', 'bundle-compare-resolution-before')}
+              ${cell(r.otherTarget || '(empty target)', 'bundle-compare-resolution-after')}
+              <td class="bundle-compare-resolution-context"><span data-tooltip-truncated data-tooltip=${context}>${context}</span></td>
+            </tr>`
+          })}</tbody>
+        </table>
+        ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
+      </section>`)
   }
 
   // Compute (or reuse the memo of) the diff for the current pairing.
@@ -420,15 +450,16 @@ class BundleCompare extends LitElement {
         bundleCompareResolutions(this.details, this._scope),
         bundleCompareResolutions(this._otherDetails, this._scope),
       )
-      // Dependency version changes come from the stasis per-module
-      // `{ name, version }` metadata, not the path/byte walk above, so
-      // they're computed alongside and hung off the same memo. Empty for
-      // sourcemap / v0 pairs (no version metadata) — the section then
-      // renders nothing.
-      this._diff.versionUpdates = computeVersionUpdates(
-        bundlePackageVersions(this.details, this._scope ? baseSources.keys() : null),
-        bundlePackageVersions(this._otherDetails, this._scope ? otherSources.keys() : null),
-      )
+      // Dependency versions come from the stasis per-module `{ name,
+      // version }` metadata, not the path/byte walk above, so they're
+      // computed alongside and hung off the same memo: the package rows
+      // join them to the sizes, the summary counts them. Empty for
+      // sourcemap / v0 pairs (no version metadata), whose rows carry sizes
+      // alone.
+      const baseVersions = bundlePackageVersions(this.details, this._scope ? baseSources.keys() : null)
+      const otherVersions = bundlePackageVersions(this._otherDetails, this._scope ? otherSources.keys() : null)
+      this._diff.versionUpdates = computeVersionUpdates(baseVersions, otherVersions)
+      this._diff.packageRows = comparePackages(this._diff.packages, baseVersions, otherVersions)
       this._diffKey = key
     }
     return this._diff
@@ -585,38 +616,23 @@ class BundleCompare extends LitElement {
     for (let i = 0; i < allPaths.length; i++) displayMap.set(allPaths[i], stripped[i])
     const displayOf = (p) => displayMap.get(p) ?? p
 
-    const hasPkgChanges = diff.packages.onlyOther.length > 0
-      || diff.packages.onlyBase.length > 0
-      || diff.packages.changed.length > 0
+    const fileCount = diff.files.onlyBase.length + diff.files.onlyOther.length + diff.files.changed.length
 
     return html`
       <div class="bundle-compare-caption">
         Changes from <strong>${baseName}</strong> to <strong>${otherName}</strong>
         ${prefix ? html` · <span class="mono">${prefix}</span>` : nothing}
       </div>
-      ${this._renderVersionUpdates(diff.versionUpdates, baseName, otherName)}
+      ${this._renderPackages(diff.packageRows, baseName, otherName)}
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
           : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
-        : html`
-          ${hasPkgChanges ? html`<section class="bundle-compare-section">
-            <h3 class="bundle-compare-section-head">Packages</h3>
-            <div class="bundle-compare-cols">
-              ${this._pkgGroup(`Removed · only in ${baseName}`, diff.packages.onlyBase, 'removed')}
-              ${this._pkgGroup(`Added · only in ${otherName}`, diff.packages.onlyOther, 'added')}
-              ${this._pkgGroup('Changed size', diff.packages.changed, 'changed')}
-            </div>
-          </section>` : nothing}
-          <section class="bundle-compare-section">
-            <h3 class="bundle-compare-section-head">Files</h3>
-            <div class="bundle-compare-cols bundle-compare-cols--files">
-              ${this._fileGroup(`Removed · only in ${baseName}`, diff.files.onlyBase, 'removed', displayOf)}
-              ${this._fileGroup(`Added · only in ${otherName}`, diff.files.onlyOther, 'added', displayOf)}
-              ${this._fileGroup('Changed', diff.files.changed, 'changed', displayOf)}
-            </div>
-          </section>
-        `}
+        : this._collapsible('files', 'Files', fileCount, () => html`<div class="bundle-compare-cols bundle-compare-cols--files">
+            ${this._fileGroup(`Removed · only in ${baseName}`, diff.files.onlyBase, 'removed', displayOf)}
+            ${this._fileGroup(`Added · only in ${otherName}`, diff.files.onlyOther, 'added', displayOf)}
+            ${this._fileGroup('Changed', diff.files.changed, 'changed', displayOf)}
+          </div>`)}
       ${this._renderResolutions(diff.resolutions)}
     `
   }

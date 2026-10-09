@@ -180,6 +180,7 @@ export function computeBundleDiff(base, other, pkgOf) {
   const pkgOnlyBase = []
   const pkgOnlyOther = []
   const pkgChanged = []
+  const pkgUnchanged = []
   for (const [pkg, acc] of pkgs) {
     // Present on a side if any of its files contributed there — its
     // byte total, an only-this-side file, or a changed file (which
@@ -199,6 +200,8 @@ export function computeBundleDiff(base, other, pkgOf) {
         otherBytes: acc.otherBytes,
         delta: acc.otherBytes - acc.baseBytes,
       })
+    } else {
+      pkgUnchanged.push({ pkg, bytes: acc.baseBytes })
     }
   }
 
@@ -227,8 +230,47 @@ export function computeBundleDiff(base, other, pkgOf) {
       identical: onlyBase.length === 0 && onlyOther.length === 0 && changed.length === 0,
     },
     files: { onlyBase, onlyOther, changed },
-    packages: { onlyBase: pkgOnlyBase, onlyOther: pkgOnlyOther, changed: pkgChanged },
+    // `unchanged` lends a version-only change its (equal) sizes.
+    packages: { onlyBase: pkgOnlyBase, onlyOther: pkgOnlyOther, changed: pkgChanged, unchanged: pkgUnchanged },
   }
+}
+
+// The Overview's package rows: each package that differs, once, from its
+// sizes (computeBundleDiff's `packages`) and the versions each bundle
+// records for it (`bundlePackageVersions`). A package only one side has is
+// removed or added, with its size and versions there; one both have is
+// changed when its size or its versions moved, with both sides of each —
+// own source and workspace modules carry sizes alone.
+export function comparePackages(packages, baseVersions, otherVersions) {
+  const sizes = new Map()
+  for (const r of packages.onlyBase) sizes.set(r.pkg, { base: r.bytes, other: null })
+  for (const r of packages.onlyOther) sizes.set(r.pkg, { base: null, other: r.bytes })
+  for (const r of packages.changed) sizes.set(r.pkg, { base: r.baseBytes, other: r.otherBytes })
+  for (const r of packages.unchanged ?? []) sizes.set(r.pkg, { base: r.bytes, other: r.bytes })
+  const versionsOf = (map, pkg) => [...map.get(pkg) ?? []].toSorted(compareSemver)
+  const moved = new Set([...packages.onlyBase, ...packages.onlyOther, ...packages.changed].map(r => r.pkg))
+  for (const pkg of new Set([...baseVersions.keys(), ...otherVersions.keys()])) {
+    if (!sameVersions(versionsOf(baseVersions, pkg), versionsOf(otherVersions, pkg))) moved.add(pkg)
+  }
+  const added = [], changed = [], removed = []
+  for (const pkg of moved) {
+    const size = sizes.get(pkg) ?? { base: null, other: null }
+    const after = versionsOf(otherVersions, pkg), before = versionsOf(baseVersions, pkg)
+    const onBase = size.base !== null || before.length > 0
+    const onOther = size.other !== null || after.length > 0
+    if (onBase && !onOther) removed.push({ pkg, bytes: size.base, versions: before })
+    else if (onOther && !onBase) added.push({ pkg, bytes: size.other, versions: after })
+    else {
+      changed.push({
+        pkg, baseBytes: size.base, otherBytes: size.other,
+        delta: size.base !== null && size.other !== null ? size.other - size.base : null,
+        baseVersions: before, otherVersions: after,
+        direction: before.length > 0 && after.length > 0 && !sameVersions(before, after) ? versionDirection(before, after) : null,
+      })
+    }
+  }
+  const byPkg = (a, b) => a.pkg.localeCompare(b.pkg)
+  return { removed: removed.toSorted(byPkg), added: added.toSorted(byPkg), changed: changed.toSorted(byPkg) }
 }
 
 // Split a version into its dotted-numeric core and its prerelease tail,
@@ -293,13 +335,23 @@ function sameVersions(a, b) {
   return true
 }
 
-// Direction of a version move, from the highest version on each side
-// (last after the ascending sort): a newer max → 'up', an older max →
-// 'down', an equal max with a different set (a pnpm dedupe, or an added
-// duplicate major) → 'changed'.
-function versionDirection(baseSorted, otherSorted) {
-  const cmp = compareSemver(otherSorted.at(-1), baseSorted.at(-1))
-  return cmp > 0 ? 'up' : cmp < 0 ? 'down' : 'changed'
+// Direction of a version move, from the versions dropped and the versions
+// taken on: 'up' when everything dropped is older than everything taken
+// on (`1.0.0` → `2.0.0`), or, with only drops or only additions, than the
+// versions kept (`1.0.0, 2.0.0` → `2.0.0` drops the older copy, and a newer
+// copy added beside the old is up too); 'down' the other way round; and
+// 'changed' when the moves fall between (`1.0.0, 1.2.0, 2.0.0` → `1.0.0,
+// 2.0.0`).
+export function versionDirection(baseVersions, otherVersions) {
+  const dropped = baseVersions.filter(v => !otherVersions.includes(v)).toSorted(compareSemver)
+  const taken = otherVersions.filter(v => !baseVersions.includes(v)).toSorted(compareSemver)
+  const kept = baseVersions.filter(v => otherVersions.includes(v)).toSorted(compareSemver)
+  const [from, to] = dropped.length > 0 && taken.length > 0 ? [dropped, taken]
+    : dropped.length > 0 ? [dropped, kept] : [kept, taken]
+  if (from.length === 0 || to.length === 0) return 'changed'
+  // Every version of `a` older than every version of `b`.
+  const before = (a, b) => compareSemver(a.at(-1), b[0]) < 0
+  return before(from, to) ? 'up' : before(to, from) ? 'down' : 'changed'
 }
 
 // Diff two `Map<packageName, Set<version>>` inventories (as

@@ -78,7 +78,7 @@ test('the Code view lists every differing file, repointed importers too, with ki
     'src/legacy.js': ['removed'],
     'src/server.js': ['repointed'],
   })
-  assert.match(markup, />1 repointed<\/button>/u)
+  assert.match(markup, /@click=>repointed<\/button>/u, "kind toggles carry no counts: the summary has them")
 })
 
 test('a file whose import was repointed shows its imports and its whole source, the importing line marked', () => {
