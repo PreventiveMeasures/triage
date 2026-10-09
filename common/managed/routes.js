@@ -36,8 +36,11 @@ export function managedRoutePath(route) {
     const parent = route.teamSlug ? `/team/${route.teamSlug}` : '/manage'
     // Code names its open file by number: 1-based in the bundle's sorted
     // sources, which its content hash fixes. Never by path from the bundle.
-    const file = tab === 'code' && Number.isSafeInteger(route.file) && route.file > 0 ? `/${route.file}` : ''
-    return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}${file}`
+    // Its marked lines follow in the fragment, as #L42 or #L42-L69.
+    const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
+    const lines = file && isLineNumber(route.line)
+      ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
+    return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}${file}${lines}`
   }
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
@@ -60,6 +63,18 @@ export function managedRoutePath(route) {
   return `${team}${report}${route.view === 'files' ? '/files' : ''}`
 }
 
+function isLineNumber(value) {
+  return Number.isSafeInteger(value) && value > 0
+}
+
+// `#L42` or `#L42-L69`, in either order; anything else marks no lines.
+function codeLines(hash) {
+  const match = /^#L([1-9]\d*)(?:-L([1-9]\d*))?$/u.exec(hash)
+  const [first, last] = match ? [Number(match[1]), Number(match[2] ?? match[1])] : []
+  if (!isLineNumber(first) || !isLineNumber(last)) return {}
+  return first === last ? { line: first } : { line: Math.min(first, last), endLine: Math.max(first, last) }
+}
+
 export function parseManagedRoute(url) {
   const path = url.pathname.replace(/\/$/u, '') || '/'
   if (path === '/' || path === '/index.html') return { view: 'home' }
@@ -80,7 +95,7 @@ export function parseManagedRoute(url) {
     const bundleTab = bundle[3] ?? 'overview'
     const file = bundle[4] == null ? null : Number(bundle[4])
     if (!BUNDLE_TABS.has(bundleTab) || file != null && (bundleTab !== 'code' || !Number.isSafeInteger(file))) return null
-    return { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab, ...(file == null ? {} : { file }) }
+    return { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab, ...(file == null ? {} : { file, ...codeLines(url.hash) }) }
   }
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }

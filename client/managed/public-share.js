@@ -23,5 +23,5 @@ export function publicShareBootstrapPath(value = share) {
   return `/api/shares/${encodeURIComponent(value.id)}/workspace`
 }
 export function publicSharePath(path, value = share) {
-  return value ? `${path}#public=${value.id}.${value.token}` : path
+  return value ? `${path.replace(/#.*$/su, '')}#public=${value.id}.${value.token}` : path
 }

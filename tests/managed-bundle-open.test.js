@@ -252,3 +252,16 @@ test('a Code link carries its file number into the opened bundle until its sourc
   assert.deepEqual(state.bundleCodeFileRequest, { bundle: bundle.integrity, file: 3 })
   assert.equal(f.browser.location.pathname, '/manage/bundle/created/code/3')
 })
+
+test('a Code link carries its marked lines with its file number', async t => {
+  const f = await fixture(t)
+  f.requests[0].resolve(Response.json(metadata))
+  assert.equal(await f.opening, true)
+  const requested = f.requests.length
+  const opening = f.history.navigate({ view: 'bundles', teamSlug: null, bundleSlug: bundle.slug, bundleTab: 'code', file: 1, line: 42, endLine: 69 })
+  await setImmediate()
+  if (f.requests.length > requested) f.requests.at(-1).resolve(Response.json(metadata))
+  assert.equal(await opening, true)
+  assert.deepEqual(state.bundleCodeFileRequest, { bundle: bundle.integrity, file: 1, line: 42, endLine: 69 })
+  assert.equal(f.browser.location.pathname + f.browser.location.hash, '/manage/bundle/created/code/1#L42-L69')
+})

@@ -132,9 +132,9 @@ export interface State {
   repositoriesSortBy: string
   bundleSourceFile: string | null
   bundleSourceFindingIdx: number | null
-  bundleSourceTargetLine: { bundle: string | null; path: string; line: number } | null
+  bundleSourceTargetLine: { bundle: string | null; path: string; line: number; end?: number; anchor?: number } | null
   bundleSourceWrap: boolean
-  bundleCodeFileRequest: { bundle: string; file: number } | null
+  bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | null
   bundleOverviewFilesSort: 'name' | 'size'
   bundleOverviewPackagesSort: 'name' | 'size'
   bundleCodeHistory: { bundle: string | null; files: string[]; at: number } | null
@@ -636,13 +636,16 @@ export const state: State = store<State>({
   // The line a search result (or other line link) last opened, marked
   // in the source viewer until another file or line is opened. Scoped
   // to its bundle and file, so it never marks a different source.
+  // Managed Code can mark a range, `line` to `end`, from a shift-click
+  // that extends it from `anchor`, the line clicked first.
   bundleSourceTargetLine: null,
   // Whether the source viewer wraps long lines. A reading preference,
   // persisted like kanbanDetailFullscreen.
   bundleSourceWrap: readSavedBundleSourceWrap() ?? false,
   // The file a managed link opens the Code tab on, by its 1-based number in
-  // the bundle's sorted sources. Kept until the tab has the sources to read
-  // it from, and dropped with any other bundle or tab.
+  // the bundle's sorted sources, and the lines it marks. Kept until the tab
+  // has the sources to read it from, and dropped with any other bundle or
+  // tab.
   bundleCodeFileRequest: null,
   bundleOverviewFilesSort: 'name',
   bundleOverviewPackagesSort: 'size',

@@ -1,6 +1,7 @@
 import { setFindingTriage } from '../../client/ignored-triage.js'
-import { managedRouteForIds } from '../../common/managed/routes.js'
-import { managedBundleRoute } from './managed-bundle-navigation.js'
+import { managedRouteForIds, parseManagedRoute } from '../../common/managed/routes.js'
+import { getPublicShare } from '../../client/managed/public-share.js'
+import { managedBundleRoute, managedCodeLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { openFindingHistoryDialog, openManagedIssueDialog } from './client-managed.js'
 import { canViewFindingHistory } from './finding-history.js'
@@ -31,7 +32,7 @@ import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-pr
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
-import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleSourceLines, bundleSourcesAsMap } from './bundle-sources.js'
 
 function navigateManagedReportView(view) {
   if (!isManagedUiMode() || !managedHistory.active || !state.currentManagedTeam) return null
@@ -272,10 +273,44 @@ function resetBundleSourceScroll(focus = false) {
   })
 }
 
+// A line link pasted or typed over the open managed file changes only the
+// fragment; managed-history keeps the page. Mark the lines it names, within
+// the file, and bring them into view.
+window.addEventListener('hashchange', () => {
+  if (!isManagedUiMode() || getPublicShare() || state.currentView !== 'bundles' || state.bundleDetailsTab !== 'code') return
+  const route = parseManagedRoute(new URL(location.href))
+  if (route?.bundleTab !== 'code' || route.file == null || route.file !== managedCodeLocation(state)?.file) return
+  const path = state.bundleSourceFile
+  const end = route.endLine ?? route.line
+  state.bundleSourceTargetLine = route.line && end <= bundleSourceLines(bundleSourcesAsMap(state.bundleDetails).get(path) ?? '')
+    ? { bundle: state.bundleDetails?.integrity ?? null, path, line: route.line, ...(route.endLine ? { end: route.endLine } : {}) }
+    : null
+  render()
+  if (state.bundleSourceTargetLine) scrollSourceLineIntoView(route.line, { block: 'center' })
+})
+
 // Source links, file history, close controls, and gutter dots. Shared by
 // #report (Code and finding panels) and the separate source overlay slot.
 // Return true when this delegate handled the click.
 function handleBundleSourceClick(e) {
+  // Managed Code's line numbers mark a line, and with Shift a range from
+  // the line clicked first. Clicking the one marked line clears it. The
+  // render puts the marked lines in the URL.
+  const lineLink = e.target.closest('[data-bundle-source-line]')
+  if (lineLink) {
+    const line = Number(lineLink.dataset.bundleSourceLine)
+    const bundle = state.bundleDetails?.integrity ?? null
+    const path = state.bundleSourceFile
+    const target = state.bundleSourceTargetLine
+    const marked = target?.bundle === bundle && target.path === path ? target : null
+    if (e.shiftKey && marked) {
+      const anchor = marked.anchor ?? marked.line
+      state.bundleSourceTargetLine = { bundle, path, line: Math.min(anchor, line), end: Math.max(anchor, line), anchor }
+    } else if (marked?.line === line && !(marked.end > line)) state.bundleSourceTargetLine = null
+    else state.bundleSourceTargetLine = { bundle, path, line }
+    renderPreservingSourceScroll()
+    return true
+  }
   const wrapToggle = e.target.closest('[data-bundle-source-wrap]')
   if (wrapToggle) {
     // Rewrapping moves every line below the first that changes, so put

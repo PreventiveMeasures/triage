@@ -50,7 +50,8 @@ test('pasting a new public fragment cannot restore the previous credential befor
 
 test('all managed pages and team/report Files routes round-trip', () => {
   const routes = [{ view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'overview' }, { view: 'home' },
-    { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'code', file: 7 }, { view: 'bundles', teamSlug: null, bundleSlug: 'bundle-id', bundleTab: 'code', file: 1 }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
+    { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'code', file: 7 }, { view: 'bundles', teamSlug: null, bundleSlug: 'bundle-id', bundleTab: 'code', file: 1 },
+    { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'code', file: 7, line: 42 }, { view: 'bundles', teamSlug: null, bundleSlug: 'bundle-id', bundleTab: 'code', file: 1, line: 42, endLine: 69 }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
     { view: 'manage-history', actor: 'user name & repo' }, { view: 'manage-scans', bundleId: 'bundle-id' }, { view: 'manage-scans', bundleId: 'bundle-id', scanMode: 'dependencies' }, { view: 'manage-scans', scanMode: 'link' }, { view: 'manage-bundles', createRepoId: 106 }]
   for (const view of ['findings', 'files']) for (const reportSlug of [null, 'report-id']) routes.push({ view, teamSlug: 'team-id', reportSlug })
   for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
@@ -61,6 +62,16 @@ test('all managed pages and team/report Files routes round-trip', () => {
   assert.equal(managedRoutePath({ view: 'files', teamSlug: '../api' }), null)
   assert.equal(managedRoutePath({ view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'graph', file: 3 }), '/team/t/bundle/b/graph', 'only Code names a file')
   assert.equal(managedRoutePath({ view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code', file: 0 }), '/team/t/bundle/b/code')
+  // Lines go in the fragment, only with a file: reversed ranges read in order,
+  // and a fragment that is not a line link marks none.
+  const code = path => parseManagedRoute(new URL(path, 'https://triage.test'))
+  assert.deepEqual(code('/team/t/bundle/b/code/3#L69-L42'), { view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code', file: 3, line: 42, endLine: 69 })
+  assert.deepEqual(code('/team/t/bundle/b/code/3#L7-L7'), { view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code', file: 3, line: 7 })
+  for (const hash of ['#L0', '#L4-', '#L-4', '#l4', '#L4-L0', '#L9007199254740992', '#finding=x', '#L4&L5']) {
+    assert.deepEqual(code(`/team/t/bundle/b/code/3${hash}`), { view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code', file: 3 }, hash)
+  }
+  assert.deepEqual(code('/team/t/bundle/b/code#L4'), { view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code' }, 'lines need a file')
+  assert.equal(managedRoutePath({ view: 'bundles', teamSlug: 't', bundleSlug: 'b', bundleTab: 'code', line: 4 }), '/team/t/bundle/b/code')
 })
 
 test('managed deduplication details round-trip through history', () => {
@@ -454,4 +465,36 @@ test('a Code link commits the file the tab shows once it opens, without touching
   await nav.navigate({ ...code, file: 99 })
   assert.equal(browser.location.pathname, '/manage/bundle/bundle/code/2')
   assert.equal(entries.length, 2)
+})
+
+test('a public share keeps the capability as the only fragment, dropping line links', async () => {
+  const hash = `#public=link0001.${'A'.repeat(43)}`
+  const { browser } = browserAt(`/team/team/bundle/bundle/code/2${hash}`)
+  const nav = createManagedHistory(browser)
+  await nav.start(() => true)
+  nav.replaceCodeRoute({ view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle', bundleTab: 'code', file: 2, line: 5 })
+  assert.equal(browser.location.pathname, '/team/team/bundle/bundle/code/2')
+  assert.equal(browser.location.hash, hash)
+})
+
+test('marked lines replace the entry, and a pasted line link to the open file keeps the page', async () => {
+  const report = { view: 'findings', teamSlug: 'team', reportSlug: 'report' }
+  const code = { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle', bundleTab: 'code', file: 3 }
+  const { browser, entries } = browserAt(managedRoutePath(report))
+  const nav = createManagedHistory(browser)
+  let restores = 0
+  await nav.start(() => { restores++; return true })
+  await nav.navigate(code)
+  for (const lines of [{ line: 4 }, { line: 4, endLine: 9 }, {}]) {
+    nav.replaceCodeRoute({ ...code, ...lines })
+    assert.equal(browser.location.pathname + browser.location.hash, managedRoutePath({ ...code, ...lines }))
+  }
+  assert.equal(entries.length, 2, 'marking lines adds no Back entries')
+  await browser.fragment('#L12-L20')
+  assert.equal(restores, 2, 'the bundle is not reopened')
+  assert.equal(browser.location.pathname + browser.location.hash, `${managedRoutePath(code)}#L12-L20`)
+  assert.ok(browser.history.state, 'the entry is adopted')
+  await browser.fragment('#something-else')
+  assert.equal(restores, 2, 'any fragment over the open file keeps the page')
+  assert.equal(browser.location.pathname + browser.location.hash, managedRoutePath(code), 'and marks no lines')
 })
