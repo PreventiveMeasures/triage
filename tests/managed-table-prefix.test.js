@@ -14,7 +14,7 @@ const renamed = ['selected_repo', 'team_repo', 'team_user', 'finding_triage',
   'finding_triage_event', 'finding_comment', 'finding_comment_event']
 const tables = ['managed_user', 'managed_session', 'managed_bundle', 'managed_report',
   'managed_storage_encryption', 'managed_link_report', 'managed_repository_alias', 'managed_change_revision', 'managed_maintenance_lease', 'managed_bundle_build_lease', 'managed_upstream_cache',
-  'managed_team', 'managed_activity', 'managed_github_metadata', 'managed_github_repository_visibility', 'managed_github_commit', 'managed_github_tag',
+  'managed_team', 'managed_activity', 'managed_github_metadata', 'managed_github_repository_visibility', 'managed_github_commit', 'managed_github_tag', 'managed_github_tag_listing',
   'managed_workspace_share', 'managed_finding_issue', ...renamed.map(name => `managed_${name}`)]
 
 // These tests run sequentially; only the engine is shared, never the schema.

@@ -889,7 +889,7 @@ test('Postgres adds the commit and tag caches to existing databases and retains 
   await db.selectRepo({ repoId: 7, fullName: 'Org/Repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, Date.now())
   await db.close()
   const connection = await connect()
-  try { await connection.query('DROP TABLE managed_github_tag, managed_github_commit; DELETE FROM managed_schema_version WHERE version = 25;') } finally { await connection.release() }
+  try { await connection.query('DROP TABLE managed_github_tag_listing, managed_github_tag, managed_github_commit; DELETE FROM managed_schema_version WHERE version = 25;') } finally { await connection.release() }
   const upgraded = await openPostgresManagedDb(connect)
   const { checkGithubCommitStore } = await import('./_managed-github-metadata.js')
   const commit = await checkGithubCommitStore(upgraded)

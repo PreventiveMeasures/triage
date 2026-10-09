@@ -1207,8 +1207,17 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   try {
     const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id))
     const reader = await browser.reader(access.repo)
+    const observedAt = Date.now()
     const revisions = refs ? await readRepositoryRefs(deps.db, reader, access.repo, withDefault, access.virtualEntries) : null
     const contents = refs ? null : await readRepositoryContents(reader, ref, path, access.virtualEntries)
+    const { tagCommits, tagsComplete, ...listed } = revisions ?? { tagCommits: [], tagsComplete: false }
+    // Create a bundle refreshes the tags bundle catalogs show, and keeps a tag
+    // its revision input resolves even when the listed page leaves it out.
+    // Like other GitHub caches, written before the access fence below.
+    const tags = refs ? tagCommits : ref.length > 5 && ref.startsWith('tags/') && contents ? [{ name: ref.slice(5), sha: contents.commit }] : []
+    if (refs || tags.length > 0) {
+      await deps.db.refreshGithubTags(access.repo.repoId, tags, refs && tagsComplete, observedAt).catch(err => { console.warn('managed: tag cache refresh failed:', err) })
+    }
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
@@ -1216,13 +1225,6 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     // does not change repository identity, credentials, or managed grants.
     if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
       sendJson(res, 409, { error: 'repository-changed' }); return
-    }
-    const { tagCommits, tagsComplete, ...listed } = revisions ?? { tagCommits: [], tagsComplete: false }
-    // Create a bundle refreshes the tags bundle catalogs show, and keeps a tag
-    // its revision input resolves even when the listed page leaves it out.
-    const tags = refs ? tagCommits : ref.length > 5 && ref.startsWith('tags/') && contents ? [{ name: ref.slice(5), sha: contents.commit }] : []
-    if (refs || tags.length > 0) {
-      await deps.db.refreshGithubTags(current.repo.repoId, tags, refs && tagsComplete).catch(err => { console.warn('managed: tag cache refresh failed:', err) })
     }
     sendJson(res, 200, refs ? { ...listed, ...(withDefault ? {
       defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),

@@ -797,8 +797,13 @@ tags. Each `refs` read refreshes the repository's tags from the listing its
 suggestions use: a listing shorter than the 100-tag page lists every tag, so
 tags it leaves out are deleted, while a full page only updates the tags it
 names. A tag the revision input resolves through `contents` is stored even when
-it is beyond that page. Tags are removed with their repository. SQLite and
-PostgreSQL create both tables for existing installations.
+it is beyond that page. Each write happens before the request's access recheck,
+like other GitHub caches. `managed_github_tag_listing` records when the last
+applied listing for a repository was observed (its request's start), and a
+listing observed before it is skipped, so an overlapping browse that finishes
+late cannot restore tags a newer one deleted or moved. Tags are removed with
+their repository. SQLite and PostgreSQL create these tables for existing
+installations.
 
 # Bundle metadata and contents
 

@@ -39,8 +39,8 @@ test('catalogs read the cached details and tags of each bundle summary commit in
   const db = await database(t)
   const other = 'b'.repeat(40)
   await db.setGithubCommits([{ key: `1:${sha}`, ...details, fetchedAt: 1 }])
-  await db.refreshGithubTags(1, [{ name: 'v1.0.0', sha }], true)
-  await db.refreshGithubTags(2, [{ name: 'v2.0.0', sha: other }, { name: 'elsewhere', sha }], true)
+  await db.refreshGithubTags(1, [{ name: 'v1.0.0', sha }], true, 1)
+  await db.refreshGithubTags(2, [{ name: 'v2.0.0', sha: other }, { name: 'elsewhere', sha }], true, 1)
   const summaries = new Map([
     ['hash-a', { summary: { files: 1, codeFiles: 1, lines: 1, commit: sha } }],
     ['hash-b', { summary: { files: 1, codeFiles: 1, lines: 1, commit: other } }],

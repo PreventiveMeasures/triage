@@ -144,7 +144,7 @@ test('catalogs send cached commit details and tags, and read missing details wit
     modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/main.js': source } }]]) }).serialize()))
   const bundle = await h.seed({ repoId: 1, bytes })
   await h.cache.prebuild(bundle)
-  await h.db.refreshGithubTags(1, [{ name: 'v1.0.0', sha }, { name: 'v0.9.0', sha: 'd'.repeat(40) }], true)
+  await h.db.refreshGithubTags(1, [{ name: 'v1.0.0', sha }, { name: 'v0.9.0', sha: 'd'.repeat(40) }], true, Date.now())
   const requests = []
   t.mock.method(globalThis, 'fetch', url => {
     const { pathname, search } = new URL(url)
@@ -238,7 +238,7 @@ test('catalog responses recheck membership and repository scope after commit cac
     modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/main.js': source } }]]) }).serialize()))
   const record = await h.seed({ repoId: 1, bytes })
   await h.cache.prebuild(record)
-  await h.db.refreshGithubTags(1, [{ name: 'v1.0.0', sha }], true)
+  await h.db.refreshGithubTags(1, [{ name: 'v1.0.0', sha }], true, Date.now())
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({}, { status: 404 })))
   const tags = h.db.listGithubCommitTags
   let changeAccess = () => h.db.removeTeamMember(h.team, h.users.viewer.userId)

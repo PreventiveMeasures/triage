@@ -59,7 +59,7 @@ test('SQLite adds the commit and tag caches to existing databases, keeps commits
   const path = join(dir, 'managed.db')
   await openSqliteManagedDb(path).close()
   const legacy = new DatabaseSync(path)
-  legacy.exec('DROP TABLE managed_github_tag; DROP TABLE managed_github_commit')
+  legacy.exec('DROP TABLE managed_github_tag_listing; DROP TABLE managed_github_tag; DROP TABLE managed_github_commit')
   legacy.close()
   const db = openSqliteManagedDb(path)
   await db.selectRepo({ repoId: 7, fullName: 'Org/Repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, Date.now())
