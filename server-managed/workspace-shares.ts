@@ -36,6 +36,7 @@ export type WorkspaceShareFeedState = { grant: string; catalog: number; annotati
 export interface WorkspaceShareStore {
   createWorkspaceShare(sessionId: string, now: number, teamId: string, tokenHash: string, permissions?: TeamUserPermissions): Promise<boolean>
   listWorkspaceShares(sessionId: string, now: number, teamId: string): Promise<WorkspaceShareInfo[] | null>
+  listWorkspacePrivateRepositories(sessionId: string, now: number, teamId: string): Promise<string[] | null>
   listManagedWorkspaceShares(sessionId: string, now: number): Promise<ManagedWorkspaceShare[] | null>
   updateWorkspaceShare(sessionId: string, now: number, teamId: string, id: string, permissions: TeamUserPermissions): Promise<boolean>
   revokeWorkspaceShares(sessionId: string, now: number, teamId: string, id?: string): Promise<boolean>
@@ -59,6 +60,11 @@ function shareQueries(db: ManagedSql) {
   // unchanged when their permissions are edited; plaintext tokens aren't kept.
   const list = db.prepare(`SELECT s.token_hash AS id, s.created_at AS createdAt, u.login AS createdBy, s.dependencies, s.security
     FROM managed_workspace_share s JOIN managed_user u ON u.id = s.created_by WHERE s.team_id = ? ORDER BY s.created_at DESC, s.token_hash`)
+  // The private repositories in the team's scope, whose content a link opens
+  // to anyone: the share dialog warns about them.
+  const privateRepositories = db.prepare(`SELECT DISTINCT sr.full_name AS fullName
+    FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
+    WHERE tr.team_id = ? AND sr.is_private = 1 ORDER BY sr.full_name`)
   const session = db.prepare(`SELECT u.id, u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
     WHERE s.id = ? AND s.expires_at > ? AND u.role IN ('manage', 'admin')`)
   const all = db.prepare(`SELECT s.token_hash AS id, s.created_at AS createdAt, u.login AS createdBy, s.dependencies, s.security,
@@ -94,7 +100,7 @@ function shareQueries(db: ManagedSql) {
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
     WHERE tr.team_id = ? AND b.visible = 1 AND (tr.path = '' OR b.repo_directory = tr.path
       OR substr(b.repo_directory, 1, length(tr.path) + 1) = tr.path || '/') ORDER BY b.id`)
-  return { manager, insert, remove, update, list, session, all, share, feed, repositories, reports, bundles }
+  return { manager, insert, remove, update, list, privateRepositories, session, all, share, feed, repositories, reports, bundles }
 }
 
 function shareInfo<T extends { dependencies: number; security: number }>(row: T) {
@@ -115,6 +121,10 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       if (!await q.manager.get(teamId, sessionId, now)) return null
       const rows = await q.list.all(teamId) as { id: string; createdAt: number; createdBy: string; dependencies: number; security: number }[]
       return rows.map(shareInfo)
+    },
+    async listWorkspacePrivateRepositories(sessionId, now, teamId) {
+      if (!await q.manager.get(teamId, sessionId, now)) return null
+      return (await q.privateRepositories.all(teamId) as { fullName: string }[]).map(row => row.fullName)
     },
     async listManagedWorkspaceShares(sessionId, now) {
       const viewer = await q.session.get(sessionId, now) as { id: string; role: string } | undefined

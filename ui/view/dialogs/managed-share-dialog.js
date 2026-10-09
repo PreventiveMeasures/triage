@@ -7,9 +7,9 @@ import shareStyles from './managed-share-dialog.css'
 class ManagedShareDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareStyles)]
   static properties = { team: { attribute: false }, session: { attribute: false }, initialId: { attribute: false }, selectedId: { state: true },
-    links: { state: true }, dependencies: { state: true }, security: { state: true }, busy: { state: true }, message: { state: true } }
+    links: { state: true }, privateRepositories: { state: true }, dependencies: { state: true }, security: { state: true }, busy: { state: true }, message: { state: true } }
   constructor() {
-    super(); this.team = null; this.initialId = ''; this.selectedId = ''; this.links = []
+    super(); this.team = null; this.initialId = ''; this.selectedId = ''; this.links = []; this.privateRepositories = []
     this.dependencies = false; this.security = false; this.busy = true; this.message = ''; this.urls = new Map()
   }
   beforeOpen() { void this.load(this.initialId) }
@@ -23,9 +23,10 @@ class ManagedShareDialog extends AppDialog {
   async load(id = this.selectedId) {
     this.busy = true
     try {
-      const links = await listWorkspaceShares(this.team.id)
+      const { shares, privateRepositories } = await listWorkspaceShares(this.team.id)
       if (this._settled) return
-      this.links = links
+      this.links = shares
+      this.privateRepositories = privateRepositories
       this.select(id)
       return true
     } catch (error) { this.message = error.message; return false }
@@ -63,6 +64,7 @@ class ManagedShareDialog extends AppDialog {
     return html`<dialog @close=${this._onClose}>
       <header><h3>Share ${this.team?.name}</h3></header>
       <p class="nwd-intro ui-hint">Anyone with this link can read this workspace’s published reports, comments, triage, and available source files without signing in.<br>New published reports will also be included.</p>
+      ${privateWarning(this.privateRepositories)}
       <label class="share-field">Public links
         <select class="nwd-input" ?disabled=${this.busy} @change=${event => this.select(event.target.value)}>
           <option value="" ?selected=${!this.selectedId}>Create a new link</option>
@@ -88,5 +90,14 @@ class ManagedShareDialog extends AppDialog {
     </dialog>`
   }
 }
+// The private repositories a link would open to anyone, named up to a few.
+const PRIVATE_NAMED = 5
+function privateWarning(repositories) {
+  if (repositories.length === 0) return nothing
+  const named = repositories.slice(0, PRIVATE_NAMED).join(', ')
+  const more = repositories.length - PRIVATE_NAMED
+  return html`<p class="share-private">${repositories.length === 1 ? 'This workspace includes a private repository' : `This workspace includes ${repositories.length} private repositories`}: ${named}${more > 0 ? ` and ${more} more` : ''}. Anyone with a public link can read their published reports and source files.</p>`
+}
+
 customElements.define('managed-share-dialog', ManagedShareDialog)
 export function openManagedShareDialog(team, initialId = '', session = null) { return openAppDialog('managed-share-dialog', { team, initialId, session }) }

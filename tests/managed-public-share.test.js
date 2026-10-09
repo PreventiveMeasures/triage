@@ -90,6 +90,23 @@ test('directory team links include bundles at or below their scope and immediate
   }
 })
 
+test('link listings name the private repositories in the team\'s scope for its managers', async t => {
+  const h = await fixture(t)
+  const listing = (team, role = 'manage') => h.request(`/api/teams/${team}/share`, { role })
+  assert.deepEqual((await listing('team')).body, { shares: [], privateRepositories: ['org/repo1'] }, 'a directory scope names its whole repository')
+  assert.deepEqual((await listing('other', 'admin')).body.privateRepositories, ['org/repo2'])
+  await h.db.setTeamRepo('team', 2, '')
+  assert.deepEqual((await listing('team')).body.privateRepositories, ['org/repo1', 'org/repo2'])
+  await h.db.selectRepo({ repoId: 1, fullName: 'org/repo1', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: h.sessions.admin.userId }, Date.now())
+  assert.deepEqual((await listing('team')).body.privateRepositories, ['org/repo2'])
+  assert.deepEqual((await listing('whole')).body.privateRepositories, [])
+  for (const role of ['triage', 'view', 'none', 'outsider']) {
+    const response = await listing('other', role)
+    assert.notEqual(response.status, 200, role)
+    assert.equal(response.body.privateRepositories, undefined, role)
+  }
+})
+
 test('public sharing is opt-in, requires team management and CSRF; the token is not a login session', async t => {
   const h = await fixture(t)
   h.config.allowShare = false

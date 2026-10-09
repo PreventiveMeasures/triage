@@ -2308,8 +2308,10 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
   if (!requireManageRole(res, s.user)) return
   const { db } = deps
   if (method === 'GET') {
-    const shares = await db.listWorkspaceShares(s.session.id, Date.now(), teamId)
-    sendJson(res, shares ? 200 : 404, shares ? { shares } : { error: 'no-team' }); return
+    const now = Date.now()
+    const shares = await db.listWorkspaceShares(s.session.id, now, teamId)
+    if (!shares) { sendJson(res, 404, { error: 'no-team' }); return }
+    sendJson(res, 200, { shares, privateRepositories: await db.listWorkspacePrivateRepositories(s.session.id, now, teamId) ?? [] }); return
   }
   let body
   if (method === 'POST' || method === 'PATCH') {

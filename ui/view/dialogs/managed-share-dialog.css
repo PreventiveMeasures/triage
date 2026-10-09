@@ -1,4 +1,11 @@
 .share-field { display: grid; gap: .35rem; margin-top: .8rem; font-size: .82rem; }
+/* Private repositories in the workspace, the way the export dialog warns. */
+.share-private {
+  margin-top: .8rem; padding: .55rem .65rem;
+  border: 1px solid var(--critical, #f87171); border-radius: var(--ui-radius, 6px);
+  background: rgb(from var(--critical, #f87171) r g b / .08);
+  color: var(--critical, #f87171); font-size: .78rem; line-height: 1.4;
+}
 fieldset { display: grid; gap: .55rem; border: 0; margin-top: 1rem; font-size: .82rem; }
 legend { margin-bottom: .55rem; font-weight: 600; }
 fieldset label { display: flex; align-items: center; gap: .5rem; }
