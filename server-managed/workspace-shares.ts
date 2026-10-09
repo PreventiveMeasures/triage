@@ -21,6 +21,15 @@ export interface WorkspaceShareSnapshot extends TeamReportAccessSnapshot {
   repositories: { repoId: number; github: string; path: string }[]
   bundles: ManagedBundle[]
 }
+// A repository in a team's scope, whose content the team's links open to
+// anyone, with its privacy as recorded.
+export interface WorkspaceRepository {
+  repoId: number
+  fullName: string
+  installationId: number | null
+  private: boolean
+  visibility: 'public' | 'private' | 'internal' | null
+}
 export interface WorkspaceShareInfo {
   id: string
   createdAt: number
@@ -36,8 +45,7 @@ export type WorkspaceShareFeedState = { grant: string; catalog: number; annotati
 export interface WorkspaceShareStore {
   createWorkspaceShare(sessionId: string, now: number, teamId: string, tokenHash: string, permissions?: TeamUserPermissions): Promise<boolean>
   listWorkspaceShares(sessionId: string, now: number, teamId: string): Promise<WorkspaceShareInfo[] | null>
-  listWorkspacePrivateRepositories(sessionId: string, now: number, teamId: string): Promise<{ fullName: string; visibility: 'private' | 'internal' | null }[] | null>
-  listWorkspaceUnrecordedRepositories(sessionId: string, now: number, teamId: string): Promise<{ repoId: number; fullName: string; installationId: number }[] | null>
+  listWorkspaceRepositories(sessionId: string, now: number, teamId: string): Promise<WorkspaceRepository[] | null>
   listManagedWorkspaceShares(sessionId: string, now: number): Promise<ManagedWorkspaceShare[] | null>
   updateWorkspaceShare(sessionId: string, now: number, teamId: string, id: string, permissions: TeamUserPermissions): Promise<boolean>
   revokeWorkspaceShares(sessionId: string, now: number, teamId: string, id?: string): Promise<boolean>
@@ -61,18 +69,10 @@ function shareQueries(db: ManagedSql) {
   // unchanged when their permissions are edited; plaintext tokens aren't kept.
   const list = db.prepare(`SELECT s.token_hash AS id, s.created_at AS createdAt, u.login AS createdBy, s.dependencies, s.security
     FROM managed_workspace_share s JOIN managed_user u ON u.id = s.created_by WHERE s.team_id = ? ORDER BY s.created_at DESC, s.token_hash`)
-  // The repositories in the team's scope whose content a link opens to anyone
-  // although they aren't public, for the share dialog to warn about: private
-  // ones, internal ones among them, and ones the App reaches but whose
-  // visibility went unrecorded (null), as public ones need no App.
-  const privateRepositories = db.prepare(`SELECT DISTINCT sr.full_name AS fullName,
-      CASE WHEN sr.visibility = 'internal' THEN 'internal' WHEN sr.is_private = 1 THEN 'private' END AS visibility
+  const teamRepositories = db.prepare(`SELECT DISTINCT sr.repo_id AS repoId, sr.full_name AS fullName,
+      sr.installation_id AS installationId, sr.is_private AS priv, sr.visibility
     FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
-    WHERE tr.team_id = ? AND (sr.is_private = 1 OR (sr.visibility IS NULL AND sr.installation_id IS NOT NULL))
-    ORDER BY sr.full_name`)
-  const unrecorded = db.prepare(`SELECT DISTINCT sr.repo_id AS repoId, sr.full_name AS fullName, sr.installation_id AS installationId
-    FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
-    WHERE tr.team_id = ? AND sr.visibility IS NULL AND sr.is_private = 0 AND sr.installation_id IS NOT NULL ORDER BY sr.repo_id`)
+    WHERE tr.team_id = ? ORDER BY sr.full_name, sr.repo_id`)
   const session = db.prepare(`SELECT u.id, u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
     WHERE s.id = ? AND s.expires_at > ? AND u.role IN ('manage', 'admin')`)
   const all = db.prepare(`SELECT s.token_hash AS id, s.created_at AS createdAt, u.login AS createdBy, s.dependencies, s.security,
@@ -108,7 +108,7 @@ function shareQueries(db: ManagedSql) {
     JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
     WHERE tr.team_id = ? AND b.visible = 1 AND (tr.path = '' OR b.repo_directory = tr.path
       OR substr(b.repo_directory, 1, length(tr.path) + 1) = tr.path || '/') ORDER BY b.id`)
-  return { manager, insert, remove, update, list, privateRepositories, unrecorded, session, all, share, feed, repositories, reports, bundles }
+  return { manager, insert, remove, update, list, teamRepositories, session, all, share, feed, repositories, reports, bundles }
 }
 
 function shareInfo<T extends { dependencies: number; security: number }>(row: T) {
@@ -130,13 +130,10 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       const rows = await q.list.all(teamId) as { id: string; createdAt: number; createdBy: string; dependencies: number; security: number }[]
       return rows.map(shareInfo)
     },
-    async listWorkspacePrivateRepositories(sessionId, now, teamId) {
+    async listWorkspaceRepositories(sessionId, now, teamId) {
       if (!await q.manager.get(teamId, sessionId, now)) return null
-      return await q.privateRepositories.all(teamId) as { fullName: string; visibility: 'private' | 'internal' | null }[]
-    },
-    async listWorkspaceUnrecordedRepositories(sessionId, now, teamId) {
-      if (!await q.manager.get(teamId, sessionId, now)) return null
-      return await q.unrecorded.all(teamId) as { repoId: number; fullName: string; installationId: number }[]
+      const rows = await q.teamRepositories.all(teamId) as (Omit<WorkspaceRepository, 'private'> & { priv: number })[]
+      return rows.map(({ priv, ...row }) => ({ ...row, private: priv === 1 }))
     },
     async listManagedWorkspaceShares(sessionId, now) {
       const viewer = await q.session.get(sessionId, now) as { id: string; role: string } | undefined

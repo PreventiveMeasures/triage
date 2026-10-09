@@ -83,7 +83,7 @@ import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
-import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, installedRepositoryVisibility, mapGithubRequests, publicRepositoryName, repositoryInstallation } from './github-app.ts'
+import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, mapGithubRequests, publicRepositoryName, repositoryInstallation, selectedRepositoryVisibility } from './github-app.ts'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
@@ -2298,16 +2298,26 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { ok: true })
 }
 
-// Ask GitHub once for the visibility of the team's repositories selected before
-// it was recorded, so an internal one is warned about and a public one isn't.
-// One GitHub can't answer for stays unrecorded, warned about as unchecked.
-async function recordRepositoryVisibility(deps: ManagedHttpDeps, sessionId: string, now: number, teamId: string): Promise<void> {
-  await mapGithubRequests(await deps.db.listWorkspaceUnrecordedRepositories(sessionId, now, teamId) ?? [], async repo => {
-    try {
-      const visibility = await installedRepositoryVisibility(deps.config, repo)
-      if (visibility) await deps.db.recordRepoVisibility(repo, visibility)
-    } catch (err) { if (!(err instanceof GithubApiError)) throw err }
+// The team's repositories whose content its links open to anyone although they
+// aren't public, as GitHub has them now: a visibility recorded at selection can
+// change since. GitHub's answer is recorded. A repository it doesn't answer for
+// keeps its recorded privacy, or recorded public, may not be public any more
+// (visibility null). Internal ones are private, named as internal.
+async function workspacePrivateRepositories(deps: ManagedHttpDeps, sessionId: string, now: number, teamId: string): Promise<{ fullName: string; visibility: 'private' | 'internal' | null }[]> {
+  const repositories = await deps.db.listWorkspaceRepositories(sessionId, now, teamId) ?? []
+  const current = await mapGithubRequests(repositories, async repo => {
+    try { return await selectedRepositoryVisibility(deps.config, repo) }
+    catch (err) { if (err instanceof GithubApiError) return null; throw err }
   })
+  const warned: { fullName: string; visibility: 'private' | 'internal' | null }[] = []
+  for (const [index, repo] of repositories.entries()) {
+    const visibility = current[index]
+    if (visibility) await deps.db.recordRepoVisibility(repo, visibility)
+    if (visibility ? visibility !== 'public' : repo.private) {
+      warned.push({ fullName: repo.fullName, visibility: (visibility ?? repo.visibility) === 'internal' ? 'internal' : 'private' })
+    } else if (!visibility) warned.push({ fullName: repo.fullName, visibility: null })
+  }
+  return warned
 }
 
 async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, teamId: string, id?: string) {
@@ -2323,8 +2333,7 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
     const now = Date.now()
     const shares = await db.listWorkspaceShares(s.session.id, now, teamId)
     if (!shares) { sendJson(res, 404, { error: 'no-team' }); return }
-    await recordRepositoryVisibility(deps, s.session.id, now, teamId)
-    sendJson(res, 200, { shares, privateRepositories: await db.listWorkspacePrivateRepositories(s.session.id, now, teamId) ?? [] }); return
+    sendJson(res, 200, { shares, privateRepositories: await workspacePrivateRepositories(deps, s.session.id, now, teamId) }); return
   }
   let body
   if (method === 'POST' || method === 'PATCH') {

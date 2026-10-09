@@ -351,12 +351,14 @@ export async function repoAccessToken(config: ManagedConfig, installationId: num
   return await installationAccessToken(githubAppId, githubAppPrivateKey, installationId, fetchImpl)
 }
 
-// GitHub's visibility of a repository reached through an App installation, read
-// with that installation's token: null where the App has no token, GitHub names
-// none, or the id no longer names that repository.
-export async function installedRepositoryVisibility(config: ManagedConfig, repo: { repoId: number; fullName: string; installationId: number }, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo['visibility']> {
-  const token = await repoAccessToken(config, repo.installationId, fetchImpl)
-  if (!token) return null
+// GitHub's visibility of a selected repository now: read with its App
+// installation's token, or without credentials where it was selected public
+// without one. Null where the App has no token, GitHub names none, or the id
+// no longer names that repository; GitHubApiError where GitHub won't answer,
+// as for a public read of a repository no longer public.
+export async function selectedRepositoryVisibility(config: ManagedConfig, repo: { repoId: number; fullName: string; installationId: number | null }, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo['visibility']> {
+  const token = repo.installationId == null ? null : await repoAccessToken(config, repo.installationId, fetchImpl)
+  if (repo.installationId != null && !token) return null
   const path = repo.fullName.split('/').map(encodeURIComponent).join('/')
   const body = await githubJson(`${GITHUB_API}/repos/${path}`, token, fetchImpl) as { id?: unknown; private?: unknown; visibility?: unknown } | null
   if (body?.id !== repo.repoId) return null
