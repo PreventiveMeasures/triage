@@ -73,7 +73,7 @@ test('a managed catalog adds the cached tags of the recorded commit after it, li
 
 test('commit tooltips carry only what they show of the catalog details, for their own commit', () => {
   const sha = 'a'.repeat(40)
-  const details = { message: '\n  Fix the parser  \n\n'.concat('Body '.repeat(1000)), authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2 }
+  const details = { subject: 'Fix the parser', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2 }
   const info = { sha, github: 'Org/Repo', tags: ['v1', ''], details }
   assert.deepEqual(JSON.parse(bundleCommitTooltip(info, sha, 'org/repo')),
     { tags: ['v1'], title: 'Fix the parser', authorName: 'Alice', authorLogin: 'alice', date: 2 })
@@ -83,9 +83,10 @@ test('commit tooltips carry only what they show of the catalog details, for thei
     assert.deepEqual(JSON.parse(bundleCommitTooltip(info, sha, repository)).tags, [],
       'tags show only beside the repository they were cached for; the commit details are the same in any')
   }
-  const long = JSON.parse(bundleCommitTooltip({ ...info, details: { ...details, message: `${'😀'.repeat(300)}\nBody` } }, sha)).title
-  assert.equal(long, `${'😀'.repeat(199)}…`, 'a long first line is cut short, by whole characters')
-  assert.equal(JSON.parse(bundleCommitTooltip({ ...info, details: { ...details, message: 'x'.repeat(200) } }, sha)).title, 'x'.repeat(200))
+  const long = JSON.parse(bundleCommitTooltip({ ...info, details: { ...details, subject: '😀'.repeat(300) } }, sha)).title
+  assert.equal(long, `${'😀'.repeat(199)}…`, 'a long subject is cut short, by whole characters')
+  assert.equal(JSON.parse(bundleCommitTooltip({ ...info, details: { ...details, subject: 'x'.repeat(200) } }, sha)).title, 'x'.repeat(200))
+  assert.equal(bundleCommitTooltip({ ...info, tags: [], details: { ...details, subject: undefined, message: 'Old' } }, sha), undefined, 'details carry a subject')
   assert.equal(bundleCommitTooltip({ ...info, details: null }, sha, 'upstream/repo'), undefined)
   assert.equal(bundleCommitTooltip({ ...info, github: undefined, details: null }, sha, 'org/repo'), undefined)
   for (const [commitInfo, hash] of [[info, 'b'.repeat(40)], [{ sha, tags: [], details: null }, sha], [null, sha], [{ ...info, details: null }, undefined]]) {

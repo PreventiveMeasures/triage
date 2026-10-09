@@ -62,6 +62,18 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
 }
+/* Text led by a built-in icon (`data-tooltip-icon`), as a commit link's hash. */
+#styled-tooltip .tooltip-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .3rem;
+}
+#styled-tooltip .tooltip-text svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  align-self: center;
+}
 /* Half the row gap again between a repository and its commit. */
 #styled-tooltip .tooltip-repo > span + .tooltip-commit { margin-left: .2rem; }
 /* The tags that point to the commit go under it and wrap in the tooltip's

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { BUNDLE_TABS } from '../common/bundle-tabs.js'
 import { managedRouteForIds, managedRoutePath, parseManagedRoute, resolveManagedRoute } from '../common/managed/routes.js'
-import { managedBundleEntry, managedBundleRoute, managedCodeLocation, managedCompareLocation, managedTabLocation, managedTeamBundleEntries } from '../ui/view/managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedCodeLocation, managedCompareLocation, managedTabLocation, managedTeamBundleEntries, shownManagedBundleId } from '../ui/view/managed-bundle-navigation.js'
 import { bundleComparisonCandidates } from '../ui/view/bundle-comparison-candidates.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
@@ -204,4 +204,14 @@ test('a Compare link reloads to its bundle and mode, and Compare\'s own changes 
   assert.equal(browser.location.pathname, '/team/first/bundle/a/compare/b')
   nav.replaceRoute(managedBundleRoute(teams, managedBundleEntry(a), 'uuid-first', 'compare'))
   assert.equal(browser.location.pathname, '/team/first/bundle/a/compare')
+})
+
+test('the shown managed bundle comes from its details, or its catalogue entry while they load', () => {
+  const entry = { managedId: 'managed', integrity: 'sha512-managed' }, local = { integrity: 'sha512-local', name: 'local.map' }
+  const shown = overrides => shownManagedBundleId({ currentView: 'bundles', selectedBundle: entry.integrity, bundles: [local, entry], bundleDetails: null, ...overrides })
+  assert.equal(shown(), 'managed', 'before its metadata arrives')
+  assert.equal(shown({ bundleDetails: { managedId: 'managed', integrity: entry.integrity } }), 'managed')
+  assert.equal(shown({ bundleDetails: { integrity: local.integrity }, selectedBundle: local.integrity }), null, 'a local bundle')
+  assert.equal(shown({ selectedBundle: local.integrity }), null)
+  assert.equal(shown({ currentView: 'findings' }), null)
 })

@@ -3,13 +3,12 @@ import { bundleCommitHash } from '../../common/bundle-commit.js'
 
 const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu
 
-// A tooltip cannot scroll, so a message's first line is cut short there.
+// A tooltip cannot scroll, so a long subject is cut short there.
 const MAX_TOOLTIP_TITLE = 200
 
-function tooltipTitle(message) {
-  const line = message.split('\n').map(text => text.trim()).find(Boolean) ?? ''
-  const chars = [...line]
-  return chars.length > MAX_TOOLTIP_TITLE ? `${chars.slice(0, MAX_TOOLTIP_TITLE - 1).join('').trimEnd()}…` : line
+function tooltipTitle(subject) {
+  const chars = [...subject]
+  return chars.length > MAX_TOOLTIP_TITLE ? `${chars.slice(0, MAX_TOOLTIP_TITLE - 1).join('').trimEnd()}…` : subject
 }
 
 function catalogTags(commitInfo, hash) {
@@ -18,15 +17,15 @@ function catalogTags(commitInfo, hash) {
 
 // The `data-tooltip-commit-info` value (see tooltip.js) for `hash`, from the
 // `commitInfo` a managed catalog sends with a bundle, when it is for that
-// commit: the message's first line, author and date, and its tags when the
+// commit: its subject, author and date, and its tags when the
 // tooltip names `repository`, the one they were cached for. A commit is the
 // same in every repository that has it (a fork's network); its tags are not.
 export function bundleCommitTooltip(commitInfo, hash, repository = null) {
   const cachedFor = typeof commitInfo?.github === 'string' && typeof repository === 'string' && repository.toLowerCase() === commitInfo.github.toLowerCase()
   const tags = cachedFor ? catalogTags(commitInfo, hash) : []
-  const details = hash && commitInfo?.sha === hash && typeof commitInfo.details?.message === 'string' ? commitInfo.details : null
+  const details = hash && commitInfo?.sha === hash && typeof commitInfo.details?.subject === 'string' ? commitInfo.details : null
   if (!details && tags.length === 0) return undefined
-  return JSON.stringify({ tags, ...(details ? { title: tooltipTitle(details.message),
+  return JSON.stringify({ tags, ...(details ? { title: tooltipTitle(details.subject),
     authorName: details.authorName, authorLogin: details.authorLogin, date: details.committedAt ?? details.authoredAt } : {}) })
 }
 

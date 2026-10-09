@@ -89,6 +89,16 @@ test('a detached upload stays open in Manage when its uploader still has access'
   assert.equal(f.browser.location.pathname, '/manage/bundle/bundle/code')
 })
 
+test('a bundle still loading its metadata is rehomed, or found gone, from its catalogue entry', async () => {
+  const f = await fixture({ teamId: 'one', role: 'view', tab: 'overview' })
+  f.state.bundleDetails = null
+  assert.equal(await f.refresh([team('two')]), true)
+  assert.equal(f.state.currentManagedTeam, 'two')
+  assert.equal(f.browser.location.pathname, '/team/two/bundle/bundle')
+  assert.equal(f.state.bundleDetails, null, 'the metadata it waits for still fills it in')
+  assert.equal(await f.refresh([]), false)
+})
+
 test('history records the final rendered tab when Advisories loses access', async () => {
   const f = await fixture({ tab: 'advisories' })
   assert.equal(await f.refresh([], () => { f.state.bundleDetailsTab = 'overview' }), true)

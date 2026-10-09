@@ -381,7 +381,7 @@ export class ManagedCreateBundle extends LitElement {
       const bundle = await this.createBundle({ repoId: this._repoId, commit: this._commit,
         entries: [...this._selected], conditions: this._bundleConditions }, request.signal)
       if (!request.signal.aborted) {
-        // Navigation loads bundle metadata before replacing this form.
+        // Navigation replaces this form with the bundle as it opens it.
         this._opening = true
         this.dispatchEvent(new CustomEvent('bundle-created', { detail: bundle, bubbles: true, composed: true }))
       }
@@ -414,7 +414,7 @@ export class ManagedCreateBundle extends LitElement {
       ${this._reposError ? html`<p class="message" role="alert">${this._reposError} <button type="button" class="text-action" @click=${() => this.loadRepositories()}>Retry</button></p>` : nothing}
       ${this._refsError ? html`<p class="message" role="status">${this._refsError} <button type="button" class="text-action" @click=${() => this.selectRepository(this._repoId)}>Retry</button></p>` : nothing}
       <section class="browser" aria-label="Repository files" aria-busy=${this._loadingRepos || this._loading || this._loadingRefs}>
-        <div class="browser-head"><nav class="breadcrumbs" aria-label="Repository directory"><button type="button" ?disabled=${!this._commit} aria-current=${ifDefined(this._path ? undefined : 'location')} @click=${() => this.loadDirectory('')}>${repo?.fullName ?? 'Repository'}</button>${parts.map((part, i) => html`<span aria-hidden="true">/</span><button type="button" aria-current=${ifDefined(i === parts.length - 1 ? 'location' : undefined)} @click=${() => this.loadDirectory(parts.slice(0, i + 1).join('/'))}>${part}</button>`)}</nav>${treeUrl ? html`<a class="commit-link" href=${treeUrl} target="_blank" rel="noopener noreferrer" data-tooltip=${this._commit} aria-label=${`View directory at commit ${this._commit.slice(0, 7)} on GitHub`}>${commitIcon}<code>${this._commit.slice(0, 7)}</code></a>` : nothing}</div>
+        <div class="browser-head"><nav class="breadcrumbs" aria-label="Repository directory"><button type="button" ?disabled=${!this._commit} aria-current=${ifDefined(this._path ? undefined : 'location')} @click=${() => this.loadDirectory('')}>${repo?.fullName ?? 'Repository'}</button>${parts.map((part, i) => html`<span aria-hidden="true">/</span><button type="button" aria-current=${ifDefined(i === parts.length - 1 ? 'location' : undefined)} @click=${() => this.loadDirectory(parts.slice(0, i + 1).join('/'))}>${part}</button>`)}</nav>${treeUrl ? html`<a class="commit-link" href=${treeUrl} target="_blank" rel="noopener noreferrer" data-tooltip=${this._commit} data-tooltip-icon="commit" aria-label=${`View directory at commit ${this._commit.slice(0, 7)} on GitHub`}>${commitIcon}<code>${this._commit.slice(0, 7)}</code></a>` : nothing}</div>
         <div class="file-browser">
           ${this._loadingRepos || this._loading || this._loadingRefs ? html`<p class="empty" role="status">${this._loadingRepos ? 'Loading repositories…' : this._loadingRefs ? 'Loading revisions…' : 'Loading files…'}</p>`
             : this._error ? html`<p class="empty error" role="alert">${this._error} <button type="button" class="text-action" @click=${() => this.loadDirectory(this._path)}>Retry</button></p>`

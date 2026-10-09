@@ -774,17 +774,21 @@ Bundle catalogs (`GET /api/teams` and `GET /api/admin/bundles`) send each
 bundle's `commitInfo`: what the cache holds for the commit its summary records,
 in the repository the bundle is stored at, or null when it holds nothing. It is
 `{ sha, github, tags, details }`, where `github` is that repository, `tags`
-names the cached tags pointing to the commit and `details` is `{ message,
-authorName, authorLogin, authoredAt, committedAt }` or null. There is no
+names the cached tags pointing to the commit and `details` is `{ subject,
+authorName, authorLogin, authoredAt, committedAt }` or null. The subject is the
+message's first paragraph on one line, as `git log --format=%s` gives it,
+without `Claude-Session:` lines; the server never sends the rest of the
+message, which only its cache keeps. There is no
 separate endpoint and no client-supplied commit: catalog access to the bundle
 is the only gate, as for its summary. The cache is read before the catalog's
 final access check, which a bundle moved meanwhile leaves without `commitInfo`.
 The bundle view shows the tags after the commit on the Overview's GitHub row,
 linked in `github` even when the bundle's stamp names another repository, and
-the commit's first message line, author and date in the tooltips that show
-that commit (Overview, Code file link, team bundle rows). A tooltip that names
-that repository also lists the first eight tags under the commit and counts the
-rest; tooltips cannot scroll, so their first line is also cut at 200 characters.
+the commit's subject, author and date in the tooltips that show that commit
+(Overview, Code file link, team bundle rows). A tooltip that names that
+repository also lists the first eight tags under the commit and counts the
+rest; tooltips cannot scroll, so the subject is also cut at 200 characters
+there. A commit link's tooltip leads its full hash with the commit icon.
 
 `managed_github_commit` keeps details by stable repository ID and SHA, without
 eviction: commits never change, so a cached one is never read again. A server
@@ -971,6 +975,12 @@ A team granted `/` sees visible bundles in that repository. A team granted `/foo
 sees bundles at `/foo` and `/foo/*`, excluding root and `/foobar`. This applies
 to team catalogs, public workspace links, direct bundle access, advisories and
 manager activity. Directory edits also refresh open clients' catalogs.
+
+Opening a bundle shows what its catalog entry already holds (name, location,
+size, and its GitHub origin, commit and tags) at once, and its files once its
+metadata arrives; its URL follows a successful open, and a failed one still
+lands on the home page. A tab picked meanwhile keeps the bundle and still
+receives its files, or the reason it has none.
 
 Opening a bundle downloads its metadata into managed app memory. Code,
 Terminal, source search and source comparison request contents when needed;

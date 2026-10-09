@@ -151,7 +151,7 @@ test('catalogs send cached commit details and tags, and read missing details wit
     requests.push(pathname + search)
     if (pathname === '/repos/org/repo1') return Promise.resolve(Response.json({ id: 1, full_name: 'org/repo1', private: false, visibility: 'public', default_branch: 'main' }))
     if (pathname === '/repos/org/repo1/commits') {
-      return Promise.resolve(Response.json([{ sha, author: { login: 'alice' }, commit: { message: 'Release 1.0.0\n\nNotes',
+      return Promise.resolve(Response.json([{ sha, author: { login: 'alice' }, commit: { message: 'Release 1.0.0\n\nPrivate notes\n\nClaude-Session: https://claude.ai/code/session_1',
         author: { name: 'Alice', date: '2026-10-01T10:00:00Z' }, committer: { date: '2026-10-01T12:00:00Z' } } }]))
     }
     return Promise.resolve(Response.json({}, { status: 404 }))
@@ -162,9 +162,13 @@ test('catalogs send cached commit details and tags, and read missing details wit
   assert.deepEqual(first.commitInfo, { sha, github: 'org/repo1', tags: ['v1.0.0'], details: null }, 'the first catalog sends cached tags without waiting for GitHub')
   await Promise.all([...h.pending])
   assert.deepEqual(requests, ['/repos/org/repo1', `/repos/org/repo1/commits?sha=${sha}&per_page=1`])
-  const details = { message: 'Release 1.0.0\n\nNotes', authorName: 'Alice', authorLogin: 'alice',
+  const details = { subject: 'Release 1.0.0', authorName: 'Alice', authorLogin: 'alice',
     authoredAt: Date.parse('2026-10-01T10:00:00Z'), committedAt: Date.parse('2026-10-01T12:00:00Z') }
   assert.deepEqual((await listed()).commitInfo, { sha, github: 'org/repo1', tags: ['v1.0.0'], details })
+  const catalog = JSON.stringify((await h.send('/api/teams', 'viewer')).json())
+  assert.ok(!catalog.includes('Private notes') && !catalog.includes('Claude-Session'), 'only the subject is sent')
+  assert.equal((await h.db.listGithubCommits([`1:${sha}`]))[0].message, 'Release 1.0.0\n\nPrivate notes\n\nClaude-Session: https://claude.ai/code/session_1',
+    'the cache keeps the whole message')
   const managed = (await h.send('/api/admin/bundles')).json().bundles.find(entry => entry.id === bundle.id)
   assert.deepEqual(managed.commitInfo, { sha, github: 'org/repo1', tags: ['v1.0.0'], details })
   await Promise.all([...h.pending])

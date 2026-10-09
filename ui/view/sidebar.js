@@ -9,7 +9,7 @@ import { clearPreviewRole, fetchManagedBundleCatalog, getPreviewRole, loadManage
 import { resetManagedFixes } from './managed-pull-requests.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
-import { managedBundleEntry, managedBundleRoute, managedCompareLocation, managedTeamBundleEntries } from './managed-bundle-navigation.js'
+import { managedBundleEntry, managedBundleRoute, managedCompareLocation, managedTeamBundleEntries, shownManagedBundleId } from './managed-bundle-navigation.js'
 import { managedReportViewChanged } from './managed-report-catalog.js'
 import { refreshManagedBundleView } from './managed-bundle-refresh.js'
 import { openManagedBundle } from './managed-bundle-open.js'
@@ -314,7 +314,7 @@ function openTeamReport(team, r) {
 // Team bundle rows open the server-backed metadata view. The repository
 // tooltip distinguishes similarly named uploads from different repositories.
 function teamBundleTemplate(team, bundle) {
-  const current = state.currentView === 'bundles' && state.currentManagedTeam === team.id && state.bundleDetails?.managedId === bundle.id
+  const current = state.currentManagedTeam === team.id && shownManagedBundleId(state) === bundle.id
   return html`<li class=${`file-item indented team-bundle-item${bundle.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
     <button type="button" class="file-name" aria-label=${bundle.visible === false ? `${bundle.filename} (hidden from teams)` : nothing} data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}
       data-tooltip-bundle=${bundle.kind || nothing} data-tooltip-built=${bundle.provenance === 'build' ? 'true' : nothing} data-tooltip-stats=${managedBundleStats(bundle) || nothing} data-tooltip-commit=${bundle.summary?.commit || nothing}
@@ -2075,7 +2075,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
   state.managedTeams = teams
   const update = fresh === null ? managedTeamsUpdate : ++managedTeamsUpdate
   managedTeamsPending = false
-  const bundleId = state.currentView === 'bundles' ? state.bundleDetails?.managedId : null
+  const bundleId = shownManagedBundleId(state)
   // Route restoration validates its destination itself. A background refresh
   // must never replace that destination with the previously displayed bundle.
   if (fresh !== null && bundleId && !managedNavigationPending) {
@@ -2083,7 +2083,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
     const bundleIsCurrent = () => isCurrent() && !signal.aborted && !managedNavigationPending
       && update === managedTeamsUpdate && navigation === currentViewGeneration() && generation === clientModeGeneration
       && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role && isManagedUiMode()
-      && state.currentView === 'bundles' && state.bundleDetails?.managedId === bundleId
+      && shownManagedBundleId(state) === bundleId
     let accessible
     try {
       accessible = await refreshManagedBundleView(state, teams, {

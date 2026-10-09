@@ -69,7 +69,7 @@ function bundleCommitInfo(info) {
   const text = value => typeof value === 'string' ? value : null
   const time = value => Number.isSafeInteger(value) ? value : null
   return { sha: info.sha, github: info.github, tags: info.tags.filter(tag => typeof tag === 'string'),
-    details: typeof details?.message === 'string' ? { message: details.message, authorName: text(details.authorName),
+    details: typeof details?.subject === 'string' ? { subject: details.subject, authorName: text(details.authorName),
       authorLogin: text(details.authorLogin), authoredAt: time(details.authoredAt), committedAt: time(details.committedAt) } : null }
 }
 
