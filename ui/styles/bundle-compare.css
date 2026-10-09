@@ -183,9 +183,9 @@
   letter-spacing: .05em;
   color: var(--muted);
 }
-/* Removed | Added | Changed lanes, shared by Packages and Files so their
-   columns line up (`--compare-lanes`, `data-lanes`: the kinds either one
-   lists; each card's `--compare-lane`). Lanes sit side by side once each
+/* Removed | Added | Changed lanes, Files' those of Packages where it can
+   so their columns line up (`--compare-lanes`, `data-lanes`; each card's
+   `--compare-lane`). Lanes sit side by side once each
    has ~400px (Changed ~500px) of the pane; three lanes in between keep
    Removed | Added on a row with Changed under them; below that they stack. */
 .bundle-compare-cols {

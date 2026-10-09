@@ -423,9 +423,9 @@ class BundleCompare extends LitElement {
     </section>`
   }
 
-  // Removed | Added | Changed columns. Packages and Files share `lanes` —
-  // the kinds either lists — so their columns line up, a kind one section
-  // lacks leaving its lane empty there. Changed's lane is the widest.
+  // Removed | Added | Changed columns, one lane per kind in `lanes`
+  // (Changed's the widest). Files takes Packages' lanes to line up under
+  // them when it can (see _renderDiff), an empty lane where it lacks a kind.
   _cols(lanes, groups) {
     const template = lanes.map(kind => kind === 'changed' ? 'minmax(0, 5fr)' : 'minmax(0, 4fr)').join(' ')
     return html`<div class="bundle-compare-cols" data-lanes=${lanes.length} style=${styleMap({ '--compare-lanes': template })}>${groups}</div>`
@@ -682,20 +682,25 @@ class BundleCompare extends LitElement {
     const fileCount = diff.files.onlyBase.length + diff.files.onlyOther.length + diff.files.changed.length
     const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
     const listsFiles = !diff.totals.identical
-    const lanes = LANES.filter(kind => diff.packageRows[kind].length > 0 || (listsFiles && files[kind].length > 0))
+    // Files line up under Packages, the main columns, while Packages has a
+    // lane for each kind Files lists; otherwise each lays out its own kinds,
+    // Packages without an empty column.
+    const packageLanes = LANES.filter(kind => diff.packageRows[kind].length > 0)
+    const fileKinds = listsFiles ? LANES.filter(kind => files[kind].length > 0) : []
+    const fileLanes = fileKinds.every(kind => packageLanes.includes(kind)) ? packageLanes : fileKinds
 
     // The header and the group titles already say which bundle is which;
     // the shared root the file rows drop rides on the Files heading.
     return html`
-      ${this._renderPackages(diff.packageRows, baseName, otherName, lanes)}
+      ${this._renderPackages(diff.packageRows, baseName, otherName, packageLanes)}
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
           : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
-        : this._collapsible('files', 'Files', fileCount, () => this._cols(lanes, html`
-            ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, lanes)}
-            ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, lanes)}
-            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, lanes)}`), prefix)}
+        : this._collapsible('files', 'Files', fileCount, () => this._cols(fileLanes, html`
+            ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, fileLanes)}
+            ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, fileLanes)}
+            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`), prefix)}
       ${this._renderResolutions(diff.resolutions)}
     `
   }

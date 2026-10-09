@@ -324,17 +324,22 @@ test('no "Changes from" caption; the root the file rows leave out rides on the F
   assert.match(markup, /Files <span class="bundle-compare-section-count">2<\/span><span class="bundle-compare-section-note" data-tooltip-truncated data-tooltip=src\/>src\/<\/span><\/summary>/u)
 })
 
-test('Packages and Files share their lanes: the kinds either lists, so their columns line up', () => {
+test('Files lines up under Packages\' lanes, or lays out its own when it lists a kind Packages lacks', () => {
   const side = (integrity, files) => ({ integrity, kind: 'stasis', bundle: new Bundle({
-    modules: new Map([['.', { name: 'app', version: '1.0.0', files }]]),
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files }],
+      ...integrity === 'base' ? [['node_modules/gone', { name: 'gone', version: '1.0.0', files: { 'index.js': 'g' } }]] : []]),
   }) })
-  const view = compare()
-  view.details = side('base', { 'src/app.js': 'one', 'src/old.js': 'old' })
-  view._otherDetails = side('other', { 'src/app.js': 'one, two' })
-  view._diffKey = null
-  view._openSections = new Set(['files'])
-  const markup = renderText(view._renderDiff())
-  assert.deepEqual(view._diffFor().packageRows.removed, [], 'no package was removed, only a file')
-  assert.deepEqual([...markup.matchAll(/class="bundle-compare-cols" data-lanes=(\d)/gu)].map(m => m[1]), ['2', '2'],
-    'Packages keeps an empty Removed lane, as Files lists one')
+  const lanesOf = (base, other) => {
+    const view = compare()
+    view.details = side('base', base)
+    view._otherDetails = side('other', other)
+    view._diffKey = null
+    view._openSections = new Set(['files'])
+    return [...renderText(view._renderDiff()).matchAll(/class="bundle-compare-cols" data-lanes=(\d)/gu)].map(m => m[1])
+  }
+  // Packages: Removed (gone) | Changed (own source); Files the same kinds,
+  // laid out in Packages' lanes.
+  assert.deepEqual(lanesOf({ 'src/app.js': 'one' }, { 'src/app.js': 'one, two' }), ['2', '2'])
+  // Files also adds one: Packages keeps its two lanes, Files lays out three.
+  assert.deepEqual(lanesOf({ 'src/app.js': 'one' }, { 'src/app.js': 'one, two', 'src/new.js': 'n' }), ['2', '3'])
 })
