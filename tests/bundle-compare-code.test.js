@@ -47,7 +47,7 @@ function view(path = null, extra = [{}, {}]) {
   const element = new CompareCode()
   element.base = base
   element.other = other
-  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), file => /^node_modules\/[^/]+/u.exec(file)?.[0] ?? '__own__').files
   element.resolutions = computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other)).changed
   element.baseName = 'Before'
   element.otherName = 'After'
@@ -164,4 +164,60 @@ test('an importer only one bundle carries is highlighted under that bundle', () 
   assert.equal(element._textSide('src/legacy.js'), element.base)
   assert.equal(element._textSide('src/features/search.js'), element.other)
   assert.equal(element._textSide('src/api.js'), element.other)
+})
+
+test('a renamed file lists once at its new path, diffed against its old one; a pure rename says so', () => {
+  const renamed = [{ 'src/util.js': 'export const u = 1\nexport const v = 2\n' }, { 'lib/util.ts': 'export const u: number = 1\nexport const v = 2\n' }]
+  const markup = renderText(view(null, renamed).render())
+  const marks = fileMarks(markup)
+  assert.deepEqual(marks['lib/util.ts'], ['renamed'])
+  assert.equal(marks['src/util.js'], undefined, 'not also removed')
+  assert.match(markup, /class=bundle-compare-code-letter renamed\s+data-tooltip=Renamed and modified from src\/util\.js>→</u)
+  assert.match(markup, />util\.ts<\/span>\s*<span class="bundle-compare-code-oldname"[^>]*>← src\/util\.js</u, 'the tree shows the old name too')
+  const diff = renderText(view('lib/util.ts', renamed).render())
+  assert.match(diff, /bundle-compare-code-pill renamed>Renamed/u)
+  assert.match(diff, /data-tooltip=src\/util\.js → lib\/util\.ts>\{<span class="bundle-compare-rename-from">src\/util\.js<\/span> → <span class="bundle-compare-rename-to">lib\/util\.ts<\/span>\}</u,
+    'the old part red, the new green')
+  assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u, 'the old contents are the before side')
+  const pure = renderText(view('lib/same.js', [{ 'src/same.js': 'x\n' }, { 'lib/same.js': 'x\n' }]).render())
+  assert.match(pure, /Renamed without changes\./u)
+  assert.match(pure, /class=bundle-compare-code-letter renamed pure\s+data-tooltip=Renamed from src\/same\.js>→</u, 'a pure rename reads blue')
+  assert.match(pure, /class=bundle-compare-code-pill renamed pure>Renamed/u)
+  const ext = renderText(view(null, [{ 'src/a.js': 'x\n' }, { 'src/a.ts': 'x\n' }]).render())
+  assert.match(ext, />a\.ts<\/span>\s*<span class="bundle-compare-code-oldname"[^>]*>← a\.js</u, 'the old name, whole')
+  const bar = renderText(view('src/a.ts', [{ 'src/a.js': 'x\n' }, { 'src/a.ts': 'x\n' }]).render())
+  assert.match(bar, />src\/a\{<span class="bundle-compare-rename-from">\.js<\/span> → <span class="bundle-compare-rename-to">\.ts<\/span>\}</u,
+    'the bar narrows an extension change to the extension')
+})
+
+test('a renamed file modified too shows under Modified as well as Renamed; a pure rename under Renamed alone', () => {
+  const both = [{ 'src/util.js': 'a\n', 'src/same.js': 'x\n' }, { 'lib/util.js': 'b\n', 'lib/same.js': 'x\n' }]
+  const shown = (...hidden) => {
+    const element = view(null, both)
+    for (const kind of hidden) element._toggleKind(kind)
+    return Object.keys(fileMarks(renderText(element.render()))).filter(path => path.startsWith('lib/'))
+  }
+  assert.deepEqual(shown('renamed'), ['lib/util.js'])
+  assert.deepEqual(shown('changed'), ['lib/same.js', 'lib/util.js'])
+  assert.deepEqual(shown('changed', 'renamed'), [])
+})
+
+test('a renamed file whose contents are the same but whose import was repointed reads as its source, its import marked', () => {
+  const source = "import pick from 'lodash/pick'\nexport const start = () => pick\n"
+  const side = (integrity, parent, target) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { [parent]: source } }]]),
+    imports: new Map([['node, import', new Map([[parent, new Map([['lodash/pick', target]])]])]]),
+  }) })
+  const base = side('base', 'src/server.js', 'node_modules/lodash/pick.cjs'), other = side('other', 'lib/server.js', 'node_modules/lodash/pick.js')
+  const files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+  const element = new CompareCode()
+  Object.assign(element, { base, other, path: 'lib/server.js', files,
+    resolutions: computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other),
+      new Map(files.changed.map(row => [row.basePath, row.path]))).changed })
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  const markup = renderText(element.render())
+  assert.deepEqual(fileMarks(markup)['lib/server.js'], ['repointed', 'renamed'])
+  assert.doesNotMatch(markup, /Renamed without changes/u)
+  assert.match(markup, /class=diff-row ctx is-import role="row" data-line=1>/u)
+  assert.doesNotMatch(markup, /Unified<\/button>/u, 'no diff layout to choose')
 })

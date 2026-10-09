@@ -37,6 +37,7 @@ import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
+import { renameTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
@@ -307,9 +308,9 @@ class BundleCompare extends LitElement {
     this._notify()
   }
 
-  _fileRow(path, label, sizeTpl) {
+  _fileRow(path, label, sizeTpl, tooltip = path) {
     return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      <span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${path}>${label}</span>${sizeTpl}
+      <span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${sizeTpl}
     </button></li>`
   }
 
@@ -363,8 +364,10 @@ class BundleCompare extends LitElement {
     const sort = this._fileSort[kind]
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
-    return this._group(title, sorted, kind, (r) => r.path,
-      (r) => this._fileRow(r.path, displayOf(r.path), this._sizeCells(r)), this._sortActions('_fileSort', kind, 'file'), { lanes })
+    // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
+    const row = r => r.basePath == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r))
+      : this._fileRow(r.path, renameTemplate(displayOf(r.basePath), displayOf(r.path)), this._sizeCells(r), `${r.basePath} → ${r.path}`)
+    return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file'), { lanes })
   }
 
   // One package group: a package each, with its versions and its size —
@@ -510,6 +513,7 @@ class BundleCompare extends LitElement {
       this._diff.resolutions = computeResolutionDiff(
         bundleCompareResolutions(this.details, this._scope),
         bundleCompareResolutions(this._otherDetails, this._scope),
+        new Map(this._diff.files.changed.filter(row => row.basePath != null).map(row => [row.basePath, row.path])),
       )
       // Dependency versions come from the stasis per-module `{ name,
       // version }` metadata, not the path/byte walk above, so they're
@@ -560,7 +564,7 @@ class BundleCompare extends LitElement {
       <div class="bundle-compare-chips">
         <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
         <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
-        <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed</span>
+        <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>
         <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
         ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
       </div></div>
@@ -672,7 +676,7 @@ class BundleCompare extends LitElement {
     const allPaths = [
       ...diff.files.onlyBase.map((r) => r.path),
       ...diff.files.onlyOther.map((r) => r.path),
-      ...diff.files.changed.map((r) => r.path),
+      ...diff.files.changed.flatMap((r) => r.basePath == null ? [r.path] : [r.path, r.basePath]),
     ]
     const { prefix, stripped } = stripCommonPathPrefix(allPaths)
     const displayMap = new Map()

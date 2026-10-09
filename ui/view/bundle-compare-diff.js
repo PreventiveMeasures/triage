@@ -20,18 +20,23 @@
 // is ambiguous without knowing which side is newer.
 
 import { bundleFileByteLength } from './bundle-sources.js'
+import { resolutionKey } from './bundle-compare-inputs.js'
 
 // Resolutions compare independently from file bytes: identical files can be
 // wired together differently. Inputs are keyed by importer, specifier,
 // conditions (including import attributes), and platform. Only existing
 // resolutions whose targets changed are reported; additions/removals are omitted.
-export function computeResolutionDiff(base, other) {
+// `renames` (base path → other path, see detectRenames) names base files as
+// the other bundle does: a renamed importer's resolutions pair with its new
+// path's, reported under it, and a target renamed is the same target.
+export function computeResolutionDiff(base, other, renames = new Map()) {
+  const renamed = path => renames.get(path) ?? path
   const changed = []
-  for (const [key, before] of base) {
-    const after = other.get(key)
-    if (after && before.target !== after.target) {
-      const { target: baseTarget, ...identity } = before
-      changed.push({ ...identity, baseTarget, otherTarget: after.target })
+  for (const before of base.values()) {
+    const after = other.get(resolutionKey(renamed(before.parent), before.specifier, before.conditions, before.platform))
+    if (after && renamed(before.target) !== after.target) {
+      const { target: otherTarget, ...identity } = after
+      changed.push({ ...identity, baseTarget: before.target, otherTarget })
     }
   }
   changed.sort((a, b) => a.key.localeCompare(b.key))
@@ -77,6 +82,94 @@ function byBytesThenKey(key) {
   }
 }
 
+// Script and style sources keep their kind across a rename (`a.js` →
+// `a.ts`, `a.css` → `a.scss`); any other file keeps its extension.
+const EXTENSION_FAMILIES = new Map([
+  ...['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx'].map(ext => [ext, 'script']),
+  ...['.css', '.scss', '.sass', '.less'].map(ext => [ext, 'style']),
+])
+
+// The keys a file meets a rename partner on: its package, its name less
+// the extension, the extension's family, and its directory — as it is (the
+// extension changed) or with one directory past the last node_modules
+// swapped for another (`src/a.js` → `lib/a.js`, `node_modules/a/src/x.ts`
+// → `node_modules/a/lib/x.js`). `\0` separates; no path holds one.
+function renameKeys(path, pkg) {
+  const dirs = path.split('/')
+  const name = dirs.pop()
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 ? name.slice(dot) : ''
+  const head = [pkg, dot > 0 ? name.slice(0, dot) : name, EXTENSION_FAMILIES.get(ext) ?? ext].join('\0')
+  const keys = [`${head}\0${dirs.join('/')}`]
+  for (let i = dirs.lastIndexOf('node_modules') + 1; i < dirs.length; i++) keys.push(`${head}\0${i}\0${dirs.toSpliced(i, 1, '').join('/')}`)
+  return keys
+}
+
+// The files of `removed` (only in base) renamed to one of `added` (only in
+// other): `Map<base path, other path>`. A pair counts only when it is clear
+// — each file the other's one candidate, no alternative on either side —
+// so `src/a.js` with both `lib/a.js` and `src/a.ts` added stays removed.
+export function detectRenames(removed, added, pkgOf) {
+  const buckets = new Map()
+  const keysOf = side => new Map(side.paths.map(path => {
+    const keys = renameKeys(path, pkgOf(path))
+    for (const key of keys) {
+      if (!buckets.has(key)) buckets.set(key, { removed: [], added: [] })
+      buckets.get(key)[side.name].push(path)
+    }
+    return [path, keys]
+  }))
+  const removedKeys = keysOf({ name: 'removed', paths: removed })
+  const addedKeys = keysOf({ name: 'added', paths: added })
+  // The one file of `side` a file's keys meet, or null for none or several.
+  const partner = (side, keys) => {
+    let found = null
+    for (const key of keys) {
+      const list = buckets.get(key)[side]
+      if (list.length > 1 || (list.length === 1 && found !== null && found !== list[0])) return null
+      if (list.length === 1) found = list[0]
+    }
+    return found
+  }
+  const renames = new Map()
+  for (const [path, keys] of removedKeys) {
+    const to = partner('added', keys)
+    if (to !== null && partner('removed', addedKeys.get(to)) === path) renames.set(path, to)
+  }
+  return renames
+}
+
+// A rename the way `git diff --stat` writes one: the directories both
+// paths share, then the part that changed (`{src → lib}/a.js`), down to
+// the extension when that is all (`src/a{.js → .ts}`; `extension: false`
+// keeps whole names, `src/{a.js → a.ts}`) — as `{ head, from, to, tail }`
+// for a view to color.
+export function renameParts(from, to, { extension = true } = {}) {
+  const a = from.split('/'), b = to.split('/')
+  let head = 0
+  while (head < a.length - 1 && head < b.length - 1 && a[head] === b[head]) head++
+  let tail = 0
+  while (tail < a.length - head - 1 && tail < b.length - head - 1 && a.at(-1 - tail) === b.at(-1 - tail)) tail++
+  const parts = {
+    head: head ? `${a.slice(0, head).join('/')}/` : '',
+    from: a.slice(head, a.length - tail).join('/'),
+    to: b.slice(head, b.length - tail).join('/'),
+    tail: tail ? `/${a.slice(-tail).join('/')}` : '',
+  }
+  // One name on each side, and only its extension differs.
+  const dot = parts.from.lastIndexOf('.')
+  if (extension && !parts.from.includes('/') && !parts.to.includes('/') && dot > 0
+      && parts.to.lastIndexOf('.') === dot && parts.from.slice(0, dot) === parts.to.slice(0, dot)) {
+    return { ...parts, head: parts.head + parts.from.slice(0, dot), from: parts.from.slice(dot), to: parts.to.slice(dot) }
+  }
+  return parts
+}
+
+export function renameLabel(from, to) {
+  const { head, from: before, to: after, tail } = renameParts(from, to)
+  return `${head}{${before} → ${after}}${tail}`
+}
+
 // Per-package accumulator factory. Tracks each side's byte total plus
 // per-bucket file counts so a package is flagged `changed` whenever
 // ANY of its files moved — not only when the byte total happens to
@@ -101,7 +194,7 @@ function emptyPkgAcc() {
 //     files: {
 //       onlyBase:  [{ path, bytes }],
 //       onlyOther: [{ path, bytes }],
-//       changed:   [{ path, baseBytes, otherBytes, delta }],
+//       changed:   [{ path, baseBytes, otherBytes, delta, basePath?, modified? }],
 //     },
 //     packages: {
 //       onlyBase:  [{ pkg, bytes }],
@@ -111,8 +204,12 @@ function emptyPkgAcc() {
 //   }
 //
 // `delta` is always `other − base` (positive = the compared bundle is
-// larger). `identical` is true when the two bundles carry the exact
-// same set of paths with byte-identical content, resources included.
+// larger). A file clearly renamed (see detectRenames) is changed, not
+// removed and added: its row's `path` is the other side's, `basePath` the
+// base's, `modified` whether its contents changed too, and it counts in
+// `renamedFiles` as well, its contents moved or not.
+// `identical` is true when the two bundles carry the exact same set of
+// paths with byte-identical content, resources included.
 export function computeBundleDiff(base, other, pkgOf) {
   const onlyBase = []
   const onlyOther = []
@@ -173,6 +270,27 @@ export function computeBundleDiff(base, other, pkgOf) {
     }
   }
 
+  const renames = detectRenames(onlyBase.map(row => row.path), onlyOther.map(row => row.path), pkgOf)
+  if (renames.size > 0) {
+    const renamedTo = new Set(renames.values())
+    for (const [from, to] of renames) {
+      const bC = base.get(from), oC = other.get(to)
+      const same = sameContent(bC, oC)
+      const bB = byteLen(bC), oB = same ? bB : byteLen(oC)
+      onlyBaseBytes -= bB
+      onlyOtherBytes -= oB
+      changed.push({ path: to, basePath: from, baseBytes: bB, otherBytes: oB, delta: oB - bB, modified: !same })
+      changedDelta += oB - bB
+      // Both in one package (its key is in the rename's).
+      const acc = pkgAcc(from)
+      acc.onlyBaseFiles--
+      acc.onlyOtherFiles--
+      acc.changedFiles++
+    }
+    onlyBase.splice(0, onlyBase.length, ...onlyBase.filter(row => !renames.has(row.path)))
+    onlyOther.splice(0, onlyOther.length, ...onlyOther.filter(row => !renamedTo.has(row.path)))
+  }
+
   // Classify each package from its accumulator: present on exactly one
   // side → onlyBase / onlyOther; present on both with any moved file →
   // changed; otherwise unchanged (dropped — the lists surface only
@@ -223,6 +341,7 @@ export function computeBundleDiff(base, other, pkgOf) {
       onlyOtherFiles: onlyOther.length,
       onlyOtherBytes,
       changedFiles: changed.length,
+      renamedFiles: renames.size,
       changedDelta,
       unchangedFiles,
       fileDelta: other.size - base.size,
