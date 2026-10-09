@@ -23,11 +23,11 @@ function renderText(value) {
   if (value?.strings) return value.strings.map((text, i) => text + renderText(value.values[i])).join('')
   return value == null || typeof value === 'symbol' ? '' : String(value)
 }
-function details(integrity, target) {
+function details(integrity, target, conditions = 'node, import') {
   return { integrity, kind: 'stasis', bundle: new Bundle({
     modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'import "dep"', 'a.js': 'a', 'b.js': 'b' } }]]),
     reason: { deps: ['a.js', 'b.js'] },
-    imports: new Map([['node, import', new Map([['app.js', new Map([['dep', target]])]])]]),
+    imports: new Map([[conditions, new Map([['app.js', new Map([['dep', target]])]])]]),
   }) }
 }
 function compare() {
@@ -55,7 +55,7 @@ test('Differences renders resolution-only changes as a collapsed File | Import |
   const view = compare()
   const collapsed = renderText(view._renderDiff())
   assert.match(collapsed, /<summary class="bundle-compare-section-head">Import resolutions <span class="bundle-compare-section-count">1/u)
-  assert.doesNotMatch(collapsed, /<table>/u, 'collapsed by default')
+  assert.doesNotMatch(collapsed, /<table/u, 'collapsed by default')
   view._openSections = new Set(['resolutions'])
   const markup = renderText(view._renderDiff())
   assert.match(markup, /Repointed/u)
@@ -68,6 +68,17 @@ test('Differences renders resolution-only changes as a collapsed File | Import |
   assert.doesNotMatch(markup, /These two bundles carry identical files/u)
   assert.match(renderText(view._renderSummary(view._diffFor())), /1 repointed resolution/u)
   assert.equal(view._diffFor().totals.changedFiles, 0)
+})
+
+test('Repointed drops the Conditions column when every row reads `*`', () => {
+  const view = compare()
+  view.details = details('base', 'a.js', '*')
+  view._otherDetails = details('other', 'b.js', '*')
+  view._openSections = new Set(['resolutions'])
+  const markup = renderText(view._renderDiff())
+  assert.match(markup, /<th>File<\/th><th>Import<\/th><th>Before<\/th><th>After<\/th><\/tr>/u)
+  assert.match(markup, /<table class=bundle-compare-resolutions--no-context>/u)
+  assert.doesNotMatch(markup, /bundle-compare-resolution-context/u)
 })
 
 test('changing scope recomputes resolution changes and restores the identical state when none remain', () => {
@@ -207,15 +218,18 @@ test('packages list Removed | Added | Changed, each package once with its versio
   assert.equal([...markup.matchAll(/aria-label=(?:removed|added|changed) package order/gu)].length, 3, 'each group orders by Name | Size')
   const changed = markup.slice(markup.indexOf('bundle-compare-group bundle-compare-changed'))
   const row = name => changed.match(new RegExp(`data-tooltip=${name}>${name}</span>[^]*?</li>`, 'u'))[0]
-  assert.match(row('lodash'), /4\.17\.20<\/span>[^]*4\.17\.21[^]*↑[^]*50 B → 60 B[^]*\+10 B/u)
-  assert.match(row('react'), /18\.2\.0[^]*18\.3\.0[^]*70 B → 70 B[^]*±0 B/u, 'a version-only change keeps its (equal) sizes')
-  assert.match(row('Own source'), /100 B → 120 B/u)
+  assert.match(row('lodash'), /4\.17\.20<\/span>[^]*4\.17\.21[^]*↑[^]*data-tooltip=50 B → 60 B>\+10 B</u)
+  assert.match(row('react'), /18\.2\.0[^]*18\.3\.0[^]*data-tooltip=70 B → 70 B>±0 B</u, 'a version-only change keeps its (equal) sizes')
+  assert.match(row('Own source'), /data-tooltip=100 B → 120 B>\+20 B</u)
+  assert.doesNotMatch(changed, /bundle-compare-row-size/u, 'a changed row shows its sizes only in the tooltip')
   assert.doesNotMatch(row('Own source'), /bundle-compare-ver/u, 'own source carries sizes alone')
-  assert.match(markup, /left-pad<\/span>\s*<span class="bundle-compare-dep-ver">1\.3\.0/u)
+  assert.match(markup, /left-pad<\/span>\s*<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=1\.3\.0>1\.3\.0/u)
   const changedOrder = () => {
     const group = renderText(view._renderPackages(rows, 'Before', 'After'))
     return [...group.slice(group.indexOf('bundle-compare-group bundle-compare-changed')).matchAll(/bundle-compare-row-path" data-tooltip-truncated data-tooltip=([^>]+)>/gu)].map(m => m[1])
   }
+  assert.deepEqual(changedOrder(), ['Own source', 'lodash', 'react'], 'size order by default')
+  view._pkgSort = { ...view._pkgSort, changed: 'name' }
   assert.deepEqual(changedOrder(), ['lodash', 'Own source', 'react'])
   view._pkgSort = { ...view._pkgSort, changed: 'size' }
   rows.changed.push({ pkg: 'axios', baseBytes: 5, otherBytes: 15, delta: 10, baseVersions: [], otherVersions: [], direction: null })
