@@ -1491,17 +1491,19 @@ class ManagedAdminTeams extends ManagedPage {
   _npmScopes(team) {
     const scopes = Array.isArray(team.npmScopes) ? team.npmScopes : []
     return html`<div class="sub npm-scopes">
-      <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span></h3>
-      <p class="muted ui-hint">Members can open private packages in these scopes. Everyone can open public packages.</p>
-      ${scopes.length === 0 ? nothing : html`<ul class="npm-scope-list">${scopes.map(scope => html`<li class="npm-scope">
-        <span>${scope}</span>
-        <button class="icon-btn danger" aria-label=${`Remove ${scope} from ${team.name}`} ?disabled=${this._busy}
-          @click=${() => this._setNpmScopes(team, scopes.filter(other => other !== scope))}>${ADMIN_REMOVE_ICON}</button>
-      </li>`)}</ul>`}
-      <div class="add-row">
+      <div class="sub-head">
+        <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span></h3>
+        <p class="muted ui-hint">Members can open private packages in these scopes. Everyone can open public packages.</p>
+      </div>
+      <div class="add-row npm-scope-row">
         <input class="add-npm-scope" type="text" placeholder="@scope" aria-label=${`npm scope to add to ${team.name}`} maxlength="215" ?disabled=${this._busy}
           @keydown=${(e) => { if (e.key === 'Enter') this._addNpmScope(team, e) }}>
         <button class="btn" aria-label=${`Add npm scope to ${team.name}`} ?disabled=${this._busy} @click=${(e) => this._addNpmScope(team, e)}>${ADMIN_PLUS_ICON} Add</button>
+        ${scopes.length === 0 ? nothing : html`<ul class="npm-scope-list">${scopes.map(scope => html`<li class="npm-scope">
+          <span>${scope}</span>
+          <button class="icon-btn danger" aria-label=${`Remove ${scope} from ${team.name}`} ?disabled=${this._busy}
+            @click=${() => this._setNpmScopes(team, scopes.filter(other => other !== scope))}>${ADMIN_REMOVE_ICON}</button>
+        </li>`)}</ul>`}
       </div>
     </div>`
   }
