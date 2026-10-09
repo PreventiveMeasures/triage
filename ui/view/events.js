@@ -9,7 +9,7 @@ import { renderHighlighted } from './render-finding.js'
 import { BUNDLE_SOURCE_WRAP_KEY, KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, depsDirName, evidenceMarkdown, findingUrl, handoffBlock, isModule, lineRange, revalidationShown } from './format.js'
-import { activeTabFor, canApplyFixToGroup, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
+import { activeTabFor, canApplyFixToGroup, canEditTriage, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, focusCodeLinkPosition, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
@@ -1298,7 +1298,7 @@ report.addEventListener('click', (e) => {
     const activeKey = tabKey(activeTab)
     const current = triageEntry(activeTab)?.comment ?? ''
     openCommentDialog({ initial: current, finding: activeTab }).then((next) => {
-      if (next === null || !canTriageFinding(activeTab)) return null
+      if (next === null || !canEditTriage(activeTab)) return null
       patchEntry(state.triage, activeKey, { comment: next || undefined })
       saveTriage()
       renderPreservingTableScroll()
@@ -1411,7 +1411,7 @@ report.addEventListener('click', (e) => {
     const group = gid ? findGroupById(gid) : null
     if (!group) return
     const activeTab = activeTabFor(group)
-    if (!canTriageFinding(activeTab)) return
+    if (!canEditTriage(activeTab)) return
     const whole = groupWithPassRows(group)
     const current = triageEntry(activeTab)?.fix ?? ''
     openFixLinkDialog({
@@ -1419,13 +1419,13 @@ report.addEventListener('click', (e) => {
       finding: activeTab,
       canApplyToGroup: canApplyFixToGroup(whole, current),
     }).then((next) => {
-      if (next === null || !canTriageFinding(activeTab)) return null
+      if (next === null || !canEditTriage(activeTab)) return null
       // The offer was granted before the dialog opened; `fixApplies`
       // re-asks per tab now, so a link a sync peer or another browser
       // tab landed on a sibling meanwhile isn't overwritten by a
       // permission that has since expired.
       const targets = next.scope === 'group'
-        ? whole.filter((f) => canTriageFinding(f) && (f === activeTab || fixApplies(f, current)))
+        ? whole.filter((f) => canEditTriage(f) && (f === activeTab || fixApplies(f, current)))
         : [activeTab]
       let changed = false
       for (const f of targets) {
@@ -1456,7 +1456,7 @@ report.addEventListener('click', (e) => {
     const key = flagBtn.dataset.flagToggle
     const gid = pathClosest(e, '[data-gid]')?.dataset.gid
     const finding = (gid ? findGroupById(gid) : null)?.find((f) => tabKey(f) === key)
-    if (!finding || !canTriageFinding(finding)) return
+    if (!finding || !canEditTriage(finding)) return
     // Toggle: true → false (explicit tombstone), false/unset → true.
     const cur = triageEntry(finding)?.flagged
     patchEntry(state.triage, key, { flagged: cur !== true })
@@ -1565,7 +1565,7 @@ const KANBAN_DATA_TYPE = 'application/x-deepview-kanban-gid'
 // answer.
 function applyTriage(targets, target) {
   for (const f of targets) {
-    if (!canTriageFinding(f)) continue
+    if (!canEditTriage(f)) continue
     setFindingTriage(state.triage, f, target, depsDirName())
   }
 }
@@ -2019,8 +2019,9 @@ report.addEventListener('click', (e) => {
   // Fix-link / comment shortcut on the compact card — the anchor
   // navigates on its own and the .mark-fix / .mark-comment buttons
   // open their dialogs via the delegates earlier in this file; none
-  // of them should also toggle the detail modal.
-  if (e.target.closest?.('.kanban-action')) return
+  // of them should also toggle the detail modal. A read-only fix note
+  // does nothing itself, so it opens the card like the rest of it.
+  if (e.target.closest?.('.kanban-action:not(.kanban-fix-note)')) return
   // Kanban card — open / toggle / switch. Backdrop is
   // pointer-events: none in CSS so this branch can also fire for
   // clicks landing on a card that's visually behind the backdrop
@@ -2333,7 +2334,7 @@ report.addEventListener('mark-color', (e) => {
   const group = findGroupById(gid)
   if (!group) return
   const activeTab = activeTabFor(group)
-  if (!canTriageFinding(activeTab)) return
+  if (!canEditTriage(activeTab)) return
   const activeKey = tabKey(activeTab)
   const color = e.detail?.color
   if (!color) return
