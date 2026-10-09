@@ -20,7 +20,9 @@ export function bundleCommitTooltip(commitInfo, hash) {
 
 // `commitInfo` is what a managed catalog sends for the bundle (see
 // server-managed/bundle-commits.ts): the cached details of its recorded commit
-// and the tags that point to it, which ride on that commit's link.
+// and the tags that point to it, which ride on that commit's link. Tags link
+// to the repository they were cached for, the one the bundle is stored at,
+// which can differ from the one its stamp names.
 export function bundleOriginLinks(bundle, prefix = '', commitInfo = null) {
   const links = []
   const github = reportRepoGithub(bundle)
@@ -29,11 +31,13 @@ export function bundleOriginLinks(bundle, prefix = '', commitInfo = null) {
     const commit = bundleCommitHash(bundle.repo?.commit)
     const path = directory.split('/').map(encodeURIComponent).join('/')
     const base = `https://github.com/${github}`
-    const tags = catalogTags(commitInfo, commit)
+    const tagRepository = reportRepoGithub({ repo: { github: commitInfo?.github } })
+    const tags = tagRepository ? catalogTags(commitInfo, commit) : []
     links.push({ label: 'GitHub', text: github + (directory ? `/${directory}` : ''),
       href: commit || directory ? `${base}/tree/${commit ?? 'HEAD'}${path ? `/${path}` : ''}` : base,
       ...(commit ? { commit: { hash: commit, text: commit.slice(0, 7), href: `${base}/commit/${commit}`,
-        ...(tags.length > 0 ? { tags: tags.map(tag => ({ name: tag, href: `${base}/releases/tag/${tag.split('/').map(encodeURIComponent).join('/')}` })) } : {}),
+        ...(tags.length > 0 ? { tags: tags.map(tag => ({ name: tag,
+          href: `https://github.com/${tagRepository}/releases/tag/${tag.split('/').map(encodeURIComponent).join('/')}` })) } : {}),
       } } : {}) })
   }
   const npm = bundle?.package?.npm

@@ -13,11 +13,12 @@ const RETRY_MS = 5 * 60_000
 
 export type CommitDetails = Omit<GithubCommit, 'key' | 'fetchedAt'>
 // What a catalog sends with a bundle whose summary records a commit, when
-// the cache holds its details, tags pointing to it, or both.
-export interface BundleCommitInfo { sha: string; tags: string[]; details: CommitDetails | null }
-interface CatalogBundle { id: string; integrity: string; repoId: number | null }
+// the cache holds its details, tags pointing to it, or both. `github` is the
+// repository they were cached for: the one the bundle is stored at.
+export interface BundleCommitInfo { sha: string; github: string; tags: string[]; details: CommitDetails | null }
+interface CatalogBundle { integrity: string; repoId: number | null; repoFullName: string | null }
 type Summaries = ReadonlyMap<string, { summary: BundleSummary | null }>
-export interface MissingCommit { repoId: number; sha: string; key: string }
+export interface CatalogCommit { repoId: number; sha: string; key: string }
 export interface CommitReader { commitDetails(sha: string): Promise<CommitDetails | null> }
 
 function truncate(value: string, max: number): string {
@@ -53,27 +54,38 @@ export function parseGithubCommit(sha: string, body: unknown): CommitDetails | n
   }
 }
 
+// The commit a bundle's own summary records, in the repository it is stored at.
+function catalogCommit(bundle: CatalogBundle, summaries: Summaries): CatalogCommit | null {
+  const sha = bundleCommitHash(summaries.get(bundle.integrity)?.summary?.commit)
+  return sha && bundle.repoId != null ? { repoId: bundle.repoId, sha, key: githubCommitKey(bundle.repoId, sha) } : null
+}
+
 // Reads only the cache: viewing a bundle never requests its commit's tags,
-// and a commit missing from the cache is left for backfillBundleCommits. The
-// caller lists only bundles the viewer can read; the commit is the one the
-// bundle's own summary records, looked up in the repository it is stored at.
+// and a commit missing from the cache is left for backfillBundleCommits.
+// Call it before the catalog's final access check: `commitInfo` answers for
+// the bundles of that last snapshot without another await, and has nothing
+// for a commit or repository this read did not cover.
 export async function bundleCommits(db: ManagedDb, bundles: readonly CatalogBundle[], summaries: Summaries) {
-  const wanted = new Map<string, MissingCommit>()
+  const wanted = new Map<string, CatalogCommit>()
   for (const bundle of bundles) {
-    const sha = bundleCommitHash(summaries.get(bundle.integrity)?.summary?.commit)
-    if (sha && bundle.repoId != null) wanted.set(bundle.id, { repoId: bundle.repoId, sha, key: githubCommitKey(bundle.repoId, sha) })
+    const commit = catalogCommit(bundle, summaries)
+    if (commit) wanted.set(commit.key, commit)
   }
-  const keys = [...new Set([...wanted.values()].map(commit => commit.key))]
-  if (keys.length === 0) return { commits: new Map<string, BundleCommitInfo>(), missing: [] }
-  const details = new Map((await db.listGithubCommits(keys)).map(({ key, fetchedAt: _fetchedAt, ...commit }) => [key, commit]))
+  const keys = [...wanted.keys()]
+  const details = new Map<string, CommitDetails>()
   const tags = new Map<string, string[]>()
-  for (const tag of await db.listGithubCommitTags(keys)) tags.set(tag.key, [...tags.get(tag.key) ?? [], tag.name])
-  const commits = new Map<string, BundleCommitInfo>()
-  for (const [id, { sha, key }] of wanted) {
-    if (details.has(key) || tags.has(key)) commits.set(id, { sha, tags: tags.get(key) ?? [], details: details.get(key) ?? null })
+  if (keys.length > 0) {
+    for (const { key, fetchedAt: _fetchedAt, ...commit } of await db.listGithubCommits(keys)) details.set(key, commit)
+    for (const tag of await db.listGithubCommitTags(keys)) tags.set(tag.key, [...tags.get(tag.key) ?? [], tag.name])
   }
-  const missing = [...new Map([...wanted.values()].filter(commit => !details.has(commit.key)).map(commit => [commit.key, commit])).values()]
-  return { commits, missing }
+  return {
+    commitInfo(bundle: CatalogBundle): BundleCommitInfo | null {
+      const commit = catalogCommit(bundle, summaries)
+      if (!commit || !bundle.repoFullName || (!details.has(commit.key) && !tags.has(commit.key))) return null
+      return { sha: commit.sha, github: bundle.repoFullName, tags: tags.get(commit.key) ?? [], details: details.get(commit.key) ?? null }
+    },
+    missing: [...wanted.values()].filter(commit => !details.has(commit.key)),
+  }
 }
 
 // Store the details of a commit, read with the reader's verified repository
@@ -95,7 +107,7 @@ const retries = new Map<string, number>()
 // Reads each commit with the viewer's own repository access, so a viewer who
 // cannot read it on GitHub leaves it for another (retried after a delay for
 // them). Commits never change, so each is stored once and kept.
-export async function backfillBundleCommits(db: ManagedDb, userId: string, missing: readonly MissingCommit[],
+export async function backfillBundleCommits(db: ManagedDb, userId: string, missing: readonly CatalogCommit[],
   readerFor: (repoId: number) => Promise<CommitReader | null>): Promise<void> {
   if (missing.length === 0) return
   await setImmediate()

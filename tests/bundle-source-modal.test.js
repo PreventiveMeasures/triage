@@ -531,7 +531,7 @@ test('a managed bundle Overview puts its cached tags after the commit and gives 
   }) }
   Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'overview', selectedBundle: entry.integrity, bundles: [entry],
     bundleDetails: parseBundleMetadata(await createBundleMetadata(full), entry.integrity) })
-  const commitInfo = { sha: commit, tags: ['v1.0.0'], details: { message: 'Release', authorName: 'Alice', authorLogin: null, authoredAt: 1, committedAt: 2 } }
+  const commitInfo = { sha: commit, github: 'org/repo', tags: ['v1.0.0'], details: { message: 'Release', authorName: 'Alice', authorLogin: null, authoredAt: 1, committedAt: 2 } }
   const githubRow = info => renderText(renderBundlesList([{ ...entry, commitInfo: info }])).match(/<dt>GitHub<\/dt><dd class="bundle-origin-row">(.*?)<\/dd>/su)[1]
   const tagged = githubRow(commitInfo)
   assert.match(tagged, /class="bundle-origin-link bundle-commit-link"[^>]*>.*?<\/a>\s*<a class="bundle-origin-link bundle-tag-link" href=https:\/\/github\.com\/org\/repo\/releases\/tag\/v1\.0\.0 target="_blank" rel="noopener noreferrer">.*?<span>v1\.0\.0<\/span><\/a>/su,

@@ -769,12 +769,15 @@ The GitHub Contents API limits directory listings to
 Bundle catalogs (`GET /api/teams` and `GET /api/admin/bundles`) send each
 bundle's `commitInfo`: what the cache holds for the commit its summary records,
 in the repository the bundle is stored at, or null when it holds nothing. It is
-`{ sha, tags, details }`, where `tags` names the cached tags pointing to the
-commit and `details` is `{ message, authorName, authorLogin, authoredAt,
-committedAt }` or null. There is no separate endpoint and no client-supplied
-commit: catalog access to the bundle is the only gate, as for its summary.
+`{ sha, github, tags, details }`, where `github` is that repository, `tags`
+names the cached tags pointing to the commit and `details` is `{ message,
+authorName, authorLogin, authoredAt, committedAt }` or null. There is no
+separate endpoint and no client-supplied commit: catalog access to the bundle
+is the only gate, as for its summary. The cache is read before the catalog's
+final access check, which a bundle moved meanwhile leaves without `commitInfo`.
 The bundle view shows the tags after the commit on the Overview's GitHub row,
-and the commit's first message line, author and date in the tooltips that show
+linked in `github` even when the bundle's stamp names another repository, and
+the commit's first message line, author and date in the tooltips that show
 that commit (Overview, Code file link, team bundle rows).
 
 `managed_github_commit` keeps details by stable repository ID and SHA, without

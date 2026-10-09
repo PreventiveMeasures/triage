@@ -47,19 +47,22 @@ test('catalogs read the cached details and tags of each bundle summary commit in
     ['hash-c', { summary: { files: 1, codeFiles: 1, lines: 1 } }],
     ['hash-d', { summary: { files: 1, codeFiles: 1, lines: 1, commit: 'not a commit' } }],
   ])
-  const { commits, missing } = await bundleCommits(db, [
-    { id: 'a', integrity: 'hash-a', repoId: 1 }, { id: 'a-copy', integrity: 'hash-a', repoId: 1 },
-    { id: 'b', integrity: 'hash-b', repoId: 2 }, { id: 'b-in-1', integrity: 'hash-b', repoId: 1 },
-    { id: 'unattached', integrity: 'hash-a', repoId: null }, { id: 'c', integrity: 'hash-c', repoId: 1 },
-    { id: 'd', integrity: 'hash-d', repoId: 1 }, { id: 'cold', integrity: 'hash-cold', repoId: 1 },
-  ], summaries)
-  assert.deepEqual(Object.fromEntries(commits), {
-    a: { sha, tags: ['v1.0.0'], details }, 'a-copy': { sha, tags: ['v1.0.0'], details },
-    b: { sha: other, tags: ['v2.0.0'], details: null },
-  })
+  const bundle = (integrity, repoId) => ({ integrity, repoId, repoFullName: repoId == null ? null : `org/repo${repoId}` })
+  const read = [bundle('hash-a', 1), bundle('hash-a', 1), bundle('hash-b', 2), bundle('hash-b', 1), bundle('hash-a', null),
+    bundle('hash-c', 1), bundle('hash-d', 1), bundle('hash-cold', 1)]
+  const { commitInfo, missing } = await bundleCommits(db, read, summaries)
+  assert.deepEqual(read.map(commitInfo), [
+    { sha, github: 'org/repo1', tags: ['v1.0.0'], details }, { sha, github: 'org/repo1', tags: ['v1.0.0'], details },
+    { sha: other, github: 'org/repo2', tags: ['v2.0.0'], details: null }, null, null, null, null, null,
+  ])
   assert.deepEqual(missing, [{ repoId: 2, sha: other, key: `2:${other}` }, { repoId: 1, sha: other, key: `1:${other}` }],
     'only missing details are backfilled, never tags, once per repository and commit')
-  assert.deepEqual(await bundleCommits(db, [], summaries), { commits: new Map(), missing: [] })
+  assert.equal(commitInfo(bundle('hash-a', 2)), null, 'a bundle moved after the read gets nothing for its new repository')
+  assert.equal(commitInfo({ ...bundle('hash-a', 1), repoFullName: null }), null)
+  const reads = t.mock.method(db, 'listGithubCommits')
+  const empty = await bundleCommits(db, [bundle('hash-c', 1)], summaries)
+  assert.deepEqual([empty.commitInfo(bundle('hash-a', 1)), empty.missing], [null, []])
+  assert.equal(reads.mock.callCount(), 0, 'catalogs without commits make no cache reads')
 })
 
 test('backfill reads at most four missing commits with the viewer access and retries failures for that viewer later', async t => {

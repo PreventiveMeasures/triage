@@ -56,14 +56,19 @@ test('a managed catalog adds the cached tags of the recorded commit after it, li
   const commit = 'a'.repeat(40)
   const bundle = { repo: { github: 'org/repo', commit } }
   const tags = ['v1.0.0', 'release/2026 #1', '', 7]
-  assert.deepEqual(bundleOriginLinks(bundle, '', { sha: commit, tags, details: null })[0].commit.tags, [
+  assert.deepEqual(bundleOriginLinks(bundle, '', { sha: commit, github: 'org/repo', tags, details: null })[0].commit.tags, [
     { name: 'v1.0.0', href: 'https://github.com/org/repo/releases/tag/v1.0.0' },
     { name: 'release/2026 #1', href: 'https://github.com/org/repo/releases/tag/release/2026%20%231' },
   ])
-  for (const info of [null, { sha: 'b'.repeat(40), tags }, { sha: commit, tags: [] }, { sha: commit }]) {
+  const moved = bundleOriginLinks(bundle, '', { sha: commit, github: 'fork/renamed', tags: ['v1.0.0'], details: null })[0]
+  assert.equal(moved.commit.href, `https://github.com/org/repo/commit/${commit}`)
+  assert.deepEqual(moved.commit.tags, [{ name: 'v1.0.0', href: 'https://github.com/fork/renamed/releases/tag/v1.0.0' }],
+    'tags link to the repository they were cached for, not the one the stamp names')
+  for (const info of [null, { sha: 'b'.repeat(40), github: 'org/repo', tags }, { sha: commit, github: 'org/repo', tags: [] },
+    { sha: commit, github: 'org/repo' }, { sha: commit, tags }, { sha: commit, github: 'javascript:alert(1)', tags }]) {
     assert.equal(Object.hasOwn(bundleOriginLinks(bundle, '', info)[0].commit, 'tags'), false)
   }
-  assert.equal(bundleOriginLinks({ repo: { github: 'org/repo' } }, '', { sha: commit, tags })[0].commit, undefined, 'tags need the recorded commit')
+  assert.equal(bundleOriginLinks({ repo: { github: 'org/repo' } }, '', { sha: commit, github: 'org/repo', tags })[0].commit, undefined, 'tags need the recorded commit')
 })
 
 test('commit tooltips carry only what they show of the catalog details, for their own commit', () => {

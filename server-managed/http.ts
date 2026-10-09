@@ -61,7 +61,7 @@ import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSe
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
-import { type MissingCommit, backfillBundleCommits, bundleCommits, cacheCommitDetails } from './bundle-commits.ts'
+import { type CatalogCommit, backfillBundleCommits, bundleCommits, cacheCommitDetails } from './bundle-commits.ts'
 import { contentAccess } from './content-access.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
@@ -1130,7 +1130,7 @@ async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
 
 // After a catalog response: read the commit details it lacked with this
 // user's repository access, for the next catalog to send.
-async function backfillCatalogCommits(deps: ManagedHttpDeps, userId: string, missing: readonly MissingCommit[]): Promise<void> {
+async function backfillCatalogCommits(deps: ManagedHttpDeps, userId: string, missing: readonly CatalogCommit[]): Promise<void> {
   let browser: ReturnType<typeof createRepositoryBrowser> | undefined
   await backfillBundleCommits(deps.db, userId, missing, async repoId => {
     const repo = (await deps.db.listAllRepos()).find(item => item.repoId === repoId)
@@ -1324,18 +1324,18 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
 async function handleListBundles(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession): Promise<void> {
   const before = await deps.db.getBundleCatalog(session.id, Date.now())
   const summaries = await bundleSummaries(before.bundles, deps.bundleCache)
-  // Even cached storage reads may outlast changes to access or locations.
+  const commits = await bundleCommits(deps.db, before.bundles, summaries)
+  // Even cached storage and commit reads may outlast changes to access or locations.
   const catalog = await deps.db.getBundleCatalog(session.id, Date.now())
-  const { commits, missing } = await bundleCommits(deps.db, catalog.bundles, summaries)
   sendJson(res, 200, {
     ...catalog,
     bundles: catalog.bundles.map(bundle => ({
-      ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }), commitInfo: commits.get(bundle.id) ?? null,
+      ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }), commitInfo: commits.commitInfo(bundle),
     })),
     maxBytes: deps.config.maxBundleBytes,
   })
   await backfillBundleSummaries(catalog.bundles, deps.bundleCache)
-  await backfillCatalogCommits(deps, session.userId, missing)
+  await backfillCatalogCommits(deps, session.userId, commits.missing)
 }
 
 type UploadedBundle = Pick<ManagedBundle, 'id' | 'slug' | 'integrity' | 'filename' | 'byteSize' | 'repoId' | 'repoDirectory'>
@@ -1592,6 +1592,7 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session
     bundleSummaries(snapshot.teams.flatMap(team => team.bundles), deps.bundleCache),
     teamAppStates(deps.db, deps.reportStore, session.id, snapshot.teams),
   ])
+  const commits = await bundleCommits(deps.db, snapshot.teams.flatMap(team => team.bundles), summaries)
   const current = await deps.db.getFeedState(session.id, Date.now())
   if (!current) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   // Keep the post-storage authorization fence, but reload the catalog only
@@ -1603,16 +1604,14 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session
   const { teams, revision } = snapshot
   // The revision sent is the reloaded catalog's, so classify what changed now.
   const apps = await teamAppStates(deps.db, deps.reportStore, session.id, teams, classified)
-  const bundles = teams.flatMap(team => team.bundles)
-  const { commits, missing } = await bundleCommits(deps.db, bundles, summaries)
   sendJson(res, 200, {
     teams: teams.map(team => ({ ...team, app: apps.get(teamAppKey(team)) ?? null,
       bundles: team.bundles.map(bundle => ({ ...bundle, ...(summaries.get(bundle.integrity) ?? { summary: null, summaryRetryAt: null }),
-        commitInfo: commits.get(bundle.id) ?? null })) })),
+        commitInfo: commits.commitInfo(bundle) })) })),
     revision,
   })
-  await backfillBundleSummaries(bundles, deps.bundleCache)
-  await backfillCatalogCommits(deps, session.userId, missing)
+  await backfillBundleSummaries(teams.flatMap(team => team.bundles), deps.bundleCache)
+  await backfillCatalogCommits(deps, session.userId, commits.missing)
 }
 
 // Admins read all reports. Managers read their uploads or reports inside their
