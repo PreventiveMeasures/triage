@@ -51,16 +51,19 @@ test('the summary row offers Overview and Code, Overview first, and a file row o
   assert.equal(view._codePath, 'app.js')
 })
 
-test('Differences renders resolution-only changes with before/after targets and a summary count', () => {
+test('Differences renders resolution-only changes as a collapsed File | Import | Before | After | Conditions table and a summary count', () => {
   const view = compare()
+  const collapsed = renderText(view._renderDiff())
+  assert.match(collapsed, /<summary class="bundle-compare-section-head">Import resolutions <span class="bundle-compare-section-count">1/u)
+  assert.doesNotMatch(collapsed, /<table>/u, 'collapsed by default')
+  view._openSections = new Set(['resolutions'])
   const markup = renderText(view._renderDiff())
-  assert.match(markup, /Import resolutions/u)
   assert.match(markup, /Repointed/u)
-  assert.match(markup, /app\.js/u)
-  assert.match(markup, /dep/u)
-  assert.match(markup, /node, import/u)
-  assert.match(markup, /Before<\/span><code[^>]*>a\.js/u)
-  assert.match(markup, /After<\/span><code[^>]*>b\.js/u)
+  assert.match(markup, /<th>File<\/th><th>Import<\/th><th>Before<\/th><th>After<\/th><th>Conditions<\/th>/u)
+  const row = markup.slice(markup.indexOf('<tbody>'))
+  // Lazy up to the tag's end: a click handler renders inline here, `=>` and all.
+  const cells = [...row.matchAll(/<td[^>]*>\s*<(?:button|code|span)[^]*?>([^<>]*)</gu)].map(m => m[1])
+  assert.deepEqual(cells, ['app.js', 'dep', 'a.js', 'b.js', 'node, import'])
   assert.match(markup, /File contents are unchanged; import resolutions differ/u)
   assert.doesNotMatch(markup, /These two bundles carry identical files/u)
   assert.match(renderText(view._renderSummary(view._diffFor())), /1 repointed resolution/u)
@@ -83,7 +86,8 @@ test('resolution groups cap visible rows while preserving exact counts', () => {
   const view = compare()
   const row = view._diffFor().resolutions.changed[0]
   const rows = Array.from({ length: 405 }, (_, i) => ({ ...row, key: String(i), parent: `file-${i}.js` }))
-  const markup = renderText(view._resolutionGroup(rows))
+  view._openSections = new Set(['resolutions'])
+  const markup = renderText(view._renderResolutions({ changed: rows, totalChanges: rows.length }))
   assert.match(markup, /bundle-compare-group-count">405/u)
   assert.match(markup, /file-399\.js/u)
   assert.doesNotMatch(markup, /file-400\.js/u)
@@ -94,6 +98,7 @@ test('added and removed resolutions never appear or contribute to the summary', 
   const view = compare()
   view.details.bundle.imports.get('node, import').get('app.js').set('removed-only', 'a.js')
   view._otherDetails.bundle.imports.get('node, import').get('app.js').set('added-only', 'b.js')
+  view._openSections = new Set(['resolutions'])
   const markup = renderText(view._renderDiff())
   assert.match(markup, /Repointed/u)
   assert.doesNotMatch(markup, /removed-only|added-only/u)
@@ -119,23 +124,35 @@ test('file groups default to name order and sort independently by displayed size
   for (const kind of ['removed', 'added', 'changed']) assert.deepEqual(order(kind), ['a.js', 'b.js', 'z.js'])
   for (const kind of ['removed', 'added', 'changed']) {
     view._fileSort = { removed: 'name', added: 'name', changed: 'name', [kind]: 'size' }
-    assert.deepEqual(order(kind), ['b.js', 'z.js', 'a.js'])
+    // Changed orders by the size of the change (200, 80, 0), the others by size.
+    assert.deepEqual(order(kind), kind === 'changed' ? ['a.js', 'z.js', 'b.js'] : ['b.js', 'z.js', 'a.js'])
     for (const other of ['removed', 'added', 'changed'].filter(value => value !== kind)) assert.deepEqual(order(other), ['a.js', 'b.js', 'z.js'])
   }
   assert.deepEqual(rows.map(row => row.path), ['z.js', 'a.js', 'b.js'], 'sorting must not mutate the cached diff')
 })
 
-test('file size sorting happens before the visible row limit', () => {
+test('file groups list every file, in a list that scrolls, in the order chosen', () => {
   const view = compare()
   view._fileSort = { ...view._fileSort, added: 'size' }
   const rows = Array.from({ length: 405 }, (_, i) => ({ path: `file-${String(i).padStart(3, '0')}.js`, bytes: i }))
   const markup = renderText(view._fileGroup('Added', rows, 'added', path => path))
   const paths = [...markup.matchAll(/class="bundle-compare-row-path mono"[^>]*>(.*?)<\/span>/gu)].map(match => match[1])
-  assert.equal(paths.length, 400)
+  assert.equal(paths.length, 405)
   assert.equal(paths[0], 'file-404.js')
-  assert.equal(paths.at(-1), 'file-005.js')
-  assert.match(markup, /bundle-compare-group-count">405/u)
-  assert.match(markup, /and 5 more/u)
+  assert.equal(paths.at(-1), 'file-000.js')
+  assert.match(markup, /class=bundle-compare-rows bundle-compare-rows--scroll/u)
+  assert.doesNotMatch(markup, /more…/u)
+})
+
+test('the Files section is collapsed until opened, then lists Removed | Added | Changed', () => {
+  const view = compare()
+  view._otherDetails.bundle.modules.get('.').files['a.js'] = 'changed'
+  view._diffKey = null
+  const collapsed = renderText(view._renderDiff())
+  assert.match(collapsed, /<summary class="bundle-compare-section-head">Files <span class="bundle-compare-section-count">1/u)
+  assert.doesNotMatch(collapsed, /bundle-compare-cols--files/u)
+  view._openSections = new Set(['files'])
+  assert.match(renderText(view._renderDiff()), /bundle-compare-cols--files[^]*bundle-compare-changed/u)
 })
 
 test('Swap hands both parsed bundles to their new roles instead of loading them again', () => {
@@ -175,15 +192,48 @@ test('a swap that lands on another bundle is dropped, not resumed later', () => 
   assert.equal(view._targetIntegrity, null, 'opening the swap\'s bundle afterwards starts a fresh comparison')
 })
 
-test('dependency updates list Removed, Added and Updated side by side in one row of columns', () => {
+test('packages list Removed | Added | Changed, each package once with its versions and sizes', async () => {
+  const { comparePackages } = await import('../ui/view/bundle-compare-diff.js')
   const view = compare()
-  const markup = renderText(view._renderVersionUpdates({
-    updated: [{ pkg: 'lodash', baseVersions: ['4.17.20'], otherVersions: ['4.17.21'], direction: 'up' }],
-    removed: [{ pkg: 'left-pad', versions: ['1.3.0'] }],
-    added: [{ pkg: 'zod', versions: ['3.23.8'] }],
-    totals: {},
-  }, 'Before', 'After'))
-  const cols = markup.slice(markup.indexOf('class="bundle-compare-cols"'))
-  assert.deepEqual([...cols.matchAll(/class=bundle-compare-group bundle-compare-(\w+)/gu)].map(m => m[1]), ['removed', 'added', 'updated'])
-  assert.equal(markup.match(/class="bundle-compare-cols"/gu).length, 1)
+  const rows = comparePackages(
+    { onlyBase: [{ pkg: 'left-pad', bytes: 40 }], onlyOther: [{ pkg: 'zod', bytes: 90 }],
+      changed: [{ pkg: '__own__', baseBytes: 100, otherBytes: 120, delta: 20 }, { pkg: 'lodash', baseBytes: 50, otherBytes: 60, delta: 10 }],
+      unchanged: [{ pkg: 'react', bytes: 70 }] },
+    new Map([['left-pad', new Set(['1.3.0'])], ['lodash', new Set(['4.17.20'])], ['react', new Set(['18.2.0'])]]),
+    new Map([['zod', new Set(['3.23.8'])], ['lodash', new Set(['4.17.21'])], ['react', new Set(['18.3.0'])]]),
+  )
+  const markup = renderText(view._renderPackages(rows, 'Before', 'After'))
+  assert.deepEqual([...markup.matchAll(/class=bundle-compare-group bundle-compare-(\w+)/gu)].map(m => m[1]), ['removed', 'added', 'changed'])
+  assert.equal([...markup.matchAll(/aria-label=(?:removed|added|changed) package order/gu)].length, 3, 'each group orders by Name | Size')
+  const changed = markup.slice(markup.indexOf('bundle-compare-group bundle-compare-changed'))
+  const row = name => changed.match(new RegExp(`data-tooltip=${name}>${name}</span>[^]*?</li>`, 'u'))[0]
+  assert.match(row('lodash'), /4\.17\.20<\/span>[^]*4\.17\.21[^]*↑[^]*50 B → 60 B[^]*\+10 B/u)
+  assert.match(row('react'), /18\.2\.0[^]*18\.3\.0[^]*70 B → 70 B[^]*±0 B/u, 'a version-only change keeps its (equal) sizes')
+  assert.match(row('Own source'), /100 B → 120 B/u)
+  assert.doesNotMatch(row('Own source'), /bundle-compare-ver/u, 'own source carries sizes alone')
+  assert.match(markup, /left-pad<\/span>\s*<span class="bundle-compare-dep-ver">1\.3\.0/u)
+  const changedOrder = () => {
+    const group = renderText(view._renderPackages(rows, 'Before', 'After'))
+    return [...group.slice(group.indexOf('bundle-compare-group bundle-compare-changed')).matchAll(/bundle-compare-row-path" data-tooltip-truncated data-tooltip=([^>]+)>/gu)].map(m => m[1])
+  }
+  assert.deepEqual(changedOrder(), ['lodash', 'Own source', 'react'])
+  view._pkgSort = { ...view._pkgSort, changed: 'size' }
+  rows.changed.push({ pkg: 'axios', baseBytes: 5, otherBytes: 15, delta: 10, baseVersions: [], otherVersions: [], direction: null })
+  assert.deepEqual(changedOrder(), ['Own source', 'axios', 'lodash', 'react'], 'the largest change first, name breaking ties')
+})
+
+test('a package installed under an npm alias keeps one row, its versions joined to its sizes', () => {
+  const side = (integrity, version, code) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'app' } }],
+      ['node_modules/alias', { name: 'actual-package', version, files: { 'index.js': code } }]]),
+  }) })
+  const view = compare()
+  view.details = side('base', '1.0.0', 'one')
+  view._otherDetails = side('other', '1.1.0', 'one, two')
+  view._diffKey = null
+  const { packageRows } = view._diffFor()
+  assert.deepEqual(packageRows.removed, [])
+  assert.deepEqual(packageRows.added, [])
+  assert.deepEqual(packageRows.changed, [{ pkg: 'alias', baseBytes: 3, otherBytes: 8, delta: 5,
+    baseVersions: ['1.0.0'], otherVersions: ['1.1.0'], direction: 'up' }])
 })

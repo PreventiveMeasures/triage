@@ -285,8 +285,11 @@ export function bundlePackageDirs(details) {
 // Shared by the Advisories tab (a bulk registry lookup keyed on these
 // pairs) and the Compare slide (the dependency version-update diff).
 // Returns an empty Map for sourcemaps and v0 stasis bundles — neither
-// carries per-module version metadata.
-export function bundlePackageVersions(details, paths = null) {
+// carries per-module version metadata. `keyOf(dir, info)` names each
+// entry, the recorded name by default; Compare keys by install directory,
+// as its sizes are, so an npm alias (`node_modules/alias` recording
+// `actual-package`) joins its own sizes.
+export function bundlePackageVersions(details, paths = null, keyOf = (_dir, info) => info.name) {
   const versions = new Map()
   if (details?.kind !== 'stasis' || !details.bundle?.modules) return versions
   const packageDirs = paths === null ? null : bundlePackageDirs(details)
@@ -295,8 +298,9 @@ export function bundlePackageVersions(details, paths = null) {
     if (selectedDirs && !selectedDirs.has(dir)) continue
     if (!dir.includes('node_modules')) continue
     if (!info?.name || typeof info.version !== 'string' || !info.version) continue
-    let set = versions.get(info.name)
-    if (!set) { set = new Set(); versions.set(info.name, set) }
+    const key = keyOf(dir, info)
+    let set = versions.get(key)
+    if (!set) { set = new Set(); versions.set(key, set) }
     set.add(info.version)
   }
   return versions

@@ -204,15 +204,58 @@
   flex: 1 1 500px;
   min-width: min(500px, 100%);
 }
-/* Files list full paths, so their columns need more room: Added/Removed
-   >=700px, Changed >=800px (keeping Changed the widest, as in Packages). */
+/* Files sit three abreast where there is room, paths ellipsized: Changed,
+   with its `before → after` sizes, takes the most. Each lists every file,
+   scrolling within its card. */
 .bundle-compare-cols--files > .bundle-compare-group {
-  flex: 1 1 700px;
-  min-width: min(700px, 100%);
+  flex: 1 1 360px;
+  min-width: min(360px, 100%);
 }
 .bundle-compare-cols--files > .bundle-compare-changed {
-  flex: 1 1 800px;
-  min-width: min(800px, 100%);
+  flex: 1 1 440px;
+  min-width: min(440px, 100%);
+}
+.bundle-compare-rows--scroll {
+  max-height: 24rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+
+  /* Thousands of rows: lay out only those scrolled into view. */
+  & > li { content-visibility: auto; contain-intrinsic-size: auto 1.6rem; }
+}
+/* Sections that open on demand (Files, Import resolutions), the heading
+   the disclosure. */
+.bundle-compare-collapsible > summary {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  width: fit-content;
+  list-style: none;
+  cursor: default;
+  user-select: none;
+
+  &::-webkit-details-marker { display: none; }
+  &::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    margin-right: .15rem;
+    border-right: 1.5px solid currentcolor;
+    border-bottom: 1.5px solid currentcolor;
+    transform: rotate(-45deg);
+  }
+  &:hover { color: var(--text); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+}
+.bundle-compare-collapsible[open] > summary { margin-bottom: .4rem; }
+.bundle-compare-collapsible[open] > summary::before { transform: translateY(-2px) rotate(45deg); }
+.bundle-compare-section-count {
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Each group sits on a very faint, kind-tinted card so Added | Removed
@@ -304,31 +347,40 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-row-delta.up { color: var(--green); }
 .bundle-compare-row-delta.down { color: var(--critical); }
 
-.bundle-compare-resolution {
-  padding: .25rem .35rem;
+/* Repointed imports: File | Import | Before | After | Conditions, each
+   cell one line, ellipsized. */
+.bundle-compare-resolutions table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
   font-size: .72rem;
   line-height: 1.4;
+
+  & th {
+    padding: .2rem .35rem;
+    text-align: left;
+    font-size: .62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+  }
+  & th:nth-child(1) { width: 26%; }
+  & th:nth-child(2) { width: 16%; }
+  & th:nth-child(3), & th:nth-child(4) { width: 22%; }
+  & td {
+    padding: .25rem .35rem;
+    border-top: 1px solid var(--border);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  & td > code, & td > span, & td > button {
+    display: block;
+    width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  & code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 }
-.bundle-compare-resolution + .bundle-compare-resolution { border-top: 1px solid var(--border); }
-.bundle-compare-resolution-source,
-.bundle-compare-resolution-targets,
-.bundle-compare-resolution-targets > div { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
-.bundle-compare-resolution code {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.bundle-compare-resolution-context {
-  min-width: 0;
-  max-width: 40%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--muted);
-  font-size: .68rem;
-}
-.bundle-compare-resolution-targets { margin-top: .1rem; }
-.bundle-compare-resolution-targets > div { flex: 1; }
-.bundle-compare-resolution-targets > div > span { flex-shrink: 0; font-size: .66rem; }
+.bundle-compare-resolution-context { color: var(--muted); font-size: .68rem; }
 .bundle-compare-resolution-before { color: var(--critical); }
 .bundle-compare-resolution-after { color: var(--green); }
 
@@ -337,9 +389,6 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
    row's `old → new` already carries the up / down / changed color, so
    the container stays untinted rather than fight the per-row accent.
    Added / removed dependencies reuse the tinted group cards. */
-.bundle-compare-group.bundle-compare-updated { background: rgb(from var(--muted) r g b / .06); }
-.bundle-compare-updated .bundle-compare-dot { background: var(--muted); }
-.bundle-compare-updated .bundle-compare-group-title { color: var(--text); }
 /* `old → new` cell, pinned right of the package name like the size
    columns; mono + tabular so version numbers line up across rows. */
 .bundle-compare-ver {

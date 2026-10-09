@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { computeBundleDiff, computeVersionUpdates, compareSemver } = await import('../ui/view/bundle-compare-diff.js')
+const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
 
 // All fixtures use ASCII content so a string's byte length equals its
 // `.length` — keeps the expected-bytes assertions readable.
@@ -315,8 +315,8 @@ describe('computeVersionUpdates', () => {
     assert.equal(vu.updated.length, 1)
     assert.deepEqual(vu.updated[0].baseVersions, ['1.0.0', '2.0.0'])
     assert.deepEqual(vu.updated[0].otherVersions, ['1.5.0', '2.0.0'])
-    // Highest version unchanged (2.0.0) but the set differs → 'changed'.
-    assert.equal(vu.updated[0].direction, 'changed')
+    // The older copy moved up (1.0.0 → 1.5.0) beside the same 2.0.0.
+    assert.equal(vu.updated[0].direction, 'up')
   })
 
   it('sorts each list by package name and reports distinct dep counts', () => {
@@ -335,5 +335,41 @@ describe('computeVersionUpdates', () => {
     assert.deepEqual(vu.added, [])
     assert.deepEqual(vu.removed, [])
     assert.deepEqual(vu.totals, { baseDeps: 0, otherDeps: 0 })
+  })
+})
+
+describe('versionDirection', () => {
+  it('reads dropped and added versions against each other, or against the kept ones', () => {
+    for (const [before, after, direction] of [
+      [['1.0.0', '2.0.0'], ['2.0.0'], 'up'],
+      [['2.0.0'], ['1.0.0', '2.0.0'], 'down'],
+      [['1.0.0', '1.2.0', '2.0.0'], ['1.0.0', '2.0.0'], 'changed'],
+      [['1.0.0'], ['2.0.0'], 'up'],
+      [['2.0.0'], ['1.5.0'], 'down'],
+      [['1.0.0'], ['1.0.0', '2.0.0'], 'up'],
+      [['1.0.0', '2.0.0'], ['1.0.0'], 'down'],
+      [['1.0.0', '3.0.0'], ['2.0.0', '3.0.0'], 'up'],
+      [['1.0.0', '3.0.0'], ['2.0.0'], 'changed'],
+    ]) assert.equal(versionDirection(before, after), direction, `${before} → ${after}`)
+  })
+})
+
+describe('comparePackages', () => {
+  it('joins sizes and versions into one row per package that moved', () => {
+    const rows = comparePackages(
+      { onlyBase: [{ pkg: 'gone', bytes: 3 }], onlyOther: [], changed: [{ pkg: '__own__', baseBytes: 10, otherBytes: 12, delta: 2 }],
+        unchanged: [{ pkg: 'bumped', bytes: 5 }, { pkg: 'same', bytes: 7 }] },
+      vmap({ gone: '1.0.0', bumped: '1.0.0', same: '2.0.0', meta: '1.0.0' }),
+      vmap({ bumped: '1.1.0', same: '2.0.0', fresh: '0.1.0' }),
+    )
+    assert.deepEqual(rows.removed, [
+      { pkg: 'gone', bytes: 3, versions: ['1.0.0'] },
+      { pkg: 'meta', bytes: null, versions: ['1.0.0'] },
+    ])
+    assert.deepEqual(rows.added, [{ pkg: 'fresh', bytes: null, versions: ['0.1.0'] }])
+    assert.deepEqual(rows.changed, [
+      { pkg: '__own__', baseBytes: 10, otherBytes: 12, delta: 2, baseVersions: [], otherVersions: [], direction: null },
+      { pkg: 'bumped', baseBytes: 5, otherBytes: 5, delta: 0, baseVersions: ['1.0.0'], otherVersions: ['1.1.0'], direction: 'up' },
+    ])
   })
 })
