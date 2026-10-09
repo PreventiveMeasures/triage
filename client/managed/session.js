@@ -61,9 +61,21 @@ function teamApp(app) {
     ? { appMode: true, appFindings: app.appFindings } : null
 }
 
+// The cached details and tags of the commit a bundle records, in the repository
+// it is stored at (server-managed/bundle-commits.ts), or null.
+function bundleCommitInfo(info) {
+  if (typeof info?.sha !== 'string' || typeof info.github !== 'string' || !Array.isArray(info.tags)) return null
+  const details = info.details
+  const text = value => typeof value === 'string' ? value : null
+  const time = value => Number.isSafeInteger(value) ? value : null
+  return { sha: info.sha, github: info.github, tags: info.tags.filter(tag => typeof tag === 'string'),
+    details: typeof details?.message === 'string' ? { message: details.message, authorName: text(details.authorName),
+      authorLogin: text(details.authorLogin), authoredAt: time(details.authoredAt), committedAt: time(details.committedAt) } : null }
+}
+
 // GET /api/teams → the signed-in user's teams, each with the reports and bundles
 // attached to the team's repos ([{ id, slug, name, reports: [{ id, slug, filename, analyzer, repoFullName, repoDirectory }],
-// bundles: [{ id, slug, integrity, filename, byteSize, repoId, repoDirectory, repoFullName }] }]), or [] when
+// bundles: [{ id, slug, integrity, filename, byteSize, repoId, repoDirectory, repoFullName, commitInfo }] }]), or [] when
 // unauthenticated. A failed background refresh keeps the provided fallback.
 // Kept on `state.managedTeams` and shown in the
 // sidebar's per-user Teams section. Never throws, so a probe failure can't break
@@ -110,6 +122,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
             summaryRetryAt: Number.isSafeInteger(b.summaryRetryAt) && b.summaryRetryAt > 0 ? b.summaryRetryAt : null,
             repoDirectory: typeof b.repoDirectory === 'string' ? b.repoDirectory : '',
             repoFullName: typeof b.repoFullName === 'string' ? b.repoFullName : '',
+            commitInfo: bundleCommitInfo(b.commitInfo),
           }))
         : [],
     }))

@@ -10,6 +10,8 @@ import { bundleOptions } from '../ui/view/bundle-selector.js'
 
 const bundle = { id: 'bundle', integrity: 'hash', filename: 'app.stasis.code.br', kind: 'stasis', repoId: 1,
   byteSize: 2048, summary: { files: 3, codeFiles: 2, lines: 1234, commit: 'a'.repeat(40) } }
+const commitInfo = { sha: 'a'.repeat(40), github: 'org/app', tags: ['v1.0.0'],
+  details: { message: 'Release\n\nNotes', authorName: 'Alice', authorLogin: 'alice', authoredAt: 1, committedAt: 2 } }
 
 test('managed catalog counts reach sidebar tooltips and comparison entries without loading inventory', async t => {
   const fetches = t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [
@@ -23,10 +25,21 @@ test('managed catalog counts reach sidebar tooltips and comparison entries witho
   assert.equal(entry.kind, 'stasis')
   assert.deepEqual(entry.summary, bundle.summary)
   assert.equal(entry.commitInfo, null)
-  const commitInfo = { sha: bundle.summary.commit, tags: ['v1'], details: null }
-  assert.deepEqual(managedTeamBundleEntries([{ bundles: [{ ...bundle, commitInfo }] }])[0].commitInfo, commitInfo, 'catalog commit details and tags reach the bundle view')
   assert.equal(managedBundleStats({}), '')
   assert.equal(managedBundleStats({ summary: { files: 0, lines: 0 } }), '0 files · 0 LoC')
+})
+
+test('catalog commit details and tags survive the team probe into sidebar rows and the bundle view', async t => {
+  const malformed = [{ ...commitInfo, sha: 7 }, { ...commitInfo, github: null }, { ...commitInfo, tags: 'v1' }, 'commit', null]
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [{ id: 'team', name: 'Team', reports: [], bundles: [
+    { ...bundle, commitInfo }, ...malformed.map((info, i) => ({ ...bundle, id: `bad-${i}`, commitInfo: info })),
+    { ...bundle, id: 'partial', commitInfo: { ...commitInfo, tags: ['v2', 3], details: { message: 7 } } },
+  ] }] })))
+  const [team] = await probeTeams()
+  assert.deepEqual(team.bundles[0].commitInfo, commitInfo, 'the sidebar row keeps what its tooltip shows')
+  assert.deepEqual(managedTeamBundleEntries([team])[0].commitInfo, commitInfo, 'and so does the bundle view')
+  assert.deepEqual(team.bundles.slice(1, -1).map(b => b.commitInfo), malformed.map(() => null))
+  assert.deepEqual(team.bundles.at(-1).commitInfo, { sha: commitInfo.sha, github: 'org/app', tags: ['v2'], details: null })
 })
 
 test('managed scan selectors show cached counts before opening bundles and preserve Code resource filtering', () => {
