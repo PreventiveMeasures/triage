@@ -88,6 +88,7 @@ test('Compare offers the package\'s other versions, read once a session, and loa
   const pending = npmCompareSource(entry)
   assert.equal(pending.pending, true)
   assert.deepEqual(pending.options, [])
+  assert.deepEqual(pending.choices.map(choice => choice.id), ['1.2.3'], 'its own side offers the version shown meanwhile')
   npmCompareSource(entry)
   assert.deepEqual(versionRequests, ['@scope/pkg'], 'one listing while it loads')
   release()
@@ -98,6 +99,8 @@ test('Compare offers the package\'s other versions, read once a session, and loa
     { id: '1.2.2', name: '@scope/pkg@1.2.2', format: 'npm', detail: '' },
     { id: '1.0.0', name: '@scope/pkg@1.0.0', format: 'npm', detail: 'old' },
   ], 'newest first, the version shown left out')
+  assert.deepEqual(source.choices.map(choice => [choice.id, choice.detail]), [['1.2.3', 'latest'], ['1.2.2', ''], ['1.0.0', 'old']],
+    'its own side offers every version, its own among them')
   assert.equal(source.name('sha512-pkg'), '@scope/pkg@1.2.3')
   assert.equal(source.name('1.0.0'), '@scope/pkg@1.0.0')
   answer = (name, version) => Promise.resolve({ ...data, version, integrity: `sha512-${version}` })

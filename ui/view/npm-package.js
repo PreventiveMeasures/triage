@@ -151,27 +151,30 @@ function tagsByVersion(distTags = {}) {
 }
 
 // What Compare offers a package version (bundle-compare.js `source`): the
-// package's other versions, newest first, compared with by their numbers.
+// package's other versions, newest first, compared with by their numbers,
+// and for its own side, every version, its own among them.
 export function npmCompareSource(entry) {
   const { name, version } = entry.npm
   const list = npmVersionList(name)
   const tags = tagsByVersion(list.distTags)
+  const option = id => ({ id, name: `${name}@${id}`, format: 'npm', detail: tags.get(id)?.join(', ') ?? '' })
+  const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
   return {
     noun: 'version',
     base: version,
     pending: list.status === 'loading',
     error: list.status === 'error' ? `Couldn't list the versions of ${name}.` : null,
-    options: (list.versions ?? []).filter(other => other !== version).map(other => ({
-      id: other, name: `${name}@${other}`, format: 'npm', detail: tags.get(other)?.join(', ') ?? '',
-    })),
+    options: versions.filter(other => other !== version).map(option),
+    choices: versions.map(option),
     name: id => id === entry.integrity || id === version ? entry.name : `${name}@${id}`,
     load: async id => (await loadNpmVersion(name, id)).details,
     // In place of Packages, which a single package has no use for.
     dependencies: (base, other) => npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest),
-    // Swapping opens the version compared with, comparing it with this one.
-    swap: (id, mode) => {
+    // A swap or a pick on this side opens `base`, compared with `target`.
+    open: (base, target, mode) => {
       if (!isManagedUiMode() || !managedHistory?.active) return
-      void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: id, bundleTab: 'compare', compareSpec: version, ...(mode === 'code' ? { compareMode: 'code' } : {}) })
+      void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: base, bundleTab: 'compare',
+        ...(target ? { compareSpec: target, ...(mode === 'code' ? { compareMode: 'code' } : {}) } : {}) })
     },
   }
 }

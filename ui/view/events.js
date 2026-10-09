@@ -2695,11 +2695,12 @@ report.addEventListener('bundle-search-case-toggle', () => {
   state.bundleSearchCase = !state.bundleSearchCase
   render()
 })
-// `<bundle-compare>` swap button — switch the active bundle to the
-// comparison target while staying on the Compare tab (so A and B trade
-// places). The component has already stashed the post-swap target (the
-// old base); this performs the same full bundle switch the sidebar row
-// click does, just landing on 'compare' instead of 'overview'.
+// `<bundle-compare>` swap button, or a pick on its own side — switch the
+// active bundle to `integrity` while staying on the Compare tab, compared
+// with `target` (for a swap the old base, so A and B trade places). The
+// component has already stashed that target; this performs the same full
+// bundle switch the sidebar row click does, just landing on 'compare'
+// instead of 'overview'.
 report.addEventListener('bundle-swap', (e) => {
   const integrity = e.detail?.integrity
   if (!integrity || !(state.bundles ?? []).some((b) => b.integrity === integrity)) return
@@ -2710,10 +2711,11 @@ report.addEventListener('bundle-swap', (e) => {
   const held = handOffBundles(e.detail.bundles ?? [])
   const release = () => { setTimeout(() => releaseHandoff(held)) }
   if (entry.managedId) {
-    // The link names the old base as the bundle compared with, in the mode
-    // Compare was in.
-    const base = state.bundles.find(b => b.integrity === state.selectedBundle)
-    const compare = base?.managedId ? { compareId: base.managedId, ...(e.detail.mode === 'code' ? { compareMode: 'code' } : {}) } : null
+    // The link names the bundle compared with, the old base for a swap, in
+    // the mode Compare was in.
+    const target = e.detail.target === undefined ? state.selectedBundle : e.detail.target
+    const compared = state.bundles.find(b => b.integrity === target)
+    const compare = compared?.managedId ? { compareId: compared.managedId, ...(e.detail.mode === 'code' ? { compareMode: 'code' } : {}) } : null
     void managedHistory.navigate(managedBundleRoute(state.managedTeams, entry, state.currentManagedTeam, 'compare', compare, state.bundles)).finally(release)
     return
   }

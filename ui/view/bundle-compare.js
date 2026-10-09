@@ -27,10 +27,16 @@
 // is reported as `bundle-compare-change`, which keeps a managed URL on it.
 // `source`, when set, offers what to compare with in place of the bundles
 // on hand, as an npm package version offers the package's other versions
-// (npm-package.js npmCompareSource): `{ noun, options, pending, error,
-// name(id), load(id), swap(id, mode), dependencies(base, other) }`, each
-// option `{ id, name, format, detail }`; its ids stand where bundles'
-// integrities do. `dependencies` lists what replaces Packages: removed,
+// (npm-package.js npmCompareSource): `{ noun, base, options, choices,
+// pending, error, name(id), load(id), open(base, target, mode),
+// dependencies(base, other) }`, each option `{ id, name, format, detail }`;
+// its ids stand where bundles' integrities do, `base` the open one's.
+// `options` are what the open one compares with, `choices` what may take
+// its place.
+//
+// Both sides are pickers. Picking the other side compares with it; picking
+// this side opens what was picked, compared with the same other side, and
+// picking the other side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
 // added and changed rows, `{ key, name, kind, range }` or, changed, with
 // `from` and `to` in place of `range`.
 import { LitElement, html, nothing } from 'lit'
@@ -61,17 +67,16 @@ const MAX_VERSION_CHARS = 24
 // The Overview's column order, Packages and Files alike.
 const LANES = ['removed', 'added', 'changed']
 
-// Swap handoff. The swap button switches the active bundle to the
-// current comparison target (so A and B trade places, and the app
-// navigates to the other bundle). That base change would normally clear
-// the comparison in willUpdate; this module-level slot carries the
-// intended new target (the old base) across the prop teardown — a
+// Reopen handoff. Swap, or a pick on this side, opens another bundle (the
+// app navigates to it) to compare with a target. That base change would
+// normally clear the comparison in willUpdate; this module-level slot
+// carries the intended target across the prop teardown — a
 // component-internal field wouldn't survive the navigation. Shape:
-// `{ base, target, scope, mode, codePath }`, consumed once by willUpdate
-// when integrity flips to `base`, or dropped when another bundle opens.
-// It holds no parsed bundle: those ride the swap event to the navigation,
-// which hands them over (bundle-load.js handOffBundles) for as long as it
-// runs.
+// `{ base, target, scope, mode, codePath }`, `base` the opened one's
+// integrity, or a source's id, consumed once by willUpdate when the base
+// becomes it, or dropped when another bundle opens. It holds no parsed
+// bundle: those ride the swap event to the navigation, which hands them
+// over (bundle-load.js handOffBundles) for as long as it runs.
 let _pendingSwap = null
 
 // Signed count for a summary metric delta: `+3` / `−2` / `±0`. Uses a
@@ -187,18 +192,25 @@ class BundleCompare extends LitElement {
   // The base bundle changed: compare it afresh, or after a swap, with the
   // old base.
   _rebase() {
-    // A swap navigates to the old comparison target as the new base; in
-    // that single case restore the old base as the new target instead
-    // of clearing it (the module-level handoff survives the prop
-    // teardown the navigation triggers). A swap that landed elsewhere
-    // (another bundle opened first) is over.
-    if (_pendingSwap && this.integrity && this.integrity !== _pendingSwap.base) _pendingSwap = null
-    if (_pendingSwap && this.integrity === _pendingSwap.base) {
+    // A swap, or a pick on this side, navigates to the new base; in that
+    // case restore the target it was opened to compare with instead of
+    // clearing it (the module-level handoff survives the prop teardown the
+    // navigation triggers). One that landed elsewhere (another bundle
+    // opened first) is over.
+    const base = this._baseKey
+    if (_pendingSwap && base && base !== _pendingSwap.base) _pendingSwap = null
+    if (_pendingSwap && base === _pendingSwap.base) {
       const { target } = _pendingSwap
       this._scope = _pendingSwap.scope
       this._mode = _pendingSwap.mode
       this._codePath = _pendingSwap.codePath
       _pendingSwap = null
+      if (!target) {
+        this._targetIntegrity = null
+        this._otherDetails = null
+        this._status = 'idle'
+        return
+      }
       this._targetIntegrity = target
       this._diff = null
       this._diffKey = null
@@ -223,34 +235,46 @@ class BundleCompare extends LitElement {
     this._diffKey = null
   }
 
-  // Swap A and B: open the current comparison target as the active
-  // bundle (so the app navigates to it) and flip the comparison to the
-  // old base. The pending-swap slot carries the new target across the
-  // base change; events.js handles the actual bundle switch off the
-  // dispatched event (same path the sidebar row click takes). Both sides
-  // are already parsed, so each is handed to its new role rather than
-  // read from storage and parsed again.
+  // The id this side is picked by: its integrity, or its source's id.
+  get _baseKey() {
+    return this.source ? this.source.base : this.integrity
+  }
+
+  // Swap A and B: open the current comparison target as the active bundle
+  // and compare it with the old base.
   _swap() {
-    const newBase = this._targetIntegrity
-    if (!newBase || newBase === this.integrity) return
+    const target = this._targetIntegrity
+    if (target && target !== this._baseKey) this._reopen(target, this._baseKey)
+  }
+
+  // A pick on this side: open it to compare with the same target, or with
+  // the old base when it is the target (a swap).
+  _pickBase(value) {
+    if (!value || value === this._baseKey) return
+    if (value === this._targetIntegrity) this._swap()
+    else this._reopen(value, this._targetIntegrity)
+  }
+
+  // Open `base` (the app navigates to it), compared with `target` (null:
+  // nothing picked yet). The pending slot carries the target, scope, mode
+  // and Code file across the base change. events.js handles the bundle
+  // switch off the dispatched event (the path a sidebar row click takes);
+  // what is already parsed of either side is handed to its new role rather
+  // than read from storage and parsed again. A source opens its own.
+  _reopen(base, target) {
     if (this.source) {
-      // The source opens the other side; it arrives as the base with its
-      // own integrity, and compares with this one's id.
-      const loaded = this._otherDetails?.integrity && !this._otherDetails.error ? this._otherDetails.integrity : null
-      _pendingSwap = loaded ? { base: loaded, target: this.source.base, scope: this._scope, mode: this._mode, codePath: this._codePath } : null
-      this.source.swap(newBase, this._mode)
+      _pendingSwap = { base, target, scope: this._scope, mode: this._mode, codePath: this._codePath }
+      this.source.open(base, target, this._mode)
       return
     }
-    if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === newBase)) return
-    _pendingSwap = { base: newBase, target: this.integrity, scope: this._scope, mode: this._mode, codePath: this._codePath }
-    const bundles = [
-      this._otherDetails?.integrity === newBase && (this._otherDetails.json || this._otherDetails.bundle) ? this._otherDetails : null,
-      this._baseReady ? this.details : null,
-    ].filter(Boolean)
+    if (!bundleComparisonCandidates(state.bundles ?? [], this.integrity).some(b => b.integrity === base)) return
+    _pendingSwap = { base, target, scope: this._scope, mode: this._mode, codePath: this._codePath }
+    const parsed = details => details && !details.error && (details.json || details.bundle) && [base, target].includes(details.integrity)
+    const bundles = [this._otherDetails, this._baseReady ? this.details : null].filter(parsed)
     this.dispatchEvent(new CustomEvent('bundle-swap', {
       bubbles: true,
       composed: true,
-      detail: { integrity: newBase, bundles, mode: this._mode },
+      detail: { integrity: base, target, bundles, mode: this._mode },
     }))
   }
 
@@ -634,15 +658,18 @@ class BundleCompare extends LitElement {
   }
 
   _renderPicker(others, hasTarget, scopeSelector) {
-    const baseName = this._nameFor(this.integrity)
     const noun = this.source?.noun ?? 'bundle'
+    const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
     return html`<div class="bundle-compare-picker">
-      <span class="bundle-compare-base" data-tooltip-truncated data-tooltip=${baseName}>${baseName}</span>
+      <div class="bundle-compare-select-wrap bundle-compare-base-wrap">
+        <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .ordered=${Boolean(this.source)}
+          label=${`${Noun} to compare`} placeholder=${this._nameFor(this.integrity)} @bundle-change=${event => this._pickBase(event.detail.value)}></bundle-selector>
+      </div>
       <span class="bundle-compare-arrow" aria-hidden="true">→</span>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare with</span>
         <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .ordered=${Boolean(this.source)}
-          label=${`${noun[0].toUpperCase()}${noun.slice(1)} to compare with`} placeholder=${`Choose a ${noun}…`} @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
+          label=${`${Noun} to compare with`} placeholder=${`Choose a ${noun}…`} @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
         ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>
           <button
             type="button"
@@ -655,14 +682,28 @@ class BundleCompare extends LitElement {
     </div>`
   }
 
+  // What this side may become: the open bundle and those it compares with,
+  // or a source's choices.
+  _baseOptions() {
+    if (this.source) return this._sourceOptions(this.source.choices ?? [])
+    const base = (state.bundles ?? []).find(bundle => bundle.integrity === this.integrity)
+    const others = bundleComparisonCandidates(state.bundles ?? [], this.integrity)
+    return this._bundleOptions(base ? [base, ...others] : others)
+  }
+
+  _sourceOptions(options) {
+    return options.map(option => ({ id: option.id, integrity: option.id, kind: option.format, format: option.format,
+      detail: option.detail, filename: option.name, size: '—', summary: null }))
+  }
+
   // Build the picker option list, disambiguating duplicate names with a
   // short integrity suffix so two same-named bundles are tellable apart.
   _otherOptions() {
-    if (this.source) {
-      return this.source.options.map(option => ({ id: option.id, integrity: option.id, kind: option.format, format: option.format,
-        detail: option.detail, filename: option.name, size: '—', summary: null }))
-    }
-    const others = bundleComparisonCandidates(state.bundles ?? [], this.integrity)
+    if (this.source) return this._sourceOptions(this.source.options)
+    return this._bundleOptions(bundleComparisonCandidates(state.bundles ?? [], this.integrity))
+  }
+
+  _bundleOptions(others) {
     const nameCounts = new Map()
     for (const b of others) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1)
     return others.map((b) => ({
