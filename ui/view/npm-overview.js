@@ -240,23 +240,31 @@ const SOURCE_MAP = /\.map$/iu
 const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 // Code minified into lines shorter than NPM_LONG_LINE: outside its strings and
 // comments (`/* @__PURE__ */`), its lines average more than anyone writes and
-// next to none of its spaces are ones a minifier drops, beside punctuation
-// (`a, b`, `x = 1`) rather than between two words (`return a`). Told only in
-// what minifiers write, as GitHub Linguist tells minified files only in
-// JavaScript and CSS, by their strings and comments: matched in one pass, so
-// that neither starts inside the other, a comment with the spaces around it.
+// next to none of its spaces are ones a minifier drops. Told only in what
+// minifiers write, as GitHub Linguist tells minified files only in JavaScript
+// and CSS, each by its strings and comments (matched in one pass, so that
+// neither starts inside the other, a comment with the spaces around it) and
+// the spaces it can do without.
 const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
-const JS_STRING_OR_COMMENT = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gu
-// No `//` comments, so `url(https://…)` is code.
-const CSS_STRING_OR_COMMENT = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|[ \t]*\/\*[\s\S]*?\*\/[ \t]*/gu
-const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS_STRING_OR_COMMENT : /\.css$/iu.test(path) ? CSS_STRING_OR_COMMENT : null
-function minifiedCode(text, stringOrComment) {
+const JS = {
+  stringOrComment: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gu,
+  // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`).
+  droppable: /(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu,
+}
+const CSS = {
+  // No `//` comments, so `url(https://…)` is code.
+  stringOrComment: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|[ \t]*\/\*[\s\S]*?\*\/[ \t]*/gu,
+  // Beside braces, `;`, `,`, `>`, parentheses and after `:` (`a { color: red }`),
+  // not those a selector or a value needs (`.a .b`, `1px solid #fff`, `a :hover`).
+  droppable: /(?<=[{};,:>(])[ \t]+|[ \t]+(?=[{};,>)!])/gu,
+}
+const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
+function minifiedCode(text, { stringOrComment, droppable }) {
   const code = text.replaceAll(stringOrComment, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
   const lines = code.split('\n').filter(line => line.trim() !== '').length
   // Counted by character: a run aligning `=` is as many spaces as it is wide.
-  return code.length > MINIFIED_AVERAGE * lines
-    && (code.match(/(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu) ?? []).join('').length < MINIFIED_SPACES * code.length
+  return code.length > MINIFIED_AVERAGE * lines && (code.match(droppable) ?? []).join('').length < MINIFIED_SPACES * code.length
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
@@ -298,8 +306,8 @@ export function npmFileReadability(path, text) {
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
     // Its lines as a whole first, which is cheaper.
-    const stringOrComment = minifiable(path)
-    const minified = stringOrComment !== null && codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text, stringOrComment)
+    const language = minifiable(path)
+    const minified = language !== null && codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text, language)
     return { ...read, category: inlineMap > 0 ? 'inline-map' : minified ? 'minified' : encoding.kind }
   }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
