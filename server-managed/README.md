@@ -1065,8 +1065,8 @@ in the bundle view with four tabs:
   their latest version (an `npm:` alias at the package it names);
   Advisories, across every published version, one row each, its head
   counting those that affect the version shown, those first and marked,
-  those fixed in it struck through, and those affecting only later versions
-  plain; Files, each with its type's icon and tagged with its category, its
+  those fixed in it (affecting only older versions) struck through, and
+  those affecting later versions, older ones perhaps too, plain; Files, each with its type's icon and tagged with its category, its
   tag naming the control characters or long lines it holds; and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names.
@@ -1125,7 +1125,7 @@ advisories are: what `npm audit` asks npm's registry, for every published
 version at once (`source: 'registry'`), and what the package's GitHub
 repository publishes that npm does not report yet (`source: 'repository'`):
 the repository its latest version names, asked for only where GitHub says it
-is public (its figures' answer), since the list is kept for every reader and
+is public, asked afresh rather than from its figures' kept answer, since the list is kept for every reader and
 the reader's token could read a private repository's; its listing is kept
 where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
 url?, title?, severity?, cvss?, cwe, range?, affected }`, `affected` indexing

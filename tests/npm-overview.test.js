@@ -86,12 +86,13 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, mi
   assert.deepEqual([read.longLines, read.longest], [2, NPM_LONG_LINE + 2])
 })
 
-test('an advisory affects the version shown, is fixed in it, or covers later versions only', () => {
+test('an advisory affects the version shown, is fixed in it, or covers later versions', () => {
   const versions = ['2.0.0', '1.2.0', '1.1.0', '1.0.0']
   const advisory = affected => ({ affected })
   assert.equal(npmAdvisoryStatus(advisory([2, 3]), versions, '1.1.0'), 'affects')
   assert.equal(npmAdvisoryStatus(advisory([2, 3]), versions, '1.2.0'), 'fixed')
   assert.equal(npmAdvisoryStatus(advisory([0]), versions, '1.2.0'), 'later')
+  assert.equal(npmAdvisoryStatus(advisory([0, 2]), versions, '1.2.0'), 'later', 'ranges either side of it: a later version is still affected')
   assert.equal(npmAdvisoryStatus(advisory([3]), versions, '2.0.0-beta.1'), 'fixed', 'a version not listed compares by semver')
   assert.equal(npmAdvisoryStatus(advisory([]), versions, '1.0.0'), 'later')
 })

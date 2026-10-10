@@ -644,6 +644,20 @@ test('a private repository\'s advisories are not asked for, nor one GitHub can\'
   assert.equal(asked.filter(([what]) => what === 'repository').length, 0)
 })
 
+test('a repository\'s visibility is asked afresh for its advisories, not taken from its kept figures', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('turned-private', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/turned.git' } })
+  registry(t, [pkg])
+  const repos = { 'org/turned': { full_name: 'org/turned', private: false } }
+  const asked = insights(t, { repos, repoAdvisories: { 'org/turned': [] } })
+  assert.equal((await h.send('/api/npm/stats?name=turned-private')).json().github.repo, 'org/turned', 'kept as public')
+  repos['org/turned'].private = true
+  const body = (await h.send('/api/npm/advisories?name=turned-private')).json()
+  assert.equal(body.repository, true)
+  assert.equal(asked.filter(([what, repo]) => what === 'github' && repo === 'org/turned').length, 2, 'GitHub asked again')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'and the now private repository\'s listing never asked for')
+})
+
 test('a version\'s publish commit\'s tags, from a public repository, asked with a token', async t => {
   const other = 'd'.repeat(40), sha = 'c'.repeat(40)
   const asked = []

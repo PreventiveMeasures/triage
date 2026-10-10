@@ -104,14 +104,15 @@ async function countOpenPulls(repo: string, token: string | null): Promise<numbe
   } catch { return null }
 }
 
-async function askGithub(repo: string, token: string | null): Promise<NpmGithubStats | null> {
+// What GitHub answers for `repo` where it says it is public, with the token
+// it was asked with: `token`, or none where that is revoked. Null where GitHub
+// has no such repository to show, or it is not public; anything else fails,
+// to be asked again next time.
+async function publicRepo(repo: string, token: string | null): Promise<{ json: Record<string, unknown> & { full_name: string }; auth: string | null } | null> {
   const ask = (auth: string | null) => createClient({ token: auth, userAgent: 'deepview-triage' }).getRepo({ repo }) as Promise<unknown>
   let auth = token, json: unknown
   try { json = await ask(token) }
   catch (error) {
-    // A repository gone, renamed away or never public has none; a revoked
-    // token asks again without one, and anything else fails, to be asked
-    // again next time.
     if (!(error instanceof HttpError) || ![401, 404].includes(error.status)) throw error
     if (error.status === 404 || token === null) return null
     auth = null
@@ -119,6 +120,13 @@ async function askGithub(repo: string, token: string | null): Promise<NpmGithubS
     catch (retry) { if (retry instanceof HttpError && retry.status === 404) return null; throw retry }
   }
   if (!plainObject(json) || json['private'] !== false || typeof json['full_name'] !== 'string') return null
+  return { json: json as Record<string, unknown> & { full_name: string }, auth }
+}
+
+async function askGithub(repo: string, token: string | null): Promise<NpmGithubStats | null> {
+  const found = await publicRepo(repo, token)
+  if (found === null) return null
+  const { json, auth } = found
   return {
     repo: json['full_name'], stars: count(json['stargazers_count']), forks: count(json['forks_count']), openIssues: count(json['open_issues_count']),
     openPulls: await countOpenPulls(json['full_name'], auth),
@@ -220,15 +228,16 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
   // Every version upstream takes, as it checks each one it is asked about.
   const asked = versions.filter(version => isExactVersion(version))
   if (asked.length === 0) return { advisories: [], repository: true }
-  // Its repository's own advisories are asked for only where GitHub says it
-  // is public, and that repository is the one asked: the list is kept for
-  // every reader of the package, and the reader's token could read a private
-  // repository's, or a listing of one kept for another reader. Where that
-  // can't be told, the list is npm's alone, and not kept.
+  // Its repository's own advisories are asked for only where GitHub says, now
+  // and not from an answer kept, that it is public, and that repository is the
+  // one asked: the list is kept for every reader of the package, and the
+  // reader's token could read a private repository's, or a listing of one
+  // kept for another reader. Where that can't be told, the list is npm's
+  // alone, and not kept.
   let github: string | null = null, repository = true
   try {
     const named = await repo()
-    github = named === null ? null : (await npmGithubStats(named, githubToken))?.repo ?? null
+    github = named === null ? null : (await publicRepo(named, await githubToken()))?.json.full_name ?? null
   } catch { repository = false }
   const packages = [{ ecosystem: 'npm' as const, name, versions: asked, ...github !== null && { github } }]
   const ask = (repoAdvisories: boolean, token: string | null) => {

@@ -18,7 +18,7 @@ const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
 const ADVISORY_GROUPS = [
   ['affects', version => `Affects ${version}`],
-  ['later', () => 'Later versions only'],
+  ['later', () => 'Later versions'],
   ['fixed', version => `Fixed in ${version}`],
 ]
 
@@ -74,11 +74,13 @@ export function npmGithubFigures(entry) {
 }
 
 // How an advisory stands for the version shown: it `affects` it; it is
-// `fixed` in it, covering only older versions; or it covers only `later` ones.
+// `fixed` in it, covering only older versions; or it covers `later` ones,
+// whether or not older ones too (its ranges can leave the version shown
+// between them).
 export function npmAdvisoryStatus(advisory, versions, version) {
   const affected = advisory.affected.map(i => versions[i]).filter(Boolean)
   if (affected.includes(version)) return 'affects'
-  return affected.some(other => compareSemver(other, version) < 0) ? 'fixed' : 'later'
+  return affected.length > 0 && affected.every(other => compareSemver(other, version) < 0) ? 'fixed' : 'later'
 }
 
 // Each advisory's status for a version, kept with the advisories answered.
