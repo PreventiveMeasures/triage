@@ -76,10 +76,11 @@ test('names a minifier renamed alike throughout are left out, and only those', (
   assert.deepEqual(ignoring(['f(a);', 'g(b);'], ['f(b);', 'g(a);']).blocks, [], 'two names swapped each stand for one')
 })
 
-test('names left out are short bindings: never keywords, properties, strings or longer names', () => {
+test('names left out are short bindings: never keywords, properties, strings, regular expressions, comments or longer names', () => {
   for (const [before, after] of [
     ['var a = 1;', 'let a = 1;'], ['f(x.foo);', 'f(x.bar);'], ['f({ foo: a });', 'f({ bar: a });'], ['f("a");', 'f("b");'],
-    ['f(value);', 'f(other);'], ['f(/\\s/);', 'f(/\\d/);'],
+    ['f(value);', 'f(other);'], ['f(/\\s/);', 'f(/\\d/);'], ['f(/foo/.test(a));', 'f(/bar/.test(a));'], ['f(/[/]x/);', 'f(/[/]y/);'],
+    ['f(a); // foo', 'f(a); // bar'], ['f(a); /* foo */ g(b);', 'f(a); /* bar */ g(b);'],
   ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 1, `${before} → ${after}`)
   assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')
   assert.equal(lineDiff('f(a,  b)\n', 'f(c, d)\n', { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
