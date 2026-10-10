@@ -13,7 +13,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => advisoriesAnswer(name), fetchNpmStats: () => Promise.resolve({}),
   fetchNpmPackage() {}, fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmAdvisoryStatus, npmEncodingLabel, npmFileExtension, npmFileExtensions, npmTextEncoding } = await import('../ui/view/npm-overview.js')
+const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmMergedAdvisories, npmTextEncoding } = await import('../ui/view/npm-overview.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -37,17 +37,39 @@ test('extensions list most files first, then by name, with their sizes summed', 
 })
 
 test('a file is ASCII or UTF-8 text, either with control characters, or binary', () => {
-  const label = text => npmEncodingLabel(npmTextEncoding(text))
-  assert.equal(label('const a = 1\n\tb\r\n'), 'ASCII', 'tab, line feed and carriage return are text')
-  assert.equal(label('héllo — ✓ 😀'), 'UTF-8')
-  assert.equal(label('\u001B[31mred\u001B[0m'), 'ASCII + controls')
-  assert.equal(label('a\u000Cb\u000Bc\u007Fd'), 'ASCII + controls', 'form feed, vertical tab and DEL are controls')
-  assert.equal(label('é\u0085'), 'UTF-8 + controls', 'C1 controls')
-  assert.equal(label('if (admin) {‮ } ⁦// x⁩'), 'UTF-8 + controls', 'bidirectional controls')
-  assert.equal(label('﻿bom and​zero width'), 'UTF-8', 'a BOM and zero-width characters are not controls')
-  assert.equal(label(null), 'Binary')
-  assert.deepEqual(npmTextEncoding('a\u001Bb\u001B‮'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
+  const kind = text => { const { kind: found, controls } = npmTextEncoding(text); return `${found}${controls ? ' + controls' : ''}` }
+  assert.equal(kind('const a = 1\n\tb\r\n'), 'ascii', 'tab, line feed and carriage return are text')
+  assert.equal(kind('héllo — ✓ 😀'), 'utf8')
+  assert.equal(kind('\u001B[31mred\u001B[0m'), 'ascii + controls')
+  assert.equal(kind('a\u000Cb\u000Bc\u007Fd'), 'ascii + controls', 'form feed, vertical tab and DEL are controls')
+  assert.equal(kind('é\u0085'), 'utf8 + controls', 'C1 controls')
+  assert.equal(kind('if (admin) {\u202E } \u2066// x\u2069'), 'utf8 + controls', 'bidirectional controls')
+  assert.equal(kind('\uFEFFbom and\u200Bzero width'), 'utf8', 'a BOM and zero-width characters are not controls')
+  assert.equal(kind(null), 'binary')
+  assert.deepEqual(npmTextEncoding('a\u001Bb\u001B\u202E'), { kind: 'utf8', controls: new Map([[0x1B, 2], [0x202E, 1]]) })
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
+})
+
+test('a file reads as text, or is not UTF-8, holds controls, is a source map, minified, or has unexpected long lines', () => {
+  const category = (path, text) => npmFileReadability(path, text).category
+  const long = 'x'.repeat(NPM_LONG_LINE + 1)
+  const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
+  assert.equal(category('lib/a.js', code), 'ascii')
+  assert.equal(category('lib/a.js', `// héllo\n${code}`), 'utf8')
+  assert.equal(category('lib/a.png', null), 'binary')
+  assert.equal(category('lib/a.js', `${code}\u001B`), 'controls')
+  assert.equal(category('lib/a.js', `${code}\n${long}\u202E`), 'controls', 'controls before anything else a text has')
+  assert.equal(category('lib/a.js.map', '{"version":3,"mappings":"AAAA"}'), 'map')
+  assert.equal(category('dist/a.js', `${long}${long}\n${long}`), 'minified', 'most of it on long lines')
+  assert.equal(category('dist/a.min.js', `${code}\n${long}`), 'minified', 'named minified, with any long line')
+  assert.equal(category('lib/a.js', `${code}\n${code}\nconst payload = '${long}'\n${code}`), 'long', 'a long line among readable ones')
+  assert.equal(category('lib/a.js', `${code}\r\n${'y'.repeat(NPM_LONG_LINE)}\r\n${code}`), 'ascii', 'up to the limit, a carriage return aside')
+  assert.equal(category('lib/a.js', `${code}\n//# sourceMappingURL=data:application/json;base64,${long}`), 'ascii', 'an inline source map comment is no long line')
+  for (const prose of ['README.md', 'docs/guide.markdown', 'LICENSE', 'CHANGELOG', 'notes.txt', 'LICENSE-MIT']) {
+    assert.equal(category(prose, `${long} words\nmore`), 'ascii', `${prose}: prose wraps`)
+  }
+  const read = npmFileReadability('lib/a.js', `${code}\n${long}\n${long}y\n${code}`)
+  assert.deepEqual([read.longLines, read.longest], [2, NPM_LONG_LINE + 2])
 })
 
 test('an advisory affects the version shown, is fixed in it, or covers later versions only', () => {
@@ -71,4 +93,18 @@ test('downloads group into 7-day weeks ending on the last day, a partial oldest 
   assert.deepEqual(npmDownloadWeeks({ start: '2026-01-01', end: '2026-01-03', days: [1, 2, 3] }), [])
   assert.deepEqual(npmDownloadWeeks(null), [])
   assert.deepEqual([0, 1, 7, 12, 23, 180, 2600, 999_999].map(niceCeiling), [1, 1, 10, 20, 25, 200, 5000, 1_000_000])
+})
+
+test('an advisory npm answers once a range is one row, its ranges, versions and CWEs together', () => {
+  const rows = npmMergedAdvisories([
+    { id: 'GHSA-a', source: 'registry', severity: 'moderate', cvss: 6.1, cwe: ['CWE-79'], range: '>=4.0.0 <4.5.0', affected: [3, 1] },
+    { id: 'GHSA-b', source: 'registry', severity: 'low', cwe: [], affected: [0] },
+    { id: 'GHSA-a', source: 'registry', severity: 'moderate', cwe: ['CWE-79', 'CWE-20'], range: '<3.11.0', affected: [5, 1] },
+    { id: 'GHSA-a', source: 'repository', severity: 'moderate', cwe: [], range: '< 5.0.0', affected: [2] },
+  ])
+  assert.deepEqual(rows, [
+    { id: 'GHSA-a', source: 'registry', severity: 'moderate', cvss: 6.1, cwe: ['CWE-79', 'CWE-20'], range: '>=4.0.0 <4.5.0 || <3.11.0', affected: [1, 3, 5] },
+    { id: 'GHSA-b', source: 'registry', severity: 'low', cwe: [], affected: [0] },
+    { id: 'GHSA-a', source: 'repository', severity: 'moderate', cwe: [], range: '< 5.0.0', affected: [2] },
+  ])
 })

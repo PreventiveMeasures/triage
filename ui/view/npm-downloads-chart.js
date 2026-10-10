@@ -6,8 +6,8 @@
 import { LitElement, html, nothing, svg } from 'lit'
 
 const DAY_MS = 24 * 60 * 60_000
-const HEIGHT = 112
-const PAD = { top: 8, right: 10, bottom: 20, left: 40 }
+const HEIGHT = 72
+const PAD = { top: 6, right: 10, bottom: 18, left: 40 }
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 const whole = new Intl.NumberFormat('en')
 
@@ -93,7 +93,7 @@ class NpmDownloadsChart extends LitElement {
       @pointermove=${event => { this._at = this._weekAt(weeks, event.offsetX) }} @pointerleave=${() => { this._at = null }}
       @keydown=${event => this._key(event, weeks)} @blur=${() => { this._at = null }}>
       <svg width=${width} height=${HEIGHT} viewBox="0 0 ${width} ${HEIGHT}" aria-hidden="true">
-        ${[0, top / 2, top].map(value => svg`<line class="npm-downloads-grid" x1=${PAD.left} x2=${width - PAD.right} y1=${y(value)} y2=${y(value)}></line>
+        ${[0, top].map(value => svg`<line class="npm-downloads-grid" x1=${PAD.left} x2=${width - PAD.right} y1=${y(value)} y2=${y(value)}></line>
           <text class="npm-downloads-tick" x=${PAD.left - 6} y=${y(value)} dy="0.32em" text-anchor="end">${compact.format(value)}</text>`)}
         <path class="npm-downloads-area" d=${area}></path>
         <path class="npm-downloads-line" d=${line}></path>

@@ -1021,26 +1021,36 @@ Every role but `none` can open a published npm package version from the
 landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
 in the bundle view with four tabs:
 
-- **Overview**: the manifest's description, license, author, GitHub
-  repository and publish commit, entry points, engines and install scripts,
-  and a tarball download. Under them, the package's figures: weekly
-  downloads and downloads over 12 months, with a chart of its weekly
-  downloads over the last year, and its GitHub repository's stars, forks
-  and open issues and pull requests; then how many files are ASCII, UTF-8,
-  either with control characters, or binary, and every file extension with
-  its count. Then its columns: Dependencies, peer and optional ones
-  included, which open in the viewer at their latest version (an `npm:`
-  alias at the package it names); Advisories, across every published
-  version, those affecting the version shown first and marked, those fixed
-  in it struck through, and those affecting only later versions plain;
-  Files, each tagged ASCII, UTF-8, either `+ controls`, or Binary; and,
-  where the package has any, its Binary files again on their own. Control
-  characters are the C0 ones but tab, line feed and carriage return, DEL,
-  the C1 ones, and the bidirectional controls (U+202A–U+202E,
-  U+2066–U+2069); a tag names those a file holds. Binary files are those
-  the server could not read as UTF-8, or holding a NUL. The version picker
-  lists the package's versions and dist-tags; it holds the version shown,
-  disabled, until they arrive.
+- **Overview**: its header names the package beside a picker of its
+  versions, as Compare's pickers list them (searchable, newest first, with
+  their dist-tags; switching keeps the tab shown, and until the versions
+  arrive it holds the version shown, disabled), and links its page on npm.
+  Over the summary, where any file can't be reviewed by reading it, a
+  warning says how many and why, in categories, the first that holds of: not
+  UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control
+  characters (the C0 ones but tab, line feed and carriage return, DEL, the
+  C1 ones, and the bidirectional controls U+202A–U+202E and U+2066–U+2069),
+  unexpected long lines (lines over 1,000 characters among readable ones),
+  minified (most of its text on such lines, or named `.min.` with any), and
+  source maps (`.map`). Prose (Markdown, text, licenses and changelogs) is
+  readable whatever its lines' lengths, and a `sourceMappingURL` comment's
+  line counts for none. Then the manifest's facts: description, license,
+  author (linking the npm profile of the account that published it), GitHub
+  repository with its stars and forks, publish commit, homepage and
+  integrity; beside them entry points, engines, install scripts and the
+  tarball download; and a card of its figures: weekly downloads and
+  downloads over 12 months, with a chart of its weekly downloads over the
+  last year. Under the facts, its languages, its readable files as UTF-8 or
+  ASCII, and every file extension with its count. Each category's chip
+  narrows the Files list to its files. Then its columns: Dependencies, where
+  it has any (peer and optional ones included), which open in the viewer at
+  their latest version (an `npm:` alias at the package it names);
+  Advisories, across every published version, one row each, its head
+  counting those that affect the version shown, those first and marked,
+  those fixed in it struck through, and those affecting only later versions
+  plain; Files, each with its type's icon and tagged with its category, its
+  tag naming the control characters or long lines it holds; and, where the
+  package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names.
 - **Treemap**: the files by size, as for bundles.
 - **Compare**: the bundle Compare, with another version of the same package,
@@ -1065,7 +1075,8 @@ as long after each failure in a row up to five minutes, on a repaint scheduled
 for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
-integrity, tarballSize, manifest, files }`, where each file row is `[path,
+integrity, tarballSize, manifest, files }`, the manifest's `publisher` the npm
+account that published it (never its email), and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 'sha256-<base64>']`. `version` defaults to `latest`. `GET
 /api/npm/versions?name=` returns `{ name, private, distTags, versions }`,

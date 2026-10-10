@@ -55,7 +55,7 @@ function packageOf(name, version, files, extra = {}) {
   const base = name.split('/').at(-1)
   const doc = { name, version, description: `${name} for tests`, license: 'MIT', main: 'lib/index.js',
     repository: { type: 'git', url: 'git+https://github.com/org/repo.git', directory: 'packages/pkg' }, gitHead: 'a'.repeat(40),
-    dependencies: { dep: '^1.0.0' }, scripts: { postinstall: 'node setup.js', test: 'node --test' },
+    dependencies: { dep: '^1.0.0' }, scripts: { postinstall: 'node setup.js', test: 'node --test' }, _npmUser: { name: 'publisher-1', email: 'p@example.com' },
     dist: { tarball: `${REGISTRY}/${name}/-/${base}-${version}.tgz`, integrity: `sha512-${createHash('sha512').update(tgz).digest('base64')}`, unpackedSize: 100, fileCount: 2 }, ...extra }
   return { doc, tgz }
 }
@@ -201,8 +201,8 @@ test('anyone with workspace access opens a public version, asked of the registry
     const png = `sha256-${createHash('sha256').update(Buffer.from([137, 80, 78, 71, 0])).digest('base64')}`
     assert.deepEqual(body.files, [['lib/index.js', 17, 'export default 1\n'], ['logo.png', 5, null, png], ['package.json', 19, '{"name":"@pub/pkg"}']],
       'a file that is not text carries its digest instead')
-    assert.deepEqual(body.manifest, { description: '@pub/pkg for tests', license: 'MIT', main: 'lib/index.js', gitHead: 'a'.repeat(40),
-      dependencies: { dep: '^1.0.0' }, installScripts: { postinstall: 'node setup.js' }, github: { github: 'org/repo', directory: 'packages/pkg' } })
+    assert.deepEqual(body.manifest, { description: '@pub/pkg for tests', license: 'MIT', main: 'lib/index.js', gitHead: 'a'.repeat(40), publisher: 'publisher-1',
+      dependencies: { dep: '^1.0.0' }, installScripts: { postinstall: 'node setup.js' }, github: { github: 'org/repo', directory: 'packages/pkg' } }, 'the publisher\'s account, never their email')
     assert.equal(calls[0].url, `${REGISTRY}/@pub/pkg/latest`)
     assert.equal(calls[0].auth, null, 'the version document is asked for anonymously')
   }

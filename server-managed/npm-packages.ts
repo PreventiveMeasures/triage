@@ -134,6 +134,9 @@ function manifestOf(json: Record<string, unknown>): Record<string, unknown> {
   const author = json['author']
   if (typeof author === 'string') pick['author'] = author
   else if (plainObject(author) && typeof author['name'] === 'string') pick['author'] = author['name']
+  // The npm account that published it, for its profile.
+  const publisher = json['_npmUser']
+  if (plainObject(publisher) && typeof publisher['name'] === 'string' && /^[\w.-]{1,214}$/u.test(publisher['name'])) pick['publisher'] = publisher['name']
   if (Array.isArray(json['keywords'])) pick['keywords'] = json['keywords'].filter(item => typeof item === 'string').slice(0, 50)
   if (typeof json['bin'] === 'string') pick['bin'] = { [String(json['name'])]: json['bin'] }
   else if (stringRecord(json['bin'])) pick['bin'] = stringRecord(json['bin'])

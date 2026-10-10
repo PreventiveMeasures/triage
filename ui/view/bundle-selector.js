@@ -1,4 +1,4 @@
-import { css, html } from 'lit'
+import { css, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { SearchableSelector } from './searchable-selector.js'
 import { BUNDLE_ICON_SVG, NPM_ICON_SVG } from './icons.js'
@@ -29,8 +29,9 @@ export function bundleOptions(bundles) {
 
 // `noun` names what it picks ('bundle' unless set); `ordered` keeps the
 // options in the order given, as versions newest first, rather than by name.
+// `iconless` leaves out each option's format icon, as where they all share one.
 class BundleSelector extends SearchableSelector {
-  static properties = { bundles: { attribute: false }, noun: {}, ordered: { type: Boolean } }
+  static properties = { bundles: { attribute: false }, noun: {}, ordered: { type: Boolean }, iconless: { type: Boolean } }
   static styles = [SearchableSelector.styles, css`
     .bundle-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 1.05rem; width: 1.05rem; height: 1.05rem; color: var(--muted); }
     /* The icon keeps its muted color in the list: the base selector colors an
@@ -43,7 +44,7 @@ class BundleSelector extends SearchableSelector {
     .secondary { line-height: 1.25; font-variant-numeric: tabular-nums; }
   `]
 
-  constructor() { super(); this.bundles = []; this.noun = 'bundle'; this.ordered = false; this.label = 'Choose bundle'; this.placeholder = 'Choose bundle' }
+  constructor() { super(); this.bundles = []; this.noun = 'bundle'; this.ordered = false; this.iconless = false; this.label = 'Choose bundle'; this.placeholder = 'Choose bundle' }
   get searchLabel() { return `Search ${this.noun}s` }
   get optionsLabel() { return `${this.noun[0].toUpperCase()}${this.noun.slice(1)}s` }
   get noMatchesLabel() { return `No matching ${this.noun}s` }
@@ -52,6 +53,7 @@ class BundleSelector extends SearchableSelector {
   willUpdate(changed) { if (changed.has('bundles')) this.options = bundleOptions(this.bundles) }
 
   optionIcon(option) {
+    if (this.iconless) return nothing
     return html`<span class="bundle-icon" aria-hidden="true">${option.format === 'npm' ? unsafeHTML(NPM_ICON_SVG)
       : option.format === 'sourcemap' ? unsafeHTML(BUNDLE_ICON_SVG) : html`<img src="./stasis.svg" alt="">`}</span>`
   }

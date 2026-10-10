@@ -16,6 +16,7 @@ import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
+import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
 const NPM_PACKAGE_URL = /^https?:\/\/(?:www\.)?npmjs\.(?:com|org)\/package\/((?:@[^/]+\/)?[^/?#]+)(?:\/v\/([^/?#]+))?\/?(?:[?#].*)?$/u
@@ -203,10 +204,10 @@ export function npmCompareSource(entry) {
   }
 }
 
-export function navigateToNpm(packageName = null, packageSpec = null) {
+export function navigateToNpm(packageName = null, packageSpec = null, bundleTab = 'overview') {
   if (!isManagedUiMode() || !managedHistory?.active) return
   void managedHistory.navigate(packageName == null ? { view: 'npm' }
-    : { view: 'npm', packageName, packageSpec, bundleTab: 'overview' })
+    : { view: 'npm', packageName, packageSpec, bundleTab })
 }
 
 function showLookup(lookup) {
@@ -338,30 +339,30 @@ export function npmDependencyChanges(base, other) {
 }
 
 // The Overview's Dependencies column, in place of the Packages one a single
-// package has no use for. Each dependency opens in the viewer, at its latest.
+// package has no use for, where it has any (npmOverviewExtras says where it
+// has none). Each dependency opens in the viewer, at its latest.
 export function npmDependenciesColumn(entry) {
   const rows = npmDependencies(entry.npm.manifest)
+  if (rows.length === 0) return nothing
   return html`<section class="bundles-overview-col">
     <header class="bundles-overview-col-head">
       <span class="bundles-overview-col-title">Dependencies <span class="bundles-overview-col-count">${rows.length}</span></span>
     </header>
-    <div class="bundles-overview-col-body bundles-overview-col-body--list">${rows.length === 0
-      ? html`<p class="bundles-overview-col-empty">No dependencies.</p>`
-      : html`<ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
-        const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
-          ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
-          <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
-        return html`<li>${opens
-          ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${row}</button>`
-          : html`<div class="bundles-source-row npm-dependency-row is-resource">${row}</div>`}</li>`
-      })}</ul>`}</div>
+    <div class="bundles-overview-col-body bundles-overview-col-body--list"><ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
+      const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
+        ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
+        <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
+      return html`<li>${opens
+        ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${row}</button>`
+        : html`<div class="bundles-source-row npm-dependency-row is-resource">${row}</div>`}</li>`
+    })}</ul></div>
   </section>`
 }
 
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it.
-export function npmOverviewMeta(entry, prefix = '') {
-  const { name, version, manifest } = entry.npm
+export function npmOverviewMeta(entry, prefix = '', githubFigures = nothing) {
+  const { manifest } = entry.npm
   const github = manifest.github?.github
   // The commit it was published from, where npm recorded one, and the
   // directory it sits in, where its repository names one.
@@ -369,21 +370,27 @@ export function npmOverviewMeta(entry, prefix = '') {
   const tree = github && (manifest.gitHead || directory)
     ? `https://github.com/${github}/tree/${manifest.gitHead ?? 'HEAD'}${directory ? `/${directory.split('/').map(encodeURIComponent).join('/')}` : ''}`
     : github ? `https://github.com/${github}` : null
+  // Its name and version are the header's (render-bundle.js), the version
+  // to switch to there too.
   return html`<dl class="bundles-detail-meta">
-    <dt>Package</dt><dd class="mono">${name}</dd>
-    <dt>Version</dt><dd><npm-version-select .name=${name} .version=${version} .list=${npmVersionList(name)}></npm-version-select></dd>
     ${entry.npm.private ? html`<dt>Access</dt><dd>Private</dd>` : nothing}
     ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${manifest.deprecated}</dd>` : nothing}
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
     ${manifest.license ? html`<dt>License</dt><dd>${manifest.license}</dd>` : nothing}
-    ${manifest.author ? html`<dt>Author</dt><dd>${manifest.author}</dd>` : nothing}
+    ${manifest.author || manifest.publisher ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.publisher
+      ? html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(manifest.publisher)}`} target="_blank" rel="noopener noreferrer"
+          data-tooltip=${`Published by ~${manifest.publisher}: their profile on npmjs.com`}><span>${manifest.author ?? `~${manifest.publisher}`}</span></a>
+        ${manifest.author ? html`<span class="npm-publisher">~${manifest.publisher}</span>` : nothing}`
+      : manifest.author}</dd>` : nothing}
     ${tree ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
       <a class="bundle-origin-link" href=${tree} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${github}${directory ? `/${directory}` : ''}</span></a>
-      ${manifest.gitHead ? html`<a class="bundle-origin-link bundle-commit-link" href=${`https://github.com/${github}/commit/${manifest.gitHead}`} data-tooltip=${manifest.gitHead} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${manifest.gitHead.slice(0, 7)}</span></a>` : nothing}
-    </dd>` : nothing}
+      ${githubFigures}
+    </dd>
+    <dt>Commit</dt><dd class="bundle-origin-row">${manifest.gitHead
+      ? html`<a class="bundle-origin-link bundle-commit-link" href=${`https://github.com/${github}/commit/${manifest.gitHead}`} data-tooltip=${manifest.gitHead} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${manifest.gitHead.slice(0, 12)}</span></a>`
+      : html`<span class="npm-commit-missing">Not recorded at publish</span>`}</dd>` : nothing}
     ${manifest.homepage && /^https?:\/\//iu.test(manifest.homepage) ? html`<dt>Homepage</dt><dd><a class="bundle-origin-link" href=${manifest.homepage} target="_blank" rel="noopener noreferrer"><span>${manifest.homepage}</span></a></dd>` : nothing}
-    <dt>npm</dt><dd><a class="bundle-origin-link" href=${`https://www.npmjs.com/package/${name}/v/${version}`} target="_blank" rel="noopener noreferrer"><span>npmjs.com/package/${name}</span></a></dd>
-    <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
+    <dt>Integrity</dt><dd class="mono bundle-integrity" data-tooltip-truncated data-tooltip=${entry.integrity}>${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
   </dl>`
 }
@@ -398,15 +405,17 @@ export function npmOverviewExtras(entry) {
     ${bins.length > 0 ? html`<dt>Bin</dt><dd class="mono">${bins.join(', ')}</dd>` : nothing}
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="mono npm-install-scripts"
-      data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}`
+      data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}
+    ${npmDependencies(manifest).length === 0 ? html`<dt>Dependencies</dt><dd>None</dd>` : nothing}`
 }
 
-// The version shown, with the package's other versions to switch to
-// (npmVersionList). Until they arrive, or without them, as when the registry
-// can't be reached, the same select holds just the version, disabled, so the
-// row keeps its height when they do.
+// The version shown, in the header, with the package's other versions to
+// switch to (npmVersionList), as Compare's pickers offer them: searchable,
+// newest first, each with its dist-tags. Switching keeps the tab shown. Until
+// they arrive, or without them, as when the registry can't be reached, it
+// holds just the version, disabled.
 class NpmVersionSelect extends LitElement {
-  static properties = { name: {}, version: {}, list: { attribute: false } }
+  static properties = { name: {}, version: {}, tab: {}, list: { attribute: false } }
 
   createRenderRoot() { return this }
 
@@ -414,6 +423,7 @@ class NpmVersionSelect extends LitElement {
     super()
     this.name = ''
     this.version = ''
+    this.tab = 'overview'
     this.list = null
   }
 
@@ -421,10 +431,12 @@ class NpmVersionSelect extends LitElement {
     const data = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
     const tags = tagsByVersion(data.distTags)
     const versions = data.versions.includes(this.version) ? data.versions : [this.version, ...data.versions]
-    return html`<select class="npm-version-select mono" aria-label=${`Version of ${this.name}`} ?disabled=${versions.length <= 1}
-      aria-busy=${this.list?.status === 'loading' ? 'true' : nothing} @change=${event => navigateToNpm(this.name, event.target.value)}>
-      ${versions.map(version => html`<option value=${version} ?selected=${version === this.version}>${version}${tags.has(version) ? ` (${tags.get(version).join(', ')})` : ''}</option>`)}
-    </select>`
+    const options = versions.map(version => ({ id: version, integrity: version, kind: 'npm', format: 'npm', filename: version,
+      detail: tags.get(version)?.join(', ') ?? '', size: '—', summary: null }))
+    return html`<bundle-selector class="npm-version-select" .bundles=${options} .value=${this.version} noun="version" ordered iconless
+      label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${versions.length <= 1}
+      aria-busy=${this.list?.status === 'loading' ? 'true' : nothing}
+      @bundle-change=${event => { if (event.detail.value !== this.version) navigateToNpm(this.name, event.detail.value, this.tab) }}></bundle-selector>`
   }
 }
 if (!customElements.get('npm-version-select')) customElements.define('npm-version-select', NpmVersionSelect)

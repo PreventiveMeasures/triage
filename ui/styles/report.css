@@ -3456,36 +3456,146 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
   color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   font-family: system-ui, sans-serif; font-size: .62rem; line-height: 1.3;
 }
-.bundles-detail-meta {
-  & .npm-deprecated { color: var(--critical); }
-  & .npm-version-select {
-    max-width: 100%; padding: .1rem .3rem;
-    &:disabled { opacity: 1; }
-    color: var(--text); background: var(--surface);
-    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem;
-  }
+.bundles-detail-meta .npm-deprecated { color: var(--critical); }
+/* An npm package's header: its name, the version shown as a picker of its
+   versions (npm-package.js NpmVersionSelect), and its page on npm. */
+.bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }
+npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
+.npm-header-link {
+  display: inline-flex; align-items: center; gap: .25rem; flex-shrink: 0;
+  color: var(--muted); font-size: .74rem; text-decoration: none;
+
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--ui-radius, 3px); }
 }
 
-/* An npm package's figures under its summary (view/npm-overview.js): stat
-   tiles beside its weekly downloads over the last year, one series in the
-   accent over a faint wash of it, on hairline gridlines. */
+/* The npm Overview's summary (view/render-bundle.js renderNpmPackageOverview),
+   laid out by the Overview's own width: the package's facts, its build's
+   beside them with the download under those, its figures in a card on the
+   right, and what its files hold under the facts. Every label takes one
+   width, so values line up down the facts and the contents alike. */
+.npm-overview {
+  --npm-label: 6.75rem;
+  container: npm-overview / inline-size;
+  /* Where the summary leaves the columns too little height, the Overview
+     scrolls as a whole instead of squeezing them. */
+  overflow-y: auto;
+
+  /* Rows are spaced by their items' margins, not a row gap, so the warning's
+     row takes no room where there is no warning. */
+  & .bundles-overview-summary {
+    display: grid;
+    grid-template:
+      'warning warning warning' auto
+      'meta build figures' auto
+      'meta actions figures' auto
+      'contents contents figures' 1fr / minmax(0, 1.5fr) minmax(0, 1fr) minmax(19rem, 1.3fr);
+    gap: 0 2rem;
+    align-items: start;
+
+    & > *, & > .bundles-detail-meta-row > * { margin-bottom: .6rem; }
+  }
+  & .npm-readability-warning { grid-area: warning; }
+  & .bundles-detail-meta-row { display: contents; }
+  & .bundles-detail-meta-row > .bundles-detail-meta:nth-child(n) {
+    min-width: 0; margin: 0 0 .6rem;
+    grid-template-columns: var(--npm-label) minmax(0, 1fr);
+  }
+  & .bundles-detail-meta-row > .bundles-detail-meta:nth-child(1) { grid-area: meta; }
+  & .bundles-detail-meta-row > .bundles-detail-meta:nth-child(2) { grid-area: build; }
+  & .bundles-detail-meta-row > .bundles-overview-exports { grid-area: actions; min-width: 0; }
+  & .bundles-overview-exports-row { place-content: flex-start; }
+  & .npm-contents { grid-area: contents; }
+  & .npm-insights { grid-area: figures; }
+  /* Labels sit on their values' first line, however many lines a value takes;
+     values wrap between words, and break within one only where it can't fit. */
+  & .bundles-detail-meta :is(dt, dd) { align-self: baseline; }
+  & .bundles-detail-meta dd { word-break: normal; overflow-wrap: anywhere; }
+  & .bundles-detail-meta .bundle-origin-row { flex-wrap: wrap; gap: .2rem 1rem; }
+  & .bundles-detail-meta .bundle-origin-link { white-space: nowrap; }
+  /* The integrity in one line, whole in its tooltip. */
+  & .bundles-detail-meta dd.bundle-integrity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
+  & .bundles-overview-columns { flex: 1 0 0; min-height: min(26rem, 75vh); }
+}
+@container npm-overview (width < 66rem) {
+  .npm-overview .bundles-overview-summary {
+    grid-template:
+      'warning warning' auto
+      'meta build' auto
+      'meta actions' auto
+      'contents contents' auto
+      'figures figures' auto / minmax(0, 1.5fr) minmax(0, 1fr);
+  }
+  /* The card spans the summary: its figures stack beside the chart. */
+  .npm-overview .npm-insights { flex-direction: row; align-items: flex-start; gap: 1.5rem; }
+  .npm-overview .npm-stats { flex-direction: column; flex-shrink: 0; }
+  .npm-overview .npm-downloads { flex: 1; max-width: 36rem; }
+}
+@container npm-overview (width < 40rem) {
+  .npm-overview .bundles-overview-summary { grid-template: 'warning' 'meta' 'build' 'actions' 'contents' 'figures' / minmax(0, 1fr); }
+  .npm-overview .npm-insights { flex-direction: column; align-items: stretch; gap: .6rem; }
+  .npm-overview .npm-stats { flex-direction: row; }
+}
+/* Its repository's stars and forks, on the GitHub row of its facts. */
+.bundles-detail-meta .bundle-origin-link.npm-github-figure {
+  color: var(--muted); font-variant-numeric: tabular-nums;
+
+  &:hover { color: var(--text); }
+}
+.bundles-detail-meta :is(.npm-commit-missing, .npm-publisher) { color: var(--muted); }
+.bundles-detail-meta .npm-publisher { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
+.npm-github-archived {
+  padding: 0 .35rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--medium) 22%, var(--bg));
+  border: 1px solid var(--medium); border-radius: var(--ui-radius, 3px);
+  font-size: .66rem;
+}
+/* What the package's files hold: rows labelled as the facts above them are,
+   the languages' label level with their bar. */
+.npm-contents {
+  display: grid; grid-template-columns: var(--npm-label, max-content) minmax(0, 1fr);
+  gap: .45rem .65rem; align-items: baseline;
+  margin: .15rem 0 0;
+
+  & dt { color: var(--muted); font-size: .72rem; font-weight: 600; }
+  & dd { margin: 0; min-width: 0; }
+  & :is(dt:has(+ dd > .bundles-languages-bar), dd:has(> .bundles-languages-bar)) { align-self: start; }
+  & .npm-extensions { margin: 0; }
+  & .bundles-languages-bar { margin: .25rem 0 0; }
+}
+.bundles-languages-legend {
+  display: flex; flex-wrap: wrap; gap: .2rem 1rem;
+  margin: .35rem 0 0; padding: 0;
+  list-style: none;
+  color: var(--text); font-size: .72rem;
+
+  & li { display: inline-flex; align-items: center; gap: .35rem; }
+}
+.bundles-languages-swatch { width: .55rem; height: .55rem; border-radius: 50%; flex-shrink: 0; }
+.bundles-languages-share { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Its figures, in a card (view/npm-overview.js): stat tiles over its weekly
+   downloads for the last year, one series in the accent over a faint wash of
+   it, on hairline gridlines. */
 .npm-insights {
-  display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem;
-  margin-top: .75rem;
+  display: flex; flex-direction: column; gap: .6rem;
+  min-width: 0;
+  padding: .65rem .8rem .5rem;
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
 }
 .npm-stats {
-  display: flex; flex-wrap: wrap; gap: .5rem 1.25rem;
+  display: flex; flex-wrap: wrap; gap: .5rem 1.5rem;
   margin: 0;
 }
 .npm-stat {
   display: flex; flex-direction: column; gap: .1rem; min-width: 5rem;
 
   & dt { color: var(--muted); font-size: .7rem; }
-  & dd { margin: 0; color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; }
+  & dd { margin: 0; color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
 }
 .npm-downloads {
-  flex: 1 1 18rem; min-width: 0; max-width: 44rem; margin: 0;
+  min-width: 0; margin: 0;
 
   & figcaption { margin-bottom: .2rem; color: var(--muted); font-size: .7rem; }
 }
@@ -3545,21 +3655,32 @@ npm-downloads-chart { display: block; }
   & .bundle-advisory-title { color: var(--muted); text-decoration: line-through; }
   & .bundle-advisory-severity { opacity: .55; }
 }
+/* How many affect the version shown, in the column's head: marked where any do. */
+.npm-advisories-active {
+  padding: 0 .4rem;
+  color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px;
+  font-size: .62rem; font-weight: 600; letter-spacing: .02em; text-transform: none;
+  font-variant-numeric: tabular-nums;
+
+  &.is-active { color: #fff; background: var(--critical); border-color: var(--critical); }
+}
+/* The range and CWEs closer, as a row's last line. */
+.npm-advisories-col .bundle-advisory-meta { gap: .1rem .9rem; }
+.npm-advisories-col .bundle-advisory-cwes { margin-left: 0; }
 /* One badge width whichever the severity, so every title starts in line. */
 .npm-advisories-col .bundle-advisory-rail { width: 5rem; align-items: stretch; text-align: center; }
 /* Narrow, the rail runs across the top with the source and GHSA at its end,
-   and the title and what it covers take the full width under it. */
+   wrapping under it where they don't fit beside it, and the title and what
+   it covers take the full width below. */
 @container npm-advisories (width < 26rem) {
   .npm-advisories-col {
-    & .bundle-advisory-row {
-      display: grid; grid-template: 'rail reference' auto 'title title' auto 'meta meta' auto / auto minmax(0, 1fr);
-      gap: .2rem .5rem;
-    }
+    & .bundle-advisory-row { flex-wrap: wrap; align-items: center; gap: .2rem .5rem; }
     & :is(.bundle-advisory-body, .bundle-advisory-header) { display: contents; }
-    & .bundle-advisory-rail { grid-area: rail; width: auto; flex-direction: row; align-items: center; gap: .5rem; }
-    & .bundle-advisory-reference { grid-area: reference; justify-self: end; }
-    & .bundle-advisory-title { grid-area: title; }
-    & .bundle-advisory-meta { grid-area: meta; }
+    & .bundle-advisory-rail { width: auto; flex-direction: row; align-items: center; gap: .5rem; }
+    & .bundle-advisory-reference { order: 1; margin-left: auto; }
+    & .bundle-advisory-title { order: 2; flex-basis: 100%; }
+    & .bundle-advisory-meta { order: 3; flex-basis: 100%; }
     & .bundle-advisory-cwes { margin-left: 0; }
   }
 }
@@ -3578,18 +3699,63 @@ npm-downloads-chart { display: block; }
   font-size: .7rem; line-height: 1.45;
 }
 .npm-extension-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-/* Text holding control characters: marked, its tag naming them. */
-.npm-extension.is-strange,
-.npm-encoding-tag.is-strange {
+/* Files that can't be reviewed by reading them, marked in their tags and
+   chips: `warn` for what to look into (not UTF-8, control characters,
+   unexpected long lines), `notice` for minified code and source maps. */
+:is(.npm-extension, .npm-encoding-tag).is-warn {
   color: var(--text);
-  background: color-mix(in srgb, var(--medium) 22%, var(--bg));
-  border-color: var(--medium);
+  background: color-mix(in srgb, var(--high) 22%, var(--bg));
+  border-color: var(--high);
 }
-.npm-encodings { margin-top: .4rem; }
+:is(.npm-extension, .npm-encoding-tag).is-notice {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 14%, var(--bg));
+  border-style: dashed;
+}
+/* A category's chip narrows the Files list to its files. */
+button.npm-category {
+  font: inherit; font-size: .7rem; line-height: 1.45;
+
+  &:hover { border-color: var(--accent); }
+  &[aria-pressed='true'] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+.npm-readability-warning {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem;
+  padding: .45rem .7rem;
+  background: color-mix(in srgb, var(--muted) 8%, var(--bg));
+  border: 1px solid var(--border); border-left: 3px solid var(--muted);
+  border-radius: var(--ui-radius, 4px);
+  font-size: .76rem;
+
+  &.is-warn {
+    background: color-mix(in srgb, var(--high) 9%, var(--bg));
+    border-color: color-mix(in srgb, var(--high) 45%, var(--border));
+    border-left-color: var(--high);
+  }
+  & .npm-extensions { margin: 0; }
+}
+/* The Files column narrowed to a category: named in its head, with a way back. */
+.bundles-overview-filter {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: 0 .35rem;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--accent); border-radius: var(--ui-radius, 3px);
+  font: inherit; font-size: .65rem; font-weight: 500; letter-spacing: 0; text-transform: none;
+
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
 .npm-encoding-tag {
   flex-shrink: 0; padding: 0 .3rem;
   color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   font-family: system-ui, sans-serif; font-size: .6rem; line-height: 1.35; white-space: nowrap;
+}
+/* In the Files list, tags and sizes each keep one width, so both line up
+   down the list whatever a row's size. */
+.bundles-source-row:has(> .npm-encoding-tag) {
+  & > .npm-encoding-tag { box-sizing: border-box; width: 4.4rem; text-align: center; }
+  & > .bundles-source-size { width: 4.6rem; text-align: right; }
 }
 .npm-extension-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* An npm package's columns — Dependencies, Advisories, Files, and Binary
@@ -3645,3 +3811,5 @@ npm-downloads-chart { display: block; }
 .npm-lookup-error { margin: .75rem 0 0; font-size: .85rem; }
 .npm-lookup-status { color: var(--muted); }
 .npm-lookup-error { color: var(--critical); }
+/* A file's type icon, before its path in the npm Overview's lists. */
+.bundles-source-row > .source-file-icon { margin-right: -.15rem; }
