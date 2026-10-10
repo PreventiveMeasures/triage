@@ -127,14 +127,16 @@ function nameless(text) {
   }
   // `exporting` between `export` and its name; `naming` before a name
   // declared as `function a` is, `named` by which word and whether as a
-  // statement; `extending` the depth of an `extends` whose class body is the
-  // next `{` there.
+  // statement; `extending` the depths of each `extends` whose class body is
+  // the next `{` there, a class in another's `extends` on top
+  // (`extends mixin(class extends B {}) {`).
   // `dynamic` once `eval` or a `with (…)` can read a name by its spelling:
   // renaming one then changes what runs. `parameters` where a `(…)` would
   // be a function's parameters (after `function`, its name, a method's key
   // or `catch`), not a call's arguments.
   // `labeled` between a label and its `:`, after which a statement starts.
-  let at = 0, dynamic = false, exporting = false, extending = -1, keyPlace = false, labeled = false, last = null, naming = false, parameters = false
+  const extending = []
+  let at = 0, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, naming = false, parameters = false
   let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
@@ -203,8 +205,9 @@ function nameless(text) {
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
       // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
-      const block = first === '{' && extending !== opens.length && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
-      if (first === '{' && extending === opens.length) extending = -1
+      const heritage = first === '{' && extending.at(-1) === opens.length
+      const block = first === '{' && !heritage && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
+      if (heritage) extending.pop()
       // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
       const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object'
         : first === '(' && CONTROL.has(last) ? 'control' : first === '[' && keyPlace ? 'computed' : first
@@ -278,7 +281,7 @@ function nameless(text) {
       const word = keyPlace || property ? null : token
       if (word === 'eval' || word === 'with') dynamic = true
       parameters = keyPlace || word === 'function' || word === 'catch' || (naming && named.word === 'function')
-      if (word === 'extends') extending = opens.length
+      if (word === 'extends') extending.push(opens.length)
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       if (word === 'const' || word === 'let' || word === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
       if (word === 'export') exporting = true
@@ -342,11 +345,11 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   return { blocks, renamed }
 }
 
-// A tag where a value starts (`(<a />`, `if (x) <b />`, `x + <i />`, `return <i>`,
+// A tag where a value starts (`(<a />`, `if (x) <b />`, `x + <i />`, `...<a />`, `return <i>`,
 // `yield <p>`, not after `<`, as `a<<b>>>0` has it; a fragment's `<>` before
 // what it holds, not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
+const JSX = /(?:^|\.\.\.|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
