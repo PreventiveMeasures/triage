@@ -97,8 +97,8 @@ test('Compare offers the package\'s other versions, read once a session, and loa
   const source = npmCompareSource(entry)
   assert.equal(source.pending, false)
   assert.deepEqual(source.options, [
-    { id: '1.2.2', name: '@scope/pkg@1.2.2', format: 'npm', detail: '' },
-    { id: '1.0.0', name: '@scope/pkg@1.0.0', format: 'npm', detail: 'old' },
+    { id: '1.2.2', name: '@scope/pkg@1.2.2', displayLabel: '1.2.2', format: 'npm', detail: '' },
+    { id: '1.0.0', name: '@scope/pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: 'old' },
   ], 'newest first, the version shown left out')
   assert.deepEqual(source.choices.map(choice => [choice.id, choice.detail]), [['1.2.3', 'latest'], ['1.2.2', ''], ['1.0.0', 'old']],
     'its own side offers every version, its own among them')

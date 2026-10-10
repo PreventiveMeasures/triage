@@ -55,16 +55,12 @@ export function npmDownloadMonths(downloads) {
 }
 
 const PERIODS = {
-  week: { label: 'Weekly', per: 'week', of: npmDownloadWeeks, name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
-  month: { label: 'Monthly', per: 'month', of: npmDownloadMonths, name: period => monthName(period.from) },
+  week: { label: 'Weekly', of: npmDownloadWeeks, name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
+  month: { label: 'Monthly', of: npmDownloadMonths, name: period => monthName(period.from) },
 }
 
-// One of its figures, in short with its unit (`1.2K/week`), in full in its
-// tooltip; `pending` in its place until it is known.
-function stat(label, count, per, pending, tooltip) {
-  return html`<div class="npm-stat"><dt>${label}</dt>
-    <dd data-tooltip=${count !== null && tooltip ? tooltip : nothing}>${count === null ? pending : compact.format(count)}<span class="npm-stat-per">/${per}</span></dd></div>`
-}
+// `1,229 downloads, Oct 2 – Oct 8, 2026`.
+const downloadsIn = (count, when) => `${whole.format(count)} downloads, ${when}`
 
 // A round number at or above `max`, for the axis's top: 1, 2, 2.5 or 5
 // times a power of ten.
@@ -104,88 +100,111 @@ class NpmDownloadsChart extends LitElement {
     this._resize.disconnect()
   }
 
-  _periodAt(periods, offsetX) {
+  _periodAt(offsetX) {
     const span = this._width - PAD.left - PAD.right
-    const step = periods.length > 1 ? span / (periods.length - 1) : span
-    return Math.min(periods.length - 1, Math.max(0, Math.round((offsetX - PAD.left) / step)))
+    const step = this._periods.length > 1 ? span / (this._periods.length - 1) : span
+    return Math.min(this._periods.length - 1, Math.max(0, Math.round((offsetX - PAD.left) / step)))
   }
 
-  _key(event, periods) {
-    const moves = { ArrowLeft: -1, ArrowRight: 1, Home: -periods.length, End: periods.length }
+  _key(event) {
+    const last = this._periods.length - 1
+    const moves = { ArrowLeft: -1, ArrowRight: 1, Home: -last - 1, End: last + 1 }
     if (!(event.key in moves)) return
     event.preventDefault()
-    const from = this._at ?? periods.length - 1
-    this._at = Math.min(periods.length - 1, Math.max(0, from + moves[event.key]))
+    this._at = Math.min(last, Math.max(0, (this._at ?? last) + moves[event.key]))
+  }
+
+  // What doesn't follow the pointer, made again only when the downloads, the
+  // unit or the width change: the periods charted, the figures with their
+  // tooltips, and the chart's lines and labels.
+  willUpdate(changed) {
+    const period = PERIODS[this._unit]
+    const { downloads } = this
+    if (changed.has('downloads') || changed.has('_unit')) {
+      this._periods = period.of(downloads)
+      const latest = this._periods.at(-1)
+      this._latest = downloads == null ? null : { total: latest?.total ?? 0, tooltip: latest && downloadsIn(latest.total, period.name(latest)) }
+    }
+    if (changed.has('downloads')) {
+      const total = downloads?.days.reduce((sum, count) => sum + count, 0)
+      this._year = downloads == null ? null
+        : { total, tooltip: downloadsIn(total, `${fullDate(Date.parse(downloads.start))} – ${fullDate(Date.parse(downloads.end))}`) }
+    }
+    if (changed.has('downloads') || changed.has('_unit') || changed.has('_width')) this._shape = this._shapeOf(period)
+  }
+
+  _shapeOf(period) {
+    const periods = this._periods
+    const width = this._width
+    if (periods.length === 0 || width <= PAD.left + PAD.right) return null
+    const plotWidth = width - PAD.left - PAD.right
+    const bottom = HEIGHT - PAD.bottom
+    const top = niceCeiling(Math.max(...periods.map(each => each.total)))
+    const x = i => PAD.left + (periods.length > 1 ? i * plotWidth / (periods.length - 1) : plotWidth / 2)
+    const y = value => bottom - value / top * (bottom - PAD.top)
+    const line = periods.map((each, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(each.total).toFixed(1)}`).join('')
+    const first = monthYear(periods[0].from)
+    const latest = periods.at(-1)
+    const last = monthYear(latest.to)
+    return {
+      x, y, bottom, line, first, last,
+      area: `${line}L${x(periods.length - 1).toFixed(1)},${bottom}L${x(0).toFixed(1)},${bottom}Z`,
+      ticks: [[0, compact.format(0)], [top, compact.format(top)]],
+      label: `${period.label} downloads over the last year, from ${first} to ${last}; the latest ${this._unit}: ${downloadsIn(latest.total, period.name(latest))}.`,
+    }
+  }
+
+  // One of its figures, in short with its unit (`1.2K/week`), in full in its
+  // tooltip; while it isn't known, what stands for it.
+  _stat(label, figure, per) {
+    return html`<div class="npm-stat"><dt class="sr-only">${label}</dt>
+      <dd data-tooltip=${figure?.tooltip || nothing}>${figure ? compact.format(figure.total) : this.status === 'loading' ? '…' : '—'}<span class="npm-stat-per">/${per}</span></dd></div>`
   }
 
   // Weekly or monthly, over the readout of the period under the pointer,
   // which keeps its line while there is none.
   _controls(at) {
-    const period = PERIODS[this._unit]
     return html`<div class="npm-downloads-controls">
       <span class="bundles-overview-sort" role="group" aria-label="Downloads by">
         ${Object.entries(PERIODS).map(([unit, { label }]) => html`<button type="button" aria-pressed=${String(this._unit === unit)}
           @click=${() => { this._unit = unit; this._at = null }}>${label}</button>`)}
       </span>
       <span class="npm-downloads-readout" aria-live="polite">${at ? html`<strong>${whole.format(at.total)}</strong>
-        <span>${period.name(at)}</span>` : nothing}</span>
+        <span>${PERIODS[this._unit].name(at)}</span>` : nothing}</span>
     </div>`
   }
 
-  // The periods charted, made again only when the downloads or the unit
-  // change, not as the pointer moves; the year's total with the downloads.
-  willUpdate(changed) {
-    if (changed.has('downloads') || changed.has('_unit')) this._periods = PERIODS[this._unit].of(this.downloads)
-    if (changed.has('downloads')) this._year = this.downloads?.days?.reduce((sum, count) => sum + count, 0) ?? null
-  }
-
   render() {
-    const period = PERIODS[this._unit]
-    const periods = this._periods
-    const latest = periods.at(-1)
-    const known = this.downloads !== null
     // Nothing to chart where the server has no downloads; until they come,
     // the chart holds its place, so nothing moves when they arrive.
-    const charted = known || this.status !== 'ready'
-    const at = this._at === null ? null : periods[this._at] ?? null
-    const pending = this.status === 'loading' ? '…' : '—'
-    const days = this.downloads?.days.length ?? 0
+    const charted = this.downloads != null || this.status !== 'ready'
+    const at = this._at === null ? null : this._periods[this._at] ?? null
     return html`<div class="npm-downloads-head">
       <dl class="npm-stats">
-        ${stat(`${period.label} downloads`, known ? latest?.total ?? 0 : null, period.per, pending,
-          latest && `${whole.format(latest.total)} downloads, ${period.name(latest)}`)}
-        ${stat('Downloads, last 12 months', this._year, 'year', pending,
-          days > 0 && `${whole.format(this._year)} downloads, ${fullDate(dayOf(this.downloads.start, 0))} – ${fullDate(dayOf(this.downloads.start, days - 1))}`)}
+        ${this._stat(`${PERIODS[this._unit].label} downloads`, this._latest, this._unit)}
+        ${this._stat('Downloads, last 12 months', this._year, 'year')}
       </dl>
       ${charted ? this._controls(at) : nothing}
     </div>
-    ${charted ? this._plot(period, periods, at) : nothing}`
+    ${charted ? this._plot(at) : nothing}`
   }
 
-  _plot(period, periods, at) {
-    if (periods.length === 0 || this._width <= PAD.left + PAD.right) return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px"></div>`
+  _plot(at) {
+    const shape = this._shape
+    if (!shape) return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px"></div>`
     const width = this._width
-    const plotWidth = width - PAD.left - PAD.right
-    const plotHeight = HEIGHT - PAD.top - PAD.bottom
-    const top = niceCeiling(Math.max(...periods.map(week => week.total)))
-    const x = i => PAD.left + (periods.length > 1 ? i * plotWidth / (periods.length - 1) : plotWidth / 2)
-    const y = value => PAD.top + plotHeight - value / top * plotHeight
-    const line = periods.map((week, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(week.total).toFixed(1)}`).join('')
-    const area = `${line}L${x(periods.length - 1).toFixed(1)},${y(0)}L${x(0).toFixed(1)},${y(0)}Z`
-    const latest = periods.at(-1)
-    return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px" tabindex="0" role="img"
-      aria-label=${`${period.label} downloads over the last year, from ${monthYear(periods[0].from)} to ${monthYear(latest.to)}; the latest ${period.per}, ${period.name(latest)}: ${whole.format(latest.total)}.`}
-      @pointermove=${event => { this._at = this._periodAt(periods, event.offsetX) }} @pointerleave=${() => { this._at = null }}
-      @keydown=${event => this._key(event, periods)} @blur=${() => { this._at = null }}>
+    return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px" tabindex="0" role="img" aria-label=${shape.label}
+      @pointermove=${event => { this._at = this._periodAt(event.offsetX) }} @pointerleave=${() => { this._at = null }}
+      @keydown=${event => this._key(event)} @blur=${() => { this._at = null }}>
       <svg width=${width} height=${HEIGHT} viewBox="0 0 ${width} ${HEIGHT}" aria-hidden="true">
-        ${[0, top].map(value => svg`<line class="npm-downloads-grid" x1=${PAD.left} x2=${width - PAD.right} y1=${y(value)} y2=${y(value)}></line>
-          <text class="npm-downloads-tick" x=${PAD.left - 6} y=${y(value)} dy="0.32em" text-anchor="end">${compact.format(value)}</text>`)}
-        <path class="npm-downloads-area" d=${area}></path>
-        <path class="npm-downloads-line" d=${line}></path>
-        <text class="npm-downloads-tick" x=${PAD.left} y=${HEIGHT - 4}>${monthYear(periods[0].from)}</text>
-        <text class="npm-downloads-tick" x=${width - PAD.right} y=${HEIGHT - 4} text-anchor="end">${monthYear(latest.to)}</text>
-        ${at ? svg`<line class="npm-downloads-crosshair" x1=${x(this._at)} x2=${x(this._at)} y1=${PAD.top} y2=${PAD.top + plotHeight}></line>
-          <circle class="npm-downloads-dot" cx=${x(this._at)} cy=${y(at.total)} r="4"></circle>` : nothing}
+        ${shape.ticks.map(([value, text]) => svg`<line class="npm-downloads-grid" x1=${PAD.left} x2=${width - PAD.right} y1=${shape.y(value)} y2=${shape.y(value)}></line>
+          <text class="npm-downloads-tick" x=${PAD.left - 6} y=${shape.y(value)} dy="0.32em" text-anchor="end">${text}</text>`)}
+        <path class="npm-downloads-area" d=${shape.area}></path>
+        <path class="npm-downloads-line" d=${shape.line}></path>
+        <text class="npm-downloads-tick" x=${PAD.left} y=${HEIGHT - 4}>${shape.first}</text>
+        <text class="npm-downloads-tick" x=${width - PAD.right} y=${HEIGHT - 4} text-anchor="end">${shape.last}</text>
+        ${at ? svg`<line class="npm-downloads-crosshair" x1=${shape.x(this._at)} x2=${shape.x(this._at)} y1=${PAD.top} y2=${shape.bottom}></line>
+          <circle class="npm-downloads-dot" cx=${shape.x(this._at)} cy=${shape.y(at.total)} r="4"></circle>` : nothing}
       </svg>
     </div>`
   }

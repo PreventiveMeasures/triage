@@ -125,8 +125,10 @@ const stringRecord = (value: unknown) => plainObject(value)
   ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) as Record<string, string> : undefined
 
 // The fields the Overview shows, in the shapes package.json gives them; each
-// left out where the document has none, or has another shape.
-function manifestOf(json: Record<string, unknown>): Record<string, unknown> {
+// left out where the document has none, or has another shape. A homepage that
+// leads only where its repository does (the repository, its directory there,
+// or its readme, npm's homepage where the package names none) is left out.
+export function npmManifest(json: Record<string, unknown>): Record<string, unknown> {
   const pick: Record<string, unknown> = {}
   for (const key of ['description', 'license', 'homepage', 'main', 'module', 'types', 'type', 'deprecated', 'gitHead']) {
     if (typeof json[key] === 'string') pick[key] = json[key]
@@ -150,7 +152,11 @@ function manifestOf(json: Record<string, unknown>): Record<string, unknown> {
   if (install.length > 0) pick['installScripts'] = Object.fromEntries(install.map(script => [script, scripts![script]]))
   try {
     const repo = getRepo(json)
-    if (repo.github) pick['github'] = { github: repo.github, ...(repo.directory === undefined ? {} : { directory: repo.directory }) }
+    if (repo.github) {
+      pick['github'] = { github: repo.github, ...(repo.directory === undefined ? {} : { directory: repo.directory }) }
+      const home = typeof pick['homepage'] === 'string' ? getRepo({ homepage: pick['homepage'] }) : {}
+      if (home.github?.toLowerCase() === repo.github.toLowerCase() && (home.directory ?? '') === (repo.directory ?? '')) delete pick['homepage']
+    }
   } catch {}
   return pick
 }
@@ -171,7 +177,7 @@ export function readNpmVersion(name: string, spec: string, privileged: boolean, 
     return {
       name, version: json['version'], private: found.private,
       dist: { tarball: dist['tarball'], integrity: dist['integrity'], unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
-      manifest: manifestOf(json),
+      manifest: npmManifest(json),
     }
   })
 }

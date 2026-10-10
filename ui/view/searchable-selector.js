@@ -1,24 +1,32 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 
+const sameRow = (a, b) => Math.abs(a.top - b.top) < 1
+const middle = rect => rect.left + rect.width / 2
+
 // The option the arrow `key` moves to from `options[index]`, as they are laid
 // out: in a list, the next or the previous; in rows of several, the one
 // beside it on its row, or the nearest on the row below or above. Up from
 // the first row is -1, the search field; the last row keeps its place down.
+// Rows run in the options' order, so only its row and the next are measured.
 function besideOption(options, index, key) {
-  const boxes = options.map(option => option.getBoundingClientRect())
-  const at = boxes[index]
+  const box = i => options[i].getBoundingClientRect()
+  const within = i => i >= 0 && i < options.length
+  const at = box(index)
   if (key === 'ArrowLeft' || key === 'ArrowRight') {
     const next = index + (key === 'ArrowLeft' ? -1 : 1)
-    return next >= 0 && next < options.length && Math.abs(boxes[next].top - at.top) < 1 ? next : index
+    return within(next) && sameRow(at, box(next)) ? next : index
   }
-  const down = key === 'ArrowDown'
-  const ahead = boxes.flatMap((box, i) => (down ? box.top > at.top + 1 : box.top < at.top - 1) ? [i] : [])
-  if (ahead.length === 0) return down ? index : -1
-  const row = boxes[down ? ahead[0] : ahead.at(-1)].top
-  const middle = box => box.left + box.width / 2
-  return ahead.filter(i => Math.abs(boxes[i].top - row) < 1)
-    .reduce((best, i) => Math.abs(middle(boxes[i]) - middle(at)) < Math.abs(middle(boxes[best]) - middle(at)) ? i : best)
+  const step = key === 'ArrowDown' ? 1 : -1
+  let first = index + step
+  while (within(first) && sameRow(at, box(first))) first += step
+  if (!within(first)) return step > 0 ? index : -1
+  const row = box(first)
+  let best = first
+  for (let i = first + step; within(i) && sameRow(row, box(i)); i += step) {
+    if (Math.abs(middle(box(i)) - middle(at)) < Math.abs(middle(box(best)) - middle(at))) best = i
+  }
+  return best
 }
 
 // Shared presentation and keyboard behavior for repository, user, and bundle pickers.
@@ -223,11 +231,14 @@ export class SearchableSelector extends LitElement {
       return
     }
     let next
-    if (active === input && ['ArrowDown', 'ArrowUp'].includes(event.key)) next = event.key === 'ArrowDown' ? 0 : -1
-    else if (['ArrowDown', 'ArrowUp'].includes(event.key) || (active !== input && ['ArrowLeft', 'ArrowRight'].includes(event.key))) next = besideOption(options, index, event.key)
-    else if (active !== input && event.key === 'Home') next = 0
-    else if (active !== input && event.key === 'End') next = options.length - 1
-    else if (active !== input && event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (active === input) {
+      if (event.key === 'ArrowDown') next = 0
+      else if (event.key === 'ArrowUp') next = -1
+      else return
+    } else if (event.key.startsWith('Arrow')) next = besideOption(options, index, event.key)
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = options.length - 1
+    else if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault(); this._query += event.key; input.focus(); return
     } else return
     event.preventDefault()

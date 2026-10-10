@@ -50,7 +50,7 @@ import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceLines, bundleSourceOrder, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleCodeStats } from '../../common/bundle-stats.js'
 import { bundleCommitTooltip, bundleOriginLinks } from './bundle-origin-links.js'
-import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
+import { bundleLineCounts, bundleNeedsSources, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
@@ -2476,23 +2476,8 @@ function languageBarPointerLeave(e) {
 }
 
 // Its sources' lines, in all and by language: the index's where it has
-// them, else counted once from the sources.
-const codeStatsOf = new WeakMap()
-function bundleDetailsCodeStats(details) {
-  if (details.codeStats) return details.codeStats
-  let stats = codeStatsOf.get(details)
-  if (!stats) {
-    // `bundleSourcesAsMap` includes only textual sources. Stasis resources
-    // (images, fonts, and other binary payloads) are intentionally absent,
-    // so they cannot distort the language shares or get a fake extension.
-    const lines = details.lineCounts?.size > 0
-      ? details.lineCounts
-      : new Map([...bundleSourcesAsMap(details)].map(([path, content]) => [path, bundleSourceLineCount(content)]))
-    stats = bundleCodeStats(lines, bundleFileSizes(details))
-    codeStatsOf.set(details, stats)
-  }
-  return stats
-}
+// them, else counted once and kept with them.
+const bundleDetailsCodeStats = details => details.codeStats ??= bundleCodeStats(bundleLineCounts(details), bundleFileSizes(details))
 
 function renderBundleLanguagesBar(details, { legend = false } = {}) {
   if (!(details?.kind === 'stasis' && details.bundle) && !(details?.npm && details.json)) return nothing

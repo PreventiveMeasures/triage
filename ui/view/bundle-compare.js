@@ -682,13 +682,13 @@ class BundleCompare extends LitElement {
     const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
     return html`<div class="bundle-compare-picker">
       <div class="bundle-compare-select-wrap bundle-compare-base-wrap">
-        <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .ordered=${Boolean(this.source)} .grid=${Boolean(this.source)}
+        <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .versions=${Boolean(this.source)}
           label=${`${Noun} to compare`} placeholder=${this._nameFor(this.integrity)} @bundle-change=${event => this._pickBase(event.detail.value)}></bundle-selector>
       </div>
       <span class="bundle-compare-arrow" aria-hidden="true">→</span>
       <div class="bundle-compare-select-wrap">
         <span class="bundle-compare-select-hint">Compare with</span>
-        <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .ordered=${Boolean(this.source)} .grid=${Boolean(this.source)}
+        <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .versions=${Boolean(this.source)}
           label=${`${Noun} to compare with`} placeholder=${`Choose a ${noun}…`} @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
         ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>
           <button
@@ -713,7 +713,7 @@ class BundleCompare extends LitElement {
 
   _sourceOptions(options) {
     return options.map(option => ({ id: option.id, integrity: option.id, kind: option.format, format: option.format,
-      detail: option.detail, filename: option.name, size: '—', summary: null }))
+      detail: option.detail, filename: option.name, displayLabel: option.displayLabel, size: '—', summary: null }))
   }
 
   // Build the picker option list, disambiguating duplicate names with a

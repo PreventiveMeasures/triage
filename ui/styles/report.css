@@ -3572,8 +3572,8 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   & > div { display: flex; align-items: baseline; gap: .65rem; min-width: 0; }
   & dt { flex: none; width: var(--npm-label); color: var(--muted); font-size: .72rem; font-weight: 600; }
   & dd { margin: 0; min-width: 0; }
-  & .npm-contents-languages { flex-basis: 100%; align-items: start; }
-  & .npm-contents-languages dd { flex: 1; }
+  & > div:has(> dd > .bundles-languages-bar) { flex-basis: 100%; align-items: start; }
+  & dd:has(> .bundles-languages-bar) { flex: 1; }
   & .bundles-languages-bar { margin: .25rem 0 0; }
 }
 .bundles-languages-legend {
@@ -3586,22 +3586,23 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 }
 .bundles-languages-swatch { width: .55rem; height: .55rem; border-radius: 50%; flex-shrink: 0; }
 .bundles-languages-share { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Read out by screen readers, out of sight. */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* The tarball's download, under the figures' card. */
 .npm-figures-actions { display: flex; justify-content: flex-end; margin-top: .5rem; }
 /* Its downloads, in a card (view/npm-downloads-chart.js): its figures, each
    with its unit, over its downloads for the last year, one series in the
    accent over a faint wash of it, on hairline gridlines. */
-.npm-insights {
-  min-width: 0;
+npm-downloads-chart {
+  display: block;
   padding: .65rem .8rem .5rem;
   background: var(--bg);
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
 }
-npm-downloads-chart { display: block; }
 /* The figures, and at the top right the switch between weeks and months;
    under it where both don't fit. */
 .npm-downloads-head {
-  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: .3rem 1rem;
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: .3rem 1rem;
   margin-bottom: .2rem;
 }
 .npm-stats {
@@ -3609,7 +3610,6 @@ npm-downloads-chart { display: block; }
   margin: 0;
 }
 .npm-stat {
-  & dt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   & dd {
     margin: 0;
     color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap;

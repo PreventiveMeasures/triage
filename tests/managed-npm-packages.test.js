@@ -10,7 +10,7 @@ import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags } from '../server-managed/npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
@@ -703,4 +703,19 @@ test('SQLite team npm scopes normalize, follow membership and hidden teams, and 
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   await checkTeamNpmScopes(db)
+})
+
+test('a homepage that leads only where the repository does is left out of the manifest', () => {
+  const repository = (url, directory) => ({ repository: { type: 'git', url, ...directory ? { directory } : {} } })
+  const homepage = json => npmManifest(json).homepage ?? null
+  const axios = repository('git+https://github.com/axios/axios.git')
+  assert.equal(homepage({ ...axios, homepage: 'https://github.com/axios/axios#readme' }), null, 'npm\'s default homepage')
+  assert.equal(homepage({ ...axios, homepage: 'https://github.com/Axios/axios' }), null)
+  assert.equal(homepage({ ...axios, homepage: 'https://axios-http.com' }), 'https://axios-http.com')
+  assert.equal(homepage({ ...axios, homepage: 'https://github.com/axios/axios/wiki' }), 'https://github.com/axios/axios/wiki')
+  const core = repository('git+https://github.com/babel/babel.git', 'packages/babel-core')
+  assert.equal(homepage({ ...core, homepage: 'https://github.com/babel/babel/tree/main/packages/babel-core#readme' }), null, 'its directory')
+  assert.equal(homepage({ ...core, homepage: 'https://github.com/babel/babel/tree/main/packages/babel-parser' }),
+    'https://github.com/babel/babel/tree/main/packages/babel-parser', 'another package\'s directory')
+  assert.equal(homepage({ homepage: 'https://example.com/' }), 'https://example.com/', 'no repository')
 })

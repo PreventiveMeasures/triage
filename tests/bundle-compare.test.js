@@ -383,11 +383,11 @@ test('the Overview lists a renamed file under Changed as `{old → new}`, and th
 
 // A `source` offers what to compare with in place of the bundles on hand, as
 // an npm package version offers the package's other versions.
-function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', format: 'npm', detail: 'old' }], pending = false, error = null } = {}) {
+function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: 'old' }], pending = false, error = null } = {}) {
   const npm = (integrity, text) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: ['a.js'], sourcesContent: [text] } })
   const calls = { loads: [], opens: [] }
   const source = base => ({
-    noun: 'version', base, pending, error, options, choices: [{ id: base, name: `pkg@${base}`, format: 'npm', detail: '' }, ...options],
+    noun: 'version', base, pending, error, options, choices: [{ id: base, name: `pkg@${base}`, displayLabel: base, format: 'npm', detail: '' }, ...options],
     name: id => `pkg@${id.replace(/^sha512-/u, '')}`,
     load: id => { calls.loads.push(id); return Promise.resolve(npm(`sha512-${id}`, id)) },
     open: (opened, target, mode) => calls.opens.push([opened, target, mode]),
@@ -402,7 +402,7 @@ function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', format: 'npm', d
 
 test('a source\'s options, names and loads stand in for the bundles on hand', async () => {
   const { view, calls } = sourced()
-  assert.deepEqual(view._otherOptions(), [{ id: '1.0.0', integrity: '1.0.0', kind: 'npm', format: 'npm', detail: 'old', filename: 'pkg@1.0.0', size: '—', summary: null }])
+  assert.deepEqual(view._otherOptions(), [{ id: '1.0.0', integrity: '1.0.0', kind: 'npm', format: 'npm', detail: 'old', filename: 'pkg@1.0.0', displayLabel: '1.0.0', size: '—', summary: null }])
   view.request = { bundle: 'sha512-2.0.0', target: '1.0.0', mode: 'code' }
   view.willUpdate(new Map([['request', null]]))
   assert.equal(view._targetIntegrity, '1.0.0')

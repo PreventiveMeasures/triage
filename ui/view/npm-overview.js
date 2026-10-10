@@ -39,9 +39,10 @@ function npmPackageAdvisories(name) {
 // with `actions` (the tarball's download) under it.
 export function npmStatsRow(entry, actions) {
   const stats = npmPackageStats(entry.npm.name)
-  return html`<div class="npm-figures"><section class="npm-insights" aria-label="Downloads">
-    <npm-downloads-chart .downloads=${stats.downloads ?? null} .status=${stats.status}></npm-downloads-chart>
-  </section><div class="npm-figures-actions">${actions}</div></div>`
+  return html`<div class="npm-figures">
+    <npm-downloads-chart role="region" aria-label="Downloads" .downloads=${stats.downloads} .status=${stats.status}></npm-downloads-chart>
+    <div class="npm-figures-actions">${actions}</div>
+  </div>`
 }
 
 const STAR_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.75 1.9 3.9 4.3.6-3.1 3 .75 4.25L8 11.5l-3.85 2 .75-4.25-3.1-3 4.3-.6Z"/></svg>`
@@ -394,10 +395,10 @@ function npmFileTypesRow(entry, details) {
 // line of their own, then its readable files and their types, side by side
 // where they fit.
 export function npmContents(entry, languages, details) {
-  const rows = [['languages', 'Languages', languages], ['readable', 'Readable', npmReadableRow(entry, details)], ['types', 'File types', npmFileTypesRow(entry, details)]]
-    .filter(([, , body]) => body !== nothing)
+  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['File types', npmFileTypesRow(entry, details)]]
+    .filter(([, body]) => body !== nothing)
   if (rows.length === 0) return nothing
-  return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([key, label, body]) => html`<div class=${`npm-contents-${key}`}><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`
+  return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([label, body]) => html`<div><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`
 }
 
 // The binary files, which the server tells from text by their bytes: not
