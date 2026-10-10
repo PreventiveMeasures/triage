@@ -247,13 +247,17 @@ const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 // the spaces it can do without.
 const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
+// What a regular expression set aside holds.
+const REGEX = '\uE000'
 const JS = {
-  // A regular expression first where a value starts (after `=>` too), so a quote in it (`/["']/`) starts no string.
-  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>]|\b(?:await|case|delete|do|else|in|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
+  // A regular expression first where a value starts (after `=>` or an operator too), so a quote in it (`/["']/`) starts no string.
+  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>+\-*/%^<~]|\b(?:await|case|delete|do|else|in|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`),
   droppable: /(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu,
-  // nor between two `+`, two `-` or two `/`: `a+ +b` is no `a++b`, `a/ /b/` no comment.
-  needed: (code, index, run) => '+-/'.includes(code[index - 1]) && code[index + run.length] === code[index - 1],
+  // nor between two `+`, two `-` or two `/` (`a+ +b` is no `a++b`, `a/ /b/`
+  // no comment), nor after a regular expression before a word (`/a/ in b`).
+  needed: (code, index, run) => ('+-/'.includes(code[index - 1]) && code[index + run.length] === code[index - 1])
+    || (code[index - 2] === REGEX && /[\w$]/u.test(code[index + run.length])),
 }
 const CSS = {
   // No `//` comments, so `url(https://…)` is code.
@@ -269,9 +273,8 @@ const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path
 function minifiedCode(text, { stringOrComment, droppable, needed }) {
   // Its lines of code alone, as long as what is on them: a comment set aside
   // leaves nothing but its line breaks, a string or template `""` and its, a
-  // regular expression a word (`/x/ in` needs its space), so the code either
-  // side stays apart.
-  const lines = text.replaceAll(stringOrComment, (match, string) => (string === undefined ? '' : string[0] === '/' ? 'R' : '""') + match.replaceAll(/[^\n]/gu, ''))
+  // regular expression `/REGEX/`, so the code either side stays apart.
+  const lines = text.replaceAll(stringOrComment, (match, string) => (string === undefined ? '' : string[0] === '/' ? `/${REGEX}/` : '""') + match.replaceAll(/[^\n]/gu, ''))
     .replaceAll(/^[ \t]+/gmu, '')
     .split('\n').filter(line => line.trim() !== '')
   const code = lines.join('\n'), length = code.length - (lines.length - 1)
