@@ -7,7 +7,7 @@
 // `import source` for .css. The plugin below routes JS-imported `.css`
 // through the `text` loader and leaves entry-point CSS alone.
 import * as esbuild from 'esbuild'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
@@ -83,6 +83,10 @@ const minifyLitTemplates = {
 
 const mode = process.argv[2] ?? 'build'
 if (mode === 'build') {
+  // Chunk names carry a content hash, so a rebuild adds files rather than
+  // overwriting them. Start from an empty out/: anything left over would be
+  // served by the static servers and published via `out/chunk-*.js`.
+  await rm('out', { recursive: true, force: true })
   const { metafile } = await esbuild.build({
     bundle: true,
     plugins: [minifyLitTemplates, litCssAsText({ minify: true }), litSvgAsHtml],

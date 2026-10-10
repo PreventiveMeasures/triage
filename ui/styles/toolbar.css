@@ -549,7 +549,7 @@ view-mode-buttons {
   display: inline-flex;
   /* Pinned to 30px so the View chooser matches the rest of the
      toolbar controls (.sev-chip / triage-filter / toolbar-search
-     / .trash-btn — all 30px). Without this the group measured ~27px
+     — all 30px). Without this the group measured ~27px
      from button intrinsic + group border, which exposed as a step
      against the 30px chip row. */
   height: 30px; box-sizing: border-box;
