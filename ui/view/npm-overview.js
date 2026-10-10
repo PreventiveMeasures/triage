@@ -248,31 +248,36 @@ const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
 const JS = {
-  // A regular expression first where a value starts, so a quote in it (`/["']/`) starts no string.
-  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};]|\b(?:case|return|throw|typeof|void))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
-  // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`).
+  // A regular expression first where a value starts (after `=>` too), so a quote in it (`/["']/`) starts no string.
+  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>]|\b(?:case|return|throw|typeof|void))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
+  // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`),
   droppable: /(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu,
+  // nor between two `+` or two `-`: `a+ +b` is no `a++b`.
+  needed: (code, index, run) => (code[index - 1] === '+' || code[index - 1] === '-') && code[index + run.length] === code[index - 1],
 }
 const CSS = {
   // No `//` comments, so `url(https://…)` is code.
   stringOrComment: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|[ \t]*\/\*[\s\S]*?\*\/[ \t]*/gu,
   // Beside braces, `;`, `,`, `>`, parentheses, after `:` (`a { color: red }`)
-  // and beside `+` or `~` outside parentheses (`.a + .b`, not `calc(1px + 2px)`),
-  // not those a selector or a value needs (`.a .b`, `1px solid #fff`, `a :hover`).
-  droppable: /(?<=[{};,:>(])[ \t]+|[ \t]+(?=[{};,>)!])|(?<=[+~])[ \t]+(?![^(\n]*\))|[ \t]+(?=[+~])(?![^(\n]*\))/gu,
+  // and beside a selector's `+` or `~` (`.a + .b`), not those a selector or a
+  // value needs (`.a .b`, `1px solid #fff`, `a :hover`),
+  droppable: /(?<=[{};,:>(])[ \t]+|[ \t]+(?=[{};,>)!])|(?<=[+~])[ \t]+|[ \t]+(?=[+~])/gu,
+  // nor beside `+` or `~` in parentheses: `calc(1px + var(--x))`.
+  needed: (code, index, run, depth) => depth > 0 && /[+~]/u.test(code[index - 1] + code[index + run.length]),
 }
 const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
-function minifiedCode(text, { stringOrComment, droppable }) {
-  const code = text.replaceAll(stringOrComment, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
-  const lines = code.split('\n').filter(line => line.trim() !== '').length
+function minifiedCode(text, { stringOrComment, droppable, needed }) {
+  // Its lines of code alone, as long as what is on them: a comment set aside leaves nothing.
+  const lines = text.replaceAll(stringOrComment, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
+    .split('\n').filter(line => line.trim() !== '')
+  const code = lines.join('\n'), length = code.length - (lines.length - 1)
   // Counted by character: a run aligning `=` is as many spaces as it is wide.
-  let dropped = 0
+  let depth = 0, dropped = 0, scanned = 0
   for (const { 0: run, index } of code.matchAll(droppable)) {
-    // Not between two `+` or two `-`: `a+ +b` is no `a++b`.
-    const before = code[index - 1]
-    if (!((before === '+' || before === '-') && code[index + run.length] === before)) dropped += run.length
+    for (; scanned < index; scanned++) depth = Math.max(0, depth + (code[scanned] === '(' ? 1 : code[scanned] === ')' ? -1 : 0))
+    if (!needed(code, index, run, depth)) dropped += run.length
   }
-  return lines > 0 && code.length > MINIFIED_AVERAGE * lines && dropped < MINIFIED_SPACES * code.length
+  return lines.length > 0 && length > MINIFIED_AVERAGE * lines.length && dropped < MINIFIED_SPACES * length
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):

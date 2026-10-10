@@ -130,6 +130,11 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     + `throw new Error(\n\t\`${'Your application imported from svelte/internal, a private module that no longer exists. '.repeat(3)}\`\n);\n`), 'ascii',
     'lines long by their comments and strings, not their code')
   assert.equal(category('lib/stub.js', `// ${'We may reimplement some of the legacy private APIs here. '.repeat(3)}\n`), 'ascii', 'nor one of comments alone')
+  assert.equal(category('lib/stub.js', `${Array.from({ length: 102 }, () => `// ${'ordinary words '.repeat(8)}`).join('\n')}\nexport{};\n`), 'ascii',
+    'nor one of comments around a line of code')
+  assert.equal(category('dist/a.mjs', `const f=x=>/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a regular expression after `=>` too')
+  assert.equal(category('dist/g.css', `${'.a{width:calc(1px + var(--x))}'.repeat(5)}\n`), 'minified', 'a sum\'s spaces in calc() needed, nested too')
   assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
   // Only in what minifiers write, JavaScript and CSS, whose strings and comments are read.
   assert.equal(category('tool.py', `x = 1\n# ${'ordinary words '.repeat(15)}\n# ${'ordinary words '.repeat(15)}\n`), 'ascii', 'nor a language it can\'t read')
