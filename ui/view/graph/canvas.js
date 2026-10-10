@@ -280,8 +280,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     paintBounds = null
     nodePicker = null
     if (layersOn()) {
+      // The layout drops imports of packages it isn't given, so leaving out
+      // crowded packages hides their rows and edges too.
       const pg = getPkgGraph()
-      layers = layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, graph.layerRoots?.roots ?? ['__own__'], {
+      const crowded = crowdedIn(pg, MAX_PACKAGE_EDGES)
+      layers = layoutDependencyLayers(pg.nodes.filter((n) => !crowded.has(n.pkg)).map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, graph.layerRoots?.roots ?? ['__own__'], {
         width: Math.max(360, layoutW - 190),
       })
       needsLayout = false
@@ -436,9 +439,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // filter are NOT here on purpose: they dim non-matching nodes
   // to 0.1 instead of hiding them, so they still occupy space and
   // read as context (where the matching subgraph sits in the whole).
-  // Package names hidden from the Graph view's file or package graph because
-  // too many edges lead into them (see crowded-packages.js). Graphs are
-  // immutable while attached, so each one is counted once.
+  // Package names hidden from the Graph and Layers views' file or package
+  // graph because too many edges lead into them (see crowded-packages.js).
+  // Graphs are immutable while attached, so each one is counted once.
   const crowdedSets = new WeakMap()
   function crowdedIn(G, limit) {
     if (!crowdedSets.has(G)) crowdedSets.set(G, crowdedGraphPackages(G, limit))

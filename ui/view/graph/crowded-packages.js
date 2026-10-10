@@ -2,7 +2,7 @@
 // transpiled module, minimalistic-assert by the crypto stacks, react by every
 // component, reselect by every selector module. When that many edges lead into
 // one, its files and every edge that touches them bury the rest of the graph,
-// so Graph and Size flow hide it.
+// so every bundle graph but Matrix hides it.
 const CROWDED_PACKAGES = new Set(['@babel/runtime', 'minimalistic-assert', 'react', 'reselect'])
 export const MAX_FILE_EDGES = 300
 export const MAX_PACKAGE_EDGES = 100

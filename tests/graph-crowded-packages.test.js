@@ -76,3 +76,32 @@ test('Size flow leaves out @babel/runtime bars and every ribbon touching them pa
   assert.equal(host.matchesNode(host.model.byId.get(`f:${helper}`)), false, 'search skips hidden files')
   assert.equal(host.layout.byId.get('f:entry.js').size, 1 + 301 * 10 + 10 + 150, 'reachable sizes still include both hidden helper files')
 })
+
+test('Dependencies leaves crowded packages out of its package and file networks', async () => {
+  const { dependencyNetwork, packageNetwork } = await import('../ui/view/graph/package-network.js')
+  const babel = node => node.pkg === '@babel/runtime'
+  const packages = importers => packageNetwork(graphOf(importers))
+  assert.ok(packages(100).nodes.some(babel), '100 importing packages keep the package')
+  const crowded = packages(101)
+  assert.equal(crowded.nodes.filter(babel).length, 0)
+  assert.equal(crowded.byPkg.has('@babel/runtime'), false)
+  assert.equal(crowded.nodeByFile.has('@babel/runtime'), false)
+  assert.ok([...crowded.importsOf.values()].every(targets => !targets.includes('@babel/runtime')))
+  assert.ok(crowded.directedEdges.every(e => e.to !== '@babel/runtime' && e.from !== '@babel/runtime'))
+  assert.ok(crowded.importedBy.get('other').length > 0, 'other packages keep their importers')
+
+  // At most 100 files show file by file: importers × 8 helpers file edges.
+  const files = importers => {
+    const helpers = Array.from({ length: 8 }, (_, i) => `node_modules/@babel/runtime/helpers/h${i}.js`)
+    const sources = Array.from({ length: importers }, (_, i) => `src/f${i}.js`)
+    const tree = { 'src/entry.js': { size: 1, imports: sources }, ...Object.fromEntries(helpers.map(file => [file, { size: 1, imports: [] }])),
+      ...Object.fromEntries(sources.map(file => [file, { size: 1, imports: helpers }])) }
+    return dependencyNetwork(buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf }), false)
+  }
+  assert.equal(files(37).nodes.filter(babel).length, 8, '296 file edges keep the helpers')
+  const flooded = files(40)
+  assert.equal(flooded.fileLevel, true)
+  assert.equal(flooded.nodes.filter(babel).length, 0)
+  assert.ok(flooded.directedEdges.every(e => !e.to.includes('@babel/runtime')))
+  assert.equal(flooded.nodes.length, 41, 'own source stays')
+})
