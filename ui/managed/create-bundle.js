@@ -241,13 +241,30 @@ export class ManagedCreateBundle extends LitElement {
   positionRevisionSuggestions() {
     if (!this._revisionOpen) return
     const menu = this.renderRoot.querySelector('.revision-menu')
+    const options = menu.querySelector('.revision-options')
     const rect = this.renderRoot.querySelector('.revision-name').getBoundingClientRect()
     const margin = 8
     const gap = 6
     const fontSize = parseFloat(getComputedStyle(this).fontSize)
-    const columnWidth = 15 * fontSize
-    const columns = Math.max(1, Math.min(3, Math.ceil(this.revisionSuggestions().length / 8), Math.floor((window.innerWidth - 2 * margin) / columnWidth)))
-    const width = Math.min(Math.max(rect.width, columns * columnWidth), window.innerWidth - 2 * margin)
+    // Size columns to the longest untruncated name, so compact names such as
+    // version tags fit more per row. Longer names still ellipsize past 15em.
+    let labelWidth = 0
+    const range = document.createRange()
+    for (const label of options.querySelectorAll('span')) {
+      range.selectNodeContents(label)
+      labelWidth = Math.max(labelWidth, range.getBoundingClientRect().width)
+    }
+    const columnWidth = Math.max(5 * fontSize, Math.min(15 * fontSize, labelWidth + 2 * fontSize))
+    const spacing = parseFloat(getComputedStyle(options).columnGap) || 0
+    const chrome = menu.offsetWidth - options.clientWidth
+    const fits = width => Math.max(1, Math.floor((width - chrome + spacing) / (columnWidth + spacing)))
+    // Fill the field's width, widening past a narrow field to up to three
+    // columns once there are more than eight suggestions per column.
+    const count = this.revisionSuggestions().length
+    const fit = Math.min(fits(window.innerWidth - 2 * margin), Math.max(fits(rect.width), Math.min(3, Math.ceil(count / 8))))
+    // Short lists stay one column; longer ones spread evenly over the rows they need.
+    const columns = count <= 8 ? 1 : Math.ceil(count / Math.ceil(count / fit))
+    const width = Math.min(Math.max(rect.width, columns * (columnWidth + spacing) - spacing + chrome), window.innerWidth - 2 * margin)
     menu.style.width = `${width}px`
     menu.style.setProperty('--revision-columns', columns)
     menu.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))}px`
