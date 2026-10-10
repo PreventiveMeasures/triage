@@ -58,26 +58,38 @@ const CONTROL = new Set(['for', 'if', 'switch', 'while', 'with'])
 const DECLARES = new Set(['as', 'async', 'class', 'function'])
 // Words the name after which a file declares: `function a`, `import b`.
 const NAMING = new Set(['as', 'class', 'function', 'import'])
-// After a function's `(…)`: its names were its parameters.
-const PARAMETERS = /\s*(?:=>|\{)/uy
+// After a function's `(…)` or a lone parameter, with or without a body.
+const BODY = /\s*(?:=>\s*)?\{/uy
 const ARROW = /\s*=>/uy
+const ARROW_BODY = /\s*=>\s*\{/uy
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
 // A text with its short names set aside (`key`, its lines where the text's
 // are), and each line's names in order (`names`). Read as a whole, so a
 // comment or a template spanning lines keeps all of them. Set aside only
-// where the file declares them (`var`, `let`, `const`, `function`, `class`,
-// `import`, `catch` and parameters), a global it doesn't (`Map`, `$`) being
-// no minifier's to rename. Kept as they are: strings, templates, comments,
+// where a declaration in scope stands for them (`var`, `let`, `const`,
+// `function`, `class`, `import`, `catch` and parameters), a global (`Map`,
+// `$`) being no minifier's to rename. Kept as they are: strings, templates, comments,
 // regular expressions, keywords, names longer than a minifier gives,
 // properties: after `.`, before `:`, or in an object's, a pattern's or a
 // class's key place (`{ a, b() {}, c = 1 }`), and what a module exports
 // (`export { a as b }`, `export const c = 1`), since renaming one changes
 // what reads it.
 function nameless(text) {
-  const declared = new Set(), key = [], names = [[]], setAside = []
+  const key = [], names = [[]], setAside = []
   const opens = []
+  // Each block a scope, declaring what is declared in it (its function's
+  // parameters too, `pending` until it opens, each read from it), seen from
+  // it and the blocks in it. Each declaration is taken to be its block's, so
+  // a `var` read outside its block is a global's, kept.
+  const scopes = [{ names: new Set(), parent: -1 }]
+  let pending = null, scope = 0
+  const declare = name => scopes[scope].names.add(name)
+  const declaredFrom = (name, from) => {
+    for (let at = from; at !== -1; at = scopes[at].parent) if (scopes[at].names.has(name)) return true
+    return false
+  }
   // Each `var`, `let` or `const` under way: the depth of its declarators,
   // whether in their names (before `=`, patterns too) rather than what they
   // are set to, whether exported. Each `(…)` under way but a statement's,
@@ -85,7 +97,14 @@ function nameless(text) {
   // whose `=` began a default (`{ x = a }`), until their next `,`: no
   // names declared there.
   const declarations = [], defaulted = new Set(), groups = []
-  const inDefault = (from, to = opens.length) => [...defaulted].some(depth => depth >= from && depth <= to)
+  const inDefault = (from, to = opens.length) => {
+    for (const depth of defaulted) if (depth >= from && depth <= to) return true
+    return false
+  }
+  const inComputed = from => {
+    for (let depth = from; depth < opens.length; depth++) if (opens[depth] === 'computed') return true
+    return false
+  }
   // `exporting` between `export` and its name; `naming` before a name
   // declared as `function a` is; `extending` the depth of an `extends`
   // whose class body is the next `{` there.
@@ -154,16 +173,24 @@ function nameless(text) {
         : first === '(' && CONTROL.has(last) ? 'control' : first === '[' && keyPlace ? 'computed' : first
       opens.push(open)
       if (open === '(') groups.push({ depth: opens.length, names: [] })
+      if (open === 'block') {
+        scopes.push({ names: new Set(pending?.map(({ name }) => name)), parent: scope })
+        scope = scopes.length - 1
+        for (const { aside } of pending ?? []) if (aside) aside[3] = scope
+      }
+      if (first === '{') pending = null
       last = first
       keyPlace = first === '{' && !block
       exporting = naming = false
     } else if (first === ')' || first === ']' || first === '}') {
       key.push(token)
       const open = opens.pop()
+      if (open === 'block') scope = scopes[scope].parent
       if (open === '(') {
         const group = groups.pop()
-        PARAMETERS.lastIndex = at
-        if (PARAMETERS.test(text)) for (const name of group.names) declared.add(name)
+        BODY.lastIndex = ARROW.lastIndex = at
+        if (BODY.test(text)) pending = group.names
+        else if (ARROW.test(text)) for (const { name } of group.names) declare(name)
       }
       // After a statement's condition, as after `;`, a statement starts.
       last = open === 'control' ? ';' : first
@@ -174,20 +201,23 @@ function nameless(text) {
     } else {
       const declaration = declarations.at(-1), group = groups.at(-1)
       const binding = declaration?.binding && opens.length >= declaration.depth && !inDefault(declaration.depth + 1)
-        && !opens.slice(declaration.depth).includes('computed')
+        && !inComputed(declaration.depth)
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:` after it.
       const property = last === '.' || text[at] === ':'
+      let aside = null
       if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || property) key.push(token)
       else {
-        setAside.push([key.length, names.length - 1, token])
+        setAside.push(aside = [key.length, names.length - 1, token, scope])
         key.push(NAMELESS)
       }
-      ARROW.lastIndex = at
+      ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
       const read = text[at] === ':' || last === '.'
-      if (!read && (naming || binding || ARROW.test(text))) declared.add(token)
-      if (!read && group && !inDefault(group.depth) && !opens.slice(group.depth).includes('computed')) group.names.push(token)
+      if (!read && (naming || binding)) declare(token)
+      else if (!read && ARROW_BODY.test(text)) pending = [{ aside, name: token }]
+      else if (!read && ARROW.test(text)) declare(token)
+      if (!read && group && !inDefault(group.depth) && !inComputed(group.depth)) group.names.push({ aside, name: token })
       if (token === 'extends') extending = opens.length
       if (binding && (token === 'in' || token === 'of')) declaration.binding = false
       if (token === 'const' || token === 'let' || token === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
@@ -201,9 +231,9 @@ function nameless(text) {
       }
     }
   }
-  // A name the file never declares is a global's, kept.
-  for (const [piece, line, name] of setAside) {
-    if (declared.has(name)) names[line].push(name)
+  // A name no declaration in scope stands for is a global's, kept.
+  for (const [piece, line, name, from] of setAside) {
+    if (declaredFrom(name, from)) names[line].push(name)
     else key[piece] = name
   }
   return { key: key.join(''), names }
@@ -248,10 +278,10 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   return { blocks, renamed }
 }
 
-// A tag where a value starts (`(<a />`, `=> <b>`, `return <i>`, `yield <p>`, a
+// A tag where a value starts (`(<a />`, `if (x) <b />`, `return <i>`, `yield <p>`, a
 // fragment's `<>` before what it holds, not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|[(=,:?&|!{};>[]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
+const JSX = /(?:^|[()=,:?&|!{};>[]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
