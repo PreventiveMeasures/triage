@@ -1,23 +1,16 @@
-// Pretty-printed copies of minified files for the viewer's Code tab: a
-// bundle's (GET /api/bundles/:id/pretty) or a published npm version's (GET
-// /api/npm/pretty), asked for by path and the hash of the content the viewer
-// holds (common/pretty-print.js). Each is formatted with oxfmt once and kept
-// Brotli-encoded, so later requests are answered with the kept bytes as they
-// are. Access is the caller's to check, before and after.
-//
-// A bundle's copies are kept in its cache directory, by content hash: one is
-// made only from a file of that bundle with that hash, so any reader of the
-// bundle may have it. They are encrypted with the bundle's data key where
-// storage is, and removed with the bundle. A public npm version's copies are
-// kept by content hash under `cache/npm/`, unencrypted, as what they are made
-// from is public; a private version's are made for each request and never
-// kept, as nothing else derived from a private package is.
+// Minified files pretty-printed for the Code tab (GET /api/bundles/:id/pretty,
+// GET /api/npm/pretty), named by path and content hash, formatted with oxfmt
+// once and kept Brotli-encoded by that hash: a bundle's in its cache directory
+// (so only made from, and read by readers of, that bundle), a public npm
+// version's under `cache/npm/`; a private version's are never kept. Access is
+// the caller's to check.
 import { Buffer } from 'node:buffer'
-import { createHash } from 'node:crypto'
 import { Readable } from 'node:stream'
+import { computeFileHash } from '@preventive/report'
 import { format } from 'oxfmt'
+import { FILE_HASH } from '../common/bundle-metadata.js'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
-import { MAX_PRETTY_BYTES, PRETTY_FILE_HASH, prettyExtension } from '../common/pretty-print.js'
+import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
 import type { OpenedBlob } from './blob-store.ts'
 import { type BundleCacheStorage, readBundleDetails } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -38,15 +31,18 @@ export class PrettyError extends Error {
   constructor(status: number, code: string) { super(code); this.status = status }
 }
 
-// Whether a request names a file that can be formatted, by a hash as files
-// are hashed.
-export const isPrettyRequest = (path: string | null, hash: string | null): path is string =>
-  path !== null && prettyExtension(path) !== null && hash !== null && PRETTY_FILE_HASH.test(hash)
+export interface PrettyRequest { path: string; hash: string; extension: string }
 
-const fileHash = (content: string | Uint8Array) => `sha512-${createHash('sha512').update(content).digest('base64')}`
+// The file a request's `path` and `hash` name, or null for one that can't be
+// formatted.
+export function prettyRequest(params: URLSearchParams): PrettyRequest | null {
+  const path = params.get('path') ?? ''
+  const extension = prettyExtension(path), hash = params.get('hash') ?? ''
+  return extension !== null && FILE_HASH.test(hash) ? { path, hash, extension } : null
+}
 
 // A copy's name: its file's hash in hex, with the extension it was parsed by.
-const prettyFile = (hash: string, extension: string) =>
+const prettyFile = ({ hash, extension }: PrettyRequest) =>
   `pretty-v${PRETTY_VERSION}/${Buffer.from(hash.slice('sha512-'.length), 'base64').toString('hex')}.${extension}.br`
 
 // How files are formatted: changing what is written no more than layout
@@ -99,19 +95,16 @@ export async function prettyBody(text: string, extension: string): Promise<Buffe
   if (Buffer.byteLength(text) > MAX_PRETTY_BYTES) throw new PrettyError(413, 'file-too-large')
   if (activeFormats >= MAX_ACTIVE_FORMATS) throw new PrettyError(429, 'pretty-busy')
   activeFormats++
-  let code: string
-  try {
-    const result = await format(`pretty.${extension}`, text, PRETTY_OPTIONS)
-    if (result.errors.length > 0) throw new PrettyError(422, 'unformattable')
-    code = result.code
-  } catch (err) {
-    throw err instanceof PrettyError ? err : new PrettyError(422, 'unformattable')
-  } finally { activeFormats-- }
-  if (!sameCode(text, code, extension === 'css')) {
+  let result: Awaited<ReturnType<typeof format>>
+  try { result = await format(`pretty.${extension}`, text, PRETTY_OPTIONS) }
+  catch { throw new PrettyError(422, 'unformattable') }
+  finally { activeFormats-- }
+  if (result.errors.length > 0) throw new PrettyError(422, 'unformattable')
+  if (!sameCode(text, result.code, extension === 'css')) {
     console.warn(`managed: pretty-printing a .${extension} file changed more than its layout; not served`)
     throw new PrettyError(422, 'pretty-mismatch')
   }
-  return encodeBrotli(Buffer.from(code))
+  return encodeBrotli(Buffer.from(result.code))
 }
 
 const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
@@ -121,13 +114,7 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
   const pending = new Map<string, Promise<Buffer>>()
   function shared(key: string, make: () => Promise<Buffer>): Promise<Buffer> {
     let job = pending.get(key)
-    if (!job) {
-      const made = make()
-      const settle = () => { if (pending.get(key) === made) pending.delete(key) }
-      made.then(settle, settle)
-      pending.set(key, made)
-      job = made
-    }
+    if (!job) pending.set(key, job = make().finally(() => pending.delete(key)))
     return job
   }
   // Bundles are read one at a time: reading one decodes all of it.
@@ -141,10 +128,8 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     try { await put() } catch (err) { console.warn('managed: pretty-print cache write failed:', err) }
   }
   return {
-    async bundle(record: ManagedBundle, path: string, hash: string): Promise<OpenedBlob> {
-      const extension = prettyExtension(path)
-      if (extension === null || !PRETTY_FILE_HASH.test(hash)) throw new PrettyError(400, 'bad-file')
-      const file = prettyFile(hash, extension)
+    async bundle(record: ManagedBundle, request: PrettyRequest): Promise<OpenedBlob> {
+      const { path, hash, extension } = request, file = prettyFile(request)
       try { return await bundles.open(record.id, file) }
       catch (err) { if (!(err instanceof CacheMissError)) throw err }
       return opened(await shared(`bundle ${record.id} ${file}`, async () => {
@@ -154,7 +139,7 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
           return bundleSourcesAsMap(details).get(path)
         })
         if (text === undefined) throw new PrettyError(404, 'no-file')
-        if (fileHash(text) !== hash) throw new PrettyError(409, 'hash-mismatch')
+        if (await computeFileHash(text) !== hash) throw new PrettyError(409, 'hash-mismatch')
         const body = await prettyBody(text, extension)
         // As for its metadata (bundle-cache.ts): a bundle deleted meanwhile
         // keeps no copy, nor does one deleted while it was written.
@@ -169,10 +154,8 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     },
     // The version's file, from its files loaded as the viewer's are (and
     // held to the same few loads at once).
-    async npm(doc: NpmVersionDocument, path: string, hash: string): Promise<OpenedBlob> {
-      const extension = prettyExtension(path)
-      if (extension === null || !PRETTY_FILE_HASH.test(hash)) throw new PrettyError(400, 'bad-file')
-      const file = prettyFile(hash, extension)
+    async npm(doc: NpmVersionDocument, request: PrettyRequest): Promise<OpenedBlob> {
+      const { path, hash, extension } = request, file = prettyFile(request)
       if (!doc.private) {
         try { return await npm.open(file) }
         catch (err) { if (!(err instanceof CacheMissError)) throw err }
@@ -183,7 +166,7 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
         try {
           const bytes = (await load.result).find(entry => entry.path === path)?.bytes
           if (!bytes) throw new PrettyError(404, 'no-file')
-          if (fileHash(bytes) !== hash) throw new PrettyError(409, 'hash-mismatch')
+          if (await computeFileHash(bytes) !== hash) throw new PrettyError(409, 'hash-mismatch')
           text = npmFileText(bytes)
         } finally { load.release() }
         if (text === null) throw new PrettyError(422, 'unformattable')

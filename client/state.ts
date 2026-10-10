@@ -651,8 +651,7 @@ export const state: State = store<State>({
   // Whether the source viewer wraps long lines: on unless turned off. A
   // reading preference, persisted like kanbanDetailFullscreen.
   bundleSourceWrap: readSavedBundleSourceWrap() ?? true,
-  // Whether the Code tab shows minified files pretty-printed (pretty-source.js),
-  // from when it is turned on until it is turned off, for the session.
+  // Whether the Code tab shows minified files pretty-printed (pretty-source.js).
   bundleSourcePretty: false,
   // The file a managed link opens the Code tab on, by its 1-based number in
   // the bundle's sorted sources, and the lines it marks. Kept until the tab

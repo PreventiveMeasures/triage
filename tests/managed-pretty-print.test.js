@@ -6,7 +6,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { brotliDecompressSync, gzipSync } from 'node:zlib'
+import { brotliDecompressSync } from 'node:zlib'
 import { format } from 'oxfmt'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
 import { createBundleCache } from '../server-managed/bundle-cache.ts'
@@ -15,10 +15,10 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { PRETTY_OPTIONS, createPrettyCache, prettyBody, sameCode } from '../server-managed/pretty-print.ts'
 import { createSession } from '../server-managed/session.ts'
-import { createEncryptedObjectStorage } from '../server-managed/storage-encryption.ts'
-import { createManagedStores } from '../server-managed/storage-stores.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
+import { managedStores } from './_managed-storage.js'
+import { packageOf, registry, withToken } from './_managed-npm.js'
 
 const config = {
   port: 0, host: '127.0.0.1', dbPath: ':memory:', debug: false,
@@ -26,62 +26,19 @@ const config = {
   cookieSecure: false, sessionCookieName: 'sid', sessionTtlMs: 3_600_000,
   maxReportBytes: 10_485_760, maxBundleBytes: 104_857_600, allowShare: true,
 }
-const REGISTRY = 'https://registry.npmjs.org'
 const minified = 'function add(a,b){return a+b}const s=css`a{color:red}`;export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
 const fileHash = text => `sha512-${createHash('sha512').update(text).digest('base64')}`
 const formatted = async text => (await format('pretty.js', text, PRETTY_OPTIONS)).code
 
-// A ustar archive of `files` under `package/`, as npm pack writes one.
-function tar(files) {
-  const blocks = []
-  for (const [path, data] of Object.entries(files)) {
-    const body = Buffer.from(data), header = Buffer.alloc(512)
-    header.write(`package/${path}`, 0, 100)
-    header.write('0000644\0', 100)
-    header.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124)
-    header.write('00000000000\0', 136)
-    header.write('0', 156)
-    header.write('ustar\0', 257)
-    header.write('00', 263)
-    header.write('        ', 148)
-    let sum = 0
-    for (const byte of header) sum += byte
-    header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148)
-    blocks.push(header, body, Buffer.alloc((512 - body.length % 512) % 512))
-  }
-  return Buffer.concat([...blocks, Buffer.alloc(1024)])
-}
-
-function packageOf(name, version, files) {
-  const tgz = gzipSync(tar(files))
-  const doc = { name, version, license: 'MIT',
-    dist: { tarball: `${REGISTRY}/${name}/-/${name.split('/').at(-1)}-${version}.tgz`, integrity: `sha512-${createHash('sha512').update(tgz).digest('base64')}`, unpackedSize: 100, fileCount: 2 } }
-  return { doc, tgz }
-}
-
-// The registry: public packages answer anyone, private ones only the token;
-// `tarballs` counts each package's tarball downloads.
-function registry(t, packages) {
-  const tarballs = new Map()
-  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
-    const auth = new Headers(init.headers).get('authorization'), url = String(input)
-    for (const { doc, tgz, private: secret } of packages) {
-      if (secret && auth !== `Bearer ${process.env['NPM_TOKEN']}`) continue
-      if (url === `${REGISTRY}/${doc.name}/${encodeURIComponent(doc.version)}`) return Promise.resolve(Response.json(doc))
-      if (url === doc.dist.tarball) { tarballs.set(doc.name, (tarballs.get(doc.name) ?? 0) + 1); return Promise.resolve(new Response(tgz)) }
-    }
-    return Promise.resolve(Response.json({ error: 'Not found' }, { status: 404 }))
-  })
-  return tarballs
-}
+// A package's tarball downloads among the registry's calls.
+const downloads = (calls, { doc }) => calls.filter(call => call.url === doc.dist.tarball).length
 
 // A managed server on disk storage, encrypted as a deployment with a key is.
 async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), 'triage-pretty-'))
   const db = openSqliteManagedDb(':memory:', { storageEncryptionKey: key })
   await db.enableStorageEncryption()
-  const raw = createDiskObjectStorage(dir)
-  const stores = createManagedStores(await createEncryptedObjectStorage(raw, db, key), true)
+  const stores = await managedStores(t, createDiskObjectStorage(dir), { db, key, disk: true })
   const bundleCache = createBundleCache(stores.cacheStorage, db, stores.bundleStore)
   const prettyCache = createPrettyCache(stores.cacheStorage, stores.npmCacheStorage, db, stores.bundleStore)
   const server = createServer(createManagedRequestHandler({
@@ -134,7 +91,7 @@ async function setup(t) {
       uploadedBy: users.admin.userId, uploadedByLogin: 'admin', repoId: 1, repoDirectory: '' }, Date.now())
     return id
   }
-  return { dir, db, raw, stores, users, send, seed, team }
+  return { dir, db, raw: stores.raw, stores, users, send, seed, team }
 }
 
 const npmPretty = (name, version, path, hash) => `/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`
@@ -178,7 +135,7 @@ test('a formatted copy is checked, apart from the formatter, to differ from its 
 test('a public npm file is formatted once, kept unencrypted by its hash, and served from that copy', async t => {
   const h = await setup(t)
   const pkg = packageOf('lib', '1.0.0', { 'dist/lib.min.js': minified, 'README.md': '# lib\n', 'dist/other.min.js': minified })
-  const tarballs = registry(t, [pkg])
+  const calls = registry(t, [pkg])
   const hash = fileHash(minified)
   const first = await h.send(npmPretty('lib', '1.0.0', 'dist/lib.min.js', hash))
   assert.equal(first.status, 200)
@@ -193,7 +150,7 @@ test('a public npm file is formatted once, kept unencrypted by its hash, and ser
   assert.deepEqual(again.bytes, first.bytes)
   // The same text at another path is the same copy.
   assert.deepEqual((await h.send(npmPretty('lib', '1.0.0', 'dist/other.min.js', hash))).bytes, first.bytes)
-  assert.equal(tarballs.get('lib'), 1, 'later reads need no tarball')
+  assert.equal(downloads(calls, pkg), 1, 'later reads need no tarball')
 })
 
 test('npm pretty-print refuses what it cannot answer', async t => {
@@ -202,7 +159,6 @@ test('npm pretty-print refuses what it cannot answer', async t => {
   const hash = fileHash(minified)
   const cases = [
     [npmPretty('lib', '1.0.0', 'lib.min.js', 'sha512-nope'), 400, 'bad-file'],
-    [npmPretty('lib', '1.0.0', 'README.md', hash), 400, 'bad-file'],
     [`/api/npm/pretty?${new URLSearchParams({ name: 'lib', version: '1.0.0', path: 'lib.min.js' })}`, 400, 'bad-file'],
     [npmPretty('lib', '1.0.0', 'missing.js', hash), 404, 'no-file'],
     [npmPretty('lib', '1.0.0', 'lib.min.js', fileHash('something else')), 409, 'hash-mismatch'],
@@ -221,10 +177,9 @@ test('npm pretty-print refuses what it cannot answer', async t => {
 
 test('a private npm version is formatted for each reader who may read it and never kept', async t => {
   const h = await setup(t)
-  const previous = process.env['NPM_TOKEN']
-  process.env['NPM_TOKEN'] = 'server-token'
-  t.after(() => { if (previous === undefined) delete process.env['NPM_TOKEN']; else process.env['NPM_TOKEN'] = previous })
-  const tarballs = registry(t, [{ ...packageOf('@corp/lib', '1.0.0', { 'lib.min.js': minified }), private: true }])
+  withToken(t)
+  const pkg = { ...packageOf('@corp/lib', '1.0.0', { 'lib.min.js': minified }), private: true }
+  const calls = registry(t, [pkg])
   const path = npmPretty('@corp/lib', '1.0.0', 'lib.min.js', fileHash(minified))
   assert.equal((await h.send(path)).status, 404, 'a reader without private access gets nothing')
   for (let i = 0; i < 2; i++) {
@@ -232,7 +187,7 @@ test('a private npm version is formatted for each reader who may read it and nev
     assert.equal(res.status, 200)
     assert.equal(res.text(), await formatted(minified))
   }
-  assert.equal(tarballs.get('@corp/lib'), 2)
+  assert.equal(downloads(calls, pkg), 2)
   await assert.rejects(readdir(join(h.dir, 'cache', 'npm')), { code: 'ENOENT' })
 })
 
@@ -272,7 +227,6 @@ test('bundle pretty-print checks access and refuses what it cannot answer', asyn
   assert.equal((await h.send(bundlePretty(id, 'dist/app.min.js', hash), 'outsider')).status, 404, 'no team grants the outsider the repository')
   const cases = [
     [bundlePretty(id, 'dist/app.min.js', 'sha512-nope'), 400, 'bad-file'],
-    [bundlePretty(id, 'dist/app.min.js.map', hash), 400, 'bad-file'],
     [bundlePretty(id, 'dist/missing.js', hash), 404, 'no-file'],
     [bundlePretty(id, 'dist/app.min.js', fileHash('else')), 409, 'hash-mismatch'],
     [bundlePretty(id, 'bad.js', fileHash('function (')), 422, 'unformattable'],

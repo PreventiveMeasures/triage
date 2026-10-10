@@ -640,10 +640,10 @@ const renderSourceWrapToggle = () => html`<button type="button" class="bundle-so
 // saying why where it failed.
 const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
 function renderPrettyToggle(copy) {
-  const tooltip = copy?.status === 'loading' ? 'Pretty-printing…'
-    : copy?.status === 'error' ? `Couldn't pretty-print: ${copy.message}` : 'Pretty-print'
-  return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': copy?.status === 'loading', 'is-error': copy?.status === 'error' })}
-    data-bundle-source-pretty aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${copy?.status === 'loading' ? 'true' : nothing}
+  const status = copy?.status
+  const tooltip = status === 'loading' ? 'Pretty-printing…' : status === 'error' ? `Couldn't pretty-print: ${copy.message}` : 'Pretty-print'
+  return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
+    data-bundle-source-pretty aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
     aria-label="Pretty-print" data-tooltip=${tooltip}>${PRETTY_ICON}</button>`
 }
 

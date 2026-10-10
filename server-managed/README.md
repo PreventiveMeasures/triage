@@ -856,24 +856,17 @@ pretty-print toggle; the npm viewer's `GET /api/npm/pretty` is the same for a
 package version's files. The file is named by its path and the hash the
 metadata gives it (`sha512-<base64>` of its UTF-8 text); only JavaScript,
 TypeScript, JSX, CSS and JSON files of at most 4 MiB are formatted, with
-[oxfmt](https://oxc.rs/docs/guide/usage/formatter). Formatting changes no more
-than layout needs: keys keep their quotes, no trailing commas or arrow
-parameters' parentheses are added, and template literals are left as they
-are. The first request reads the bundle, checks the file's hash (409
-`hash-mismatch` where it differs) and formats it; formatting runs off the
-event loop, two files at a time per process (429 `pretty-busy` past that). A
-file that does not parse is 422 `unformattable`. The output is then checked,
-apart from the formatter, to be the file but for its layout: both are
-rewritten to one form, numbers spelled alike, strings in double quotes with
-no quote escaped, regular expressions' flags in order, and whitespace,
-parentheses and semicolons dropped (for CSS quotes too, and lowercased), and
-must match. One that doesn't is 422
-`pretty-mismatch` and is logged.
-The Brotli bytes are kept in the bundle's cache directory by content hash,
-encrypted with its data key where storage is, and removed with the bundle;
-later requests stream them as they are. Concurrent requests for one file share
-its formatting, and bundles are read one at a time. Access is checked before
-and again after formatting, and the endpoint supports HEAD.
+[oxfmt](https://oxc.rs/docs/guide/usage/formatter), changing no more than
+layout needs. The first request reads the bundle, checks the file's hash (409
+`hash-mismatch` where it differs) and formats it, off the event loop and two
+files at a time per process (429 `pretty-busy` past that). A file that does
+not parse is 422 `unformattable`; one whose output, checked apart from the
+formatter (`sameCode` in `pretty-print.ts`), differs from it in more than
+layout is 422 `pretty-mismatch` and is logged. The Brotli bytes are kept in
+the bundle's cache directory by content hash, encrypted with its data key
+where storage is, and removed with the bundle; later requests stream them as
+they are. Access is checked before and again after formatting, and the
+endpoint supports HEAD.
 
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,

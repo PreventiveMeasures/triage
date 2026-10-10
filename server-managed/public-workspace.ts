@@ -14,7 +14,7 @@ import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
-import { PrettyError, isPrettyRequest } from './pretty-print.ts'
+import { PrettyError, prettyRequest } from './pretty-print.ts'
 import { sharedTeamApp } from './team-app.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -110,11 +110,11 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
     await stream(stored, bundle.kind === 'sourcemap' ? 'br' : null, 'application/octet-stream'); return
   }
   if (part === 'pretty') {
-    const hash = url.searchParams.get('hash'), path = url.searchParams.get('path')
-    if (!isPrettyRequest(path, hash)) { json(res, 400, { error: 'bad-file' }); return }
+    const file = prettyRequest(url.searchParams)
+    if (!file) { json(res, 400, { error: 'bad-file' }); return }
     if (!deps.prettyCache) { json(res, 503, { error: 'unavailable' }); return }
     let pretty
-    try { pretty = await deps.prettyCache.bundle(bundle, path, hash!) }
+    try { pretty = await deps.prettyCache.bundle(bundle, file) }
     catch (err) {
       if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
       throw err

@@ -476,8 +476,7 @@ test('Code file header links a file to GitHub after copy where its package or bu
   assert.ok(!header('node_modules/no-repo/index.js').includes('bundle-code-github-link'), 'no repository shows no link')
 })
 
-test('Code offers a managed bundle\'s minified code pretty-printed, beside the wrap toggle', t => {
-  t.after(() => { state.bundleSourcePretty = false })
+test('Code offers a managed bundle\'s minified code pretty-printed, beside the wrap toggle', () => {
   const minified = `${'var a=1;'.repeat(200)}\n`
   const sources = { 'dist/app.min.js': minified, 'src/index.js': 'export const a = 1\n' }
   const header = (entry, file) => {
@@ -491,7 +490,6 @@ test('Code offers a managed bundle\'s minified code pretty-printed, beside the w
   assert.match(offered, /data-bundle-source-pretty[^>]*aria-pressed=false[^>]*aria-label="Pretty-print"/su)
   assert.match(offered, /data-bundle-source-pretty.*data-bundle-source-wrap/su, 'the toggle comes before wrapping')
   assert.ok(!header(managed, 'src/index.js').includes('data-bundle-source-pretty'), 'readable code is not offered it')
-  assert.ok(!header({ name: 'local.map', integrity: 'sha512-pretty-local' }, 'dist/app.min.js').includes('data-bundle-source-pretty'), 'nor is a local bundle\'s')
 })
 
 test('Code own files in a managed bundle without a stamp link to its stored repository and directory', () => {

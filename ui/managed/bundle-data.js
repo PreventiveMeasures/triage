@@ -77,22 +77,26 @@ const NPM_ERRORS = {
   502: "The npm registry couldn't be reached.",
 }
 
-// npm package reads are never kept: the server checks access, against the
-// registry, on every one.
-async function requestNpm(part, params, signal) {
+// A read that a session change aborts, its failures named by `errors`, by
+// their error code or else their status.
+async function request(url, errors, read, signal) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
   const generation = managedAppState.generation
-  const response = await managedFetch(`/api/npm/${part}?${new URLSearchParams(params)}`, { credentials: 'same-origin', signal })
+  const response = await managedFetch(url, { credentials: 'same-origin', signal })
   signal.throwIfAborted()
   if (!response.ok) {
     const code = (await response.json().catch(() => null))?.error ?? null
-    throw Object.assign(new Error(NPM_ERRORS[response.status] ?? `npm request failed (${response.status})`), { status: response.status, code })
+    throw Object.assign(new Error(errors[code] ?? errors[response.status] ?? `Request failed (${response.status})`), { status: response.status, code })
   }
-  const data = await response.json()
+  const data = await read(response)
   signal.throwIfAborted()
   if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
   return data
 }
+
+// npm package reads are never kept: the server checks access, against the
+// registry, on every one.
+const requestNpm = (part, params, signal) => request(`/api/npm/${part}?${new URLSearchParams(params)}`, NPM_ERRORS, response => response.json(), signal)
 
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
@@ -123,30 +127,14 @@ const PRETTY_ERRORS = {
   409: 'This file has changed since it was opened.',
   413: 'This file is too large to pretty-print.',
   422: "This file couldn't be read as code.",
+  'pretty-mismatch': 'Pretty-printing would change more than its layout, so it is shown as published.',
   429: 'Too many files are being pretty-printed. Try again shortly.',
   502: "The npm registry couldn't be reached.",
-}
-// Refusals whose code says more than their status.
-const PRETTY_CODE_ERRORS = {
-  'pretty-mismatch': 'Pretty-printing would change more than its layout, so it is shown as published.',
 }
 
 // A file pretty-printed by the server, which keeps the copy; the viewer
 // keeps it only while the file is open (pretty-source.js).
-async function requestPretty(url, signal) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
-  const generation = managedAppState.generation
-  const response = await managedFetch(url, { credentials: 'same-origin', signal })
-  signal.throwIfAborted()
-  if (!response.ok) {
-    const code = (await response.json().catch(() => null))?.error ?? null
-    throw Object.assign(new Error(PRETTY_CODE_ERRORS[code] ?? PRETTY_ERRORS[response.status] ?? `Pretty-print request failed (${response.status})`), { status: response.status, code })
-  }
-  const text = await response.text()
-  signal.throwIfAborted()
-  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
-  return text
-}
+const requestPretty = (url, signal) => request(url, PRETTY_ERRORS, response => response.text(), signal)
 
 export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
   return requestPretty(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, signal)

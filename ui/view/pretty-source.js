@@ -9,7 +9,7 @@ import { state } from '#client/index.js'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../../common/pretty-print.js'
 import { utf8ByteLength } from '../../common/utf8.js'
 import { fetchPrettyBundleFile, fetchPrettyNpmFile } from './client-managed.js'
-import { npmFileReadability, npmFilesRead } from './npm-overview.js'
+import { npmFileReadability } from './npm-overview.js'
 import { render } from './render.js'
 
 // Copies kept, the one read last last; each can run to megabytes.
@@ -21,23 +21,21 @@ const KEPT_COPIES = 8
 const copies = new Map()
 const copyKey = (details, path) => `${details.integrity}\0${path}`
 
-// Whether each of a bundle's files is minified, as the npm Overview tells
-// (npmFileReadability), by its details; an npm version's are read there.
-const minifiedFiles = new WeakMap()
-function minified(details, path, content) {
-  if (details.npm) return npmFilesRead(details).byPath.get(path)?.category === 'minified'
-  let files = minifiedFiles.get(details)
-  if (!files) minifiedFiles.set(details, files = new Map())
-  if (!files.has(path)) files.set(path, npmFileReadability(path, content).category === 'minified')
-  return files.get(path)
-}
+// Whether each file of a bundle or npm version can be formatted, by its
+// details: in a language the server formats, no larger than it formats, and
+// minified, as the npm Overview tells (npmFileReadability).
+const formattable = new WeakMap()
 
-// Whether the open file can be pretty-printed: a minified file of a managed
-// bundle or an npm version, in a language the server formats, and no larger
-// than it formats.
+// Whether the open file can be pretty-printed: a formattable file of a
+// managed bundle or an npm version.
 export function prettyPrintable(details, entry, path, content) {
-  return Boolean(entry?.managedId || entry?.npm) && typeof content === 'string' && prettyExtension(path) !== null
-    && content.length <= MAX_PRETTY_BYTES && utf8ByteLength(content) <= MAX_PRETTY_BYTES && minified(details, path, content)
+  if (!(entry?.managedId || entry?.npm) || typeof content !== 'string') return false
+  let files = formattable.get(details)
+  if (!files) formattable.set(details, files = new Map())
+  if (!files.has(path)) {
+    files.set(path, prettyExtension(path) !== null && utf8ByteLength(content) <= MAX_PRETTY_BYTES && npmFileReadability(path, content).category === 'minified')
+  }
+  return files.get(path)
 }
 
 function keep(key, copy) {
@@ -49,10 +47,10 @@ function keep(key, copy) {
   }
 }
 
-async function load(key, copy, details, entry, path, content) {
+async function load(key, copy, entry, path, content, known) {
   let next
   try {
-    const hash = details.fileHashes?.get(path) ?? await computeFileHash(content)
+    const hash = known ?? await computeFileHash(content)
     const text = entry.npm
       ? await fetchPrettyNpmFile(entry.npm.name, entry.npm.version, path, hash)
       : await fetchPrettyBundleFile(entry.managedId, path, hash)
@@ -67,16 +65,15 @@ async function load(key, copy, details, entry, path, content) {
   if (state.bundleSourceFile === path) render()
 }
 
-// The open file's pretty-printed copy while the toggle is on, asked for
-// the first time it is wanted; null while it is off, or for a file that
-// can't be pretty-printed.
+// A printable file's pretty-printed copy while the toggle is on, asked for
+// the first time it is wanted; null while it is off.
 export function prettyCopy(details, entry, path, content) {
-  if (!state.bundleSourcePretty || !prettyPrintable(details, entry, path, content)) return null
+  if (!state.bundleSourcePretty) return null
   const key = copyKey(details, path)
   const asked = copies.get(key)
   const copy = asked ?? { status: 'loading' }
   keep(key, copy)
-  if (!asked) load(key, copy, details, entry, path, content)
+  if (!asked) load(key, copy, entry, path, content, details.fileHashes?.get(path))
   return copy
 }
 
