@@ -100,6 +100,10 @@ function nameless(text) {
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
     last = segment[end - 1]
+    // A line break no operator spans may end a statement, as `;` does, or a class field.
+    const line = segment.lastIndexOf('\n')
+    const ends = line !== -1 && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd()) && !/^[,=+\-*/%&|^<>?:.)\]}]/u.test(segment.slice(line + 1).trimStart())
+    if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     const declaration = declarations.at(-1)
     const next = segment.lastIndexOf(','), set = segment.search(/(?<![=!<>])=(?![=>])[^=]*$/u)
     if (declaration?.depth === opens.length && set !== next) declaration.binding = next > set
@@ -112,9 +116,16 @@ function nameless(text) {
     const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
     keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
   }
+  // Ending its line, a value ends its class field: the next name is a key.
+  const lineEnd = segment => {
+    const line = segment.lastIndexOf('\n')
+    if (line !== -1 && opens.at(-1) === 'object' && segment.slice(line + 1).trim() === '' && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd())) keyPlace = true
+  }
   for (READ.lastIndex = 0; ;) {
     const match = READ.exec(text)
-    between(text.slice(at, match?.index ?? text.length))
+    const gap = text.slice(at, match?.index ?? text.length)
+    between(gap)
+    lineEnd(gap)
     if (!match) break
     const [token] = match
     const first = token[0]
@@ -137,7 +148,9 @@ function nameless(text) {
       // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
       const block = first === '{' && extending !== opens.length && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
       if (first === '{' && extending === opens.length) extending = -1
-      const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object' : first === '(' && CONTROL.has(last) ? 'control' : first
+      // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
+      const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object'
+        : first === '(' && CONTROL.has(last) ? 'control' : first === '[' && keyPlace ? 'computed' : first
       opens.push(open)
       if (open === '(') groups.push({ depth: opens.length, names: [] })
       last = first
@@ -160,6 +173,7 @@ function nameless(text) {
     } else {
       const declaration = declarations.at(-1), group = groups.at(-1)
       const binding = declaration?.binding && opens.length >= declaration.depth && !inDefault(declaration.depth + 1)
+        && !opens.slice(declaration.depth).includes('computed')
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:` after it.
       const property = last === '.' || text[at] === ':'
@@ -170,7 +184,7 @@ function nameless(text) {
       }
       ARROW.lastIndex = at
       if (naming || binding || ARROW.test(text)) declared.add(token)
-      if (group && !inDefault(group.depth)) group.names.push(token)
+      if (group && !inDefault(group.depth) && !opens.slice(group.depth).includes('computed')) group.names.push(token)
       if (token === 'extends') extending = opens.length
       if (binding && (token === 'in' || token === 'of')) declaration.binding = false
       if (token === 'const' || token === 'let' || token === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
@@ -231,9 +245,9 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   return { blocks, renamed }
 }
 
-// A tag where a value starts (`(<a />`, `=> <b>`, `return <i>`): JSX, whose
+// A tag where a value starts (`(<a />`, `=> <b>`, `return <i>`, `yield <p>`): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|[(=,:?&|!{};>[]|\breturn)[ \t]*<\/?[A-Za-z][\w.:-]*(?:\s|\/?>)/mu
+const JSX = /(?:^|[(=,:?&|!{};>[]|\b(?:await|case|default|do|else|return|throw|yield))[ \t]*<\/?[A-Za-z][\w.:-]*(?:\s|\/?>)/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
