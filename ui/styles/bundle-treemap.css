@@ -96,12 +96,40 @@
   color: var(--muted);
   font-size: .7rem;
 }
-/* Right edge: file stats, reason filter, Code switch, then the projection switch. */
+/* Right edge: file stats, reason filter, Code | Resources, then the projection switch. */
 .bundle-treemap-head-right {
   display: flex;
   align-items: baseline;
   gap: .75rem;
   min-width: 0;
+}
+/* Code | Resources: two flush chips in one bordered pill, sized like the
+   compact switches beside it. Neither pressed shows every file. */
+.bundle-treemap-kind {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 6px);
+  overflow: hidden;
+
+  & button {
+    margin: 0;
+    padding: 2px 8px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: .68rem;
+    font-weight: 500;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: default;
+
+    &:not(:last-child) { border-right: 1px solid var(--border); }
+    &:hover { color: var(--text); background: rgb(from var(--text) r g b / .04); }
+    &[aria-pressed='true'] { color: var(--accent); background: var(--surface-active); }
+    &:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+  }
 }
 .bundle-treemap-sub {
   min-width: 0;
