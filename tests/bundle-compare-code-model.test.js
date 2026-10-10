@@ -86,10 +86,12 @@ test('names a minifier renamed alike throughout are left out, and only those', (
     ['({ function: a }); a();', '({ function: b }); b();'], ['x.var = a; a();', 'x.var = b; b();'],
     ['let a = 1; eval("a");', 'let b = 1; eval("a");'], ['let a; with (o) { a; }', 'let b; with (o) { b; }'], ['let a; x + <a />;', 'let b; x + <b />;'],
     ['let a; debugger\n/a/.test(x)', 'let b; debugger\n/b/.test(x)'], ['foo(a)\n{ a(); }', 'foo(b)\n{ b(); }'],
-    ['let a = 1; eval/* c */("a");', 'let b = 1; eval/* c */("a");'], ['let a = 1; (eval)("a");', 'let b = 1; (eval)("a");']]) {
+    ['let a = 1; eval/* c */("a");', 'let b = 1; eval/* c */("a");'], ['let a = 1; (eval)("a");', 'let b = 1; (eval)("a");'],
+    ['let x\n++a', 'let y\n++b'], ['let a, b; a: { b: { break a; } f(); }', 'let b, a; a: { b: { break b; } f(); }']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
+  assert.deepEqual(lineDiff('x: { let a = 1; f(a); break x; }\n', 'x: { let b = 1; f(b); break x; }\n', { ignoreRenames: true }).blocks, [], 'a labeled block is a block')
 })
 
 test('names left out are short bindings: never keywords, properties or keys, strings, templates, regular expressions, comments or longer names', () => {
