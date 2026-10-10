@@ -129,6 +129,7 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('dist/a.mjs', `var x=a+/["']/.test(s);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
     'or after an operator')
   assert.equal(category('dist/a.mjs', `/*! license */\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`), 'minified', 'a banner aside')
+  assert.equal(category('dist/cli.js', `#!/usr/bin/env node\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`), 'minified', 'a hashbang too')
   // Lines as long, written by a person: spaced after commas and around operators.
   assert.equal(category('v4/checks.js', `export { ${Array.from({ length: 30 }, (_, i) => `_check${i} as check${i}`).join(', ')} } from "../core/index.js";\n`), 'ascii')
   assert.equal(category('types/bufferTime.d.ts', Array.from({ length: 4 }, () =>
