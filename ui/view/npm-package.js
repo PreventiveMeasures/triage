@@ -16,8 +16,9 @@ import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
-import { githubTagHref } from './bundle-origin-links.js'
+import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
 import { sourceFileIcon } from './source-file-icon.js'
+import { overviewColumn } from './bundle-overview-column.js'
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
@@ -363,19 +364,14 @@ export function npmDependencyChanges(base, other) {
 export function npmDependenciesColumn(entry) {
   const rows = npmDependencies(entry.npm.manifest)
   if (rows.length === 0) return nothing
-  return html`<section class="bundles-overview-col">
-    <header class="bundles-overview-col-head">
-      <span class="bundles-overview-col-title">Dependencies <span class="bundles-overview-col-count">${rows.length}</span></span>
-    </header>
-    <div class="bundles-overview-col-body bundles-overview-col-body--list"><ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
+  return overviewColumn({ title: 'Dependencies', count: rows.length, list: true, body: html`<ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
       const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
         ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
         <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
       return html`<li>${opens
         ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${row}</button>`
         : html`<div class="bundles-source-row npm-dependency-row is-resource">${row}</div>`}</li>`
-    })}</ul></div>
-  </section>`
+    })}</ul>` })
 }
 
 // The tags pointing to a version's publish commit, after it as a bundle's
@@ -394,8 +390,7 @@ function npmCommitTags(entry, github) {
 // source viewer where the package has it (`files`, by path, none until its
 // files are read), else its name.
 function factFile(path, files, label = path) {
-  const found = files?.has(path) ? path : null
-  return found ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${found} data-tooltip=${`Open ${found}`}>${label}</button>` : label
+  return files?.has(path) ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${path} data-tooltip=${`Open ${path}`}>${label}</button>` : label
 }
 
 // Its license files at its root: `LICENSE`, or one a license, such as
@@ -426,12 +421,9 @@ export function npmLicenseParts(license, paths) {
 export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, files = null } = {}) {
   const { manifest } = entry.npm
   const github = manifest.github?.github
-  // The commit it was published from, where npm recorded one, and the
-  // directory it sits in, where its repository names one.
-  const directory = manifest.github?.directory ?? ''
-  const tree = github && (manifest.gitHead || directory)
-    ? `https://github.com/${github}/tree/${manifest.gitHead ?? 'HEAD'}${directory ? `/${directory.split('/').map(encodeURIComponent).join('/')}` : ''}`
-    : github ? `https://github.com/${github}` : null
+  // Its repository, at the commit it was published from where npm recorded
+  // one, and in the directory its repository names, as a bundle's links.
+  const origin = github ? bundleOriginLinks({ repo: { github, directory: manifest.github.directory ?? '', commit: manifest.gitHead } })[0] : null
   // Its name and version are the header's (render-bundle.js), the version
   // to switch to there too.
   return html`<dl class="bundles-detail-meta npm-facts">
@@ -444,12 +436,12 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
           data-tooltip=${`Published by ~${manifest.publisher}: their profile on npmjs.com`}><span>${manifest.author ?? `~${manifest.publisher}`}</span></a>
         ${manifest.author ? html`<span class="npm-publisher">~${manifest.publisher}</span>` : nothing}`
       : manifest.author}</dd>` : nothing}
-    ${tree ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
-      <a class="bundle-origin-link" href=${tree} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${github}${directory ? `/${directory}` : ''}</span></a>
+    ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
+      <a class="bundle-origin-link" href=${origin.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${origin.text}</span></a>
       ${githubFigures}
     </dd>
-    <dt>Commit</dt><dd class="bundle-origin-row">${manifest.gitHead
-      ? html`<a class="bundle-origin-link bundle-commit-link" href=${`https://github.com/${github}/commit/${manifest.gitHead}`} data-tooltip=${manifest.gitHead} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${manifest.gitHead.slice(0, 12)}</span></a>
+    <dt>Commit</dt><dd class="bundle-origin-row">${origin.commit
+      ? html`<a class="bundle-origin-link bundle-commit-link" href=${origin.commit.href} data-tooltip=${origin.commit.hash} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${origin.commit.text}</span></a>
         ${npmCommitTags(entry, github)}`
       : html`<span class="npm-commit-missing">Not recorded at publish</span>`}</dd>` : nothing}
     ${manifest.homepage && /^https?:\/\//iu.test(manifest.homepage) ? html`<dt>Homepage</dt><dd><a class="bundle-origin-link" href=${manifest.homepage} target="_blank" rel="noopener noreferrer"><span>${manifest.homepage}</span></a></dd>` : nothing}
@@ -458,17 +450,13 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
   </dl>`
 }
 
-// An entry point as the package's files name it (npmEntryFile), else as it
-// is written.
-const entryFile = (path, files) => npmEntryFile(path, files) ?? npmEntryPath(path)
-
 // The package's entry points, each with its file's icon, Main and Module in
 // one row where they name the same file; its kind of module, bins, engines,
 // install scripts and, where it has none, its dependencies.
 export function npmOverviewExtras(entry, files = null) {
   const { manifest } = entry.npm
   const entries = ['main', 'module', 'types'].filter(field => typeof manifest[field] === 'string')
-    .map(field => ({ label: `${field[0].toUpperCase()}${field.slice(1)}`, path: manifest[field], file: entryFile(manifest[field], files) }))
+    .map(field => ({ label: `${field[0].toUpperCase()}${field.slice(1)}`, path: manifest[field], file: npmEntryFile(manifest[field], files) ?? npmEntryPath(manifest[field]) }))
   const main = entries.find(row => row.label === 'Main'), module = entries.find(row => row.label === 'Module')
   if (main && module && main.file === module.file) {
     main.label = 'Main, Module'
@@ -504,18 +492,11 @@ class NpmVersionSelect extends LitElement {
     this.list = null
   }
 
-  // The picker's options, `{ value, label, detail }` as the selector takes
-  // them, made again only when the versions or the one shown change.
-  willUpdate(changed) {
-    if (changed.has('list') || changed.has('version')) {
-      const list = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
-      this._options = versionChoices(list, this.version).map(({ id, detail }) => ({ value: id, label: id, detail }))
-    }
-  }
-
   render() {
-    return html`<bundle-selector .options=${this._options} .value=${this.version} noun="version" versions
-      label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${this._options.length <= 1}
+    const list = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
+    const options = versionChoices(list, this.version).map(({ id, detail }) => ({ value: id, label: id, detail }))
+    return html`<bundle-selector .options=${options} .value=${this.version} noun="version" versions
+      label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${options.length <= 1}
       aria-busy=${this.list?.status === 'loading' ? 'true' : nothing}
       @bundle-change=${event => { if (event.detail.value !== this.version) navigateToNpm(this.name, event.detail.value, this.tab) }}></bundle-selector>`
   }

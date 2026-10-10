@@ -36,8 +36,9 @@ import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { EXTERNAL_LINK_ICON } from './advisory-parts.js'
+import { overviewColumn } from './bundle-overview-column.js'
 import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
-import { npmAdvisoriesColumn, npmBinaryColumn, npmContents, npmFilesFilter, npmFilesReadability, npmGithubFigures, npmReadabilityTag, npmReadabilityWarning, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmBinaryColumn, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmReadabilityTag, npmReadabilityWarning, npmStatsRow } from './npm-overview.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -594,31 +595,16 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       ${summaryExtra}
     </div>
     <div class="bundles-overview-columns">
-      ${leadColumn ?? html`<section class="bundles-overview-col">
-        <header class="bundles-overview-col-head">
-          <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
-          <span class="bundles-overview-sort" role="group" aria-label="Package order">
-            ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(packagesSort === value)} @click=${() => { state.bundleOverviewPackagesSort = value; render() }}>${label}</button>`)}
-          </span>
-        </header>
-        <div class="bundles-overview-col-body">${distTpl}</div>
-      </section>`}
-      <section class="bundles-overview-col">
-        <header class="bundles-overview-col-head">
-          <span class="bundles-overview-col-title">Files <span class="bundles-overview-col-count">${fileFilter ? `${listed.length} of ${sources.length}` : sources.length}</span>
-            ${fileFilter ? html`<button type="button" class="bundles-overview-filter" aria-label=${`Show every file, not only ${fileFilter.label}`} @click=${fileFilter.clear}>${fileFilter.label}<span aria-hidden="true">×</span></button>` : nothing}</span>
-          <span class="bundles-overview-sort" role="group" aria-label="File order">
-            ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
-          </span>
-        </header>
-        <div class="bundles-overview-col-body bundles-overview-col-body--list">${filesTpl}</div>
-      </section>
-      ${reports.length > 0 ? html`<section class="bundles-overview-col">
-        <header class="bundles-overview-col-head">
-          Reports <span class="bundles-overview-col-count">${reports.length}</span>
-        </header>
-        <div class="bundles-overview-col-body bundles-overview-col-body--list">${reportsTpl}</div>
-      </section>` : nothing}
+      ${leadColumn ?? overviewColumn({ title: 'Packages', count: packages.size, body: distTpl,
+        tools: html`<span class="bundles-overview-sort" role="group" aria-label="Package order">
+          ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(packagesSort === value)} @click=${() => { state.bundleOverviewPackagesSort = value; render() }}>${label}</button>`)}
+        </span>` })}
+      ${overviewColumn({ title: 'Files', count: fileFilter ? `${listed.length} of ${sources.length}` : sources.length, body: filesTpl, list: true,
+        extra: fileFilter ? html` <button type="button" class="bundles-overview-filter" aria-label=${`Show every file, not only ${fileFilter.label}`} @click=${fileFilter.clear}>${fileFilter.label}<span aria-hidden="true">×</span></button>` : nothing,
+        tools: html`<span class="bundles-overview-sort" role="group" aria-label="File order">
+          ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
+        </span>` })}
+      ${reports.length > 0 ? overviewColumn({ title: 'Reports', count: reports.length, body: reportsTpl, list: true }) : nothing}
       ${trailColumns}
     </div>
   </div>`
@@ -2697,17 +2683,15 @@ function renderNpmPackageOverview(entry, details) {
   }
   // Files lists every file, tagged by what its bytes hold; the binary ones,
   // which have no text to show, are listed again in a column of their own.
-  const { sources, sourcesContent } = details.json
+  const { sources } = details.json
   const sizeMap = bundleFileSizes(details)
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
-  const binaries = sources.filter((_, i) => typeof sourcesContent[i] !== 'string')
-  const readability = npmFilesReadability(details)
-  const files = new Set(sources)
-  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files }), npmOverviewExtras(entry, files), sources, sizes, null, nothing, {
-    bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: new Set(binaries),
+  const { paths, binaries, byPath } = npmFilesRead(details)
+  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files: paths }), npmOverviewExtras(entry, paths), sources, sizes, null, nothing, {
+    bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
     summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
     overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines,
-    fileTag: path => npmReadabilityTag(readability.get(path)), fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry, details),
+    fileTag: path => npmReadabilityTag(byPath.get(path)), fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
   })
 }

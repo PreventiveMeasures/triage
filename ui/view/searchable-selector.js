@@ -1,32 +1,19 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 
-const sameRow = (a, b) => Math.abs(a.top - b.top) < 1
-const middle = rect => rect.left + rect.width / 2
-
-// The option the arrow `key` moves to from `options[index]`, as they are laid
-// out: in a list, the next or the previous; in rows of several, the one
-// beside it on its row, or the nearest on the row below or above. Up from
-// the first row is -1, the search field; the last row keeps its place down.
-// Rows run in the options' order, so only its row and the next are measured.
+// The option the arrow `key` moves to from `options[index]`: in a list, the
+// next or the previous; in rows of as many as the first row holds, the one
+// beside it, or in line with it on the row below or above (the last where
+// the row below is short). Up from the first row is -1, the search field.
 function besideOption(options, index, key) {
-  const box = i => options[i].getBoundingClientRect()
-  const within = i => i >= 0 && i < options.length
-  const at = box(index)
-  if (key === 'ArrowLeft' || key === 'ArrowRight') {
-    const next = index + (key === 'ArrowLeft' ? -1 : 1)
-    return within(next) && sameRow(at, box(next)) ? next : index
-  }
-  const step = key === 'ArrowDown' ? 1 : -1
-  let first = index + step
-  while (within(first) && sameRow(at, box(first))) first += step
-  if (!within(first)) return step > 0 ? index : -1
-  const row = box(first)
-  let best = first
-  for (let i = first + step; within(i) && sameRow(row, box(i)); i += step) {
-    if (Math.abs(middle(box(i)) - middle(at)) < Math.abs(middle(box(best)) - middle(at))) best = i
-  }
-  return best
+  const top = options[0].getBoundingClientRect().top
+  let columns = 1
+  while (columns < options.length && Math.abs(options[columns].getBoundingClientRect().top - top) < 1) columns++
+  if (columns === 1 && (key === 'ArrowLeft' || key === 'ArrowRight')) return index
+  const next = index + { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns }[key]
+  if (next < 0) return key === 'ArrowUp' ? -1 : index
+  const lastRow = Math.floor((options.length - 1) / columns)
+  return next < options.length ? next : Math.floor(index / columns) < lastRow ? options.length - 1 : index
 }
 
 // Shared presentation and keyboard behavior for repository, user, and bundle pickers.

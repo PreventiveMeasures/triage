@@ -11,7 +11,7 @@ import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
 import { SCAN_ICON_SVG } from './icons.js'
-import { advisoryCwes, advisoryRail, advisoryReference } from './advisory-parts.js'
+import { advisoryRow } from './advisory-parts.js'
 import './bundle-scope-selector.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
 import { openWhyDialog } from './dialogs/why-dialog.js'
@@ -425,36 +425,8 @@ function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurr
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">
-      ${sorted.map((a) => renderAdvisoryRow(a, isCurrent))}
+      ${sorted.map((a) => advisoryRow(a, ({ title, severity, details: markdown }) => openAdvisoryDetailsDialog({ heading: title, severity, markdown, isCurrent })))}
     </ul>
   </li>`
 }
 
-function renderAdvisoryRow(a, isCurrent) {
-  const sev = a.severity
-  const title = a.title
-  const cvssVector = typeof a.cvss?.vectorString === 'string' && a.cvss.vectorString ? a.cvss.vectorString : ''
-  const vulnerable = typeof a.vulnerable_versions === 'string' ? a.vulnerable_versions : null
-  const matched = Array.isArray(a.versions) ? a.versions.filter(version => typeof version === 'string') : []
-  const reference = advisoryReference(a)
-  return html`<li class="bundle-advisory-row">
-    ${advisoryRail(sev, a.cvss?.score)}
-    <div class="bundle-advisory-body">
-      <div class="bundle-advisory-header">
-        ${typeof a.details === 'string' && a.details.trim()
-          ? html`<button type="button" class="bundle-advisory-title" aria-haspopup="dialog" @click=${() => openAdvisoryDetailsDialog({ heading: title, severity: sev, markdown: a.details, isCurrent })}>${title}</button>`
-          : html`<span class="bundle-advisory-title">${title}</span>`}
-        ${reference}
-      </div>
-      <div class="bundle-advisory-subrow">
-        <div class="bundle-advisory-meta">
-          ${a.informational ? html`<span>${a.informational}</span>` : nothing}
-          ${vulnerable ? html`<span>Affected <span class="mono">${vulnerable}</span></span>` : nothing}
-          ${matched.length > 0 ? html`<span>Matches <span class="mono">${matched.join(', ')}</span></span>` : nothing}
-          ${advisoryCwes(a.cwe)}
-        </div>
-        ${cvssVector ? html`<div class="bundle-advisory-cvss-vector mono">${cvssVector}</div>` : nothing}
-      </div>
-    </div>
-  </li>`
-}

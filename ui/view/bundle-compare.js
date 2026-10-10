@@ -633,10 +633,8 @@ class BundleCompare extends LitElement {
   }
 
   // Summary band — file + size (+ dependency) deltas plus the four
-  // bucket chips, wrapping on their own so the Overview | Code tabs keep
-  // to the right of the first line. Sits under the picker once a
-  // comparison is live.
-
+  // bucket chips, wrapping on their own so the mode tabs keep to the right
+  // of the first line. Sits under the picker once a comparison is live.
   _renderSummary(diff) {
     const totals = diff.totals
     const vt = diff.versionUpdates.totals

@@ -32,11 +32,9 @@ export function bundleOptions(bundles) {
 const shownLabel = option => option.displayLabel ?? option.label
 
 // `noun` names what it picks ('bundle' unless set). With `versions`, the
-// options keep the order given, newest first, rather than going by name, and
-// are listed several to a row, as wide as the longest one's name, the detail
-// (a version's tags) beside it, or under it where they don't fit.
-// Options come from `bundles` (bundleOptions), or are given as they are, as
-// `options`; one that names no format has no icon.
+// options keep the order given (newest first) and sit several to a row, a
+// version's tags beside it, or under it where they don't fit. Options come
+// from `bundles` (bundleOptions) or as `options`; one with no format has no icon.
 class BundleSelector extends SearchableSelector {
   static properties = { bundles: { attribute: false }, noun: {}, versions: { type: Boolean, reflect: true } }
   static styles = [SearchableSelector.styles, css`

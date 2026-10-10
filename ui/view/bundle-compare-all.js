@@ -6,14 +6,10 @@
 // changed words marked. Compare offers it only for a comparison it can list
 // in fewer than COMBINED_DIFF_MAX rows (combinedDiffRows).
 import { html, nothing } from 'lit'
-import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
-import { formatBytes, stripCommonPathPrefix } from './format.js'
-import { bundleFileByteLength } from './bundle-sources.js'
-import { sourceFileIcon } from './source-file-icon.js'
+import { stripCommonPathPrefix } from './format.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
-import { renameTemplate } from './bundle-compare-rename.js'
-import { BundleCompareCode, KIND, fileContents, fileEntries, isLargeDiff, prefs } from './bundle-compare-code.js'
+import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 8000
 
@@ -51,91 +47,46 @@ export function combinedDiffRows(base, other, files, max = COMBINED_DIFF_MAX) {
 class BundleCompareAll extends BundleCompareCode {
   static properties = { ...BundleCompareCode.properties, models: { attribute: false } }
 
+  // Every file's model is drawn on every render, so all are kept for the
+  // comparison, starting from those Compare found counting its rows.
   constructor() {
     super()
     this.models = null
-    this._all = new Map()
+    this._modelCap = Infinity
   }
 
   willUpdate(changed) {
     super.willUpdate(changed)
-    if (['files', 'base', 'other', 'models'].some(name => changed.has(name))) this._all.clear()
+    if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(`${path}\0false`, model)
   }
 
   // Nothing to keep in view: the list scrolls as the reader does.
   updated() {}
 
-  // Every file's model is drawn on every render, so they are all kept for the
-  // comparison, not the few the Code view keeps for the files it opens:
-  // Compare's, found counting its rows, and those without whitespace.
-  _model(path, before, after) {
-    if (!prefs.ignoreWhitespace && this.models?.has(path)) return this.models.get(path)
-    const key = `${path}\0${prefs.ignoreWhitespace}`
-    if (!this._all.has(key)) this._all.set(key, lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace }))
-    return this._all.get(key)
-  }
-
   render() {
     const entries = combinedEntries(this._entries)
     const { prefix } = stripCommonPathPrefix(entries.map(([path]) => path))
-    const shown = entries.map(([path, entry]) => ({ path, entry, ...this._file(path, entry) }))
-    const additions = shown.reduce((sum, file) => sum + (file.model?.additions ?? 0), 0)
-    const deletions = shown.reduce((sum, file) => sum + (file.model?.deletions ?? 0), 0)
-    return html`<div class="bundle-compare-all">
-      <header class="bundle-code-main-bar bundle-compare-code-bar">
+    const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry) }))
+    const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
+    const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
+    return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
         <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
-        ${additions + deletions > 0 ? html`<span class="bundle-compare-code-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
-          <span class="add">+${additions.toLocaleString()}</span><span class="del">−${deletions.toLocaleString()}</span>
-        </span>` : nothing}
+        ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
         ${prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
         <span class="bundle-code-main-spacer"></span>
-        ${this._toggles(shown.some(file => file.model?.blocks.length > 0), shown.some(file => file.textual))}
+        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual))}
       </header>
-      <div class="bundle-compare-diff bundle-compare-all-body" tabindex="0" aria-label="Every change">
+      <div class="bundle-compare-diff" tabindex="0" aria-label="Every change">
         ${entries.length === 0 ? html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
-          : repeat(shown, file => file.path, file => this._renderEntry(file, prefix))}
-      </div>
-    </div>`
-  }
-
-  // A file's two sides, and its line model where it has one to draw.
-  _file(path, entry) {
-    const { before, after } = this._contents(path, entry)
-    const textual = typeof before === 'string' && typeof after === 'string'
-    const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
-    return { before, after, textual, large, model: textual && !large ? this._model(path, before, after) : null }
-  }
-
-  _renderEntry({ path, entry, before, after, textual, large, model }, prefix) {
-    const { kind } = entry
-    const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
-    const size = value => formatBytes(value ?? 0)
-    let body
-    if (!textual) {
-      const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
-        : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
-      body = html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.</div>`
-    } else if (large) {
-      body = html`<div class="bundle-compare-code-message">
-        <p>This diff is large and may take a few seconds to compute.</p>
-        <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
+          : repeat(shown, ({ path }) => path, ({ path, entry, file }) => html`<section class="bundle-compare-all-file" aria-label=${path}>
+            <header class="bundle-code-main-bar bundle-compare-all-file-head">
+              ${this._fileName(path, entry, prefix)}
+              <span class="bundle-code-main-spacer"></span>
+              ${this._fileFigures(entry, file.model)}
+            </header>
+            ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file.model, file.before, file.after)}
+          </section>`)}
       </div>`
-    } else if (model.blocks.length === 0) {
-      body = html`<div class="bundle-compare-code-message">${prefs.ignoreWhitespace ? 'Only whitespace changed in this file.' : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</div>`
-    } else {
-      body = this._renderDiff(path, entry, model, before, after)
-    }
-    return html`<section class="bundle-compare-all-file" aria-label=${strip(path)}>
-      <header class="bundle-compare-all-file-head">
-        <span class=${classMap({ 'bundle-compare-code-pill': true, [kind]: true, pure: kind === 'renamed' && !entry.modified })}>${KIND[kind].label}</span>
-        ${sourceFileIcon(path, this._format(path))}
-        <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.basePath ? `${entry.basePath} → ${path}` : path}>${entry.basePath ? renameTemplate(strip(entry.basePath), strip(path)) : strip(path)}</span>
-        <span class="bundle-code-main-spacer"></span>
-        ${model?.blocks.length > 0 ? html`<span class="bundle-compare-code-counts"><span class="add">+${model.additions.toLocaleString()}</span><span class="del">−${model.deletions.toLocaleString()}</span></span>` : nothing}
-        <span class="bundle-code-main-stats">${kind === 'added' ? size(entry.otherBytes) : kind === 'removed' ? size(entry.baseBytes) : `${size(entry.baseBytes)} → ${size(entry.otherBytes)}`}</span>
-      </header>
-      ${body}
-    </section>`
   }
 }
 

@@ -1,16 +1,13 @@
-// A package's downloads, for the npm Overview (npm-overview.js): its latest
-// week's (or month's) and its last year's, in short with their units, over a
-// chart of them by week (or month) across the year, one series as a line over
-// a faint area. At the top right, the switch between weeks and months, and
-// under it the downloads of the period under the pointer (or the arrow keys,
-// once the chart has focus), which a crosshair marks.
-// Drawn at its own pixel width, so its text keeps its shape.
+// A package's downloads (npm-overview.js): its latest week's or month's and
+// its last year's, over a chart of them across the year, with the switch
+// between weeks and months and the hovered period's downloads at its top
+// right. Drawn at its own pixel width, so its text keeps its shape.
 import { LitElement, html, nothing, svg } from 'lit'
 
 const DAY_MS = 24 * 60 * 60_000
 const HEIGHT = 72
 const PAD = { top: 6, right: 10, bottom: 18, left: 40 }
-const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+export const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 const whole = new Intl.NumberFormat('en')
 
 const dayOf = (start, offset) => new Date(Date.parse(start) + offset * DAY_MS)

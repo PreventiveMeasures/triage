@@ -5,15 +5,16 @@
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
 import { bundleFileSizes } from '../../common/bundle-sources.js'
-import { advisoryCwes, advisoryRail, advisoryReference } from './advisory-parts.js'
+import { advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmStats } from './client-managed.js'
 import { NPM_LICENSE_FILE, npmPackageData } from './npm-package.js'
 import { render } from './render.js'
 import { sourceFileIcon } from './source-file-icon.js'
-import './npm-downloads-chart.js'
+import { overviewColumn } from './bundle-overview-column.js'
+import { encodePath } from './bundle-origin-links.js'
+import { compact } from './npm-downloads-chart.js'
 
-const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
 // Groups of the Advisories column, in order, each headed by what it holds.
 const ADVISORY_GROUPS = [
@@ -59,8 +60,7 @@ export function npmGithubFigures(entry) {
   const stats = npmPackageStats(entry.npm.name)
   const github = stats.status === 'ready' ? stats.github : null
   if (!github) return nothing
-  const repo = github.repo.split('/').map(encodeURIComponent).join('/')
-  const figure = (icon, count, noun, path) => html`<a class="bundle-origin-link npm-github-figure" href=${`https://github.com/${repo}/${path}`}
+  const figure = (icon, count, noun, path) => html`<a class="bundle-origin-link npm-github-figure" href=${`https://github.com/${encodePath(github.repo)}/${path}`}
     data-tooltip=${`${count.toLocaleString('en')} ${noun}`} target="_blank" rel="noopener noreferrer">${icon}<span>${compact.format(count)}</span></a>`
   // GitHub counts open pull requests among open issues: apart where it says
   // how many there are, together where it doesn't.
@@ -83,15 +83,6 @@ export function npmAdvisoryStatus(advisory, versions, version) {
   return affected.length > 0 && affected.every(other => compareSemver(other, version) < 0) ? 'fixed' : 'later'
 }
 
-// Each advisory's status for a version, kept with the advisories answered.
-const statusesKept = new WeakMap()
-function advisoryStatuses(data, version) {
-  let byVersion = statusesKept.get(data)
-  if (!byVersion) statusesKept.set(data, byVersion = new Map())
-  if (!byVersion.has(version)) byVersion.set(version, data.advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version)))
-  return byVersion.get(version)
-}
-
 // The package's advisories across every version, npm's and its repository's
 // on GitHub, grouped by how they stand for the version shown: those affecting
 // it first and marked, those it fixes last and struck through.
@@ -100,7 +91,7 @@ export function npmAdvisoriesColumn(entry) {
   const data = npmPackageAdvisories(name)
   const ready = data.status === 'ready'
   const advisories = ready ? data.advisories : []
-  const statuses = ready ? advisoryStatuses(data, version) : []
+  const statuses = advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version))
   const groups = ADVISORY_GROUPS.map(([status, heading]) => ({
     status, heading: heading(version), advisories: advisories.filter((_, i) => statuses[i] === status),
   })).filter(group => group.advisories.length > 0)
@@ -112,45 +103,19 @@ export function npmAdvisoriesColumn(entry) {
     : groups.length === 0 ? html`${unchecked}<p class="bundles-overview-col-empty">No advisories for any version.</p>`
     : html`${unchecked}${groups.map(group => html`<section class=${`npm-advisory-group is-${group.status}`}>
       <h4 class="npm-advisory-group-head">${group.heading} <span class="bundles-overview-col-count">${group.advisories.length}</span></h4>
-      <ul class="bundle-advisories-rows">${group.advisories.map(npmAdvisoryRow)}</ul>
+      <ul class="bundle-advisories-rows">${group.advisories.map(advisory => advisoryRow({ ...advisory, title: advisory.title ?? advisory.id,
+        severity: SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown', cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range }))}</ul>
     </section>`)}`
-  return html`<section class="bundles-overview-col npm-advisories-col">
-    <header class="bundles-overview-col-head">
-      <span class="bundles-overview-col-title">Advisories <span class="bundles-overview-col-count">${ready ? advisories.length : '…'}</span>
-        ${ready ? html`<span class=${`npm-advisories-active${active > 0 ? ' is-active' : ''}`}
-          data-tooltip=${`${active} affecting ${version}`}>${active} active</span>` : nothing}</span>
-    </header>
-    <div class="bundles-overview-col-body">${body}</div>
-  </section>`
+  return overviewColumn({ title: 'Advisories', count: ready ? advisories.length : '…', body, className: 'npm-advisories-col',
+    extra: ready ? html` <span class=${`npm-advisories-active${active > 0 ? ' is-active' : ''}`} data-tooltip=${`${active} affecting ${version}`}>${active} active</span>` : nothing })
 }
 
-// As a bundle's advisory row has it: severity and CVSS in a rail of their
-// own, so titles line up; its source and GHSA beside the title; the range it
-// covers and its CWEs under it.
-function npmAdvisoryRow(advisory) {
-  const severity = SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown'
-  const cwes = advisoryCwes(advisory.cwe)
-  return html`<li class="bundle-advisory-row">
-    ${advisoryRail(severity, advisory.cvss)}
-    <div class="bundle-advisory-body">
-      <div class="bundle-advisory-header">
-        <span class="bundle-advisory-title">${advisory.title ?? advisory.id}</span>
-        ${advisoryReference(advisory)}
-      </div>
-      ${advisory.range || cwes !== nothing ? html`<div class="bundle-advisory-meta">
-        ${advisory.range ? html`<span>Affected <span class="mono">${advisory.range}</span></span>` : nothing}
-        ${cwes}
-      </div>` : nothing}
-    </div>
-  </li>`
-}
 
 // What a text holds beyond printing characters and its line breaks: the C0
 // controls other than tab, line feed and carriage return, DEL, the C1
 // controls, and the bidirectional controls that can make code read other than
 // it runs ("Trojan Source").
-const CONTROL = /(?![\t\n\r])\p{Cc}|[\u202A-\u202E\u2066-\u2069]/u
-const CONTROLS = new RegExp(CONTROL.source, 'gu')
+const CONTROLS = /(?![\t\n\r])\p{Cc}|[\u202A-\u202E\u2066-\u2069]/gu
 const NON_ASCII = /\P{ASCII}/u
 
 // A file's text: `kind` 'ascii' or 'utf8', by whether it holds anything past
@@ -159,11 +124,9 @@ const NON_ASCII = /\P{ASCII}/u
 // point, or null for none.
 export function npmTextEncoding(text) {
   if (typeof text !== 'string') return { kind: 'binary', controls: null }
-  const kind = NON_ASCII.test(text) ? 'utf8' : 'ascii'
-  if (!CONTROL.test(text)) return { kind, controls: null }
   const controls = new Map()
   for (const [char] of text.matchAll(CONTROLS)) controls.set(char.codePointAt(0), (controls.get(char.codePointAt(0)) ?? 0) + 1)
-  return { kind, controls }
+  return { kind: NON_ASCII.test(text) ? 'utf8' : 'ascii', controls: controls.size > 0 ? controls : null }
 }
 
 // Lines longer than anyone writes by hand.
@@ -174,21 +137,13 @@ const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 const SOURCE_MAP = /\.map$/iu
 const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 
-// How a file reads, as its `category`, the first of these that holds:
-//   binary    not UTF-8, or holding a NUL: no text to read at all
-//   controls  text holding control or bidirectional characters, which can make
-//             it read other than it runs
-//   map       a source map
-//   minified  code most of whose text sits on long lines, or named .min. and
-//             holding any
-//   long      code with lines longer than anyone writes among readable ones,
-//             where something can sit past the edge of any editor
-//   utf8      readable, holding characters past ASCII
-//   ascii     readable ASCII
-// Prose is readable whatever its lines' lengths, and a sourceMappingURL
-// comment's line counts for none. With `kind` and `controls` as
-// npmTextEncoding has them, and for text, its `longest` line's length and how
-// many `longLines` it has.
+// How a file reads, as its `category`, the first that holds (READABILITY):
+// binary (no text), controls (text holding control or bidirectional
+// characters), map (a source map), minified (code mostly on long lines, or
+// named .min.), long (code with some lines longer than anyone writes), else
+// utf8 or ascii. Prose is readable whatever its lines' lengths, and a
+// sourceMappingURL comment's line counts for none. With npmTextEncoding's
+// `kind` and `controls`, and its `longest` line's length and `longLines`.
 export function npmFileReadability(path, text) {
   const encoding = npmTextEncoding(text)
   if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0 }
@@ -227,24 +182,27 @@ const READABILITY = new Map([
 const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(([category]) => category)
 const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
 
-// What the Overview reads of a version's files, read once a version: each
-// file's readability (npmFileReadability) by path, how many files each
-// category has, and its file types (npmFileTypes).
+// What the Overview reads of a version's files, once a version: their
+// `paths`, each one's readability (npmFileReadability) and extension by path,
+// how many files each category has, the `binaries`, sorted, and its file types
+// (npmFileTypes).
 const readabilities = new WeakMap()
-function filesRead(details) {
+export function npmFilesRead(details) {
   let known = readabilities.get(details)
   if (!known) {
     const { sources, sourcesContent } = details.json
     const byPath = new Map(sources.map((path, i) => [path, npmFileReadability(path, sourcesContent[i])]))
     const counts = new Map()
     for (const { category } of byPath.values()) counts.set(category, (counts.get(category) ?? 0) + 1)
-    known = { byPath, counts, types: npmFileTypes(sources, bundleFileSizes(details)) }
+    known = {
+      paths: new Set(sources), byPath, counts, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
+      binaries: new Set(sources.filter(path => byPath.get(path).category === 'binary').toSorted((a, b) => a.localeCompare(b))),
+      types: npmFileTypes(sources, bundleFileSizes(details)),
+    }
     readabilities.set(details, known)
   }
   return known
 }
-
-export const npmFilesReadability = details => filesRead(details).byPath
 
 function controlsNote(controls) {
   const found = [...controls].toSorted((a, b) => b[1] - a[1] || a[0] - b[0])
@@ -252,14 +210,14 @@ function controlsNote(controls) {
   return `Control characters: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
 }
 
-function readabilityNote(readability) {
-  const lines = `${readability.longLines.toLocaleString('en')} ${readability.longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${readability.longest.toLocaleString('en')}`
-  switch (readability.category) {
+function readabilityNote({ category, controls, longLines, longest }) {
+  const lines = () => `${longLines.toLocaleString('en')} ${longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${longest.toLocaleString('en')}`
+  switch (category) {
     case 'binary': return 'Not UTF-8 text, or holding a NUL: there is no text to read'
-    case 'controls': return controlsNote(readability.controls)
+    case 'controls': return controlsNote(controls)
     case 'map': return 'A source map'
-    case 'minified': return `Minified: ${lines}`
-    case 'long': return `${lines}, among readable ones`
+    case 'minified': return `Minified: ${lines()}`
+    case 'long': return `${lines()}, among readable ones`
     default: return nothing
   }
 }
@@ -272,48 +230,39 @@ export function npmReadabilityTag(readability) {
   return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote(readability)}>${tag}</span>`
 }
 
-// What the Files list is narrowed to, for the version shown: a category or
-// an extension, as `{ kind, value }`, or null for every file.
-let filesShown = { key: null, filter: null }
+// What the Files list is narrowed to, for the version shown: the chip last
+// pressed, `{ id, label, keeps }`, or null for every file.
+let filesShown = { key: null, chip: null }
 const shownKey = entry => `${entry.npm.name}@${entry.npm.version}`
-const shownFilter = entry => filesShown.key === shownKey(entry) ? filesShown.filter : null
-const isShown = (entry, kind, value) => shownFilter(entry)?.kind === kind && shownFilter(entry)?.value === value
-
-// A chip's click: narrows to its files, or back to every file where it
-// already does.
-function showFiles(entry, kind, value) {
-  filesShown = { key: shownKey(entry), filter: isShown(entry, kind, value) ? null : { kind, value } }
-  render()
-}
+const shownChip = entry => filesShown.key === shownKey(entry) ? filesShown.chip : null
 
 // The Files list's narrowing, for renderBundleSourcesPanel: null for every file.
-export function npmFilesFilter(entry, details) {
-  const filter = shownFilter(entry)
-  if (filter === null) return null
-  const clear = () => { filesShown = { key: null, filter: null }; render() }
-  if (filter.kind === 'type') return { label: 'Package', keeps: isNpmPackageFile, clear }
-  if (filter.kind === 'extension') return { label: filter.value || 'No extension', keeps: path => npmFileExtension(path) === filter.value, clear }
-  const known = npmFilesReadability(details)
-  return { label: READABILITY.get(filter.value).name, keeps: path => known.get(path)?.category === filter.value, clear }
+export function npmFilesFilter(entry) {
+  const chip = shownChip(entry)
+  return chip && { label: chip.label, keeps: chip.keeps, clear: () => { filesShown = { key: null, chip: null }; render() } }
 }
 
-// A chip narrowing the Files list to its files: `kind` and `value` what it
-// narrows by, `label` its content, `classes` its marks beyond a chip's.
-function filterChip(entry, kind, value, label, count, { classes = '', tooltip = 'Show only these in Files' } = {}) {
-  return html`<li><button type="button" class=${`npm-extension npm-category${classes}`} aria-pressed=${String(isShown(entry, kind, value))}
-    data-tooltip=${tooltip} @click=${() => showFiles(entry, kind, value)}>${label}<span class="npm-extension-count">${count.toLocaleString('en')}</span></button></li>`
+// A chip narrowing the Files list to the files `chip.keeps`, or back to
+// every file where it already does: `content` its label, `classes` its marks
+// beyond a chip's.
+function filterChip(entry, chip, content, count, { classes = '', tooltip = 'Show only these in Files' } = {}) {
+  const pressed = shownChip(entry)?.id === chip.id
+  return html`<li><button type="button" class=${`npm-extension npm-category${classes}`} aria-pressed=${String(pressed)} data-tooltip=${tooltip}
+    @click=${() => { filesShown = { key: shownKey(entry), chip: pressed ? null : chip }; render() }}>${content}<span class="npm-extension-count">${count.toLocaleString('en')}</span></button></li>`
 }
 
 // A category's chip.
-function categoryChip(entry, category, count) {
+function categoryChip(entry, details, category) {
   const { name, mark } = READABILITY.get(category)
-  return filterChip(entry, 'category', category, html`<span>${name}</span>`, count, { classes: mark ? ` is-${mark}` : '' })
+  const { byPath, counts } = npmFilesRead(details)
+  return filterChip(entry, { id: `category:${category}`, label: name, keeps: path => byPath.get(path)?.category === category },
+    html`<span>${name}</span>`, counts.get(category), { classes: mark ? ` is-${mark}` : '' })
 }
 
 // Over the summary, where any file can't be reviewed by reading it: how many,
 // each category's chip showing which.
 export function npmReadabilityWarning(entry, details) {
-  const { counts } = filesRead(details)
+  const { counts } = npmFilesRead(details)
   const present = UNREADABLE.filter(category => counts.has(category))
   if (present.length === 0) return nothing
   const unreadable = present.reduce((sum, category) => sum + counts.get(category), 0)
@@ -321,16 +270,16 @@ export function npmReadabilityWarning(entry, details) {
   return html`<div class=${`npm-readability-warning${warn ? ' is-warn' : ''}`} role="note">
     <span class="npm-readability-warning-text"><strong>${unreadable.toLocaleString('en')} of ${details.json.sources.length.toLocaleString('en')} files</strong>
       can't be reviewed by reading them:</span>
-    <ul class="npm-extensions">${present.map(category => categoryChip(entry, category, counts.get(category)))}</ul>
+    <ul class="npm-extensions">${present.map(category => categoryChip(entry, details, category))}</ul>
   </div>`
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.
 function npmReadableRow(entry, details) {
-  const { counts } = filesRead(details)
+  const { counts } = npmFilesRead(details)
   const present = READABLE.filter(category => counts.has(category))
   if (present.length === 0) return nothing
-  return html`<ul class="npm-extensions" aria-label="Readable files">${present.map(category => categoryChip(entry, category, counts.get(category)))}</ul>`
+  return html`<ul class="npm-extensions" aria-label="Readable files">${present.map(category => categoryChip(entry, details, category))}</ul>`
 }
 
 // A file's extension, as the Overview lists them: what follows the last dot
@@ -382,12 +331,12 @@ const filesNote = (files, bytes) => `${files.toLocaleString('en')} ${files === 1
 // The package's file types, as chips under its summary, each narrowing the
 // Files list to its files as a category's does.
 function npmFileTypesRow(entry, details) {
-  const { types } = filesRead(details)
+  const { types, extensions } = npmFilesRead(details)
   if (!types.package && types.extensions.length === 0) return nothing
   return html`<ul class="npm-extensions" aria-label="File types">
-    ${types.package ? filterChip(entry, 'type', 'package', html`<span>Package</span>`, types.package.files,
+    ${types.package ? filterChip(entry, { id: 'package', label: 'Package', keeps: isNpmPackageFile }, html`<span>Package</span>`, types.package.files,
       { tooltip: `package.json, readme and license: ${filesNote(types.package.files, types.package.bytes)}` }) : nothing}
-    ${types.extensions.map(({ extension, files, bytes }) => filterChip(entry, 'extension', extension,
+    ${types.extensions.map(({ extension, files, bytes }) => filterChip(entry, { id: `extension:${extension}`, label: extension || 'No extension', keeps: path => extensions.get(path) === extension },
       html`<span class="npm-extension-name">${extension || 'no extension'}</span>`, files, { tooltip: filesNote(files, bytes) }))}
   </ul>`
 }
@@ -403,21 +352,15 @@ export function npmContents(entry, languages, details) {
   return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([label, body]) => html`<div><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`
 }
 
-// The binary files, which the server tells from text by their bytes: not
-// UTF-8, or holding a NUL. Listed apart from the Files column's text, and
-// only where the package has any.
+// The binary files (`paths`, sorted), which the server tells from text by
+// their bytes: not UTF-8, or holding a NUL. Listed apart from the Files
+// column's text, and only where the package has any.
 export function npmBinaryColumn(paths, sizes) {
-  if (paths.length === 0) return nothing
-  const sorted = paths.toSorted((a, b) => a.localeCompare(b))
-  return html`<section class="bundles-overview-col npm-binary-col">
-    <header class="bundles-overview-col-head">
-      <span class="bundles-overview-col-title">Binary files <span class="bundles-overview-col-count">${paths.length}</span></span>
-    </header>
-    <div class="bundles-overview-col-body bundles-overview-col-body--list"><ul class="bundles-sources-list">${sorted.map(path => html`<li>
+  if (paths.size === 0) return nothing
+  return overviewColumn({ title: 'Binary files', count: paths.size, list: true, body: html`<ul class="bundles-sources-list">${[...paths].map(path => html`<li>
       <div class="bundles-source-row is-resource">
         ${sourceFileIcon(path)}<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${path}>${path}</span>
         ${sizes.has(path) ? html`<span class="bundles-source-size">${formatBytes(sizes.get(path))}</span>` : nothing}
       </div>
-    </li>`)}</ul></div>
-  </section>`
+    </li>`)}</ul>` })
 }

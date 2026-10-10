@@ -214,22 +214,16 @@ function finalize(node, parentPath, parent, byPath) {
   return value
 }
 
-// A bundle of a single package's files' directory groups by path
-// (treemap-groups.js), and each group's rank by its bytes, kept with the
-// bundle; none for a bundle of several packages, colored by package.
-const _groupsByBundle = new WeakMap()
-function singlePackageGroups(details, pkgs, stripped, prefix, sizes) {
-  let known = _groupsByBundle.get(details)
-  if (!known) {
-    const groups = new Set(pkgs).size === 1 ? treemapGroups(stripped, prefix) : new Map()
-    const bytes = new Map()
-    stripped.forEach((path, i) => {
-      if (groups.has(path)) bytes.set(groups.get(path), (bytes.get(groups.get(path)) ?? 0) + Math.max(sizes[i] ?? 0, 0))
-    })
-    known = { groups, ranks: new Map([...bytes].toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([group], rank) => [group, rank])) }
-    if (details) _groupsByBundle.set(details, known)
-  }
-  return known
+// A single package's files' directory groups by path (treemap-groups.js),
+// and each group's rank by its bytes; none for several packages, colored by
+// package.
+function singlePackageGroups(pkgs, stripped, prefix, sizes) {
+  const groups = new Set(pkgs).size === 1 ? treemapGroups(stripped, prefix) : new Map()
+  const bytes = new Map()
+  stripped.forEach((path, i) => {
+    if (groups.has(path)) bytes.set(groups.get(path), (bytes.get(groups.get(path)) ?? 0) + Math.max(sizes[i] ?? 0, 0))
+  })
+  return { groups, ranks: new Map([...bytes].toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([group], rank) => [group, rank])) }
 }
 
 // Recursively place a node's rectangle (and its descendants) into the
@@ -454,9 +448,8 @@ class BundleTreemap extends LitElement {
     // Display-prefix stripping must not erase dependency boundaries.
     const pkgs = origPaths.map((path) => bundlePkgOf(path, { packageDir: packageDirs?.get(path) }))
     // A single package's files, which its color can't tell apart, are
-    // colored by directory group instead, the largest group first: both
-    // only the bundle's, whatever scope is shown.
-    const { groups, ranks } = singlePackageGroups(this.details, pkgs, stripped, prefix, origPaths.map((path) => sizes.get(path)))
+    // colored by directory group instead, the largest group first.
+    const { groups, ranks } = singlePackageGroups(pkgs, stripped, prefix, origPaths.map((path) => sizes.get(path)))
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
     for (let i = 0; i < origPaths.length; i++) {

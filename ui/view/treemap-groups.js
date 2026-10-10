@@ -1,13 +1,9 @@
 // How a treemap of a single package colors its files (bundle-treemap.js),
-// where coloring by package would paint them all one color: by the top-most
-// directories that tell them apart. Below the directories every file shares,
-// each directory is a group. Directories every file but those loose beside
-// them shares are passed through on the way, and the files loose in one are a
-// group of their own, `dir/*`, or `dir/*.js` where they share an extension.
-// `src/a/a.js`, `src/b/b.js` and `src/c.js` make `src/a/`, `src/b/` and
-// `src/*.js`; `package.json`, `README.md` and `dist/{a,b}/…` make `*`,
-// `dist/a/` and `dist/b/`. Where that leaves one group, as for a package of
-// loose files alone, each extension is one.
+// which its package's color can't tell apart: by the top-most directories
+// that do. `src/a/a.js`, `src/b/b.js` and `src/c.js` make `src/a/`, `src/b/`
+// and `src/*.js` (loose files sharing an extension name it); `package.json`,
+// `README.md` and `dist/{a,b}/…` make `*`, `dist/a/` and `dist/b/`. Where that
+// leaves one group, each extension is one.
 
 const extensionOf = (name) => {
   const dot = name.lastIndexOf('.')

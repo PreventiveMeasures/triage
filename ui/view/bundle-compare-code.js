@@ -99,6 +99,11 @@ export function fileContents(base, other, path, { kind, basePath = path }) {
   return { before, after }
 }
 
+// Lines added and removed, as a diff's head counts them.
+export const diffCounts = (additions, deletions) => html`<span class="bundle-compare-code-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
+  <span class="add">+${additions.toLocaleString()}</span><span class="del">−${deletions.toLocaleString()}</span>
+</span>`
+
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
 function dirOrder([a, an], [b, bn]) {
@@ -160,6 +165,7 @@ export class BundleCompareCode extends LitElement {
     // Directory path → open, for the disclosures the user toggled.
     this._open = new Map()
     this._models = new Map()
+    this._modelCap = MODEL_CACHE
     // `${path}\0${whitespace}` → fold run → lines revealed, and the rows
     // shown before "Show more"; large files the user asked to diff anyway.
     this._expansions = new Map()
@@ -370,10 +376,6 @@ export class BundleCompareCode extends LitElement {
 
   // ── The selected file ────────────────────────────────────────────
 
-  _contents(path, entry) {
-    return fileContents(this.base, this.other, path, entry)
-  }
-
   _model(path, before, after) {
     const key = `${path}\0${prefs.ignoreWhitespace}`
     // Re-inserted on every use, so the cache drops the least recent.
@@ -383,8 +385,54 @@ export class BundleCompareCode extends LitElement {
       model = lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace })
     }
     this._models.set(key, model)
-    if (this._models.size > MODEL_CACHE) this._models.delete(this._models.keys().next().value)
+    if (this._models.size > this._modelCap) this._models.delete(this._models.keys().next().value)
     return model
+  }
+
+  // A file's two sides, and its line model where it has one to draw: none
+  // for a file that is not text, nor for one too large to diff unasked.
+  _fileState(path, entry) {
+    const { before, after } = fileContents(this.base, this.other, path, entry)
+    const textual = typeof before === 'string' && typeof after === 'string'
+    const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
+    return { before, after, textual, large, model: textual && !large ? this._model(path, before, after) : null }
+  }
+
+  // What a file shows in place of a diff: why there is none, or how to have
+  // one; null where there is a diff to show.
+  _fileMessage(path, { kind }, { before, after, textual, large, model }) {
+    const size = value => formatBytes(value ?? 0)
+    if (!textual) {
+      const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
+        : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
+      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.</div>`
+    }
+    if (large) {
+      return html`<div class="bundle-compare-code-message">
+        <p>This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.</p>
+        <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
+      </div>`
+    }
+    if (model.blocks.length > 0) return null
+    return html`<div class="bundle-compare-code-message">
+      <p>${prefs.ignoreWhitespace ? 'Only whitespace changed in this file.' : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
+      ${prefs.ignoreWhitespace ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
+    </div>`
+  }
+
+  // A file's kind, icon and path, `prefix` left off.
+  _fileName(path, entry, prefix) {
+    const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
+    return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
+      ${sourceFileIcon(path, this._format(path))}
+      <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.basePath ? `${entry.basePath} → ${path}` : path}>${entry.basePath ? renameTemplate(strip(entry.basePath), strip(path)) : strip(path)}</span>`
+  }
+
+  // A file's lines added and removed, and its sizes.
+  _fileFigures({ kind, baseBytes, otherBytes }, model) {
+    const size = value => formatBytes(value ?? 0)
+    return html`${model?.blocks.length > 0 ? diffCounts(model.additions, model.deletions) : nothing}
+      <span class="bundle-code-main-stats">${kind === 'added' ? size(otherBytes) : kind === 'removed' ? size(baseBytes) : `${size(baseBytes)} → ${size(otherBytes)}`}</span>`
   }
 
   // Highlighted lines of one side, or null until (or unless) Prism colors
@@ -411,41 +459,19 @@ export class BundleCompareCode extends LitElement {
   _renderFile(path, prefix) {
     const entry = this._entries.get(path)
     const { kind } = entry
-    const { before, after } = this._contents(path, entry)
-    const textual = typeof before === 'string' && typeof after === 'string'
-    const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
-    const model = textual && !large ? this._model(path, before, after) : null
+    const file = this._fileState(path, entry)
+    const { before, after, textual, model } = file
     // A file whose only change is a repointed import — moved there by a
     // rename or not — reads as its source, whatever the whitespace setting:
     // its two sides are one text.
     const asSource = kind === 'repointed' || (kind === 'renamed' && !entry.modified && !!entry.repointed)
     const diffable = textual && (!asSource || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
-    const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
-    const display = strip(path)
-    const size = value => formatBytes(value ?? 0)
-    let body
-    if (kind === 'repointed' && before === undefined) {
-      body = html`<div class="bundle-compare-code-message">Neither bundle carries this importer's source.</div>`
-    } else if (!textual) {
-      const bytes = kind === 'added' ? `${size(bundleFileByteLength(after))}` : kind === 'removed' ? `${size(bundleFileByteLength(before))}`
-        : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
-      body = html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.</div>`
-    } else if (large) {
-      body = html`<div class="bundle-compare-code-message">
-        <p>This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.</p>
-        <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
-      </div>`
-    } else if (asSource && model.blocks.length === 0) {
-      body = this._renderSource(path, after, entry.repointed)
-    } else if (model.blocks.length === 0) {
-      body = html`<div class="bundle-compare-code-message">
-        <p>${prefs.ignoreWhitespace ? 'Only whitespace changed in this file.' : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
-        ${prefs.ignoreWhitespace ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
-      </div>`
-    } else {
-      body = this._renderDiff(path, entry, model, before, after)
-    }
+    const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
+    const body = kind === 'repointed' && before === undefined
+      ? html`<div class="bundle-compare-code-message">Neither bundle carries this importer's source.</div>`
+      : asSource && model?.blocks.length === 0 ? this._renderSource(path, after, entry.repointed)
+      : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, model, before, after)
     return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
         <span class="bundle-code-file-nav">
           <button type="button" class="focus-code-nav-btn" aria-label="Previous file" data-tooltip="Previous file" ?disabled=${index <= 0} @click=${() => this._select(this._order[index - 1])}>
@@ -455,17 +481,12 @@ export class BundleCompareCode extends LitElement {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
           </button>
         </span>
-        <span class=${classMap({ 'bundle-compare-code-pill': true, [kind]: true, pure: kind === 'renamed' && !entry.modified })}>${KIND[kind].label}</span>
-        ${sourceFileIcon(path, this._format(path))}
-        <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.basePath ? `${entry.basePath} → ${path}` : path}>${entry.basePath ? renameTemplate(strip(entry.basePath), display) : display}</span>
+        ${this._fileName(path, entry, prefix)}
         <button type="button" class="bundle-code-copy-path" data-copy-path=${path} aria-label="Copy file path">
           <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
         </button>
         <span class="bundle-code-main-spacer"></span>
-        ${model?.blocks.length > 0 ? html`<span class="bundle-compare-code-counts" aria-label=${`${model.additions} added, ${model.deletions} removed lines`}>
-          <span class="add">+${model.additions.toLocaleString()}</span><span class="del">−${model.deletions.toLocaleString()}</span>
-        </span>` : nothing}
-        <span class="bundle-code-main-stats">${kind === 'added' ? size(entry.otherBytes) : kind === 'removed' ? size(entry.baseBytes) : `${size(entry.baseBytes)} → ${size(entry.otherBytes)}`}</span>
+        ${this._fileFigures(entry, model)}
         ${model && model.blocks.length > 0 ? html`<span class="bundle-code-file-nav">
           <button type="button" class="focus-code-nav-btn" aria-label="Previous change" data-tooltip="Previous change" @click=${() => this._stepChange(-1)}>
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 5-5 5 5"/></svg>

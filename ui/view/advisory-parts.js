@@ -1,6 +1,6 @@
-// The parts of an advisory row that bundle advisories
-// (render-bundle-advisories.js) and an npm package's (npm-overview.js) share:
-// the severity rail, the source and GHSA reference, and CWE links.
+// An advisory's row, as bundle advisories (render-bundle-advisories.js) and
+// an npm package's (npm-overview.js) list them: the severity rail, the title
+// with its source and GHSA reference, and what it covers with CWE links.
 import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { GITHUB_ICON_SVG } from './icons.js'
@@ -49,7 +49,7 @@ function cweTemplate(c) {
 }
 
 // Severity badge stacked above the CVSS score, where there is one.
-export function advisoryRail(severity, cvss) {
+function advisoryRail(severity, cvss) {
   return html`<div class="bundle-advisory-rail">
     <span class=${`bundle-advisory-severity sev-${severity}`}>${severityLabel(severity)}</span>
     ${typeof cvss === 'number' ? html`<span class="bundle-advisory-cvss-score">CVSS <span class="mono">${cvss.toFixed(1)}</span></span>` : nothing}
@@ -58,7 +58,7 @@ export function advisoryRail(severity, cvss) {
 
 // Where the advisory comes from, and its id linking to its record: the
 // GHSA where it has one, beside its source's icon.
-export function advisoryReference(a) {
+function advisoryReference(a) {
   const url = typeof a.url === 'string' && /^https?:\/\//iu.test(a.url) ? a.url : null
   const advisoryId = a.ghsa ?? ghsaIdFrom(url) ?? (typeof a.id === 'string' ? a.id : null)
   const source = ADVISORY_SOURCES.get(a.source)
@@ -69,7 +69,36 @@ export function advisoryReference(a) {
   </span>`
 }
 
-export function advisoryCwes(cwe) {
+function advisoryCwes(cwe) {
   const cwes = Array.isArray(cwe) ? cwe.filter((c) => typeof c === 'string') : []
   return cwes.length > 0 ? html`<span class="bundle-advisory-cwes">${cwes.map((c, i) => html`${i === 0 ? '' : ', '}${cweTemplate(c)}`)}</span>` : nothing
+}
+
+// Severity and CVSS in a rail of their own, so titles line up; the source and
+// GHSA beside the title; the range it covers, versions matched, CWEs and CVSS
+// vector under it. `onDetails` opens its text, where it has one.
+export function advisoryRow(a, onDetails = null) {
+  const cvssVector = typeof a.cvss?.vectorString === 'string' ? a.cvss.vectorString : ''
+  const vulnerable = typeof a.vulnerable_versions === 'string' ? a.vulnerable_versions : null
+  const matched = Array.isArray(a.versions) ? a.versions.filter(version => typeof version === 'string') : []
+  return html`<li class="bundle-advisory-row">
+    ${advisoryRail(a.severity, a.cvss?.score)}
+    <div class="bundle-advisory-body">
+      <div class="bundle-advisory-header">
+        ${onDetails && typeof a.details === 'string' && a.details.trim()
+          ? html`<button type="button" class="bundle-advisory-title" aria-haspopup="dialog" @click=${() => onDetails(a)}>${a.title}</button>`
+          : html`<span class="bundle-advisory-title">${a.title}</span>`}
+        ${advisoryReference(a)}
+      </div>
+      <div class="bundle-advisory-subrow">
+        <div class="bundle-advisory-meta">
+          ${a.informational ? html`<span>${a.informational}</span>` : nothing}
+          ${vulnerable ? html`<span>Affected <span class="mono">${vulnerable}</span></span>` : nothing}
+          ${matched.length > 0 ? html`<span>Matches <span class="mono">${matched.join(', ')}</span></span>` : nothing}
+          ${advisoryCwes(a.cwe)}
+        </div>
+        ${cvssVector ? html`<div class="bundle-advisory-cvss-vector mono">${cvssVector}</div>` : nothing}
+      </div>
+    </div>
+  </li>`
 }
