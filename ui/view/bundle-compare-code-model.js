@@ -62,6 +62,9 @@ const NAMING = new Set(['as', 'class', 'function', 'import'])
 const BODY = /\s*(?:=>\s*)?\{/uy
 const ARROW = /\s*=>/uy
 const ARROW_BODY = /\s*=>\s*\{/uy
+// What a `let` declaring follows with, a name or a pattern: not `let(a)`,
+// a call where `let` is a name, as it may be outside strict code.
+const LET = /\s*[\p{L}_$[{]/uy
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
@@ -286,7 +289,8 @@ function nameless(text) {
       parameters = keyPlace || word === 'function' || word === 'catch' || (naming && named.word === 'function')
       if (word === 'extends') extending.push(opens.length)
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
-      if (word === 'const' || word === 'let' || word === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
+      LET.lastIndex = at
+      if (word === 'const' || word === 'var' || (word === 'let' && LET.test(text))) declarations.push({ binding: true, depth: opens.length, exported: exporting })
       if (word === 'export') exporting = true
       else if (!DECLARES.has(word)) exporting = false
       if (word === 'async') named = { statement: statement(last), word: null }
