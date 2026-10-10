@@ -57,12 +57,13 @@ export function npmDownloadMonths(downloads) {
 }
 
 // The weekly downloads from which a package is among npm's top 10, 50, 100,
-// …, 100,000 packages: download-counts' snapshot of a month's downloads
-// (Jan 30 – Feb 28, 2026), each rank's count scaled to a week by the
-// registry's weeks then, and grown by the median growth, to Sep 21 – Oct 4,
-// 2026, of the packages ranked around it, over weeks npm counted whole.
-// Below the last, a package is unpopular (Infinity).
-const TIERS = [[10, 640e6], [50, 330e6], [100, 260e6], [500, 105e6], [1000, 60e6], [5000, 4.6e6], [10_000, 1e6], [50_000, 20e3], [100_000, 2.1e3], [Infinity, 0]]
+// …, 100,000 packages, rounded: download-counts' snapshot of a month's
+// downloads (Jan 30 – Feb 28, 2026), each rank's count grown by the median
+// growth of the packages ranked around it to the 30 days Sep 9 – Oct 8,
+// 2026, as npm counts them, days it failed to count among them, then made a
+// week. An estimate, to be revisited. Below the last, a package is
+// unpopular (Infinity).
+const TIERS = [[10, 550e6], [50, 285e6], [100, 225e6], [500, 95e6], [1000, 50e6], [5000, 4e6], [10_000, 850e3], [50_000, 18e3], [100_000, 2e3], [Infinity, 0]]
 
 // The tier a package's downloads put it in (TIERS), by the most it had in any
 // of its latest six 7-day weeks (npmDownloadWeeks): a week lower for a day
