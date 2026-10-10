@@ -3,7 +3,7 @@ import { isEncryptionEnabled, isUnlocked, onVaultStateChange, unlockEncryption }
 import { hydrateKey } from '../secure-storage.js'
 import { migrateStoredIgnores } from '../ignored-triage.js'
 import { readTriageBlob } from '../triage.js'
-import { localContentSyncStatus } from '../sync/objstore-presence.js'
+import { localContentSyncStatus } from '../sync/presence-cache.js'
 import { computeContentHash } from '../sync/objstore-crypto.ts'
 
 // Only dependency handles cross the lazy import boundary. The workspace reader
