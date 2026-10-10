@@ -103,6 +103,86 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, ha
   assert.deepEqual([read.longLines, read.longest], [2, NPM_LONG_LINE + 2])
 })
 
+test('code minified into shorter lines is minified too, by its lines\' length and its spacing', () => {
+  const category = (path, text) => npmFileReadability(path, text).category
+  // tsx's dist/temporary-directory-*.mjs (one 782-character line), shortened.
+  const minified = 'var c=Object.defineProperty;var r=(s,t)=>c(s,"name",{value:t,configurable:!0});import m from"node:path";import n from"node:os";'
+    + 'const i=r((s,t)=>{const e=s[0]-t[0];if(e===0){const o=s[1]-t[1];return o===0?s[2]>=t[2]:o>0}return e>0},"isVersionGreaterOrEqual");'
+    + 'export{i as a,m as b};\n'
+  assert.equal(category('dist/temporary-directory.mjs', minified), 'minified')
+  assert.equal(npmFileReadability('dist/a.mjs', minified).average, minified.trimEnd().replaceAll(/"[^"]*"/gu, '""').length, 'its code\'s average, strings aside')
+  assert.equal(category('dist/a.mjs', `${minified.trimEnd()}const a=new Set(["${'Custom ESM Loaders is an experimental feature. '.repeat(3)}"]);\n`), 'minified',
+    'spaces in its strings aside')
+  assert.equal(category('dist/a.mjs', `${minified.trimEnd()}var p=/* @__PURE__ */ m(1),q=/* @__PURE__ */ n(2);\n`), 'minified',
+    'spaces in its comments aside')
+  assert.equal(category('dist/a.mjs', `const q=/["']/g;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a quote in a regular expression starts no string')
+  assert.equal(category('dist/a.mjs', `${'var a=b+ +c,d=e- -f;'.repeat(6)}\n`), 'minified', 'nor are spaces between two operators droppable')
+  assert.equal(category('dist/a.mjs', `${'var a=b/ /x/.test(s),c=d;'.repeat(5)}\n`), 'minified', 'two slashes either')
+  assert.equal(category('dist/a.mjs', `${'var a=/x/ instanceof RegExp,b=c;'.repeat(5)}\n`), 'minified', 'nor a regular expression\'s before a word')
+  assert.equal(category('dist/a.mjs', `${'var π=()=>π;'.repeat(12)}\n`), 'minified', 'a word of any script')
+  assert.equal(category('dist/a.mjs', `${'var \\u03c0=()=>\\u03c0;'.repeat(6)}\n`), 'minified', 'or escaped')
+  assert.equal(category('dist/a.mjs', `${'var ℘=1;b=℘;'.repeat(12)}\n`), 'minified', 'as JavaScript tells one')
+  assert.equal(category('dist/a.mjs', `${'b=cafe\u0301 in o;'.repeat(9)}\n`), 'minified', 'marks and all')
+  assert.equal(category('dist/a.mjs', `async function f(v){return await /["']/.test(v)}${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`),
+    'minified', 'a regular expression after `await` too')
+  assert.equal(category('dist/a.mjs', `var x=a+/["']/.test(s);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'or after an operator')
+  assert.equal(category('dist/a.mjs', `/*! license */\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`), 'minified', 'a banner aside')
+  assert.equal(npmFileReadability('dist/a.mjs', `/*! license */\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`).average, 144, 'from its average too')
+  assert.equal(npmFileReadability('src/a.js', 'export const a = 1\n').average, 0, 'none where not minified so')
+  assert.equal(category('dist/cli.js', `#!/usr/bin/env node\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`), 'minified', 'a hashbang too')
+  // Lines as long, written by a person: spaced after commas and around operators.
+  assert.equal(category('v4/checks.js', `export { ${Array.from({ length: 30 }, (_, i) => `_check${i} as check${i}`).join(', ')} } from "../core/index.js";\n`), 'ascii')
+  assert.equal(category('types/bufferTime.d.ts', Array.from({ length: 4 }, () =>
+    'export declare function bufferTime<T>(bufferTimeSpan: number, bufferCreationInterval: number | null | undefined, scheduler?: SchedulerLike): OperatorFunction<T, T[]>;').join('\n')), 'ascii')
+  assert.equal(category('lib/table.js', Array.from({ length: 3 }, (_, i) => `${'value'.repeat(20)}${i}${' '.repeat(20)}=${' '.repeat(20)}${'other'.repeat(20)};`).join('\n')), 'ascii',
+    'spaces aligning `=` count by character, not by run')
+  assert.equal(category('dist/a.mjs', 'export{a as b}from"./c.js";\n'), 'ascii', 'lines as short as anyone writes')
+  // svelte's src/internal/index.js, shortened: long, but in its comment and string.
+  assert.equal(category('src/internal/index.js', `// ${'We may reimplement some of the legacy private APIs here. '.repeat(3)}\n\n`
+    + `throw new Error(\n\t\`${'Your application imported from svelte/internal, a private module that no longer exists. '.repeat(3)}\`\n);\n`), 'ascii',
+    'lines long by their comments and strings, not their code')
+  assert.equal(category('lib/stub.js', `// ${'We may reimplement some of the legacy private APIs here. '.repeat(3)}\n`), 'ascii', 'nor one of comments alone')
+  assert.equal(category('lib/stub.js', `${Array.from({ length: 102 }, () => `// ${'ordinary words '.repeat(8)}`).join('\n')}\nexport{};\n`), 'ascii',
+    'nor one of comments around a line of code')
+  const code60 = 'x=Object.defineProperty(a,b,{value:c,configurable:!0});y=z;'
+  assert.equal(category('lib/split.js', `${code60}/* ${'ordinary words '.repeat(6)}\n${'more words '.repeat(6)} */${code60}\n`), 'ascii',
+    'a comment spanning lines leaves its code on them')
+  assert.equal(category('dist/a.mjs', `if(a)b();else/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a regular expression after `else` too')
+  assert.equal(category('dist/a.mjs', `const f=x=>/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a regular expression after `=>` too')
+  for (const keyword of ['new', 'v instanceof', 'class extends']) {
+    assert.equal(category('dist/a.mjs', `var y=${keyword} /'/.constructor;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l='x';\n`), 'minified',
+      `a regular expression after \`${keyword}\` too`)
+  }
+  assert.equal(category('dist/a.mjs', `export default/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a regular expression after `default` too')
+  assert.equal(category('dist/a.mjs', `var u=n.default/2+"/"+v;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'but a property named so is divided')
+  assert.equal(category('dist/a.mjs', `class A{#default=1;f(v){return this.#default/2+"/"+v}}${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`),
+    'minified', 'a private one too')
+  assert.equal(category('dist/a.mjs', `var y=[.../'/.exec(s)];${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l='x';\n`), 'minified',
+    'a regular expression after `...` too')
+  assert.equal(category('dist/g.css', `${'.a{width:calc(1px + var(--x))}'.repeat(5)}\n`), 'minified', 'a sum\'s spaces in calc() needed, nested too')
+  assert.equal(category('dist/g.css', `${'.a{--gap:1px + 2px;width:calc(var(--gap))}'.repeat(3)}\n`), 'minified', 'and in a custom property\'s value')
+  assert.equal(category('src/e.css', `${'.a{--gap:0}.a + .b{color:red}'.repeat(5)}\n`), 'ascii', 'not past it')
+  assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
+  // Only in what minifiers write, JavaScript and CSS, whose strings and comments are read.
+  assert.equal(category('tool.py', `x = 1\n# ${'ordinary words '.repeat(15)}\n# ${'ordinary words '.repeat(15)}\n`), 'ascii', 'nor a language it can\'t read')
+  assert.equal(category('index.html', `<!-- ${'ordinary words '.repeat(15)}-->\n`), 'ascii')
+  assert.equal(category('dist/a.css', '.a{color:red;margin:0 auto;padding:0}.b{display:flex;align-items:center;justify-content:space-between}.c{font:12px/1.5 sans-serif}\n'), 'minified')
+  assert.equal(category('dist/b.css', '.a{background:url(https://cdn.example.com/a.svg) no-repeat}.b{display:flex;align-items:center;justify-content:space-between}.c{margin:0}\n'), 'minified',
+    'a URL in CSS is no `//` comment')
+  assert.equal(category('dist/c.css', `${'.a .b{color:red}'.repeat(8)}\n`), 'minified', 'a descendant selector\'s space is no minifier\'s to drop')
+  assert.equal(category('src/e.css', `${'.a + .b{color:red}'.repeat(8)}\n`), 'ascii', 'a sibling selector\'s is')
+  assert.equal(category('dist/f.css', `${'.a{width:calc(1px + 2px)}'.repeat(6)}\n`), 'minified', 'but not a sum\'s in calc()')
+  assert.equal(category('src/d.css', `${Array.from({ length: 6 }, (_, i) => `.list .item-${i}`).join(', ')} { color: red; margin: 0 auto; }\n`), 'ascii')
+  assert.equal(category('src/About.jsx', `export const About = () => <p>${'We build tools that make reviewing code a little easier for everyone '.repeat(8)}</p>\n`), 'ascii',
+    'nor what minifiers never write, as JSX')
+})
+
 test('an advisory affects the version shown, is fixed in it, or covers later versions', () => {
   const versions = ['2.0.0', '1.2.0', '1.1.0', '1.0.0']
   const advisory = affected => ({ affected })
