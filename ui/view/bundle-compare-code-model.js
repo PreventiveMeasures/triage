@@ -202,7 +202,8 @@ function nameless(text) {
     if (first === '#' || (first === '/' && (token[1] === '/' || token[1] === '*'))) keep(token)
     else if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
-      last = '"'
+      // A module's name ends its `import` or `export … from`, as `;` does.
+      last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
       exporting = keyPlace = naming = parameters = false
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
@@ -351,7 +352,7 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
 // `yield <p>`, not after `<` but a spaced one (`x < <a />`), as `a<<b>>>0` has it; a fragment's `<>` before
 // what it holds, not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
+const JSX = /(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[\p{L}_$][\p{L}\p{N}_$.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
