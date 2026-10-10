@@ -234,6 +234,34 @@ test('branch suggestions put the default first, retain filtering, and leave tag 
   assert.deepEqual(page.revisionSuggestions(), ['v1', 'v2'])
 })
 
+test('branch suggestions collapse prefixes with more than two branches until a query filters them', () => {
+  const page = new ManagedCreateBundle()
+  page._refs = { defaultBranch: 'claude/main', branches: ['claude/a', 'dev', 'claude/b', 'fix/x', 'claude/c', 'fix/y', 'claude/main'], tags: [] }
+  assert.deepEqual(page.revisionEntries(), [{ name: 'claude/main' }, { name: 'dev' }, { name: 'fix/x' }, { name: 'fix/y' },
+    { prefix: 'claude', count: 3, expanded: false }], 'the default branch stays first and outside its prefix')
+  page.toggleRevisionGroup('claude')
+  assert.deepEqual(page.revisionEntries().slice(4), [{ prefix: 'claude', count: 3, expanded: true },
+    { name: 'claude/a', label: 'a', group: 'claude' }, { name: 'claude/b', label: 'b', group: 'claude' }, { name: 'claude/c', label: 'c', group: 'claude' }])
+  page.toggleRevisionGroup('claude')
+  assert.equal(page.revisionEntries().length, 5)
+  page._revisionQuery = 'b'
+  assert.deepEqual(page.revisionEntries(), [{ name: 'claude/b' }], 'a query lists matching branches in full')
+  page._revisionQuery = ''
+  page._refKind = 'tag'
+  page._refs.tags = ['a/1', 'a/2', 'a/3']
+  assert.deepEqual(page.revisionEntries(), [{ name: 'a/1' }, { name: 'a/2' }, { name: 'a/3' }], 'tags never group')
+})
+
+test('version branches lead newest first, plain lines before suffixed ones, in groups too', () => {
+  const page = new ManagedCreateBundle()
+  page._refs = { defaultBranch: 'main', tags: [], branches: ['canary-base', 'main', 'v0.10', 'v0.12', 'v0.7.4-release', 'v1.x', 'v10.x',
+    'v18.x-staging', 'v20.x', 'v20.x-staging', 'v22.23.2-proposal', 'v22.x', 'v22.x-staging', 'v9.x', 'release/1.2', 'release/1.10', 'release/next'] }
+  assert.deepEqual(page.revisionSuggestions(), ['main', 'v22.x', 'v20.x', 'v10.x', 'v9.x', 'v1.x', 'v0.12', 'v0.10',
+    'v22.x-staging', 'v22.23.2-proposal', 'v20.x-staging', 'v18.x-staging', 'v0.7.4-release', 'canary-base', 'release/1.2', 'release/1.10', 'release/next'])
+  page.toggleRevisionGroup('release')
+  assert.deepEqual(page.revisionEntries().slice(-3).map(entry => entry.name), ['release/1.10', 'release/1.2', 'release/next'])
+})
+
 test('the creation picker loads managed repositories and never selects a filtered-out initial repository', async t => {
   const calls = []
   const allowed = { repoId: 2, fullName: 'org/allowed' }
