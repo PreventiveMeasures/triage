@@ -1,5 +1,6 @@
 // A sourcemap bundle as @preventive/sourcemap reads it: plain or indexed,
-// each file once, with the edges between its files. A file keeps the key
+// each file once, with the edges between its files, which the graph draws
+// and Code links follow by the specifier of each import. A file keeps the key
 // it had before the package read it, the spelling the map lists it under
 // (`sourceRoot` in front), so Code links, hashes and reports that name one
 // still find it.
@@ -34,29 +35,65 @@ export function sourcemapEntries(details) {
   return (details.json?.sources ?? []).map((path, i) => [path, contents[i] ?? null])
 }
 
-// `read`'s edges between files of the map, `Map<from, Set<to>>` by key: an
-// edge to no file of it (a package left out, a builtin) leads nowhere here.
+// `read`'s edges between files of the map, as rows by key: `[from, to]`,
+// and `[from, to, specifier]` for an import its specifier names. An edge to
+// no file of it (a package left out, a builtin) leads nowhere here.
 export function sourcemapEdges(map, read) {
-  const edges = new Map()
-  for (const { from, to } of read(map).edges) {
+  const rows = new Map()
+  for (const { from, to, specifier } of read(map).edges) {
     if (from.source === null || to?.source == null) continue
-    if (!edges.has(from.source)) edges.set(from.source, new Set())
-    edges.get(from.source).add(to.source)
+    const row = typeof specifier === 'string' ? [from.source, to.source, specifier] : [from.source, to.source]
+    rows.set(row.join('\0'), row)
   }
-  return edges
+  return [...rows.values()]
 }
 
-// edges-lite.js throws for a map that is not Metro's: one with no edges the
-// client can tell.
+// edges-lite.js throws for a map that is not Metro's, or one with no
+// sourcesContent to read: one with no edges the client can tell.
 function liteEdges(map) {
   try { return metroEdges(map) } catch { return { edges: [] } }
 }
 
-// The edges a view draws: those the metadata carries, else what the client
+const NO_EDGES = Object.freeze([])
+
+// The edges a view reads: those the metadata carries, else what the client
 // reads of its own map. None without a map.
 export function bundleSourcemapEdges(details) {
   if (details?.edges) return details.edges
-  if (!details?.map) return new Map()
+  if (!details?.map) return NO_EDGES
   details.edges = sourcemapEdges(details.map, liteEdges)
   return details.edges
+}
+
+const importsCache = new WeakMap()
+const specifiersCache = new WeakMap()
+
+// The graph's: `Map<from, Set<to>>`.
+export function bundleSourcemapImports(details) {
+  const rows = bundleSourcemapEdges(details)
+  if (!importsCache.has(rows)) {
+    const imports = new Map()
+    for (const [from, to] of rows) {
+      if (!imports.has(from)) imports.set(from, new Set())
+      imports.get(from).add(to)
+    }
+    importsCache.set(rows, imports)
+  }
+  return importsCache.get(rows)
+}
+
+// Code links': the file each import's specifier names, `Map<from,
+// Map<specifier, to>>`.
+export function bundleSourcemapSpecifiers(details) {
+  const rows = bundleSourcemapEdges(details)
+  if (!specifiersCache.has(rows)) {
+    const specifiers = new Map()
+    for (const [from, to, specifier] of rows) {
+      if (specifier === undefined) continue
+      if (!specifiers.has(from)) specifiers.set(from, new Map())
+      specifiers.get(from).set(specifier, to)
+    }
+    specifiersCache.set(rows, specifiers)
+  }
+  return specifiersCache.get(rows)
 }

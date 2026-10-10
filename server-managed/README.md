@@ -832,6 +832,7 @@ format: file inventory, byte sizes, source hashes and lines of code (blank lines
 identity, repository/package origins, imports, entry points, executable flags and language/code statistics.
 A sourcemap's imports are the edges between its files, which the server reads with oxc-parser
 (`@preventive/sourcemap/edges.js`) for every map; a client reading a map itself sees Metro's alone (`edges-lite.js`).
+The graph draws them, and Code links follow each import's specifier to the file its edge leads to.
 It excludes source bodies and binary resources. `GET /api/bundles/:id/contents`
 returns the original sourcemap or Stasis JSON after HTTP decoding.
 Both endpoints use `Content-Encoding: br`. Metadata is cached as Brotli;

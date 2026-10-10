@@ -1,4 +1,5 @@
 import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleSourcemapSpecifiers } from './bundle-sourcemap.js'
 
 const indexes = new WeakMap()
 const manifests = new WeakMap()
@@ -130,6 +131,7 @@ function resolvePackageImport(scope, specifier, sources, index, recorded, direct
 // Merge conditions before linking. When exporting a restricted source set,
 // include only visible parents and replace every unavailable target with null:
 // its path must not leak, and relative fallback must still remain blocked.
+// A sourcemap's are what its edges say each specifier names (bundle-sourcemap.js).
 export function bundleSourceImports(details, sources = bundleSourcesAsMap(details)) {
   const imports = new Map()
   if (details?.kind === 'stasis') {
@@ -145,6 +147,11 @@ export function bundleSourceImports(details, sources = bundleSourcesAsMap(detail
           merged.set(specifier, merged.has(specifier) && merged.get(specifier) !== resolved ? null : resolved)
         }
       }
+    }
+  } else if (details?.kind === 'sourcemap') {
+    for (const [parent, specifiers] of bundleSourcemapSpecifiers(details)) {
+      if (!sources.has(parent)) continue
+      imports.set(parent, new Map([...specifiers].map(([specifier, target]) => [specifier, sources.has(target) ? target : null])))
     }
   }
   return imports

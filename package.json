@@ -295,7 +295,7 @@
     "@exodus/stasis": "1.0.0-beta.9",
     "@exodus/stasis-core": "1.0.0-beta.9",
     "@preventive/report": "1.0.0-alpha.9",
-    "@preventive/sourcemap": "1.0.0-alpha.0",
+    "@preventive/sourcemap": "1.0.0-alpha.1",
     "@preventive/upstream": "1.0.0-alpha.12",
     "oxc-parser": "^0.152.0",
     "ws": "^8.22.0"

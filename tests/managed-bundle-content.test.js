@@ -684,7 +684,7 @@ test('sourcemap metadata carries the edges the server reads with the parser', as
   const record = await h.seed({ kind: 'sourcemap', repoId: 1, bytes })
   const metadata = await h.send(`/api/bundles/${record.id}/metadata`, 'viewer')
   assert.equal(metadata.status, 200)
-  assert.deepEqual(parseBundleMetadata(metadata.json(), record.integrity).edges, new Map([['src/main.ts', new Set(['src/dep.ts'])]]))
+  assert.deepEqual(parseBundleMetadata(metadata.json(), record.integrity).edges, [['src/main.ts', 'src/dep.ts', './dep']])
 })
 
 test('sourcemap uploads retain their identity while storing and serving only Brotli bytes', async t => {

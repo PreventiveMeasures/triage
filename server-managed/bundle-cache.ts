@@ -90,9 +90,10 @@ export function bundleSummary(details: BundleDetails, metadata?: Parameters<type
 
 // A sourcemap's edges, read with the parser (edges.js) that the client goes
 // without: every map's, where the client reads Metro's alone. Without it,
-// the metadata keeps what the client would read.
+// the metadata keeps what the client would read. A map with no
+// sourcesContent has no source to read them from.
 function readSourcemapEdges(details: BundleDetails) {
-  if (details.kind !== 'sourcemap' || !details.map) return
+  if (details.kind !== 'sourcemap' || !details.map?.files.some(file => file.content !== null)) return
   try { details.edges = sourcemapEdges(details.map, bundleEdges) }
   catch (err) { console.warn('managed: sourcemap edges failed:', err) }
 }

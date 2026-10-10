@@ -18,8 +18,8 @@ importers:
         specifier: 1.0.0-alpha.9
         version: 1.0.0-alpha.9
       '@preventive/sourcemap':
-        specifier: 1.0.0-alpha.0
-        version: 1.0.0-alpha.0(oxc-parser@0.152.0)
+        specifier: 1.0.0-alpha.1
+        version: 1.0.0-alpha.1(oxc-parser@0.152.0)
       '@preventive/upstream':
         specifier: 1.0.0-alpha.12
         version: 1.0.0-alpha.12
@@ -647,8 +647,8 @@ packages:
     resolution: {integrity: sha512-uY3H2rPbuU24IBkeGyFUXhRgP0TdH452Z5/f9YTTYneBLtE+HIwHWqGxR31nF0mgr1KQj5H+a1YwCSQkLuZXgw==, tarball: https://registry.npmjs.org/@preventive/report/-/report-1.0.0-alpha.9.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@preventive/sourcemap@1.0.0-alpha.0':
-    resolution: {integrity: sha512-/mZy0Qx0nTEieb3L5bz5MdOLLpE+gU/LO7UqXQ0L9vXZrhjja319W/5vW5eP0fDJw+i1tDpK61wTm6Cc0ELJIg==, tarball: https://registry.npmjs.org/@preventive/sourcemap/-/sourcemap-1.0.0-alpha.0.tgz}
+  '@preventive/sourcemap@1.0.0-alpha.1':
+    resolution: {integrity: sha512-mMdY/kIzJ008OEMj2yfIUtDHhvGuORn5V94x7r+SmcofV5uQt6du670kcAhzpDdaTCJQRSfqsyMWeNA5CxwOyw==, tarball: https://registry.npmjs.org/@preventive/sourcemap/-/sourcemap-1.0.0-alpha.1.tgz}
     engines: {node: '>=24.14.0'}
     peerDependencies:
       oxc-parser: '>=0.152.0'
@@ -1765,7 +1765,7 @@ snapshots:
 
   '@preventive/report@1.0.0-alpha.9': {}
 
-  '@preventive/sourcemap@1.0.0-alpha.0(oxc-parser@0.152.0)':
+  '@preventive/sourcemap@1.0.0-alpha.1(oxc-parser@0.152.0)':
     optionalDependencies:
       oxc-parser: 0.152.0
 

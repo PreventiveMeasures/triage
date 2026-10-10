@@ -88,9 +88,9 @@ export async function createBundleMetadata(details) {
     // path-keyed graph index.
     result.sourceSizes = entries.map(([, content]) => typeof content === 'string' ? utf8ByteLength(content) : null)
     result.namesCount = details.namesCount ?? names?.length ?? null
-    // `[from, to]`, each a row of `files`.
+    // `[from, to]` or `[from, to, specifier]`, `from` and `to` rows of `files`.
     const rows = new Map(result.files.map(([path], i) => [path, i]))
-    result.edges = [...bundleSourcemapEdges(details)].flatMap(([from, targets]) => [...targets].map((to) => [rows.get(from), rows.get(to)]))
+    result.edges = bundleSourcemapEdges(details).map(([from, to, ...specifier]) => [rows.get(from), rows.get(to), ...specifier])
   } else {
     const b = details.bundle
     const bundle = { version: b.version, config: b.config, repo: b.repo, package: b.package, formats: mapObject(b.formats), imports: mapObject(b.imports), reason: b.reason, executable: [...b.executable] }
@@ -192,15 +192,11 @@ export function parseBundleMetadata(data, integrity) {
 
 function parseSourcemapEdges(rows, files) {
   if (!Array.isArray(rows)) throw new Error('Invalid sourcemap edges')
-  const edges = new Map()
-  for (const row of rows) {
-    if (!Array.isArray(row) || row.length !== 2 || row[0] === row[1]
-        || row.some((i) => !Number.isSafeInteger(i) || i < 0 || i >= files.length)) throw new Error('Invalid sourcemap edges')
-    const [from, to] = row.map((i) => files[i][0])
-    if (!edges.has(from)) edges.set(from, new Set())
-    edges.get(from).add(to)
-  }
-  return edges
+  return rows.map((row) => {
+    if (!Array.isArray(row) || ![2, 3].includes(row.length) || row[0] === row[1] || (row.length === 3 && typeof row[2] !== 'string')
+        || row.slice(0, 2).some((i) => !Number.isSafeInteger(i) || i < 0 || i >= files.length)) throw new Error('Invalid sourcemap edges')
+    return [files[row[0]][0], files[row[1]][0], ...row.slice(2)]
+  })
 }
 
 // HTTP content encoding handles compression before this shared JSON parser.
