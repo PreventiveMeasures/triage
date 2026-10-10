@@ -143,6 +143,23 @@ test('names are hidden renamed in JavaScript alone: in CSS a short selector chan
   assert.doesNotMatch(diff, /Hide renamed names/u, 'nor is it offered')
 })
 
+test('the Diff view pretty-prints no more minified files together than it keeps copies of', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  await import('../ui/view/bundle-compare-all.js')
+  const files = Array.from({ length: 5 }, (_, i) => `dist/f${i}.min.js`)
+  const code = view(files[0], [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}\n`]))])
+  code.base.managedId = 'b1'
+  code.other.managedId = 'b2'
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  state.bundleSourcePretty = true
+  const markup = renderText(all.render())
+  assert.match(markup, /\?disabled=true\s+data-tooltip=Too many minified files to pretty-print together: open one in Code/u)
+  assert.doesNotMatch(markup, /is-loading/u, 'none asked for')
+})
+
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {
   const element = view()
   element._toggleKind('changed')

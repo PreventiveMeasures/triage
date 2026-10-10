@@ -400,24 +400,32 @@ export class BundleCompareCode extends LitElement {
   // A file's two sides, pretty-printed where the toggle has them so, and its
   // line model where it has one to draw: none for a file that is not text,
   // nor for one too large to diff unasked.
-  _fileState(path, entry) {
+  // `prettyAllowed` false where a view would pretty-print more than it can at once.
+  _fileState(path, entry, prettyAllowed = true) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
-    const pretty = textual ? this._pretty(path, entry, contents) : null
+    const pretty = textual ? this._pretty(path, entry, contents, prettyAllowed) : null
     const { before, after } = pretty?.status === 'ready' ? pretty : contents
     const key = modelKey(path, pretty?.status === 'ready')
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     return { before, after, textual, large, pretty, key, model: textual && !large ? this._model(key, before, after, hidesRenames(path)) : null }
   }
 
+  // Whether each side of a file with text can be pretty-printed.
+  _printable(path, { kind, basePath = path }, { before, after } = fileContents(this.base, this.other, path, { kind, basePath })) {
+    return kind !== 'repointed' && typeof before === 'string' && typeof after === 'string'
+      && [[this.base, basePath, before], [this.other, path, after]].every(([details, file, text]) => text === '' || prettyPrintable(details, details, file, text))
+  }
+
   // Both sides pretty-printed (pretty-source.js), as the Code tab shows a
   // minified file, so minified versions diff line by line: null unless each
-  // side with text can be, else the toggle's state and, once both copies
-  // came, their texts.
-  _pretty(path, { kind, basePath = path }, { before, after }) {
-    if (kind === 'repointed') return null
+  // side with text can be, `limited` where not `allowed`, else the toggle's
+  // state and, once both copies came, their texts.
+  _pretty(path, entry, contents, allowed = true) {
+    if (!this._printable(path, entry, contents)) return null
+    if (!allowed) return { status: 'limited' }
+    const { basePath = path } = entry, { before, after } = contents
     const sides = [[this.base, basePath, before], [this.other, path, after]]
-    if (!sides.every(([details, file, text]) => text === '' || prettyPrintable(details, details, file, text))) return null
     const copies = sides.map(([details, file, text]) => text === '' ? { status: 'ready', text } : prettyCopy(details, details, file, text, () => this.requestUpdate()))
     if (copies.includes(null)) return { status: 'off' }
     const failed = copies.find(copy => copy.status === 'error')
@@ -539,7 +547,8 @@ export class BundleCompareCode extends LitElement {
   // (`renames`), renamed names, a text the wrap.
   _toggles(diffable, textual, pretty = null, renames = false) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
-          aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" data-tooltip=${prettyTooltip(pretty)}
+          aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
+          data-tooltip=${pretty.status === 'limited' ? 'Too many minified files to pretty-print together: open one in Code' : prettyTooltip(pretty)}
           @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
         ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}

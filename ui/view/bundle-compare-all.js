@@ -12,6 +12,9 @@ import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey, renamable } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 8000
+// Minified files pretty-printed together, both sides of each among the
+// copies pretty-source.js keeps: more would ask for as many copies at once.
+const COMBINED_PRETTY_MAX = 4
 
 // The files the Diff view lists, by path: each one added, removed, changed
 // or renamed (fileEntries). A file whose only change is an import resolving
@@ -66,7 +69,8 @@ class BundleCompareAll extends BundleCompareCode {
   render() {
     const entries = combinedEntries(this._entries)
     const { prefix } = stripCommonPathPrefix(entries.map(([path]) => path))
-    const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry) }))
+    const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
+    const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
     return html`<header class="bundle-code-main-bar bundle-compare-code-bar">

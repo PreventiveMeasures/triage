@@ -77,7 +77,8 @@ test('names a minifier renamed alike throughout are left out, and only those', (
   // Only what the file declares: a global it doesn't is no minifier's to rename.
   for (const [global, other] of [['new Map();', 'new Set();'], ['$(x);', '_(x);'], ['a();', 'b();'], ['const { x = a } = o;', 'const { x = b } = o;'],
     ['function f({ x = a }) {}', 'function f({ x = b }) {}'], ['let a; f(<a />);', 'let b; f(<b />);'], ['let a; throw <a />;', 'let b; throw <b />;'],
-    ['const { [a]: x } = o;', 'const { [b]: x } = o;'], ['let x = 1\nf(), a()', 'let y = 1\nf(), b()']]) {
+    ['const { [a]: x } = o;', 'const { [b]: x } = o;'], ['let x = 1\nf(), a()', 'let y = 1\nf(), b()'], ['let a; f(<>a</>);', 'let b; f(<>b</>);'],
+    ['const { a: x, b: y } = o; a();', 'const { a: x, b: y } = o; b();'], ['function f({ a: x, b: y }) {} a();', 'function f({ a: x, b: y }) {} b();']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
@@ -110,7 +111,7 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['function f() { a(c); }', 'function f() { b(c); }'], ['if (x) { a, c; }', 'if (x) { b, c; }'], ['f(() => { a(c); });', 'f(() => { b(c); });'],
     ['x = { k: v => { a(c); } };', 'x = { k: v => { b(c); } };'], ['x = a / 2 / c;', 'x = b / 2 / c;'], ['x = { k: a, [c]: 1 };', 'x = { k: b, [c]: 1 };'],
     ['export const k = f(a, c);', 'export const k = f(b, c);'], ['export function f(a) { return a; }', 'export function f(b) { return b; }'],
-    ['if (a) x = c / 2;', 'if (b) x = c / 2;'],
+    ['if (a) x = c / 2;', 'if (b) x = c / 2;'], ['x = /[&<>"\']/g.test(a);', 'x = /[&<>"\']/g.test(b);'],
   ]) assert.equal(lineDiff(`let a; ${before}\n`, `let b; ${after}\n`, { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   // Declared by a function's parameters, an arrow's, a `catch`'s, an import.
   for (const [before, after] of [

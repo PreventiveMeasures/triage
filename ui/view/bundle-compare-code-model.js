@@ -183,8 +183,10 @@ function nameless(text) {
         key.push(NAMELESS)
       }
       ARROW.lastIndex = at
-      if (naming || binding || ARROW.test(text)) declared.add(token)
-      if (group && !inDefault(group.depth) && !opens.slice(group.depth).includes('computed')) group.names.push(token)
+      // A pattern's key (`{ a: x }`) names what is read, not what is bound.
+      const read = text[at] === ':' || last === '.'
+      if (!read && (naming || binding || ARROW.test(text))) declared.add(token)
+      if (!read && group && !inDefault(group.depth) && !opens.slice(group.depth).includes('computed')) group.names.push(token)
       if (token === 'extends') extending = opens.length
       if (binding && (token === 'in' || token === 'of')) declaration.binding = false
       if (token === 'const' || token === 'let' || token === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
@@ -245,9 +247,10 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   return { blocks, renamed }
 }
 
-// A tag where a value starts (`(<a />`, `=> <b>`, `return <i>`, `yield <p>`): JSX, whose
+// A tag where a value starts (`(<a />`, `=> <b>`, `return <i>`, `yield <p>`, a
+// fragment's `<>` before what it holds, not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|[(=,:?&|!{};>[]|\b(?:await|case|default|do|else|return|throw|yield))[ \t]*<\/?[A-Za-z][\w.:-]*(?:\s|\/?>)/mu
+const JSX = /(?:^|[(=,:?&|!{};>[]|\b(?:await|case|default|do|else|return|throw|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
