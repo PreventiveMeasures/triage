@@ -248,7 +248,8 @@ const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
 const JS = {
-  stringOrComment: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gu,
+  // A regular expression first where a value starts, so a quote in it (`/["']/`) starts no string.
+  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};]|\b(?:case|return|throw|typeof|void))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`).
   droppable: /(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu,
 }
@@ -265,7 +266,13 @@ function minifiedCode(text, { stringOrComment, droppable }) {
   const code = text.replaceAll(stringOrComment, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
   const lines = code.split('\n').filter(line => line.trim() !== '').length
   // Counted by character: a run aligning `=` is as many spaces as it is wide.
-  return lines > 0 && code.length > MINIFIED_AVERAGE * lines && (code.match(droppable) ?? []).join('').length < MINIFIED_SPACES * code.length
+  let dropped = 0
+  for (const { 0: run, index } of code.matchAll(droppable)) {
+    // Not between two `+` or two `-`: `a+ +b` is no `a++b`.
+    const before = code[index - 1]
+    if (!((before === '+' || before === '-') && code[index + run.length] === before)) dropped += run.length
+  }
+  return lines > 0 && code.length > MINIFIED_AVERAGE * lines && dropped < MINIFIED_SPACES * code.length
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):

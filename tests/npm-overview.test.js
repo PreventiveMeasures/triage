@@ -115,6 +115,9 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     'spaces in its strings aside')
   assert.equal(category('dist/a.mjs', `${minified.trimEnd()}var p=/* @__PURE__ */ m(1),q=/* @__PURE__ */ n(2);\n`), 'minified',
     'spaces in its comments aside')
+  assert.equal(category('dist/a.mjs', `const q=/["']/g;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a quote in a regular expression starts no string')
+  assert.equal(category('dist/a.mjs', `${'var a=b+ +c,d=e- -f;'.repeat(6)}\n`), 'minified', 'nor are spaces between two operators droppable')
   // Lines as long, written by a person: spaced after commas and around operators.
   assert.equal(category('v4/checks.js', `export { ${Array.from({ length: 30 }, (_, i) => `_check${i} as check${i}`).join(', ')} } from "../core/index.js";\n`), 'ascii')
   assert.equal(category('types/bufferTime.d.ts', Array.from({ length: 4 }, () =>
