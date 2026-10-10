@@ -1088,8 +1088,9 @@ control. A version shows in the bundle view with four tabs:
   readme and licenses), in steps of eight times that agree for a file of about
   130 lines and 5 KiB; and a card of its downloads: the latest
   week's (or month's) and the last year's, each with its unit (`1.2K/week`,
-  `9.6K/year`), and its tier among npm's packages by downloads (top 10, 50,
-  100, 500, 1,000, 5,000, 10,000, 50,000 or 100,000, else unpopular), solid
+  `9.6K/year`), and its tier among npm's packages by downloads (top 10, 20,
+  50, 100, 200, 500, 1,000, 2,000, 5,000, 10,000, 20,000, 50,000 or 100,000,
+  else unpopular), solid
   green for the top 100, then tinted from green to orange, by the most it had in
   any of its latest six weeks, so a week lower for days npm failed to count
   (zeros it may never correct) or for a holiday doesn't move it; the tiers'
