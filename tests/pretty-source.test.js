@@ -115,6 +115,24 @@ test('a view asking for more copies than are kept keeps every one it waits for',
   assert.equal(requests.length, 10, 'and none asked for twice')
 })
 
+test('copies that come once their view moved on are dropped past those kept', async () => {
+  togglePrettySource()
+  // The Code view, one file after another, each asked for in a paint of its own before any came.
+  const files = Array.from({ length: 10 }, (_, i) => `g${i}.min.js`)
+  const details = bundleOf(Object.fromEntries(files.map((path, i) => [path, `${minified}${i}`])))
+  const comes = []
+  for (let i = 0; i < files.length; i++) answers.push(new Promise(resolve => { comes.push(resolve) }))
+  for (let i = 0; i < files.length; i++) {
+    prettyCopy(details, managed, files[i], `${minified}${i}`)
+    await new Promise(resolve => { setTimeout(resolve, 1) })
+  }
+  comes.forEach((come, i) => come(`copy ${i}`))
+  await setImmediate()
+  answers.push('again')
+  assert.equal(prettyCopy(details, managed, files[0], `${minified}0`).status, 'loading', 'the first, dropped once it came, is asked for again')
+  assert.equal(requests.length, 11)
+})
+
 test('a request a session change aborted is asked again on the next paint', async () => {
   togglePrettySource()
   const details = bundleOf({ 'a.min.js': minified })

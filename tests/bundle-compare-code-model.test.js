@@ -90,6 +90,7 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['export const [c, a] = x;', 'export const [c, b] = x;'], ['export const { k: a } = x;', 'export const { k: b } = x;'],
     ['export function a() {}', 'export function b() {}'], ['export class a {}', 'export class b {}'], ['export * as a from "m";', 'export * as b from "m";'],
     ['if (x) /foo/.test(a);', 'if (x) /bar/.test(a);'], ['for await (const x of a) /foo/.test(x);', 'for await (const x of a) /bar/.test(x);'],
+    ['x . foo();', 'x . bar();'], ['x./* c */foo();', 'x./* c */bar();'],
   ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 1, `${before} → ${after}`)
   // Read as a whole: every line of a comment or a template spanning lines is kept.
   for (const [before, after] of [[['/*', ' * foo', ' */', 'f(a);'], ['/*', ' * bar', ' */', 'f(a);']], [['f(`', '  foo', '`);'], ['f(`', '  bar', '`);']]]) {
