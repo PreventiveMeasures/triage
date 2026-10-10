@@ -391,35 +391,6 @@ a.btn {
   font-size: .85rem;
   font-weight: 500;
 }
-.data-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 8px);
-  overflow: hidden;
-}
-.data-list li {
-  display: flex;
-  align-items: baseline;
-  gap: .75rem;
-  padding: .85rem 1rem;
-  font-size: .8rem;
-}
-.data-list li + li {
-  border-top: 1px solid var(--border);
-}
-.data-list strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-weight: 500;
-}
-.data-list span {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: .75rem;
-  white-space: nowrap;
-}
 .data-empty {
   margin: 0;
   color: var(--muted);

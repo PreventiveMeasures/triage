@@ -283,12 +283,6 @@
   }
 
   & .result-count { color: var(--muted); margin-left: auto; }
-
-  & .checkbox-label {
-    display: inline-flex; align-items: center; gap: .25rem;
-    color: var(--muted);
-    & input { margin: 0; }
-  }
 }
 
 /* Analyzer / model dropdown panel — native popover (top layer, so no
@@ -383,7 +377,7 @@
    where the export makes no sense (graph / kanban), and a host that
    still counted as an item would leave the row's gap behind it.
    Sized and framed like the other standalone controls in the row
-   (.trash-btn below, the view-mode group above): 30px tall, bordered,
+   (the view-mode group above): 30px tall, bordered,
    accent on hover. */
 download-button { display: contents; }
 .toolbar-export-btn {
@@ -404,16 +398,6 @@ download-button { display: contents; }
   &:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
   & svg { display: block; }
 }
-
-.trash-btn {
-  height: 30px; box-sizing: border-box;
-  background: var(--bg); color: var(--text); border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 4px); padding: .25rem .55rem; font-size: .8rem;
-  font-family: inherit;
-  &:hover { border-color: var(--accent); }
-  &.active { border-color: var(--critical); color: var(--critical); }
-}
-.toolbar .trash-btn { margin-left: auto; }
 
 /* Triage state selector — Fixed / Invalid / Deleted / Ignored
    buttons. Visible buttons follow the bucket counts; the active one
