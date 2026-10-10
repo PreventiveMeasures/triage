@@ -33,6 +33,7 @@ import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
+import { prettyCopy, prettyPrintable } from './pretty-source.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
@@ -634,6 +635,18 @@ const WRAP_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="non
 const renderSourceWrapToggle = () => html`<button type="button" class="bundle-source-wrap-toggle" data-bundle-source-wrap hidden
   aria-pressed=${state.bundleSourceWrap ? 'true' : 'false'} aria-label="Wrap lines" data-tooltip="Wrap lines">${WRAP_ICON}</button>`
 
+// Pretty-print toggle for the Code tab's bar, on a minified file the server
+// can format (pretty-source.js): busy while its copy is asked for, and
+// saying why where it failed.
+const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
+function renderPrettyToggle(copy) {
+  const status = copy?.status
+  const tooltip = status === 'loading' ? 'Pretty-printing…' : status === 'error' ? `Couldn't pretty-print: ${copy.message}` : 'Pretty-print'
+  return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
+    data-bundle-source-pretty aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
+    aria-label="Pretty-print" data-tooltip=${tooltip}>${PRETTY_ICON}</button>`
+}
+
 const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
   <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
@@ -721,15 +734,16 @@ function plainSource(content) {
 // `lineFindings` (Map<line, Finding[]>) drives the per-line dot in
 // the gutter. Lines without findings render a plain number. The line
 // a clicked result opened (state.bundleSourceTargetLine) gets a band
-// across gutter and code (`.is-target`).
-function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null, lineLinks = false) {
+// across gutter and code (`.is-target`). A `pretty` copy of the file
+// (pretty-source.js) has lines of its own, which the file's mark is not on.
+function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null, lineLinks = false, pretty = false) {
   const lineCount = content.split('\n').length
   const target = state.bundleSourceTargetLine
-  const targetLine = target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
+  const targetLine = !pretty && target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
   const targetEnd = targetLine == null ? null : Math.max(target.end ?? targetLine, targetLine)
   const digits = String(lineCount).length
   const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined, content)
-  const cacheKey = `${details?.integrity ?? ''}\0${path}`
+  const cacheKey = `${details?.integrity ?? ''}\0${path}${pretty ? '\0pretty' : ''}`
   // Trigger prism asynchronously on first sight of this file.
   // The cache value is undefined initially; once the highlight
   // resolves we set it (string for success, null for "no highlight
@@ -875,10 +889,10 @@ function renderBundleSourceBar(path, history = null) {
 
 // Code wrap + finding side panel — the viewer body every source
 // surface (modal, Code slide main pane, Search sidebar) renders.
-function renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines = null, lineLinks = false) {
+function renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines = null, lineLinks = false, pretty = false) {
   return html`<div class="bundle-source-code-wrap">
         ${typeof content === 'string'
-          ? renderBundleSourceLines(content, path, details, lineFindings, matchLines, lineLinks)
+          ? renderBundleSourceLines(content, path, details, lineFindings, matchLines, lineLinks, pretty)
           : html`<div class="bundle-source-empty">Source content not bundled.</div>`}
       </div>
       ${renderBundleSourceFindingPanel(fileFindings)}`
@@ -1557,13 +1571,22 @@ function renderBundleCodeFileNav(history) {
 }
 
 // Main pane of the Code slide — header bar (path + copy button + GitHub
-// link where the file's location is known + file stats + issue stepper) over the shared source-viewer body.
+// link where the file's location is known + pretty-print toggle on a
+// minified file + file stats + issue stepper) over the shared source-viewer body.
 // The stepper cycles the side panel through the open file's
 // findings in line order; its (idx, line) pairs ride in a JSON
 // attribute so the events.js delegate steps without re-deriving
-// the per-file findings.
-function renderBundleCodeMain(details, path, content, fileFindings, lineFindings, entry = null) {
+// the per-file findings. A pretty-printed copy, once it has come, shows in
+// the file's place, with its own stats and none of the file's findings,
+// marks or line links, which are on the file's lines.
+function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
+  const printable = prettyPrintable(details, entry, path, sourceContent)
+  const copy = printable ? prettyCopy(details, entry, path, sourceContent) : null
+  const pretty = copy?.status === 'ready'
+  const content = pretty ? copy.text : sourceContent
+  const fileFindings = pretty ? [] : sourceFileFindings
+  const lineFindings = pretty ? new Map() : sourceLineFindings
   const lineCount = typeof content === 'string' ? content.split('\n').length : 0
   const byteSize = typeof content === 'string' ? utf8ByteLength(content) : 0
   const issueOrder = fileFindings
@@ -1596,6 +1619,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
         data-tooltip-version=${github.package?.version ?? nothing}
       >${unsafeHTML(GITHUB_ICON_SVG)}${github.package ? html`<span hidden data-tooltip-package-icon>${packageIconFor(github.package.ecosystem)}</span>` : nothing}</a>` : nothing}
       <span class="bundle-code-main-spacer"></span>
+      ${printable ? renderPrettyToggle(copy) : nothing}
       ${renderSourceWrapToggle()}
       ${typeof content === 'string'
         ? html`<span class="bundle-code-main-stats">${lineCount.toLocaleString()} ${lineCount === 1 ? 'line' : 'lines'} · ${formatBytes(byteSize)}</span>`
@@ -1624,7 +1648,7 @@ function renderBundleCodeMain(details, path, content, fileFindings, lineFindings
     </header>
     <div class="bundle-code-main-body">
       ${renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
-        Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare())}
+        !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
     </div>`
 }
 

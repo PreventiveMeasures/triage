@@ -18,6 +18,7 @@ import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
 import { startViewTransition } from './render-transition.js'
 import { refreshBundleGraphSidebar, refreshBundleGraphTopPkgs, revealBundleCodeCurrent } from './render-bundle.js'
 import { keepSourceLine } from './source-wrap.js'
+import { togglePrettySource } from './pretty-source.js'
 import { grantAdvisoriesProxyConsent, retryBundleAdvisories } from './render-bundle-advisories.js'
 import { openCommentDialog } from './dialogs/comment-dialog.js'
 import { openFindingSourceDialog } from './dialogs/finding-source-dialog.js'
@@ -320,6 +321,13 @@ function handleBundleSourceClick(e) {
     try { localStorage.setItem(BUNDLE_SOURCE_WRAP_KEY, String(state.bundleSourceWrap)) } catch {}
     render()
     queueMicrotask(restore)
+    return true
+  }
+  // A pretty-printed copy's lines aren't the file's, so it opens at its top.
+  if (e.target.closest('[data-bundle-source-pretty]')) {
+    togglePrettySource()
+    render()
+    resetBundleSourceScroll()
     return true
   }
   const historyButton = e.target.closest('[data-bundle-code-history]')

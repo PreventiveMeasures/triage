@@ -139,7 +139,7 @@ token takes precedence over any login cookie and is confined to an explicit
 allowlist: `/api/shares/:linkId/workspace` (only the token's own workspace),
 `/api/teams/:id/{shared,reports,feed}`, visible reports' read-only
 `triage`, `comments`, and `sources` routes, and authorized
-bundles' `metadata`, `contents`, `download`, and `advisories` routes. Global
+bundles' `metadata`, `contents`, `download`, `pretty`, and `advisories` routes. Global
 endpoints, mutations, unknown routes, cleanup and sync transports are denied.
 The token stays in the URL fragment across browser navigation, rather than
 being sent in page URLs or stored in local storage.
@@ -850,6 +850,24 @@ Clients are expected to support Brotli; no encoding negotiation is needed.
 Both endpoints support HEAD, compressed Content-Length when known, and
 `Cache-Control: private, no-store`.
 
+`GET /api/bundles/:id/pretty?path=&hash=` returns one of its files
+pretty-printed, as Brotli-encoded `text/plain`, for the Code tab's
+pretty-print toggle; the npm viewer's `GET /api/npm/pretty` is the same for a
+package version's files. The file is named by its path and the hash the
+metadata gives it (`sha512-<base64>` of its UTF-8 text); only JavaScript,
+TypeScript, JSX, CSS and JSON files of at most 4 MiB are formatted, with
+[oxfmt](https://oxc.rs/docs/guide/usage/formatter), changing no more than
+layout needs. The first request reads the bundle, checks the file's hash (409
+`hash-mismatch` where it differs) and formats it, off the event loop and two
+files at a time per process (429 `pretty-busy` past that). A file that does
+not parse is 422 `unformattable`; one whose output, checked apart from the
+formatter (`sameCode` in `pretty-print.ts`), differs from it in more than
+layout is 422 `pretty-mismatch` and is logged. The Brotli bytes are kept in
+the bundle's cache directory by content hash, encrypted with its data key
+where storage is, and removed with the bundle; later requests stream them as
+they are. Access is checked before and again after formatting, and the
+endpoint supports HEAD.
+
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,
 Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
@@ -1112,6 +1130,12 @@ control. A version shows in the bundle view with four tabs:
   tag naming the control characters or long lines it holds; and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names.
+  A minified file (as the Overview tags them) of a language the server
+  formats has a pretty-print toggle in its bar, as a managed bundle's has:
+  turned on, the file shows as the server formatted it (see `GET
+  /api/npm/pretty` below), and so does each minified file opened after,
+  until it is turned off. The formatted copy has lines of its own, so line
+  links and marks stay on the file as published.
 - **Treemap**: the files by size, as for bundles, colored by the top-most
   directories that tell them apart, as package colors can't tell one
   package's files apart: below the directories every file shares, each
@@ -1187,7 +1211,16 @@ the version's Socket badge rounds it where that is lower or at most 0.01
 higher and `alerts` most severe first, each
 `{ type, severity, category, file, note }`, `file` its path in the package;
 null where Socket has none. Socket is asked only about a version npm answers
-for without a token: a private package's name never leaves for it. Responses are `private, no-store`. Nothing derived from a package's
+for without a token: a private package's name never leaves for it. `GET
+/api/npm/pretty?name=&version=&path=&hash=` returns one of the version's files
+pretty-printed, formatted and checked as a bundle's are (`GET
+/api/bundles/:id/pretty`), its hash the `sha512-<base64>` of the file's bytes,
+which the client takes of the text it was sent. The files are loaded as for
+`package`, within the same four loads at once. A public version's copy is kept
+by content hash under `cache/npm/`, unencrypted, as what it is made from is
+public, and served as it is to anyone who may read a public version and names
+that hash; a private version's is made for each request and never kept.
+Responses are `private, no-store`. Nothing else derived from a package's
 files is kept on the server; its figures and advisories, which are public,
 are kept an hour, npm's asked for without the server's npm token, and GitHub
 with the reader's own token where they have one. Access to the package is

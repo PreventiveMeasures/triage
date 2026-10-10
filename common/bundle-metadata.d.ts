@@ -1,6 +1,7 @@
 import type { SourceMap } from '@preventive/sourcemap'
 import type { SourcemapEdge } from './bundle-sourcemap.js'
 export const BUNDLE_METADATA_VERSION: number
+export const FILE_HASH: RegExp
 export interface BundleIdentity { integrity: string; kind: string | null; size: number }
 export interface BundleDetails extends BundleIdentity { bundle?: unknown; json?: unknown; map?: SourceMap; edges?: readonly SourcemapEdge[] }
 export function parseBundleContents(text: string, identity: BundleIdentity): BundleDetails

@@ -1206,6 +1206,7 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 .bundle-code-file-nav { display: flex; align-items: center; gap: .2rem; flex: none; }
 .bundle-code-copy-path,
 .bundle-code-github-link,
+.bundle-source-pretty-toggle,
 .bundle-source-wrap-toggle {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1218,9 +1219,14 @@ body:is(.theme-light, .theme-pink, .theme-paper)
 }
 .bundle-code-copy-path:hover,
 .bundle-code-github-link:hover,
+.bundle-source-pretty-toggle:hover,
 .bundle-source-wrap-toggle:hover { background: var(--bg); color: var(--text); }
 .bundle-code-copy-path.copied { color: var(--green); }
+.bundle-source-pretty-toggle[aria-pressed=true],
 .bundle-source-wrap-toggle[aria-pressed=true] { color: var(--accent); }
+/* Busy while its copy is asked for; red where that failed. */
+.bundle-source-pretty-toggle.is-loading { opacity: .55; cursor: progress; }
+.bundle-source-pretty-toggle.is-error { color: var(--critical); }
 .bundle-source-wrap-toggle[hidden] { display: none; }
 .bundle-code-main-spacer { flex: 1; }
 .bundle-code-main-stats {

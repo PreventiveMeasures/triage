@@ -99,6 +99,7 @@ compatible with a shared file, but the launcher requires separate files.
 | Managed avatars | `avatars/<uuid>` plus `.type` sidecar | `.managed/avatars/<uuid>` with embedded content type |
 | Bundle metadata cache | `cache/bundles/<uuid>/...` | `.managed/cache/bundles/<uuid>/...` |
 | Report source cache | `cache/report-sources/<bundleUuid>/...` | `.managed/cache/report-sources/<bundleUuid>/...` |
+| Pretty-printed public npm files | `cache/npm/pretty-v1/<sha512hex>.<ext>.br` | `.managed/cache/npm/pretty-v1/<sha512hex>.<ext>.br` |
 | Managed upload parts | Not enabled by the disk adapter | `.managed/uploads/<derivedUuid>` |
 | Managed encrypted caches (when enabled) | `cache-encrypted-v1/` | `.managed/cache-encrypted-v1/` |
 

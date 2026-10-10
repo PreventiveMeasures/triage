@@ -15,6 +15,10 @@ export function storageRowPaths(type: StorageRowKind, row: Pick<StorageRow, 'id'
   return type === 'report' ? [`reports/${row.id}.br`, `reports/${row.id}`]
     : [`bundles/${row.id}${row.kind === 'sourcemap' ? '.map.br' : ''}`]
 }
+// A cache of public content, which no row owns, kept unencrypted as avatars
+// are: public npm versions' pretty-printed files (pretty-print.ts).
+export const PUBLIC_CACHE = 'npm'
+export const PUBLIC_CACHE_PREFIX = `cache/${PUBLIC_CACHE}/`
 export function storageOwner(identity: string): { type: StorageRowKind; id: string; cache: boolean } | null {
   const match = /^(reports|bundles)\/([^/]+)$/u.exec(identity)
   if (match) {

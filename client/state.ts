@@ -134,6 +134,7 @@ export interface State {
   bundleSourceFindingIdx: number | null
   bundleSourceTargetLine: { bundle: string | null; path: string; line: number; end?: number; anchor?: number } | null
   bundleSourceWrap: boolean
+  bundleSourcePretty: boolean
   // A file for the Code tab to open once its sources load: a link's, by
   // number, or the one open in the bundle before, by path.
   bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
@@ -650,6 +651,8 @@ export const state: State = store<State>({
   // Whether the source viewer wraps long lines: on unless turned off. A
   // reading preference, persisted like kanbanDetailFullscreen.
   bundleSourceWrap: readSavedBundleSourceWrap() ?? true,
+  // Whether the Code tab shows minified files pretty-printed (pretty-source.js).
+  bundleSourcePretty: false,
   // The file a managed link opens the Code tab on, by its 1-based number in
   // the bundle's sorted sources, and the lines it marks. Kept until the tab
   // has the sources to read it from, and dropped with any other bundle or

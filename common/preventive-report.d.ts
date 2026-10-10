@@ -19,4 +19,5 @@ declare module '@preventive/report' {
   export function parseCodexCsvToScans(content: string): { displayName: string, data: { type: string, source: string, findings: unknown[] } }[]
 
   export function backfillFindingIds(findings: Record<string, unknown>[]): Promise<void>
+  export function computeFileHash(source: string | Uint8Array): Promise<string>
 }

@@ -27,6 +27,9 @@ export function bundleNeedsSources(tab, sourceFile = null) {
   return Boolean(sourceFile) || SOURCE_TABS.has(tab)
 }
 
+// A file's hash as metadata names it: computeFileHash's sha512 of its text.
+export const FILE_HASH = /^sha512-[A-Za-z0-9+/]{86}==$/u
+
 // Bound outstanding WebCrypto jobs: serial awaits incur one task round-trip
 // per file, while an unbounded Promise.all holds every encoded body at once.
 export function computeBundleFileHashes(details) {
@@ -149,7 +152,7 @@ export function parseBundleMetadata(data, integrity) {
     if (!Array.isArray(row) || (row.length !== 4 && !(legacySizes && row.length === 3))) throw new Error('Invalid bundle metadata file')
     const [path, size, hash, lines] = row
     if (typeof path !== 'string' || fileSizes.has(path) || (size !== null && (!Number.isSafeInteger(size) || size < 0))
-        || (hash !== null && (typeof hash !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(hash)))
+        || (hash !== null && (typeof hash !== 'string' || !FILE_HASH.test(hash)))
         || (size === null && hash !== null) || (legacySizes && size !== null && hash === null)
         || (lines !== undefined && lines !== null && (!Number.isSafeInteger(lines) || lines < 0))) throw new Error('Invalid bundle metadata file')
     fileSizes.set(path, size)
