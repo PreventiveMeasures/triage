@@ -43,8 +43,8 @@ const RENAMED_MAX_LENGTH = 3
 // divides), a name, a bracket, or what lies between, operators and numbers.
 const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
 // Words after which a value starts, so a `/` begins a regular expression.
-const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw',
-  'typeof', 'void', 'yield'])
+const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'extends', 'in', 'instanceof', 'new', 'of', 'return',
+  'throw', 'typeof', 'void', 'yield'])
 // Words a `{` after which opens a block, as do `)`, `;`, `{`, `}`, `=>` and
 // the start; any other opens an object, a pattern or a class body.
 const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
