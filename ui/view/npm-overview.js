@@ -61,7 +61,9 @@ function npmSocketReport(entry) {
   return data.status === 'ready' ? data.socket : null
 }
 
-const SOCKET_SCORES = [['overall', 'Overall'], ['supplyChain', 'Supply chain'], ['vulnerability', 'Vulnerability'], ['quality', 'Quality'], ['maintenance', 'Maintenance'], ['license', 'License']]
+// Its five, as Socket's page shows them: its overall score is only the
+// lowest of them.
+const SOCKET_SCORES = [['supplyChain', 'Supply chain'], ['vulnerability', 'Vulnerability'], ['quality', 'Quality'], ['maintenance', 'Maintenance'], ['license', 'License']]
 
 // Its Socket scores, out of 100, each a chip as wide as its text, after a
 // ring filled to it, tinted by how it stands: 80 and over, 50 and over, and
