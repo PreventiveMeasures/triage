@@ -81,11 +81,15 @@ function nameless(text) {
   // Each `var`, `let` or `const` under way: the depth of its declarators,
   // whether in their names (before `=`, patterns too) rather than what they
   // are set to, whether exported. Each `(…)` under way but a statement's,
-  // and the names in it but defaults: parameters, if `=>` or `{` follows.
-  const declarations = [], groups = []
+  // and the names in it: parameters, if `=>` or `{` follows. The depths
+  // whose `=` began a default (`{ x = a }`), until their next `,`: no
+  // names declared there.
+  const declarations = [], defaulted = new Set(), groups = []
+  const inDefault = (from, to = opens.length) => [...defaulted].some(depth => depth >= from && depth <= to)
   // `exporting` between `export` and its name; `naming` before a name
-  // declared as `function a` is.
-  let at = 0, exporting = false, keyPlace = false, last = null, naming = false
+  // declared as `function a` is; `extending` the depth of an `extends`
+  // whose class body is the next `{` there.
+  let at = 0, exporting = false, extending = -1, keyPlace = false, last = null, naming = false
   const keep = segment => {
     key.push(segment)
     for (let i = segment.indexOf('\n'); i !== -1; i = segment.indexOf('\n', i + 1)) names.push([])
@@ -96,10 +100,11 @@ function nameless(text) {
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
     last = segment[end - 1]
-    const declaration = declarations.at(-1), group = groups.at(-1)
+    const declaration = declarations.at(-1)
     const next = segment.lastIndexOf(','), set = segment.search(/(?<![=!<>])=(?![=>])[^=]*$/u)
     if (declaration?.depth === opens.length && set !== next) declaration.binding = next > set
-    if (group?.depth === opens.length && set !== next) group.defaulted = set > next
+    else if (set > next) defaulted.add(opens.length)
+    else if (next > set || segment.includes(';')) defaulted.delete(opens.length)
     if (segment.includes(';')) while (declarations.length > 0 && opens.length <= declarations.at(-1).depth) declarations.pop()
     // A generator's `*` leaves its name in its key place, or to be declared.
     if (last === '*' && segment.slice(0, end - 1).trim() === '') return
@@ -129,10 +134,12 @@ function nameless(text) {
       exporting = keyPlace = naming = false
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
-      const block = first === '{' && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
+      // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
+      const block = first === '{' && extending !== opens.length && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
+      if (first === '{' && extending === opens.length) extending = -1
       const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object' : first === '(' && CONTROL.has(last) ? 'control' : first
       opens.push(open)
-      if (open === '(') groups.push({ defaulted: false, depth: opens.length, names: [] })
+      if (open === '(') groups.push({ depth: opens.length, names: [] })
       last = first
       keyPlace = first === '{' && !block
       exporting = naming = false
@@ -148,10 +155,11 @@ function nameless(text) {
       last = open === 'control' ? ';' : first
       keyPlace = first === '}' && opens.at(-1) === 'object'
       exporting = naming = false
+      for (const depth of defaulted) if (depth > opens.length) defaulted.delete(depth)
       while (declarations.length > 0 && opens.length < declarations.at(-1).depth) declarations.pop()
     } else {
       const declaration = declarations.at(-1), group = groups.at(-1)
-      const binding = declaration?.binding && opens.length >= declaration.depth
+      const binding = declaration?.binding && opens.length >= declaration.depth && !inDefault(declaration.depth + 1)
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:` after it.
       const property = last === '.' || text[at] === ':'
@@ -162,7 +170,8 @@ function nameless(text) {
       }
       ARROW.lastIndex = at
       if (naming || binding || ARROW.test(text)) declared.add(token)
-      if (group && !group.defaulted) group.names.push(token)
+      if (group && !inDefault(group.depth)) group.names.push(token)
+      if (token === 'extends') extending = opens.length
       if (binding && (token === 'in' || token === 'of')) declaration.binding = false
       if (token === 'const' || token === 'let' || token === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
       if (token === 'export') exporting = true
@@ -222,6 +231,10 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   return { blocks, renamed }
 }
 
+// A tag where a value starts (`(<a />`, `=> <b>`, `return <i>`): JSX, whose
+// tags are no bindings, so its file's names are not set aside.
+const JSX = /(?:^|[(=,:?&|!{};>[]|\breturn)[ \t]*<\/?[A-Za-z][\w.:-]*(?:\s|\/?>)/mu
+
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
 // added file is diffed against '' and a removed one against it, so all
@@ -232,7 +245,7 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
 // the next; `renamed` holds such removed lines.
 export function lineDiff(before, after, { ignoreWhitespace = false, ignoreRenames = false } = {}) {
   const a = textLines(before), b = textLines(after)
-  const { blocks, renamed } = ignoreRenames ? renameBlocks(before, after, a, b, ignoreWhitespace) : { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
+  const { blocks, renamed } = ignoreRenames && !JSX.test(before) && !JSX.test(after) ? renameBlocks(before, after, a, b, ignoreWhitespace) : { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
   let additions = 0, deletions = 0
   for (const block of blocks) {
     additions += block.b1 - block.b0
