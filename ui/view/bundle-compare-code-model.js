@@ -249,8 +249,10 @@ function nameless(text) {
         && !inComputed(declaration.depth)
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:`
-      // after it; or a label, after `break` or `continue` (`break a`).
-      const property = last === '.' || text[at] === ':' || last === 'break' || last === 'continue'
+      // after it; or a label, after `break` or `continue` (`break a`), which a
+      // line break still ends.
+      const jump = last === 'break' || last === 'continue'
+      const property = last === '.' || text[at] === ':' || jump
       // A label where a statement starts (`a: {`), not a key: its block a block.
       if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
       let aside = null
@@ -287,7 +289,7 @@ function nameless(text) {
       naming = NAMING.has(word) || (naming && word === 'async')
       // `for await (` is a `for`'s condition still.
       if (!(keyPlace && MODIFIERS.has(token)) && !(token === 'await' && last === 'for')) {
-        last = word ?? '_'
+        last = jump ? last : word ?? '_'
         keyPlace = false
       }
     }
