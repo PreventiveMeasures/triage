@@ -256,8 +256,10 @@ const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([
 
 // What the Overview reads of a version's files, once a version: their
 // `paths`, each one's readability (npmFileReadability) and extension by path,
-// how many files each category has, the `binaries`, sorted, and its file types
-// (npmFileTypes).
+// how many files each category has, the `binaries`, sorted, its file types
+// (npmFileTypes), and its `content`: its text files, their lines of code and
+// all its files' bytes (`unpacked`), the package's own files
+// (isNpmPackageFile) left out, as every package has them.
 const readabilities = new WeakMap()
 export function npmFilesRead(details) {
   let known = readabilities.get(details)
@@ -266,10 +268,17 @@ export function npmFilesRead(details) {
     const byPath = new Map(sources.map((path, i) => [path, npmFileReadability(path, sourcesContent[i])]))
     const counts = new Map()
     for (const { category } of byPath.values()) counts.set(category, (counts.get(category) ?? 0) + 1)
+    const lines = bundleLineCounts(details), sizes = bundleFileSizes(details)
+    const content = { files: 0, lines: 0, unpacked: 0 }
+    for (const path of sources.filter(source => !isNpmPackageFile(source))) {
+      if (byPath.get(path).category !== 'binary') content.files++
+      content.lines += lines.get(path) ?? 0
+      content.unpacked += sizes.get(path) ?? 0
+    }
     known = {
       paths: new Set(sources), byPath, counts, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
       binaries: new Set(sources.filter(path => byPath.get(path).category === 'binary').toSorted((a, b) => a.localeCompare(b))),
-      types: npmFileTypes(sources, bundleFileSizes(details), bundleLineCounts(details)),
+      types: npmFileTypes(sources, sizes, lines), content,
     }
     readabilities.set(details, known)
   }

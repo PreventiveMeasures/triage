@@ -1055,11 +1055,15 @@ control. A version shows in the bundle view with four tabs:
   GitHub repository, or its directory or readme there, as npm's default
   does) and integrity; beside them entry points,
   each with its file's icon and opening its file, Main and Module in one row
-  where they name the same file, engines, install scripts, how many
-  dependencies it has, and its files with the lines of code they add up to,
-  its tarball's size and what it unpacks to, each but the tarball's size tinted by
-  how big it is (tiny, small, medium, large or gigantic, in steps of about
-  eight times); and a card of its downloads: the latest
+  where they name the same file, engines, install scripts (each with its
+  command, a file it names opening it, in the order npm runs them, and
+  `node-gyp rebuild` where a `binding.gyp` has no install script of its own),
+  how many dependencies it has, and its files with the lines of code they add
+  up to, its tarball's size and what it unpacks to, each but the tarball's
+  size tinted by how big it is: tiny, small, medium, large or gigantic, files,
+  lines and bytes counted without the files every package has (package.json,
+  readme and licenses), in steps of eight times that agree for a file of about
+  130 lines and 5 KiB; and a card of its downloads: the latest
   week's (or month's) and the last year's, each with its unit (`1.2K/week`,
   `9.6K/year`), over a chart of them across the year by week, or by calendar
   month (the last twelve complete ones), with the switch between the two at its top

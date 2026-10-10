@@ -498,9 +498,29 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
   </dl>`
 }
 
+const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare']
+
+// The scripts npm runs as it installs the package, `[script, command]`, in
+// the order it runs them: those its manifest names, and `node-gyp rebuild`
+// for one with a `binding.gyp` at its root (`files`) and neither install
+// script of its own, as npm runs then.
+export function npmInstallScripts(manifest, files = null) {
+  const scripts = { ...manifest.installScripts }
+  if (!scripts.preinstall && !scripts.install && files?.has('binding.gyp')) scripts.install = 'node-gyp rebuild'
+  return INSTALL_SCRIPTS.filter(script => typeof scripts[script] === 'string').map(script => [script, scripts[script]])
+}
+
+// An install script's command, each word naming a file of the package
+// opening it.
+const scriptCommand = (command, files) => command.split(/(\s+)/u).map(word => {
+  const path = word.replace(/^\.\//u, '')
+  return files?.has(path) ? factFile(path, files, word) : word
+})
+
 // The package's entry points, each with its file's icon, Main and Module in
 // one row where they name the same file; its kind of module, bins, engines,
-// install scripts and how many dependencies it has, sized as its files are.
+// install scripts, each with its command, and how many dependencies it has,
+// sized as its files are.
 export function npmOverviewExtras(entry, files = null) {
   const { manifest } = entry.npm
   const entries = ['main', 'module', 'types'].filter(field => typeof manifest[field] === 'string')
@@ -511,15 +531,15 @@ export function npmOverviewExtras(entry, files = null) {
     entries.splice(entries.indexOf(module), 1)
   }
   const bins = Object.keys(manifest.bin ?? {})
-  const scripts = Object.keys(manifest.installScripts ?? {})
+  const scripts = npmInstallScripts(manifest, files)
   const dependencies = npmDependencies(manifest).length
   return html`
     ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file)}${factFile(file, files, path)}</span></dd>`)}
     ${manifest.type ? html`<dt>Type</dt><dd class="mono">${manifest.type}</dd>` : nothing}
     ${bins.length > 0 ? html`<dt>Bin</dt><dd class="mono">${bins.join(', ')}</dd>` : nothing}
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
-    ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="mono npm-install-scripts"
-      data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}
+    ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="npm-install-scripts">${scripts.length === 0 ? 'Yes'
+      : scripts.map(([script, command]) => html`<div class="npm-install-script"><span class="npm-install-script-name">${script}</span><code>${scriptCommand(command, files)}</code></div>`)}</dd>` : nothing}
     <dt>Dependencies</dt><dd>${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}</dd>`
 }
 

@@ -2688,12 +2688,13 @@ function renderNpmPackageOverview(entry, details) {
   const { sources } = details.json
   const sizeMap = bundleFileSizes(details)
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
-  const { paths, binaries, byPath } = npmFilesRead(details)
+  const { paths, binaries, byPath, content } = npmFilesRead(details)
   return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files: paths }), npmOverviewExtras(entry, paths), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
     summaryExtra: html`${npmSocketAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
-    overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: npmSized,
+    // Sized by what the package holds beyond the files every package has.
+    overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: (measure, value, text) => npmSized(measure, content[measure], text),
     fileTag: path => npmReadabilityTag(byPath.get(path)), fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
   })
 }

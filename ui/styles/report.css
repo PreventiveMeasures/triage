@@ -3469,6 +3469,21 @@ a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
   font-family: system-ui, sans-serif; font-size: .6rem; line-height: 1.35; white-space: nowrap;
 }
 .bundles-detail-meta .npm-deprecated { color: var(--critical); }
+/* Each install script on a line of its own: its name, then its command whole,
+   under its name where they don't fit side by side, broken between words. */
+.npm-install-script {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .5rem;
+
+  & + & { margin-top: .15rem; }
+  & code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem;
+    white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+  }
+}
+.npm-install-script-name {
+  flex-shrink: 0;
+  color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem;
+}
 /* An entry point, after its file's icon, on one line, cut short where it
    doesn't fit. */
 .npm-entry-point {

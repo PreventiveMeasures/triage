@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -283,4 +283,14 @@ test('a search kept once it opens: newest first, for its user alone, each remova
   assert.deepEqual(npmRecentSearches(), ['@scope/pkg@1.2.3'])
   stored.set(`deepview.npm.recent.${user.id}`, '{not json')
   assert.deepEqual(npmRecentSearches(), [], 'a list that does not read is none')
+})
+
+test('install scripts run in npm\'s order, node-gyp\'s where a binding.gyp has no install script of its own', () => {
+  const manifest = { installScripts: { postinstall: 'node setup.js', preinstall: 'echo hi' } }
+  assert.deepEqual(npmInstallScripts(manifest), [['preinstall', 'echo hi'], ['postinstall', 'node setup.js']])
+  const gyp = new Set(['binding.gyp', 'package.json'])
+  assert.deepEqual(npmInstallScripts({}, gyp), [['install', 'node-gyp rebuild']])
+  assert.deepEqual(npmInstallScripts({ installScripts: { install: 'prebuild-install' } }, gyp), [['install', 'prebuild-install']])
+  assert.deepEqual(npmInstallScripts({ installScripts: { preinstall: 'x' } }, gyp), [['preinstall', 'x']], 'a preinstall of its own stops it too')
+  assert.deepEqual(npmInstallScripts({}), [])
 })
