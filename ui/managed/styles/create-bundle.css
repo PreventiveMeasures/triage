@@ -42,7 +42,9 @@
   box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .45);
 }
 .revision-menu[data-positioned] { visibility: visible; }
-.revision-options { display: grid; grid-template-columns: repeat(var(--revision-columns, 1), minmax(0, 1fr)); gap: .15rem .5rem; }
+.revision-options { display: flex; flex-direction: column; gap: .15rem; }
+.revision-section { display: grid; grid-template-columns: repeat(var(--revision-columns, 1), minmax(0, 1fr)); gap: .15rem .5rem; }
+.revision-section + .revision-section { padding-top: .15rem; border-top: 1px solid var(--border); }
 .revision-options button {
   min-width: 0; padding: .375rem .6rem; border: 0; border-radius: var(--ui-radius, 4px); background: transparent; color: var(--text);
   text-align: left; font-size: .76rem;
@@ -51,8 +53,8 @@
 .revision-options button[aria-selected=true] { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .revision-options button:hover, .revision-options button[data-active] { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .revision-options button[data-active] { outline: 1px solid var(--accent); outline-offset: -1px; }
-/* A collapsible prefix heads its own row, its branches in the rows below. */
-.revision-options .revision-group { grid-column: 1 / -1; display: flex; align-items: center; gap: .4rem; }
+/* A collapsible prefix heads its own row, its branches in a section below. */
+.revision-options .revision-group { display: flex; align-items: center; gap: .4rem; }
 .revision-group svg { flex: none; width: .75rem; height: .75rem; color: var(--muted); }
 .revision-group[aria-expanded=false] svg { rotate: -90deg; }
 .revision-options .revision-group .count {

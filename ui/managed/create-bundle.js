@@ -11,13 +11,41 @@ import { defaultBundleConditions } from './bundle-conditions.js'
 const commitIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/></svg>`
 const chevronIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`
 const MAX_CACHED_DIRECTORIES = 100
-let measureContext
 
 const REVISION_TYPES = [
   { kind: 'branch', label: 'Branch', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="3" r="1.5"/><path d="M4 4.5v7m0-3h3a5 5 0 0 0 5-4"/></svg>` },
   { kind: 'tag', label: 'Tag', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5Z"/><circle cx="5" cy="5" r="1"/></svg>` },
   { kind: 'commit', label: 'Commit SHA', icon: commitIcon },
 ]
+
+const VERSION = /^v?(\d+(?:\.(?:\d+|x))*)(?:[-+](.+))?$/iu
+
+// Release lines (v22.x, 3.12), other versions (v22.x-staging), or the rest.
+function branchKind(name) {
+  const match = VERSION.exec(name)
+  if (!match) return 'other'
+  return match[2] === undefined ? 'line' : 'version'
+}
+
+// Version-like branches (v22.x, 3.12, v22.x-staging) lead, newest line first,
+// plain lines before suffixed ones so each reads as one run. The rest keep
+// GitHub's order after them.
+export function orderBranches(names) {
+  const keyed = names.map(name => {
+    const match = VERSION.exec(name)
+    return { name, parts: match?.[1].split('.').map(part => part.toLowerCase() === 'x' ? Infinity : Number(part)), suffix: match?.[2] ?? '' }
+  })
+  const compare = (a, b) => {
+    if (Boolean(a.suffix) !== Boolean(b.suffix)) return a.suffix ? 1 : -1
+    // A missing part or `x` names the whole line, above its releases.
+    for (let i = 0; i < Math.max(a.parts.length, b.parts.length); i++) {
+      const diff = (b.parts[i] ?? Infinity) - (a.parts[i] ?? Infinity)
+      if (diff) return diff
+    }
+    return a.suffix.localeCompare(b.suffix)
+  }
+  return [...keyed.filter(item => item.parts).toSorted(compare), ...keyed.filter(item => !item.parts)].map(item => item.name)
+}
 
 // Branches sharing a first path segment collapse under it when there are more
 // than two of them, listed after the other branches. An expanded prefix lists
@@ -29,7 +57,7 @@ export function groupBranches(names, expanded, defaultBranch) {
   for (const [key, members] of groups) {
     if (members.length <= 2) continue
     entries.push({ prefix: key, count: members.length, expanded: expanded.has(key) })
-    if (expanded.has(key)) entries.push(...members.map(name => ({ name, label: name.slice(key.length + 1) })))
+    if (expanded.has(key)) entries.push(...orderBranches(members.map(name => name.slice(key.length + 1))).map(label => ({ name: `${key}/${label}`, label, group: key })))
   }
   return entries
 }
@@ -231,8 +259,8 @@ export class ManagedCreateBundle extends LitElement {
 
   revisionSuggestions() {
     const choices = this._refKind === 'branch' ? this._refs.branches : this._refKind === 'tag' ? this._refs.tags : []
-    const ordered = this._refKind === 'branch' && this._refs.defaultBranch
-      ? [this._refs.defaultBranch, ...choices.filter(name => name !== this._refs.defaultBranch)] : choices
+    const ordered = this._refKind === 'branch'
+      ? [...this._refs.defaultBranch ? [this._refs.defaultBranch] : [], ...orderBranches(choices.filter(name => name !== this._refs.defaultBranch))] : choices
     const query = this._revisionQuery.trim().toLowerCase()
     return ordered.filter(name => name.toLowerCase().includes(query))
   }
@@ -248,6 +276,22 @@ export class ManagedCreateBundle extends LitElement {
     const expanded = new Set(this._expandedPrefixes)
     if (!expanded.delete(prefix)) expanded.add(prefix)
     this._expandedPrefixes = expanded
+  }
+
+  // Runs of like branches (release lines, other versions, the rest, each open
+  // group) lay out as separate grids, each sized to its own names. The default
+  // branch joins the run after it.
+  revisionSections(entries) {
+    const kind = entry => entry.group ?? (this._refKind === 'branch' ? branchKind(entry.name) : 'all')
+    const next = entries[1]?.prefix == null ? entries[1] : undefined
+    const sections = []
+    for (const [index, entry] of entries.entries()) {
+      if (entry.prefix != null) { sections.push({ header: entry, index }); continue }
+      const key = kind(index === 0 && entry.name === this._refs.defaultBranch && next ? next : entry)
+      if (sections.at(-1)?.key === key) sections.at(-1).items.push({ entry, index })
+      else sections.push({ key, items: [{ entry, index }] })
+    }
+    return sections
   }
 
   showRevisionSuggestions(all = true) {
@@ -279,34 +323,35 @@ export class ManagedCreateBundle extends LitElement {
     const margin = 8
     const gap = 6
     const fontSize = parseFloat(getComputedStyle(this).fontSize)
-    // Size columns to the longest name and its option's padding, so compact
-    // names such as version tags fit more per row. Longer names still
-    // ellipsize past 15em. Names in collapsed groups count too, so opening a
-    // group never reflows the menu.
-    const all = this.revisionEntries({ has: () => true })
-    const option = options.querySelector('[role=option]:not(.revision-group)')
-    let columnWidth = 5 * fontSize
-    if (option) {
-      const style = getComputedStyle(option)
-      measureContext ??= document.createElement('canvas').getContext('2d')
-      measureContext.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
-      measureContext.letterSpacing = style.letterSpacing
-      const labelWidth = all.reduce((widest, entry) => entry.prefix == null ? Math.max(widest, measureContext.measureText(entry.label ?? entry.name).width) : widest, 0)
-      const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
-      columnWidth = Math.max(columnWidth, Math.min(15 * fontSize, Math.ceil(labelWidth + padding) + 1))
-    }
-    const spacing = parseFloat(getComputedStyle(options).columnGap) || 0
+    // Size each section's columns to its longest name and the option's padding,
+    // so compact names such as version tags fit more per row. Longer names
+    // still ellipsize past 15em.
+    const range = document.createRange()
+    const option = options.querySelector('.revision-section > button')
+    const padding = option ? parseFloat(getComputedStyle(option).paddingLeft) + parseFloat(getComputedStyle(option).paddingRight) : 0
+    const sections = [...options.querySelectorAll('.revision-section')].map(section => {
+      let labelWidth = 0
+      for (const label of section.querySelectorAll('button > span')) {
+        range.selectNodeContents(label)
+        labelWidth = Math.max(labelWidth, range.getBoundingClientRect().width)
+      }
+      return { section, count: section.children.length, columnWidth: Math.max(5 * fontSize, Math.min(15 * fontSize, Math.ceil(labelWidth + padding) + 1)) }
+    })
+    const spacing = sections.length > 0 ? parseFloat(getComputedStyle(sections[0].section).columnGap) || 0 : 0
     const chrome = menu.offsetWidth - options.clientWidth
-    const fits = width => Math.max(1, Math.floor((width - chrome + spacing) / (columnWidth + spacing)))
     // Fill the field's width, widening past a narrow field to up to three
-    // columns once there are more than eight suggestions per column.
-    const count = all.length
-    const fit = Math.min(fits(window.innerWidth - 2 * margin), Math.max(fits(rect.width), Math.min(3, Math.ceil(count / 8))))
-    // Short lists stay one column; longer ones spread evenly over the rows they need.
-    const columns = count <= 8 ? 1 : Math.ceil(count / Math.ceil(count / fit))
-    const width = Math.min(Math.max(rect.width, columns * (columnWidth + spacing) - spacing + chrome), window.innerWidth - 2 * margin)
+    // columns once a section has more than eight suggestions per column.
+    const width = Math.min(window.innerWidth - 2 * margin, Math.max(rect.width,
+      ...sections.map(({ count, columnWidth }) => Math.min(3, Math.ceil(count / 8)) * (columnWidth + spacing) - spacing + chrome)))
+    // Short lists stay one column, counting branches in collapsed groups so
+    // opening one never reflows the rest. Longer sections spread evenly over
+    // the rows they need.
+    const short = this.revisionEntries({ has: () => true }).length <= 8
+    for (const { section, count, columnWidth } of sections) {
+      const fit = Math.max(1, Math.floor((width - chrome + spacing) / (columnWidth + spacing)))
+      section.style.setProperty('--revision-columns', short ? 1 : Math.ceil(count / Math.ceil(count / fit)))
+    }
     menu.style.width = `${width}px`
-    menu.style.setProperty('--revision-columns', columns)
     menu.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))}px`
     const below = window.innerHeight - rect.bottom - gap - margin
     const above = rect.top - gap - margin
@@ -466,9 +511,9 @@ export class ManagedCreateBundle extends LitElement {
           <input class="revision-name" type="text" aria-label=${revisionLabel} role=${ifDefined(this._refKind === 'commit' ? undefined : 'combobox')} aria-autocomplete=${ifDefined(this._refKind === 'commit' ? undefined : 'list')} aria-expanded=${ifDefined(this._refKind === 'commit' ? undefined : String(this._revisionOpen))} aria-controls=${ifDefined(this._refKind === 'commit' ? undefined : 'bundle-revisions')} aria-activedescendant=${ifDefined(this._revisionOpen && this._activeRevision >= 0 ? `revision-${this._activeRevision}` : undefined)} autocomplete="off" placeholder=${this._refKind === 'commit' ? 'Commit SHA…' : `Choose or enter a ${this._refKind}…`} .value=${this._refName} ?disabled=${!repo || this._loadingRefs} @focus=${() => this.showRevisionSuggestions()} @click=${() => this.showRevisionSuggestions()} @keydown=${this.revisionKeyDown} @input=${event => { this.editRevision(event.target.value); this.showRevisionSuggestions(false) }}>
           ${this._refKind === 'commit' ? nothing : html`<button type="button" class="revision-expand" aria-label=${`Show ${this._refKind} suggestions`} aria-expanded=${this._revisionOpen} ?disabled=${!repo || this._loadingRefs} @mousedown=${event => event.preventDefault()} @click=${() => { if (this._revisionOpen) this.closeRevisionSuggestions(); else { this.renderRoot.querySelector('.revision-name').focus(); this.showRevisionSuggestions() } }}>${chevronIcon}</button>`}
           <div class="revision-menu" id="bundle-revisions" popover="auto" role="listbox" aria-label=${`${revisionLabel} suggestions`} @beforetoggle=${event => { this._revisionOpen = event.newState === 'open'; delete event.target.dataset.positioned; if (!this._revisionOpen) this._activeRevision = -1 }}>
-            <div class="revision-options">${choices.map((entry, index) => entry.prefix == null
-              ? html`<button type="button" role="option" id=${`revision-${index}`} aria-label=${ifDefined(entry.label === undefined ? undefined : entry.name)} aria-selected=${entry.name === this._refName} ?data-active=${index === this._activeRevision} tabindex="-1" @mousedown=${event => event.preventDefault()} @click=${() => this.pickRevision(entry.name)}><span data-tooltip-truncated data-tooltip=${entry.name}>${entry.label ?? entry.name}</span></button>`
-              : html`<button type="button" role="option" class="revision-group" id=${`revision-${index}`} aria-selected="false" aria-expanded=${entry.expanded} ?data-active=${index === this._activeRevision} tabindex="-1" @mousedown=${event => event.preventDefault()} @click=${() => { this._activeRevision = -1; this.toggleRevisionGroup(entry.prefix) }}>${chevronIcon}<span>${entry.prefix}/</span><span class="count" aria-label=${`${entry.count} branches`}>${entry.count}</span></button>`)}</div>
+            <div class="revision-options">${this.revisionSections(choices).map(({ header, index: headerIndex, items }) => header
+              ? html`<button type="button" role="option" class="revision-group" id=${`revision-${headerIndex}`} aria-selected="false" aria-expanded=${header.expanded} ?data-active=${headerIndex === this._activeRevision} tabindex="-1" @mousedown=${event => event.preventDefault()} @click=${() => { this._activeRevision = -1; this.toggleRevisionGroup(header.prefix) }}>${chevronIcon}<span>${header.prefix}/</span><span class="count" aria-label=${`${header.count} branches`}>${header.count}</span></button>`
+              : html`<div class="revision-section" role="none">${items.map(({ entry, index }) => html`<button type="button" role="option" id=${`revision-${index}`} aria-label=${ifDefined(entry.label === undefined ? undefined : entry.name)} aria-selected=${entry.name === this._refName} ?data-active=${index === this._activeRevision} tabindex="-1" @mousedown=${event => event.preventDefault()} @click=${() => this.pickRevision(entry.name)}><span data-tooltip-truncated data-tooltip=${entry.name}>${entry.label ?? entry.name}</span></button>`)}</div>`)}</div>
             ${choices.length > 0 ? nothing : html`<p class="revision-empty">${this._revisionQuery ? 'No matching suggestions. Enter a revision name to browse.' : `No ${this._refKind} suggestions available.`}</p>`}
           </div>
         </form>
