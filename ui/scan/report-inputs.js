@@ -203,7 +203,7 @@ export class ReportInputs extends LitElement {
     const detail = details.join(' · ')
     return html`<label class="option"><input type="checkbox" ?disabled=${this._loading} .checked=${this._current.ids.has(input.id)} @change=${e => this._toggle(input.id, e.target.checked)}>${unsafeHTML(REPORT_FILE_ICONS[input.analyzer] ?? REPORT_FILE_ICONS.default)}<span class="copy"><strong data-tooltip-truncated data-tooltip=${name}>${name}</strong><span data-tooltip-truncated data-tooltip=${detail}>${detail}</span></span></label>`
   }
-  static styles = css`
+  static styles = [css`
     :host { display: block; min-width: 0; }
     * { box-sizing: border-box; }
     button, .field > span, .list-head, .empty:not([role='alert']) { cursor: default; user-select: none; -webkit-user-select: none; }
@@ -212,7 +212,6 @@ export class ReportInputs extends LitElement {
     .field { display: grid; flex: 1 1 14rem; gap: .3rem; max-width: 32rem; min-width: 0; }
     .field > span { color: var(--muted); font-size: .72rem; }
     button { padding: .3rem .55rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 5px); color: var(--text); background: var(--bg); font: inherit; font-size: .74rem; cursor: default; }
-    ${ROW_ACTION_STYLES}
     .repository-fields { display: flex; align-items: start; gap: .4rem; }
     .repository-fields > .row-action { margin-top: .25rem; }
     .repository-rows { display: grid; flex: 1; min-width: 0; gap: .65rem; }
@@ -239,6 +238,6 @@ export class ReportInputs extends LitElement {
     .copy span { max-width: 55%; color: var(--muted); font-size: .66rem; }
     .empty { margin: 0; padding: 1rem .9rem; color: var(--muted); font-size: .76rem; }
     button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  `
+  `, ROW_ACTION_STYLES]
 }
 if (!customElements.get('scan-report-inputs')) customElements.define('scan-report-inputs', ReportInputs)

@@ -13,7 +13,7 @@ import './regime-editor.js'
 import './depth-toggle.js'
 import './mode-selector.js'
 import { SCAN_PAGE_STYLES } from './page-styles.js'
-import { ADD_ROW_ICON, REMOVE_ROW_ICON } from './row-actions.js'
+import { ADD_ROW_ICON, REMOVE_ROW_ICON, ROW_ACTION_STYLES } from './row-actions.js'
 import { codeScanFiles, formatBytes, sourceMetrics, sourceStats } from './metrics.js'
 import '../view/bundle-scope-selector.js'
 
@@ -48,7 +48,7 @@ export class ScanPage extends LitElement {
     _notice: { state: true },
   }
 
-  static styles = SCAN_PAGE_STYLES
+  static styles = [SCAN_PAGE_STYLES, ROW_ACTION_STYLES]
 
   constructor() {
     super()
