@@ -85,6 +85,11 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['x = { a() { return 1 } };', 'x = { b() { return 1 } };'], ['x = { c, a };', 'x = { c, b };'], ['x = { *a() {} };', 'x = { *b() {} };'],
     ['x = { get a() {} };', 'x = { get b() {} };'], ['const { a = 1 } = x;', 'const { b = 1 } = x;'], ['class X { a() {} }', 'class X { b() {} }'],
     ['class X { f() {} a = 1; }', 'class X { f() {} b = 1; }'],
+    // Names a module exports, and a regular expression where a statement starts.
+    ['export { value as a };', 'export { value as b };'], ['export const c = 1, a = 2;', 'export const c = 1, b = 2;'],
+    ['export const [c, a] = x;', 'export const [c, b] = x;'], ['export const { k: a } = x;', 'export const { k: b } = x;'],
+    ['export function a() {}', 'export function b() {}'], ['export class a {}', 'export class b {}'], ['export * as a from "m";', 'export * as b from "m";'],
+    ['if (x) /foo/.test(a);', 'if (x) /bar/.test(a);'],
   ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 1, `${before} → ${after}`)
   // Read as a whole: every line of a comment or a template spanning lines is kept.
   for (const [before, after] of [[['/*', ' * foo', ' */', 'f(a);'], ['/*', ' * bar', ' */', 'f(a);']], [['f(`', '  foo', '`);'], ['f(`', '  bar', '`);']]]) {
@@ -94,6 +99,8 @@ test('names left out are short bindings: never keywords, properties or keys, str
   for (const [before, after] of [
     ['function f() { a(c); }', 'function f() { b(c); }'], ['if (x) { a, c; }', 'if (x) { b, c; }'], ['f(() => { a(c); });', 'f(() => { b(c); });'],
     ['x = { k: v => { a(c); } };', 'x = { k: v => { b(c); } };'], ['x = a / 2 / c;', 'x = b / 2 / c;'], ['x = { k: a, [c]: 1 };', 'x = { k: b, [c]: 1 };'],
+    ['export const k = f(a, c);', 'export const k = f(b, c);'], ['export function f(a) { return a; }', 'export function f(b) { return b; }'],
+    ['if (a) x = c / 2;', 'if (b) x = c / 2;'],
   ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')
   assert.equal(lineDiff('f(a,  b)\n', 'f(c, d)\n', { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
