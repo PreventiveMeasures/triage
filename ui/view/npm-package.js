@@ -46,12 +46,22 @@ export function npmPackageEntries(manifest, paths) {
   const entries = []
   for (const field of [manifest?.main, manifest?.module, 'index.js']) {
     if (typeof field !== 'string') continue
-    const base = field.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '')
-    const found = [base, `${base}.js`, `${base}.cjs`, `${base}.mjs`, `${base}/index.js`].find(path => path && files.has(path))
+    const found = npmEntryFile(field, files)
     if (found && !entries.includes(found)) entries.push(found)
   }
   return entries
 }
+
+// The file of `files` an entry point names, as require would find it:
+// `./lib/a` as `lib/a`, `lib/a.js`, `.cjs` or `.mjs`, or `lib/a/index.js`;
+// undefined where none is there. The Overview's entry points and the file
+// Code opens on both resolve this way.
+export function npmEntryFile(field, files) {
+  const base = npmEntryPath(field)
+  return [base, `${base}.js`, `${base}.cjs`, `${base}.mjs`, `${base}/index.js`].find(path => path && files?.has(path))
+}
+
+const npmEntryPath = field => field.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '')
 
 // The bundle view's entry for a package version. It has no managed id, so
 // nothing reads it through the bundle routes; `npm` names the version.
@@ -448,12 +458,9 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
   </dl>`
 }
 
-// An entry point as the package's files name it: `./lib/a` as `lib/a.js`
-// where only that is there, or `lib/a/index.js`.
-function entryFile(path, files) {
-  const plain = path.replace(/^\.\//u, '').replace(/\/$/u, '')
-  return [plain, `${plain}.js`, `${plain}/index.js`].find(candidate => files?.has(candidate)) ?? plain
-}
+// An entry point as the package's files name it (npmEntryFile), else as it
+// is written.
+const entryFile = (path, files) => npmEntryFile(path, files) ?? npmEntryPath(path)
 
 // The package's entry points, each with its file's icon, Main and Module in
 // one row where they name the same file; its kind of module, bins, engines,

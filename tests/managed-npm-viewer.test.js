@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmCompareSource, npmDependencies, npmDependencyChanges, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
+const { npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -163,6 +163,11 @@ test('Code opens on what main names, resolved as require would', () => {
   assert.deepEqual(npmPackageEntries({ main: 'lib/util', module: 'esm/index.mjs' }, paths), ['lib/util.cjs', 'esm/index.mjs', 'index.js'])
   assert.deepEqual(npmPackageEntries({ main: 'lib/' }, paths), ['lib/index.js', 'index.js'])
   assert.deepEqual(npmPackageEntries({}, ['a.js']), [])
+  // The Overview's entry points resolve as Code does.
+  const files = new Set(paths)
+  assert.equal(npmEntryFile('./lib/util', files), 'lib/util.cjs')
+  assert.equal(npmEntryFile('esm/index', files), 'esm/index.mjs')
+  assert.equal(npmEntryFile('./missing', files), undefined)
 })
 
 test('a version shows as a bundle of its files, sized by their bytes, text alone as source', () => {
