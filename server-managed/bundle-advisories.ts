@@ -3,21 +3,41 @@ import { type Client, HttpError, createClient } from '@preventive/upstream/githu
 
 export const ADVISORIES_TIMEOUT_MS = 30_000
 
+const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+const PATCHED_VERSION = /^v?\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/u
+
+// A maintainer may give a vulnerable range only its lower bound, and the
+// version that fixed it apart, as GitHub's page shows them side by side
+// (`>= 5.0.0-beta.1`, patched in `5.0.0-rc.2`): upstream reads the range
+// alone, so such a range is ended below that version, where it is one.
+export function boundRepoAdvisories(list: unknown): unknown {
+  if (!Array.isArray(list)) return list
+  return list.map(advisory => record(advisory) && Array.isArray(advisory['vulnerabilities']) ? {
+    ...advisory,
+    vulnerabilities: advisory['vulnerabilities'].map((vulnerability: unknown) => {
+      if (!record(vulnerability)) return vulnerability
+      const patched = vulnerability['patched_versions'], range = vulnerability['vulnerable_version_range']
+      if (typeof patched !== 'string' || !PATCHED_VERSION.test(patched.trim()) || (typeof range === 'string' && range.includes('<'))) return vulnerability
+      const bound = `< ${patched.trim()}`
+      return { ...vulnerability, vulnerable_version_range: typeof range === 'string' && range.trim() !== '' ? `${range.trim()}, ${bound}` : bound }
+    }),
+  } : advisory)
+}
+
 function advisoryGithubClient(token: string | null, signal: AbortSignal): Client {
   const authenticated = createClient({ token, userAgent: 'deepview-triage' })
-  if (token === null) return authenticated
   let client = authenticated
   return {
     ...authenticated,
     async listRepoAdvisories(options) {
       const current = client
-      try { return await current.listRepoAdvisories(options) } catch (error) {
-        if (current !== authenticated || !(error instanceof HttpError) || error.status !== 401) throw error
+      try { return boundRepoAdvisories(await current.listRepoAdvisories(options)) as unknown[] } catch (error) {
+        if (token === null || current !== authenticated || !(error instanceof HttpError) || error.status !== 401) throw error
         signal.throwIfAborted()
         // Published advisories remain readable after a token is revoked. Reuse
         // anonymous access for subsequent repositories in this audit as well.
         if (client === authenticated) client = createClient({ token: null, userAgent: 'deepview-triage' })
-        return client.listRepoAdvisories(options)
+        return boundRepoAdvisories(await client.listRepoAdvisories(options)) as unknown[]
       }
     },
   }

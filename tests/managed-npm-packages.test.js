@@ -717,6 +717,24 @@ test('Socket is never asked about a private package, whoever reads it', async t 
   assert.deepEqual(asked, [], 'its name never leaves for Socket')
 })
 
+test('a repository advisory\'s range with no upper bound ends below the version GitHub names as patched', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('patched', '5.0.3', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/patched.git' } })
+  registry(t, [{ ...pkg, versions: ['4.1.10', '4.1.11', '5.0.0-beta.1', '5.0.0-rc.2', '5.0.3'] }])
+  insights(t, {
+    repos: { 'org/patched': { full_name: 'org/patched', private: false, visibility: 'public' } },
+    repoAdvisories: { 'org/patched': [{ ghsa_id: 'GHSA-82fw-gwwq-j7x9', state: 'published', summary: 'Path traversal', severity: 'medium', cwe_ids: [],
+      vulnerabilities: [
+        { package: { ecosystem: 'npm', name: 'patched' }, vulnerable_version_range: '>= 2.1.0, < 4.1.11', patched_versions: '4.1.11' },
+        { package: { ecosystem: 'npm', name: 'patched' }, vulnerable_version_range: '>= 5.0.0-beta.1', patched_versions: '5.0.0-rc.2' },
+      ] }] },
+  })
+  const body = (await h.send('/api/npm/advisories?name=patched')).json()
+  assert.deepEqual(body.versions, ['5.0.3', '5.0.0-rc.2', '5.0.0-beta.1', '4.1.11', '4.1.10'])
+  assert.deepEqual(body.advisories.map(({ range, affected }) => [range, affected.map(at => body.versions[at])]),
+    [['>= 2.1.0, < 4.1.11 || >= 5.0.0-beta.1, < 5.0.0-rc.2', ['5.0.0-beta.1', '4.1.10']]], '5.0.3 and the patched versions are not affected')
+})
+
 test('npm\'s advisories are answered while GitHub refuses, and its repository asked again next time', async t => {
   const h = await setup(t)
   const pkg = packageOf('rate-limited', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/limited.git' } })
