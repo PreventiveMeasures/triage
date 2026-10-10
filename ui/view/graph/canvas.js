@@ -2,7 +2,7 @@ import { html, render } from '../frontend-global.js'
 import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
-import { buildPackageGraph, pkgLabelOf, pkgRelative } from './data.js'
+import { buildPackageGraph, pkgLabelOf, pkgRelative, withoutPackages } from './data.js'
 import { pkgColor } from './utils.js'
 import { GRAPH_BACKGROUNDS } from './colors.js'
 import { forceLayout } from './force-layout.js'
@@ -217,13 +217,19 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   const pkgViewOn = () => layersOn() || (graph2.bundleLayout === 'graph' && graph2.packagesView && (graph.canPackagesView ?? false) && !graph2.focusedPkg)
   let layers = null
   let dependencyLayout = null
+  // The Graph view's file graph and the package graph both leave out
+  // crowded packages (see crowded-packages.js) before anything is laid
+  // out, so their layouts arrange only what they draw.
+  const fileGraph = withoutPackages(graph, crowdedGraphPackages(graph, MAX_FILE_EDGES))
+
   // Derived once per attach on first use; the file graph is
   // immutable for the attachment's lifetime, so the aggregate is
   // too. Lazy so the findings tab / file views never pay for it.
   let _pkgGraph = null
   function getPkgGraph() {
     if (!_pkgGraph) {
-      _pkgGraph = buildPackageGraph(graph)
+      const crowded = crowdedGraphPackages(buildPackageGraph(graph), MAX_PACKAGE_EDGES)
+      _pkgGraph = buildPackageGraph(withoutPackages(graph, crowded))
       if (layersOn() && graph.layerRoots?.appImports.length > 0) {
         if (!_pkgGraph.byPkg.has('__own__')) {
           const app = { file: '__own__', pkg: '__own__', label: 'App (source not bundled)', size: null, fileCount: 0, totalIssues: 0 }
@@ -231,7 +237,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
           _pkgGraph.byPkg.set('__own__', app)
         }
         _pkgGraph.importsOf.set('__own__', [...new Set([
-          ...(_pkgGraph.importsOf.get('__own__') ?? []), ...graph.layerRoots.appImports,
+          ...(_pkgGraph.importsOf.get('__own__') ?? []), ...graph.layerRoots.appImports.filter((pkg) => !crowded.has(pkg)),
         ])])
       }
     }
@@ -280,11 +286,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     paintBounds = null
     nodePicker = null
     if (layersOn()) {
-      // The layout drops imports of packages it isn't given, so leaving out
-      // crowded packages hides their rows and edges too.
       const pg = getPkgGraph()
-      const crowded = crowdedIn(pg, MAX_PACKAGE_EDGES)
-      layers = layoutDependencyLayers(pg.nodes.filter((n) => !crowded.has(n.pkg)).map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, graph.layerRoots?.roots ?? ['__own__'], {
+      layers = layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, graph.layerRoots?.roots ?? ['__own__'], {
         width: Math.max(360, layoutW - 190),
       })
       needsLayout = false
@@ -304,7 +307,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // Positions land on (and cache under) the active node set —
     // package aggregates in packages view (their `file` is the
     // package name), files otherwise.
-    const nodes = pkgView ? getPkgGraph().nodes : graph.nodes
+    const nodes = pkgView ? getPkgGraph().nodes : fileGraph.nodes
     if (cache && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH
         && cache.focused === focused && (cache.pkgView ?? false) === pkgView) {
       // Reuse cached positions — copy back into the live nodes.
@@ -319,14 +322,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         // on packages with hundreds of files. Switch to a
         // file-level Vogel sunflower past 50 files, using a bounded
         // assignment search to shorten edges on its fixed positions.
-        if (graph.nodes.length > 50) {
-          layoutFilesVogel(graph, layoutW, layoutH)
+        if (fileGraph.nodes.length > 50) {
+          layoutFilesVogel(fileGraph, layoutW, layoutH)
         } else {
-          const sol = forceLayout(graph.files, graph.importsOf, layoutW, layoutH)
-          copyPositions(graph.nodes, new Map(sol.map((s) => [s.file, s])))
+          const sol = forceLayout(fileGraph.files, fileGraph.importsOf, layoutW, layoutH)
+          copyPositions(fileGraph.nodes, new Map(sol.map((s) => [s.file, s])))
         }
       } else {
-        layoutSpiral(graph, layoutW, layoutH)
+        layoutSpiral(fileGraph, layoutW, layoutH)
       }
       const pos = new Map()
       for (const n of nodes) pos.set(n.file, { x: n.x, y: n.y })
@@ -367,7 +370,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       return { k: scale, tx: (W - (layers.width + 185) * scale) / 2 + 145 * scale,
         ty: 24 + Math.max(0, (H - 70 - (layers.height + layers.gap) * scale) / 2) }
     }
-    const nodes = pkgViewOn() ? getPkgGraph().nodes : graph.nodes
+    const nodes = pkgViewOn() ? getPkgGraph().nodes : fileGraph.nodes
     if (nodes.length <= 50) {
       // Include the fixed-size circles, halos, and always-on labels. Fitting
       // centers alone clips disconnected packages pushed to the layout edges.
@@ -439,18 +442,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // filter are NOT here on purpose: they dim non-matching nodes
   // to 0.1 instead of hiding them, so they still occupy space and
   // read as context (where the matching subgraph sits in the whole).
-  // Package names hidden from the Graph and Layers views' file or package
-  // graph because too many edges lead into them (see crowded-packages.js).
-  // Graphs are immutable while attached, so each one is counted once.
-  const crowdedSets = new WeakMap()
-  function crowdedIn(G, limit) {
-    if (!crowdedSets.has(G)) crowdedSets.set(G, crowdedGraphPackages(G, limit))
-    return crowdedSets.get(G)
-  }
-
   function nodeVisible(n) {
-    if (graph2.hidden.has(n.pkg)) return false
-    return !(pkgViewOn() ? crowdedIn(getPkgGraph(), MAX_PACKAGE_EDGES) : crowdedIn(graph, MAX_FILE_EDGES)).has(n.pkg)
+    return !graph2.hidden.has(n.pkg)
   }
 
   // Severity ring around a node dot — larger radius + thicker stroke
@@ -562,7 +555,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     paintedFrame = null
     // Canvas resize resets its context (and may change DPR). Paint objects
     // were created under the old transform, so rebuild them on the next draw.
-    renderCaches.delete(graph)
+    renderCaches.delete(fileGraph)
     if (_pkgGraph) renderCaches.delete(_pkgGraph)
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -618,7 +611,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   }
 
   function draw() {
-    const G = pkgViewOn() ? getPkgGraph() : graph
+    const G = pkgViewOn() ? getPkgGraph() : fileGraph
     // Only the dense dot renderer, below its label threshold, is invariant
     // under translation. Label collision/placement depends on viewport edges.
     if (paintBounds?.graph !== G) {
@@ -679,7 +672,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // a ghost node.
     const dependencyView = dependenciesOn()
     const pkgView = pkgViewOn()
-    const G = dependencyView ? getDependencyGraph() : pkgView ? getPkgGraph() : graph
+    const G = dependencyView ? getDependencyGraph() : pkgView ? getPkgGraph() : fileGraph
     const selKey = dependencyPackagesOn() || pkgView ? graph2.solo : graph2.selected
     const sel = selKey ? G.nodeByFile.get(selKey) : null
     const selected = sel ? selKey : null
@@ -983,8 +976,8 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const connected = new Set()
     if (hovered) {
       connected.add(hovered)
-      for (const ei of (graph.adj.get(hovered) ?? [])) {
-        const e = graph.edges[ei]
+      for (const ei of (fileGraph.adj.get(hovered) ?? [])) {
+        const e = fileGraph.edges[ei]
         connected.add(e.a); connected.add(e.b)
       }
     }
@@ -994,9 +987,9 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const nodeR = (n) => (n.isHub ? 6 : 4) * graph2.nodeSize
 
     // ── Edges with curves + arrowheads ────────────────────────
-    for (const e of graph.edges) {
-      const na = graph.nodeByFile.get(e.a)
-      const nb = graph.nodeByFile.get(e.b)
+    for (const e of fileGraph.edges) {
+      const na = fileGraph.nodeByFile.get(e.a)
+      const nb = fileGraph.nodeByFile.get(e.b)
       if (!na || !nb) continue
       if (!nodeVisible(na) || !nodeVisible(nb)) continue
       // Direction: bidi (both directions present) → arrows on
@@ -1050,7 +1043,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     }
 
     // ── Nodes ─────────────────────────────────────────────────
-    for (const n of graph.nodes) {
+    for (const n of fileGraph.nodes) {
       if (!nodeVisible(n)) continue
       const [sx, sy] = worldToScreen(n.x, n.y)
       const r = nodeR(n)
@@ -1105,7 +1098,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     // pure rect-vs-rect compare. measureText() runs once per node
     // per frame; cheap on the typical <50-node focus view.
     const labelCandidates = []
-    for (const n of graph.nodes) {
+    for (const n of fileGraph.nodes) {
       if (!nodeVisible(n)) continue
       const [sx, sy] = worldToScreen(n.x, n.y)
       const r = nodeR(n)
@@ -1369,7 +1362,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       return null
     }
     const pkgView = pkgViewOn()
-    const G = pkgView ? getPkgGraph() : graph
+    const G = pkgView ? getPkgGraph() : fileGraph
     const rich = pkgView && G.nodes.length <= 50
     if (G.nodes.length > 50) {
       nodePicker ??= createNodePicker(G.nodes)

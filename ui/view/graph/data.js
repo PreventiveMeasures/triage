@@ -323,6 +323,24 @@ export function buildPackageGraph(graph) {
 // Display name for a package key — the synthetic `__own__` bucket
 // reads as "Own source"; every real package is shown by name, a
 // vendored one without its `vendor/` dir (see `pkgLabel`).
+// The graph without the given packages' files and every edge touching them,
+// for views that lay out only what they draw. Nodes are shared, so positions a
+// layout writes land on the same node objects.
+export function withoutPackages(graph, hidden) {
+  if (hidden.size === 0) return graph
+  const nodes = graph.nodes.filter((n) => !hidden.has(n.pkg))
+  const nodeByFile = new Map(nodes.map((n) => [n.file, n]))
+  const kept = (file) => nodeByFile.has(file)
+  const edges = graph.edges.filter((e) => kept(e.a) && kept(e.b))
+  const keptLinks = (links) => new Map([...links].filter(([file]) => kept(file)).map(([file, targets]) => [file, targets.filter(kept)]))
+  const packages = graph.packages.filter((pkg) => !hidden.has(pkg))
+  return {
+    ...graph, files: graph.files.filter(kept), nodes, nodeByFile, edges, adj: buildAdj(edges),
+    importsOf: keptLinks(graph.importsOf), importedBy: keptLinks(graph.importedBy), packages,
+    pkgCount: new Map(packages.map((pkg) => [pkg, graph.pkgCount.get(pkg)])), byPkg: new Map(packages.map((pkg) => [pkg, graph.byPkg.get(pkg)])),
+  }
+}
+
 export function pkgLabelOf(pkg) {
   return pkgLabel(pkg)
 }

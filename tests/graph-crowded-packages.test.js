@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import '../ui/view/frontend-install.js'
-import { buildGraph, buildPackageGraph } from '../ui/view/graph/data.js'
+import { buildGraph, buildPackageGraph, withoutPackages } from '../ui/view/graph/data.js'
 import { crowdedGraphPackages, crowdedPackages } from '../ui/view/graph/crowded-packages.js'
 import { buildSizeFlow, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
 import '../ui/view/graph/size-flow.js'
@@ -104,4 +104,33 @@ test('Dependencies leaves crowded packages out of its package and file networks'
   assert.equal(flooded.nodes.filter(babel).length, 0)
   assert.ok(flooded.directedEdges.every(e => !e.to.includes('@babel/runtime')))
   assert.equal(flooded.nodes.length, 41, 'own source stays')
+})
+
+test('the Graph view lays out a graph that already lacks crowded packages', () => {
+  const graph = graphOf(301)
+  assert.equal(withoutPackages(graph, new Set()), graph)
+  const shown = withoutPackages(graph, crowdedGraphPackages(graph, 300))
+  assert.equal(shown.nodes.filter(n => n.pkg === '@babel/runtime').length, 0)
+  assert.ok(shown.nodes.every(n => graph.nodeByFile.get(n.file) === n), 'nodes are shared, so positions land on them')
+  assert.ok(shown.edges.every(e => shown.nodeByFile.has(e.a) && shown.nodeByFile.has(e.b)))
+  for (const [file, edges] of shown.adj) for (const i of edges) assert.ok([shown.edges[i].a, shown.edges[i].b].includes(file), 'edge indices follow the kept edges')
+  assert.ok([...shown.importsOf.values(), ...shown.importedBy.values()].every(files => files.every(file => shown.nodeByFile.has(file))))
+  assert.equal(shown.packages.includes('@babel/runtime'), false)
+  assert.equal(shown.byPkg.has('@babel/runtime'), false)
+  assert.equal(graph.nodes.filter(n => n.pkg === '@babel/runtime').length, 2, 'Matrix keeps the full graph')
+})
+
+test('Size flow rows ignore paths through hidden packages', () => {
+  const deps = Array.from({ length: 301 }, (_, i) => `node_modules/dep-${i}/f.js`)
+  const tree = {
+    'entry.js': { size: 1, imports: ['src/a.js', ...deps] },
+    'src/a.js': { size: 10, imports: ['src/x.js'] }, 'src/x.js': { size: 10, imports: [] }, 'src/only-via-helper.js': { size: 10, imports: [] },
+    [helper]: { size: 100, imports: ['src/x.js', 'src/only-via-helper.js'] },
+    ...Object.fromEntries(deps.map(file => [file, { size: 10, imports: [helper] }])),
+  }
+  const graph = buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf })
+  graph.flowEntries = [{ file: 'entry.js' }]
+  const layout = layoutSizeFlow(buildSizeFlow(graph))
+  assert.equal(layout.byId.get('f:src/x.js').level, 2, 'the hidden helper at row 2 no longer pushes x.js to row 3')
+  assert.equal(layout.byId.has('f:src/only-via-helper.js'), false, 'bars reached only through hidden files are not drawn')
 })

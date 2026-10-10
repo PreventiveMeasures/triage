@@ -156,10 +156,12 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
 // Longest-path ranks keep ordinary imports flowing down, including diamonds
 // and direct + indirect imports of the same module. Only entries are pinned;
 // cycles share a rank and retain explicit return ribbons.
-function flowLevels(model, roots, minSize) {
+// Rows follow only the bars that are drawn: hidden and filtered nodes neither
+// push their imports deeper nor keep otherwise unreachable bars in the flow.
+function flowLevels(model, roots, shown) {
   const active = new Set(roots), pending = [...roots], rootSet = new Set(roots)
   for (const id of pending) { for (const e of model.byId.get(id).outgoing) {
-    if (!active.has(e.to) && sizeFlowFilterSize(model.byId.get(e.to)) >= minSize) { active.add(e.to); pending.push(e.to) }
+    if (!active.has(e.to) && shown(e.to)) { active.add(e.to); pending.push(e.to) }
   } }
   const links = new Map(pending.map(id => [id, new Set(model.byId.get(id).outgoing.map(e => e.to).filter(to => active.has(to) && !rootSet.has(to)))]))
   const { componentOf, groups } = stronglyConnected(pending, links)
@@ -261,7 +263,7 @@ export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 
   const hiddenPackages = sizeFlowHiddenPackages(model)
   const shown = id => sizeFlowFilterSize(model.byId.get(id)) >= minSize && !hiddenPackages.has(model.byId.get(id).pkg)
   const roots = (focus && model.byId.has(focus) ? [focus] : model.roots).filter(shown)
-  const levels = flowLevels(model, roots, minSize)
+  const levels = flowLevels(model, roots, shown)
   const candidates = [...levels.keys()]
     .filter(shown)
     .toSorted((a, b) => levels.get(a) - levels.get(b) || model.byId.get(b).removable - model.byId.get(a).removable || a.localeCompare(b))
