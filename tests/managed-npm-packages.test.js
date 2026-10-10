@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer, request } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
@@ -11,7 +11,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
-import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball } from '../server-managed/npm-loads.ts'
+import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -220,7 +220,8 @@ test('a private version is read with the token for admins and managers only, eve
   withToken(t)
   const cache = await mkdtemp(join(tmpdir(), 'triage-npm-cache-'))
   setCacheDir(cache)
-  t.after(async () => { setCacheDir(false); await rm(cache, { recursive: true, force: true }) })
+  setNpmTarballCache(cache)
+  t.after(async () => { setCacheDir(false); setNpmTarballCache(null); await rm(cache, { recursive: true, force: true }) })
   const pkg = { ...packageOf('@acme/secret', '2.0.0', { 'index.js': 'secret source' }), private: true }
   const calls = registry(t, [pkg])
   for (const who of ['admin', 'manage']) {
@@ -230,9 +231,9 @@ test('a private version is read with the token for admins and managers only, eve
     assert.deepEqual(res.json().files, [['index.js', 13, 'secret source']])
   }
   assert.ok(calls.some(call => call.url === pkg.doc.dist.tarball), 'the tarball was fetched with the token')
-  // A bundle build fills upstream's cache using the token, which leaves it
-  // readable without one. A reader without private access is answered by the
-  // anonymous registry all the same.
+  // The viewer kept the tarball, and a bundle build fills upstream's cache
+  // using the token too, which leaves it readable without one. A reader
+  // without private access is answered by the anonymous registry all the same.
   await getTarball('@acme/secret', '2.0.0', { tarball: pkg.doc.dist.tarball, integrity: pkg.doc.dist.integrity })
   for (const who of ['view', 'triage']) {
     calls.length = 0
@@ -405,6 +406,55 @@ test('a tarball is read from the package\'s own path on the registry, bounded as
     await assert.rejects(tarballOf(version(dist)), /upstream-invalid/u, JSON.stringify(dist))
   }
   assert.deepEqual(calls, [], 'nothing off the package\'s path is asked for')
+})
+
+test('tarballs are kept where bundle builds keep theirs, and served from there or npm\'s cache only when they match the sha512', async t => {
+  const cache = await mkdtemp(join(tmpdir(), 'triage-npm-kept-')), npmCache = await mkdtemp(join(tmpdir(), 'triage-npm-cacache-'))
+  const configured = process.env['npm_config_cache']
+  process.env['npm_config_cache'] = npmCache
+  t.after(async () => {
+    setCacheDir(false)
+    setNpmTarballCache(null)
+    if (configured === undefined) delete process.env['npm_config_cache']
+    else process.env['npm_config_cache'] = configured
+    await rm(cache, { recursive: true, force: true })
+    await rm(npmCache, { recursive: true, force: true })
+  })
+  const [kept, built, npm] = [packageOf('@kept/pkg', '1.0.0', { 'index.js': 'kept' }), packageOf('@built/pkg', '2.0.0', { 'index.js': 'built' }),
+    packageOf('from-npm', '3.0.0', { 'index.js': 'npm' })]
+  const calls = registry(t, [kept, built, npm])
+  const downloads = () => calls.filter(call => call.url.includes('/-/')).length
+  const tarballOf = async ({ doc }) => {
+    const load = loadNpmTarball({ name: doc.name, version: doc.version, private: false, dist: { ...doc.dist, unpackedSize: null, fileCount: null }, manifest: {} })
+    try { return Buffer.from(await load.result) } finally { load.release() }
+  }
+  assert.deepEqual(await tarballOf(kept), kept.tgz)
+  assert.equal(downloads(), 1, 'no cache set, nothing kept')
+  setNpmTarballCache(cache)
+  const file = join(cache, 'npm', 'tarballs', '@kept+pkg@1.0.0.tgz')
+  assert.deepEqual(await tarballOf(kept), kept.tgz)
+  assert.deepEqual(await readFile(file), kept.tgz, 'kept under upstream\'s name for it')
+  assert.deepEqual(await tarballOf(kept), kept.tgz)
+  assert.equal(downloads(), 2, 'then read from the cache')
+  await writeFile(file, gzipSync('other'))
+  assert.deepEqual(await tarballOf(kept), kept.tgz, 'bytes the integrity does not name are passed over')
+  assert.equal(downloads(), 3)
+  assert.deepEqual(await readFile(file), kept.tgz, 'and replaced')
+  await truncate(file, MAX_TAR_BYTES + 1)
+  assert.deepEqual(await tarballOf(kept), kept.tgz, 'as is a file past the tar stream\'s bound, unread')
+  assert.equal(downloads(), 4)
+  // What a bundle build fetched is read as it left it.
+  setCacheDir(cache)
+  await getTarball('@built/pkg', '2.0.0', { tarball: built.doc.dist.tarball, integrity: built.doc.dist.integrity })
+  calls.length = 0
+  assert.deepEqual(await tarballOf(built), built.tgz)
+  // npm files a tarball by its sha512.
+  const hex = Buffer.from(npm.doc.dist.integrity.slice('sha512-'.length), 'base64').toString('hex')
+  const content = join(npmCache, '_cacache', 'content-v2', 'sha512', hex.slice(0, 2), hex.slice(2, 4))
+  await mkdir(content, { recursive: true })
+  await writeFile(join(content, hex.slice(4)), npm.tgz)
+  assert.deepEqual(await tarballOf(npm), npm.tgz)
+  assert.equal(downloads(), 0, 'neither was downloaded')
 })
 
 test('registry documents read at once are held to a budget: four version lists, or their bytes in versions', async t => {

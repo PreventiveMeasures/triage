@@ -1097,11 +1097,14 @@ their team.
 
 For everyone else, a version is public only when the registry answers for it
 without credentials. That request is made on every read and never answered
-from a cache: tarballs that a bundle build fetched with the token can remain
-in upstream's caches, readable without one, so leaving the token out is not
-enough. The viewer never reads those caches: the tarball comes from the
-registry, at the package's own path, without credentials for a public version,
-and is checked against the sha512 that anonymous answer gives. Readers with
+from a cache: documents and tarballs that a bundle build fetched with the token
+can remain in upstream's caches, readable without one, so leaving the token out
+is not enough. Tarballs are read from there all the same, as the answer names the sha512 the
+tarball must have: one kept in upstream's cache directory (`npm/tarballs`,
+where bundle builds keep theirs), or in npm's own cache, is served only when it
+matches. Otherwise the tarball comes from the registry, at the package's own
+path, without credentials for a public version, is checked against that sha512,
+and is then kept in upstream's cache, where the server has one. Readers with
 private access also try the registry anonymously first, and retry a scoped
 package with the token; their answer says `private: true` when only the token
 could read it. Access is checked again after the registry answers, and a

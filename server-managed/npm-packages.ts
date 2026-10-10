@@ -6,9 +6,10 @@
 // manager, or a member of a visible team listing its scope (team-npm-scopes.ts).
 // For everyone else, a version is public only when the registry answers for
 // it without credentials, asked on every request and never from a cache:
-// upstream's caches, which bundle builds fill using the token, are never
-// read here. The tarball is then read without credentials too, and held to
-// the integrity that anonymous answer gives.
+// upstream's caches, which bundle builds fill using the token, hold no
+// answer here. Its tarball may come from them (npm-loads.ts), as only bytes
+// matching the integrity that anonymous answer gives are served; else it is
+// read without credentials too, and held to that integrity.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { getRepo } from '@preventive/upstream/package.js'

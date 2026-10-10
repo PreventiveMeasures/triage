@@ -10,6 +10,7 @@ import { startServer } from '../server-common/standalone.ts'
 import { initializeApp } from '../server-common/initialize.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
+import { setNpmTarballCache } from './npm-loads.ts'
 import { loadManagedStatic } from './static.ts'
 import { openManagedStorage } from './storage.ts'
 import { setCacheDir } from '@preventive/upstream/npm.js'
@@ -23,8 +24,10 @@ type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | '
 
 export async function createManagedApp(config: ManagedConfig, options: ManagedAppOptions = {}) {
   // Audits keep upstream's records on disk where the config has a cache
-  // directory; bundle builds set it in their own worker.
+  // directory; bundle builds set it in their own worker. The npm viewer
+  // keeps the tarballs it downloads there too, beside theirs.
   setCacheDir(config.upstreamCacheDir ?? false)
+  setNpmTarballCache(config.upstreamCacheDir ?? null)
   // Load the optional peer only for serverless managed deployments. Embedding
   // hosts can discard listener promises, so retain maintenance inside the app.
   const waitUntil = config.serverless ? (await import('@vercel/functions')).waitUntil : undefined
