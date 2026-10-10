@@ -252,7 +252,7 @@ const REGEX = '\uE000'
 const JS = {
   // A hashbang, the file's first line (`#!/usr/bin/env node`), a comment.
   // A regular expression first where a value starts (after `=>`, an operator or a keyword, not a property: `x.default/2`), so a quote in it (`/["']/`) starts no string.
-  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.])(?:await|case|default|delete|do|else|in|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*|(?<![\s\S])#!.*)[ \t]*/gmu,
+  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.])(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*|(?<![\s\S])#!.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words, as
   // JavaScript tells a word's characters (`return a`, `var π`, `var \u03c0`),
   droppable: /(?<![\p{ID_Continue}$\\\u200C\u200D])[ \t]+|[ \t]+(?![\p{ID_Continue}$\\\u200C\u200D])/gu,
@@ -274,7 +274,8 @@ const CSS = {
     && (depth > 0 || /^\s*--[^:]*:/u.test(code.slice(Math.max(...['{', ';', '}'].map(end => code.lastIndexOf(end, index))) + 1, index))),
 }
 const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
-function minifiedCode(text, { stringOrComment, droppable, needed }) {
+// Its code's lines' average length where they are minified into short ones, else 0.
+function minifiedAverage(text, { stringOrComment, droppable, needed }) {
   // Its lines of code alone, as long as what is on them: a comment set aside
   // leaves nothing but its line breaks, a string or template `""` and its, a
   // regular expression `/REGEX/`, so the code either side stays apart.
@@ -288,7 +289,7 @@ function minifiedCode(text, { stringOrComment, droppable, needed }) {
     for (; scanned < index; scanned++) depth = Math.max(0, depth + (code[scanned] === '(' ? 1 : code[scanned] === ')' ? -1 : 0))
     if (!needed(code, index, run, depth)) dropped += run.length
   }
-  return lines.length > 0 && length > MINIFIED_AVERAGE * lines.length && dropped < MINIFIED_SPACES * length
+  return lines.length > 0 && length > MINIFIED_AVERAGE * lines.length && dropped < MINIFIED_SPACES * length ? Math.round(length / lines.length) : 0
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
@@ -300,12 +301,13 @@ function minifiedCode(text, { stringOrComment, droppable, needed }) {
 // readable whatever its lines' lengths, and an inline source map's line
 // counts for none, nor for how much of the code is on long lines. With
 // npmTextEncoding's `kind` and `controls`, its `longest` line's length and
-// `longLines`, its non-blank lines' `average` length, and how long its
-// inline map is (`inlineMap`, 0 for none).
+// `longLines`, its code's lines' `average` length where it is minified into
+// short ones (strings and comments aside, see MINIFIED_AVERAGE; 0 otherwise),
+// and how long its inline map is (`inlineMap`, 0 for none).
 export function npmFileReadability(path, text) {
   const encoding = npmTextEncoding(text)
   if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, average: 0, inlineMap: 0 }
-  let codeChars = 0, codeLines = 0, inlineMap = 0, longChars = 0, longLines = 0, longest = 0
+  let inlineMap = 0, longChars = 0, longLines = 0, longest = 0
   for (let at = 0; at <= text.length;) {
     const next = text.indexOf('\n', at)
     const end = next === -1 ? text.length : next
@@ -317,14 +319,10 @@ export function npmFileReadability(path, text) {
         longChars += length
       }
       longest = Math.max(longest, length)
-      if (text.slice(at, end).trim() !== '') {
-        codeLines++
-        codeChars += length
-      }
     }
     at = end + 1
   }
-  const read = { ...encoding, longest, longLines, average: codeLines === 0 ? 0 : Math.round(codeChars / codeLines), inlineMap }
+  const read = { ...encoding, longest, longLines, average: 0, inlineMap }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
@@ -332,8 +330,8 @@ export function npmFileReadability(path, text) {
     // None of its lines longer than MINIFIED_AVERAGE, none of its code's can
     // average more: told without reading its code.
     const language = minifiable(path)
-    const minified = language !== null && longest > MINIFIED_AVERAGE && minifiedCode(text, language)
-    return { ...read, category: inlineMap > 0 ? 'inline-map' : minified ? 'minified' : encoding.kind }
+    const average = language !== null && longest > MINIFIED_AVERAGE ? minifiedAverage(text, language) : 0
+    return { ...read, average, category: inlineMap > 0 ? 'inline-map' : average > 0 ? 'minified' : encoding.kind }
   }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
   return { ...read, category: inlineMap > 0 ? 'inline-map' : 'minified' }
@@ -400,7 +398,7 @@ function readabilityNote({ average, category, controls, longLines, longest, inli
     case 'controls': return controlsNote(controls)
     case 'map': return 'A source map'
     case 'inline-map': return `Inline source map, ${formatBytes(inlineMap)}${longLines > 0 ? `; minified: ${lines()}` : ''}`
-    case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines ${average.toLocaleString('en')} characters long on average, with few spaces`}`
+    case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines of code ${average.toLocaleString('en')} characters long on average, strings and comments aside, with few spaces`}`
     case 'long': return `${lines()}, among readable ones`
     default: return nothing
   }

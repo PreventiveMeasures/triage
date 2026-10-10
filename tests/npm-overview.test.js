@@ -110,7 +110,7 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     + 'const i=r((s,t)=>{const e=s[0]-t[0];if(e===0){const o=s[1]-t[1];return o===0?s[2]>=t[2]:o>0}return e>0},"isVersionGreaterOrEqual");'
     + 'export{i as a,m as b};\n'
   assert.equal(category('dist/temporary-directory.mjs', minified), 'minified')
-  assert.equal(npmFileReadability('dist/a.mjs', minified).average, minified.length - 1)
+  assert.equal(npmFileReadability('dist/a.mjs', minified).average, minified.trimEnd().replaceAll(/"[^"]*"/gu, '""').length, 'its code\'s average, strings aside')
   assert.equal(category('dist/a.mjs', `${minified.trimEnd()}const a=new Set(["${'Custom ESM Loaders is an experimental feature. '.repeat(3)}"]);\n`), 'minified',
     'spaces in its strings aside')
   assert.equal(category('dist/a.mjs', `${minified.trimEnd()}var p=/* @__PURE__ */ m(1),q=/* @__PURE__ */ n(2);\n`), 'minified',
@@ -129,6 +129,8 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('dist/a.mjs', `var x=a+/["']/.test(s);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
     'or after an operator')
   assert.equal(category('dist/a.mjs', `/*! license */\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`), 'minified', 'a banner aside')
+  assert.equal(npmFileReadability('dist/a.mjs', `/*! license */\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`).average, 144, 'from its average too')
+  assert.equal(npmFileReadability('src/a.js', 'export const a = 1\n').average, 0, 'none where not minified so')
   assert.equal(category('dist/cli.js', `#!/usr/bin/env node\n${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(3)}\n`), 'minified', 'a hashbang too')
   // Lines as long, written by a person: spaced after commas and around operators.
   assert.equal(category('v4/checks.js', `export { ${Array.from({ length: 30 }, (_, i) => `_check${i} as check${i}`).join(', ')} } from "../core/index.js";\n`), 'ascii')
@@ -151,6 +153,10 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     'a regular expression after `else` too')
   assert.equal(category('dist/a.mjs', `const f=x=>/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
     'a regular expression after `=>` too')
+  for (const keyword of ['new', 'v instanceof']) {
+    assert.equal(category('dist/a.mjs', `var y=${keyword} /'/.constructor;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l='x';\n`), 'minified',
+      `a regular expression after \`${keyword}\` too`)
+  }
   assert.equal(category('dist/a.mjs', `export default/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
     'a regular expression after `default` too')
   assert.equal(category('dist/a.mjs', `var u=n.default/2+"/"+v;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
