@@ -6,8 +6,6 @@
   box-shadow: var(--shadow-glass);
   font-size: .825rem;
 
-  & label { color: var(--muted); margin-right: .15rem; }
-
   & select {
     height: 30px; box-sizing: border-box;
     background: var(--bg); color: var(--text); border: 1px solid var(--border);

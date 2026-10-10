@@ -818,7 +818,6 @@ a { color: var(--accent); text-decoration: none; cursor: default; }
   dialog,
   bundle-terminal,
   finding-card,
-  finding-row,
   finding-table,
   [role='button'],
   [tabindex]:not([tabindex='-1']),

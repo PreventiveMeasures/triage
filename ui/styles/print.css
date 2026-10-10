@@ -90,23 +90,19 @@
      URL input, and empty-repo CTA chip are on-screen-only, dropped. */
   .page-head .file-chip,
   .page-head .meta-row .tag,
-  .page-head .meta-row .repo-chip,
   .page-head .files-toggle-btn {
     background: transparent !important;
     border: 0 !important;
     padding: 0 !important;
     color: #000 !important;
   }
-  .page-head .file-chip svg,
-  .page-head .meta-row .repo-chip svg { color: #000 !important; }
+  .page-head .file-chip svg { color: #000 !important; }
   .page-head .meta-row { color: #000 !important; }
   /* repo-chip's pencil + input live in its shadow root —
-     `repo-chip.css` hides them. Here we drop the empty-state CTA chip
-     (on-screen only) and the workspace severity bar (proportional
-     severity-color palette that prints as muddy noise). `display:
-     none`, not `visibility: hidden`, so the row reflows without a
-     phantom 200×8 gap. */
-  .page-head .meta-row .repo-chip.empty,
+     `repo-chip.css` hides them. Here we drop the workspace severity
+     bar (proportional severity-color palette that prints as muddy
+     noise). `display: none`, not `visibility: hidden`, so the row
+     reflows without a phantom 200×8 gap. */
   .page-head .meta-row .status-bar { display: none !important; }
   .page-head { break-after: avoid; }
 
