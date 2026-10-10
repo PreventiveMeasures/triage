@@ -3561,20 +3561,28 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   border: 1px solid var(--medium); border-radius: var(--ui-radius, 3px);
   font-size: .66rem;
 }
-/* What the package's files hold: rows labelled as the facts above them are,
-   the languages' label level with their bar, on a line of their own; the
-   rows after them side by side where they fit, each label as wide as the
-   facts', so their values line up when they don't. */
+/* What the package's files hold, labelled as the facts above them are: a
+   grid of label and value, the languages' label level with their bar. */
 .npm-contents {
-  display: flex; flex-wrap: wrap; gap: .45rem 1.75rem;
+  display: grid; grid-template-columns: var(--npm-label) minmax(0, 1fr); gap: .45rem .65rem; align-items: baseline;
   margin: .15rem 0 0;
 
-  & > div { display: flex; align-items: baseline; gap: .65rem; min-width: 0; }
-  & dt { flex: none; width: var(--npm-label); color: var(--muted); font-size: .72rem; font-weight: 600; }
+  & > div { display: contents; }
+  & dt { color: var(--muted); font-size: .72rem; font-weight: 600; }
   & dd { margin: 0; min-width: 0; }
-  & > div:has(> dd > .bundles-languages-bar) { flex-basis: 100%; align-items: start; }
-  & dd:has(> .bundles-languages-bar) { flex: 1; }
+  & :is(dt:has(+ dd > .bundles-languages-bar), dd:has(> .bundles-languages-bar)) { align-self: start; }
   & .bundles-languages-bar { margin: .25rem 0 0; }
+}
+/* Where the summary spans the Overview, the file types share the readable
+   files' line, labelled where they start; else each has its own, values in
+   line under the languages'. */
+@container npm-overview (40rem <= width < 66rem) {
+  .npm-overview .npm-contents {
+    grid-template-columns: var(--npm-label) auto auto minmax(0, 1fr);
+
+    & dd:has(> .bundles-languages-bar) { grid-column: 2 / -1; }
+    & .npm-contents-types > dt { grid-column: 3; margin-left: 1.25rem; }
+  }
 }
 .bundles-languages-legend {
   display: flex; flex-wrap: wrap; gap: .2rem 1rem;
@@ -3617,12 +3625,13 @@ npm-downloads-chart {
 }
 .npm-stat-per { margin-left: .1rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
 /* Under the switch, the period under the pointer's downloads, on a line
-   kept for them, so the chart doesn't move as they come and go; they run
-   left from the switch's end, past it where they need to. */
+   kept for them, so the chart doesn't move as they come and go: centered
+   between the switch and the chart's top gridline (the head's margin and
+   the plot's 6px pad below it), running left from the switch's end. */
 .npm-downloads-controls { position: relative; margin-left: auto; padding-bottom: 1.05rem; }
 .npm-downloads-readout {
-  position: absolute; right: 0; bottom: 0;
-  display: flex; align-items: baseline; gap: .4rem;
+  position: absolute; right: 0; top: calc(100% - 1.05rem); width: max-content; height: calc(1.05rem + .2rem + 6px);
+  display: flex; flex-wrap: wrap; align-content: center; align-items: baseline; gap: 0 .4rem;
   color: var(--muted); font-size: .7rem; white-space: nowrap;
   font-variant-numeric: tabular-nums;
 
@@ -3639,6 +3648,8 @@ npm-downloads-chart {
 .npm-downloads-tick { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .npm-downloads-area { fill: var(--accent); fill-opacity: .1; }
 .npm-downloads-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.npm-downloads-bar { fill: var(--accent); fill-opacity: .7; }
+.npm-downloads-bar.is-at { fill-opacity: 1; }
 .npm-downloads-crosshair { stroke: var(--muted); stroke-width: 1; shape-rendering: crispedges; }
 .npm-downloads-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
 /* Its advisories across every version (view/npm-overview.js), grouped by how
@@ -3820,5 +3831,23 @@ button.npm-category {
 .npm-lookup-error { margin: .75rem 0 0; font-size: .85rem; }
 .npm-lookup-status { color: var(--muted); }
 .npm-lookup-error { color: var(--critical); }
+/* Recent searches, under the search: each opens again, or is removed. */
+.npm-lookup-recent {
+  margin-top: 1.25rem;
+
+  & h2 { margin: 0 0 .4rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  & ul { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0; padding: 0; list-style: none; }
+  & li {
+    display: inline-flex; align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+  }
+  & button { padding: .25rem .5rem; color: var(--text); background: none; border: 0; font: inherit; font-size: .8rem; }
+  & .npm-lookup-recent-open { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  & .npm-lookup-recent-open:hover:not(:disabled) { color: var(--accent); }
+  & .npm-lookup-recent-remove { padding-left: .1rem; color: var(--muted); line-height: 1; }
+  & .npm-lookup-recent-remove:hover { color: var(--critical); }
+  & button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--ui-radius, 6px); }
+}
 /* A file's type icon, before its path in the npm Overview's lists. */
 .bundles-source-row > .source-file-icon { margin-right: -.15rem; }

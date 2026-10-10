@@ -265,10 +265,15 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     try { ({ entry, details } = await loadNpmVersion(name, spec ?? 'latest', { signal: currentViewSignal() })) }
     catch (err) {
       if (err?.name === 'AbortError' || !isCurrent()) return false
+      searching = null
       showLookup({ input, pending: false, error: err.message })
       return { view: 'npm' }
     }
     if (!isCurrent() || !isManagedUiMode()) return false
+  }
+  if (searching?.name === name && searching.spec === spec) {
+    saveRecentSearches([input, ...npmRecentSearches().filter(other => other !== input)])
+    searching = null
   }
   cleanupGraph2()
   state.bundles = [entry]
@@ -292,22 +297,52 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   return npmPackageRoute(entry, state.bundleDetailsTab, managedTabLocation(state))
 }
 
-function submitLookup(event) {
-  event.preventDefault()
-  const field = event.currentTarget.querySelector('input[name="package"]')
-  const parsed = parseNpmPackageInput(field?.value)
+// The lookup's recent searches, newest first: kept in this browser for each
+// user signed in to it, a convenience rather than anything to guard.
+const RECENT_SEARCHES = 10
+const recentKey = () => `deepview.npm.recent.${state.managedSession?.id ?? 'anonymous'}`
+// The search last made, until the version it names opens (openNpmRoute).
+let searching = null
+
+export function npmRecentSearches() {
+  try {
+    const list = JSON.parse(localStorage.getItem(recentKey()) ?? '[]')
+    return Array.isArray(list) ? list.filter(search => typeof search === 'string' && parseNpmPackageInput(search)) : []
+  } catch { return [] }
+}
+
+function saveRecentSearches(list) {
+  try { localStorage.setItem(recentKey(), JSON.stringify(list.slice(0, RECENT_SEARCHES))) } catch {}
+}
+
+export function forgetNpmSearch(search) {
+  saveRecentSearches(npmRecentSearches().filter(other => other !== search))
+  render()
+}
+
+// Opens what `text` names, kept among the recent searches once it opens.
+export function searchNpm(text) {
+  const parsed = parseNpmPackageInput(text)
   if (!parsed) {
-    state.npmLookup = { input: field?.value ?? '', pending: false, error: 'Enter a package name, like lodash, @scope/name or name@1.2.3.' }
+    state.npmLookup = { input: text ?? '', pending: false, error: 'Enter a package name, like lodash, @scope/name or name@1.2.3.' }
     render()
     return
   }
+  searching = parsed
   navigateToNpm(parsed.name, parsed.spec)
 }
 
-// The lookup page: a package to open, and why the last one did not.
+function submitLookup(event) {
+  event.preventDefault()
+  searchNpm(event.currentTarget.querySelector('input[name="package"]')?.value)
+}
+
+// The lookup page: a package to open, why the last one did not, and the
+// recent searches to open again or remove.
 export function renderNpmLookup() {
   const lookup = state.npmLookup ?? { input: '', pending: false, error: null }
   const privileged = ['admin', 'manage'].includes(state.managedSession?.role)
+  const recent = npmRecentSearches()
   return html`<section class="npm-lookup" aria-labelledby="npm-lookup-title">
     <header class="npm-lookup-head">
       <span class="npm-lookup-icon" aria-hidden="true">${unsafeHTML(NPM_ICON_SVG)}</span>
@@ -322,6 +357,14 @@ export function renderNpmLookup() {
     </form>
     ${lookup.pending ? html`<p class="npm-lookup-status" role="status">Opening ${lookup.input}…</p>` : nothing}
     ${lookup.error ? html`<p class="npm-lookup-error" role="alert">${lookup.error}</p>` : nothing}
+    ${recent.length > 0 ? html`<section class="npm-lookup-recent" aria-labelledby="npm-lookup-recent-title">
+      <h2 id="npm-lookup-recent-title">Recent searches</h2>
+      <ul>${recent.map(search => html`<li>
+        <button type="button" class="npm-lookup-recent-open" ?disabled=${lookup.pending} @click=${() => searchNpm(search)}>${search}</button>
+        <button type="button" class="npm-lookup-recent-remove" aria-label=${`Remove ${search} from recent searches`} data-tooltip="Remove"
+          @click=${() => forgetNpmSearch(search)}>×</button>
+      </li>`)}</ul>
+    </section>` : nothing}
   </section>`
 }
 

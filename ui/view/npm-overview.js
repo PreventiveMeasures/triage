@@ -342,14 +342,13 @@ function npmFileTypesRow(entry, details) {
 }
 
 // What the package holds, under its facts and labelled as they are: its
-// languages by lines (`languages`, the bar the bundle Overview draws) on a
-// line of their own, then its readable files and their types, side by side
-// where they fit.
+// languages by lines (`languages`, the bar the bundle Overview draws), its
+// readable files and their types.
 export function npmContents(entry, languages, details) {
-  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['File types', npmFileTypesRow(entry, details)]]
-    .filter(([, body]) => body !== nothing)
+  const rows = [['languages', 'Languages', languages], ['readable', 'Readable', npmReadableRow(entry, details)], ['types', 'File types', npmFileTypesRow(entry, details)]]
+    .filter(([, , body]) => body !== nothing)
   if (rows.length === 0) return nothing
-  return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([label, body]) => html`<div><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`
+  return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([key, label, body]) => html`<div class=${`npm-contents-${key}`}><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`
 }
 
 // The binary files (`paths`, sorted), which the server tells from text by

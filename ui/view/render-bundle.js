@@ -37,7 +37,7 @@ import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { EXTERNAL_LINK_ICON } from './advisory-parts.js'
 import { overviewColumn } from './bundle-overview-column.js'
-import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
+import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { npmAdvisoriesColumn, npmBinaryColumn, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmReadabilityTag, npmReadabilityWarning, npmStatsRow } from './npm-overview.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
@@ -2463,7 +2463,9 @@ function languageBarPointerLeave(e) {
 
 // Its sources' lines, in all and by language: the index's where it has
 // them, else counted once and kept with them.
-const bundleDetailsCodeStats = details => details.codeStats ??= bundleCodeStats(bundleLineCounts(details), bundleFileSizes(details))
+const bundleDetailsCodeStats = details => details.codeStats ??= bundleCodeStats(details.npm
+  ? new Map([...bundleLineCounts(details)].filter(([path]) => !NPM_LICENSE_FILE.test(path.slice(path.lastIndexOf('/') + 1))))
+  : bundleLineCounts(details), bundleFileSizes(details))
 
 function renderBundleLanguagesBar(details, { legend = false } = {}) {
   if (!(details?.kind === 'stasis' && details.bundle) && !(details?.npm && details.json)) return nothing

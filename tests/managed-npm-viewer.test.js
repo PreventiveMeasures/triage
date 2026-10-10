@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -253,4 +253,34 @@ test('a private version is asked for each time it opens, as access may be lost m
   assert.equal(requests.length, 2)
   assert.equal(state.currentView, 'npm')
   assert.equal(state.npmLookup.error, 'No such package version, or it is not available to you.')
+})
+
+test('a search kept once it opens: newest first, for its user alone, each removable, ten at most', async t => {
+  const stored = new Map()
+  globalThis.localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, String(value)) }
+  t.after(() => { delete globalThis.localStorage })
+  const open = (name, spec = null) => openNpmRoute({ view: 'npm', packageName: name, packageSpec: spec }, () => true, () => {})
+  const search = async (text, name, spec = null) => { searchNpm(text); await open(name, spec) }
+  await search(' @scope/pkg@1.2.3 ', '@scope/pkg', '1.2.3')
+  await search('https://www.npmjs.com/package/lodash', 'lodash')
+  assert.deepEqual(npmRecentSearches(), ['lodash', '@scope/pkg@1.2.3'], 'as it opens, newest first')
+  await open('react')
+  assert.deepEqual(npmRecentSearches(), ['lodash', '@scope/pkg@1.2.3'], 'a version opened otherwise, as a dependency, is no search')
+  answer = () => Promise.reject(new Error('Not found'))
+  await search('missing', 'missing')
+  assert.deepEqual(npmRecentSearches(), ['lodash', '@scope/pkg@1.2.3'], 'nor one that fails to open')
+  answer = () => Promise.resolve(data)
+  await search('@scope/pkg@1.2.3', '@scope/pkg', '1.2.3')
+  assert.deepEqual(npmRecentSearches(), ['@scope/pkg@1.2.3', 'lodash'], 'searched again, it comes first, once')
+  forgetNpmSearch('lodash')
+  assert.deepEqual(npmRecentSearches(), ['@scope/pkg@1.2.3'])
+  const user = state.managedSession
+  state.managedSession = { id: 'someone-else', role: 'view' }
+  assert.deepEqual(npmRecentSearches(), [], 'another user signed in here has their own')
+  for (let i = 0; i < 12; i++) await search(`pkg-${i}`, `pkg-${i}`)
+  assert.deepEqual(npmRecentSearches(), Array.from({ length: 10 }, (_, i) => `pkg-${11 - i}`))
+  state.managedSession = user
+  assert.deepEqual(npmRecentSearches(), ['@scope/pkg@1.2.3'])
+  stored.set(`deepview.npm.recent.${user.id}`, '{not json')
+  assert.deepEqual(npmRecentSearches(), [], 'a list that does not read is none')
 })

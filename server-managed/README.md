@@ -1023,8 +1023,11 @@ or localStorage. Session/role changes clear managed caches and terminal state.
 # npm package viewer
 
 Every role but `none` can open a published npm package version from the
-landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
-in the bundle view with four tabs:
+landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. The
+`/npm` page lists the reader's last ten searches that opened, newest first,
+under its search, each to open again or remove; they are kept in the
+browser's `localStorage` per signed-in user, a convenience, not access
+control. A version shows in the bundle view with four tabs:
 
 - **Overview**: its header names the package beside a picker of its
   versions, as wide as the version shown, listing them as Compare's pickers
