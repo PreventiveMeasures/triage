@@ -16,7 +16,7 @@ import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisorie
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
 
-const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range/last-year'
+const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
 const KEPT_MS = 60 * 60_000
 const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
@@ -49,9 +49,23 @@ const isDay = (value: unknown): value is string => typeof value === 'string' && 
 // none for a day npm leaves out; null where npm has none for it.
 export interface NpmDownloads { start: string; end: string; days: number[] }
 
+const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10)
+
+// Its last year, as npm counts it (to the last day it has counted), from
+// the first of the month that year starts in, so that month is whole too.
 async function askDownloads(name: string): Promise<NpmDownloads | null> {
+  const year = await askRange('last-year', name)
+  const start = new Date(year?.start ?? 0)
+  if (year === null || start.getUTCDate() === 1) return year
+  const first = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)
+  const before = await askRange(`${isoDay(first)}:${isoDay(start.getTime() - DAY_MS)}`, name).catch(() => null)
+  return before?.start === isoDay(first) && before.days.length === (start.getTime() - first) / DAY_MS
+    ? { start: before.start, end: year.end, days: [...before.days, ...year.days] } : year
+}
+
+async function askRange(range: string, name: string): Promise<NpmDownloads | null> {
   let res: Response
-  try { res = await fetch(`${DOWNLOADS_API}/${name}`, { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) }) }
+  try { res = await fetch(`${DOWNLOADS_API}/${range}/${name}`, { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) }) }
   catch { throw new NpmPackageError(502, 'upstream-unavailable') }
   if (res.status === 404) { await res.body?.cancel(); return null }
   if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }

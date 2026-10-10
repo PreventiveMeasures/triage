@@ -57,7 +57,7 @@ export function npmDownloadMonths(downloads) {
 }
 
 const PERIODS = {
-  week: { label: 'Weekly', of: npmDownloadWeeks, name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
+  week: { label: 'Weekly', of: downloads => npmDownloadWeeks(downloads).slice(-52), name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
   month: { label: 'Monthly', of: npmDownloadMonths, name: period => monthName(period.from) },
 }
 
@@ -122,9 +122,12 @@ class NpmDownloadsChart extends LitElement {
       this._latest = downloads == null ? null : { total: latest?.total ?? 0, tooltip: latest && downloadsIn(latest.total, period.name(latest)) }
     }
     if (changed.has('downloads')) {
-      const total = downloads?.days.reduce((sum, count) => sum + count, 0)
+      // The last 365 days: the downloads reach back further, to the first of
+      // the month they start in, so that month is whole.
+      const year = downloads?.days.slice(-365)
+      const total = year?.reduce((sum, count) => sum + count, 0)
       this._year = downloads == null ? null
-        : { total, tooltip: downloadsIn(total, `${fullDate(Date.parse(downloads.start))} – ${fullDate(Date.parse(downloads.end))}`) }
+        : { total, tooltip: downloadsIn(total, `${fullDate(dayOf(downloads.start, downloads.days.length - year.length))} – ${fullDate(Date.parse(downloads.end))}`) }
     }
     if (changed.has('downloads') || changed.has('_unit') || changed.has('_width')) this._shape = this._shapeOf(period)
   }

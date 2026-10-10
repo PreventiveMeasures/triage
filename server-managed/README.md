@@ -1059,7 +1059,7 @@ control. A version shows in the bundle view with four tabs:
   the lines of code they add up to; and a card of its downloads: the latest
   week's (or month's) and the last year's, each with its unit (`1.2K/week`,
   `9.6K/year`), over a chart of them across the year by week, or by calendar
-  month (complete ones only), with the switch between the two at its top
+  month (the last twelve complete ones), with the switch between the two at its top
   right and under it the hovered period's downloads; and the tarball
   download under it. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
@@ -1116,7 +1116,8 @@ bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 newest first, and `GET /api/npm/download?name=&version=` the tarball.
 `GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
 is `{ start, end, days }`, a count a day over the last year from npm's
-downloads API, and `github` is `{ repo, stars, forks, openIssues, openPulls,
+downloads API, reaching back to the first of the month that year starts in so
+its months are whole (the last 365 days make the year's total), and `github` is `{ repo, stars, forks, openIssues, openPulls,
 archived, pushedAt }` for the repository the latest version's manifest names,
 `openIssues` taking in the open pull requests `openPulls` counts apart (from
 the last page of their list, one a page; null where GitHub didn't say); either

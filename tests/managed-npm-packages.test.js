@@ -475,7 +475,7 @@ test('registry documents read at once are held to a budget: four version lists, 
 
 // npm's downloads API, GitHub and npm's bulk advisories, beside the registry
 // `registry` mocks; what each was asked, with its credentials.
-function insights(t, { downloads = {}, repos = {}, advisories = {}, repoAdvisories = {} }) {
+function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {} }) {
   const asked = [], registryFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
     const auth = new Headers(init.headers).get('authorization'), url = String(input)
@@ -485,10 +485,12 @@ function insights(t, { downloads = {}, repos = {}, advisories = {}, repoAdvisori
       const answer = repoAdvisories[listing[1]] ?? []
       return Promise.resolve(answer instanceof Response ? answer : Response.json(answer))
     }
-    const day = url.match(/^https:\/\/api\.npmjs\.org\/downloads\/range\/last-year\/(.+)$/u)
+    const day = url.match(/^https:\/\/api\.npmjs\.org\/downloads\/range\/([^/]+)\/(.+)$/u)
     if (day) {
-      asked.push(['downloads', day[1], auth])
-      return Promise.resolve(downloads[day[1]] ? Response.json(downloads[day[1]]) : Response.json({ error: 'not found' }, { status: 404 }))
+      const [, range, name] = day
+      asked.push(['downloads', range === 'last-year' ? name : `${name} ${range}`, auth])
+      const answer = range === 'last-year' ? downloads[name] : ranges[`${name} ${range}`]
+      return Promise.resolve(answer ? Response.json(answer) : Response.json({ error: 'not found' }, { status: 404 }))
     }
     const pulls = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/?]+)\/pulls\?state=open&per_page=1$/u)
     if (pulls) {
@@ -534,6 +536,21 @@ test('a package\'s figures: its downloads, and its public repository\'s, asked w
   assert.equal((await h.send('/api/npm/stats?name=%40pub%2Ffigures')).status, 200)
   assert.equal(asked.length, 3, 'figures are kept')
   assert.deepEqual(calls.map(call => [call.url, call.auth]), [[`${REGISTRY}/@pub/figures/latest`, null]], 'the registry is asked again, anonymously')
+})
+
+test('a year of downloads reaches back to the first of the month it starts in, so that month is whole', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('monthly', '1.0.0', { 'index.js': '' }), packageOf('half-month', '1.0.0', { 'index.js': '' })])
+  const year = name => ({ start: '2026-01-03', end: '2026-01-05', package: name, downloads: [{ day: '2026-01-03', downloads: 3 }, { day: '2026-01-04', downloads: 4 }, { day: '2026-01-05', downloads: 5 }] })
+  const asked = insights(t, {
+    downloads: { monthly: year('monthly'), 'half-month': year('half-month') },
+    ranges: { 'monthly 2026-01-01:2026-01-02': { start: '2026-01-01', end: '2026-01-02', package: 'monthly', downloads: [{ day: '2026-01-01', downloads: 1 }, { day: '2026-01-02', downloads: 2 }] } },
+  })
+  assert.deepEqual((await h.send('/api/npm/stats?name=monthly')).json().downloads, { start: '2026-01-01', end: '2026-01-05', days: [1, 2, 3, 4, 5] })
+  assert.deepEqual((await h.send('/api/npm/stats?name=half-month')).json().downloads, { start: '2026-01-03', end: '2026-01-05', days: [3, 4, 5] },
+    'without the days before it, the year as npm has it')
+  assert.deepEqual(asked.filter(([what]) => what === 'downloads').map(([, name]) => name),
+    ['monthly', 'monthly 2026-01-01:2026-01-02', 'half-month', 'half-month 2026-01-01:2026-01-02'])
 })
 
 test('a private repository, or a package npm has no downloads for, has no figures', async t => {

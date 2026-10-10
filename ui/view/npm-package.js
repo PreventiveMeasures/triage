@@ -355,8 +355,10 @@ export function renderNpmLookup() {
         placeholder="lodash, @scope/name@1.2.3 or an npmjs.com link" .value=${lookup.input ?? ''} ?disabled=${lookup.pending}>
       <button type="submit" ?disabled=${lookup.pending}>Open</button>
     </form>
-    ${lookup.pending ? html`<p class="npm-lookup-status" role="status">Opening ${lookup.input}…</p>` : nothing}
-    ${lookup.error ? html`<p class="npm-lookup-error" role="alert">${lookup.error}</p>` : nothing}
+    <div class="npm-lookup-message">
+      <p class="npm-lookup-status" role="status">${lookup.pending ? `Opening ${lookup.input}…` : nothing}</p>
+      ${lookup.error ? html`<p class="npm-lookup-error" role="alert">${lookup.error}</p>` : nothing}
+    </div>
     ${recent.length > 0 ? html`<section class="npm-lookup-recent" aria-labelledby="npm-lookup-recent-title">
       <h2 id="npm-lookup-recent-title">Recent searches</h2>
       <ul>${recent.map(search => html`<li>

@@ -3827,13 +3827,19 @@ button.npm-category {
   }
   & :disabled { opacity: .6; }
 }
-.npm-lookup-status,
-.npm-lookup-error { margin: .75rem 0 0; font-size: .85rem; }
+/* Where the search says it's opening a package, or why it didn't: a line
+   kept for it, so the recent searches under it stay put. */
+.npm-lookup-message {
+  min-height: 1.5em; margin-top: .75rem;
+  font-size: .85rem; line-height: 1.5;
+
+  & p { margin: 0; }
+}
 .npm-lookup-status { color: var(--muted); }
 .npm-lookup-error { color: var(--critical); }
 /* Recent searches, under the search: each opens again, or is removed. */
 .npm-lookup-recent {
-  margin-top: 1.25rem;
+  margin-top: 1rem;
 
   & h2 { margin: 0 0 .4rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
   & ul { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0; padding: 0; list-style: none; }
