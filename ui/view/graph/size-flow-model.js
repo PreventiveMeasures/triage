@@ -208,6 +208,47 @@ function spreadFlowPorts(nodes, edges, byId) {
   } }
 }
 
+// Ribbon pairs that cross with `left` before `right`, and with them swapped,
+// given the sorted centers of each bar's importers.
+function crossings(left, right) {
+  let kept = 0, swapped = 0
+  for (let i = 0, j = 0; i < left.length; i++) { while (j < right.length && right[j] < left[i]) j++; kept += j }
+  for (let i = 0, j = 0; j < right.length; j++) { while (i < left.length && left[i] < right[j]) i++; swapped += i }
+  return [kept, swapped]
+}
+
+// Bars start in size order. Neighbors swap only when that removes crossings
+// with ribbons from the rows above, so a smaller bar moves left exactly when
+// it untangles the flow. Rows settle top-down: the entry row keeps its size
+// order and each row follows the rows already placed above it. A work budget
+// bounds the cost on very large, tangled graphs.
+function untangleBands(bands, edges, byId) {
+  const upstream = new Map()
+  for (const edge of edges) {
+    const from = byId.get(edge.from), to = byId.get(edge.to)
+    if (from.level === to.level) continue
+    const [above, below] = from.level < to.level ? [from, to] : [to, from]
+    if (!upstream.has(below)) upstream.set(below, [])
+    upstream.get(below).push(above)
+  }
+  let budget = 1_000_000
+  for (const band of bands.values()) {
+    const ends = new Map(band.map(n => [n, (upstream.get(n) ?? []).map(above => above.x + above.width / 2).toSorted((a, b) => a - b)]))
+    for (let pass = 0; pass < band.length && budget > 0; pass++) {
+      let swapped = false
+      for (let i = 0; i + 1 < band.length; i++) {
+        const left = ends.get(band[i]), right = ends.get(band[i + 1])
+        budget -= 1 + left.length + right.length
+        const [kept, flipped] = crossings(left, right)
+        if (flipped < kept) { [band[i], band[i + 1]] = [band[i + 1], band[i]]; swapped = true }
+      }
+      if (!swapped) break
+    }
+    let x = 0
+    for (const n of band) { n.x = x; x += n.width }
+  }
+}
+
 export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 } = {}) {
   const roots = (focus && model.byId.has(focus) ? [focus] : model.roots).filter(id => sizeFlowFilterSize(model.byId.get(id)) >= minSize)
   const levels = flowLevels(model, roots, minSize)
@@ -217,20 +258,20 @@ export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 
   const visible = new Set(candidates)
   const edges = model.edges.filter(e => visible.has(e.from) && visible.has(e.to))
     .toSorted((a, b) => b.size - a.size || a.id.localeCompare(b.id)).map(e => ({ ...e }))
-  const nodes = [...visible].map(id => ({ ...model.byId.get(id), level: levels.get(id) }))
-  const bands = Map.groupBy(nodes, n => n.level), byId = new Map(nodes.map(n => [n.id, n]))
-  const maxSize = nodes.reduce((max, n) => Math.max(max, n.removable), 1)
+  const sized = [...visible].map(id => ({ ...model.byId.get(id), level: levels.get(id) }))
+  const bands = Map.groupBy(sized, n => n.level), byId = new Map(sized.map(n => [n.id, n]))
+  const maxSize = sized.reduce((max, n) => Math.max(max, n.removable), 1)
   // Bars share one byte scale and measure deletion impact from all entry
   // points, even while focusing. Overlapping ribbons never inflate a bar.
   const weight = n => Math.max(n, maxSize / 4000)
   const widest = [...bands.values()].reduce((max, band) => Math.max(max, band.reduce((s, n) => s + n.removable, 0)), 1)
   const rowStep = 88, scale = Math.max(1, width) / widest
   let actualWidth = 0, height = 0
-  for (const band of bands.values()) {
-    let x = 0
-    for (const n of band) { n.x = x; n.y = 12 + n.level * rowStep; n.width = Math.max(1.5, n.removable * scale); x += n.width; height = Math.max(height, n.y + 26) }
-    actualWidth = Math.max(actualWidth, x)
-  }
+  for (const n of sized) { n.y = 12 + n.level * rowStep; n.width = Math.max(1.5, n.removable * scale); height = Math.max(height, n.y + 26) }
+  untangleBands(bands, edges, byId)
+  for (const band of bands.values()) actualWidth = Math.max(actualWidth, band.reduce((x, n) => x + n.width, 0))
+  // Keyboard navigation and paint order read each row left to right.
+  const nodes = [...bands.values()].flat()
   for (const edge of edges) {
     const from = byId.get(edge.from), to = byId.get(edge.to)
     const ribbonWidth = weight(edge.size) * scale

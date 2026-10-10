@@ -192,6 +192,39 @@ test('full dependency paths are visible and following a dependency retains all i
   }
 })
 
+test('a smaller bar moves left of larger ones only when that removes ribbon crossings', () => {
+  const row = (layout, level) => layout.nodes.filter(n => n.level === level).map(n => n.id)
+  const uncrossed = layout => {
+    const edges = layout.edges.toSorted((a, b) => a.x1 - b.x1)
+    for (let i = 1; i < edges.length; i++) assert.ok(edges[i - 1].x2 < edges[i].x2, `${edges[i - 1].id} crosses ${edges[i].id}`)
+  }
+  const pair = layoutSizeFlow(buildSizeFlow(fixture({
+    'x.js': { size: 1000, imports: ['x-dep.js'] }, 'x-dep.js': { size: 50 },
+    'y.js': { size: 500, imports: ['y-dep.js'] }, 'y-dep.js': { size: 100 },
+  }, ['x.js', 'y.js'])))
+  assert.deepEqual(row(pair, 0), ['f:x.js', 'f:y.js'])
+  assert.deepEqual(row(pair, 1), ['f:x-dep.js', 'f:y-dep.js'], 'the smaller import moves under its importer')
+  assert.equal(pair.byId.get('f:x-dep.js').x, 0)
+  uncrossed(pair)
+
+  // A tiny bar travels past several larger ones to sit under its importer.
+  const far = layoutSizeFlow(buildSizeFlow(fixture({
+    'big.js': { size: 1000, imports: ['big-dep.js'] }, 'big-dep.js': { size: 900 },
+    'g.js': { size: 400, imports: ['g-dep.js'] }, 'g-dep.js': { size: 5 },
+    'c.js': { size: 300, imports: ['c-dep.js'] }, 'c-dep.js': { size: 50 },
+    'p.js': { size: 200, imports: ['p-dep.js'] }, 'p-dep.js': { size: 100 },
+  }, ['big.js', 'g.js', 'c.js', 'p.js'])))
+  assert.deepEqual(row(far, 0), ['f:big.js', 'f:g.js', 'f:c.js', 'f:p.js'])
+  assert.deepEqual(row(far, 1), ['f:big-dep.js', 'f:g-dep.js', 'f:c-dep.js', 'f:p-dep.js'])
+  uncrossed(far)
+  assert.deepEqual(far.nodes.map(n => n.id), [...row(far, 0), ...row(far, 1)], 'nodes list each row left to right')
+
+  const shared = layoutSizeFlow(buildSizeFlow(fixture({
+    'entry.js': { size: 10, imports: ['small.js', 'large.js'] }, 'small.js': { size: 50 }, 'large.js': { size: 100 },
+  })))
+  assert.deepEqual(row(shared, 1), ['f:large.js', 'f:small.js'], 'with no crossing to remove, larger bars stay left')
+})
+
 test('ribbons that fit sit side by side from the left edge of the bar', () => {
   const layout = layoutSizeFlow(buildSizeFlow(fixture({
     'entry.js': { size: 500, imports: ['small.js', 'large.js', 'medium.js'] },
