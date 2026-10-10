@@ -14,6 +14,7 @@ import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
+import { PrettyError, isPrettyRequest } from './pretty-print.ts'
 import { sharedTeamApp } from './team-app.ts'
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -32,7 +33,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   const shareRoute = /^\/api\/shares\/([A-Za-z0-9_-]+)\/workspace$/u.exec(url.pathname)
   const teamRoute = /^\/api\/teams\/([^/]+)\/(shared|reports|feed|annotations)$/u.exec(url.pathname)
   const reportRoute = /^\/api\/reports\/([^/]+)\/(triage|comments|sources)$/u.exec(url.pathname)
-  const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories)$/u.exec(url.pathname)
+  const bundleRoute = /^\/api\/bundles\/([^/]+)\/(metadata|contents|download|advisories|pretty)$/u.exec(url.pathname)
   if (!shareRoute && !teamRoute && !reportRoute && !bundleRoute) { json(res, 403, { error: 'share-scope-required' }); return }
   const tokenHash = hashToken(token)
   const snapshot = await deps.db.getWorkspaceShare(tokenHash)
@@ -107,6 +108,18 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
     const stored = await deps.bundleStore.open(bundle.id, bundle.kind)
     if (!stored) { json(res, 503, { error: 'unavailable' }); return }
     await stream(stored, bundle.kind === 'sourcemap' ? 'br' : null, 'application/octet-stream'); return
+  }
+  if (part === 'pretty') {
+    const hash = url.searchParams.get('hash'), path = url.searchParams.get('path')
+    if (!isPrettyRequest(path, hash)) { json(res, 400, { error: 'bad-file' }); return }
+    if (!deps.prettyCache) { json(res, 503, { error: 'unavailable' }); return }
+    let pretty
+    try { pretty = await deps.prettyCache.bundle(bundle, path, hash!) }
+    catch (err) {
+      if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
+      throw err
+    }
+    await stream(pretty, 'br', 'text/plain; charset=utf-8'); return
   }
   if (!deps.bundleCache) { json(res, 503, { error: 'unavailable' }); return }
   if (part === 'advisories') {

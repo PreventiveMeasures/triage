@@ -77,6 +77,14 @@ export async function fetchNpmSocket(name, version, options) {
   return (await loadManagedBundle()).fetchNpmSocket(name, version, options)
 }
 
+export async function fetchPrettyBundleFile(id, path, hash, options) {
+  return (await loadManagedBundle()).fetchPrettyBundleFile(id, path, hash, options)
+}
+
+export async function fetchPrettyNpmFile(name, version, path, hash, options) {
+  return (await loadManagedBundle()).fetchPrettyNpmFile(name, version, path, hash, options)
+}
+
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }

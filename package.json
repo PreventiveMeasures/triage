@@ -140,6 +140,7 @@
     "server-managed/npm-loads.ts",
     "server-managed/npm-packages.ts",
     "server-managed/package-entry-points.ts",
+    "server-managed/pretty-print.ts",
     "server-managed/public-workspace.ts",
     "server-managed/repo-path.ts",
     "server-managed/report-migration.ts",
@@ -208,6 +209,8 @@
     "common/github-issue-labels.js",
     "common/github-issue-labels.d.ts",
     "common/gzip.js",
+    "common/pretty-print.d.ts",
+    "common/pretty-print.js",
     "common/linked-workspace-groups.js",
     "common/managed/comments.ts",
     "common/managed/npm-packages.d.ts",
@@ -299,6 +302,7 @@
     "@preventive/sourcemap": "1.0.0-alpha.1",
     "@preventive/upstream": "1.0.0-alpha.12",
     "oxc-parser": "^0.152.0",
+    "oxfmt": "^0.72.0",
     "ws": "^8.22.0"
   },
   "peerDependencies": {

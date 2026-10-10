@@ -117,3 +117,41 @@ export function fetchNpmTags(name, version, { signal } = {}) {
 export function fetchNpmSocket(name, version, { signal } = {}) {
   return requestNpm('socket', { name, version }, signal)
 }
+
+const PRETTY_ERRORS = {
+  404: 'This file is no longer available.',
+  409: 'This file has changed since it was opened.',
+  413: 'This file is too large to pretty-print.',
+  422: "This file couldn't be read as code.",
+  429: 'Too many files are being pretty-printed. Try again shortly.',
+  502: "The npm registry couldn't be reached.",
+}
+// Refusals whose code says more than their status.
+const PRETTY_CODE_ERRORS = {
+  'pretty-mismatch': 'Pretty-printing would change more than its layout, so it is shown as published.',
+}
+
+// A file pretty-printed by the server, which keeps the copy; the viewer
+// keeps it only while the file is open (pretty-source.js).
+async function requestPretty(url, signal) {
+  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  const generation = managedAppState.generation
+  const response = await managedFetch(url, { credentials: 'same-origin', signal })
+  signal.throwIfAborted()
+  if (!response.ok) {
+    const code = (await response.json().catch(() => null))?.error ?? null
+    throw Object.assign(new Error(PRETTY_CODE_ERRORS[code] ?? PRETTY_ERRORS[response.status] ?? `Pretty-print request failed (${response.status})`), { status: response.status, code })
+  }
+  const text = await response.text()
+  signal.throwIfAborted()
+  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+  return text
+}
+
+export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
+  return requestPretty(`/api/bundles/${encodeURIComponent(id)}/pretty?${new URLSearchParams({ path, hash })}`, signal)
+}
+
+export function fetchPrettyNpmFile(name, version, path, hash, { signal } = {}) {
+  return requestPretty(`/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`, signal)
+}

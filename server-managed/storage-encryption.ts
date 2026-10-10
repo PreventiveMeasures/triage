@@ -4,7 +4,7 @@ import { Readable } from 'node:stream'
 import { type StorageKey, decryptStorageStream, encryptStorageStream, wrapStorageValue } from '../server-common/storage-crypto.ts'
 import { ENCRYPTED_CACHE_PREFIX, type ObjectStorage, type RawObject, type RawObjectStorage, deleteObjects, objectPath, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageRow, type StorageRowKind, dataKeyIdentity, unwrapDataKey } from './storage-db.ts'
-import { inspectStorageObject, storageOwner, storageRowPaths, verifyStoragePayload } from './storage-payload.ts'
+import { PUBLIC_CACHE_PREFIX, inspectStorageObject, storageOwner, storageRowPaths, verifyStoragePayload } from './storage-payload.ts'
 
 const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
@@ -22,6 +22,8 @@ function logicalKey(identity: string) {
 }
 const encryptedCachePath = (identity: string) => `${ENCRYPTED_CACHE_PREFIX}${identity.slice('cache/'.length)}`
 const deletionPaths = (identity: string) => identity.startsWith('cache/') ? [identity, encryptedCachePath(identity)] : [identity]
+// Public bytes, stored as they are whether or not storage is encrypted.
+const publicPath = (identity: string) => identity.startsWith('avatars/') || identity.startsWith(PUBLIC_CACHE_PREFIX)
 
 // A PUT can commit and still throw. Remove only this attempted plaintext,
 // comparing bytes rather than magic: arbitrary uploads can share the header.
@@ -199,7 +201,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
   async function open(identity: string): ReturnType<ObjectStorage['open']> {
     logicalKey(identity)
     const state = await mode()
-    if (identity.startsWith('avatars/')) return raw.open(identity)
+    if (publicPath(identity)) return raw.open(identity)
     if (state) return openEncrypted(raw, db, key!, identity, state)
     const stored = await raw.open(identity)
     if (!stored) return null
@@ -231,7 +233,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
       if (replaceReport) return convertStoredReport(raw, db, key, identity, bytes, mode)
       const state = await mode()
       const owner = storageOwner(identity)
-      if (identity.startsWith('avatars/')) { await raw.put(identity, bytes); return null }
+      if (publicPath(identity)) { await raw.put(identity, bytes); return null }
       if (!state) return putPlaintext(raw, identity, bytes, () => mode(true))
       let dataKey: Buffer, wrapped: string | null = null
       if (owner?.cache) {

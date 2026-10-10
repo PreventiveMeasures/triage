@@ -188,6 +188,11 @@ export function loadNpmTarball(doc: NpmVersionDocument): NpmLoad<Uint8Array> {
   return shared(`tarball ${doc.dist.integrity} ${doc.dist.tarball}`, doc, () => readTarball(doc))
 }
 
+// The version's files, for one of them to be pretty-printed (pretty-print.ts).
+export function loadNpmFiles(doc: NpmVersionDocument): NpmLoad<NpmPackageFile[]> {
+  return shared(`files ${doc.dist.integrity} ${doc.dist.tarball}`, doc, async () => readFiles(await readTarball(doc)))
+}
+
 // The version as the viewer reads it, as brotli-encoded JSON: `{ name,
 // version, private, integrity, tarballSize, manifest, files }`, its files as
 // npmFileRows gives them. Encoding is where a load holds the most, so it

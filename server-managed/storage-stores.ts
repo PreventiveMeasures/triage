@@ -79,5 +79,8 @@ export function createManagedStores(objects: ObjectStorage, avatarSidecar: boole
     avatarStore: avatarStore(objects, avatarSidecar),
     cacheStorage,
     reportSourcesStorage: cacheStore(objects, 'report-sources'),
+    // Public npm versions' pretty-printed files (pretty-print.ts), kept
+    // unencrypted (PUBLIC_CACHE_PREFIX in storage-payload.ts).
+    npmCacheStorage: cacheStore(objects, 'npm'),
   }
 }

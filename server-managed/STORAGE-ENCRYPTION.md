@@ -22,11 +22,12 @@ one supported master key; rotation and old-key lists are not implemented.
 | --- | --- |
 | Reports, including Brotli-compressed reports | Random per-report key, wrapped in `managed_report.data_key` |
 | Bundles, including Brotli sourcemaps | Random per-bundle key, wrapped in `managed_bundle.data_key` |
-| Bundle metadata/package inventory and report-source caches | Their bundle's data key |
+| Bundle metadata/package inventory, report-source and pretty-printed file caches | Their bundle's data key |
 | Temporary Vercel upload parts | Master key, with fresh per-write derivation |
 | Global deduplication link reports | Master key; encrypted JSON stored directly in `managed_link_report.encrypted_groups`, bound to the row |
 | GitHub access and refresh tokens | Master key; each SQL value is wrapped separately and bound to its user and field |
 | Public GitHub avatars | Unencrypted |
+| Pretty-printed files of public npm versions (`cache/npm/`) | Unencrypted |
 | Other SQL data: users, permissions, sessions, triage, comments, activity and upload metadata | Unencrypted |
 | E2e objects | Unchanged; encrypted by clients with their own keys |
 

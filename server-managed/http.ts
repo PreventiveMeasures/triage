@@ -34,6 +34,7 @@
 //   GET  /api/bundles/<id>/{metadata,contents} → authorized encoded bytes | 401/404/422
 //   GET  /api/bundles/<id>/advisories → published dependency advisories (security access) | 401/403/404
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
+//   GET  /api/bundles/<id>/pretty?path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
@@ -55,6 +56,7 @@
 //   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
 //   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404
 //   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404
+//   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -75,7 +77,7 @@ import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AvatarStore } from './avatar-store.ts'
-import type { BlobStore } from './blob-store.ts'
+import type { BlobStore, OpenedBlob } from './blob-store.ts'
 import { bundleFilePrefix, bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
 import { resolveRepositoryImportLocation } from './repository-aliases.ts'
 import type { ManagedConfig } from './config.ts'
@@ -122,6 +124,7 @@ import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBu
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmSocketReport } from './npm-insights.ts'
+import { type PrettyCache, PrettyError, isPrettyRequest } from './pretty-print.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -170,7 +173,8 @@ const NPM_STATS_PATH = '/api/npm/stats'
 const NPM_ADVISORIES_PATH = '/api/npm/advisories'
 const NPM_TAGS_PATH = '/api/npm/tags'
 const NPM_SOCKET_PATH = '/api/npm/socket'
-const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH])
+const NPM_PRETTY_PATH = '/api/npm/pretty'
+const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PRETTY_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -280,6 +284,7 @@ export interface ManagedHttpDeps {
   bundleStore: BundleStore
   bundleCache?: BundleCache
   reportSourcesCache?: ReportSourcesCache
+  prettyCache?: PrettyCache
   uploadStore?: BlobStore
   originGate: OriginGate
   isShuttingDown: () => boolean
@@ -1296,6 +1301,42 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
   })
   if (req.method === 'HEAD') { cached.stream.destroy(); res.end(); return }
   try { await pipeline(cached.stream, res) } catch { res.destroy() }
+}
+
+// A pretty-printed file (pretty-print.ts), as text: kept bytes as they are,
+// or those just made.
+async function sendPretty(req: IncomingMessage, res: ServerResponse, pretty: OpenedBlob) {
+  res.writeHead(200, {
+    'content-type': 'text/plain; charset=utf-8', 'content-encoding': 'br',
+    ...(pretty.size == null ? {} : { 'content-length': String(pretty.size) }), 'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff',
+  })
+  if (req.method === 'HEAD') { pretty.stream.destroy(); res.end(); return }
+  try { await pipeline(pretty.stream, res) } catch { res.destroy() }
+}
+
+// GET /api/bundles/:id/pretty?path=&hash=. Access is checked again after a
+// copy is made, which can take a while.
+async function handleBundlePretty(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
+  const hash = params.get('hash'), path = params.get('path')
+  if (!isPrettyRequest(path, hash)) { sendJson(res, 400, { error: 'bad-file' }); return }
+  const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+  if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  if (!access.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let pretty
+  try { pretty = await deps.prettyCache.bundle(access.bundle, path, hash!) }
+  catch (err) {
+    if (err instanceof PrettyError) { sendJson(res, err.status, { error: err.message }); return }
+    throw err
+  }
+  const current = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+  if (!current?.bundle) {
+    pretty.stream.destroy()
+    sendJson(res, current ? 404 : 401, { error: current ? 'no-bundle' : 'unauthenticated' })
+    return
+  }
+  await sendPretty(req, res, pretty)
 }
 
 // Published dependency advisories require security access, independently of access to
@@ -2379,15 +2420,17 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Pro
   return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
-// GET /api/npm/{package,versions,download,stats,advisories,tags,socket}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,pretty}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
 async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
-  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH || path === NPM_SOCKET_PATH
+  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH || path === NPM_SOCKET_PATH || path === NPM_PRETTY_PATH
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
+  const file = params.get('path'), hash = params.get('hash')
+  if (path === NPM_PRETTY_PATH && !isPrettyRequest(file, hash)) { sendJson(res, 400, { error: 'bad-file' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
@@ -2463,6 +2506,16 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, socket })
       return
     }
+    // One of its files pretty-printed (pretty-print.ts), from a copy kept
+    // for a public version.
+    if (path === NPM_PRETTY_PATH) {
+      if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+      const pretty = await deps.prettyCache.npm(doc, file!, hash!)
+      if (!(await recheck(doc.private))) { pretty.stream.destroy(); return }
+      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      await sendPretty(req, res, pretty)
+      return
+    }
     // The load stays held until this response is written or abandoned, and
     // a reader who stops reading it gives it up after a while. One already
     // gone takes none, as its close has passed.
@@ -2481,7 +2534,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     })
     writeResponse(res, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
   } catch (err) {
-    if (err instanceof NpmPackageError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.status, { error: err.message }); return }
+    if (err instanceof NpmPackageError || err instanceof PrettyError) { if (!res.headersSent && !res.destroyed) sendJson(res, err.status, { error: err.message }); return }
     if (controller.signal.aborted) return
     throw err
   } finally {
@@ -2722,6 +2775,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
+      return
+    }
+    const bundlePretty = /^\/api\/bundles\/([a-f\d-]{36})\/pretty$/iu.exec(path)
+    if (bundlePretty) {
+      if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
+      await handleBundlePretty(req, res, deps, workspaceSession!.session, bundlePretty[1]!, url.searchParams)
       return
     }
     const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download)$/iu.exec(path)
