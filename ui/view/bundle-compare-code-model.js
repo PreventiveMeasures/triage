@@ -62,6 +62,7 @@ const NAMING = new Set(['as', 'class', 'function', 'import'])
 const BODY = /\s*(?:=>\s*)?\{/uy
 const ARROW = /\s*=>/uy
 const ARROW_BODY = /\s*=>\s*\{/uy
+const CALL = /\s*\(/uy
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
@@ -129,7 +130,9 @@ function nameless(text) {
   // declared as `function a` is, `named` by which word and whether as a
   // statement; `extending` the depth of an `extends` whose class body is the
   // next `{` there.
-  let at = 0, exporting = false, extending = -1, keyPlace = false, last = null, naming = false
+  // `dynamic` once a direct `eval(…)` or a `with (…)` can read a name by
+  // its spelling: renaming one then changes what runs.
+  let at = 0, dynamic = false, exporting = false, extending = -1, keyPlace = false, last = null, naming = false
   let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
@@ -137,6 +140,8 @@ function nameless(text) {
   }
   const between = segment => {
     keep(segment)
+    // A line break ends these statements, a `/` after it starting a value.
+    if (segment.includes('\n') && (last === 'break' || last === 'continue' || last === 'debugger')) last = ';'
     // A line break no operator spans may end a statement, as `;` does, or a
     // class field: even one alone between two names (`let x⏎f()`).
     const line = segment.lastIndexOf('\n')
@@ -257,6 +262,8 @@ function nameless(text) {
       if (!read && group && !inDefault(group.depth) && !inComputed(group.depth)) group.names.push({ aside, name: token })
       // A key or a property is no keyword: `{ const: a }`, `x.var`.
       const word = keyPlace || property ? null : token
+      CALL.lastIndex = at
+      if ((word === 'eval' || word === 'with') && CALL.test(text)) dynamic = true
       if (word === 'extends') extending = opens.length
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       if (word === 'const' || word === 'let' || word === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
@@ -278,7 +285,7 @@ function nameless(text) {
     if (declaredFrom(name, from)) names[line].push(name)
     else key[piece] = name
   }
-  return { key: key.join(''), names }
+  return { dynamic, key: key.join(''), names }
 }
 
 // The change blocks between two texts' lines with names renamed alike left
@@ -291,6 +298,7 @@ function nameless(text) {
 // is a change.
 function renameBlocks(before, after, a, b, ignoreWhitespace) {
   const na = nameless(before), nb = nameless(after)
+  if (na.dynamic || nb.dynamic) return { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
   const found = changeBlocks(na.key, nb.key, ignoreWhitespace)
   const pairs = []
   let i = 0, j = 0
@@ -320,10 +328,11 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   return { blocks, renamed }
 }
 
-// A tag where a value starts (`(<a />`, `if (x) <b />`, `return <i>`, `yield <p>`, a
-// fragment's `<>` before what it holds, not `[&<>"']`'s): JSX, whose
+// A tag where a value starts (`(<a />`, `if (x) <b />`, `x + <i />`, `return <i>`,
+// `yield <p>`, not after `<`, as `a<<b>>>0` has it; a fragment's `<>` before
+// what it holds, not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|[()=,:?&|!{};>[]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
+const JSX = /(?:^|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
