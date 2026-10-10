@@ -63,18 +63,19 @@ function npmSocketReport(entry) {
 
 const SOCKET_SCORES = [['overall', 'Overall'], ['supplyChain', 'Supply chain'], ['vulnerability', 'Vulnerability'], ['quality', 'Quality'], ['maintenance', 'Maintenance'], ['license', 'License']]
 
-// Its Socket scores, out of 100, each a chip of one width, its number beside
-// a meter filled to it, tinted by how it stands: 80 and over, 50 and over, and under
-// 50, that one marked as well; a full score's number green too.
+// Its Socket scores, out of 100, each a chip as wide as its text, after a
+// ring filled to it, tinted by how it stands: 80 and over, 50 and over, and
+// under 50, that one marked as well; a full score's number green too.
 function npmSocketRow(entry) {
   const scores = npmSocketReport(entry)?.scores
   if (!scores) return nothing
-  return html`<ul class="npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label]) => {
+  return html`<ul class="npm-extensions npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label]) => {
     const score = Math.round(scores[key] * 100)
     const level = score === 100 ? 'is-good is-max' : score >= 80 ? 'is-good' : score >= 50 ? 'is-fair' : 'is-poor is-warn'
     return html`<li><a class=${`npm-extension npm-socket-score ${level}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">
-      <span>${label}</span><span class="npm-extension-count">${score}</span>
-      <span class="npm-socket-meter" style=${`--score: ${score}%`} aria-hidden="true"></span></a></li>`
+      <svg class="npm-socket-gauge" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" pathLength="100"></circle>
+        <circle class="npm-socket-gauge-fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray=${`${score} 100`}></circle></svg>
+      <span>${label}</span><span class="npm-extension-count">${score}</span></a></li>`
   })}</ul>`
 }
 

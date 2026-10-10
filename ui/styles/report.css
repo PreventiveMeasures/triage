@@ -3796,35 +3796,29 @@ button.npm-category {
     border-left-color: var(--high);
   }
 }
-/* Socket's scores, all six in a row where they fit, each a chip of one width
-   linking to its report; and over the summary, the alerts it raises on the
-   version, as on malware, each with its note. */
-.npm-socket-scores {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(max(5.5rem, calc(16% - .3rem)), 1fr)); gap: .3rem;
-  margin: 0; padding: 0;
-  list-style: none;
-}
-/* Its name, then its number beside its meter. */
+/* Socket's scores, each a chip as wide as its text, linking to its report;
+   and over the summary, the alerts it raises on the version, as on malware,
+   each with its note. */
+.npm-socket-scores { gap: .25rem; }
 a.npm-socket-score {
-  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .1rem .4rem;
-  padding: .15rem .45rem .25rem;
-  color: var(--text); text-decoration: none;
+  align-items: center; gap: .25rem;
+  padding: 0 .3rem 0 .2rem;
+  color: var(--text); font-size: .6rem; text-decoration: none;
 
-  & > :first-child { grid-column: 1 / -1; }
   &.is-good { --meter: var(--green); }
   &.is-fair { --meter: var(--medium); }
   &.is-poor { --meter: var(--high); }
   &.is-max .npm-extension-count { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
-/* Its meter: a hairline track, filled to the score in its tint, blended with
-   the muted ink so it reads as a hint. */
-.npm-socket-meter {
-  height: 3px;
-  background:
-    linear-gradient(color-mix(in srgb, var(--meter) 55%, var(--muted)) 0 0) 0 0 / var(--score) 100% no-repeat,
-    color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 2px;
+/* Its gauge: a hairline ring, filled clockwise from the top to the score in
+   its tint, blended with the muted ink so it reads as a hint. */
+.npm-socket-gauge {
+  flex-shrink: 0; width: .72rem; height: .72rem;
+  transform: rotate(-90deg);
+
+  & circle { fill: none; stroke: color-mix(in srgb, var(--muted) 30%, transparent); stroke-width: 2.5; }
+  & .npm-socket-gauge-fill { stroke: color-mix(in srgb, var(--meter) 70%, var(--muted)); }
 }
 .npm-socket-alerts {
   padding: .5rem .7rem;

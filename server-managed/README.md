@@ -1081,8 +1081,8 @@ control. A version shows in the bundle view with four tabs:
   counting them as well, each with its files' size and, where they are text,
   their lines of code in its tooltip; then Socket's scores for a public
   package (overall, supply chain, vulnerability, quality, maintenance and
-  license, out of 100), in one row where they fit, each number beside a
-  meter filled to it, tinted for 80 and over, 50 and over, and under 50,
+  license, out of 100), each a small chip as wide as its text after a ring
+  gauge filled to it, tinted for 80 and over, 50 and over, and under 50,
   that one marked, a full score's number green. Each category's chip, and each file type's, narrows
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
