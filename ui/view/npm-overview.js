@@ -5,6 +5,7 @@
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
 import { bundleFileSizes } from '../../common/bundle-sources.js'
+import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
@@ -42,11 +43,10 @@ function npmPackageAdvisories(name) {
 // package is public.
 export function npmPackageLinks(entry) {
   const { name, version } = entry.npm
-  const link = (href, text, tooltip) => html`<a class="npm-package-link" href=${href} target="_blank" rel="noopener noreferrer"
-    data-tooltip=${tooltip}>${text}${EXTERNAL_LINK_ICON}</a>`
+  const link = (href, text) => html`<a class="npm-package-link" href=${href} target="_blank" rel="noopener noreferrer">${text}${EXTERNAL_LINK_ICON}</a>`
   return html`<span class="npm-package-links">
-    ${link(`https://www.npmjs.com/package/${name}/v/${encodeURIComponent(version)}`, 'npmjs', `${name}@${version} on npmjs.com`)}
-    ${entry.npm.private ? nothing : link(npmSocketHref(entry), 'socket.dev', `Socket's report on ${name}@${version}`)}
+    ${link(`https://www.npmjs.com/package/${name}/v/${encodeURIComponent(version)}`, 'npmjs')}
+    ${entry.npm.private ? nothing : link(npmSocketHref(entry), 'socket.dev')}
   </span>`
 }
 
@@ -63,14 +63,18 @@ function npmSocketReport(entry) {
 
 const SOCKET_SCORES = [['overall', 'Overall'], ['supplyChain', 'Supply chain'], ['vulnerability', 'Vulnerability'], ['quality', 'Quality'], ['maintenance', 'Maintenance'], ['license', 'License']]
 
-// Its Socket scores, out of 100, each a chip, one under 50 marked.
+// Its Socket scores, out of 100, each a chip of one width with a meter
+// filled to it, tinted by how it stands: 80 and over, 50 and over, and under
+// 50, that one marked as well.
 function npmSocketRow(entry) {
   const scores = npmSocketReport(entry)?.scores
   if (!scores) return nothing
-  return html`<ul class="npm-extensions" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label]) => {
+  return html`<ul class="npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label]) => {
     const score = Math.round(scores[key] * 100)
-    return html`<li><a class=${`npm-extension npm-socket-score${score < 50 ? ' is-warn' : ''}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer"
-      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${score} of 100`}><span>${label}</span><span class="npm-extension-count">${score}</span></a></li>`
+    const level = score >= 80 ? 'is-good' : score >= 50 ? 'is-fair' : 'is-poor is-warn'
+    return html`<li><a class=${`npm-extension npm-socket-score ${level}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">
+      <span>${label}</span><span class="npm-extension-count">${score}</span>
+      <span class="npm-socket-meter" style=${`--score: ${score}%`} aria-hidden="true"></span></a></li>`
   })}</ul>`
 }
 
@@ -175,7 +179,7 @@ export function npmAdvisoriesColumn(entry) {
         severity: SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown', cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range }, showDetails))}</ul>
     </section>`)}`
   return overviewColumn({ title: 'Advisories', count: ready ? advisories.length : '…', body, className: 'npm-advisories-col',
-    extra: ready ? html` <span class=${`npm-advisories-active${active > 0 ? ' is-active' : ''}`} data-tooltip=${`${active} affecting ${version}`}>${active} active</span>` : nothing })
+    extra: ready ? html` <span class=${`npm-advisories-active${active > 0 ? ' is-active' : ''}`}>${active} active</span>` : nothing })
 }
 
 
@@ -265,7 +269,7 @@ export function npmFilesRead(details) {
     known = {
       paths: new Set(sources), byPath, counts, extensions: new Map(sources.map(path => [path, npmFileExtension(path)])),
       binaries: new Set(sources.filter(path => byPath.get(path).category === 'binary').toSorted((a, b) => a.localeCompare(b))),
-      types: npmFileTypes(sources, bundleFileSizes(details)),
+      types: npmFileTypes(sources, bundleFileSizes(details), bundleLineCounts(details)),
     }
     readabilities.set(details, known)
   }
@@ -312,8 +316,8 @@ export function npmFilesFilter(entry) {
 
 // A chip narrowing the Files list to the files `chip.keeps`, or back to
 // every file where it already does: `content` its label, `classes` its marks
-// beyond a chip's.
-function filterChip(entry, chip, content, count, { classes = '', tooltip = 'Show only these in Files' } = {}) {
+// beyond a chip's, `tooltip` what its label doesn't say.
+function filterChip(entry, chip, content, count, { classes = '', tooltip = nothing } = {}) {
   const pressed = shownChip(entry)?.id === chip.id
   return html`<li><button type="button" class=${`npm-extension npm-category${classes}`} aria-pressed=${String(pressed)} data-tooltip=${tooltip}
     @click=${() => { filesShown = { key: shownKey(entry), chip: pressed ? null : chip }; render() }}>${content}<span class="npm-extension-count">${count.toLocaleString('en')}</span></button></li>`
@@ -363,14 +367,16 @@ export function npmFileExtension(path) {
 }
 
 // The package's extensions, most files first, then by name: `{ extension,
-// files, bytes }`, sizes as `sizes` has them, by path.
-export function npmFileExtensions(paths, sizes) {
+// files, bytes, lines }`, sizes as `sizes` has them and lines of code as
+// `lines` has them, by path, `lines` null where none of its files is text.
+export function npmFileExtensions(paths, sizes, lines = new Map()) {
   const byExtension = new Map()
   for (const path of paths) {
     const extension = npmFileExtension(path)
-    const row = byExtension.get(extension) ?? { extension, files: 0, bytes: 0 }
+    const row = byExtension.get(extension) ?? { extension, files: 0, bytes: 0, lines: null }
     row.files++
     row.bytes += sizes.get(path) ?? 0
+    if (lines.has(path)) row.lines = (row.lines ?? 0) + lines.get(path)
     byExtension.set(extension, row)
   }
   return [...byExtension.values()].toSorted((a, b) => b.files - a.files || a.extension.localeCompare(b.extension))
@@ -382,30 +388,34 @@ const PACKAGE_FILE = /^(?:package\.json|readme(?:\.md)?)$/iu
 export const isNpmPackageFile = path => PACKAGE_FILE.test(path) || NPM_LICENSE_FILE.test(path)
 
 // The package's file types: its own files (isNpmPackageFile) as `package`,
-// where it has any, then its extensions as npmFileExtensions has them. An
-// extension only its own files have is left out; one other files have too
+// where it has any, then its extensions, each as npmFileExtensions has them.
+// An extension only its own files have is left out; one other files have too
 // counts its own files as well.
-export function npmFileTypes(paths, sizes) {
+export function npmFileTypes(paths, sizes, lines = new Map()) {
   const own = paths.filter(isNpmPackageFile)
   const others = new Set(paths.filter(path => !isNpmPackageFile(path)).map(npmFileExtension))
+  const { files, bytes, lines: ownLines } = npmFileExtensions(own, sizes, lines).reduce((sum, row) => ({
+    files: sum.files + row.files, bytes: sum.bytes + row.bytes, lines: row.lines === null ? sum.lines : (sum.lines ?? 0) + row.lines,
+  }), { files: 0, bytes: 0, lines: null })
   return {
-    package: own.length > 0 ? { files: own.length, bytes: own.reduce((sum, path) => sum + (sizes.get(path) ?? 0), 0) } : null,
-    extensions: npmFileExtensions(paths, sizes).filter(row => others.has(row.extension)),
+    package: own.length > 0 ? { files, bytes, lines: ownLines } : null,
+    extensions: npmFileExtensions(paths, sizes, lines).filter(row => others.has(row.extension)),
   }
 }
 
-const filesNote = (files, bytes) => `${files.toLocaleString('en')} ${files === 1 ? 'file' : 'files'} · ${formatBytes(bytes)}: show only these in Files`
+// A file type's size, and its lines of code where its files are text.
+const typeNote = ({ bytes, lines }) => lines === null ? formatBytes(bytes) : `${formatBytes(bytes)} · ${lines.toLocaleString('en')} LoC`
 
 // The package's file types, as chips under its summary, each narrowing the
-// Files list to its files as a category's does.
+// Files list to its files as a category's does, its files' size in its tooltip.
 function npmFileTypesRow(entry, details) {
   const { types, extensions } = npmFilesRead(details)
   if (!types.package && types.extensions.length === 0) return nothing
   return html`<ul class="npm-extensions" aria-label="File types">
     ${types.package ? filterChip(entry, { id: 'package', label: 'Package', keeps: isNpmPackageFile }, html`<span>Package</span>`, types.package.files,
-      { tooltip: `package.json, readme and license: ${filesNote(types.package.files, types.package.bytes)}` }) : nothing}
-    ${types.extensions.map(({ extension, files, bytes }) => filterChip(entry, { id: `extension:${extension}`, label: extension || 'No extension', keeps: path => extensions.get(path) === extension },
-      html`<span class="npm-extension-name">${extension || 'no extension'}</span>`, files, { tooltip: filesNote(files, bytes) }))}
+      { tooltip: `package.json, readme and license: ${typeNote(types.package)}` }) : nothing}
+    ${types.extensions.map(type => filterChip(entry, { id: `extension:${type.extension}`, label: type.extension || 'No extension', keeps: path => extensions.get(path) === type.extension },
+      html`<span class="npm-extension-name">${type.extension || 'no extension'}</span>`, type.files, { tooltip: typeNote(type) }))}
   </ul>`
 }
 

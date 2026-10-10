@@ -2674,7 +2674,7 @@ function renderBundleDetails(entry, details) {
 // they are (report.css .npm-overview).
 function renderNpmPackageOverview(entry, details) {
   const download = `/api/npm/download?${new URLSearchParams({ name: entry.npm.name, version: entry.npm.version })}`
-  const downloadButton = html`<a class="bundles-download-btn" href=${download} data-tooltip="Download the tarball">${DOWNLOAD_ICON}<span>Tarball</span></a>`
+  const downloadButton = html`<a class="bundles-download-btn" href=${download}>${DOWNLOAD_ICON}<span>Tarball</span></a>`
   // Under the downloads chart once the version is read; beside the facts
   // until then.
   const exportsCol = html`<div class="bundles-overview-exports">

@@ -3778,13 +3778,33 @@ button.npm-category {
     border-left-color: var(--high);
   }
 }
-/* Socket's scores, each a chip linking to its report; and over the summary,
-   the alerts it raises on the version, as on malware, each with its note. */
+/* Socket's scores, in rows of at most three, each a chip of one width linking
+   to its report; and over the summary, the alerts it raises on the version,
+   as on malware, each with its note. */
+.npm-socket-scores {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(max(7.5rem, 30%), 1fr)); gap: .3rem;
+  margin: 0; padding: 0;
+  list-style: none;
+}
 a.npm-socket-score {
+  display: flex; flex-wrap: wrap; justify-content: space-between; row-gap: .2rem;
+  padding: .15rem .45rem .3rem;
   color: var(--text); text-decoration: none;
 
+  &.is-good { --meter: var(--green); }
+  &.is-fair { --meter: var(--medium); }
+  &.is-poor { --meter: var(--high); }
   &:hover { border-color: var(--accent); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+/* Its meter: a hairline track, filled to the score in its tint, blended with
+   the muted ink so it reads as a hint. */
+.npm-socket-meter {
+  flex-basis: 100%; height: 3px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--meter) 55%, var(--muted)) 0 0) 0 0 / var(--score) 100% no-repeat,
+    color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 2px;
 }
 .npm-socket-alerts {
   padding: .5rem .7rem;

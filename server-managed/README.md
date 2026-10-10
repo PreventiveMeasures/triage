@@ -1072,9 +1072,11 @@ control. A version shows in the bundle view with four tabs:
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
   count, one only those files have left out, one other files have too
-  counting them as well; then Socket's scores for a public package (overall,
-  supply chain, vulnerability, quality, maintenance and license, out of 100,
-  one under 50 marked). Each category's chip, and each file type's, narrows
+  counting them as well, each with its files' size and, where they are text,
+  their lines of code in its tooltip; then Socket's scores for a public
+  package (overall, supply chain, vulnerability, quality, maintenance and
+  license, out of 100), each with a meter filled to it, tinted for 80 and
+  over, 50 and over, and under 50, that one marked. Each category's chip, and each file type's, narrows
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at

@@ -27,12 +27,15 @@ test('extensions list most files first, then by name, with their sizes summed', 
   const paths = ['a.js', 'b.js', 'c.js', 'README.md', 'LICENSE', 'x.d.ts', 'y.d.ts', 'logo.png']
   const sizes = new Map([['a.js', 10], ['b.js', 20], ['c.js', 5], ['README.md', 100], ['x.d.ts', 3], ['y.d.ts', 4], ['logo.png', 900]])
   assert.deepEqual(npmFileExtensions(paths, sizes), [
-    { extension: '.js', files: 3, bytes: 35 },
-    { extension: '.d.ts', files: 2, bytes: 7 },
-    { extension: '', files: 1, bytes: 0 },
-    { extension: '.md', files: 1, bytes: 100 },
-    { extension: '.png', files: 1, bytes: 900 },
+    { extension: '.js', files: 3, bytes: 35, lines: null },
+    { extension: '.d.ts', files: 2, bytes: 7, lines: null },
+    { extension: '', files: 1, bytes: 0, lines: null },
+    { extension: '.md', files: 1, bytes: 100, lines: null },
+    { extension: '.png', files: 1, bytes: 900, lines: null },
   ])
+  const lines = new Map([['a.js', 3], ['b.js', 4], ['README.md', 0]])
+  assert.deepEqual(npmFileExtensions(paths, sizes, lines).map(row => [row.extension, row.lines]),
+    [['.js', 7], ['.d.ts', null], ['', null], ['.md', 0], ['.png', null]], 'lines of code where any of its files is text')
   assert.deepEqual(npmFileExtensions([], new Map()), [])
 })
 
@@ -40,13 +43,17 @@ test('a package\'s own files at its root are a type of their own, their extensio
   const paths = ['package.json', 'README.md', 'LICENSE', 'licence.md', 'lib/index.js', 'docs/guide.md', 'lib/README.md', 'lib/package.json']
   const sizes = new Map(paths.map((path, i) => [path, i + 1]))
   assert.deepEqual(npmFileTypes(paths, sizes), {
-    package: { files: 4, bytes: 1 + 2 + 3 + 4 },
+    package: { files: 4, bytes: 1 + 2 + 3 + 4, lines: null },
     // `.md` counts README.md and licence.md too, as docs/guide.md and lib/README.md have it;
     // `.json` stays, for lib/package.json; LICENSE alone had no extension.
-    extensions: [{ extension: '.md', files: 4, bytes: 2 + 4 + 6 + 7 }, { extension: '.json', files: 2, bytes: 1 + 8 }, { extension: '.js', files: 1, bytes: 5 }],
+    extensions: [{ extension: '.md', files: 4, bytes: 2 + 4 + 6 + 7, lines: null }, { extension: '.json', files: 2, bytes: 1 + 8, lines: null }, { extension: '.js', files: 1, bytes: 5, lines: null }],
   })
-  assert.deepEqual(npmFileTypes(['package.json', 'index.js'], new Map()), { package: { files: 1, bytes: 0 }, extensions: [{ extension: '.js', files: 1, bytes: 0 }] })
-  assert.deepEqual(npmFileTypes(['LICENSE-MIT', 'LICENSE-APACHE', 'LICENCE.txt', 'license-bsd.md', 'licenses/x.js', 'LICENSE_x'], new Map()).package, { files: 4, bytes: 0 },
+  const lines = new Map([['package.json', 20], ['README.md', 5], ['lib/index.js', 9]])
+  const typed = npmFileTypes(paths, sizes, lines)
+  assert.equal(typed.package.lines, 25, 'its own files\' lines, those that are text')
+  assert.deepEqual(typed.extensions.map(row => [row.extension, row.lines]), [['.md', 5], ['.json', 20], ['.js', 9]])
+  assert.deepEqual(npmFileTypes(['package.json', 'index.js'], new Map()), { package: { files: 1, bytes: 0, lines: null }, extensions: [{ extension: '.js', files: 1, bytes: 0, lines: null }] })
+  assert.deepEqual(npmFileTypes(['LICENSE-MIT', 'LICENSE-APACHE', 'LICENCE.txt', 'license-bsd.md', 'licenses/x.js', 'LICENSE_x'], new Map()).package, { files: 4, bytes: 0, lines: null },
     'a license file named after its license is one too')
   assert.deepEqual(npmFileTypes([], new Map()), { package: null, extensions: [] })
 })

@@ -364,7 +364,7 @@ export function renderNpmLookup() {
       <h2 id="npm-lookup-recent-title">Recent searches</h2>
       <ul>${recent.map(search => html`<li>
         <button type="button" class="npm-lookup-recent-open" ?disabled=${lookup.pending} @click=${() => searchNpm(search)}>${search}</button>
-        <button type="button" class="npm-lookup-recent-remove" aria-label=${`Remove ${search} from recent searches`} data-tooltip="Remove"
+        <button type="button" class="npm-lookup-recent-remove" aria-label=${`Remove ${search} from recent searches`}
           @click=${() => forgetNpmSearch(search)}>×</button>
       </li>`)}</ul>
     </section>` : nothing}
@@ -434,9 +434,11 @@ function npmCommitTags(entry, github) {
 
 // A file of the package, as a fact names it: a button opening it in the
 // source viewer where the package has it (`files`, by path, none until its
-// files are read), its path in its tooltip (`./LICENSE`), else its name.
+// files are read), its path in its tooltip (`./LICENSE`) where its label is
+// another, else its name.
 export function factFile(path, files, label = path) {
-  return files?.has(path) ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${path} data-tooltip=${`./${path}`}>${label}</button>` : label
+  const tooltip = label === path || label === `./${path}` ? nothing : `./${path}`
+  return files?.has(path) ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${path} data-tooltip=${tooltip}>${label}</button>` : label
 }
 
 // Its license files at its root: `LICENSE`, or one a license, such as
@@ -478,8 +480,8 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
     ${manifest.license ? html`<dt>License</dt><dd>${npmLicenseParts(manifest.license, [...files ?? []]).map(({ text, file }) => factFile(file, files, text))}</dd>` : nothing}
     ${manifest.author || manifest.publisher ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.publisher
-      ? html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(manifest.publisher)}`} target="_blank" rel="noopener noreferrer"
-          data-tooltip=${`Published by ~${manifest.publisher}: their profile on npmjs.com`}><span>${manifest.author ?? `~${manifest.publisher}`}</span></a>
+      ? html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(manifest.publisher)}`} target="_blank" rel="noopener noreferrer">
+          <span>${manifest.author ?? `~${manifest.publisher}`}</span></a>
         ${manifest.author ? html`<span class="npm-publisher">~${manifest.publisher}</span>` : nothing}`
       : manifest.author}</dd>` : nothing}
     ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
