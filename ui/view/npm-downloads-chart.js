@@ -79,11 +79,11 @@ export function npmDownloadTier(downloads) {
   return TIERS.find(([, from]) => most >= from)[0]
 }
 
-// A tier's name, and its tint: solid green for the top 100, green to the
-// top 5,000, through yellow, to orange for the unpopular, a package few
-// would notice changing.
+// A tier's name, and its tint: solid green to the top 200, green to the top
+// 5,000, yellow to the top 20,000, orange to the top 100,000, and red for
+// the unpopular, a package few would notice changing.
 function tierChip(tier) {
-  const level = tier <= 100 ? 'is-solid' : tier <= 5000 ? 'is-top' : tier <= 10_000 ? 'is-mid' : tier <= 100_000 ? 'is-low' : 'is-unpopular'
+  const level = tier <= 200 ? 'is-solid' : tier <= 5000 ? 'is-top' : tier <= 20_000 ? 'is-mid' : tier <= 100_000 ? 'is-low' : 'is-unpopular'
   return html`<dd class=${`npm-downloads-tier ${level}`}>${tier === Infinity ? 'unpopular' : `top ${tier.toLocaleString('en')}`}</dd>`
 }
 

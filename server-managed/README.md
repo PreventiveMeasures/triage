@@ -1091,7 +1091,8 @@ control. A version shows in the bundle view with four tabs:
   `9.6K/year`), and its tier among npm's packages by downloads (top 10, 20,
   50, 100, 200, 500, 1,000, 2,000, 5,000, 10,000, 20,000, 50,000 or 100,000,
   else unpopular), solid
-  green for the top 100, then tinted from green to orange, by the most it had in
+  green to the top 200, then tinted green to the top 5,000, yellow to the top
+  20,000, orange to the top 100,000 and red for the unpopular, by the most it had in
   any of its latest six weeks, so a week lower for days npm failed to count
   (zeros it may never correct) or for a holiday doesn't move it; the tiers'
   weekly bounds, rounded estimates to be revisited, are download-counts'
