@@ -9,6 +9,7 @@ import { packageEntryPointSuggestions, solidityEntryPointSuggestions } from './p
 import { defaultBundleConditions } from './bundle-conditions.js'
 
 const commitIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/></svg>`
+const chevronIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`
 const MAX_CACHED_DIRECTORIES = 100
 
 const REVISION_TYPES = [
@@ -16,6 +17,21 @@ const REVISION_TYPES = [
   { kind: 'tag', label: 'Tag', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="M2 2h5.5l6.5 6.5-5.5 5.5L2 7.5Z"/><circle cx="5" cy="5" r="1"/></svg>` },
   { kind: 'commit', label: 'Commit SHA', icon: commitIcon },
 ]
+
+// Branches sharing a first path segment collapse under it when there are more
+// than two of them, listed after the other branches. An expanded prefix lists
+// its branches without the prefix. The default branch stays outside any group.
+export function groupBranches(names, expanded, defaultBranch) {
+  const prefix = name => name === defaultBranch || !name.includes('/') ? null : name.slice(0, name.indexOf('/'))
+  const groups = Map.groupBy(names.filter(prefix), prefix)
+  const entries = names.filter(name => !(groups.get(prefix(name))?.length > 2)).map(name => ({ name }))
+  for (const [key, members] of groups) {
+    if (members.length <= 2) continue
+    entries.push({ prefix: key, count: members.length, expanded: expanded.has(key) })
+    if (expanded.has(key)) entries.push(...members.map(name => ({ name, label: name.slice(key.length + 1) })))
+  }
+  return entries
+}
 
 async function browseRepository(route, params, signal) {
   const response = await managedFetch(`/api/admin/repositories/${route}?${new URLSearchParams(params)}`, {
@@ -50,7 +66,7 @@ export class ManagedCreateBundle extends LitElement {
     _packageEntryPoints: { state: true },
     _solidityEntryPoints: { state: true }, _soliditySuggestionsLimited: { state: true },
     _loadingRefs: { state: true }, _loading: { state: true }, _error: { state: true }, _refsError: { state: true }, _limited: { state: true },
-    _revisionOpen: { state: true }, _revisionQuery: { state: true }, _activeRevision: { state: true },
+    _revisionOpen: { state: true }, _revisionQuery: { state: true }, _activeRevision: { state: true }, _expandedPrefixes: { state: true },
   }
 
   constructor() {
@@ -84,6 +100,7 @@ export class ManagedCreateBundle extends LitElement {
     this._revisionOpen = false
     this._revisionQuery = ''
     this._activeRevision = -1
+    this._expandedPrefixes = new Set()
     this._onViewport = () => this.positionRevisionSuggestions()
   }
 
@@ -219,8 +236,23 @@ export class ManagedCreateBundle extends LitElement {
     return ordered.filter(name => name.toLowerCase().includes(query))
   }
 
+  // The menu's rows: branches group by prefix until a query filters them.
+  revisionEntries() {
+    const names = this.revisionSuggestions()
+    return this._refKind === 'branch' && !this._revisionQuery.trim()
+      ? groupBranches(names, this._expandedPrefixes, this._refs.defaultBranch) : names.map(name => ({ name }))
+  }
+
+  toggleRevisionGroup(prefix) {
+    const expanded = new Set(this._expandedPrefixes)
+    if (!expanded.delete(prefix)) expanded.add(prefix)
+    this._expandedPrefixes = expanded
+  }
+
   showRevisionSuggestions(all = true) {
     if (this._refKind === 'commit' || this._repoId == null || this._loadingRefs) return
+    // Each opening starts collapsed, but for the chosen branch's group.
+    if (!this._revisionOpen) this._expandedPrefixes = new Set(this._refName.includes('/') ? [this._refName.slice(0, this._refName.indexOf('/'))] : [])
     this._revisionQuery = all ? '' : this._refName
     this._activeRevision = -1
     this.renderRoot.querySelector('.revision-menu').showPopover()
@@ -251,7 +283,7 @@ export class ManagedCreateBundle extends LitElement {
     // ellipsize past 15em.
     let labelWidth = 0
     const range = document.createRange()
-    for (const label of options.querySelectorAll('span')) {
+    for (const label of options.querySelectorAll('[role=option]:not(.revision-group) > span')) {
       range.selectNodeContents(label)
       labelWidth = Math.max(labelWidth, range.getBoundingClientRect().width)
     }
@@ -263,7 +295,7 @@ export class ManagedCreateBundle extends LitElement {
     const fits = width => Math.max(1, Math.floor((width - chrome + spacing) / (columnWidth + spacing)))
     // Fill the field's width, widening past a narrow field to up to three
     // columns once there are more than eight suggestions per column.
-    const count = this.revisionSuggestions().length
+    const count = this.revisionEntries().length
     const fit = Math.min(fits(window.innerWidth - 2 * margin), Math.max(fits(rect.width), Math.min(3, Math.ceil(count / 8))))
     // Short lists stay one column; longer ones spread evenly over the rows they need.
     const columns = count <= 8 ? 1 : Math.ceil(count / Math.ceil(count / fit))
@@ -288,15 +320,16 @@ export class ManagedCreateBundle extends LitElement {
       return
     }
     if (event.key === 'Enter') {
-      const name = this.revisionSuggestions()[this._activeRevision]
-      if (this._revisionOpen && name != null) { event.preventDefault(); this.pickRevision(name) }
+      const entry = this.revisionEntries()[this._activeRevision]
+      if (this._revisionOpen && entry?.prefix != null) { event.preventDefault(); this.toggleRevisionGroup(entry.prefix) }
+      else if (this._revisionOpen && entry != null) { event.preventDefault(); this.pickRevision(entry.name) }
       else this.closeRevisionSuggestions()
       return
     }
     if (this._refKind === 'commit' || !['ArrowDown', 'ArrowUp'].includes(event.key)) return
     event.preventDefault()
     if (!this._revisionOpen) this.showRevisionSuggestions()
-    const count = this.revisionSuggestions().length
+    const count = this.revisionEntries().length
     this._activeRevision = count === 0 ? -1 : event.key === 'ArrowDown'
       ? Math.min(this._activeRevision + 1, count - 1) : this._activeRevision <= 0 ? count - 1 : this._activeRevision - 1
     await this.updateComplete
@@ -417,7 +450,7 @@ export class ManagedCreateBundle extends LitElement {
     const repo = this._repos.find(item => item.repoId === this._repoId)
     const parts = this._path.split('/').filter(Boolean)
     const treeUrl = repo && this._commit ? `https://github.com/${[...repo.fullName.split('/'), 'tree', this._commit, ...parts].map(encodeURIComponent).join('/')}` : null
-    const choices = this.revisionSuggestions()
+    const choices = this.revisionEntries()
     const revisionLabel = this._refKind === 'commit' ? 'Commit SHA' : this._refKind === 'tag' ? 'Tag' : 'Branch'
     return html`<p class="intro ui-hint">Choose a repository and revision, then select files to use as entry points.</p>
       <div ?inert=${busy}>
@@ -426,9 +459,11 @@ export class ManagedCreateBundle extends LitElement {
         <form class="revision" @focusout=${event => { if (!event.currentTarget.contains(event.relatedTarget)) this.closeRevisionSuggestions() }} @submit=${event => { event.preventDefault(); void this.loadDirectory('', true) }}>
           <div class="revision-switch" role="group" aria-label="Revision type">${REVISION_TYPES.map(({ kind, label, icon }) => html`<button type="button" aria-label=${label} data-tooltip=${label} aria-pressed=${this._refKind === kind} ?disabled=${!repo || this._loadingRefs} @click=${() => { this.selectRevisionType(kind); this.renderRoot.querySelector('.revision-name').focus(); this.showRevisionSuggestions() }}>${icon}</button>`)}</div>
           <input class="revision-name" type="text" aria-label=${revisionLabel} role=${ifDefined(this._refKind === 'commit' ? undefined : 'combobox')} aria-autocomplete=${ifDefined(this._refKind === 'commit' ? undefined : 'list')} aria-expanded=${ifDefined(this._refKind === 'commit' ? undefined : String(this._revisionOpen))} aria-controls=${ifDefined(this._refKind === 'commit' ? undefined : 'bundle-revisions')} aria-activedescendant=${ifDefined(this._revisionOpen && this._activeRevision >= 0 ? `revision-${this._activeRevision}` : undefined)} autocomplete="off" placeholder=${this._refKind === 'commit' ? 'Commit SHA…' : `Choose or enter a ${this._refKind}…`} .value=${this._refName} ?disabled=${!repo || this._loadingRefs} @focus=${() => this.showRevisionSuggestions()} @click=${() => this.showRevisionSuggestions()} @keydown=${this.revisionKeyDown} @input=${event => { this.editRevision(event.target.value); this.showRevisionSuggestions(false) }}>
-          ${this._refKind === 'commit' ? nothing : html`<button type="button" class="revision-expand" aria-label=${`Show ${this._refKind} suggestions`} aria-expanded=${this._revisionOpen} ?disabled=${!repo || this._loadingRefs} @mousedown=${event => event.preventDefault()} @click=${() => { if (this._revisionOpen) this.closeRevisionSuggestions(); else { this.renderRoot.querySelector('.revision-name').focus(); this.showRevisionSuggestions() } }}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>`}
+          ${this._refKind === 'commit' ? nothing : html`<button type="button" class="revision-expand" aria-label=${`Show ${this._refKind} suggestions`} aria-expanded=${this._revisionOpen} ?disabled=${!repo || this._loadingRefs} @mousedown=${event => event.preventDefault()} @click=${() => { if (this._revisionOpen) this.closeRevisionSuggestions(); else { this.renderRoot.querySelector('.revision-name').focus(); this.showRevisionSuggestions() } }}>${chevronIcon}</button>`}
           <div class="revision-menu" id="bundle-revisions" popover="auto" role="listbox" aria-label=${`${revisionLabel} suggestions`} @beforetoggle=${event => { this._revisionOpen = event.newState === 'open'; delete event.target.dataset.positioned; if (!this._revisionOpen) this._activeRevision = -1 }}>
-            <div class="revision-options">${choices.map((name, index) => html`<button type="button" role="option" id=${`revision-${index}`} aria-selected=${name === this._refName} ?data-active=${index === this._activeRevision} tabindex="-1" @mousedown=${event => event.preventDefault()} @click=${() => this.pickRevision(name)}><span data-tooltip-truncated data-tooltip=${name}>${name}</span></button>`)}</div>
+            <div class="revision-options">${choices.map((entry, index) => entry.prefix == null
+              ? html`<button type="button" role="option" id=${`revision-${index}`} aria-label=${ifDefined(entry.label === undefined ? undefined : entry.name)} aria-selected=${entry.name === this._refName} ?data-active=${index === this._activeRevision} tabindex="-1" @mousedown=${event => event.preventDefault()} @click=${() => this.pickRevision(entry.name)}><span data-tooltip-truncated data-tooltip=${entry.name}>${entry.label ?? entry.name}</span></button>`
+              : html`<button type="button" role="option" class="revision-group" id=${`revision-${index}`} aria-selected="false" aria-expanded=${entry.expanded} ?data-active=${index === this._activeRevision} tabindex="-1" @mousedown=${event => event.preventDefault()} @click=${() => { this._activeRevision = -1; this.toggleRevisionGroup(entry.prefix) }}>${chevronIcon}<span>${entry.prefix}/</span><span class="count" aria-label=${`${entry.count} branches`}>${entry.count}</span></button>`)}</div>
             ${choices.length > 0 ? nothing : html`<p class="revision-empty">${this._revisionQuery ? 'No matching suggestions. Enter a revision name to browse.' : `No ${this._refKind} suggestions available.`}</p>`}
           </div>
         </form>

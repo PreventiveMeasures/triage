@@ -234,6 +234,24 @@ test('branch suggestions put the default first, retain filtering, and leave tag 
   assert.deepEqual(page.revisionSuggestions(), ['v1', 'v2'])
 })
 
+test('branch suggestions collapse prefixes with more than two branches until a query filters them', () => {
+  const page = new ManagedCreateBundle()
+  page._refs = { defaultBranch: 'claude/main', branches: ['claude/a', 'dev', 'claude/b', 'fix/x', 'claude/c', 'fix/y', 'claude/main'], tags: [] }
+  assert.deepEqual(page.revisionEntries(), [{ name: 'claude/main' }, { name: 'dev' }, { name: 'fix/x' }, { name: 'fix/y' },
+    { prefix: 'claude', count: 3, expanded: false }], 'the default branch stays first and outside its prefix')
+  page.toggleRevisionGroup('claude')
+  assert.deepEqual(page.revisionEntries().slice(4), [{ prefix: 'claude', count: 3, expanded: true },
+    { name: 'claude/a', label: 'a' }, { name: 'claude/b', label: 'b' }, { name: 'claude/c', label: 'c' }])
+  page.toggleRevisionGroup('claude')
+  assert.equal(page.revisionEntries().length, 5)
+  page._revisionQuery = 'b'
+  assert.deepEqual(page.revisionEntries(), [{ name: 'claude/b' }], 'a query lists matching branches in full')
+  page._revisionQuery = ''
+  page._refKind = 'tag'
+  page._refs.tags = ['a/1', 'a/2', 'a/3']
+  assert.deepEqual(page.revisionEntries(), [{ name: 'a/1' }, { name: 'a/2' }, { name: 'a/3' }], 'tags never group')
+})
+
 test('the creation picker loads managed repositories and never selects a filtered-out initial repository', async t => {
   const calls = []
   const allowed = { repoId: 2, fullName: 'org/allowed' }
