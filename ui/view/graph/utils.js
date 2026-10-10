@@ -99,6 +99,16 @@ function isLightTheme() {
 // just look up under the new prefix on the next call. Old entries
 // stay around but they're tiny and the package-name set is bounded.
 const _pkgColorCache = new Map()
+// The palette's colors in their order, for groups told apart by rank: the
+// first few are as far apart as it has.
+export function paletteColor(index) {
+  const palette = isLightTheme() ? PKG_PALETTE_LIGHT : PKG_PALETTE_DARK
+  return palette[index % palette.length]
+}
+
+// A fill for what spans several of them.
+export const mixedColor = () => isLightTheme() ? '#8c959f' : '#6e7681'
+
 export function pkgColor(pkg) {
   const light = isLightTheme()
   const palette = light ? PKG_PALETTE_LIGHT : PKG_PALETTE_DARK

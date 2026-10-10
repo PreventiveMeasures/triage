@@ -55,8 +55,9 @@ import { classMap } from 'lit/directives/class-map.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
 import { bundleGraphReasons } from './bundle-graph-inputs.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
-import { pkgColor } from './graph/utils.js'
+import { mixedColor, paletteColor, pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
+import { treemapGroups } from './treemap-groups.js'
 import './bundle-scope-selector.js'
 
 // After single-child collapse, six nested levels is plenty to drill;
@@ -196,16 +197,20 @@ function finalize(node, parentPath, parent, byPath) {
   // packages — resolves to null ("mixed") and the cell falls back to
   // its top-level-dir color. `undefined` until the first child is
   // seen; a single differing child latches it to null.
-  let pkg
+  // A directory group (treemap-groups.js) rolls up the same way.
+  let group, pkg
   for (const c of node.children.values()) {
     value += finalize(c, node.path, node, byPath)
     count += c.count
     if (pkg === undefined) pkg = c.pkg
     else if (pkg !== c.pkg) pkg = null
+    if (group === undefined) group = c.group
+    else if (group !== c.group) group = null
   }
   node.value = value
   node.count = count
   node.pkg = pkg ?? null
+  node.group = group ?? null
   return value
 }
 
@@ -428,6 +433,10 @@ class BundleTreemap extends LitElement {
     // for the viewer to open, so their cells carry no viewer link.
     const kinds = bundleFileKinds(this.details)
     const { prefix, stripped } = stripCommonPathPrefix(origPaths)
+    // A single package's files, which its color can't tell apart, are
+    // colored by directory group instead, the largest group first.
+    const packages = new Set(origPaths.map((path) => bundlePkgOf(path, { packageDir: packageDirs?.get(path) })))
+    const groups = packages.size === 1 ? treemapGroups(stripped, prefix) : new Map()
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
     for (let i = 0; i < origPaths.length; i++) {
@@ -460,7 +469,7 @@ class BundleTreemap extends LitElement {
       if (!leaf) {
         // Display-prefix stripping must not erase dependency boundaries.
         const pkg = bundlePkgOf(origPaths[i], { packageDir: packageDirs?.get(origPaths[i]) })
-        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg, resource: kinds.get(origPaths[i]) === 'resource' }
+        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg, group: groups.get(stripped[i]) ?? null, resource: kinds.get(origPaths[i]) === 'resource' }
         node.children.set(base, leaf)
       }
       leaf.value += size
@@ -470,6 +479,11 @@ class BundleTreemap extends LitElement {
     for (const c of root.children.values()) collapseNode(c)
     const dirByPath = new Map()
     finalize(root, '', null, dirByPath)
+    const groupBytes = new Map()
+    stripped.forEach((path, i) => {
+      if (groups.has(path)) groupBytes.set(groups.get(path), (groupBytes.get(groups.get(path)) ?? 0) + Math.max(sizes.get(origPaths[i]) ?? 0, 0))
+    })
+    this._groupRanks = new Map([...groupBytes].toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([group], rank) => [group, rank]))
     this._root = root
     this._dirByPath = dirByPath
     this._meta = { total, prefix }
@@ -601,6 +615,19 @@ class BundleTreemap extends LitElement {
     </nav>`
   }
 
+  // A node's fill and the name its tooltip gives it: its directory group's
+  // where the treemap colors by group, a node spanning groups neutral and
+  // unnamed; else its package's, as the path heuristic has it for one
+  // spanning packages.
+  _paint(node) {
+    if (this._groupRanks?.size > 0) {
+      return node.group == null ? { color: mixedColor(), label: null }
+        : { color: paletteColor(this._groupRanks.get(node.group) ?? 0), label: node.group }
+    }
+    const pkg = node.pkg ?? bundlePkgOf(node.path)
+    return { color: pkgColor(pkg), label: pkgLabel(pkg), named: node.pkg != null }
+  }
+
   _cell(c) {
     const pctStr = pctLabel(c.node.value, this._meta.total)
     const pos = { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` }
@@ -621,10 +648,9 @@ class BundleTreemap extends LitElement {
     // directory rendered as one block inherits it via `finalize` when
     // its whole subtree shares a package, else `pkg` is null (mixed)
     // and we fall back to the path heuristic for a stable hue.
-    const pkg = c.node.pkg ?? bundlePkgOf(c.node.path)
-    const color = pkgColor(pkg)
+    const { color, label } = this._paint(c.node)
     const style = styleMap({ ...pos, background: color, color: readableTextOn(color) })
-    const ttPkg = pkgLabel(pkg)
+    const ttPkg = label ?? nothing
     if (c.kind === 'agg') {
       return html`<div
         class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-agg"
@@ -657,9 +683,8 @@ class BundleTreemap extends LitElement {
   // but drops the tooltip's package line rather than claim one.
   _arc(node, d, total) {
     const pctStr = pctLabel(node.value, total)
-    const pkg = node.pkg ?? bundlePkgOf(node.path)
-    const color = pkgColor(pkg)
-    const ttPkg = pkgLabel(pkg)
+    const { color, label, named = label != null } = this._paint(node)
+    const ttPkg = label ?? nothing
     if (node.isFile) {
       return svg`<path
         class="bundle-treemap-node bundle-treemap-arc"
@@ -679,8 +704,8 @@ class BundleTreemap extends LitElement {
       fill=${color}
       data-treemap-into=${node.path}
       data-tt-path=${`${node.path}/`}
-      data-tt-pkg=${node.pkg ? ttPkg : nothing}
-      data-tt-color=${node.pkg ? color : nothing}
+      data-tt-pkg=${named ? ttPkg : nothing}
+      data-tt-color=${named ? color : nothing}
       data-tt-meta=${`${formatBytes(node.value)} · ${fileCount} · ${pctStr}%`}
     ></path>`
   }

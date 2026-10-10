@@ -1052,7 +1052,14 @@ in the bundle view with four tabs:
   tag naming the control characters or long lines it holds; and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names.
-- **Treemap**: the files by size, as for bundles.
+- **Treemap**: the files by size, as for bundles, colored by the top-most
+  directories that tell them apart, as package colors can't tell one
+  package's files apart: below the directories every file shares, each
+  directory has its color, and the files loose in a directory passed on the
+  way have one more (`src/a/`, `src/b/` and `src/*.js` for `src/a/a.js`,
+  `src/b/b.js` and `src/c.js`), the largest first; a package of loose files
+  alone is colored by extension. Any bundle of a single package is colored
+  the same way.
 - **Compare**: the bundle Compare, with another version of the same package,
   picked from its versions newest first. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
