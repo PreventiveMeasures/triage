@@ -35,6 +35,7 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
+import { EXTERNAL_LINK_ICON } from './advisory-parts.js'
 import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
 import { npmAdvisoriesColumn, npmBinaryColumn, npmContents, npmFilesFilter, npmFilesReadability, npmGithubFigures, npmReadabilityTag, npmReadabilityWarning, npmStatsRow } from './npm-overview.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
@@ -452,9 +453,10 @@ function openBundleWhy(details, query) {
 // Null leaves the row out.
 // `leadColumn` replaces the Packages column, as an npm package's Dependencies do;
 // `trailColumns` follow Files, `summaryExtra` follows the summary's meta, and
-// `columnsClass` names the columns row's layout.
+// `overviewClass` names the Overview's own layout. `fileIcon` and `fileTag`
+// render before and after each Files row's path.
 function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, {
-  bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing, columnsClass = '',
+  bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
   fileTag = null, fileIcon = null, overviewClass = '', fileFilter = null,
 } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
@@ -577,7 +579,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
     <div class="bundles-overview-summary">
       <div class="bundles-detail-meta-row">
         ${renderMeta(prefix)}
-        <dl class="bundles-detail-meta">
+        <dl class="bundles-detail-meta is-build">
           ${extras}
           <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
           ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
@@ -589,7 +591,7 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
       ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
       ${summaryExtra}
     </div>
-    <div class="bundles-overview-columns ${columnsClass}">
+    <div class="bundles-overview-columns">
       ${leadColumn ?? html`<section class="bundles-overview-col">
         <header class="bundles-overview-col-head">
           <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
@@ -2043,7 +2045,7 @@ function renderBundleSlide(entry) {
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.npm.name}>${entry.npm.name}</div>
           <npm-version-select .name=${entry.npm.name} .version=${entry.npm.version} .tab=${tab} .list=${npmVersionList(entry.npm.name)}></npm-version-select>
           <a class="npm-header-link" href=${`https://www.npmjs.com/package/${entry.npm.name}/v/${entry.npm.version}`} target="_blank" rel="noopener noreferrer"
-            data-tooltip=${`${entry.npm.name}@${entry.npm.version} on npmjs.com`}>npmjs.com${EXTERNAL_ARROW}</a>`
+            data-tooltip=${`${entry.npm.name}@${entry.npm.version} on npmjs.com`}>npmjs.com${EXTERNAL_LINK_ICON}</a>`
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
@@ -2547,7 +2549,7 @@ function bundleExportsColumn(entry, details) {
 // Shared `.bundles-overview` shell for the Overview branches that
 // have no parsed sources to show (loading / error / un-parsed) —
 // metadata row on top, optional placeholder line below.
-function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing, overviewClass = '') {
+function renderBundleOverviewFallback(meta, exportsCol, { placeholder = nothing, overviewClass = '' } = {}) {
   return html`<div class="bundles-overview ${overviewClass}">
     <div class="bundles-overview-summary">
       <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
@@ -2613,7 +2615,7 @@ function renderBundleDetails(entry, details) {
   if (!loaded) return renderBundleOverviewFallback(meta('', true), exportsCol)
   if (details.error) {
     return renderBundleOverviewFallback(meta('', true), exportsCol,
-      html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>`)
+      { placeholder: html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>` })
   }
   if (details.kind === 'sourcemap' && details.json) {
     const json = details.json
@@ -2673,10 +2675,8 @@ function renderBundleDetails(entry, details) {
   // the metadata block above plus a generic "not parsed" line,
   // wrapped in the same shell so layout is consistent.
   return renderBundleOverviewFallback(meta('', true), exportsCol,
-    html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>`)
+    { placeholder: html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>` })
 }
-
-const EXTERNAL_ARROW = html`<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13L13 3"/><path d="M5 3h8v8"/></svg>`
 
 // An npm package version's Overview: its manifest beside the files its
 // tarball holds, with the tarball to download. Its details arrive with it,
@@ -2693,7 +2693,7 @@ function renderNpmPackageOverview(entry, details) {
     <div class="bundles-overview-exports-row">${downloadButton}</div>
   </div>`
   if (details?.integrity !== entry.integrity || !details.json) {
-    return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry) }), exportsCol, nothing, 'npm-overview')
+    return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry) }), exportsCol, { overviewClass: 'npm-overview' })
   }
   // Files lists every file, tagged by what its bytes hold; the binary ones,
   // which have no text to show, are listed again in a column of their own.
@@ -2706,8 +2706,8 @@ function renderNpmPackageOverview(entry, details) {
   return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files }), npmOverviewExtras(entry, files), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: new Set(binaries),
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
-    summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details, sources, sizeMap)}${npmStatsRow(entry, downloadButton)}`,
-    columnsClass: 'npm-overview-columns', overviewClass: 'npm-overview',
-    fileTag: path => npmReadabilityTag(readability.get(path)), fileIcon: path => sourceFileIcon(path), fileFilter: npmFilesFilter(entry, details),
+    summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
+    overviewClass: 'npm-overview',
+    fileTag: path => npmReadabilityTag(readability.get(path)), fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry, details),
   })
 }

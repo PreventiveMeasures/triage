@@ -564,6 +564,19 @@ test('advisories cover every published version, each naming the versions it affe
   assert.deepEqual(asked, [['advisories', ['advised'], null], ['repository', 'org/repo', null]], 'every version asked at once, without credentials')
 })
 
+test('an advisory npm answers once a range it covers is one row, its ranges, versions and CWEs together', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('ranged', '4.5.0', { 'index.js': '' })
+  registry(t, [{ ...pkg, versions: ['3.10.0', '4.0.0', '4.4.0', '4.5.0'] }])
+  insights(t, { advisories: { ranged: [
+    { id: 1, url: 'https://github.com/advisories/GHSA-gpvr-g6gh-9mc2', title: 'No charset', severity: 'moderate', vulnerable_versions: '>=4.0.0 <4.5.0', cwe: ['CWE-79'], cvss: { score: 6.1 } },
+    { id: 2, url: 'https://github.com/advisories/GHSA-gpvr-g6gh-9mc2', title: 'No charset', severity: 'moderate', vulnerable_versions: '<3.11.0', cwe: ['CWE-79', 'CWE-20'], cvss: { score: 0 } },
+  ] } })
+  const body = (await h.send('/api/npm/advisories?name=ranged')).json()
+  assert.deepEqual(body.advisories, [{ id: 'GHSA-gpvr-g6gh-9mc2', source: 'registry', ghsa: 'GHSA-gpvr-g6gh-9mc2', url: 'https://github.com/advisories/GHSA-gpvr-g6gh-9mc2',
+    title: 'No charset', severity: 'moderate', cvss: 6.1, cwe: ['CWE-79', 'CWE-20'], range: '>=4.0.0 <4.5.0 || <3.11.0', affected: [1, 2, 3] }])
+})
+
 test('advisories its repository publishes on GitHub join npm\'s, its listing kept as bundle advisories keep it', async t => {
   const h = await setup(t)
   const pkg = packageOf('repo-advised', '1.2.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/advised.git' } })
@@ -611,6 +624,7 @@ test('a version\'s publish commit\'s tags, from a public repository, asked with 
     asked.push({ url: String(input), auth: new Headers(init.headers).get('authorization'), body: JSON.parse(init.body) })
     return Promise.resolve(Response.json({ data: { repository } }))
   })
+  const token = value => () => Promise.resolve(value)
   const commit = oid => ({ __typename: 'Commit', oid })
   const annotated = target => ({ __typename: 'Tag', oid: 'e'.repeat(40), target })
   repository = { isPrivate: false, refs: { nodes: [
@@ -619,20 +633,25 @@ test('a version\'s publish commit\'s tags, from a public repository, asked with 
     { name: 'nested@1.2.3', target: annotated(annotated(commit(sha))) },
     { name: 'v1.2.3-rc.1', target: commit(other) },
   ] } }
-  assert.deepEqual(await npmCommitTags('Org/Tagged', sha, '1.2.3', 'user-token'), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'], 'annotated tags followed to their commit, others left out')
+  assert.deepEqual(await npmCommitTags('Org/Tagged', sha, '1.2.3', token('user-token')), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'], 'annotated tags followed to their commit, others left out')
   assert.equal(asked.length, 1)
   assert.equal(asked[0].url, 'https://api.github.com/graphql')
   assert.equal(asked[0].auth, 'Bearer user-token')
   assert.deepEqual(asked[0].body.variables, { owner: 'Org', name: 'Tagged', query: '1.2.3' })
-  assert.deepEqual(await npmCommitTags('org/tagged', sha, '1.2.3', 'another-token'), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'])
+  assert.deepEqual(await npmCommitTags('org/tagged', sha, '1.2.3', token('another-token')), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'])
   assert.equal(asked.length, 1, 'kept for the repository and commit, whoever asks')
   repository = { isPrivate: true, refs: { nodes: [{ name: 'v2.0.0', target: commit(sha) }] } }
-  assert.deepEqual(await npmCommitTags('org/private', sha, '2.0.0', 'user-token'), [], 'a private repository\'s tags are no one\'s to see here')
+  assert.deepEqual(await npmCommitTags('org/private', sha, '2.0.0', token('user-token')), [], 'a private repository\'s tags are no one\'s to see here')
   repository = null
-  assert.deepEqual(await npmCommitTags('org/gone', sha, '2.0.0', 'user-token'), [])
+  assert.deepEqual(await npmCommitTags('org/gone', sha, '2.0.0', token('user-token')), [])
   asked.length = 0
-  assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', null), [])
+  assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', token(null)), [])
   assert.equal(asked.length, 0, 'GraphQL needs a token: without one, nothing is asked')
+  repository = { isPrivate: false, refs: { nodes: [{ name: 'v3.0.0', target: commit(sha) }] } }
+  assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', token('user-token')), ['v3.0.0'], 'nor kept for a reader with one')
+  let tokensAsked = 0
+  await npmCommitTags('org/untold', sha, '3.0.0', () => { tokensAsked++; return Promise.resolve('user-token') })
+  assert.equal(tokensAsked, 0, 'a token is asked for only where the tags are not kept')
 })
 
 test('the tags route reads the version as the reader may, and asks GitHub only with their token', async t => {

@@ -616,26 +616,26 @@ class BundleCompare extends LitElement {
     return this._diff
   }
 
+  // How many rows the Diff view would list, counted up to COMBINED_DIFF_MAX,
+  // with the line models found on the way, kept with the comparison.
+  _combinedFor() {
+    const diff = this._diffFor()
+    return diff.combined ??= combinedDiffRows(this.details, this._otherDetails, diff.files)
+  }
+
+  // Whether the Diff view is offered: only while its list is short enough to
+  // read whole.
+  get _diffFits() { return this._combinedFor().rows < COMBINED_DIFF_MAX }
+
+  // The mode shown: a link to Diff for a longer list shows the Overview.
+  get _shownMode() {
+    return this._mode === 'diff' && !this._diffFits ? 'overview' : this._mode
+  }
+
   // Summary band — file + size (+ dependency) deltas plus the four
   // bucket chips, wrapping on their own so the Overview | Code tabs keep
   // to the right of the first line. Sits under the picker once a
   // comparison is live.
-  // How many rows the Diff view would list, counted up to COMBINED_DIFF_MAX,
-  // with the line models found on the way, once a comparison.
-  _combinedFor() {
-    const diff = this._diffFor()
-    if (this._combinedKey !== this._diffKey || !this._combined) {
-      this._combinedKey = this._diffKey
-      this._combined = combinedDiffRows(this.details, this._otherDetails, diff.files)
-    }
-    return this._combined
-  }
-
-  // The mode shown: Diff only while its list is short enough to read whole;
-  // a link to a longer one shows the Overview.
-  get _shownMode() {
-    return this._mode === 'diff' && !(this._combinedFor().rows < COMBINED_DIFF_MAX) ? 'overview' : this._mode
-  }
 
   _renderSummary(diff) {
     const totals = diff.totals
@@ -670,7 +670,7 @@ class BundleCompare extends LitElement {
         ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
       </div></div>
       <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
-        ${[['overview', 'Overview'], ['code', 'Code'], ...this._combinedFor().rows < COMBINED_DIFF_MAX ? [['diff', 'Diff']] : []]
+        ${[['overview', 'Overview'], ['code', 'Code'], ...this._diffFits ? [['diff', 'Diff']] : []]
           .map(([mode, label]) => html`<button type="button" role="tab"
           aria-selected=${String(this._shownMode === mode)} @click=${() => { this._mode = mode; this._notify() }}>${label}</button>`)}
       </div>

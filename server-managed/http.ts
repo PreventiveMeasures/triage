@@ -91,6 +91,7 @@ import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
+import { bundleCommitHash } from '../common/bundle-commit.js'
 import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
@@ -117,7 +118,7 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats } from './npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
@@ -2376,14 +2377,14 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Pro
   return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
-// GET /api/npm/{package,versions,download,stats,advisories}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
 async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
-  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH
+  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
@@ -2398,6 +2399,11 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (isPrivate && !canReadPrivateNpm(current, name)) { sendJson(res, 404, { error: 'package-not-found' }); return false }
     return !res.destroyed
   }
+  // The reader's GitHub token, for GitHub's rate limits and never for what it
+  // shows: asked for once, and only where an answer isn't kept (npm-insights.ts).
+  let token: Promise<string | null> | undefined
+  const githubToken = () => token ??= ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
+  const githubRepoOf = (doc: NpmVersionDocument) => (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
   try {
     const privileged = canReadPrivateNpm(reader, name)
     if (path === NPM_VERSIONS_PATH) {
@@ -2413,8 +2419,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const versions = await readNpmVersions(name, privileged, controller.signal)
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
       const { advisories, repository } = await npmAdvisories(name, versions.versions, {
-        githubToken: () => reader.userId === undefined ? Promise.resolve(null)
-          : ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null),
+        githubToken,
         cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
         debug: deps.config.debug,
       })
@@ -2424,14 +2429,13 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // The package's, with the repository its latest version names; either
     // is null where it can't be had.
     if (path === NPM_STATS_PATH) {
+      // npm's downloads, which need nothing of the version, are asked at once;
+      // none is answered before the package's access is.
+      const downloadsAsked = npmDownloads(name).catch(() => null)
       const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
       if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      const repo = (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
-      const token = repo === null || reader.userId === undefined ? null : await ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
-      const [downloads, github] = await Promise.all([
-        npmDownloads(name).catch(() => null),
-        repo === null ? null : npmGithubStats(repo, token).catch(() => null),
-      ])
+      const repo = githubRepoOf(doc)
+      const [downloads, github] = await Promise.all([downloadsAsked, repo === null ? null : npmGithubStats(repo, githubToken).catch(() => null)])
       if (await recheck(doc.private)) sendJson(res, 200, { name, downloads, github })
       return
     }
@@ -2440,11 +2444,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // Its publish commit's tags, where its repository is public on GitHub and
     // the reader has a token to ask with; none where they can't be had.
     if (path === NPM_TAGS_PATH) {
-      const repo = (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
-      const sha = typeof doc.manifest['gitHead'] === 'string' && /^[\da-f]{40}$/u.test(doc.manifest['gitHead']) ? doc.manifest['gitHead'] : null
-      const token = repo === null || sha === null || reader.userId === undefined ? null
-        : await ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
-      const tags = repo === null || sha === null ? [] : await npmCommitTags(repo, sha, doc.version, token).catch(() => [])
+      const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
+      const tags = repo === null || sha === null ? [] : await npmCommitTags(repo, sha, doc.version, githubToken).catch(() => [])
       if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, tags })
       return
     }

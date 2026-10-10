@@ -214,6 +214,24 @@ function finalize(node, parentPath, parent, byPath) {
   return value
 }
 
+// A bundle of a single package's files' directory groups by path
+// (treemap-groups.js), and each group's rank by its bytes, kept with the
+// bundle; none for a bundle of several packages, colored by package.
+const _groupsByBundle = new WeakMap()
+function singlePackageGroups(details, pkgs, stripped, prefix, sizes) {
+  let known = _groupsByBundle.get(details)
+  if (!known) {
+    const groups = new Set(pkgs).size === 1 ? treemapGroups(stripped, prefix) : new Map()
+    const bytes = new Map()
+    stripped.forEach((path, i) => {
+      if (groups.has(path)) bytes.set(groups.get(path), (bytes.get(groups.get(path)) ?? 0) + Math.max(sizes[i] ?? 0, 0))
+    })
+    known = { groups, ranks: new Map([...bytes].toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([group], rank) => [group, rank])) }
+    if (details) _groupsByBundle.set(details, known)
+  }
+  return known
+}
+
 // Recursively place a node's rectangle (and its descendants) into the
 // flat cell list. A directory big enough to host a header + children
 // becomes a `dir` container with its sub-rects squarified inside;
@@ -433,10 +451,12 @@ class BundleTreemap extends LitElement {
     // for the viewer to open, so their cells carry no viewer link.
     const kinds = bundleFileKinds(this.details)
     const { prefix, stripped } = stripCommonPathPrefix(origPaths)
+    // Display-prefix stripping must not erase dependency boundaries.
+    const pkgs = origPaths.map((path) => bundlePkgOf(path, { packageDir: packageDirs?.get(path) }))
     // A single package's files, which its color can't tell apart, are
-    // colored by directory group instead, the largest group first.
-    const packages = new Set(origPaths.map((path) => bundlePkgOf(path, { packageDir: packageDirs?.get(path) })))
-    const groups = packages.size === 1 ? treemapGroups(stripped, prefix) : new Map()
+    // colored by directory group instead, the largest group first: both
+    // only the bundle's, whatever scope is shown.
+    const { groups, ranks } = singlePackageGroups(this.details, pkgs, stripped, prefix, origPaths.map((path) => sizes.get(path)))
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
     for (let i = 0; i < origPaths.length; i++) {
@@ -467,9 +487,7 @@ class BundleTreemap extends LitElement {
       let leaf = node.children.get(base)
       if (leaf && !leaf.isFile) continue
       if (!leaf) {
-        // Display-prefix stripping must not erase dependency boundaries.
-        const pkg = bundlePkgOf(origPaths[i], { packageDir: packageDirs?.get(origPaths[i]) })
-        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg, group: groups.get(stripped[i]) ?? null, resource: kinds.get(origPaths[i]) === 'resource' }
+        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg: pkgs[i], group: groups.get(stripped[i]) ?? null, resource: kinds.get(origPaths[i]) === 'resource' }
         node.children.set(base, leaf)
       }
       leaf.value += size
@@ -479,11 +497,7 @@ class BundleTreemap extends LitElement {
     for (const c of root.children.values()) collapseNode(c)
     const dirByPath = new Map()
     finalize(root, '', null, dirByPath)
-    const groupBytes = new Map()
-    stripped.forEach((path, i) => {
-      if (groups.has(path)) groupBytes.set(groups.get(path), (groupBytes.get(groups.get(path)) ?? 0) + Math.max(sizes.get(origPaths[i]) ?? 0, 0))
-    })
-    this._groupRanks = new Map([...groupBytes].toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([group], rank) => [group, rank]))
+    this._groupRanks = ranks
     this._root = root
     this._dirByPath = dirByPath
     this._meta = { total, prefix }
@@ -615,14 +629,14 @@ class BundleTreemap extends LitElement {
     </nav>`
   }
 
-  // A node's fill and the name its tooltip gives it: its directory group's
-  // where the treemap colors by group, a node spanning groups neutral and
-  // unnamed; else its package's, as the path heuristic has it for one
-  // spanning packages.
+  // A node's fill, the name its tooltip gives it, and whether a directory's
+  // tooltip names it: its directory group's where the treemap colors by
+  // group, a node spanning groups neutral and unnamed; else its package's,
+  // as the path heuristic has it for one spanning packages, unnamed.
   _paint(node) {
     if (this._groupRanks?.size > 0) {
-      return node.group == null ? { color: mixedColor(), label: null }
-        : { color: paletteColor(this._groupRanks.get(node.group) ?? 0), label: node.group }
+      return node.group == null ? { color: mixedColor(), label: null, named: false }
+        : { color: paletteColor(this._groupRanks.get(node.group) ?? 0), label: node.group, named: true }
     }
     const pkg = node.pkg ?? bundlePkgOf(node.path)
     return { color: pkgColor(pkg), label: pkgLabel(pkg), named: node.pkg != null }
@@ -683,7 +697,7 @@ class BundleTreemap extends LitElement {
   // but drops the tooltip's package line rather than claim one.
   _arc(node, d, total) {
     const pctStr = pctLabel(node.value, total)
-    const { color, label, named = label != null } = this._paint(node)
+    const { color, label, named } = this._paint(node)
     const ttPkg = label ?? nothing
     if (node.isFile) {
       return svg`<path

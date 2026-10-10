@@ -31,13 +31,10 @@ function ghsaIdFrom(url) {
   return m ? m[1] : null
 }
 
-// External-link glyph rendered next to the GHSA id — bare diagonal
-// arrow filling the full 16×16 viewBox. `currentColor` so it tints
-// with the surrounding text (muted by default, accent on hover).
-const EXTERNAL_LINK_SVG = html`<svg class="bundle-advisory-ghsa-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M3 13L13 3"/>
-  <path d="M5 3h8v8"/>
-</svg>`
+// An external link's glyph: a bare diagonal arrow filling its 16×16 box, in
+// the text's color (muted by default, accent on hover). After a GHSA id, and
+// after the npm package link in its header (render-bundle.js).
+export const EXTERNAL_LINK_ICON = html`<svg class="external-link-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13L13 3"/><path d="M5 3h8v8"/></svg>`
 
 // MITRE CWE link for a `CWE-1234`-shaped id — link form is
 // https://cwe.mitre.org/data/definitions/<n>.html. Anything else
@@ -68,7 +65,7 @@ export function advisoryReference(a) {
   if (!source && !(advisoryId && url)) return nothing
   return html`<span class="bundle-advisory-reference">
     ${source ? html`<span class="bundle-advisory-source" role="img" aria-label=${source.label}>${source.icon}</span>` : nothing}
-    ${advisoryId && url ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${advisoryId}${EXTERNAL_LINK_SVG}</a>` : nothing}
+    ${advisoryId && url ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${advisoryId}${EXTERNAL_LINK_ICON}</a>` : nothing}
   </span>`
 }
 

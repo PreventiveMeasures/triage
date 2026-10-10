@@ -240,6 +240,9 @@ test('the Diff view lists every changed file\'s diff in one list, and counts the
   assert.equal([...markup.matchAll(/class=bundle-compare-diff-table/gu)].length, 5, 'a diff for every text file')
   assert.ok(counted.rows > heads.length && counted.rows < COMBINED_DIFF_MAX)
   assert.deepEqual([...counted.models.keys()].toSorted(), heads.filter(path => path !== 'assets/logo.png'), 'the line models found counting')
-  // Counted only until it passes the limit.
-  assert.equal(combinedDiffRows(code.base, code.other, code.files, 3).rows, 4)
+  // Counted only until it passes the limit; two rows a file at least, so too
+  // many files for it are told without a diff.
+  const capped = combinedDiffRows(code.base, code.other, code.files, 13)
+  assert.ok(capped.rows >= 13 && Number.isFinite(capped.rows), `${capped.rows}`)
+  assert.equal(combinedDiffRows(code.base, code.other, code.files, 12).rows, Infinity)
 })

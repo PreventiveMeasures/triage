@@ -66,13 +66,39 @@ export const prefs = { layout: 'unified', ignoreWhitespace: false }
 const highlightCache = new Map()
 const highlightPending = new Set()
 
-export function countLines(text) {
+function countLines(text) {
   let count = 0
   for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) count++
   return count
 }
 
 // A diff too large to compute before it is asked for.
+// path → { kind, baseBytes, otherBytes, basePath, modified } for every file
+// that differs between the two sides of `files` (bundle-compare-diff.js):
+// removed, added, or changed, `basePath` naming a renamed file on the base
+// side and `modified` saying whether its contents changed too.
+export function fileEntries(files) {
+  const entries = new Map()
+  if (!files) return entries
+  for (const row of files.onlyBase) entries.set(row.path, { kind: 'removed', baseBytes: row.bytes, otherBytes: null })
+  for (const row of files.onlyOther) entries.set(row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes })
+  for (const row of files.changed) {
+    entries.set(row.path, row.basePath == null ? { kind: 'changed', baseBytes: row.baseBytes, otherBytes: row.otherBytes }
+      : { kind: 'renamed', basePath: row.basePath, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes })
+  }
+  return entries
+}
+
+// A file's two sides, as `entry` names them, from the two bundles' details.
+export function fileContents(base, other, path, { kind, basePath = path }) {
+  let before = kind === 'added' ? '' : bundleFilesAsMap(base).get(basePath)
+  let after = kind === 'removed' ? '' : bundleFilesAsMap(other).get(path)
+  // An importer captured on one side only (or neither) is no change of
+  // contents; what there is of it shows as unchanged.
+  if (kind === 'repointed') before = after = after ?? before
+  return { before, after }
+}
+
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
 function dirOrder([a, an], [b, bn]) {
@@ -166,19 +192,11 @@ export class BundleCompareCode extends LitElement {
     }
   }
 
-  // path → { kind, baseBytes, otherBytes, basePath, modified, repointed }
-  // for every file that differs or imports something that now resolves
-  // elsewhere; `basePath` names a renamed file on the base side, `modified`
-  // says whether its contents changed too, `repointed` lists those imports.
+  // fileEntries, and every file that imports something that now resolves
+  // elsewhere, `repointed` listing those imports.
   _buildEntries() {
-    const entries = new Map()
+    const entries = fileEntries(this.files)
     if (!this.files) return entries
-    for (const row of this.files.onlyBase) entries.set(row.path, { kind: 'removed', baseBytes: row.bytes, otherBytes: null })
-    for (const row of this.files.onlyOther) entries.set(row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes })
-    for (const row of this.files.changed) {
-      entries.set(row.path, row.basePath == null ? { kind: 'changed', baseBytes: row.baseBytes, otherBytes: row.otherBytes }
-        : { kind: 'renamed', basePath: row.basePath, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes })
-    }
     for (const row of this.resolutions ?? []) {
       if (!entries.has(row.parent)) {
         const bytes = bundleFileByteLength(bundleFilesAsMap(this.other).get(row.parent) ?? bundleFilesAsMap(this.base).get(row.parent))
@@ -352,13 +370,8 @@ export class BundleCompareCode extends LitElement {
 
   // ── The selected file ────────────────────────────────────────────
 
-  _contents(path, { kind, basePath = path }) {
-    let before = kind === 'added' ? '' : bundleFilesAsMap(this.base).get(basePath)
-    let after = kind === 'removed' ? '' : bundleFilesAsMap(this.other).get(path)
-    // An importer captured on one side only (or neither) is no change of
-    // contents; what there is of it shows as unchanged.
-    if (kind === 'repointed') before = after = after ?? before
-    return { before, after }
+  _contents(path, entry) {
+    return fileContents(this.base, this.other, path, entry)
   }
 
   _model(path, before, after) {

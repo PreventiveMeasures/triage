@@ -64,7 +64,7 @@ test('Diff is offered only while its list is under 8000 rows; a link to a longer
   view._mode = 'diff'
   assert.match(renderText(view.render()), /<bundle-compare-all /u)
   combinedRows = 8000
-  view._combined = null
+  delete view._diffFor().combined
   const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
   assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
   assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false'])

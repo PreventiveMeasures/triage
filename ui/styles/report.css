@@ -3396,14 +3396,14 @@ button.bundle-advisory-title:focus-visible { outline: 2px solid var(--accent); o
 a.bundle-advisory-ghsa:hover {
   color: var(--accent, #60a5fa);
 }
-.bundle-advisory-ghsa-icon {
+.bundle-advisory-ghsa .external-link-icon {
   flex-shrink: 0;
   opacity: .75;
   /* Icon is not text — keep it out of any text-selection that
      starts on the GHSA id beside it. */
   user-select: none;
 }
-a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
+a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
 /* CWE links — plain inline text, no external-link arrow (the
    CWE list reads as a comma-separated phrase, and a row of
    arrows next to each id would be visual noise). Selectable
@@ -3451,19 +3451,27 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
 /* npm package Overview (view/npm-package.js). Its Dependencies column lists
    rows as Files does, each opening in the viewer at its latest version. */
 .npm-dependency-row .bundles-source-size { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.npm-dependency-kind {
+/* A small tag after a row's name: a dependency's kind, a file's category. */
+:is(.npm-dependency-kind, .npm-encoding-tag) {
   flex-shrink: 0; padding: 0 .3rem;
   color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
   font-family: system-ui, sans-serif; font-size: .62rem; line-height: 1.3;
 }
 .bundles-detail-meta .npm-deprecated { color: var(--critical); }
-/* An entry point, after its file's icon. */
+/* An entry point, after its file's icon, on one line, cut short where it
+   doesn't fit. */
 .npm-entry-point {
   display: inline-flex; align-items: center; gap: .35rem; max-width: 100%;
 
   & > .source-file-icon { width: 13px; height: 13px; }
+  & > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
-.bundles-detail-meta button.bundle-entry-point:hover { color: var(--accent); }
+/* A fact that opens a file of the package, underlined as a link is. */
+.npm-overview .bundles-detail-meta button.bundle-entry-point {
+  text-decoration: underline dotted color-mix(in srgb, currentcolor 45%, transparent); text-underline-offset: 3px;
+
+  &:hover { color: var(--accent); text-decoration-color: currentcolor; }
+}
 /* An npm package's header: its name, the version shown as a picker of its
    versions (npm-package.js NpmVersionSelect), and its page on npm. */
 .bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }
@@ -3504,12 +3512,12 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
   }
   & .npm-readability-warning { grid-area: warning; }
   & .bundles-detail-meta-row { display: contents; }
-  & .bundles-detail-meta-row > .bundles-detail-meta:nth-child(n) {
+  & .bundles-detail-meta-row > :is(.npm-facts, .is-build).bundles-detail-meta {
     min-width: 0; margin: 0 0 .6rem;
     grid-template-columns: var(--npm-label) minmax(0, 1fr);
   }
-  & .bundles-detail-meta-row > .bundles-detail-meta:nth-child(1) { grid-area: meta; }
-  & .bundles-detail-meta-row > .bundles-detail-meta:nth-child(2) { grid-area: build; }
+  & .npm-facts { grid-area: meta; }
+  & .bundles-detail-meta.is-build { grid-area: build; }
   & .bundles-detail-meta-row > .bundles-overview-exports { grid-area: actions; min-width: 0; }
   & .bundles-overview-exports-row { place-content: flex-start; }
   & .npm-contents { grid-area: contents; }
@@ -3521,7 +3529,7 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
   & .bundles-detail-meta .bundle-origin-row { flex-wrap: wrap; gap: .2rem 1rem; }
   & .bundles-detail-meta .bundle-origin-link { white-space: nowrap; }
   /* The integrity in one line, whole in its tooltip. */
-  & .bundles-detail-meta dd.bundle-integrity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
+  & .bundles-detail-meta dd.bundle-integrity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   & .bundles-overview-columns { flex: 1 0 0; min-height: min(26rem, 75vh); }
 }
 @container npm-overview (width < 66rem) {
@@ -3561,14 +3569,13 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
 /* What the package's files hold: rows labelled as the facts above them are,
    the languages' label level with their bar. */
 .npm-contents {
-  display: grid; grid-template-columns: var(--npm-label, max-content) minmax(0, 1fr);
+  display: grid; grid-template-columns: var(--npm-label) minmax(0, 1fr);
   gap: .45rem .65rem; align-items: baseline;
   margin: .15rem 0 0;
 
   & dt { color: var(--muted); font-size: .72rem; font-weight: 600; }
   & dd { margin: 0; min-width: 0; }
   & :is(dt:has(+ dd > .bundles-languages-bar), dd:has(> .bundles-languages-bar)) { align-self: start; }
-  & .npm-extensions { margin: 0; }
   & .bundles-languages-bar { margin: .25rem 0 0; }
 }
 .bundles-languages-legend {
@@ -3688,14 +3695,13 @@ npm-downloads-chart { display: block; }
     & .bundle-advisory-reference { order: 1; margin-left: auto; }
     & .bundle-advisory-title { order: 2; flex-basis: 100%; }
     & .bundle-advisory-meta { order: 3; flex-basis: 100%; }
-    & .bundle-advisory-cwes { margin-left: 0; }
   }
 }
-/* Every file extension in an npm package, as chips under its summary
-   (view/npm-overview.js). */
+/* A row of chips in an npm package's summary (view/npm-overview.js): its
+   categories, readable files and file types. */
 .npm-extensions {
   display: flex; flex-wrap: wrap; gap: .3rem;
-  margin: .6rem 0 0; padding: 0;
+  margin: 0; padding: 0;
   list-style: none;
 }
 .npm-extension {
@@ -3740,7 +3746,6 @@ button.npm-category {
     border-color: color-mix(in srgb, var(--high) 45%, var(--border));
     border-left-color: var(--high);
   }
-  & .npm-extensions { margin: 0; }
 }
 /* The Files column narrowed to a category: named in its head, with a way back. */
 .bundles-overview-filter {
@@ -3753,11 +3758,7 @@ button.npm-category {
   &:hover { color: var(--accent); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
-.npm-encoding-tag {
-  flex-shrink: 0; padding: 0 .3rem;
-  color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
-  font-family: system-ui, sans-serif; font-size: .6rem; line-height: 1.35; white-space: nowrap;
-}
+.npm-encoding-tag { font-size: .6rem; line-height: 1.35; white-space: nowrap; }
 /* In the Files list, tags and sizes each keep one width, so both line up
    down the list whatever a row's size. */
 .bundles-source-row:has(> .npm-encoding-tag) {
@@ -3769,12 +3770,13 @@ button.npm-category {
    files where it has any — share the row while it is wide, and below
    1200px fill a two-column grid in order, a last odd one spanning it. */
 @media (width < 1200px) {
-  .bundles-overview-columns.npm-overview-columns {
+  .npm-overview > .bundles-overview-columns {
     grid-template-rows: none;
     grid-auto-rows: minmax(0, 1fr);
+
+    & > .bundles-overview-col { grid-column: auto; grid-row: auto; }
+    & > .bundles-overview-col:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
-  .npm-overview-columns > .bundles-overview-col:nth-child(n) { grid-column: auto; grid-row: auto; }
-  .npm-overview-columns > .bundles-overview-col:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 
 /* The npm viewer's lookup page. */

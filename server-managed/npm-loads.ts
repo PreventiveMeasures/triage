@@ -3,7 +3,6 @@
 // registry, and the viewer's response built from it, each shared by the
 // readers asking for it meanwhile and held to a few at once per process.
 import { Buffer } from 'node:buffer'
-import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -72,7 +71,8 @@ function shared<T>(key: string, doc: NpmVersionDocument, work: () => Promise<T>)
 
 // The sha512 an integrity names, in base64, or null where it names none.
 const sha512Of = (integrity: string) => /(?:^|\s)sha512-([\d+/A-Za-z]{86}==)(?=\s|$)/u.exec(integrity)?.[1] ?? null
-const sha512 = (bytes: Uint8Array) => createHash('sha512').update(bytes).digest('base64')
+// Hashed off the event loop: a tarball runs to tens of MiB.
+const sha512 = async (bytes: Uint8Array) => Buffer.from(await crypto.subtle.digest('SHA-512', bytes as Uint8Array<ArrayBuffer>)).toString('base64')
 
 // Upstream's disk cache (setCacheDir), where tarballs are kept between
 // loads, or null to keep none and read none.
@@ -164,11 +164,11 @@ async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
   if (kept !== null) {
     for (const path of [kept, npmCachePath(expected)]) {
       const bytes = path === null ? null : await readKept(path)
-      if (bytes && sha512(bytes) === expected) return bytes
+      if (bytes && await sha512(bytes) === expected) return bytes
     }
   }
   const bytes = await downloadTarball(url, doc.private)
-  if (sha512(bytes) !== expected) throw new NpmPackageError(502, 'upstream-invalid')
+  if (await sha512(bytes) !== expected) throw new NpmPackageError(502, 'upstream-invalid')
   if (kept !== null) await keep(kept, bytes)
   return bytes
 }

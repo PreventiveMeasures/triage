@@ -9,46 +9,32 @@ import { html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
-import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFileByteLength } from './bundle-sources.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { renameTemplate } from './bundle-compare-rename.js'
-import { BundleCompareCode, KIND, isLargeDiff, prefs } from './bundle-compare-code.js'
+import { BundleCompareCode, KIND, fileContents, fileEntries, isLargeDiff, prefs } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 8000
 
 // The files the Diff view lists, by path: each one added, removed, changed
-// or renamed, as the Code view's entries have them. A file whose only change
-// is an import resolving elsewhere has no text that changed, so none of it
-// shows here.
-function combinedEntries(files) {
-  const entries = []
-  for (const row of files?.onlyBase ?? []) entries.push([row.path, { kind: 'removed', baseBytes: row.bytes, otherBytes: null }])
-  for (const row of files?.onlyOther ?? []) entries.push([row.path, { kind: 'added', baseBytes: null, otherBytes: row.bytes }])
-  for (const row of files?.changed ?? []) {
-    entries.push([row.path, row.basePath == null ? { kind: 'changed', baseBytes: row.baseBytes, otherBytes: row.otherBytes }
-      : { kind: 'renamed', basePath: row.basePath, modified: row.modified, baseBytes: row.baseBytes, otherBytes: row.otherBytes }])
-  }
-  return entries.toSorted(([a], [b]) => a.localeCompare(b))
-}
-
-function sides(base, other, path, entry) {
-  return {
-    before: entry.kind === 'added' ? '' : bundleFilesAsMap(base).get(entry.basePath ?? path),
-    after: entry.kind === 'removed' ? '' : bundleFilesAsMap(other).get(path),
-  }
-}
+// or renamed (fileEntries). A file whose only change is an import resolving
+// elsewhere has no text that changed, so none of it shows here.
+const combinedEntries = entries => [...entries].toSorted(([a], [b]) => a.localeCompare(b))
 
 // The rows the Diff view lists for a comparison, a head for each file and
 // its diff's rows as they first show, counted up to `max`; and the line
 // models found on the way, for the view to draw. Infinity where a file is
-// too large to diff without being asked to.
+// too large to diff without being asked to. Each file lists two rows at
+// least, so one with too many files for `max` is told without a diff.
 export function combinedDiffRows(base, other, files, max = COMBINED_DIFF_MAX) {
   const models = new Map()
+  const entries = fileEntries(files)
+  if (entries.size * 2 >= max) return { rows: Infinity, models }
   let rows = 0
-  for (const [path, entry] of combinedEntries(files)) {
+  for (const [path, entry] of combinedEntries(entries)) {
     rows++
-    const { before, after } = sides(base, other, path, entry)
+    const { before, after } = fileContents(base, other, path, entry)
     if (typeof before === 'string' && typeof after === 'string') {
       if (isLargeDiff(before, after)) return { rows: Infinity, models }
       const model = lineDiff(before, after)
@@ -68,18 +54,29 @@ class BundleCompareAll extends BundleCompareCode {
   constructor() {
     super()
     this.models = null
+    this._all = new Map()
+  }
+
+  willUpdate(changed) {
+    super.willUpdate(changed)
+    if (['files', 'base', 'other', 'models'].some(name => changed.has(name))) this._all.clear()
   }
 
   // Nothing to keep in view: the list scrolls as the reader does.
   updated() {}
 
+  // Every file's model is drawn on every render, so they are all kept for the
+  // comparison, not the few the Code view keeps for the files it opens:
+  // Compare's, found counting its rows, and those without whitespace.
   _model(path, before, after) {
     if (!prefs.ignoreWhitespace && this.models?.has(path)) return this.models.get(path)
-    return super._model(path, before, after)
+    const key = `${path}\0${prefs.ignoreWhitespace}`
+    if (!this._all.has(key)) this._all.set(key, lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace }))
+    return this._all.get(key)
   }
 
   render() {
-    const entries = combinedEntries(this.files)
+    const entries = combinedEntries(this._entries)
     const { prefix } = stripCommonPathPrefix(entries.map(([path]) => path))
     const shown = entries.map(([path, entry]) => ({ path, entry, ...this._file(path, entry) }))
     const additions = shown.reduce((sum, file) => sum + (file.model?.additions ?? 0), 0)
@@ -103,7 +100,7 @@ class BundleCompareAll extends BundleCompareCode {
 
   // A file's two sides, and its line model where it has one to draw.
   _file(path, entry) {
-    const { before, after } = sides(this.base, this.other, path, entry)
+    const { before, after } = this._contents(path, entry)
     const textual = typeof before === 'string' && typeof after === 'string'
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     return { before, after, textual, large, model: textual && !large ? this._model(path, before, after) : null }

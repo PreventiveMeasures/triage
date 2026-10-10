@@ -39,7 +39,7 @@ export class NpmPackageError extends Error {
 
 // Who reads, as the session has it now: the role, and the scopes of the
 // visible teams they are a member of.
-export interface NpmReader { role: Role; scopes: ReadonlySet<string>; userId?: string }
+export interface NpmReader { role: Role; scopes: ReadonlySet<string>; userId: string }
 
 // Whether a reader may have a package read with the server's token.
 export function canReadPrivateNpm(reader: NpmReader, name: string): boolean {
@@ -120,7 +120,7 @@ export interface NpmVersionDocument {
   manifest: Record<string, unknown>
 }
 
-const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+export const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const stringRecord = (value: unknown) => plainObject(value)
   ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) as Record<string, string> : undefined
 

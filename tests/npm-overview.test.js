@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 
 const state = {}
-let advisoriesAnswer = () => Promise.resolve({ versions: [], advisories: [] })
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
@@ -10,10 +9,10 @@ mock.module('../client/index.js', { exports: {
 mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchNpmAdvisories: name => advisoriesAnswer(name), fetchNpmStats: () => Promise.resolve({}),
+  fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
   fetchNpmPackage() {}, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmFileTypes, npmMergedAdvisories, npmTextEncoding } = await import('../ui/view/npm-overview.js')
+const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmFileTypes, npmTextEncoding } = await import('../ui/view/npm-overview.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -115,20 +114,6 @@ test('downloads group into 7-day weeks ending on the last day, a partial oldest 
     [['2026-02-01', '2026-02-28', 28], ['2026-03-01', '2026-03-31', 31]])
   assert.deepEqual(npmDownloadMonths({ start: '2026-03-01', end: '2026-03-31', days: Array.from({ length: 31 }, () => 2) }).map(month => month.total), [62], 'a month whole at both ends')
   assert.deepEqual(npmDownloadMonths(null), [])
-})
-
-test('an advisory npm answers once a range is one row, its ranges, versions and CWEs together', () => {
-  const rows = npmMergedAdvisories([
-    { id: 'GHSA-a', source: 'registry', severity: 'moderate', cvss: 6.1, cwe: ['CWE-79'], range: '>=4.0.0 <4.5.0', affected: [3, 1] },
-    { id: 'GHSA-b', source: 'registry', severity: 'low', cwe: [], affected: [0] },
-    { id: 'GHSA-a', source: 'registry', severity: 'moderate', cwe: ['CWE-79', 'CWE-20'], range: '<3.11.0', affected: [5, 1] },
-    { id: 'GHSA-a', source: 'repository', severity: 'moderate', cwe: [], range: '< 5.0.0', affected: [2] },
-  ])
-  assert.deepEqual(rows, [
-    { id: 'GHSA-a', source: 'registry', severity: 'moderate', cvss: 6.1, cwe: ['CWE-79', 'CWE-20'], range: '>=4.0.0 <4.5.0 || <3.11.0', affected: [1, 3, 5] },
-    { id: 'GHSA-b', source: 'registry', severity: 'low', cwe: [], affected: [0] },
-    { id: 'GHSA-a', source: 'repository', severity: 'moderate', cwe: [], range: '< 5.0.0', affected: [2] },
-  ])
 })
 
 test('each license in an expression opens its own file, else the package\'s only one', async () => {

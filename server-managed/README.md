@@ -1121,7 +1121,8 @@ repository publishes that npm does not report yet (`source: 'repository'`),
 the repository looked up from its newest version's document and its listing
 kept where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
 url?, title?, severity?, cvss?, cwe, range?, affected }`, `affected` indexing
-`versions`. `repository` is false where GitHub refused (its anonymous rate
+`versions`, one row an advisory: npm's registry answers one a range it covers,
+merged here, their ranges joined with `||`. `repository` is false where GitHub refused (its anonymous rate
 limit, say), leaving npm's alone; such a list is asked again on the next
 request. Responses are `private, no-store`. Nothing derived from a package's
 files is kept on the server; its figures and advisories, which are public,

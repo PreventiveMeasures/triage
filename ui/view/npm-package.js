@@ -8,7 +8,7 @@ import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-packages.js'
-import { COMPARE_MODES, compareModeOf } from '../../common/managed/routes.js'
+import { compareModeField, compareModeOf } from '../../common/managed/routes.js'
 import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -16,6 +16,7 @@ import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
+import { githubTagHref } from './bundle-origin-links.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
@@ -176,22 +177,29 @@ function tagsByVersion(distTags = {}) {
   return tags
 }
 
+// A package's versions to pick from, newest first, `version` among them
+// though the list has not (or not yet) got it: `{ id, detail }`, its dist-tags
+// as its detail.
+function versionChoices(list, version) {
+  const tags = tagsByVersion(list.distTags)
+  const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
+  return versions.map(id => ({ id, detail: tags.get(id)?.join(', ') ?? '' }))
+}
+
 // What Compare offers a package version (bundle-compare.js `source`): the
 // package's other versions, newest first, compared with by their numbers,
 // and for its own side, every version, its own among them.
 export function npmCompareSource(entry) {
   const { name, version } = entry.npm
   const list = npmVersionList(name)
-  const tags = tagsByVersion(list.distTags)
-  const option = id => ({ id, name: `${name}@${id}`, format: 'npm', detail: tags.get(id)?.join(', ') ?? '' })
-  const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
+  const choices = versionChoices(list, version).map(({ id, detail }) => ({ id, name: `${name}@${id}`, format: 'npm', detail }))
   return {
     noun: 'version',
     base: version,
     pending: list.status === 'loading',
     error: list.status === 'error' ? `Couldn't list the versions of ${name}.` : null,
-    options: versions.filter(other => other !== version).map(option),
-    choices: versions.map(option),
+    options: choices.filter(choice => choice.id !== version),
+    choices,
     name: id => id === entry.integrity || id === version ? entry.name : `${name}@${id}`,
     load: async id => (await loadNpmVersion(name, id)).details,
     // In place of Packages, which a single package has no use for.
@@ -200,7 +208,7 @@ export function npmCompareSource(entry) {
     open: (base, target, mode) => {
       if (!isManagedUiMode() || !managedHistory?.active) return
       void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: base, bundleTab: 'compare',
-        ...(target ? { compareSpec: target, ...(COMPARE_MODES.has(mode) ? { compareMode: mode } : {}) } : {}) })
+        ...(target ? { compareSpec: target, ...compareModeField(mode) } : {}) })
     },
   }
 }
@@ -365,12 +373,11 @@ export function npmDependenciesColumn(entry) {
 // they arrive, or where the server has none (npm-insights.ts npmCommitTags).
 function npmCommitTags(entry, github) {
   const { name, version } = entry.npm
-  const data = npmPackageData('tags', `${name}@${version}`, () => fetchNpmTags(name, version), answer => ({ tags: Array.isArray(answer.tags) ? answer.tags : [] }))
-  const tags = data.status === 'ready' ? data.tags.filter(tag => typeof tag === 'string' && tag) : []
-  if (tags.length === 0) return nothing
-  const repo = github.split('/').map(encodeURIComponent).join('/')
-  return html`<span class="bundle-origin-tags">${tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link"
-    href=${`https://github.com/${repo}/releases/tag/${tag.split('/').map(encodeURIComponent).join('/')}`} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag}</span></a>`)}</span>`
+  const data = npmPackageData('tags', `${name}@${version}`, () => fetchNpmTags(name, version),
+    answer => ({ tags: Array.isArray(answer.tags) ? answer.tags.filter(tag => typeof tag === 'string' && tag) : [] }))
+  if (data.status !== 'ready' || data.tags.length === 0) return nothing
+  return html`<span class="bundle-origin-tags">${data.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link"
+    href=${githubTagHref(github, tag)} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag}</span></a>`)}</span>`
 }
 
 // A file of the package, as a fact names it: a button opening it in the
@@ -417,7 +424,7 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
     : github ? `https://github.com/${github}` : null
   // Its name and version are the header's (render-bundle.js), the version
   // to switch to there too.
-  return html`<dl class="bundles-detail-meta">
+  return html`<dl class="bundles-detail-meta npm-facts">
     ${entry.npm.private ? html`<dt>Access</dt><dd>Private</dd>` : nothing}
     ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${manifest.deprecated}</dd>` : nothing}
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
@@ -490,14 +497,18 @@ class NpmVersionSelect extends LitElement {
     this.list = null
   }
 
+  // The picker's options, `{ value, label, detail }` as the selector takes
+  // them, made again only when the versions or the one shown change.
+  willUpdate(changed) {
+    if (changed.has('list') || changed.has('version')) {
+      const list = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
+      this._options = versionChoices(list, this.version).map(({ id, detail }) => ({ value: id, label: id, detail }))
+    }
+  }
+
   render() {
-    const data = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
-    const tags = tagsByVersion(data.distTags)
-    const versions = data.versions.includes(this.version) ? data.versions : [this.version, ...data.versions]
-    const options = versions.map(version => ({ id: version, integrity: version, kind: 'npm', format: 'npm', filename: version,
-      detail: tags.get(version)?.join(', ') ?? '', size: '—', summary: null }))
-    return html`<bundle-selector class="npm-version-select" .bundles=${options} .value=${this.version} noun="version" ordered iconless
-      label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${versions.length <= 1}
+    return html`<bundle-selector .options=${this._options} .value=${this.version} noun="version" ordered
+      label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${this._options.length <= 1}
       aria-busy=${this.list?.status === 'loading' ? 'true' : nothing}
       @bundle-change=${event => { if (event.detail.value !== this.version) navigateToNpm(this.name, event.detail.value, this.tab) }}></bundle-selector>`
   }

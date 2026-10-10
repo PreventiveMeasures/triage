@@ -11,6 +11,12 @@ function tooltipTitle(subject) {
   return chars.length > MAX_TOOLTIP_TITLE ? `${chars.slice(0, MAX_TOOLTIP_TITLE - 1).join('').trimEnd()}…` : subject
 }
 
+// A path's segments each URI-encoded, its slashes kept.
+export const encodePath = path => path.split('/').map(encodeURIComponent).join('/')
+
+// A tag's release page on GitHub, `repository` owner/name.
+export const githubTagHref = (repository, tag) => `https://github.com/${encodePath(repository)}/releases/tag/${encodePath(tag)}`
+
 function catalogTags(commitInfo, hash) {
   return hash && commitInfo?.sha === hash && Array.isArray(commitInfo.tags) ? commitInfo.tags.filter(tag => typeof tag === 'string' && tag) : []
 }
@@ -47,8 +53,7 @@ export function bundleOriginLinks(bundle, prefix = '', commitInfo = null) {
     links.push({ label: 'GitHub', text: github + (directory ? `/${directory}` : ''),
       href: commit || directory ? `${base}/tree/${commit ?? 'HEAD'}${path ? `/${path}` : ''}` : base,
       ...(commit ? { commit: { hash: commit, text: commit.slice(0, 7), href: `${base}/commit/${commit}`,
-        ...(tags.length > 0 ? { tags: tags.map(tag => ({ name: tag,
-          href: `https://github.com/${tagRepository}/releases/tag/${tag.split('/').map(encodeURIComponent).join('/')}` })) } : {}),
+        ...(tags.length > 0 ? { tags: tags.map(tag => ({ name: tag, href: githubTagHref(tagRepository, tag) })) } : {}),
       } } : {}) })
   }
   const npm = bundle?.package?.npm

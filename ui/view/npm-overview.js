@@ -4,13 +4,14 @@
 // file extensions, and its binary files in a column of their own.
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
+import { bundleFileSizes } from '../../common/bundle-sources.js'
 import { advisoryCwes, advisoryRail, advisoryReference } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmStats } from './client-managed.js'
 import { NPM_LICENSE_FILE, npmPackageData } from './npm-package.js'
 import { render } from './render.js'
 import { sourceFileIcon } from './source-file-icon.js'
-import './npm-downloads-chart.js'
+import { npmDownloadWeeks } from './npm-downloads-chart.js'
 
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
@@ -23,13 +24,13 @@ const ADVISORY_GROUPS = [
 
 // A package's figures for this session: `downloads` and `github`, each null
 // where the server could not have them.
-export function npmPackageStats(name) {
+function npmPackageStats(name) {
   return npmPackageData('stats', name, () => fetchNpmStats(name), data => ({ downloads: data.downloads ?? null, github: data.github ?? null }))
 }
 
 // A package's advisories for this session, across its published versions,
 // which each one's `affected` indexes.
-export function npmPackageAdvisories(name) {
+function npmPackageAdvisories(name) {
   return npmPackageData('advisories', name, () => fetchNpmAdvisories(name),
     data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false }))
 }
@@ -42,14 +43,13 @@ function stat(label, value, title = nothing) {
 // downloads over the last year, with `actions` (the tarball's download)
 // under them. While they load, the card holds its place, so nothing around
 // it moves when they arrive.
-export function npmStatsRow(entry, actions = nothing) {
+export function npmStatsRow(entry, actions) {
   const stats = npmPackageStats(entry.npm.name)
   const ready = stats.status === 'ready'
   const { downloads = null } = ready ? stats : {}
   const pending = stats.status === 'loading' ? '…' : '—'
-  const days = downloads?.days ?? []
-  const week = days.slice(-7).reduce((sum, count) => sum + count, 0)
-  const year = days.reduce((sum, count) => sum + count, 0)
+  const week = npmDownloadWeeks(downloads).at(-1)?.total ?? 0
+  const year = (downloads?.days ?? []).reduce((sum, count) => sum + count, 0)
   const exact = count => count.toLocaleString('en')
   return html`<div class="npm-figures"><section class="npm-insights" aria-label="Package figures">
     <dl class="npm-stats">
@@ -59,7 +59,7 @@ export function npmStatsRow(entry, actions = nothing) {
     ${ready && !downloads ? nothing : html`<figure class="npm-downloads" aria-label="Weekly downloads, last 12 months">
       <npm-downloads-chart .downloads=${downloads}></npm-downloads-chart>
     </figure>`}
-  </section>${actions === nothing ? nothing : html`<div class="npm-figures-actions">${actions}</div>`}</div>`
+  </section><div class="npm-figures-actions">${actions}</div></div>`
 }
 
 const STAR_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.75 1.9 3.9 4.3.6-3.1 3 .75 4.25L8 11.5l-3.85 2 .75-4.25-3.1-3 4.3-.6Z"/></svg>`
@@ -98,24 +98,13 @@ export function npmAdvisoryStatus(advisory, versions, version) {
   return affected.some(other => compareSemver(other, version) < 0) ? 'fixed' : 'later'
 }
 
-// One row an advisory: npm's registry answers one a range it covers, which
-// are merged here, their ranges joined as semver joins them, the versions
-// they cover together, their CWEs together, and the highest score.
-export function npmMergedAdvisories(advisories) {
-  const merged = new Map()
-  for (const advisory of advisories) {
-    const key = `${advisory.source} ${advisory.id}`
-    const kept = merged.get(key)
-    if (!kept) { merged.set(key, { ...advisory }); continue }
-    const range = [kept.range, advisory.range].filter(Boolean).join(' || ')
-    const cvss = Math.max(kept.cvss ?? -1, advisory.cvss ?? -1)
-    merged.set(key, {
-      ...kept, ...range && { range }, ...cvss >= 0 && { cvss },
-      affected: [...new Set([...kept.affected, ...advisory.affected])].toSorted((a, b) => a - b),
-      cwe: [...new Set([...kept.cwe ?? [], ...advisory.cwe ?? []])],
-    })
-  }
-  return [...merged.values()]
+// Each advisory's status for a version, kept with the advisories answered.
+const statusesKept = new WeakMap()
+function advisoryStatuses(data, version) {
+  let byVersion = statusesKept.get(data)
+  if (!byVersion) statusesKept.set(data, byVersion = new Map())
+  if (!byVersion.has(version)) byVersion.set(version, data.advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version)))
+  return byVersion.get(version)
 }
 
 // The package's advisories across every version, npm's and its repository's
@@ -125,8 +114,8 @@ export function npmAdvisoriesColumn(entry) {
   const { name, version } = entry.npm
   const data = npmPackageAdvisories(name)
   const ready = data.status === 'ready'
-  const advisories = ready ? npmMergedAdvisories(data.advisories) : []
-  const statuses = advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version))
+  const advisories = ready ? data.advisories : []
+  const statuses = ready ? advisoryStatuses(data, version) : []
   const groups = ADVISORY_GROUPS.map(([status, heading]) => ({
     status, heading: heading(version), advisories: advisories.filter((_, i) => statuses[i] === status),
   })).filter(group => group.advisories.length > 0)
@@ -249,19 +238,28 @@ const READABILITY = new Map([
   ['utf8', { name: 'UTF-8', tag: 'UTF-8', mark: null }],
   ['ascii', { name: 'ASCII', tag: 'ASCII', mark: null }],
 ])
-const UNREADABLE = ['binary', 'controls', 'long', 'minified', 'map']
+// Those that can't be reviewed by reading, the warning's, and those that can.
+const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(([category]) => category)
+const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
 
-// A version's files by path, as npmFileReadability has them, read once a version.
+// What the Overview reads of a version's files, read once a version: each
+// file's readability (npmFileReadability) by path, how many files each
+// category has, and its file types (npmFileTypes).
 const readabilities = new WeakMap()
-export function npmFilesReadability(details) {
+function filesRead(details) {
   let known = readabilities.get(details)
   if (!known) {
     const { sources, sourcesContent } = details.json
-    known = new Map(sources.map((path, i) => [path, npmFileReadability(path, sourcesContent[i])]))
+    const byPath = new Map(sources.map((path, i) => [path, npmFileReadability(path, sourcesContent[i])]))
+    const counts = new Map()
+    for (const { category } of byPath.values()) counts.set(category, (counts.get(category) ?? 0) + 1)
+    known = { byPath, counts, types: npmFileTypes(sources, bundleFileSizes(details)) }
     readabilities.set(details, known)
   }
   return known
 }
+
+export const npmFilesReadability = details => filesRead(details).byPath
 
 function controlsNote(controls) {
   const found = [...controls].toSorted((a, b) => b[1] - a[1] || a[0] - b[0])
@@ -307,7 +305,7 @@ function showFiles(entry, kind, value) {
 export function npmFilesFilter(entry, details) {
   const filter = shownFilter(entry)
   if (filter === null) return null
-  const clear = () => showFiles(entry, filter.kind, filter.value)
+  const clear = () => { filesShown = { key: null, filter: null }; render() }
   if (filter.kind === 'type') return { label: 'Package', keeps: isNpmPackageFile, clear }
   if (filter.kind === 'extension') return { label: filter.value || 'No extension', keeps: path => npmFileExtension(path) === filter.value, clear }
   const known = npmFilesReadability(details)
@@ -321,12 +319,6 @@ function filterChip(entry, kind, value, label, count, { classes = '', tooltip = 
     data-tooltip=${tooltip} @click=${() => showFiles(entry, kind, value)}>${label}<span class="npm-extension-count">${count.toLocaleString('en')}</span></button></li>`
 }
 
-function countsOf(details) {
-  const counts = new Map()
-  for (const { category } of npmFilesReadability(details).values()) counts.set(category, (counts.get(category) ?? 0) + 1)
-  return counts
-}
-
 // A category's chip.
 function categoryChip(entry, category, count) {
   const { name, mark } = READABILITY.get(category)
@@ -336,7 +328,7 @@ function categoryChip(entry, category, count) {
 // Over the summary, where any file can't be reviewed by reading it: how many,
 // each category's chip showing which.
 export function npmReadabilityWarning(entry, details) {
-  const counts = countsOf(details)
+  const { counts } = filesRead(details)
   const present = UNREADABLE.filter(category => counts.has(category))
   if (present.length === 0) return nothing
   const unreadable = present.reduce((sum, category) => sum + counts.get(category), 0)
@@ -349,9 +341,9 @@ export function npmReadabilityWarning(entry, details) {
 }
 
 // The readable files, as chips, UTF-8 and ASCII apart.
-export function npmReadableRow(entry, details) {
-  const counts = countsOf(details)
-  const present = ['utf8', 'ascii'].filter(category => counts.has(category))
+function npmReadableRow(entry, details) {
+  const { counts } = filesRead(details)
+  const present = READABLE.filter(category => counts.has(category))
   if (present.length === 0) return nothing
   return html`<ul class="npm-extensions" aria-label="Readable files">${present.map(category => categoryChip(entry, category, counts.get(category)))}</ul>`
 }
@@ -404,8 +396,8 @@ const filesNote = (files, bytes) => `${files.toLocaleString('en')} ${files === 1
 
 // The package's file types, as chips under its summary, each narrowing the
 // Files list to its files as a category's does.
-function npmFileTypesRow(entry, paths, sizes) {
-  const types = npmFileTypes(paths, sizes)
+function npmFileTypesRow(entry, details) {
+  const { types } = filesRead(details)
   if (!types.package && types.extensions.length === 0) return nothing
   return html`<ul class="npm-extensions" aria-label="File types">
     ${types.package ? filterChip(entry, 'type', 'package', html`<span>Package</span>`, types.package.files,
@@ -418,8 +410,8 @@ function npmFileTypesRow(entry, paths, sizes) {
 // What the package holds, under its facts and labelled as they are: its
 // languages by lines (`languages`, the bar the bundle Overview draws), its
 // readable files, and their types.
-export function npmContents(entry, languages, details, paths, sizes) {
-  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['File types', npmFileTypesRow(entry, paths, sizes)]]
+export function npmContents(entry, languages, details) {
+  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['File types', npmFileTypesRow(entry, details)]]
     .filter(([, body]) => body !== nothing)
   if (rows.length === 0) return nothing
   return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([label, body]) => html`<dt>${label}</dt><dd>${body}</dd>`)}</dl>`

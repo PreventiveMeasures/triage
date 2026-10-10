@@ -12,10 +12,12 @@ const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFracti
 const whole = new Intl.NumberFormat('en')
 
 const dayOf = (start, offset) => new Date(Date.parse(start) + offset * DAY_MS)
-const shortDate = date => date.toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-const fullDate = date => date.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
-const monthYear = date => date.toLocaleDateString('en', { month: 'short', year: 'numeric', timeZone: 'UTC' })
-const monthName = date => date.toLocaleDateString('en', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+// Made once: the readout formats dates on every pointer move.
+const dateFormat = options => new Intl.DateTimeFormat('en', { ...options, timeZone: 'UTC' }).format
+const shortDate = dateFormat({ month: 'short', day: 'numeric' })
+const fullDate = dateFormat({ month: 'short', day: 'numeric', year: 'numeric' })
+const monthYear = dateFormat({ month: 'short', year: 'numeric' })
+const monthName = dateFormat({ month: 'long', year: 'numeric' })
 
 // The downloads in 7-day weeks ending on the last day, oldest first, a
 // partial oldest week left out: `{ from, to, total }`, dates as `Date`s.
@@ -109,9 +111,15 @@ class NpmDownloadsChart extends LitElement {
     </span>`
   }
 
+  // The periods charted, made again only when the downloads or the unit
+  // change, not as the pointer moves.
+  willUpdate(changed) {
+    if (changed.has('downloads') || changed.has('_unit')) this._periods = PERIODS[this._unit].of(this.downloads)
+  }
+
   render() {
     const period = PERIODS[this._unit]
-    const periods = period.of(this.downloads)
+    const periods = this._periods
     // The readout keeps its line while there is nothing to read, so the
     // chart doesn't move when the downloads arrive.
     if (periods.length === 0 || this._width <= PAD.left + PAD.right) {
