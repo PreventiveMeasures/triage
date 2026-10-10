@@ -252,13 +252,13 @@ const REGEX = '\uE000'
 const JS = {
   // A regular expression first where a value starts (after `=>` or an operator too), so a quote in it (`/["']/`) starts no string.
   stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>+\-*/%^<~]|\b(?:await|case|delete|do|else|in|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
-  // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`,
-  // `var π`, `var \u03c0`),
-  droppable: /(?<![\p{L}\p{N}_$\\])[ \t]+|[ \t]+(?![\p{L}\p{N}_$\\])/gu,
+  // Beside punctuation (`a, b`, `x = 1`), not between two words, as
+  // JavaScript tells a word's characters (`return a`, `var π`, `var \u03c0`),
+  droppable: /(?<![\p{ID_Continue}$\\\u200C\u200D])[ \t]+|[ \t]+(?![\p{ID_Continue}$\\\u200C\u200D])/gu,
   // nor between two `+`, two `-` or two `/` (`a+ +b` is no `a++b`, `a/ /b/`
   // no comment), nor after a regular expression before a word (`/a/ in b`).
   needed: (code, index, run) => ('+-/'.includes(code[index - 1]) && code[index + run.length] === code[index - 1])
-    || (code[index - 2] === REGEX && /[\p{L}\p{N}_$\\]/u.test(code[index + run.length])),
+    || (code[index - 2] === REGEX && /[\p{ID_Continue}$\\\u200C\u200D]/u.test(code[index + run.length])),
 }
 const CSS = {
   // No `//` comments, so `url(https://…)` is code.

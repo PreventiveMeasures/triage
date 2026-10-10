@@ -122,6 +122,8 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('dist/a.mjs', `${'var a=/x/ instanceof RegExp,b=c;'.repeat(5)}\n`), 'minified', 'nor a regular expression\'s before a word')
   assert.equal(category('dist/a.mjs', `${'var π=()=>π;'.repeat(12)}\n`), 'minified', 'a word of any script')
   assert.equal(category('dist/a.mjs', `${'var \\u03c0=()=>\\u03c0;'.repeat(6)}\n`), 'minified', 'or escaped')
+  assert.equal(category('dist/a.mjs', `${'var ℘=1;b=℘;'.repeat(12)}\n`), 'minified', 'as JavaScript tells one')
+  assert.equal(category('dist/a.mjs', `${'b=cafe\u0301 in o;'.repeat(9)}\n`), 'minified', 'marks and all')
   assert.equal(category('dist/a.mjs', `async function f(v){return await /["']/.test(v)}${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`),
     'minified', 'a regular expression after `await` too')
   assert.equal(category('dist/a.mjs', `var x=a+/["']/.test(s);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
