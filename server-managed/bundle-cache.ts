@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
 import { bundleEdges } from '@preventive/sourcemap/edges.js'
-import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents } from '../common/bundle-metadata.js'
+import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents, parseBundleMetadata } from '../common/bundle-metadata.js'
 import { bundleReasons } from '../common/bundle-reasons.js'
 import { sourcemapEdges } from '../common/bundle-sourcemap.js'
 import { type BundleAdvisoryInventory, bundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -159,6 +159,16 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
         return stored
       }
       return openCached(record, filename)
+    },
+    // A sourcemap's edges as its metadata keeps them, read with the parser
+    // once, for a derivative that reads the bundle itself (report previews).
+    async sourcemapEdges(record: ManagedBundle): Promise<BundleDetails['edges']> {
+      const cached = await openCached(record, filename)
+      const chunks: Buffer[] = []
+      try { for await (const chunk of cached.stream) chunks.push(Buffer.from(chunk)) }
+      finally { cached.stream.destroy() }
+      const decoded = await decompress(Buffer.concat(chunks), { maxOutputLength: MAX_DECODED_BYTES })
+      return parseBundleMetadata(JSON.parse(decodeUtf8(decoded)), record.integrity).edges
     },
     async advisoryInventory(record: ManagedBundle, reason = ''): Promise<BundleAdvisoryInventory | null | undefined> {
       if (record.kind !== 'stasis') return { packages: [], skipped: [] }

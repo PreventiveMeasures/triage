@@ -29,7 +29,7 @@ function formatDirectory(bundleId: string, sha256: string, name: string) {
 }
 function sourceCacheFilename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>) {
   const key = createHash('sha256').update(JSON.stringify([
-    'finding-access-v8', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
+    'finding-access-v9', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
   ])).digest('hex')
   return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
 }
@@ -70,11 +70,21 @@ function encodeSources(integrity: string, details: BundleDetails, selection: Ret
   return compress(Buffer.from(JSON.stringify({ integrity, ...selection, imports, formats, packageDirs })), { level: 6 })
 }
 
+type SourcemapEdges = (bundle: ManagedBundle) => Promise<BundleDetails['edges']>
+
+// A sourcemap's imports follow the edges its metadata keeps (the bundle
+// cache's `sourcemapEdges`), read with the parser, else what edges-lite.js reads.
+async function lendSourcemapEdges(details: BundleDetails, bundle: ManagedBundle, sourcemapEdges?: SourcemapEdges) {
+  if (details.kind !== 'sourcemap' || !sourcemapEdges) return
+  const edges = await sourcemapEdges(bundle).catch(() => undefined)
+  if (edges) details.edges = edges
+}
+
 // Immutable report hashes share a derivative across duplicate uploads. Bundle
 // identity and visibility are part of the key: a broader viewer's sources must
 // never populate a restricted response. Group derivatives by hash and filename
 // format so each format's permissions can be removed after its last deletion.
-export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, reports: BlobStore, bundles: BundleStore) {
+export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, reports: BlobStore, bundles: BundleStore, sourcemapEdges?: SourcemapEdges) {
   const pending = new Map<string, { reportId: string; job: Promise<boolean> }>()
   let queue = Promise.resolve()
   function enqueue<T>(work: () => Promise<T>): Promise<T> {
@@ -98,6 +108,7 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     }
     const details = await readBundleDetails(bundle, bundles)
     if (!details) return false
+    await lendSourcemapEdges(details, bundle, sourcemapEdges)
     const selection = selectSources(sourcePaths, bundleSourcesAsMap(details))
     const body = await encodeSources(bundle.integrity, details, selection)
     // A duplicate with the same hash AND format can use these parsed bytes.

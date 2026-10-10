@@ -952,6 +952,8 @@ finding members (including evidence, even when members share a finding ID),
 and removed when their final report reference or bundle is deleted. Cold
 builders recheck references after publishing to reconcile concurrent deletion
 on another instance. Authorization is checked again before streaming sources.
+A sourcemap's import links there follow the edges its bundle metadata keeps,
+read with the parser once, rather than read again for each derivative.
 
 Admins can read/manage every bundle. Managers can read/manage bundles they own
 or can access through their teams. View/triage users need a visible bundle and team access; the none
