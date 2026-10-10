@@ -252,8 +252,8 @@ const JS = {
   stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>]|\b(?:case|do|else|return|throw|typeof|void))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`),
   droppable: /(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu,
-  // nor between two `+` or two `-`: `a+ +b` is no `a++b`.
-  needed: (code, index, run) => (code[index - 1] === '+' || code[index - 1] === '-') && code[index + run.length] === code[index - 1],
+  // nor between two `+`, two `-` or two `/`: `a+ +b` is no `a++b`, `a/ /b/` no comment.
+  needed: (code, index, run) => '+-/'.includes(code[index - 1]) && code[index + run.length] === code[index - 1],
 }
 const CSS = {
   // No `//` comments, so `url(https://…)` is code.
