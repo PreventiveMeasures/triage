@@ -141,7 +141,8 @@ function nameless(text) {
         binding = true
         exporting = false
       } else if (!DECLARES.has(token)) exporting = false
-      if (!(keyPlace && MODIFIERS.has(token))) {
+      // `for await (` is a `for`'s condition still.
+      if (!(keyPlace && MODIFIERS.has(token)) && !(token === 'await' && last === 'for')) {
         last = token
         keyPlace = false
       }

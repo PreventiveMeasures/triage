@@ -134,6 +134,15 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
 })
 
+test('names are hidden renamed in JavaScript alone: in CSS a short selector changed shows', t => {
+  t.after(() => { element._setRenames(false) })
+  const element = view('dist/app.css', [{ 'dist/app.css': '#foo{color:red}\n' }, { 'dist/app.css': '#bar{color:red}\n' }])
+  element._setRenames(true)
+  const diff = renderText(element.render())
+  assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u)
+  assert.doesNotMatch(diff, /Hide renamed names/u, 'nor is it offered')
+})
+
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {
   const element = view()
   element._toggleKind('changed')
