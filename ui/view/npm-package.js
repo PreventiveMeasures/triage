@@ -410,6 +410,24 @@ export function npmLicenseParts(license, paths) {
     .map(text => ({ text, file: /^[\w.+-]+$/u.test(text) && !/^(?:OR|AND|WITH)$/u.test(text) ? fileFor(text) : null }))
 }
 
+const README_FILE = /^readme(?:\.(?:md|markdown|txt))?$/iu
+
+// Whether `homepage` leads only where its GitHub row does: the repository
+// (`github`), or its `directory` in it at some ref, or the readme there,
+// which is npm's homepage where the package names none.
+export function isNpmGithubHomepage(homepage, github, directory = '') {
+  const url = URL.canParse(homepage) ? new URL(homepage) : null
+  if (!url || !github || !/^(?:www\.)?github\.com$/iu.test(url.hostname) || url.search || !['', '#readme'].includes(url.hash.toLowerCase())) return false
+  let parts
+  try { parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent) } catch { return false }
+  const [owner, repo = '', kind, , ...rest] = parts
+  if (`${owner}/${repo.replace(/\.git$/iu, '')}`.toLowerCase() !== github.toLowerCase()) return false
+  const dir = directory.split('/').filter(Boolean).join('/')
+  if (kind === undefined) return true
+  if (kind === 'tree') return rest.join('/') === dir
+  return kind === 'blob' && README_FILE.test(rest.at(-1) ?? '') && rest.slice(0, -1).join('/') === dir
+}
+
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it. `files`
 // are the package's file paths, once read.
@@ -442,7 +460,7 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
       ? html`<a class="bundle-origin-link bundle-commit-link" href=${`https://github.com/${github}/commit/${manifest.gitHead}`} data-tooltip=${manifest.gitHead} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${manifest.gitHead.slice(0, 12)}</span></a>
         ${npmCommitTags(entry, github)}`
       : html`<span class="npm-commit-missing">Not recorded at publish</span>`}</dd>` : nothing}
-    ${manifest.homepage && /^https?:\/\//iu.test(manifest.homepage) ? html`<dt>Homepage</dt><dd><a class="bundle-origin-link" href=${manifest.homepage} target="_blank" rel="noopener noreferrer"><span>${manifest.homepage}</span></a></dd>` : nothing}
+    ${manifest.homepage && /^https?:\/\//iu.test(manifest.homepage) && !isNpmGithubHomepage(manifest.homepage, github, directory) ? html`<dt>Homepage</dt><dd><a class="bundle-origin-link" href=${manifest.homepage} target="_blank" rel="noopener noreferrer"><span>${manifest.homepage}</span></a></dd>` : nothing}
     <dt>Integrity</dt><dd class="mono bundle-integrity" data-tooltip-truncated data-tooltip=${entry.integrity}>${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
   </dl>`

@@ -125,3 +125,17 @@ test('each license in an expression opens its own file, else the package\'s only
   assert.deepEqual(parts('ISC', ['LICENSE-MIT', 'LICENSE-APACHE']), ['ISC'], 'no file of its own, and no only one')
   assert.deepEqual(parts('MIT', []), ['MIT'])
 })
+
+test('a homepage that only leads to its GitHub repository or readme is left out', async () => {
+  const { isNpmGithubHomepage } = await import('../ui/view/npm-package.js')
+  assert.equal(isNpmGithubHomepage('https://github.com/axios/axios', 'axios/axios'), true)
+  assert.equal(isNpmGithubHomepage('https://github.com/Axios/axios.git/#readme', 'axios/axios'), true)
+  assert.equal(isNpmGithubHomepage('https://github.com/babel/babel/tree/main/packages/babel-core#readme', 'babel/babel', 'packages/babel-core'), true)
+  assert.equal(isNpmGithubHomepage('https://github.com/babel/babel/blob/main/packages/babel-core/README.md', 'babel/babel', 'packages/babel-core'), true)
+  assert.equal(isNpmGithubHomepage('https://github.com/babel/babel/tree/main/packages/babel-parser', 'babel/babel', 'packages/babel-core'), false, 'another package\'s directory')
+  assert.equal(isNpmGithubHomepage('https://github.com/axios/axios/wiki', 'axios/axios'), false)
+  assert.equal(isNpmGithubHomepage('https://github.com/axios/axios#usage', 'axios/axios'), false)
+  assert.equal(isNpmGithubHomepage('https://github.com/other/axios', 'axios/axios'), false)
+  assert.equal(isNpmGithubHomepage('https://axios-http.com', 'axios/axios'), false)
+  assert.equal(isNpmGithubHomepage('https://github.com/axios/axios', undefined), false)
+})

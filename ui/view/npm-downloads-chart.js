@@ -1,7 +1,9 @@
-// A package's weekly downloads over the last year, for the npm Overview
-// (npm-overview.js): one series, as a line over a faint area, under a
-// readout of one week's downloads: the latest, or the week under the pointer
-// (or the arrow keys, once the chart has focus), which a crosshair marks.
+// A package's downloads, for the npm Overview (npm-overview.js): its latest
+// week's (or month's) and its last year's, in short with their units, over a
+// chart of them by week (or month) across the year, one series as a line over
+// a faint area. At the top right, the switch between weeks and months, and
+// under it the downloads of the period under the pointer (or the arrow keys,
+// once the chart has focus), which a crosshair marks.
 // Drawn at its own pixel width, so its text keeps its shape.
 import { LitElement, html, nothing, svg } from 'lit'
 
@@ -53,8 +55,15 @@ export function npmDownloadMonths(downloads) {
 }
 
 const PERIODS = {
-  week: { label: 'Weekly', of: npmDownloadWeeks, latest: 'latest week, ', name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
-  month: { label: 'Monthly', of: npmDownloadMonths, latest: 'latest month, ', name: period => monthName(period.from) },
+  week: { label: 'Weekly', per: 'week', of: npmDownloadWeeks, name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
+  month: { label: 'Monthly', per: 'month', of: npmDownloadMonths, name: period => monthName(period.from) },
+}
+
+// One of its figures, in short with its unit (`1.2K/week`), in full in its
+// tooltip; `pending` in its place until it is known.
+function stat(label, count, per, pending, tooltip) {
+  return html`<div class="npm-stat"><dt>${label}</dt>
+    <dd data-tooltip=${count !== null && tooltip ? tooltip : nothing}>${count === null ? pending : compact.format(count)}<span class="npm-stat-per">/${per}</span></dd></div>`
 }
 
 // A round number at or above `max`, for the axis's top: 1, 2, 2.5 or 5
@@ -66,13 +75,19 @@ export function niceCeiling(max) {
 }
 
 class NpmDownloadsChart extends LitElement {
-  static properties = { downloads: { attribute: false }, _width: { state: true }, _at: { state: true }, _unit: { state: true } }
+  // `status` is its downloads' load, as npmPackageData has it: 'loading',
+  // 'error' (until it asks again) or 'ready' (`downloads` null where the
+  // server has none).
+  static properties = {
+    downloads: { attribute: false }, status: {}, _width: { state: true }, _at: { state: true }, _unit: { state: true },
+  }
 
   createRenderRoot() { return this }
 
   constructor() {
     super()
     this.downloads = null
+    this.status = 'loading'
     this._width = 0
     this._at = null
     this._unit = 'week'
@@ -103,29 +118,52 @@ class NpmDownloadsChart extends LitElement {
     this._at = Math.min(periods.length - 1, Math.max(0, from + moves[event.key]))
   }
 
-  // Weekly or monthly, at the readout's end.
-  _units() {
-    return html`<span class="bundles-overview-sort npm-downloads-units" role="group" aria-label="Downloads by">
-      ${Object.entries(PERIODS).map(([unit, { label }]) => html`<button type="button" aria-pressed=${String(this._unit === unit)}
-        @click=${() => { this._unit = unit; this._at = null }}>${label}</button>`)}
-    </span>`
+  // Weekly or monthly, over the readout of the period under the pointer,
+  // which keeps its line while there is none.
+  _controls(at) {
+    const period = PERIODS[this._unit]
+    return html`<div class="npm-downloads-controls">
+      <span class="bundles-overview-sort" role="group" aria-label="Downloads by">
+        ${Object.entries(PERIODS).map(([unit, { label }]) => html`<button type="button" aria-pressed=${String(this._unit === unit)}
+          @click=${() => { this._unit = unit; this._at = null }}>${label}</button>`)}
+      </span>
+      <span class="npm-downloads-readout" aria-live="polite">${at ? html`<strong>${whole.format(at.total)}</strong>
+        <span>${period.name(at)}</span>` : nothing}</span>
+    </div>`
   }
 
   // The periods charted, made again only when the downloads or the unit
-  // change, not as the pointer moves.
+  // change, not as the pointer moves; the year's total with the downloads.
   willUpdate(changed) {
     if (changed.has('downloads') || changed.has('_unit')) this._periods = PERIODS[this._unit].of(this.downloads)
+    if (changed.has('downloads')) this._year = this.downloads?.days?.reduce((sum, count) => sum + count, 0) ?? null
   }
 
   render() {
     const period = PERIODS[this._unit]
     const periods = this._periods
-    // The readout keeps its line while there is nothing to read, so the
-    // chart doesn't move when the downloads arrive.
-    if (periods.length === 0 || this._width <= PAD.left + PAD.right) {
-      return html`<div class="npm-downloads-head"><span class="npm-downloads-readout">\u00A0</span>${this._units()}</div>
-        <div class="npm-downloads-plot" style="height: ${HEIGHT}px"></div>`
-    }
+    const latest = periods.at(-1)
+    const known = this.downloads !== null
+    // Nothing to chart where the server has no downloads; until they come,
+    // the chart holds its place, so nothing moves when they arrive.
+    const charted = known || this.status !== 'ready'
+    const at = this._at === null ? null : periods[this._at] ?? null
+    const pending = this.status === 'loading' ? '…' : '—'
+    const days = this.downloads?.days.length ?? 0
+    return html`<div class="npm-downloads-head">
+      <dl class="npm-stats">
+        ${stat(`${period.label} downloads`, known ? latest?.total ?? 0 : null, period.per, pending,
+          latest && `${whole.format(latest.total)} downloads, ${period.name(latest)}`)}
+        ${stat('Downloads, last 12 months', this._year, 'year', pending,
+          days > 0 && `${whole.format(this._year)} downloads, ${fullDate(dayOf(this.downloads.start, 0))} – ${fullDate(dayOf(this.downloads.start, days - 1))}`)}
+      </dl>
+      ${charted ? this._controls(at) : nothing}
+    </div>
+    ${charted ? this._plot(period, periods, at) : nothing}`
+  }
+
+  _plot(period, periods, at) {
+    if (periods.length === 0 || this._width <= PAD.left + PAD.right) return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px"></div>`
     const width = this._width
     const plotWidth = width - PAD.left - PAD.right
     const plotHeight = HEIGHT - PAD.top - PAD.bottom
@@ -134,16 +172,9 @@ class NpmDownloadsChart extends LitElement {
     const y = value => PAD.top + plotHeight - value / top * plotHeight
     const line = periods.map((week, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(week.total).toFixed(1)}`).join('')
     const area = `${line}L${x(periods.length - 1).toFixed(1)},${y(0)}L${x(0).toFixed(1)},${y(0)}Z`
-    const at = this._at === null ? null : periods[this._at]
     const latest = periods.at(-1)
-    const shown = at ?? latest
-    return html`<div class="npm-downloads-head">
-      <span class="npm-downloads-readout" aria-live="polite"><strong>${whole.format(shown.total)}</strong>
-        <span>${at ? '' : period.latest}${period.name(shown)}</span></span>
-      ${this._units()}
-    </div>
-    <div class="npm-downloads-plot" style="height: ${HEIGHT}px" tabindex="0" role="img"
-      aria-label=${`${period.label} downloads over the last year, from ${monthYear(periods[0].from)} to ${monthYear(latest.to)}; the ${period.latest}${period.name(latest)}: ${whole.format(latest.total)}.`}
+    return html`<div class="npm-downloads-plot" style="height: ${HEIGHT}px" tabindex="0" role="img"
+      aria-label=${`${period.label} downloads over the last year, from ${monthYear(periods[0].from)} to ${monthYear(latest.to)}; the latest ${period.per}, ${period.name(latest)}: ${whole.format(latest.total)}.`}
       @pointermove=${event => { this._at = this._periodAt(periods, event.offsetX) }} @pointerleave=${() => { this._at = null }}
       @keydown=${event => this._key(event, periods)} @blur=${() => { this._at = null }}>
       <svg width=${width} height=${HEIGHT} viewBox="0 0 ${width} ${HEIGHT}" aria-hidden="true">

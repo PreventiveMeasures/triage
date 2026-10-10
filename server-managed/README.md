@@ -1041,14 +1041,18 @@ in the bundle view with four tabs:
   GitHub repository with its stars, forks, open issues and open pull requests
   (GitHub counts them together; the pull requests are counted apart from its
   list of them, and where that fails they show together), publish commit with
-  the tags that point to it, homepage and integrity; beside them entry points,
+  the tags that point to it, homepage (left out where it only leads to its
+  GitHub repository, or its directory or readme there, as npm's default
+  does) and integrity; beside them entry points,
   each with its file's icon and opening its file, Main and Module in one row
-  where they name the same file, engines and install scripts; and a card of its figures: weekly downloads and downloads
-  over 12 months, with a chart of its downloads over the last year by week,
-  or by calendar month (complete ones only), a switch at its top right, the
-  latest period's, or the hovered one's, read out over it; and the tarball
-  download under it. Under the facts, its languages, its readable files as
-  UTF-8 or ASCII, and its file types: Package, for the files every package
+  where they name the same file, engines, install scripts, and its files with
+  the lines of code they add up to; and a card of its downloads: the latest
+  week's (or month's) and the last year's, each with its unit (`1.2K/week`,
+  `9.6K/year`), over a chart of them across the year by week, or by calendar
+  month (complete ones only), with the switch between the two at its top
+  right and under it the hovered period's downloads; and the tarball
+  download under it. Under the facts, its languages, then its readable files
+  as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
   count, one only those files have left out, one other files have too

@@ -3541,15 +3541,9 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
       'contents contents' auto
       'figures figures' auto / minmax(0, 1.5fr) minmax(0, 1fr);
   }
-  /* The card spans the summary: its figures stack beside the chart. */
-  .npm-overview .npm-insights { flex-direction: row; align-items: flex-start; gap: 1.5rem; }
-  .npm-overview .npm-stats { flex-direction: column; flex-shrink: 0; }
-  .npm-overview .npm-downloads { flex: 1; min-width: 0; }
 }
 @container npm-overview (width < 40rem) {
   .npm-overview .bundles-overview-summary { grid-template: 'warning' 'meta' 'build' 'actions' 'contents' 'figures' / minmax(0, 1fr); }
-  .npm-overview .npm-insights { flex-direction: column; align-items: stretch; gap: .6rem; }
-  .npm-overview .npm-stats { flex-direction: row; }
 }
 /* Its repository's stars and forks, on the GitHub row of its facts. */
 .bundles-detail-meta .bundle-origin-link.npm-github-figure {
@@ -3567,15 +3561,18 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
   font-size: .66rem;
 }
 /* What the package's files hold: rows labelled as the facts above them are,
-   the languages' label level with their bar. */
+   the languages' label level with their bar, on a line of their own; the
+   rows after them side by side where they fit, each label as wide as the
+   facts', so their values line up when they don't. */
 .npm-contents {
-  display: grid; grid-template-columns: var(--npm-label) minmax(0, 1fr);
-  gap: .45rem .65rem; align-items: baseline;
+  display: flex; flex-wrap: wrap; gap: .45rem 1.75rem;
   margin: .15rem 0 0;
 
-  & dt { color: var(--muted); font-size: .72rem; font-weight: 600; }
+  & > div { display: flex; align-items: baseline; gap: .65rem; min-width: 0; }
+  & dt { flex: none; width: var(--npm-label); color: var(--muted); font-size: .72rem; font-weight: 600; }
   & dd { margin: 0; min-width: 0; }
-  & :is(dt:has(+ dd > .bundles-languages-bar), dd:has(> .bundles-languages-bar)) { align-self: start; }
+  & .npm-contents-languages { flex-basis: 100%; align-items: start; }
+  & .npm-contents-languages dd { flex: 1; }
   & .bundles-languages-bar { margin: .25rem 0 0; }
 }
 .bundles-languages-legend {
@@ -3590,28 +3587,46 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
 .bundles-languages-share { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* The tarball's download, under the figures' card. */
 .npm-figures-actions { display: flex; justify-content: flex-end; margin-top: .5rem; }
-/* Its figures, in a card (view/npm-overview.js): stat tiles over its weekly
-   downloads for the last year, one series in the accent over a faint wash of
-   it, on hairline gridlines. */
+/* Its downloads, in a card (view/npm-downloads-chart.js): its figures, each
+   with its unit, over its downloads for the last year, one series in the
+   accent over a faint wash of it, on hairline gridlines. */
 .npm-insights {
-  display: flex; flex-direction: column; gap: .6rem;
   min-width: 0;
   padding: .65rem .8rem .5rem;
   background: var(--bg);
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
 }
+npm-downloads-chart { display: block; }
+/* The figures, and at the top right the switch between weeks and months;
+   under it where both don't fit. */
+.npm-downloads-head {
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: .3rem 1rem;
+  margin-bottom: .2rem;
+}
 .npm-stats {
-  display: flex; flex-wrap: wrap; gap: .5rem 1.5rem;
+  display: flex; flex-wrap: wrap; gap: .3rem 1.25rem;
   margin: 0;
 }
 .npm-stat {
-  display: flex; flex-direction: column; gap: .1rem; min-width: 5rem;
-
-  & dt { color: var(--muted); font-size: .7rem; }
-  & dd { margin: 0; color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  & dt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  & dd {
+    margin: 0;
+    color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
 }
-.npm-downloads { min-width: 0; margin: 0; }
-npm-downloads-chart { display: block; }
+.npm-stat-per { margin-left: .1rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
+/* Under the switch, the period under the pointer's downloads, on a line
+   kept for them, so the chart doesn't move as they come and go; they run
+   left from the switch's end, past it where they need to. */
+.npm-downloads-controls { position: relative; margin-left: auto; padding-bottom: 1.05rem; }
+.npm-downloads-readout {
+  position: absolute; right: 0; bottom: 0;
+  display: flex; align-items: baseline; gap: .4rem;
+  color: var(--muted); font-size: .7rem; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+
+  & strong { color: var(--text); font-size: .78rem; font-weight: 600; }
+}
 .npm-downloads-plot {
   position: relative;
 
@@ -3625,21 +3640,6 @@ npm-downloads-chart { display: block; }
 .npm-downloads-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .npm-downloads-crosshair { stroke: var(--muted); stroke-width: 1; shape-rendering: crispedges; }
 .npm-downloads-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
-/* Over the chart: one period's downloads, the hovered one's in place, and
-   the switch between weeks and months at its end, under it where both
-   don't fit. */
-.npm-downloads-head {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .75rem;
-  margin-bottom: .3rem;
-}
-.npm-downloads-readout {
-  display: flex; align-items: baseline; gap: .45rem; min-width: 0;
-  color: var(--muted); font-size: .7rem; white-space: nowrap; overflow: hidden;
-  font-variant-numeric: tabular-nums;
-
-  & strong { color: var(--text); font-size: .78rem; font-weight: 600; }
-}
-.npm-downloads-units { margin-left: auto; }
 /* Its advisories across every version (view/npm-overview.js), grouped by how
    they stand for the version shown, each row as a bundle advisory's: those
    affecting it boxed and marked, those it fixes struck through. */

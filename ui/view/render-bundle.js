@@ -450,14 +450,15 @@ function openBundleWhy(details, query) {
 //
 // `unpackedSize` is the bytes every listed file adds up to once unpacked —
 // what the Packages column totals — shown beside the artifact's own Size.
-// Null leaves the row out.
+// Null leaves the row out. `lines` are the lines of code its sources add up
+// to, shown beside their count where given.
 // `leadColumn` replaces the Packages column, as an npm package's Dependencies do;
 // `trailColumns` follow Files, `summaryExtra` follows the summary's meta, and
 // `overviewClass` names the Overview's own layout. `fileIcon` and `fileTag`
 // render before and after each Files row's path.
 function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, {
   bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
-  fileTag = null, fileIcon = null, overviewClass = '', fileFilter = null,
+  fileTag = null, fileIcon = null, overviewClass = '', fileFilter = null, lines = null,
 } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
@@ -575,13 +576,14 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // for an analyzer dump). The outer wrapper is a flex column so
   // the columns row takes the remaining height after the meta /
   // chips, and CSS handles the per-column scroll.
+  const textCount = sources.length - (resources?.size ?? 0)
   return html`<div class="bundles-overview ${overviewClass}">
     <div class="bundles-overview-summary">
       <div class="bundles-detail-meta-row">
         ${renderMeta(prefix)}
         <dl class="bundles-detail-meta is-build">
           ${extras}
-          <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
+          <dt>Sources</dt><dd>${lines == null ? textCount : `${textCount} ${textCount === 1 ? 'file' : 'files'} · ${lines.toLocaleString('en')} LoC`}</dd>
           ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
           ${unpackedSize == null ? nothing : html`<dt>Unpacked</dt><dd>${formatBytes(unpackedSize)}</dd>`}
           ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
@@ -2473,15 +2475,28 @@ function languageBarPointerLeave(e) {
   hideTooltip()
 }
 
+// Its sources' lines, in all and by language: the index's where it has
+// them, else counted once from the sources.
+const codeStatsOf = new WeakMap()
+function bundleDetailsCodeStats(details) {
+  if (details.codeStats) return details.codeStats
+  let stats = codeStatsOf.get(details)
+  if (!stats) {
+    // `bundleSourcesAsMap` includes only textual sources. Stasis resources
+    // (images, fonts, and other binary payloads) are intentionally absent,
+    // so they cannot distort the language shares or get a fake extension.
+    const lines = details.lineCounts?.size > 0
+      ? details.lineCounts
+      : new Map([...bundleSourcesAsMap(details)].map(([path, content]) => [path, bundleSourceLineCount(content)]))
+    stats = bundleCodeStats(lines, bundleFileSizes(details))
+    codeStatsOf.set(details, stats)
+  }
+  return stats
+}
+
 function renderBundleLanguagesBar(details, { legend = false } = {}) {
   if (!(details?.kind === 'stasis' && details.bundle) && !(details?.npm && details.json)) return nothing
-  // `bundleSourcesAsMap` includes only textual sources. Stasis resources
-  // (images, fonts, and other binary payloads) are intentionally absent,
-  // so they cannot distort the language shares or get a fake extension.
-  const lines = details.lineCounts?.size > 0
-    ? details.lineCounts
-    : new Map([...bundleSourcesAsMap(details)].map(([path, content]) => [path, bundleSourceLineCount(content)]))
-  const stats = details.codeStats ?? bundleCodeStats(lines, bundleFileSizes(details))
+  const stats = bundleDetailsCodeStats(details)
   const total = stats.lines
   const segments = stats.languages.filter(language => language.lines > 0)
   if (total <= 0 || segments.length === 0) return nothing
@@ -2707,7 +2722,7 @@ function renderNpmPackageOverview(entry, details) {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: new Set(binaries),
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
     summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
-    overviewClass: 'npm-overview',
+    overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines,
     fileTag: path => npmReadabilityTag(readability.get(path)), fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry, details),
   })
 }

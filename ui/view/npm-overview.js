@@ -11,7 +11,7 @@ import { fetchNpmAdvisories, fetchNpmStats } from './client-managed.js'
 import { NPM_LICENSE_FILE, npmPackageData } from './npm-package.js'
 import { render } from './render.js'
 import { sourceFileIcon } from './source-file-icon.js'
-import { npmDownloadWeeks } from './npm-downloads-chart.js'
+import './npm-downloads-chart.js'
 
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
@@ -35,30 +35,12 @@ function npmPackageAdvisories(name) {
     data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false }))
 }
 
-function stat(label, value, title = nothing) {
-  return html`<div class="npm-stat"><dt>${label}</dt><dd data-tooltip=${title}>${value}</dd></div>`
-}
-
-// The package's figures in the summary: its downloads beside its weekly
-// downloads over the last year, with `actions` (the tarball's download)
-// under them. While they load, the card holds its place, so nothing around
-// it moves when they arrive.
+// The package's downloads in the summary, in a card (npm-downloads-chart.js),
+// with `actions` (the tarball's download) under it.
 export function npmStatsRow(entry, actions) {
   const stats = npmPackageStats(entry.npm.name)
-  const ready = stats.status === 'ready'
-  const { downloads = null } = ready ? stats : {}
-  const pending = stats.status === 'loading' ? '…' : '—'
-  const week = npmDownloadWeeks(downloads).at(-1)?.total ?? 0
-  const year = (downloads?.days ?? []).reduce((sum, count) => sum + count, 0)
-  const exact = count => count.toLocaleString('en')
-  return html`<div class="npm-figures"><section class="npm-insights" aria-label="Package figures">
-    <dl class="npm-stats">
-      ${stat('Weekly downloads', downloads ? compact.format(week) : pending, downloads ? exact(week) : nothing)}
-      ${stat('Downloads, 12 months', downloads ? compact.format(year) : pending, downloads ? exact(year) : nothing)}
-    </dl>
-    ${ready && !downloads ? nothing : html`<figure class="npm-downloads" aria-label="Weekly downloads, last 12 months">
-      <npm-downloads-chart .downloads=${downloads}></npm-downloads-chart>
-    </figure>`}
+  return html`<div class="npm-figures"><section class="npm-insights" aria-label="Downloads">
+    <npm-downloads-chart .downloads=${stats.downloads ?? null} .status=${stats.status}></npm-downloads-chart>
   </section><div class="npm-figures-actions">${actions}</div></div>`
 }
 
@@ -408,13 +390,14 @@ function npmFileTypesRow(entry, details) {
 }
 
 // What the package holds, under its facts and labelled as they are: its
-// languages by lines (`languages`, the bar the bundle Overview draws), its
-// readable files, and their types.
+// languages by lines (`languages`, the bar the bundle Overview draws) on a
+// line of their own, then its readable files and their types, side by side
+// where they fit.
 export function npmContents(entry, languages, details) {
-  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['File types', npmFileTypesRow(entry, details)]]
-    .filter(([, body]) => body !== nothing)
+  const rows = [['languages', 'Languages', languages], ['readable', 'Readable', npmReadableRow(entry, details)], ['types', 'File types', npmFileTypesRow(entry, details)]]
+    .filter(([, , body]) => body !== nothing)
   if (rows.length === 0) return nothing
-  return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([label, body]) => html`<dt>${label}</dt><dd>${body}</dd>`)}</dl>`
+  return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([key, label, body]) => html`<div class=${`npm-contents-${key}`}><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`
 }
 
 // The binary files, which the server tells from text by their bytes: not
