@@ -75,7 +75,8 @@ test('names a minifier renamed alike throughout are left out, and only those', (
   assert.equal(ignoring(['let a, d;', 'f(a);', 'g(a);'], ['let b, c;', 'f(b);', 'g(c);']).blocks.length, 1, 'one name renamed two ways')
   assert.deepEqual(ignoring(['var a, b;', 'f(a);', 'g(b);'], ['var b, a;', 'f(b);', 'g(a);']).blocks, [], 'two names swapped each stand for one')
   // Only what the file declares: a global it doesn't is no minifier's to rename.
-  for (const [global, other] of [['new Map();', 'new Set();'], ['$(x);', '_(x);'], ['a();', 'b();']]) {
+  for (const [global, other] of [['new Map();', 'new Set();'], ['$(x);', '_(x);'], ['a();', 'b();'], ['const { x = a } = o;', 'const { x = b } = o;'],
+    ['function f({ x = a }) {}', 'function f({ x = b }) {}'], ['let a; f(<a />);', 'let b; f(<b />);']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
@@ -96,6 +97,7 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['export function a() {}', 'export function b() {}'], ['export class a {}', 'export class b {}'], ['export * as a from "m";', 'export * as b from "m";'],
     ['if (x) /foo/.test(a);', 'if (x) /bar/.test(a);'], ['for await (const x of a) /foo/.test(x);', 'for await (const x of a) /bar/.test(x);'],
     ['x . foo();', 'x . bar();'], ['x./* c */foo();', 'x./* c */bar();'], ['export default /foo/;', 'export default /bar/;'],
+    ['class X extends m(B) { a() {} }', 'class X extends m(B) { b() {} }'],
     // Each name renamed declared, so that only what keeps it can show it.
   ]) assert.equal(lineDiff(`let a, foo; ${before}\n`, `let b, bar; ${after}\n`, { ignoreRenames: true }).blocks.length, 1, `${before} → ${after}`)
   // Read as a whole: every line of a comment or a template spanning lines is kept.

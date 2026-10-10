@@ -1159,7 +1159,7 @@ control. A version shows in the bundle view with four tabs:
   and Diff review the changes as for bundles: with the pretty-print toggle
   on, a file minified on both sides diffs as the server formatted each, and
   **Hide renamed names** leaves out lines of a JavaScript file (`.js`, `.mjs`,
-  `.cjs`, what a minifier renames) that differ only in short names (three
+  `.cjs` without JSX, what a minifier renames) that differ only in short names (three
   characters at most, as a minifier gives them) the file declares, renamed
   alike throughout it; a global it doesn't declare (`Map`, `$`) is kept. A line is left out only where each of its names
   stands for one other in every line, unchanged ones included, and neither
