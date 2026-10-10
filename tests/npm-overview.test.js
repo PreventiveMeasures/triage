@@ -13,7 +13,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => advisoriesAnswer(name), fetchNpmStats: () => Promise.resolve({}),
   fetchNpmPackage() {}, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmMergedAdvisories, npmTextEncoding } = await import('../ui/view/npm-overview.js')
+const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmFileTypes, npmMergedAdvisories, npmTextEncoding } = await import('../ui/view/npm-overview.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -34,6 +34,21 @@ test('extensions list most files first, then by name, with their sizes summed', 
     { extension: '.png', files: 1, bytes: 900 },
   ])
   assert.deepEqual(npmFileExtensions([], new Map()), [])
+})
+
+test('a package\'s own files at its root are a type of their own, their extensions shown only where other files have them', () => {
+  const paths = ['package.json', 'README.md', 'LICENSE', 'licence.md', 'lib/index.js', 'docs/guide.md', 'lib/README.md', 'lib/package.json']
+  const sizes = new Map(paths.map((path, i) => [path, i + 1]))
+  assert.deepEqual(npmFileTypes(paths, sizes), {
+    package: { files: 4, bytes: 1 + 2 + 3 + 4 },
+    // `.md` counts README.md and licence.md too, as docs/guide.md and lib/README.md have it;
+    // `.json` stays, for lib/package.json; LICENSE alone had no extension.
+    extensions: [{ extension: '.md', files: 4, bytes: 2 + 4 + 6 + 7 }, { extension: '.json', files: 2, bytes: 1 + 8 }, { extension: '.js', files: 1, bytes: 5 }],
+  })
+  assert.deepEqual(npmFileTypes(['package.json', 'index.js'], new Map()), { package: { files: 1, bytes: 0 }, extensions: [{ extension: '.js', files: 1, bytes: 0 }] })
+  assert.deepEqual(npmFileTypes(['LICENSE-MIT', 'LICENSE-APACHE', 'LICENCE.txt', 'license-bsd.md', 'licenses/x.js', 'LICENSE_x'], new Map()).package, { files: 4, bytes: 0 },
+    'a license file named after its license is one too')
+  assert.deepEqual(npmFileTypes([], new Map()), { package: null, extensions: [] })
 })
 
 test('a file is ASCII or UTF-8 text, either with control characters, or binary', () => {
@@ -114,4 +129,14 @@ test('an advisory npm answers once a range is one row, its ranges, versions and 
     { id: 'GHSA-b', source: 'registry', severity: 'low', cwe: [], affected: [0] },
     { id: 'GHSA-a', source: 'repository', severity: 'moderate', cwe: [], range: '< 5.0.0', affected: [2] },
   ])
+})
+
+test('each license in an expression opens its own file, else the package\'s only one', async () => {
+  const { npmLicenseParts } = await import('../ui/view/npm-package.js')
+  const parts = (license, paths) => npmLicenseParts(license, paths).map(({ text, file }) => file ? `${text}→${file}` : text)
+  assert.deepEqual(parts('MIT OR Apache-2.0', ['LICENSE-MIT', 'LICENSE-APACHE', 'index.js']), ['MIT→LICENSE-MIT', ' OR ', 'Apache-2.0→LICENSE-APACHE'])
+  assert.deepEqual(parts('(MIT AND BSD-3-Clause)', ['LICENSE']), ['(', 'MIT→LICENSE', ' AND ', 'BSD-3-Clause→LICENSE', ')'])
+  assert.deepEqual(parts('MIT OR Apache-2.0', ['LICENSE-MIT', 'LICENSE-APACHE', 'LICENSE']), ['MIT→LICENSE-MIT', ' OR ', 'Apache-2.0→LICENSE-APACHE'])
+  assert.deepEqual(parts('ISC', ['LICENSE-MIT', 'LICENSE-APACHE']), ['ISC'], 'no file of its own, and no only one')
+  assert.deepEqual(parts('MIT', []), ['MIT'])
 })

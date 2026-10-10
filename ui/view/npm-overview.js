@@ -7,7 +7,7 @@ import { formatBytes } from '../scan/metrics.js'
 import { advisoryCwes, advisoryRail, advisoryReference } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmStats } from './client-managed.js'
-import { npmPackageData } from './npm-package.js'
+import { NPM_LICENSE_FILE, npmPackageData } from './npm-package.js'
 import { render } from './render.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import './npm-downloads-chart.js'
@@ -63,11 +63,14 @@ export function npmStatsRow(entry, actions = nothing) {
 }
 
 const STAR_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.75 1.9 3.9 4.3.6-3.1 3 .75 4.25L8 11.5l-3.85 2 .75-4.25-3.1-3 4.3-.6Z"/></svg>`
+const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.25" fill="currentColor"/></svg>`
+const PULL_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M4 5v6M12 11V6a2 2 0 0 0-2-2H7m1.5-1.5L7 4l1.5 1.5"/></svg>`
 const FORK_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><circle cx="4.5" cy="3.25" r="1.5"/><circle cx="11.5" cy="3.25" r="1.5"/><circle cx="8" cy="12.75" r="1.5"/><path d="M4.5 4.75v.75a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2v-.75M8 7.5v3.75"/></svg>`
 
-// Its repository's stars and forks, beside the repository in the facts
-// (npm-package.js npmOverviewMeta), each linking to GitHub's list of them;
-// nothing until they arrive, or where GitHub has none to give.
+// Its repository's stars, forks, open issues and pull requests, beside the
+// repository in the facts (npm-package.js npmOverviewMeta), each linking to
+// GitHub's list of them; nothing until they arrive, or where GitHub has none
+// to give.
 export function npmGithubFigures(entry) {
   if (!entry.npm.manifest.github?.github) return nothing
   const stats = npmPackageStats(entry.npm.name)
@@ -76,8 +79,14 @@ export function npmGithubFigures(entry) {
   const repo = github.repo.split('/').map(encodeURIComponent).join('/')
   const figure = (icon, count, noun, path) => html`<a class="bundle-origin-link npm-github-figure" href=${`https://github.com/${repo}/${path}`}
     data-tooltip=${`${count.toLocaleString('en')} ${noun}`} target="_blank" rel="noopener noreferrer">${icon}<span>${compact.format(count)}</span></a>`
+  // GitHub counts open pull requests among open issues: apart where it says
+  // how many there are, together where it doesn't.
+  const pulls = typeof github.openPulls === 'number' ? github.openPulls : null
+  const issues = pulls === null ? github.openIssues : Math.max(github.openIssues - pulls, 0)
   return html`${figure(STAR_ICON, github.stars, github.stars === 1 ? 'star' : 'stars', 'stargazers')}
     ${figure(FORK_ICON, github.forks, github.forks === 1 ? 'fork' : 'forks', 'forks')}
+    ${figure(ISSUE_ICON, issues, pulls === null ? 'open issues and pull requests' : issues === 1 ? 'open issue' : 'open issues', 'issues')}
+    ${pulls === null ? nothing : figure(PULL_ICON, pulls, pulls === 1 ? 'open pull request' : 'open pull requests', 'pulls')}
     ${github.archived ? html`<span class="npm-github-archived">Archived</span>` : nothing}`
 }
 
@@ -299,6 +308,7 @@ export function npmFilesFilter(entry, details) {
   const filter = shownFilter(entry)
   if (filter === null) return null
   const clear = () => showFiles(entry, filter.kind, filter.value)
+  if (filter.kind === 'type') return { label: 'Package', keeps: isNpmPackageFile, clear }
   if (filter.kind === 'extension') return { label: filter.value || 'No extension', keeps: path => npmFileExtension(path) === filter.value, clear }
   const known = npmFilesReadability(details)
   return { label: READABILITY.get(filter.value).name, keeps: path => known.get(path)?.category === filter.value, clear }
@@ -372,22 +382,44 @@ export function npmFileExtensions(paths, sizes) {
   return [...byExtension.values()].toSorted((a, b) => b.files - a.files || a.extension.localeCompare(b.extension))
 }
 
-// Every extension in the package, as chips under its summary, each
-// narrowing the Files list to its files as a category's does.
-export function npmExtensionsRow(entry, paths, sizes) {
-  const rows = npmFileExtensions(paths, sizes)
-  if (rows.length === 0) return nothing
-  return html`<ul class="npm-extensions" aria-label="File extensions">
-    ${rows.map(({ extension, files, bytes }) => filterChip(entry, 'extension', extension, html`<span class="npm-extension-name">${extension || 'no extension'}</span>`, files,
-      { tooltip: `${files.toLocaleString('en')} ${files === 1 ? 'file' : 'files'} · ${formatBytes(bytes)}: show only these in Files` }))}
+// The files every package has, at its root: its manifest, readme and license
+// files (npm-package.js NPM_LICENSE_FILE).
+const PACKAGE_FILE = /^(?:package\.json|readme(?:\.md)?)$/iu
+export const isNpmPackageFile = path => PACKAGE_FILE.test(path) || NPM_LICENSE_FILE.test(path)
+
+// The package's file types: its own files (isNpmPackageFile) as `package`,
+// where it has any, then its extensions as npmFileExtensions has them. An
+// extension only its own files have is left out; one other files have too
+// counts its own files as well.
+export function npmFileTypes(paths, sizes) {
+  const own = paths.filter(isNpmPackageFile)
+  const others = new Set(paths.filter(path => !isNpmPackageFile(path)).map(npmFileExtension))
+  return {
+    package: own.length > 0 ? { files: own.length, bytes: own.reduce((sum, path) => sum + (sizes.get(path) ?? 0), 0) } : null,
+    extensions: npmFileExtensions(paths, sizes).filter(row => others.has(row.extension)),
+  }
+}
+
+const filesNote = (files, bytes) => `${files.toLocaleString('en')} ${files === 1 ? 'file' : 'files'} · ${formatBytes(bytes)}: show only these in Files`
+
+// The package's file types, as chips under its summary, each narrowing the
+// Files list to its files as a category's does.
+function npmFileTypesRow(entry, paths, sizes) {
+  const types = npmFileTypes(paths, sizes)
+  if (!types.package && types.extensions.length === 0) return nothing
+  return html`<ul class="npm-extensions" aria-label="File types">
+    ${types.package ? filterChip(entry, 'type', 'package', html`<span>Package</span>`, types.package.files,
+      { tooltip: `package.json, readme and license: ${filesNote(types.package.files, types.package.bytes)}` }) : nothing}
+    ${types.extensions.map(({ extension, files, bytes }) => filterChip(entry, 'extension', extension,
+      html`<span class="npm-extension-name">${extension || 'no extension'}</span>`, files, { tooltip: filesNote(files, bytes) }))}
   </ul>`
 }
 
 // What the package holds, under its facts and labelled as they are: its
 // languages by lines (`languages`, the bar the bundle Overview draws), its
-// readable files, and their extensions.
+// readable files, and their types.
 export function npmContents(entry, languages, details, paths, sizes) {
-  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['Extensions', npmExtensionsRow(entry, paths, sizes)]]
+  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['File types', npmFileTypesRow(entry, paths, sizes)]]
     .filter(([, body]) => body !== nothing)
   if (rows.length === 0) return nothing
   return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([label, body]) => html`<dt>${label}</dt><dd>${body}</dd>`)}</dl>`

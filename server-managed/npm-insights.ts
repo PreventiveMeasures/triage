@@ -78,13 +78,36 @@ export function npmDownloads(name: string): Promise<NpmDownloads | null> {
   return downloads(name, () => askDownloads(name))
 }
 
-// A public repository's figures; GitHub's open issue count takes in its open
-// pull requests.
-export interface NpmGithubStats { repo: string; stars: number; forks: number; openIssues: number; archived: boolean; pushedAt: string | null }
+// A public repository's figures: GitHub's `openIssues` takes in its open pull
+// requests, which `openPulls` counts on their own, null where GitHub didn't
+// say.
+export interface NpmGithubStats {
+  repo: string; stars: number; forks: number; openIssues: number; openPulls: number | null; archived: boolean; pushedAt: string | null
+}
+
+// How many pull requests a repository has open: the last page of their list,
+// one a page, as its Link header names it, or the one page's length.
+async function countOpenPulls(repo: string, token: string | null): Promise<number | null> {
+  const path = repo.split('/').map(encodeURIComponent).join('/')
+  let res: Response
+  try {
+    res = await fetch(`https://api.github.com/repos/${path}/pulls?state=open&per_page=1`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'deepview-triage', ...token && { authorization: `Bearer ${token}` } },
+      redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    })
+  } catch { return null }
+  if (!res.ok) { await res.body?.cancel(); return null }
+  const last = /[?&]page=(\d+)>;\s*rel="last"/u.exec(res.headers.get('link') ?? '')?.[1]
+  if (last !== undefined) { await res.body?.cancel(); return Number(last) }
+  try {
+    const json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8')) as unknown
+    return Array.isArray(json) ? json.length : null
+  } catch { return null }
+}
 
 async function askGithub(repo: string, token: string | null): Promise<NpmGithubStats | null> {
   const ask = (auth: string | null) => createClient({ token: auth, userAgent: 'deepview-triage' }).getRepo({ repo }) as Promise<unknown>
-  let json: unknown
+  let auth = token, json: unknown
   try { json = await ask(token) }
   catch (error) {
     // A repository gone, renamed away or never public has none; a revoked
@@ -92,12 +115,14 @@ async function askGithub(repo: string, token: string | null): Promise<NpmGithubS
     // again next time.
     if (!(error instanceof HttpError) || ![401, 404].includes(error.status)) throw error
     if (error.status === 404 || token === null) return null
+    auth = null
     try { json = await ask(null) }
     catch (retry) { if (retry instanceof HttpError && retry.status === 404) return null; throw retry }
   }
   if (!plainObject(json) || json['private'] !== false || typeof json['full_name'] !== 'string') return null
   return {
     repo: json['full_name'], stars: count(json['stargazers_count']), forks: count(json['forks_count']), openIssues: count(json['open_issues_count']),
+    openPulls: await countOpenPulls(json['full_name'], auth),
     archived: json['archived'] === true, pushedAt: typeof json['pushed_at'] === 'string' ? json['pushed_at'] : null,
   }
 }

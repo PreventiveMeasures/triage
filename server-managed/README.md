@@ -1034,18 +1034,27 @@ in the bundle view with four tabs:
   minified (most of its text on such lines, or named `.min.` with any), and
   source maps (`.map`). Prose (Markdown, text, licenses and changelogs) is
   readable whatever its lines' lengths, and a `sourceMappingURL` comment's
-  line counts for none. Then the manifest's facts: description, license,
-  author (linking the npm profile of the account that published it), GitHub
-  repository with its stars and forks, publish commit with the tags that
-  point to it, homepage and integrity; beside them entry points, engines and
-  install scripts; and a card of its figures: weekly downloads and downloads
+  line counts for none. Then the manifest's facts: description, license
+  (each license in its expression opening its file in the package: the one
+  named after it, as `LICENSE-APACHE` for `Apache-2.0`, else its only license
+  file), author (linking the npm profile of the account that published it),
+  GitHub repository with its stars, forks, open issues and open pull requests
+  (GitHub counts them together; the pull requests are counted apart from its
+  list of them, and where that fails they show together), publish commit with
+  the tags that point to it, homepage and integrity; beside them entry points,
+  each with its file's icon and opening its file, Main and Module in one row
+  where they name the same file, engines and install scripts; and a card of its figures: weekly downloads and downloads
   over 12 months, with a chart of its downloads over the last year by week,
   or by calendar month (complete ones only), a switch at its top right, the
   latest period's, or the hovered one's, read out over it; and the tarball
-  download under it. Under the facts, its languages, its readable files as UTF-8 or
-  ASCII, and every file extension with its count. Each category's chip,
-  and each extension's, narrows the Files list to its files, one at a time;
-  the Files head names it, with a way back to every file. Then its columns: Dependencies, where
+  download under it. Under the facts, its languages, its readable files as
+  UTF-8 or ASCII, and its file types: Package, for the files every package
+  has at its root (`package.json`, a readme, and license files such as
+  `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
+  count, one only those files have left out, one other files have too
+  counting them as well. Each category's chip, and each file type's, narrows
+  the Files list to its files, one at a time; the Files head names it, with a
+  way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
   their latest version (an `npm:` alias at the package it names);
   Advisories, across every published version, one row each, its head
@@ -1093,8 +1102,10 @@ bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 newest first, and `GET /api/npm/download?name=&version=` the tarball.
 `GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
 is `{ start, end, days }`, a count a day over the last year from npm's
-downloads API, and `github` is `{ repo, stars, forks, openIssues, archived,
-pushedAt }` for the repository the latest version's manifest names; either
+downloads API, and `github` is `{ repo, stars, forks, openIssues, openPulls,
+archived, pushedAt }` for the repository the latest version's manifest names,
+`openIssues` taking in the open pull requests `openPulls` counts apart (from
+the last page of their list, one a page; null where GitHub didn't say); either
 is null where it can't be had, `github` for a repository GitHub does not
 say is public. `GET /api/npm/tags?name=&version=` returns `{ name, version,
 tags }`: the tags of its GitHub repository that point to its publish commit

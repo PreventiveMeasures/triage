@@ -490,6 +490,13 @@ function insights(t, { downloads = {}, repos = {}, advisories = {}, repoAdvisori
       asked.push(['downloads', day[1], auth])
       return Promise.resolve(downloads[day[1]] ? Response.json(downloads[day[1]]) : Response.json({ error: 'not found' }, { status: 404 }))
     }
+    const pulls = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/?]+)\/pulls\?state=open&per_page=1$/u)
+    if (pulls) {
+      asked.push(['pulls', pulls[1], auth])
+      const answer = repos[pulls[1]]?.pulls
+      return Promise.resolve(answer === undefined ? Response.json({ message: 'Not Found' }, { status: 404 })
+        : Response.json(answer > 0 ? [{}] : [], { headers: answer > 1 ? { link: `<https://api.github.com/repositories/1/pulls?state=open&per_page=1&page=${answer}>; rel="last"` } : {} }))
+    }
     const repo = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/?]+)$/u)
     if (repo) {
       asked.push(['github', repo[1], auth])
@@ -512,20 +519,20 @@ test('a package\'s figures: its downloads, and its public repository\'s, asked w
   const calls = registry(t, [pkg])
   const asked = insights(t, {
     downloads: { '@pub/figures': { start: '2026-01-01', end: '2026-01-04', package: '@pub/figures', downloads: [{ day: '2026-01-01', downloads: 5 }, { day: '2026-01-03', downloads: 7 }, { day: '2026-01-04', downloads: 9 }] } },
-    repos: { 'org/figures': { full_name: 'org/figures', private: false, stargazers_count: 1200, forks_count: 30, open_issues_count: 4, archived: false, pushed_at: '2026-09-01T00:00:00Z' } },
+    repos: { 'org/figures': { full_name: 'org/figures', private: false, stargazers_count: 1200, forks_count: 30, open_issues_count: 4, archived: false, pushed_at: '2026-09-01T00:00:00Z', pulls: 3 } },
   })
   const res = await h.send('/api/npm/stats?name=%40pub%2Ffigures')
   assert.equal(res.status, 200)
   assert.deepEqual(res.json(), {
     name: '@pub/figures',
     downloads: { start: '2026-01-01', end: '2026-01-04', days: [5, 0, 7, 9] },
-    github: { repo: 'org/figures', stars: 1200, forks: 30, openIssues: 4, archived: false, pushedAt: '2026-09-01T00:00:00Z' },
+    github: { repo: 'org/figures', stars: 1200, forks: 30, openIssues: 4, openPulls: 3, archived: false, pushedAt: '2026-09-01T00:00:00Z' },
   }, 'a day npm leaves out counts none')
-  assert.deepEqual(asked, [['downloads', '@pub/figures', null], ['github', 'org/figures', null]])
+  assert.deepEqual(asked, [['downloads', '@pub/figures', null], ['github', 'org/figures', null], ['pulls', 'org/figures', null]])
   // Kept an hour; the access check is not.
   calls.length = 0
   assert.equal((await h.send('/api/npm/stats?name=%40pub%2Ffigures')).status, 200)
-  assert.equal(asked.length, 2, 'figures are kept')
+  assert.equal(asked.length, 3, 'figures are kept')
   assert.deepEqual(calls.map(call => [call.url, call.auth]), [[`${REGISTRY}/@pub/figures/latest`, null]], 'the registry is asked again, anonymously')
 })
 

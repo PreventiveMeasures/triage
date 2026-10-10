@@ -3457,6 +3457,13 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
   font-family: system-ui, sans-serif; font-size: .62rem; line-height: 1.3;
 }
 .bundles-detail-meta .npm-deprecated { color: var(--critical); }
+/* An entry point, after its file's icon. */
+.npm-entry-point {
+  display: inline-flex; align-items: center; gap: .35rem; max-width: 100%;
+
+  & > .source-file-icon { width: 13px; height: 13px; }
+}
+.bundles-detail-meta button.bundle-entry-point:hover { color: var(--accent); }
 /* An npm package's header: its name, the version shown as a picker of its
    versions (npm-package.js NpmVersionSelect), and its page on npm. */
 .bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }

@@ -2693,7 +2693,7 @@ function renderNpmPackageOverview(entry, details) {
     <div class="bundles-overview-exports-row">${downloadButton}</div>
   </div>`
   if (details?.integrity !== entry.integrity || !details.json) {
-    return renderBundleOverviewFallback(npmOverviewMeta(entry, '', npmGithubFigures(entry)), exportsCol, nothing, 'npm-overview')
+    return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry) }), exportsCol, nothing, 'npm-overview')
   }
   // Files lists every file, tagged by what its bytes hold; the binary ones,
   // which have no text to show, are listed again in a column of their own.
@@ -2702,7 +2702,8 @@ function renderNpmPackageOverview(entry, details) {
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
   const binaries = sources.filter((_, i) => typeof sourcesContent[i] !== 'string')
   const readability = npmFilesReadability(details)
-  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix, npmGithubFigures(entry)), npmOverviewExtras(entry), sources, sizes, null, nothing, {
+  const files = new Set(sources)
+  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files }), npmOverviewExtras(entry, files), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: new Set(binaries),
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
     summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details, sources, sizeMap)}${npmStatsRow(entry, downloadButton)}`,

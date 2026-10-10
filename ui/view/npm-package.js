@@ -16,6 +16,7 @@ import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
+import { sourceFileIcon } from './source-file-icon.js'
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
@@ -372,9 +373,40 @@ function npmCommitTags(entry, github) {
     href=${`https://github.com/${repo}/releases/tag/${tag.split('/').map(encodeURIComponent).join('/')}`} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag}</span></a>`)}</span>`
 }
 
+// A file of the package, as a fact names it: a button opening it in the
+// source viewer where the package has it (`files`, by path, none until its
+// files are read), else its name.
+function factFile(path, files, label = path) {
+  const found = files?.has(path) ? path : null
+  return found ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${found} data-tooltip=${`Open ${found}`}>${label}</button>` : label
+}
+
+// Its license files at its root: `LICENSE`, or one a license, such as
+// `LICENSE-MIT`, `LICENCE-APACHE.md`.
+export const NPM_LICENSE_FILE = /^licen[cs]e(?:-[\w.]+)?(?:\.(?:md|txt))?$/iu
+
+// A license expression's parts, `{ text, file }`, each license in it with
+// the file of `paths` it opens: the one named after it (`LICENSE-APACHE` for
+// `Apache-2.0`), else the package's only license file; null for none, and
+// for the operators and parentheses between them.
+export function npmLicenseParts(license, paths) {
+  const licenseFiles = paths.filter(path => NPM_LICENSE_FILE.test(path))
+  const fileFor = id => {
+    const key = id.toLowerCase().match(/^[a-z]+/u)?.[0] ?? ''
+    const named = licenseFiles.find(path => {
+      const suffix = path.toLowerCase().match(/^licen[cs]e-([a-z]+)/u)?.[1]
+      return suffix !== undefined && key !== '' && (suffix.startsWith(key) || key.startsWith(suffix))
+    })
+    return named ?? (licenseFiles.length === 1 ? licenseFiles[0] : null)
+  }
+  return license.split(/(\s+(?:OR|AND|WITH)\s+|[()])/u).filter(Boolean)
+    .map(text => ({ text, file: /^[\w.+-]+$/u.test(text) && !/^(?:OR|AND|WITH)$/u.test(text) ? fileFor(text) : null }))
+}
+
 // The Overview's metadata for a package version, beside the file inventory
-// the bundle Overview lists: `meta` names it, `extras` describes it.
-export function npmOverviewMeta(entry, prefix = '', githubFigures = nothing) {
+// the bundle Overview lists: `meta` names it, `extras` describes it. `files`
+// are the package's file paths, once read.
+export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, files = null } = {}) {
   const { manifest } = entry.npm
   const github = manifest.github?.github
   // The commit it was published from, where npm recorded one, and the
@@ -389,7 +421,7 @@ export function npmOverviewMeta(entry, prefix = '', githubFigures = nothing) {
     ${entry.npm.private ? html`<dt>Access</dt><dd>Private</dd>` : nothing}
     ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${manifest.deprecated}</dd>` : nothing}
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
-    ${manifest.license ? html`<dt>License</dt><dd>${manifest.license}</dd>` : nothing}
+    ${manifest.license ? html`<dt>License</dt><dd>${npmLicenseParts(manifest.license, [...files ?? []]).map(({ text, file }) => factFile(file, files, text))}</dd>` : nothing}
     ${manifest.author || manifest.publisher ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.publisher
       ? html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(manifest.publisher)}`} target="_blank" rel="noopener noreferrer"
           data-tooltip=${`Published by ~${manifest.publisher}: their profile on npmjs.com`}><span>${manifest.author ?? `~${manifest.publisher}`}</span></a>
@@ -409,13 +441,30 @@ export function npmOverviewMeta(entry, prefix = '', githubFigures = nothing) {
   </dl>`
 }
 
-export function npmOverviewExtras(entry) {
+// An entry point as the package's files name it: `./lib/a` as `lib/a.js`
+// where only that is there, or `lib/a/index.js`.
+function entryFile(path, files) {
+  const plain = path.replace(/^\.\//u, '').replace(/\/$/u, '')
+  return [plain, `${plain}.js`, `${plain}/index.js`].find(candidate => files?.has(candidate)) ?? plain
+}
+
+// The package's entry points, each with its file's icon, Main and Module in
+// one row where they name the same file; its kind of module, bins, engines,
+// install scripts and, where it has none, its dependencies.
+export function npmOverviewExtras(entry, files = null) {
   const { manifest } = entry.npm
-  const entryFields = ['main', 'module', 'types', 'type'].filter(field => manifest[field])
+  const entries = ['main', 'module', 'types'].filter(field => typeof manifest[field] === 'string')
+    .map(field => ({ label: `${field[0].toUpperCase()}${field.slice(1)}`, path: manifest[field], file: entryFile(manifest[field], files) }))
+  const main = entries.find(row => row.label === 'Main'), module = entries.find(row => row.label === 'Module')
+  if (main && module && main.file === module.file) {
+    main.label = 'Main, Module'
+    entries.splice(entries.indexOf(module), 1)
+  }
   const bins = Object.keys(manifest.bin ?? {})
   const scripts = Object.keys(manifest.installScripts ?? {})
   return html`
-    ${entryFields.map(field => html`<dt>${field[0].toUpperCase()}${field.slice(1)}</dt><dd class="mono">${manifest[field]}</dd>`)}
+    ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file)}${factFile(file, files, path)}</span></dd>`)}
+    ${manifest.type ? html`<dt>Type</dt><dd class="mono">${manifest.type}</dd>` : nothing}
     ${bins.length > 0 ? html`<dt>Bin</dt><dd class="mono">${bins.join(', ')}</dd>` : nothing}
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="mono npm-install-scripts"
