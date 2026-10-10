@@ -1461,8 +1461,8 @@ class ManagedAdminTeams extends ManagedPage {
           : html`<h2 class="team-name">${team.name}</h2>
             ${team.hidden ? html`<span class="muted ui-hint">Hidden</span>` : nothing}
             <span class="team-actions">
-              <button class="btn" aria-label=${`${team.hidden ? 'Restore' : 'Hide'} ${team.name}`} ?disabled=${this._busy}
-                @click=${() => this._do(() => postTeam('/api/admin/teams/set-hidden', this._csrf, { teamId: team.id, hidden: !team.hidden }))}>${team.hidden ? 'Restore' : 'Hide'}</button>
+              <button class="icon-btn" aria-label=${`${team.hidden ? 'Restore' : 'Hide'} ${team.name}`} ?disabled=${this._busy}
+                @click=${() => this._do(() => postTeam('/api/admin/teams/set-hidden', this._csrf, { teamId: team.id, hidden: !team.hidden }))}>${adminIcon(team.hidden ? 'show' : 'hide')}</button>
               <button class="icon-btn" aria-label=${`Rename ${team.name}`} ?disabled=${this._busy} @click=${() => { this._renamingId = team.id }}>${ADMIN_EDIT_ICON}</button>
               <button class="icon-btn danger" aria-label=${`Delete ${team.name}`} ?disabled=${this._busy} @click=${() => this._deleteTeam(team)}>${ADMIN_DELETE_ICON}</button>
             </span>`}

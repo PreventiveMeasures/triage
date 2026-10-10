@@ -276,12 +276,17 @@
 .npm-scope {
   display: inline-flex;
   align-items: center;
-  gap: .2rem;
-  padding: .1rem .1rem .1rem .45rem;
+  gap: .45rem;
+  padding: .35rem .35rem .35rem .45rem;
   border: 1px solid var(--border);
   border-radius: 4px;
   font-family: var(--mono);
   font-size: .75rem;
+}
+/* A snug hover box around the remove icon; the chip's padding keeps its size. */
+.npm-scope .icon-btn {
+  width: 1.3rem;
+  height: 1.3rem;
 }
 .add-npm-scope {
   flex: 1;
