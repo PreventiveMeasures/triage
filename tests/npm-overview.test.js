@@ -103,6 +103,24 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, ha
   assert.deepEqual([read.longLines, read.longest], [2, NPM_LONG_LINE + 2])
 })
 
+test('code minified into shorter lines is minified too, by its lines\' length and its spacing', () => {
+  const category = (path, text) => npmFileReadability(path, text).category
+  // tsx's dist/temporary-directory-*.mjs (one 782-character line), shortened.
+  const minified = 'var c=Object.defineProperty;var r=(s,t)=>c(s,"name",{value:t,configurable:!0});import m from"node:path";import n from"node:os";'
+    + 'const i=r((s,t)=>{const e=s[0]-t[0];if(e===0){const o=s[1]-t[1];return o===0?s[2]>=t[2]:o>0}return e>0},"isVersionGreaterOrEqual");'
+    + 'export{i as a,m as b};\n'
+  assert.equal(category('dist/temporary-directory.mjs', minified), 'minified')
+  assert.equal(npmFileReadability('dist/a.mjs', minified).average, minified.length - 1)
+  assert.equal(category('dist/a.mjs', `"use strict";const a=new Set(["${'Custom ESM Loaders is an experimental feature. '.repeat(3)}"]);export{a};\n`), 'minified',
+    'spaces in its strings aside')
+  // Lines as long, written by a person: spaced after commas and around operators.
+  assert.equal(category('v4/checks.js', `export { ${Array.from({ length: 30 }, (_, i) => `_check${i} as check${i}`).join(', ')} } from "../core/index.js";\n`), 'ascii')
+  assert.equal(category('types/bufferTime.d.ts', Array.from({ length: 4 }, () =>
+    'export declare function bufferTime<T>(bufferTimeSpan: number, bufferCreationInterval: number | null | undefined, scheduler?: SchedulerLike): OperatorFunction<T, T[]>;').join('\n')), 'ascii')
+  assert.equal(category('dist/a.mjs', 'export{a as b}from"./c.js";\n'), 'ascii', 'lines as short as anyone writes')
+  assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
+})
+
 test('an advisory affects the version shown, is fixed in it, or covers later versions', () => {
   const versions = ['2.0.0', '1.2.0', '1.1.0', '1.0.0']
   const advisory = affected => ({ affected })
