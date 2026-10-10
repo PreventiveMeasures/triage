@@ -162,7 +162,7 @@ test('a package\'s tier among npm\'s by downloads goes by the most it had in any
   const weeks = (count, perDay) => Array.from({ length: count * 7 }, () => perDay)
   assert.equal(tier(weeks(4, 25e6)), 500, '175M a week')
   assert.equal(tier(weeks(4, 10e6)), 1000, '70M a week')
-  assert.equal(tier(weeks(4, 200)), null, 'below the last tier')
+  assert.equal(tier(weeks(4, 200)), Infinity, 'unpopular, below the last tier')
   const gappy = weeks(4, 25e6)
   gappy[27] = 0
   gappy[26] = 0

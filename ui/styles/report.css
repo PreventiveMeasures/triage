@@ -3661,11 +3661,21 @@ npm-downloads-chart {
   }
 }
 .npm-stat-per { margin-left: .1rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
-/* Its tier among npm's packages by downloads, beside its figures. */
+/* Its tier among npm's packages by downloads, beside its figures, tinted
+   from green for the most downloaded to orange for the unpopular, blended
+   with the text's colors as a hint. */
 .npm-stat dd.npm-downloads-tier {
   align-self: center; padding: 0 .4rem;
-  color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
+  color: color-mix(in srgb, var(--tier) 55%, var(--text));
+  background: color-mix(in srgb, var(--tier) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--tier) 50%, var(--border)); border-radius: var(--ui-radius, 3px);
   font-size: .7rem; font-weight: 500; line-height: 1.5;
+
+  &.is-top { --tier: var(--green); }
+  &.is-high { --tier: color-mix(in srgb, var(--green) 65%, var(--medium)); }
+  &.is-mid { --tier: color-mix(in srgb, var(--green) 30%, var(--medium)); }
+  &.is-low { --tier: var(--medium); }
+  &.is-unpopular { --tier: var(--high); }
 }
 /* Under the switch, the period under the pointer's downloads, on a line
    kept for them, so the chart doesn't move as they come and go: centered

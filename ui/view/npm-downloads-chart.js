@@ -61,17 +61,25 @@ export function npmDownloadMonths(downloads) {
 // (Jan 30 – Feb 28, 2026), each rank's count scaled to a week by the
 // registry's weeks then, and grown by the median growth, to Sep 21 – Oct 4,
 // 2026, of the packages ranked around it, over weeks npm counted whole.
-const TIERS = [[10, 640e6], [50, 330e6], [100, 260e6], [500, 105e6], [1000, 60e6], [5000, 4.6e6], [10_000, 1e6], [50_000, 20e3], [100_000, 2.1e3]]
+// Below the last, a package is unpopular (Infinity).
+const TIERS = [[10, 640e6], [50, 330e6], [100, 260e6], [500, 105e6], [1000, 60e6], [5000, 4.6e6], [10_000, 1e6], [50_000, 20e3], [100_000, 2.1e3], [Infinity, 0]]
 
 // The tier a package's downloads put it in (TIERS), by the most it had in any
 // of its latest six 7-day weeks (npmDownloadWeeks): a week lower for a day
 // npm failed to count, as it now and then does, or for a holiday, is passed
-// over. Null below the last tier, or without a week.
+// over. Infinity for an unpopular one; null without a week.
 export function npmDownloadTier(downloads) {
   const latest = npmDownloadWeeks(downloads).slice(-6)
   if (latest.length === 0) return null
   const most = Math.max(...latest.map(week => week.total))
-  return TIERS.find(([, from]) => most >= from)?.[0] ?? null
+  return TIERS.find(([, from]) => most >= from)[0]
+}
+
+// A tier's name, and its tint: green for the most downloaded, through
+// yellow, to orange for the unpopular, a package few would notice changing.
+function tierChip(tier) {
+  const level = tier <= 100 ? 'is-top' : tier <= 1000 ? 'is-high' : tier <= 10_000 ? 'is-mid' : tier <= 100_000 ? 'is-low' : 'is-unpopular'
+  return html`<dd class=${`npm-downloads-tier ${level}`}>${tier === Infinity ? 'unpopular' : `top ${tier.toLocaleString('en')}`}</dd>`
 }
 
 const PERIODS = {
@@ -216,7 +224,7 @@ class NpmDownloadsChart extends LitElement {
       <dl class="npm-stats">
         ${this._stat(`${PERIODS[this._unit].label} downloads`, this._latest, this._unit)}
         ${this._stat('Downloads, last 12 months', this._year, 'year')}
-        ${this._tier ? html`<div class="npm-stat"><dt class="sr-only">Popularity</dt><dd class="npm-downloads-tier">top ${this._tier.toLocaleString('en')}</dd></div>` : nothing}
+        ${this._tier ? html`<div class="npm-stat"><dt class="sr-only">Popularity</dt>${tierChip(this._tier)}</div>` : nothing}
       </dl>
       ${charted ? this._controls(at) : nothing}
     </div>

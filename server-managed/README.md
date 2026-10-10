@@ -1071,7 +1071,8 @@ control. A version shows in the bundle view with four tabs:
   130 lines and 5 KiB; and a card of its downloads: the latest
   week's (or month's) and the last year's, each with its unit (`1.2K/week`,
   `9.6K/year`), and its tier among npm's packages by downloads (top 10, 50,
-  100, 500, 1,000, 5,000, 10,000, 50,000 or 100,000), by the most it had in
+  100, 500, 1,000, 5,000, 10,000, 50,000 or 100,000, else unpopular), tinted
+  from green to orange, by the most it had in
   any of its latest six weeks, so a week lower for days npm failed to count
   (zeros it may never correct) or for a holiday doesn't move it; the tiers'
   weekly bounds are download-counts' snapshot of a month (Jan 30 – Feb 28,
