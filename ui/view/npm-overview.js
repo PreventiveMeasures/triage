@@ -238,17 +238,21 @@ const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 const INLINE_SOURCE_MAP = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=data:[^\s,]*,[\w+/=%.~-]*\s*(?:\*\/)?\s*$/u
 const SOURCE_MAP = /\.map$/iu
 const MINIFIED_NAME = /\.min\.[^/.]+$/iu
-// Code minified into lines shorter than NPM_LONG_LINE: its lines average more
-// than anyone writes, and outside its strings next to none of its spaces are
-// ones a minifier drops, beside punctuation (`a, b`, `x = 1`) rather than
-// between two words (`return a`).
+// Code minified into lines shorter than NPM_LONG_LINE: outside its strings and
+// comments (`/* @__PURE__ */`), its lines average more than anyone writes and
+// next to none of its spaces are ones a minifier drops, beside punctuation
+// (`a, b`, `x = 1`) rather than between two words (`return a`).
 const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
-const STRING = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gu
-function minifiedSpacing(text) {
-  const code = text.replaceAll(STRING, '""').replaceAll(/^[ \t]+/gmu, '')
+// In one pass, so that neither starts inside the other; a comment goes with
+// the spaces around it.
+const STRING_OR_COMMENT = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gu
+function minifiedCode(text) {
+  const code = text.replaceAll(STRING_OR_COMMENT, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
+  const lines = code.split('\n').filter(line => line.trim() !== '').length
   // Counted by character: a run aligning `=` is as many spaces as it is wide.
-  return (code.match(/(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu) ?? []).join('').length < MINIFIED_SPACES * code.length
+  return code.length > MINIFIED_AVERAGE * lines
+    && (code.match(/(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu) ?? []).join('').length < MINIFIED_SPACES * code.length
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
@@ -289,7 +293,8 @@ export function npmFileReadability(path, text) {
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
-    const minified = codeChars > MINIFIED_AVERAGE * codeLines && minifiedSpacing(text)
+    // Its lines as a whole first, which is cheaper.
+    const minified = codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text)
     return { ...read, category: inlineMap > 0 ? 'inline-map' : minified ? 'minified' : encoding.kind }
   }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }

@@ -111,8 +111,10 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     + 'export{i as a,m as b};\n'
   assert.equal(category('dist/temporary-directory.mjs', minified), 'minified')
   assert.equal(npmFileReadability('dist/a.mjs', minified).average, minified.length - 1)
-  assert.equal(category('dist/a.mjs', `"use strict";const a=new Set(["${'Custom ESM Loaders is an experimental feature. '.repeat(3)}"]);export{a};\n`), 'minified',
+  assert.equal(category('dist/a.mjs', `${minified.trimEnd()}const a=new Set(["${'Custom ESM Loaders is an experimental feature. '.repeat(3)}"]);\n`), 'minified',
     'spaces in its strings aside')
+  assert.equal(category('dist/a.mjs', `${minified.trimEnd()}var p=/* @__PURE__ */ m(1),q=/* @__PURE__ */ n(2);\n`), 'minified',
+    'spaces in its comments aside')
   // Lines as long, written by a person: spaced after commas and around operators.
   assert.equal(category('v4/checks.js', `export { ${Array.from({ length: 30 }, (_, i) => `_check${i} as check${i}`).join(', ')} } from "../core/index.js";\n`), 'ascii')
   assert.equal(category('types/bufferTime.d.ts', Array.from({ length: 4 }, () =>
@@ -120,6 +122,10 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('lib/table.js', Array.from({ length: 3 }, (_, i) => `${'value'.repeat(20)}${i}${' '.repeat(20)}=${' '.repeat(20)}${'other'.repeat(20)};`).join('\n')), 'ascii',
     'spaces aligning `=` count by character, not by run')
   assert.equal(category('dist/a.mjs', 'export{a as b}from"./c.js";\n'), 'ascii', 'lines as short as anyone writes')
+  // svelte's src/internal/index.js, shortened: long, but in its comment and string.
+  assert.equal(category('src/internal/index.js', `// ${'We may reimplement some of the legacy private APIs here. '.repeat(3)}\n\n`
+    + `throw new Error(\n\t\`${'Your application imported from svelte/internal, a private module that no longer exists. '.repeat(3)}\`\n);\n`), 'ascii',
+    'lines long by their comments and strings, not their code')
   assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
 })
 
