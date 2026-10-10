@@ -246,15 +246,18 @@ export class ManagedCreateBundle extends LitElement {
     const margin = 8
     const gap = 6
     const fontSize = parseFloat(getComputedStyle(this).fontSize)
-    // Size columns to the longest untruncated name, so compact names such as
-    // version tags fit more per row. Longer names still ellipsize past 15em.
+    // Size columns to the longest untruncated name and its option's padding, so
+    // compact names such as version tags fit more per row. Longer names still
+    // ellipsize past 15em.
     let labelWidth = 0
     const range = document.createRange()
     for (const label of options.querySelectorAll('span')) {
       range.selectNodeContents(label)
       labelWidth = Math.max(labelWidth, range.getBoundingClientRect().width)
     }
-    const columnWidth = Math.max(5 * fontSize, Math.min(15 * fontSize, labelWidth + 2 * fontSize))
+    const option = options.querySelector('button')
+    const padding = option ? parseFloat(getComputedStyle(option).paddingLeft) + parseFloat(getComputedStyle(option).paddingRight) : 0
+    const columnWidth = Math.max(5 * fontSize, Math.min(15 * fontSize, Math.ceil(labelWidth + padding) + 1))
     const spacing = parseFloat(getComputedStyle(options).columnGap) || 0
     const chrome = menu.offsetWidth - options.clientWidth
     const fits = width => Math.max(1, Math.floor((width - chrome + spacing) / (columnWidth + spacing)))
@@ -270,8 +273,10 @@ export class ManagedCreateBundle extends LitElement {
     menu.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))}px`
     const below = window.innerHeight - rect.bottom - gap - margin
     const above = rect.top - gap - margin
+    // Open upward only when 320px doesn't fit below, then grow up to 420px where
+    // the screen has room.
     const upward = below < Math.min(menu.scrollHeight, 320) && above > below
-    menu.style.maxHeight = `${Math.max(0, Math.min(320, upward ? above : below))}px`
+    menu.style.maxHeight = `${Math.max(0, Math.min(420, upward ? above : below))}px`
     menu.style.top = `${Math.max(margin, upward ? rect.top - menu.offsetHeight - gap : rect.bottom + gap)}px`
     menu.dataset.positioned = ''
   }

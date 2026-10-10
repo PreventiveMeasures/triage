@@ -36,6 +36,8 @@
 .revision-expand:focus-visible { outline-offset: -2px; }
 .revision-menu {
   visibility: hidden; position: fixed; inset: auto; margin: 0; padding: .45rem; overflow: auto; overscroll-behavior: contain;
+  /* A scrollbar appearing must not narrow columns sized to their names. */
+  scrollbar-gutter: stable;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 8px); background: var(--surface-active); color: var(--text);
   box-shadow: 0 .65rem 1.8rem rgb(0 0 0 / .45);
 }
