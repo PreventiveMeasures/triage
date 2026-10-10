@@ -1022,9 +1022,11 @@ landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
 in the bundle view with four tabs:
 
 - **Overview**: its header names the package beside a picker of its
-  versions, as Compare's pickers list them (searchable, newest first, with
-  their dist-tags; switching keeps the tab shown, and until the versions
-  arrive it holds the version shown, disabled), and links its page on npm.
+  versions, as wide as the version shown, listing them as Compare's pickers
+  do (searchable, newest first, several to a row as wide as the longest
+  needs, with their dist-tags; the arrow keys move along a row and between
+  rows; switching keeps the tab shown, and until the versions arrive it holds
+  the version shown, disabled), and links its page on npm.
   Over the summary, where any file can't be reviewed by reading it, a
   warning says how many and why, in categories, the first that holds of: not
   UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control

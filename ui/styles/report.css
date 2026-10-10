@@ -3475,7 +3475,8 @@ a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
 /* An npm package's header: its name, the version shown as a picker of its
    versions (npm-package.js NpmVersionSelect), and its page on npm. */
 .bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }
-npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
+/* As wide as the version it shows, with its tags. */
+npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16rem; }
 .npm-header-link {
   display: inline-flex; align-items: center; gap: .25rem; flex-shrink: 0;
   color: var(--muted); font-size: .74rem; text-decoration: none;

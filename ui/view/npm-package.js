@@ -525,7 +525,7 @@ class NpmVersionSelect extends LitElement {
   }
 
   render() {
-    return html`<bundle-selector .options=${this._options} .value=${this.version} noun="version" ordered
+    return html`<bundle-selector .options=${this._options} .value=${this.version} noun="version" ordered grid
       label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${this._options.length <= 1}
       aria-busy=${this.list?.status === 'loading' ? 'true' : nothing}
       @bundle-change=${event => { if (event.detail.value !== this.version) navigateToNpm(this.name, event.detail.value, this.tab) }}></bundle-selector>`
