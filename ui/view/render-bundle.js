@@ -2594,8 +2594,9 @@ function renderBundleDetails(entry, details) {
   }
   if (details.kind === 'sourcemap' && details.json) {
     const json = details.json
-    const sources = json.sources ?? []
+    // A map read whole lists its files, each once, in place of `sources`.
     const sizeMap = bundleFileSizes(details)
+    const sources = json.sources ?? [...sizeMap.keys()]
     const sizes = details.sourceSizes ?? (sizeMap.size === sources.length
       ? sources.map((path) => sizeMap.get(path) ?? null)
       : sources.map((_, i) => typeof json.sourcesContent?.[i] === 'string' ? utf8ByteLength(json.sourcesContent[i]) : null))

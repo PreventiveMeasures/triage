@@ -1,3 +1,4 @@
+import { bundleSourcemapEdges } from '../../common/bundle-sourcemap.js'
 import { bundlePkgOf, isOwnSourcePath } from './bundle-pkg-of.js'
 
 export { bundleReasons as bundleGraphReasons } from '../../common/bundle-reasons.js'
@@ -35,8 +36,10 @@ export function filterBundleGraphReason(tree, origToStripped, reasons, requested
 }
 
 // Include every recorded platform/condition variant; a Metro resolution can
-// be a platform -> file map instead of a single resolved path.
+// be a platform -> file map instead of a single resolved path. A sourcemap
+// records no imports: its edges are what bundle-sourcemap.js reads of it.
 export function bundleImportsAsMap(details) {
+  if (details?.kind === 'sourcemap') return bundleSourcemapEdges(details)
   const result = new Map()
   if (details?.kind !== 'stasis' || !details.bundle) return result
   for (const byParent of details.bundle.imports.values()) {

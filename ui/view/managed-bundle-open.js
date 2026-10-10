@@ -74,10 +74,11 @@ export async function openManagedBundle({ bundleId: id, teamId, bundleTab: tab, 
     if (shown()) {
       const indexed = parseBundleMetadata(metadata, metadata.integrity)
       // Compare's swap hands over the bundle it opens, already parsed in full;
-      // the metadata lends it the hashes and sizes the server indexed, as a
-      // metadata open's sources upgrade (ensureBundleSources) does.
+      // the metadata lends it the hashes, sizes and sourcemap edges the server
+      // indexed, as a metadata open's sources upgrade (ensureBundleSources) does.
       const details = handed?.integrity === indexed.integrity
-        ? Object.assign(handed, { fileHashes: indexed.fileHashes, fileSizes: indexed.fileSizes, lineCounts: indexed.lineCounts, codeStats: indexed.codeStats })
+        ? Object.assign(handed, { fileHashes: indexed.fileHashes, fileSizes: indexed.fileSizes, lineCounts: indexed.lineCounts, codeStats: indexed.codeStats },
+          indexed.edges ? { edges: indexed.edges } : {})
         : indexed
       details.managedId = id
       state.bundleDetails = details

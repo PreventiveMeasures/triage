@@ -175,7 +175,8 @@ export function selectBundleTab(tab, { preserveSource = false } = {}) {
 // `state.bundleDetails` unconditionally; the render path shows a
 // "failed to parse" placeholder when `details.error` is set.
 //
-// Sourcemap → `details.json` is the raw `.map` JSON. Stasis →
+// Sourcemap → `details.map` is the map as @preventive/sourcemap reads
+// it, `details.json` its header (bundle-sourcemap.js). Stasis →
 // `details.bundle` is an `@exodus/stasis-core` `Bundle` (handles v0 +
 // v1 uniformly; .sources / .imports / .modules are Map-shaped).
 //
@@ -190,10 +191,7 @@ async function readBundleDetails(integrity, entry) {
     const isMap = entry.name.toLowerCase().endsWith('.map')
     const kind = isMap ? 'sourcemap' : 'stasis'
     try {
-      if (isMap) {
-        const json = JSON.parse(decodeUtf8(bytes))
-        return { integrity, kind, size: bytes.byteLength, json }
-      }
+      if (isMap) return parseBundleContents(decodeUtf8(bytes), { integrity, kind, size: bytes.byteLength })
       // Stasis bundles are brotli-compressed JSON snapshots;
       // brotliDecompress dispatches native-or-fallback (see
       // view/brotli-decompress.js). Bundle.parse validates the
@@ -320,7 +318,12 @@ export function ensureBundleSources(details = state.bundleDetails) {
       render()
       return null
     }
-    if (!full.error) { full.fileHashes = details.fileHashes; full.fileSizes = details.fileSizes; full.lineCounts = details.lineCounts; full.codeStats = details.codeStats }
+    if (!full.error) {
+      full.fileHashes = details.fileHashes; full.fileSizes = details.fileSizes; full.lineCounts = details.lineCounts; full.codeStats = details.codeStats
+      // A managed sourcemap's edges, read on the server with the parser the
+      // client goes without.
+      if (details.edges) full.edges = details.edges
+    }
     state.bundleDetails = full
     render()
     return full

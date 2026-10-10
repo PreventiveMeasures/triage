@@ -89,7 +89,7 @@ it('supports legacy Stasis bundles and sourcemaps with absent source content', a
 it('rejects wrong integrities, versions, invalid sizes/hashes and mismatched inventories', async () => {
   const data = await createBundleMetadata(details())
   for (const corrupt of [
-    { ...data, integrity: 'other' }, { ...data, version: 6 },
+    { ...data, integrity: 'other' }, { ...data, version: 7 },
     { ...data, files: data.files.map((row) => row.slice(0, 3)) },
     { ...data, files: [['src/main.js', -1, 'bad']] },
     { ...data, files: [['src/main.js', 12, 'bad']] },
@@ -131,7 +131,7 @@ function withResources() {
 it('keeps a resource\'s byte size, and no hash or line count, since it is no source', async () => {
   const full = withResources()
   const data = await createBundleMetadata(full)
-  assert.equal(data.version, 5)
+  assert.equal(data.version, 6)
   const rows = new Map(data.files.map(([path, ...rest]) => [path, rest]))
   assert.deepEqual(rows.get('assets/logo.png'), [7, null, null])
   assert.deepEqual(rows.get('assets/icon.svg'), [6, null, null])

@@ -78,7 +78,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk', stasisModul
       ['browser', new Map([['src/main.js', new Map([['proof', 'src/evidence.js'], ['conditional', 'secret.js'], ['./evidence.js', 'unrelated.js']])]])],
     ]),
     ...stasisOptions,
-  }).serialize())) : Buffer.from(JSON.stringify({ version: 3, sources: [...Object.keys(files), 'missing.js'], sourcesContent: [...Object.values(files), null] }))
+  }).serialize())) : Buffer.from(JSON.stringify({ version: 3, sources: [...Object.keys(files), 'missing.js'], sourcesContent: [...Object.values(files), null], mappings: '' }))
   const bundle = { id: randomUUID(), integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'app.stasis.code.br' : 'app.map', kind, byteSize: bytes.length, uploadedBy: users.admin.userId, uploadedByLogin: 'admin', repoId: 1 }
   await bundles.put(bundle.id, bytes, kind); await db.insertBundle(bundle, Date.now())
   async function seed(content = JSON.stringify({ findings }), bundleId = bundle.id, filename = 'report.json') {

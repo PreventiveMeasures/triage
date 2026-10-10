@@ -3,8 +3,10 @@
 import { Buffer } from 'node:buffer'
 import { brotliDecompress } from 'node:zlib'
 import { promisify } from 'node:util'
+import { bundleEdges } from '@preventive/sourcemap/edges.js'
 import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents } from '../common/bundle-metadata.js'
 import { bundleReasons } from '../common/bundle-reasons.js'
+import { sourcemapEdges } from '../common/bundle-sourcemap.js'
 import { type BundleAdvisoryInventory, bundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { decodeUtf8 } from '../common/utf8.js'
 import type { OpenedBlob } from './blob-store.ts'
@@ -86,9 +88,19 @@ export function bundleSummary(details: BundleDetails, metadata?: Parameters<type
   return { ...summary, versionedPackages: packages.reduce((count, pkg) => count + pkg.versions.length, 0) + skipped.length }
 }
 
+// A sourcemap's edges, read with the parser (edges.js) that the client goes
+// without: every map's, where the client reads Metro's alone. Without it,
+// the metadata keeps what the client would read.
+function readSourcemapEdges(details: BundleDetails) {
+  if (details.kind !== 'sourcemap' || !details.map) return
+  try { details.edges = sourcemapEdges(details.map, bundleEdges) }
+  catch (err) { console.warn('managed: sourcemap edges failed:', err) }
+}
+
 async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
   const details = await readBundleDetails(record, store)
   if (!details) throw new Error('Bundle bytes unavailable')
+  readSourcemapEdges(details)
   const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
   const body = await encodeBrotli(Buffer.from(JSON.stringify(metadata)))
   if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')
