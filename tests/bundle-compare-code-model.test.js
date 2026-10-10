@@ -85,7 +85,8 @@ test('names a minifier renamed alike throughout are left out, and only those', (
     ['for (let a of x) {}\na();', 'for (let b of x) {}\nb();'], ['({ const: a }); a();', '({ const: b }); b();'],
     ['({ function: a }); a();', '({ function: b }); b();'], ['x.var = a; a();', 'x.var = b; b();'],
     ['let a = 1; eval("a");', 'let b = 1; eval("a");'], ['let a; with (o) { a; }', 'let b; with (o) { b; }'], ['let a; x + <a />;', 'let b; x + <b />;'],
-    ['let a; debugger\n/a/.test(x)', 'let b; debugger\n/b/.test(x)']]) {
+    ['let a; debugger\n/a/.test(x)', 'let b; debugger\n/b/.test(x)'], ['foo(a)\n{ a(); }', 'foo(b)\n{ b(); }'],
+    ['let a = 1; eval/* c */("a");', 'let b = 1; eval/* c */("a");'], ['let a = 1; (eval)("a");', 'let b = 1; (eval)("a");']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
@@ -125,7 +126,8 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['function f(a, c = 1) { a(c); }', 'function f(b, c = 1) { b(c); }'], ['f((a) => a(c));', 'f((b) => b(c));'], ['f(a => a(c));', 'f(b => b(c));'],
     ['try {} catch (a) { a(c); }', 'try {} catch (b) { b(c); }'], ['import a from "m"; a(c);', 'import b from "m"; b(c);'],
     ['import { k as a } from "m"; a(c);', 'import { k as b } from "m"; b(c);'], ['x = { k(a) { a(c); } };', 'x = { k(b) { b(c); } };'],
-    ['f(function a() { a(c); });', 'f(function b() { b(c); });'], ['f(a => a(c), 1);', 'f(b => b(c), 1);'], ['for (let a of c) a(c);', 'for (let b of c) b(c);'],
+    ['f(function a() { a(c); });', 'f(function b() { b(c); });'], ['class X { m(a) { a(c); } }', 'class X { m(b) { b(c); } }'],
+    ['x = { async *m(a) { a(c); } };', 'x = { async *m(b) { b(c); } };'], ['f(function* (a) { a(c); });', 'f(function* (b) { b(c); });'], ['f(a => a(c), 1);', 'f(b => b(c), 1);'], ['for (let a of c) a(c);', 'for (let b of c) b(c);'],
     ['for (let a = 0; a < c; a++) { f(a); }', 'for (let b = 0; b < c; b++) { f(b); }'], ['function a() {} a(c);', 'function b() {} b(c);'],
   ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')

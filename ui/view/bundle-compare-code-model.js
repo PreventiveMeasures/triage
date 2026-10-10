@@ -62,7 +62,6 @@ const NAMING = new Set(['as', 'class', 'function', 'import'])
 const BODY = /\s*(?:=>\s*)?\{/uy
 const ARROW = /\s*=>/uy
 const ARROW_BODY = /\s*=>\s*\{/uy
-const CALL = /\s*\(/uy
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
@@ -130,9 +129,11 @@ function nameless(text) {
   // declared as `function a` is, `named` by which word and whether as a
   // statement; `extending` the depth of an `extends` whose class body is the
   // next `{` there.
-  // `dynamic` once a direct `eval(…)` or a `with (…)` can read a name by
-  // its spelling: renaming one then changes what runs.
-  let at = 0, dynamic = false, exporting = false, extending = -1, keyPlace = false, last = null, naming = false
+  // `dynamic` once `eval` or a `with (…)` can read a name by its spelling:
+  // renaming one then changes what runs. `parameters` where a `(…)` would
+  // be a function's parameters (after `function`, its name, a method's key
+  // or `catch`), not a call's arguments.
+  let at = 0, dynamic = false, exporting = false, extending = -1, keyPlace = false, last = null, naming = false, parameters = false
   let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
@@ -161,7 +162,7 @@ function nameless(text) {
     if (segment.includes(';')) while (declarations.length > 0 && opens.length <= declarations.at(-1).depth) declarations.pop()
     // A generator's `*` leaves its name in its key place, or to be declared.
     if (last === '*' && segment.slice(0, end - 1).trim() === '') return
-    exporting = naming = false
+    exporting = naming = parameters = false
     const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
     keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
   }
@@ -191,7 +192,7 @@ function nameless(text) {
     else if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
       last = '"'
-      exporting = keyPlace = naming = false
+      exporting = keyPlace = naming = parameters = false
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
       // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
@@ -205,12 +206,12 @@ function nameless(text) {
         loops.push({ body: false, depth: opens.length, scope })
       }
       opens.push(open)
-      if (open === '(') groups.push({ depth: opens.length, names: [] })
+      if (open === '(') groups.push({ depth: opens.length, names: [], parameters })
       if (open === 'block') enter(pending ?? [])
       if (first === '{') pending = null
       last = first
       keyPlace = first === '{' && !block
-      exporting = naming = false
+      exporting = naming = parameters = false
     } else if (first === ')' || first === ']' || first === '}') {
       key.push(token)
       const open = opens.pop()
@@ -221,7 +222,8 @@ function nameless(text) {
       if (open === '(') {
         const group = groups.pop()
         BODY.lastIndex = ARROW.lastIndex = at
-        if (BODY.test(text)) pending = self ? [...group.names, self] : group.names
+        ARROW_BODY.lastIndex = at
+        if (ARROW_BODY.test(text) || (group.parameters && BODY.test(text))) pending = self ? [...group.names, self] : group.names
         else if (ARROW.test(text)) {
           enter(group.names)
           arrows.push(opens.length)
@@ -231,7 +233,7 @@ function nameless(text) {
       // After a statement's condition, as after `;`, a statement starts.
       last = open === 'control' ? ';' : first
       keyPlace = first === '}' && opens.at(-1) === 'object'
-      exporting = naming = false
+      exporting = naming = parameters = false
       for (const depth of defaulted) if (depth > opens.length) defaulted.delete(depth)
       while (declarations.length > 0 && opens.length < declarations.at(-1).depth) declarations.pop()
     } else {
@@ -262,8 +264,8 @@ function nameless(text) {
       if (!read && group && !inDefault(group.depth) && !inComputed(group.depth)) group.names.push({ aside, name: token })
       // A key or a property is no keyword: `{ const: a }`, `x.var`.
       const word = keyPlace || property ? null : token
-      CALL.lastIndex = at
-      if ((word === 'eval' || word === 'with') && CALL.test(text)) dynamic = true
+      if (word === 'eval' || word === 'with') dynamic = true
+      parameters = keyPlace || word === 'function' || word === 'catch' || (naming && named.word === 'function')
       if (word === 'extends') extending = opens.length
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       if (word === 'const' || word === 'let' || word === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
