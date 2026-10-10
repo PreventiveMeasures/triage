@@ -37,11 +37,12 @@ export function sourcemapEntries(details) {
 
 // `read`'s edges between files of the map, as rows by key: `[from, to]`,
 // and `[from, to, specifier]` for an import its specifier names. An edge to
-// no file of it (a package left out, a builtin) leads nowhere here.
+// no file of it (a package left out, a builtin) leads nowhere here, and one
+// to its own file is none, which metadata refuses to hold.
 export function sourcemapEdges(map, read) {
   const rows = new Map()
   for (const { from, to, specifier } of read(map).edges) {
-    if (from.source === null || to?.source == null) continue
+    if (from.source === null || to?.source == null || to.source === from.source) continue
     const row = typeof specifier === 'string' ? [from.source, to.source, specifier] : [from.source, to.source]
     rows.set(row.join('\0'), row)
   }

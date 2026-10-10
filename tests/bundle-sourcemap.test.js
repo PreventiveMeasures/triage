@@ -70,6 +70,9 @@ it('metadata carries the edges the server read with the parser, between files of
   const link = bundleSourceLinkResolver(full, 'app/src/index.ts')
   assert.equal(link('./b'), 'app/src/b.ts')
   assert.equal(link('./c'), null)
+  // An edge from a file to itself is none: metadata refuses one.
+  const [self] = details.map.files
+  assert.deepEqual(sourcemapEdges(details.map, () => ({ edges: [{ from: self, to: self, kind: 'import', specifier: './index' }] })), [])
   // An index written before edges were kept has none to give.
   const { edges: _edges, ...stale } = data
   assert.equal(parseBundleMetadata({ ...stale, version: 5 }, identity.integrity).edges, undefined)
