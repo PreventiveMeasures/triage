@@ -124,6 +124,19 @@ export const plainObject = (value: unknown): value is Record<string, unknown> =>
 const stringRecord = (value: unknown) => plainObject(value)
   ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) as Record<string, string> : undefined
 
+interface NpmPerson { name: string | null; email: string | null }
+const NPM_ACCOUNT = /^[\w.-]{1,214}$/u
+
+// One of package.json's people: `{ name, email, url }`, or `Name <email>
+// (url)` in one string.
+function npmPerson(value: unknown): NpmPerson | null {
+  const text = (part: unknown) => typeof part === 'string' && part.trim() !== '' ? part.trim() : null
+  if (plainObject(value)) return { name: text(value['name']), email: text(value['email']) }
+  if (typeof value !== 'string') return null
+  const parts = /^([^<(]*)(?:<([^>]*)>)?\s*(?:\([^)]*\))?\s*$/u.exec(value)
+  return parts ? { name: text(parts[1]), email: text(parts[2]) } : { name: text(value), email: null }
+}
+
 // The fields the Overview shows, in the shapes package.json gives them; each
 // left out where the document has none, or has another shape. A homepage that
 // leads only where its repository does (the repository, its directory there,
@@ -133,12 +146,19 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
   for (const key of ['description', 'license', 'homepage', 'main', 'module', 'types', 'type', 'deprecated', 'gitHead']) {
     if (typeof json[key] === 'string') pick[key] = json[key]
   }
-  const author = json['author']
-  if (typeof author === 'string') pick['author'] = author
-  else if (plainObject(author) && typeof author['name'] === 'string') pick['author'] = author['name']
+  // Its author's name, and their npm account where it can be told: the
+  // publisher's or a maintainer's whose email or name is the author's. Emails
+  // only match people up; none is kept.
+  const author = npmPerson(json['author'])
+  if (author?.name) pick['author'] = author.name
+  const accounts = [json['_npmUser'], ...Array.isArray(json['maintainers']) ? json['maintainers'] : []].map(npmPerson)
+    .filter((person): person is NpmPerson & { name: string } => person?.name != null && NPM_ACCOUNT.test(person.name))
   // The npm account that published it, for its profile.
-  const publisher = json['_npmUser']
-  if (plainObject(publisher) && typeof publisher['name'] === 'string' && /^[\w.-]{1,214}$/u.test(publisher['name'])) pick['publisher'] = publisher['name']
+  const publisher = npmPerson(json['_npmUser'])?.name
+  if (publisher && NPM_ACCOUNT.test(publisher)) pick['publisher'] = publisher
+  const same = (a: string | null, b: string | null) => a !== null && b !== null && a.toLowerCase() === b.toLowerCase()
+  const account = author && accounts.find(person => same(person.email, author.email) || same(person.name, author.name))
+  if (account) pick['authorAccount'] = account.name
   if (Array.isArray(json['keywords'])) pick['keywords'] = json['keywords'].filter(item => typeof item === 'string').slice(0, 50)
   if (typeof json['bin'] === 'string') pick['bin'] = { [String(json['name'])]: json['bin'] }
   else if (stringRecord(json['bin'])) pick['bin'] = stringRecord(json['bin'])
@@ -183,19 +203,27 @@ export function readNpmVersion(name: string, spec: string, privileged: boolean, 
 }
 
 // The package's dist-tags and versions, newest published first, from its
-// abbreviated document. Null where the registry has none for this reader.
-export function readNpmVersions(name: string, privileged: boolean, signal: AbortSignal) {
+// abbreviated document; with `times`, from its whole one, which alone has
+// when each was published, `times` by version (ISO dates). Null where the
+// registry has none for this reader.
+export function readNpmVersions(name: string, privileged: boolean, signal: AbortSignal, { times = false } = {}) {
   if (!isNpmPackageName(name)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
   return withDocumentBudget(PACKUMENT_BYTES, async () => {
-    const found = await readDocument(name, registryUrl(name), privileged, { accept: 'application/vnd.npm.install-v1+json', limit: PACKUMENT_BYTES, signal })
+    const accept = times ? 'application/json' : 'application/vnd.npm.install-v1+json'
+    const found = await readDocument(name, registryUrl(name), privileged, { accept, limit: PACKUMENT_BYTES, signal })
     if (!found) return null
     const { json } = found
     if (json['name'] !== name || !plainObject(json['versions'])) throw new NpmPackageError(502, 'upstream-invalid')
     const versions = Object.keys(json['versions']).filter(isNpmPackageSpec).toReversed()
     const distTags = Object.fromEntries(Object.entries(stringRecord(json['dist-tags']) ?? {}).filter(([, version]) => versions.includes(version)))
-    return { name, private: found.private, distTags, versions }
+    const listed = { name, private: found.private, distTags, versions }
+    if (!times) return listed
+    const time = stringRecord(json['time']) ?? {}
+    return { ...listed, times: Object.fromEntries(versions.filter(version => isPublishTime(time[version])).map(version => [version, time[version]!])) }
   })
 }
+
+const isPublishTime = (value: string | undefined) => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))
 
 export interface NpmPackageFile { path: string; bytes: Uint8Array }
 

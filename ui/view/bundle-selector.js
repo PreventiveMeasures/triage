@@ -7,14 +7,15 @@ import { sourceMetrics } from '../scan/metrics.js'
 // Match the format dispatch in bundle-load.js and the landing page's icons:
 // .map files are sourcemaps; the other supported bundle format is Stasis.
 // An npm package version (npm-package.js npmCompareSource) names its
-// dist-tags as its detail, and its number alone as `displayLabel`, how the
-// list names it.
+// dist-tags as its detail, its number alone as `displayLabel`, how the list
+// names it, and the day it was published (`date`) under it.
 export function bundleOptions(bundles) {
   return bundles.map(bundle => {
     const format = bundle.format === 'npm' ? 'npm'
       : ['sourcemap', 'sourcemaps'].includes(bundle.kind) || bundle.filename.toLowerCase().endsWith('.map') ? 'sourcemap' : 'stasis'
     const detail = format === 'npm' ? bundle.detail ?? '' : format === 'sourcemap' ? 'Sourcemap' : 'Stasis'
     const metadata = []
+    if (bundle.date) metadata.push(bundle.date)
     if (typeof bundle.size === 'string' && !['', '—'].includes(bundle.size)) metadata.push(bundle.size)
     if (bundle.files) {
       metadata.push(`${bundle.files.length.toLocaleString()} files`)

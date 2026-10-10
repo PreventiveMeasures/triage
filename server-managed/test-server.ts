@@ -411,7 +411,7 @@ async function serveFixtureNpm(url: URL, res: ServerResponse): Promise<void> {
   const signal = AbortSignal.timeout(60_000)
   try {
     if (url.pathname === '/api/npm/versions') {
-      const versions = await readNpmVersions(name, false, signal)
+      const versions = await readNpmVersions(name, false, signal, { times: true })
       sendJson(res, versions ? 200 : 404, versions ?? { error: 'package-not-found' }); return
     }
     const doc = await readNpmVersion(name, spec, false, signal)

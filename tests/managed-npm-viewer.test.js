@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmPublished, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -84,7 +84,8 @@ test('two versions differ in the dependencies they name and the ranges they ask 
 
 test('Compare offers the package\'s other versions, read once a session, and loads them as versions', async () => {
   let release
-  versionsAnswer = () => new Promise(resolve => { release = () => resolve({ versions: ['1.2.3', '1.2.2', '1.0.0'], distTags: { latest: '1.2.3', old: '1.0.0', gone: '9.9.9' } }) })
+  versionsAnswer = () => new Promise(resolve => { release = () => resolve({ versions: ['1.2.3', '1.2.2', '1.0.0'], distTags: { latest: '1.2.3', old: '1.0.0', gone: '9.9.9' },
+    times: { '1.2.3': '2026-04-02T21:01:20.458Z', '1.0.0': '2020-01-31T00:00:00.000Z' } }) })
   const entry = npmPackageEntry(data)
   const pending = npmCompareSource(entry)
   assert.equal(pending.pending, true)
@@ -98,8 +99,8 @@ test('Compare offers the package\'s other versions, read once a session, and loa
   assert.equal(source.pending, false)
   assert.deepEqual(source.options, [
     { id: '1.2.2', name: '@scope/pkg@1.2.2', displayLabel: '1.2.2', format: 'npm', detail: '' },
-    { id: '1.0.0', name: '@scope/pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: 'old' },
-  ], 'newest first, the version shown left out')
+    { id: '1.0.0', name: '@scope/pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: 'old', date: '2020-01-31' },
+  ], 'newest first, the version shown left out, each with the day it was published where the registry says')
   assert.deepEqual(source.choices.map(choice => [choice.id, choice.detail]), [['1.2.3', 'latest'], ['1.2.2', ''], ['1.0.0', 'old']],
     'its own side offers every version, its own among them')
   assert.equal(source.name('sha512-pkg'), '@scope/pkg@1.2.3')
@@ -293,4 +294,12 @@ test('install scripts run in npm\'s order, node-gyp\'s where a binding.gyp has n
   assert.deepEqual(npmInstallScripts({ installScripts: { install: 'prebuild-install' } }, gyp), [['install', 'prebuild-install']])
   assert.deepEqual(npmInstallScripts({ installScripts: { preinstall: 'x' } }, gyp), [['preinstall', 'x']], 'a preinstall of its own stops it too')
   assert.deepEqual(npmInstallScripts({}), [])
+})
+
+test('a version\'s publish date reads with how long ago it was: days, then months, then years', () => {
+  const now = Date.parse('2026-10-10T12:00:00Z')
+  assert.equal(npmPublished('2026-10-10T08:00:00Z', now), 'Oct 10, 2026 · today')
+  assert.equal(npmPublished('2026-10-03T12:00:00Z', now), 'Oct 3, 2026 · 7 days ago')
+  assert.equal(npmPublished('2026-04-02T21:01:20Z', now), 'Apr 2, 2026 · 6 months ago')
+  assert.equal(npmPublished('2021-02-20T15:42:16Z', now), 'Feb 20, 2021 · 5 years ago')
 })

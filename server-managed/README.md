@@ -1049,7 +1049,10 @@ control. A version shows in the bundle view with four tabs:
   line counts for none, nor for how much of a file is on long lines. Then the manifest's facts: description, license
   (each license in its expression opening its file in the package: the one
   named after it, as `LICENSE-APACHE` for `Apache-2.0`, else its only license
-  file), author (linking the npm profile of the account that published it),
+  file), author (with their npm account, linking its profile, where the
+  publisher's or a maintainer's email or name is theirs), the publisher's
+  account where it is someone else's, when the version was published and
+  how long ago,
   GitHub repository with its stars, forks, open issues and open pull requests
   (GitHub counts them together; the pull requests are counted apart from its
   list of them, and where that fails they show together), publish commit with
@@ -1111,7 +1114,7 @@ control. A version shows in the bundle view with four tabs:
   alone is colored by extension. Any bundle of a single package is colored
   the same way.
 - **Compare**: the bundle Compare, with another version of the same package,
-  picked from its versions newest first. Its Dependencies section, in place
+  picked from its versions newest first, each with the day it was published. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
   that changed. Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
@@ -1136,8 +1139,9 @@ integrity, tarballSize, manifest, files }`, the manifest's `publisher` the npm
 account that published it (never its email), and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 'sha256-<base64>']`. `version` defaults to `latest`. `GET
-/api/npm/versions?name=` returns `{ name, private, distTags, versions }`,
-newest first, and `GET /api/npm/download?name=&version=` the tarball.
+/api/npm/versions?name=` returns `{ name, private, distTags, versions,
+times }`, newest first, `times` when each was published (ISO dates, from the
+registry's whole document rather than its abbreviated one), and `GET /api/npm/download?name=&version=` the tarball.
 `GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
 is `{ start, end, days }`, a count a day over the last year from npm's
 downloads API, reaching back to the first of the month that year starts in so

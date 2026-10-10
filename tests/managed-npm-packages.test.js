@@ -73,7 +73,11 @@ function registry(t, packages) {
       if (secret && auth !== `Bearer ${process.env['NPM_TOKEN']}`) continue
       if (url === `${REGISTRY}/${doc.name}/${encodeURIComponent(doc.version)}` || url === `${REGISTRY}/${doc.name}/latest`) return Promise.resolve(Response.json(doc))
       if (url === `${REGISTRY}/${doc.name}`) {
-        return Promise.resolve(Response.json({ name: doc.name, 'dist-tags': { latest: doc.version, next: '9.9.9' }, versions: Object.fromEntries((versions ?? [doc.version]).map(v => [v, {}])) }))
+        const listed = versions ?? [doc.version]
+        // The whole document has when each was published, the abbreviated one not.
+        const time = headers.get('accept') === 'application/json'
+          ? { time: { created: '2020-01-01T00:00:00.000Z', modified: '2026-01-01T00:00:00.000Z', ...Object.fromEntries(listed.map((v, i) => [v, `2025-0${i + 1}-01T00:00:00.000Z`])) } } : {}
+        return Promise.resolve(Response.json({ name: doc.name, 'dist-tags': { latest: doc.version, next: '9.9.9' }, versions: Object.fromEntries(listed.map(v => [v, {}])), ...time }))
       }
       if (url === doc.dist.tarball) return Promise.resolve(new Response(tgz))
     }
@@ -208,7 +212,8 @@ test('anyone with workspace access opens a public version, asked of the registry
     assert.equal(calls[0].auth, null, 'the version document is asked for anonymously')
   }
   const versions = await h.send('/api/npm/versions?name=%40pub%2Fpkg')
-  assert.deepEqual(versions.json(), { name: '@pub/pkg', private: false, distTags: { latest: '1.2.3' }, versions: ['1.2.3'] }, 'tags of unlisted versions are left out')
+  assert.deepEqual(versions.json(), { name: '@pub/pkg', private: false, distTags: { latest: '1.2.3' }, versions: ['1.2.3'], times: { '1.2.3': '2025-01-01T00:00:00.000Z' } },
+    'tags of unlisted versions are left out; when each was published, from the whole document')
   const download = await h.send('/api/npm/download?name=%40pub%2Fpkg&version=1.2.3')
   assert.equal(download.status, 200)
   assert.equal(download.headers['content-type'], 'application/gzip')
@@ -871,4 +876,18 @@ test('a homepage that leads only where the repository does is left out of the ma
   assert.equal(homepage({ ...core, homepage: 'https://github.com/babel/babel/tree/main/packages/babel-parser' }),
     'https://github.com/babel/babel/tree/main/packages/babel-parser', 'another package\'s directory')
   assert.equal(homepage({ homepage: 'https://example.com/' }), 'https://example.com/', 'no repository')
+})
+
+test('an author is named, with their npm account where the publisher or a maintainer is them, and no email kept', () => {
+  const people = json => { const { author, authorAccount, publisher } = npmManifest(json); return { author, authorAccount, publisher } }
+  const maintainers = [{ name: 'substack', email: 'mail@substack.net' }, { name: 'maxogden', email: 'max@example.com' }]
+  assert.deepEqual(people({ author: 'James Halliday <mail@substack.net> (http://substack.net)', _npmUser: { name: 'maxogden', email: 'max@example.com' }, maintainers }),
+    { author: 'James Halliday', authorAccount: 'substack', publisher: 'maxogden' }, 'a maintainer by their email, published by another')
+  assert.deepEqual(people({ author: 'substack', _npmUser: { name: 'maxogden', email: 'max@example.com' }, maintainers }),
+    { author: 'substack', authorAccount: 'substack', publisher: 'maxogden' }, 'a maintainer by their account\'s name')
+  assert.deepEqual(people({ author: { name: 'Max', email: 'MAX@example.com' }, _npmUser: { name: 'maxogden', email: 'max@example.com' } }),
+    { author: 'Max', authorAccount: 'maxogden', publisher: 'maxogden' }, 'the publisher, emails told apart regardless of case')
+  assert.deepEqual(people({ author: 'Someone Else', _npmUser: { name: 'maxogden', email: 'max@example.com' }, maintainers }),
+    { author: 'Someone Else', authorAccount: undefined, publisher: 'maxogden' }, 'no account where none is theirs')
+  assert.ok(!JSON.stringify(npmManifest({ author: 'A <a@example.com>', _npmUser: { name: 'a', email: 'a@example.com' }, maintainers })).includes('@example.com'))
 })

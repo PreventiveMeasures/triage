@@ -180,7 +180,7 @@ export function npmPackageData(kind, name, ask, shape) {
 
 // A package's versions, newest first, and dist-tags.
 export function npmVersionList(name) {
-  return npmPackageData('versions', name, () => fetchNpmVersions(name), data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {} }))
+  return npmPackageData('versions', name, () => fetchNpmVersions(name), data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {}, times: data.times ?? {} }))
 }
 
 function tagsByVersion(distTags = {}) {
@@ -190,12 +190,23 @@ function tagsByVersion(distTags = {}) {
 }
 
 // A package's versions to pick from, newest first, `version` among them
-// though the list has not (or not yet) got it: `{ id, detail }`, its dist-tags
-// as its detail.
+// though the list has not (or not yet) got it: `{ id, detail, date }`, its
+// dist-tags as its detail, and the day it was published.
 function versionChoices(list, version) {
   const tags = tagsByVersion(list.distTags)
   const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
-  return versions.map(id => ({ id, detail: tags.get(id)?.join(', ') ?? '' }))
+  return versions.map(id => ({ id, detail: tags.get(id)?.join(', ') ?? '', ...list.times?.[id] && { date: list.times[id].slice(0, 10) } }))
+}
+
+const publishedDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+const ago = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+
+// When a version was published (an ISO date), and how long ago, in days up
+// to two months, then months up to two years, then years.
+export function npmPublished(time, now = Date.now()) {
+  const days = Math.floor((now - Date.parse(time)) / (24 * 60 * 60_000))
+  const age = days < 60 ? ago.format(-days, 'day') : days < 730 ? ago.format(-Math.floor(days / 30.44), 'month') : ago.format(-Math.floor(days / 365.25), 'year')
+  return `${publishedDate.format(Date.parse(time))} · ${age}`
 }
 
 // What Compare offers a package version (bundle-compare.js `source`): the
@@ -204,7 +215,7 @@ function versionChoices(list, version) {
 export function npmCompareSource(entry) {
   const { name, version } = entry.npm
   const list = npmVersionList(name)
-  const choices = versionChoices(list, version).map(({ id, detail }) => ({ id, name: `${name}@${id}`, displayLabel: id, format: 'npm', detail }))
+  const choices = versionChoices(list, version).map(({ id, detail, date }) => ({ id, name: `${name}@${id}`, displayLabel: id, format: 'npm', detail, ...date && { date } }))
   return {
     noun: 'version',
     base: version,
@@ -463,6 +474,10 @@ export function npmLicenseParts(license, paths) {
     .map(text => ({ text, file: /^[\w.+-]+$/u.test(text) && !/^(?:OR|AND|WITH)$/u.test(text) ? fileFor(text) : null }))
 }
 
+// An npm account, linking to its profile on npmjs.com.
+const npmAccount = (account, label) => html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(account)}`}
+  target="_blank" rel="noopener noreferrer"><span>${label}</span></a>`
+
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it. `files`
 // are the package's file paths, once read.
@@ -472,6 +487,8 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
   // Its repository, at the commit it was published from where npm recorded
   // one, and in the directory its repository names, as a bundle's links.
   const origin = github ? bundleOriginLinks({ repo: { github, directory: manifest.github.directory ?? '', commit: manifest.gitHead } })[0] : null
+  // When it was published, once the package's versions arrive.
+  const published = npmVersionList(entry.npm.name).times?.[entry.npm.version]
   // Its name and version are the header's (render-bundle.js), the version
   // to switch to there too.
   return html`<dl class="bundles-detail-meta npm-facts">
@@ -479,11 +496,12 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
     ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${manifest.deprecated}</dd>` : nothing}
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
     ${manifest.license ? html`<dt>License</dt><dd>${npmLicenseParts(manifest.license, [...files ?? []]).map(({ text, file }) => factFile(file, files, text))}</dd>` : nothing}
-    ${manifest.author || manifest.publisher ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.publisher
-      ? html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(manifest.publisher)}`} target="_blank" rel="noopener noreferrer">
-          <span>${manifest.author ?? `~${manifest.publisher}`}</span></a>
-        ${manifest.author ? html`<span class="npm-publisher">~${manifest.publisher}</span>` : nothing}`
+    ${manifest.author ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.authorAccount
+      ? html`${npmAccount(manifest.authorAccount, manifest.author)}${manifest.author === manifest.authorAccount ? nothing : html`<span class="npm-publisher">~${manifest.authorAccount}</span>`}`
       : manifest.author}</dd>` : nothing}
+    ${manifest.publisher && manifest.publisher !== manifest.authorAccount
+      ? html`<dt>Publisher</dt><dd class="bundle-origin-row">${npmAccount(manifest.publisher, `~${manifest.publisher}`)}</dd>` : nothing}
+    ${published ? html`<dt>Published</dt><dd>${npmPublished(published)}</dd>` : nothing}
     ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
       <a class="bundle-origin-link" href=${origin.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${origin.text}</span></a>
       ${githubFigures}
@@ -563,7 +581,7 @@ class NpmVersionSelect extends LitElement {
 
   render() {
     const list = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
-    const options = versionChoices(list, this.version).map(({ id, detail }) => ({ value: id, label: id, detail }))
+    const options = versionChoices(list, this.version).map(({ id, detail, date }) => ({ value: id, label: id, detail, secondary: date }))
     return html`<bundle-selector .options=${options} .value=${this.version} noun="version" versions
       label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${options.length <= 1}
       aria-busy=${this.list?.status === 'loading' ? 'true' : nothing}

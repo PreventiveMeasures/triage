@@ -49,7 +49,7 @@
 //   POST /api/admin/teams/{set,remove}-member → admin links/unlinks a user (+perms) | 401/403/404
 //   POST /api/admin/teams/set-npm-scopes → admin replaces a team's npm scopes | 400/401/403/404
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/502
-//   GET  /api/npm/versions?name= → its dist-tags and versions | 400/401/404/502
+//   GET  /api/npm/versions?name= → its dist-tags, versions and when each was published | 400/401/404/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
 //   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
@@ -2409,7 +2409,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   try {
     const privileged = canReadPrivateNpm(reader, name)
     if (path === NPM_VERSIONS_PATH) {
-      const versions = await readNpmVersions(name, privileged, controller.signal)
+      const versions = await readNpmVersions(name, privileged, controller.signal, { times: true })
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
       if (await recheck(versions.private)) sendJson(res, 200, versions)
       return
