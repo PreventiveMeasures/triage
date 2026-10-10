@@ -39,9 +39,9 @@ const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 
 // changed is a change.
 const RENAMED_MAX_LENGTH = 3
 // What a text is read in, from where it is: a string, a template, a
-// comment, a regular expression (where a value starts: `/` after one
+// comment (a hashbang too, its first line), a regular expression (where a value starts: `/` after one
 // divides), a name, a bracket, or what lies between, operators and numbers.
-const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
+const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
 // Words after which a value starts, so a `/` begins a regular expression.
 const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'extends', 'in', 'instanceof', 'new', 'of', 'return',
   'throw', 'typeof', 'void', 'yield'])
@@ -197,7 +197,7 @@ function nameless(text) {
       continue
     }
     at = READ.lastIndex
-    if (first === '/' && (token[1] === '/' || token[1] === '*')) keep(token)
+    if (first === '#' || (first === '/' && (token[1] === '/' || token[1] === '*'))) keep(token)
     else if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
       last = '"'
