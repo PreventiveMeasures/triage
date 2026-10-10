@@ -64,6 +64,12 @@ function keep(key, copy) {
     setTimeout(() => { asking = false })
   }
   wanted.add(key)
+  evict()
+}
+
+// Past KEPT_COPIES, the least recent no view waits for: as one is asked for,
+// and as one comes that may be wanted no longer.
+function evict() {
   for (const [old, kept] of copies) {
     if (copies.size <= KEPT_COPIES) break
     if (wanted.has(old) || wantedBefore.has(old) || kept.status === 'loading') continue
@@ -90,6 +96,7 @@ async function load(key, copy, entry, path, content, known) {
   const notify = notifiers.get(key)
   notifiers.delete(key)
   notify?.()
+  evict()
 }
 
 // A printable file's pretty-printed copy while the toggle is on, asked for

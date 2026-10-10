@@ -130,7 +130,9 @@ function nameless(text) {
       if (opens.length < declaring) declaring = -1
     } else {
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (declaring !== -1 && binding)
-      if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || text[at] === ':') key.push(token)
+      // A property: `.` before it, spaces or a comment between (`a . b`), or `:` after it.
+      const property = last === '.' || text[at] === ':'
+      if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || property) key.push(token)
       else {
         key.push(NAMELESS)
         names.at(-1).push(token)
