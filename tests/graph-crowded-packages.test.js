@@ -40,16 +40,16 @@ for (const name of ['minimalistic-assert', 'react', 'reselect']) {
       const tree = { [target]: { size: 1, imports: [] }, ...Object.fromEntries(files.map(file => [file, { size: 10, imports: [target] }])) }
       return buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf })
     }
-    assert.deepEqual([...crowdedGraphPackages(crowdedGraph(500), 500)], [])
-    assert.deepEqual([...crowdedGraphPackages(crowdedGraph(501), 500)], [name])
+    assert.deepEqual([...crowdedGraphPackages(crowdedGraph(300), 300)], [])
+    assert.deepEqual([...crowdedGraphPackages(crowdedGraph(301), 300)], [name])
     assert.deepEqual([...crowdedGraphPackages(buildPackageGraph(crowdedGraph(100)), 100)], [])
     assert.deepEqual([...crowdedGraphPackages(buildPackageGraph(crowdedGraph(101)), 100)], [name])
   })
 }
 
-test('the Graph view hides @babel/runtime past 500 file edges or 100 importing packages', () => {
-  assert.deepEqual([...crowdedGraphPackages(graphOf(500), 500)], [])
-  assert.deepEqual([...crowdedGraphPackages(graphOf(501), 500)], ['@babel/runtime'])
+test('the Graph view hides @babel/runtime past 300 file edges or 100 importing packages', () => {
+  assert.deepEqual([...crowdedGraphPackages(graphOf(300), 300)], [])
+  assert.deepEqual([...crowdedGraphPackages(graphOf(301), 300)], ['@babel/runtime'])
   assert.deepEqual([...crowdedGraphPackages(buildPackageGraph(graphOf(100, 2)), 100)], [], '100 packages share 200 file edges')
   assert.deepEqual([...crowdedGraphPackages(buildPackageGraph(graphOf(101)), 100)], ['@babel/runtime'])
 })
@@ -59,8 +59,8 @@ test('Size flow leaves out @babel/runtime bars and every ribbon touching them pa
   const babel = layout => layout.nodes.filter(n => n.pkg === '@babel/runtime').length
   const touching = layout => layout.edges.filter(e => [e.from, e.to].some(id => layout.byId.get(id)?.pkg === '@babel/runtime' || !layout.byId.has(id))).length
 
-  assert.equal(babel(flow(graphOf(500))), 2, 'both helper files show at 500 file edges')
-  const files = flow(graphOf(501))
+  assert.equal(babel(flow(graphOf(300))), 2, 'both helper files show at 300 file edges')
+  const files = flow(graphOf(301))
   assert.equal(babel(files), 0)
   assert.equal(touching(files), 0)
   assert.deepEqual([...files.hiddenPackages], ['@babel/runtime'])
@@ -72,7 +72,7 @@ test('Size flow leaves out @babel/runtime bars and every ribbon touching them pa
   assert.equal(touching(packages), 0)
 
   const Flow = customElements.get('size-flow'), host = new Flow()
-  host.graph = graphOf(501); host.willUpdate(new Map([['graph', null]]))
+  host.graph = graphOf(301); host.willUpdate(new Map([['graph', null]]))
   assert.equal(host.matchesNode(host.model.byId.get(`f:${helper}`)), false, 'search skips hidden files')
-  assert.equal(host.layout.byId.get('f:entry.js').size, 1 + 501 * 10 + 10 + 150, 'reachable sizes still include both hidden helper files')
+  assert.equal(host.layout.byId.get('f:entry.js').size, 1 + 301 * 10 + 10 + 150, 'reachable sizes still include both hidden helper files')
 })

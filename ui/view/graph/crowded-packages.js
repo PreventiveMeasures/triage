@@ -4,7 +4,7 @@
 // one, its files and every edge that touches them bury the rest of the graph,
 // so Graph and Size flow hide it.
 const CROWDED_PACKAGES = new Set(['@babel/runtime', 'minimalistic-assert', 'react', 'reselect'])
-export const MAX_FILE_EDGES = 500
+export const MAX_FILE_EDGES = 300
 export const MAX_PACKAGE_EDGES = 100
 
 // The listed packages that more than `limit` edges lead into from other
