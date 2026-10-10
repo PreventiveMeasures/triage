@@ -3472,17 +3472,20 @@ a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
 /* Each install script on a line of its own: its name, then its command whole,
    under its name where they don't fit side by side, broken between words. */
 .npm-install-script {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .5rem;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .5rem;
 
-  & + & { margin-top: .15rem; }
+  & + & { margin-top: .3rem; }
   & code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem;
     white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
   }
 }
+/* Its name a warning's tag: what runs on install is what to read first. */
 .npm-install-script-name {
-  flex-shrink: 0;
-  color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem;
+  flex-shrink: 0; padding: 0 .35rem;
+  color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
+  border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .66rem; font-weight: 600; line-height: 1.45;
 }
 /* An entry point, after its file's icon, on one line, cut short where it
    doesn't fit. */
@@ -3793,29 +3796,31 @@ button.npm-category {
     border-left-color: var(--high);
   }
 }
-/* Socket's scores, in rows of at most three, each a chip of one width linking
-   to its report; and over the summary, the alerts it raises on the version,
-   as on malware, each with its note. */
+/* Socket's scores, all six in a row where they fit, each a chip of one width
+   linking to its report; and over the summary, the alerts it raises on the
+   version, as on malware, each with its note. */
 .npm-socket-scores {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(max(7.5rem, 30%), 1fr)); gap: .3rem;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(max(5.5rem, calc(16% - .3rem)), 1fr)); gap: .3rem;
   margin: 0; padding: 0;
   list-style: none;
 }
+/* Its name, then its number beside its meter. */
 a.npm-socket-score {
-  display: flex; flex-wrap: wrap; justify-content: space-between; row-gap: .2rem;
-  padding: .15rem .45rem .3rem;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .1rem .4rem;
+  padding: .15rem .45rem .25rem;
   color: var(--text); text-decoration: none;
 
+  & > :first-child { grid-column: 1 / -1; }
   &.is-good { --meter: var(--green); }
   &.is-fair { --meter: var(--medium); }
   &.is-poor { --meter: var(--high); }
-  &:hover { border-color: var(--accent); }
+  &.is-max .npm-extension-count { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 /* Its meter: a hairline track, filled to the score in its tint, blended with
    the muted ink so it reads as a hint. */
 .npm-socket-meter {
-  flex-basis: 100%; height: 3px;
+  height: 3px;
   background:
     linear-gradient(color-mix(in srgb, var(--meter) 55%, var(--muted)) 0 0) 0 0 / var(--score) 100% no-repeat,
     color-mix(in srgb, var(--border) 70%, transparent);

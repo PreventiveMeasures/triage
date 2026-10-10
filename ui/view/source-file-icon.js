@@ -35,8 +35,12 @@ export function sourceFileType(path, format) {
   if (['javascript', 'jsx'].includes(lang)) return 'js'
   if (['typescript', 'tsx'].includes(lang)) return 'ts'
   if (['solidity', 'rust', 'php', 'python', 'json'].includes(lang)) return lang
+  if (lang === null && /\.map$/iu.test(path)) return 'map'
   return 'generic'
 }
+
+// A source map's: a map folded in three.
+const mapMark = svg`<path d="M1.5 3.4 5.3 2l5.4 1.6 3.8-1.4v10.4l-3.8 1.4-5.4-1.6-3.8 1.4Z" fill="#3fa59a" fill-opacity=".22" stroke="#3fa59a" stroke-width="1.1" stroke-linejoin="round"/><path d="M5.3 2v10.4m5.4-8.8V14" stroke="#3fa59a" stroke-width="1.1"/>`
 
 export function sourceFileIcon(path, format) {
   const type = sourceFileType(path, format)
@@ -50,6 +54,8 @@ export function sourceFileIcon(path, format) {
           ? phpMark
           : type === 'python'
             ? pythonMark
+            : type === 'map'
+              ? mapMark
             : type === 'json'
               ? svg`<path d="M3 1h6l5 5v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" fill="#e6c84f"/><path d="M9 1v4a1 1 0 0 0 1 1h4Z" fill="#202020" opacity=".2"/><path d="M6.5 6.5h-.75a.75.75 0 0 0-.75.75v1.5L4 9.5l1 .75v1.5a.75.75 0 0 0 .75.75h.75m3-6h.75a.75.75 0 0 1 .75.75v1.5l1 .75-1 .75v1.5a.75.75 0 0 1-.75.75H9.5" fill="none" stroke="#202020" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>`
               : svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`

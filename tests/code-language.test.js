@@ -30,6 +30,8 @@ test('missing and unrecognized formats fall back to filename detection', () => {
       assert.equal(sourceFileType(path, format), icon)
     }
   }
+  for (const path of ['lib/index.js.map', 'dist/style.CSS.MAP']) assert.equal(sourceFileType(path), 'map', `${path}: a source map's own icon`)
+  assert.equal(sourceFileType('lib/index.js.map', 'json'), 'json', 'a format names it first')
   for (const path of ['dir.js/example', 'dir/.js', 'file.constructor']) {
     assert.equal(langForPath(path), null)
     assert.equal(sourceFileType(path), 'generic')

@@ -1058,7 +1058,7 @@ control. A version shows in the bundle view with four tabs:
   does) and integrity; beside them entry points,
   each with its file's icon and opening its file, Main and Module in one row
   where they name the same file, engines, install scripts (each with its
-  command, a file it names opening it, in the order npm runs them, and
+  name marked as a warning's and its command, a file it names opening it, in the order npm runs them, and
   `node-gyp rebuild` where a `binding.gyp` has no install script of its own),
   how many dependencies it has, and its files with the lines of code they add
   up to, its tarball's size and what it unpacks to, each but the tarball's
@@ -1081,8 +1081,9 @@ control. A version shows in the bundle view with four tabs:
   counting them as well, each with its files' size and, where they are text,
   their lines of code in its tooltip; then Socket's scores for a public
   package (overall, supply chain, vulnerability, quality, maintenance and
-  license, out of 100), each with a meter filled to it, tinted for 80 and
-  over, 50 and over, and under 50, that one marked. Each category's chip, and each file type's, narrows
+  license, out of 100), in one row where they fit, each number beside a
+  meter filled to it, tinted for 80 and over, 50 and over, and under 50,
+  that one marked, a full score's number green. Each category's chip, and each file type's, narrows
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
@@ -1092,7 +1093,7 @@ control. A version shows in the bundle view with four tabs:
   counting those that affect the version shown, those first and marked,
   those fixed in it (affecting only older versions) struck through, and
   those affecting later versions, older ones perhaps too, plain, each with
-  its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon and tagged with its category, its
+  its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon (a source map's a folded map) and tagged with its category, its
   tag naming the control characters or long lines it holds; and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names.
