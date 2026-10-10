@@ -1467,7 +1467,6 @@ class ManagedAdminTeams extends ManagedPage {
               <button class="icon-btn danger" aria-label=${`Delete ${team.name}`} ?disabled=${this._busy} @click=${() => this._deleteTeam(team)}>${ADMIN_DELETE_ICON}</button>
             </span>`}
       </div>
-      ${team.hidden ? html`<p class="team-hidden-note muted ui-hint">Hidden from everyone's sidebar. Access grants and public links are disabled until this team is restored.</p>` : nothing}
       <div class="team-body">
       <div class="sub">
         <h3 class="sub-title">Repositories <span class="count">${team.repos.length}</span></h3>
