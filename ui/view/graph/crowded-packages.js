@@ -1,7 +1,8 @@
-// @babel/runtime's helpers are imported by nearly every transpiled module.
-// When that many edges lead into the package, its files and every edge that
+// Tiny utility packages imported from nearly everywhere: @babel/runtime's
+// helpers by every transpiled module, minimalistic-assert by the crypto
+// stacks. When that many edges lead into one, its files and every edge that
 // touches them bury the rest of the graph, so Graph and Size flow hide it.
-const CROWDED_PACKAGES = new Set(['@babel/runtime'])
+const CROWDED_PACKAGES = new Set(['@babel/runtime', 'minimalistic-assert'])
 export const MAX_FILE_EDGES = 500
 export const MAX_PACKAGE_EDGES = 100
 

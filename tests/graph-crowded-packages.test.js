@@ -32,6 +32,19 @@ test('only edges from other packages count, and only for the listed package', ()
   assert.deepEqual([...crowdedPackages(edges, 101)], [], 'internal imports never count')
 })
 
+test('minimalistic-assert is hidden past the same limits', () => {
+  const assertFile = 'node_modules/minimalistic-assert/index.js'
+  const assertGraph = importers => {
+    const files = Array.from({ length: importers }, (_, i) => `node_modules/dep-${i}/f${i}.js`)
+    const tree = { [assertFile]: { size: 1, imports: [] }, ...Object.fromEntries(files.map(file => [file, { size: 10, imports: [assertFile] }])) }
+    return buildGraph(tree, Object.keys(tree), new Map(), null, null, null, null, { pkgOf })
+  }
+  assert.deepEqual([...crowdedGraphPackages(assertGraph(500), 500)], [])
+  assert.deepEqual([...crowdedGraphPackages(assertGraph(501), 500)], ['minimalistic-assert'])
+  assert.deepEqual([...crowdedGraphPackages(buildPackageGraph(assertGraph(100)), 100)], [])
+  assert.deepEqual([...crowdedGraphPackages(buildPackageGraph(assertGraph(101)), 100)], ['minimalistic-assert'])
+})
+
 test('the Graph view hides @babel/runtime past 500 file edges or 100 importing packages', () => {
   assert.deepEqual([...crowdedGraphPackages(graphOf(500), 500)], [])
   assert.deepEqual([...crowdedGraphPackages(graphOf(501), 500)], ['@babel/runtime'])
