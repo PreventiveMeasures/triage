@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { assignHubs, buildGraph } from '../ui/view/graph/data.js'
 import { layoutSpiral } from '../ui/view/graph/layout.js'
 

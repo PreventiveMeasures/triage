@@ -1,12 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    html: () => null, nothing: null, LitElement: class {}, StateElement: class {},
-  }
-}
 const { mergeReportGroups } = await import('../common/workspace-groups.js')
 const { revalidationDifferences } = await import('../common/revalidation-conflicts.js')
 const { state } = await import('../client/state.ts')

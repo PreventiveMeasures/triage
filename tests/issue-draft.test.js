@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import './_polyfills.js'
-globalThis[Symbol.for('@rray/frontend')] ??= {}
 const { createIssueDraft, editIssueDraft, toggleIssueDraftSection } = await import('../ui/view/dialogs/issue-draft.js')
 const { evidenceMarkdown } = await import('../ui/view/format.js')
 const draftFor = (finding, options = {}) => createIssueDraft(finding, { evidence: evidenceMarkdown(finding), ...options })

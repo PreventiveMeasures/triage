@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import './_polyfills.js'
-import '../ui/view/frontend-install.js'
 
 // Render the actual card without the page renderer and source-preview DOM.
 mock.module('../ui/view/render.js', { namedExports: { render() {} } })

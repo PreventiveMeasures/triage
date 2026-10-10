@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
-import '../ui/view/frontend-install.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 

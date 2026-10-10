@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-metadata.js'
 import { bundleWhy, layoutWhy } from '../ui/view/bundle-why.js'

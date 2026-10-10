@@ -7,8 +7,8 @@
 // `import source` for .css. The plugin below routes JS-imported `.css`
 // through the `text` loader and leaves entry-point CSS alone.
 import * as esbuild from 'esbuild'
-import { readFile } from 'node:fs/promises'
-import { resolve as resolvePath, dirname } from 'node:path'
+import { readFile, writeFile } from 'node:fs/promises'
+import { basename, resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
 import { minifyLitSource } from './build-lit-minify.js'
@@ -83,7 +83,7 @@ const minifyLitTemplates = {
 
 const mode = process.argv[2] ?? 'build'
 if (mode === 'build') {
-  await esbuild.build({
+  const { metafile } = await esbuild.build({
     bundle: true,
     plugins: [minifyLitTemplates, litCssAsText({ minify: true }), litSvgAsHtml],
     entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
@@ -101,7 +101,23 @@ if (mode === 'build') {
     // `view/brotli-decompress.js` spawns from the same entry with
     // `{ type: 'module' }` to keep the decode off the main thread.
     format: 'esm',
+    // Code shared between entries (lit, the scan page, report parsing…)
+    // lands once in a chunk instead of in every bundle that uses it, so a
+    // lazy bundle loads only what view.js doesn't already have, and both
+    // share one module instance. Chunks keep a fixed prefix for the
+    // package.json `files` list.
+    splitting: true,
+    chunkNames: 'chunk-[hash]',
+    metafile: true,
   })
+  // view.js imports its chunks itself, but the browser only sees those
+  // imports once view.js has arrived. Preload them beside it so they
+  // download in parallel (the static server lifts these into a Link header).
+  const chunks = metafile.outputs['out/view.js'].imports.filter(i => i.kind === 'import-statement').map(i => basename(i.path))
+  const index = await readFile('out/index.html', 'utf8')
+  const preload = '<link rel="modulepreload" href="./view.js" />'
+  if (!index.includes(preload)) throw new Error('out/index.html lost its view.js modulepreload')
+  await writeFile('out/index.html', index.replace(preload, [preload, ...chunks.map(c => `<link rel="modulepreload" href="./${c}" />`)].join('\n')))
 } else if (mode === 'serve') {
   const scanServer = configuredScanServer(process.env['DEEPVIEW_SCAN_SERVER']) ?? DEFAULT_SCAN_SERVER
   // Mirror the previous `--servedir=ui --outdir=ui` setup: esbuild
@@ -123,6 +139,8 @@ if (mode === 'build') {
     write: false,
     allowOverwrite: true,
     format: 'esm',
+    splitting: true,
+    chunkNames: 'chunk-[hash]',
   })
   // Bind esbuild on an ephemeral port — the proxy below is the visible
   // dev origin on PROXY_PORT (default 8000), esbuild lives behind it.

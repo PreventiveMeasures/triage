@@ -15,20 +15,6 @@ import { layoutDependencyLayers } from '../ui/view/graph/layered-layout.js'
 import { layoutFilesVogel } from '../ui/view/graph/layout.js'
 import { bundleLayerRoots } from '../ui/view/bundle-graph-inputs.js'
 
-// data.js → utils.js → format.js → frontend-global.js throws at
-// module load when the `@rray/frontend` slot isn't installed. Tests
-// don't run the boot path that installs it, so stub it before the
-// import chain evaluates; buildPackageGraph never calls any of
-// these symbols.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { buildGraph, buildPackageGraph } = await import('../ui/view/graph/data.js')
 const { dependencyFilesOn, dependencyNetwork } = await import('../ui/view/graph/package-network.js')
 const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')

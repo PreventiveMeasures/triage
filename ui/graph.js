@@ -20,7 +20,7 @@
 // render.js / render-bundle.js only do data-fetch + ctx assembly
 // (which needs the `state` aggregator) and dispatch into us.
 
-import { render as litRender } from './view/frontend-global.js'
+import { render as litRender } from 'lit'
 import './view/graph/graph-layout.js'
 import { renderFocusOverlay, renderSelectionCard, renderTopPkgsBlock } from './view/graph/render.js'
 import { buildGraph } from './view/graph/data.js'

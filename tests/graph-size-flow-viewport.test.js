@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import '../ui/view/graph/size-flow.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { graph2 } from '../ui/view/graph/state.js'

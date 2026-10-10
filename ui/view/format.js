@@ -1,6 +1,6 @@
 import { dependencyDirectory } from '../../client/dependency-paths.js'
 import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '@preventive/report'
-import { html, nothing } from './frontend-global.js'
+import { html, nothing } from 'lit'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
 // and the whole client layer in with it (see fileUrl's note below).

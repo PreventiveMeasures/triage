@@ -29,19 +29,6 @@ import './_polyfills.js'
 import { createManagedHistory } from '../ui/view/managed-history.js'
 import { browserAt } from './_managed-browser.js'
 
-// `ui/view/finding-link.js` → group.js → format.js → frontend-global.js
-// throws at module load without the `@rray/frontend` slot; tests don't
-// run the boot path that installs it. None of the stubbed symbols is
-// called by the helpers under test.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const {
   buildFindingUrl,
   computeLinkHint,

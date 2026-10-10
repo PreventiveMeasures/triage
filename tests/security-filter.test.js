@@ -2,9 +2,6 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test } from 'node:test'
 import './_polyfills.js'
 
-globalThis[Symbol.for('@rray/frontend')] ??= {
-  LitElement: class {}, StateElement: class {}, html: () => null, nothing: null,
-}
 const { state } = await import('../client/state.ts')
 const { clearMergedGroups, drawnTabs, getMergedGroups } = await import('../ui/view/group.js')
 const { configureRevalidation } = await import('../ui/view/format.js')

@@ -3,7 +3,6 @@ import { mock, test } from 'node:test'
 import './_polyfills.js'
 import { state } from '../client/state.ts'
 import { newIssueLabels } from '../common/github-issue-labels.js'
-globalThis[Symbol.for('@rray/frontend')] ??= {}
 const { githubIssueUrl } = await import('../ui/view/format.js')
 
 class TestDialog { static styles = []; _finish() { this._settled = true } }

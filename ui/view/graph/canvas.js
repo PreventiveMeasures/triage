@@ -1,4 +1,4 @@
-import { html, render } from '../frontend-global.js'
+import { html, render } from 'lit'
 import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'

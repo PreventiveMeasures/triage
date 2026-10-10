@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import './_polyfills.js'
-import '../ui/view/frontend-install.js'
 
 const { renderSelectionCard } = await import('../ui/view/graph/render.js')
 const { graph2 } = await import('../ui/view/graph/state.js')

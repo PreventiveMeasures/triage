@@ -13,18 +13,6 @@ import { beforeEach, describe, it } from 'node:test'
 
 import './_polyfills.js'
 
-// format.js → frontend-global.js throws at module load when the
-// `@rray/frontend` slot isn't installed; stub it before the import
-// chain evaluates (the summary path never calls these symbols).
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { state } = await import('../client/state.ts')
 const { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, applyFilters, cloneFilterFields } = await import('../ui/view/filters.js')
 const { activeFilterDescriptions, exportBucketGroups, exportSelectionSummary } = await import('../ui/view/export-summary.js')

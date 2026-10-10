@@ -8,7 +8,8 @@
 // row, ↑/↓ history, click-anywhere-to-focus). All pipeline / fs /
 // command behavior lives in `@preventive/terminal`.
 
-import { LitElement, html, nothing, repeat, unsafeCSS } from './view/frontend-global.js'
+import { LitElement, html, nothing, unsafeCSS } from 'lit'
+import { repeat } from 'lit/directives/repeat.js'
 import { createTerminal } from '@preventive/terminal'
 import { classifyDiff } from './view/diff-color.js'
 import { silencedGaps } from './view/silenced-gaps.js'

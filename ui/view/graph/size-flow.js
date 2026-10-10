@@ -1,5 +1,5 @@
 import { keyed } from 'lit/directives/keyed.js'
-import { LitElement, html, unsafeCSS } from '../frontend-global.js'
+import { LitElement, html, unsafeCSS } from 'lit'
 import { hideTooltip, installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'

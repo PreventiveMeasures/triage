@@ -242,6 +242,7 @@
     "client/linked-findings.d.ts",
     "client/linked-findings.js",
     "out/brotli-fallback.js",
+    "out/chunk-*.js",
     "out/client-managed.js",
     "out/client-managed-import.js",
     "out/client-sync.js",

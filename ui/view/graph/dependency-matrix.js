@@ -1,4 +1,4 @@
-import { LitElement, html, unsafeCSS } from '../frontend-global.js'
+import { LitElement, html, unsafeCSS } from 'lit'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { buildDependencyMatrix } from './matrix-model.js'

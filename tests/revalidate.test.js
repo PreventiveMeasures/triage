@@ -19,19 +19,6 @@ import { beforeEach, describe, it } from 'node:test'
 // transitively through `state.ts` touch them at module-load time.
 import './_polyfills.js'
 
-// filters.js / group.js → format.js → frontend-global.js throws at
-// module load when the `@rray/frontend` slot isn't installed. Tests
-// don't run the boot path that installs it, so stub it before the
-// import chain evaluates; nothing under test calls these symbols.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { state } = await import('../client/state.ts')
 const { readReport } = await import('@preventive/report')
 const { applyFilters, applyOpeningFilters, applySorting, confidenceOnScale, defaultConfidenceFloor, defaultRevalidateFilter, filterRevalidateKind, matchesFilters, priorityApplies, priorityForGroup, rangeApplies, shouldLockConfirmed } = await import('../ui/view/filters.js')

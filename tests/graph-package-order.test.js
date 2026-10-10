@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { optimizePackageRings } from '../ui/view/graph/package-order.js'
 import { makeLargeGraph } from '../examples/large-graph-sample.js'

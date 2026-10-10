@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import './_polyfills.js'
-import '../ui/view/frontend-install.js'
 import { browserAt } from './_managed-browser.js'
 
 const hash = `#public=link0001.${'A'.repeat(43)}`

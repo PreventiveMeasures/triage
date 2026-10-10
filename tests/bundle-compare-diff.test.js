@@ -3,8 +3,7 @@
 // `Map<path, content>` file maps plus a `pkgOf` bucketing function
 // and returns per-file (onlyBase / onlyOther / changed) + per-package
 // deltas plus roll-up totals. This module has no Lit / DOM / `state`
-// dependency, so the test imports it straight — no `@rray/frontend`
-// stub or polyfills needed.
+// dependency, so the test imports it straight — no polyfills needed.
 //
 // `base` is the open bundle, `other` the one picked to compare; the
 // result names the sides onlyBase / onlyOther (not added / removed) so

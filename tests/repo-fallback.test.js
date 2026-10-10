@@ -19,19 +19,6 @@ import { beforeEach, describe, it } from 'node:test'
 // transitively through `state.ts` touch them at module-load time.
 import './_polyfills.js'
 
-// group.js → format.js → frontend-global.js throws at module load when
-// the `@rray/frontend` slot isn't installed; the boot path that
-// installs it doesn't run under the test runner. None of these symbols
-// is called by the repo resolvers.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { state } = await import('../client/state.ts')
 const { findingRepo, findingRepoFallback, findingRepoTarget } = await import('../ui/view/group.js')
 const { configureRevalidation, findingUrl } = await import('../ui/view/format.js')
