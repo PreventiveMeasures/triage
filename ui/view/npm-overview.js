@@ -250,8 +250,8 @@ const MINIFIED_SPACES = .01
 // What a regular expression set aside holds.
 const REGEX = '\uE000'
 const JS = {
-  // A regular expression first where a value starts (after `=>` or an operator too), so a quote in it (`/["']/`) starts no string.
-  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>+\-*/%^<~]|\b(?:await|case|delete|do|else|in|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
+  // A regular expression first where a value starts (after `=>`, an operator or a keyword, not a property: `x.default/2`), so a quote in it (`/["']/`) starts no string.
+  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.])(?:await|case|default|delete|do|else|in|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words, as
   // JavaScript tells a word's characters (`return a`, `var π`, `var \u03c0`),
   droppable: /(?<![\p{ID_Continue}$\\\u200C\u200D])[ \t]+|[ \t]+(?![\p{ID_Continue}$\\\u200C\u200D])/gu,
@@ -267,8 +267,10 @@ const CSS = {
   // and beside a selector's `+` or `~` (`.a + .b`), not those a selector or a
   // value needs (`.a .b`, `1px solid #fff`, `a :hover`),
   droppable: /(?<=[{};,:>(])[ \t]+|[ \t]+(?=[{};,>)!])|(?<=[+~])[ \t]+|[ \t]+(?=[+~])/gu,
-  // nor beside `+` or `~` in parentheses: `calc(1px + var(--x))`.
-  needed: (code, index, run, depth) => depth > 0 && /[+~]/u.test(code[index - 1] + code[index + run.length]),
+  // nor beside `+` or `~` in parentheses (`calc(1px + var(--x))`) or in a
+  // custom property's value, kept for a `calc()` to come (`--gap:1px + 2px`).
+  needed: (code, index, run, depth) => /[+~]/u.test(code[index - 1] + code[index + run.length])
+    && (depth > 0 || /^\s*--[^:]*:/u.test(code.slice(Math.max(...['{', ';', '}'].map(end => code.lastIndexOf(end, index))) + 1, index))),
 }
 const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
 function minifiedCode(text, { stringOrComment, droppable, needed }) {

@@ -150,7 +150,13 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     'a regular expression after `else` too')
   assert.equal(category('dist/a.mjs', `const f=x=>/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
     'a regular expression after `=>` too')
+  assert.equal(category('dist/a.mjs', `export default/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a regular expression after `default` too')
+  assert.equal(category('dist/a.mjs', `var u=n.default/2+"/"+v;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'but a property named so is divided')
   assert.equal(category('dist/g.css', `${'.a{width:calc(1px + var(--x))}'.repeat(5)}\n`), 'minified', 'a sum\'s spaces in calc() needed, nested too')
+  assert.equal(category('dist/g.css', `${'.a{--gap:1px + 2px;width:calc(var(--gap))}'.repeat(3)}\n`), 'minified', 'and in a custom property\'s value')
+  assert.equal(category('src/e.css', `${'.a{--gap:0}.a + .b{color:red}'.repeat(5)}\n`), 'ascii', 'not past it')
   assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
   // Only in what minifiers write, JavaScript and CSS, whose strings and comments are read.
   assert.equal(category('tool.py', `x = 1\n# ${'ordinary words '.repeat(15)}\n# ${'ordinary words '.repeat(15)}\n`), 'ascii', 'nor a language it can\'t read')
