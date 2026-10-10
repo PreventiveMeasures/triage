@@ -646,6 +646,9 @@ bundle-compare-code > .bundle-code-view {
   &[aria-pressed='true'] { color: var(--accent); }
   &[hidden] { display: none; }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* Pretty-printing: busy while its copies are asked for; red where that failed. */
+  &.is-loading { opacity: .55; cursor: progress; }
+  &.is-error { color: var(--critical); }
 }
 @container bundle-code (max-width: 560px) {
   .bundle-compare-code-bar .bundle-code-main-stats,
@@ -721,6 +724,8 @@ bundle-compare-code > .bundle-code-view {
   color: var(--muted);
   user-select: none;
 }
+/* An unchanged line whose names were renamed alike: its tooltip names the line it was. */
+.diff-renamed { color: var(--accent); cursor: default; }
 .diff-code {
   flex: 1;
   padding-right: 1rem;

@@ -1156,7 +1156,17 @@ control. A version shows in the bundle view with four tabs:
   the version compared with, comparing it with the one before. Both sides
   are pickers, as for bundles: picking the open side's opens that version
   compared with the same one, and picking the other side's swaps them. Code
-  and Diff review the changes as for bundles.
+  and Diff review the changes as for bundles: with the pretty-print toggle
+  on, a file minified on both sides diffs as the server formatted each, and
+  **Hide renamed names** leaves out lines that differ only in short names
+  (three characters at most, as a minifier gives them) renamed alike
+  throughout the file. A line is left out only where each of its names
+  stands for one other in every line, unchanged ones included, and neither
+  side's name ever stands for a second one; such lines are marked `≈`, naming
+  the line they were. A name renamed two ways, or two names renamed to one
+  (a line's `a` becoming `b` beside lines that keep both), keeps its lines
+  shown. Keywords, properties (after `.`, or an object's keys), strings and
+  longer names are never left out.
 
 A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
 version it opened. Code links name files by number and lines in the fragment,

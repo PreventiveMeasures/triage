@@ -24,15 +24,89 @@ export function textLines(text) {
   return lines
 }
 
+function changeBlocks(before, after, ignoreWhitespace) {
+  const text = diff(before, after, { format: 'unified', context: 0, whitespace: ignoreWhitespace ? 'all' : 'none' })
+  return text ? (parseDiff(text)[0]?.blocks ?? []).map(({ a0, a1, b0, b1 }) => ({ a0, a1, b0, b1 })) : []
+}
+
+// Words a minifier never renames, kept as they are when names are set aside.
+const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+  'default', 'delete', 'do', 'else', 'enum', 'eval', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'get',
+  'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'of', 'package', 'private', 'protected',
+  'public', 'return', 'set', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'undefined', 'var', 'void',
+  'while', 'with', 'yield', 'Infinity', 'NaN'])
+// Names a minifier gives: longer ones are an API's or a person's, and one
+// changed is a change.
+const RENAMED_MAX_LENGTH = 3
+// A string, or a name: not a property's (after `.`, or before `:` as an
+// object's key), nor an escape's letter.
+const NAME = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*(?![\p{L}\p{N}_$:])/gu
+// What a set-aside name leaves in its line.
+const NAMELESS = ''
+
+// A line with its short names set aside, and those names in order.
+function nameless(line) {
+  const names = []
+  const key = line.replaceAll(NAME, token => {
+    if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || /^["'`]/u.test(token)) return token
+    names.push(token)
+    return NAMELESS
+  })
+  return { key, names }
+}
+
+// The change blocks between two texts' lines with names renamed alike left
+// out, and the removed lines so left out. Lines pair up as they are with
+// their names set aside, then every pair, unchanged ones too, tells which
+// name became which; a pair whose names differ is left out only when each
+// of its names stands for the one other throughout, neither side's ever
+// standing for a second. Any other (a name renamed two ways, or two names
+// renamed to one, as a line's `a` → `b` beside unchanged lines naming both)
+// is a change.
+function renameBlocks(before, after, a, b, ignoreWhitespace) {
+  const na = a.map(nameless), nb = b.map(nameless)
+  // Ending as the text does, so a newline added or dropped at the end stays a change.
+  const keys = (list, text) => list.map(line => line.key).join('\n') + (text.endsWith('\n') ? '\n' : '')
+  const found = changeBlocks(keys(na, before), keys(nb, after), ignoreWhitespace)
+  const pairs = []
+  let i = 0, j = 0
+  for (const block of [...found, { a0: a.length, a1: a.length, b0: b.length, b1: b.length }]) {
+    while (i < block.a0) pairs.push([i++, j++])
+    i = block.a1
+    j = block.b1
+  }
+  const backward = new Map(), forward = new Map()
+  const link = (map, from, to) => { if (!map.has(from)) map.set(from, new Set()); map.get(from).add(to) }
+  for (const [pa, pb] of pairs) na[pa].names.forEach((name, k) => { link(forward, name, nb[pb].names[k]); link(backward, nb[pb].names[k], name) })
+  const sole = (from, to) => forward.get(from).size === 1 && backward.get(to).size === 1
+  const blocks = [], renamed = new Set()
+  const add = block => {
+    const last = blocks.at(-1)
+    if (last && last.a1 === block.a0 && last.b1 === block.b0) { last.a1 = block.a1; last.b1 = block.b1 } else blocks.push({ ...block })
+  }
+  let next = 0
+  for (const [pa, pb] of pairs) {
+    while (next < found.length && found[next].a0 <= pa) add(found[next++])
+    const names = na[pa].names, others = nb[pb].names
+    if (names.every((name, k) => name === others[k])) continue
+    if (names.every((name, k) => sole(name, others[k]))) renamed.add(pa)
+    else add({ a0: pa, a1: pa + 1, b0: pb, b1: pb + 1 })
+  }
+  while (next < found.length) add(found[next++])
+  return { blocks, renamed }
+}
+
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
 // added file is diffed against '' and a removed one against it, so all
 // three kinds of change share one model. `ignoreWhitespace` is diff -w:
-// lines differing only in whitespace pair up as unchanged.
-export function lineDiff(before, after, { ignoreWhitespace = false } = {}) {
+// lines differing only in whitespace pair up as unchanged. With
+// `ignoreRenames`, so do lines differing only in short names renamed alike
+// throughout (renameBlocks), as a minifier renames them from one build to
+// the next; `renamed` holds such removed lines.
+export function lineDiff(before, after, { ignoreWhitespace = false, ignoreRenames = false } = {}) {
   const a = textLines(before), b = textLines(after)
-  const text = diff(before, after, { format: 'unified', context: 0, whitespace: ignoreWhitespace ? 'all' : 'none' })
-  const blocks = text ? (parseDiff(text)[0]?.blocks ?? []).map(({ a0, a1, b0, b1 }) => ({ a0, a1, b0, b1 })) : []
+  const { blocks, renamed } = ignoreRenames ? renameBlocks(before, after, a, b, ignoreWhitespace) : { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
   let additions = 0, deletions = 0
   for (const block of blocks) {
     additions += block.b1 - block.b0
@@ -42,7 +116,7 @@ export function lineDiff(before, after, { ignoreWhitespace = false } = {}) {
   // newline added or dropped at the end is a change of that line alone.
   const noEol = { a: before !== '' && !before.endsWith('\n'), b: after !== '' && !after.endsWith('\n') }
   // `words` keeps the marks of each pair a render asks for.
-  return { a, b, blocks, additions, deletions, noEol, words: new Map() }
+  return { a, b, blocks, renamed, additions, deletions, noEol, words: new Map() }
 }
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the

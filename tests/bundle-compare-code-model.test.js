@@ -55,6 +55,36 @@ test('ignoring whitespace pairs lines that differ only in it', () => {
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n').blocks.length, 1)
 })
 
+test('names a minifier renamed alike throughout are left out, and only those', () => {
+  const ignoring = (before, after) => lineDiff(text(before), text(after), { ignoreRenames: true })
+  // A new function shifts every name after it: each still stands for one.
+  const before = ['var Y = 1;', 'function q(n) {', '  return Y + n;', '}', 'q(Y);']
+  const after = ['var X = 1;', 'function Z(n) {', '  return X + n;', '}', 'Z(X);']
+  const model = ignoring(before, after)
+  assert.deepEqual(model.blocks, [])
+  assert.deepEqual([...model.renamed], [0, 1, 2, 4])
+  assert.equal(lineDiff(text(before), text(after)).blocks.length, 2, 'off, they all show')
+  const inserted = ignoring(before, ['function H(n) {', '  return n;', '}', ...after])
+  assert.deepEqual(inserted.blocks, [{ a0: 0, a1: 0, b0: 0, b1: 3 }], 'what is new shows, the names it moved do not')
+  assert.equal(inserted.additions, 3)
+  // A collision anywhere keeps a line: `a` → `b` beside lines that keep both.
+  const edited = ignoring(['var a = 1, b = 2;', 'f(a);', 'return a;'], ['var a = 1, b = 2;', 'f(a);', 'return b;'])
+  assert.deepEqual(edited.blocks, [{ a0: 2, a1: 3, b0: 2, b1: 3 }])
+  assert.equal(edited.renamed.size, 0)
+  assert.equal(ignoring(['f(a);', 'g(b);'], ['f(c);', 'g(c);']).blocks.length, 1, 'two names renamed to one')
+  assert.equal(ignoring(['f(a);', 'g(a);'], ['f(b);', 'g(c);']).blocks.length, 1, 'one name renamed two ways')
+  assert.deepEqual(ignoring(['f(a);', 'g(b);'], ['f(b);', 'g(a);']).blocks, [], 'two names swapped each stand for one')
+})
+
+test('names left out are short bindings: never keywords, properties, strings or longer names', () => {
+  for (const [before, after] of [
+    ['var a = 1;', 'let a = 1;'], ['f(x.foo);', 'f(x.bar);'], ['f({ foo: a });', 'f({ bar: a });'], ['f("a");', 'f("b");'],
+    ['f(value);', 'f(other);'], ['f(/\\s/);', 'f(/\\d/);'],
+  ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 1, `${before} → ${after}`)
+  assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')
+  assert.equal(lineDiff('f(a,  b)\n', 'f(c, d)\n', { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
+})
+
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {
   const before = 'start\n  const rows = query.all({ limit: 50 })\n  res.json(rows)\nend\n'
   const after = 'start\n  const limit = Math.min(Number(req.query.limit) || 50, 200)\n  const rows = query.all({ limit })\n  res.json(rows)\nend\n'

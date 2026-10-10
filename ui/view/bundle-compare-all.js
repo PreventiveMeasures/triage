@@ -9,7 +9,7 @@ import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { stripCommonPathPrefix } from './format.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
-import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff } from './bundle-compare-code.js'
+import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 8000
 
@@ -57,7 +57,7 @@ class BundleCompareAll extends BundleCompareCode {
 
   willUpdate(changed) {
     super.willUpdate(changed)
-    if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(`${path}\0false`, model)
+    if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), model)
   }
 
   // Nothing to keep in view: the list scrolls as the reader does.
@@ -74,7 +74,7 @@ class BundleCompareAll extends BundleCompareCode {
         ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
         ${prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
         <span class="bundle-code-main-spacer"></span>
-        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual))}
+        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual), shown.find(({ file }) => file.pretty)?.file.pretty)}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label="Every change">
         ${entries.length === 0 ? html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
@@ -84,7 +84,7 @@ class BundleCompareAll extends BundleCompareCode {
               <span class="bundle-code-main-spacer"></span>
               ${this._fileFigures(entry, file.model)}
             </header>
-            ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file.model, file.before, file.after)}
+            ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}
           </section>`)}
       </div>`
   }

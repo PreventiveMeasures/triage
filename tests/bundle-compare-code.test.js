@@ -3,8 +3,14 @@ import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import '../ui/view/frontend-install.js'
 
-mock.module('../client/index.js', { namedExports: { state: {}, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
+const state = {}
+mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
+// The server's pretty-printed copies, by bundle and path.
+const pretty = new Map()
+mock.module('../ui/view/client-managed.js', { namedExports: {
+  fetchPrettyBundleFile: (id, path) => Promise.resolve(pretty.get(`${id}:${path}`)), fetchPrettyNpmFile() {},
+} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
@@ -102,6 +108,29 @@ test('a changed text file renders its diff and a binary one says so', () => {
   assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u)
   const binary = renderText(view('assets/logo.png').render())
   assert.match(binary, /Binary file changed · 1 B → 1 B\. A text diff is not available\./u)
+})
+
+test('minified files diff pretty-printed, and names renamed alike throughout can be hidden', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  // A minifier's two builds: one function more, and every name after it moved.
+  const element = view('dist/app.min.js', [{ 'dist/app.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}\n` },
+    { 'dist/app.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);\n` }])
+  element.base.managedId = 'b1'
+  element.other.managedId = 'b2'
+  pretty.set('b1:dist/app.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\n')
+  pretty.set('b2:dist/app.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\n')
+  const off = renderText(element.render())
+  assert.match(off, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'a minified file offers pretty-printing')
+  state.bundleSourcePretty = true
+  assert.match(renderText(element.render()), /is-loading/u, 'busy while both copies are asked for')
+  await new Promise(resolve => { setTimeout(resolve, 10) })
+  const formatted = renderText(element.render())
+  assert.match(formatted, /class="add">\+5<\/span><span class="del">−4/u, 'each copy line by line')
+  element._setRenames(true)
+  const renames = renderText(element.render())
+  assert.match(renames, /class="add">\+1<\/span><span class="del">−0/u, 'what is new alone')
+  assert.match(renames, /class="diff-renamed" data-tooltip=Renamed from: var Y = 1;>≈/u)
+  assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
 })
 
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {

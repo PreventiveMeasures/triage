@@ -33,7 +33,7 @@ import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
-import { prettyCopy, prettyPrintable } from './pretty-source.js'
+import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { overviewColumn } from './bundle-overview-column.js'
@@ -638,13 +638,11 @@ const renderSourceWrapToggle = () => html`<button type="button" class="bundle-so
 // Pretty-print toggle for the Code tab's bar, on a minified file the server
 // can format (pretty-source.js): busy while its copy is asked for, and
 // saying why where it failed.
-const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
 function renderPrettyToggle(copy) {
   const status = copy?.status
-  const tooltip = status === 'loading' ? 'Pretty-printing…' : status === 'error' ? `Couldn't pretty-print: ${copy.message}` : 'Pretty-print'
   return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
     data-bundle-source-pretty aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
-    aria-label="Pretty-print" data-tooltip=${tooltip}>${PRETTY_ICON}</button>`
+    aria-label="Pretty-print" data-tooltip=${prettyTooltip(copy)}>${PRETTY_ICON}</button>`
 }
 
 const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
@@ -1582,7 +1580,7 @@ function renderBundleCodeFileNav(history) {
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
   const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
   const printable = prettyPrintable(details, entry, path, sourceContent)
-  const copy = printable ? prettyCopy(details, entry, path, sourceContent) : null
+  const copy = printable ? prettyCopy(details, entry, path, sourceContent, () => { if (state.bundleSourceFile === path) render() }) : null
   const pretty = copy?.status === 'ready'
   const content = pretty ? copy.text : sourceContent
   const fileFindings = pretty ? [] : sourceFileFindings

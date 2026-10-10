@@ -3,15 +3,8 @@ import { createHash } from 'node:crypto'
 import { setImmediate } from 'node:timers/promises'
 import { beforeEach, mock, test } from 'node:test'
 
-const state = { bundleSourcePretty: false, bundleSourceFile: null }
-mock.module('../client/index.js', { exports: {
-  state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
-  readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
-} })
-const renders = []
-mock.module('../ui/view/render.js', { exports: { render() { renders.push(state.bundleSourceFile) } } })
-mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
-mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
+const state = { bundleSourcePretty: false }
+mock.module('../client/index.js', { exports: { state } })
 // Each request is answered by the next of `answers`, a text or an error.
 const answers = [], requests = []
 const answer = () => {
@@ -19,12 +12,13 @@ const answer = () => {
   return next instanceof Error ? Promise.reject(next) : Promise.resolve(next)
 }
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
-  fetchNpmPackage() {}, fetchNpmSocket: () => Promise.resolve({ socket: null }), fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
   fetchPrettyBundleFile: (...args) => { requests.push(['bundle', ...args]); return answer() },
   fetchPrettyNpmFile: (...args) => { requests.push(['npm', ...args]); return answer() },
 } })
-const { prettyCopy, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { prettyCopy: copyOf, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
+// Each copy asked for here notes its path once it comes, as a view repaints.
+const renders = []
+const prettyCopy = (details, entry, path, content) => copyOf(details, entry, path, content, () => renders.push(path))
 
 const minified = `${'var a=1;'.repeat(200)}\n`
 const readable = 'export const a = 1\n'
@@ -63,7 +57,6 @@ test('only a managed bundle\'s or npm version\'s minified code is offered pretty
 
 test('a bundle file\'s copy is asked for by its metadata hash once the toggle is on, and kept', async () => {
   const details = bundleOf({ 'dist/app.min.js': minified })
-  state.bundleSourceFile = 'dist/app.min.js'
   assert.equal(prettyCopy(details, managed, 'dist/app.min.js', minified), null, 'off by default')
   assert.equal(requests.length, 0)
   togglePrettySource()
@@ -71,7 +64,7 @@ test('a bundle file\'s copy is asked for by its metadata hash once the toggle is
   assert.deepEqual(prettyCopy(details, managed, 'dist/app.min.js', minified), { status: 'loading' })
   await settled()
   assert.deepEqual(requests, [['bundle', 'bundle-1', 'dist/app.min.js', hashOf(minified)]])
-  assert.deepEqual(renders, ['dist/app.min.js'], 'the open file repaints with its copy')
+  assert.deepEqual(renders, ['dist/app.min.js'], 'the view that asked repaints with its copy')
   assert.deepEqual(prettyCopy(details, managed, 'dist/app.min.js', minified), { status: 'ready', text: 'var a = 1;\n' })
   togglePrettySource()
   assert.equal(prettyCopy(details, managed, 'dist/app.min.js', minified), null)
