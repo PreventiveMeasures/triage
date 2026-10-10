@@ -249,7 +249,7 @@ const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
 const JS = {
   // A regular expression first where a value starts (after `=>` too), so a quote in it (`/["']/`) starts no string.
-  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>]|\b(?:case|return|throw|typeof|void))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
+  stringOrComment: /((?<=(?:^|[(,=:[!&|?{};>]|\b(?:case|do|else|return|throw|typeof|void))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gmu,
   // Beside punctuation (`a, b`, `x = 1`), not between two words (`return a`),
   droppable: /(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu,
   // nor between two `+` or two `-`: `a+ +b` is no `a++b`.
@@ -267,8 +267,11 @@ const CSS = {
 }
 const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
 function minifiedCode(text, { stringOrComment, droppable, needed }) {
-  // Its lines of code alone, as long as what is on them: a comment set aside leaves nothing.
-  const lines = text.replaceAll(stringOrComment, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
+  // Its lines of code alone, as long as what is on them: a comment set aside
+  // leaves nothing but its line breaks, a string or template `""` and its, so
+  // the code either side stays apart.
+  const lines = text.replaceAll(stringOrComment, (match, string) => (string === undefined ? '' : '""') + match.replaceAll(/[^\n]/gu, ''))
+    .replaceAll(/^[ \t]+/gmu, '')
     .split('\n').filter(line => line.trim() !== '')
   const code = lines.join('\n'), length = code.length - (lines.length - 1)
   // Counted by character: a run aligning `=` is as many spaces as it is wide.

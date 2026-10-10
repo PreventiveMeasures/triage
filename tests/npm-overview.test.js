@@ -132,6 +132,11 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('lib/stub.js', `// ${'We may reimplement some of the legacy private APIs here. '.repeat(3)}\n`), 'ascii', 'nor one of comments alone')
   assert.equal(category('lib/stub.js', `${Array.from({ length: 102 }, () => `// ${'ordinary words '.repeat(8)}`).join('\n')}\nexport{};\n`), 'ascii',
     'nor one of comments around a line of code')
+  const code60 = 'x=Object.defineProperty(a,b,{value:c,configurable:!0});y=z;'
+  assert.equal(category('lib/split.js', `${code60}/* ${'ordinary words '.repeat(6)}\n${'more words '.repeat(6)} */${code60}\n`), 'ascii',
+    'a comment spanning lines leaves its code on them')
+  assert.equal(category('dist/a.mjs', `if(a)b();else/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
+    'a regular expression after `else` too')
   assert.equal(category('dist/a.mjs', `const f=x=>/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
     'a regular expression after `=>` too')
   assert.equal(category('dist/g.css', `${'.a{width:calc(1px + var(--x))}'.repeat(5)}\n`), 'minified', 'a sum\'s spaces in calc() needed, nested too')
