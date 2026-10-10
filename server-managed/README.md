@@ -1041,10 +1041,12 @@ control. A version shows in the bundle view with four tabs:
   characters (the C0 ones but tab, line feed and carriage return, DEL, the
   C1 ones, and the bidirectional controls U+202A–U+202E and U+2066–U+2069),
   unexpected long lines (lines over 1,000 characters among readable ones),
-  minified (most of its text on such lines, or named `.min.` with any), and
-  source maps (`.map`). Prose (Markdown, text, licenses and changelogs) is
-  readable whatever its lines' lengths, and a `sourceMappingURL` comment's
-  line counts for none. Then the manifest's facts: description, license
+  minified (most of its text on such lines, or named `.min.` with any), source
+  maps (`.map`), and inline source maps (code with a line that is a
+  `sourceMappingURL` comment holding its map as a `data:` URL, minified or
+  not, its tag giving the map's size). Prose (Markdown, text, licenses and
+  changelogs) is readable whatever its lines' lengths, and an inline map's
+  line counts for none, nor for how much of a file is on long lines. Then the manifest's facts: description, license
   (each license in its expression opening its file in the package: the one
   named after it, as `LICENSE-APACHE` for `Apache-2.0`, else its only license
   file), author (linking the npm profile of the account that published it),

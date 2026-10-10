@@ -72,7 +72,7 @@ test('a file is ASCII or UTF-8 text, either with control characters, or binary',
   assert.deepEqual(npmTextEncoding('plain'), { kind: 'ascii', controls: null })
 })
 
-test('a file reads as text, or is not UTF-8, holds controls, is a source map, minified, or has unexpected long lines', () => {
+test('a file reads as text, or is not UTF-8, holds controls, is a source map, has one in it, is minified, or has unexpected long lines', () => {
   const category = (path, text) => npmFileReadability(path, text).category
   const long = 'x'.repeat(NPM_LONG_LINE + 1)
   const code = Array.from({ length: 40 }, (_, i) => `export const value${i} = ${i}`).join('\n')
@@ -86,7 +86,16 @@ test('a file reads as text, or is not UTF-8, holds controls, is a source map, mi
   assert.equal(category('dist/a.min.js', `${code}\n${long}`), 'minified', 'named minified, with any long line')
   assert.equal(category('lib/a.js', `${code}\n${code}\nconst payload = '${long}'\n${code}`), 'long', 'a long line among readable ones')
   assert.equal(category('lib/a.js', `${code}\r\n${'y'.repeat(NPM_LONG_LINE)}\r\n${code}`), 'ascii', 'up to the limit, a carriage return aside')
-  assert.equal(category('lib/a.js', `${code}\n//# sourceMappingURL=data:application/json;base64,${long}`), 'ascii', 'an inline source map comment is no long line')
+  const inline = `//# sourceMappingURL=data:application/json;charset=utf-8;base64,${long.repeat(8)}`
+  assert.equal(category('lib/a.js', `${code}\n//# sourceMappingURL=a.js.map`), 'ascii', 'a source map beside it')
+  assert.equal(category('lib/a.js', `${code}\n${inline}`), 'inline-map', 'its source map in it, which is no long line')
+  assert.equal(category('lib/a.css', `a { b: c }\n/*# sourceMappingURL=data:application/json;base64,e30= */`), 'inline-map')
+  assert.equal(category('dist/a.js', `${long}${long}\n${code}\n${inline}`), 'inline-map', 'minified, the map not counted against it')
+  assert.equal(category('lib/a.js', `${code}\n${code}\nconst payload = '${long}'\n${code}\n${inline}`), 'long', 'unexpected long lines before its map')
+  assert.equal(npmFileReadability('lib/a.js', `${code}\n${inline}`).inlineMap, inline.length)
+  assert.equal(category('lib/a.js', `${code}\nconst map = \`\n//# sourceMappingURL=data:application/json;base64,\${encode(map)}\``), 'ascii',
+    'code that writes one has none')
+  assert.equal(category('lib/a.js', `${code}\n//# sourceMappingURL=data:application/json,%7B%22version%22%3A3%7D`), 'inline-map', 'percent-encoded')
   for (const prose of ['README.md', 'docs/guide.markdown', 'LICENSE', 'CHANGELOG', 'notes.txt', 'LICENSE-MIT']) {
     assert.equal(category(prose, `${long} words\nmore`), 'ascii', `${prose}: prose wraps`)
   }

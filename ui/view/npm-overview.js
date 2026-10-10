@@ -206,36 +206,44 @@ export const NPM_LONG_LINE = 1000
 // Prose, which wraps where it is read: its long lines are paragraphs.
 const PROSE = /(?:\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|textile)|(?:^|\/)(?:licen[cs]e|copying|notice|authors|contributors|readme|changelog|changes|history)(?:[-.][^/]*)?)$/iu
 const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
+// A line that is all one, the map in it as a data: URL, base64 or
+// percent-encoded: not code that writes one.
+const INLINE_SOURCE_MAP = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=data:[^\s,]*,[\w+/=%.~-]*\s*(?:\*\/)?\s*$/u
 const SOURCE_MAP = /\.map$/iu
 const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
 // binary (no text), controls (text holding control or bidirectional
-// characters), map (a source map), minified (code mostly on long lines, or
-// named .min.), long (code with some lines longer than anyone writes), else
-// utf8 or ascii. Prose is readable whatever its lines' lengths, and a
-// sourceMappingURL comment's line counts for none. With npmTextEncoding's
-// `kind` and `controls`, and its `longest` line's length and `longLines`.
+// characters), map (a source map), long (code with some lines longer than
+// anyone writes), inline-map (code with its source map in it, minified or
+// not), minified (code mostly on long lines, or named .min.), else utf8 or
+// ascii. Prose is readable whatever its lines' lengths, and an inline
+// source map's line counts for none, nor for how much of the code is on long
+// lines. With npmTextEncoding's `kind` and `controls`,
+// its `longest` line's length and `longLines`, and how long its inline map
+// is (`inlineMap`, 0 for none).
 export function npmFileReadability(path, text) {
   const encoding = npmTextEncoding(text)
-  if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0 }
-  let longChars = 0, longLines = 0, longest = 0
+  if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, inlineMap: 0 }
+  let inlineMap = 0, longChars = 0, longLines = 0, longest = 0
   for (let at = 0; at <= text.length;) {
     const next = text.indexOf('\n', at)
     const end = next === -1 ? text.length : next
     const length = end - at - (text[end - 1] === '\r' ? 1 : 0)
-    if (length > NPM_LONG_LINE && !SOURCE_MAP_COMMENT.test(text.slice(at, at + 40))) {
+    if (SOURCE_MAP_COMMENT.test(text.slice(at, at + 64)) && INLINE_SOURCE_MAP.test(text.slice(at, end))) inlineMap += length
+    else if (length > NPM_LONG_LINE) {
       longest = Math.max(longest, length)
       longLines++
       longChars += length
-    } else longest = Math.max(longest, Math.min(length, NPM_LONG_LINE))
+    } else longest = Math.max(longest, length)
     at = end + 1
   }
-  const read = { ...encoding, longest, longLines }
+  const read = { ...encoding, longest, longLines, inlineMap }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
-  if (longLines === 0 || PROSE.test(path)) return { ...read, category: encoding.kind }
-  return { ...read, category: longChars / text.length >= .5 || MINIFIED_NAME.test(path) ? 'minified' : 'long' }
+  if (longLines === 0 || PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
+  if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
+  return { ...read, category: inlineMap > 0 ? 'inline-map' : 'minified' }
 }
 
 // Each category: its name, its tag in the Files list, and how it is marked,
@@ -247,6 +255,7 @@ const READABILITY = new Map([
   ['long', { name: 'Unexpected long lines', tag: 'Long lines', mark: 'warn' }],
   ['minified', { name: 'Minified', tag: 'Minified', mark: 'notice' }],
   ['map', { name: 'Source maps', tag: 'Map', mark: 'notice' }],
+  ['inline-map', { name: 'Inline source maps', tag: 'Inline map', mark: 'notice' }],
   ['utf8', { name: 'UTF-8', tag: 'UTF-8', mark: null }],
   ['ascii', { name: 'ASCII', tag: 'ASCII', mark: null }],
 ])
@@ -291,12 +300,13 @@ function controlsNote(controls) {
   return `Control characters: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
 }
 
-function readabilityNote({ category, controls, longLines, longest }) {
+function readabilityNote({ category, controls, longLines, longest, inlineMap }) {
   const lines = () => `${longLines.toLocaleString('en')} ${longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${longest.toLocaleString('en')}`
   switch (category) {
     case 'binary': return 'Not UTF-8 text, or holding a NUL: there is no text to read'
     case 'controls': return controlsNote(controls)
     case 'map': return 'A source map'
+    case 'inline-map': return `Inline source map, ${formatBytes(inlineMap)}${longLines > 0 ? `; minified: ${lines()}` : ''}`
     case 'minified': return `Minified: ${lines()}`
     case 'long': return `${lines()}, among readable ones`
     default: return nothing
