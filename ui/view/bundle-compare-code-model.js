@@ -80,12 +80,32 @@ function nameless(text) {
   const key = [], names = [[]], setAside = []
   const opens = []
   // Each block a scope, declaring what is declared in it (its function's
-  // parameters too, `pending` until it opens, each read from it), seen from
-  // it and the blocks in it. Each declaration is taken to be its block's, so
-  // a `var` read outside its block is a global's, kept.
+  // parameters too, and a function expression's own name, `pending` until it
+  // opens, each read from it), seen from it and the blocks in it. So are a
+  // concise arrow's body (`arrows`, the depths where a `,` or `;` ends it)
+  // and a `for` from its `(` to the end of its body (`loops`). Each
+  // declaration is taken to be its block's, so a `var` read outside its
+  // block is a global's, kept.
   const scopes = [{ names: new Set(), parent: -1 }]
-  let pending = null, scope = 0
+  const arrows = [], loops = []
+  let pending = null, scope = 0, self = null
   const declare = name => scopes[scope].names.add(name)
+  const enter = (entries = []) => {
+    scopes.push({ names: new Set(entries.map(({ name }) => name)), parent: scope })
+    scope = scopes.length - 1
+    for (const { aside } of entries) if (aside) aside[3] = scope
+  }
+  const endArrows = depth => {
+    while (arrows.length > 0 && arrows.at(-1) >= depth) {
+      arrows.pop()
+      scope = scopes[scope].parent
+    }
+  }
+  const endLoops = depth => {
+    while (loops.length > 0 && loops.at(-1).body && loops.at(-1).depth >= depth) scope = scopes[loops.pop().scope].parent
+  }
+  // Where a statement starts, a `function` or `class` declares its name.
+  const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default'
   const declaredFrom = (name, from) => {
     for (let at = from; at !== -1; at = scopes[at].parent) if (scopes[at].names.has(name)) return true
     return false
@@ -106,9 +126,11 @@ function nameless(text) {
     return false
   }
   // `exporting` between `export` and its name; `naming` before a name
-  // declared as `function a` is; `extending` the depth of an `extends`
-  // whose class body is the next `{` there.
+  // declared as `function a` is, `named` by which word and whether as a
+  // statement; `extending` the depth of an `extends` whose class body is the
+  // next `{` there.
   let at = 0, exporting = false, extending = -1, keyPlace = false, last = null, naming = false
+  let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
     for (let i = segment.indexOf('\n'); i !== -1; i = segment.indexOf('\n', i + 1)) names.push([])
@@ -120,6 +142,8 @@ function nameless(text) {
     const line = segment.lastIndexOf('\n')
     const ends = line !== -1 && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd()) && !/^[,=+\-*/%&|^<>?:.)\]}]/u.test(segment.slice(line + 1).trimStart())
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
+    if (ends || segment.includes(',') || segment.includes(';')) endArrows(opens.length)
+    if (ends || segment.includes(';')) endLoops(opens.length)
     let end = segment.length
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
@@ -171,13 +195,13 @@ function nameless(text) {
       // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
       const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object'
         : first === '(' && CONTROL.has(last) ? 'control' : first === '[' && keyPlace ? 'computed' : first
+      if (open === 'control' && last === 'for') {
+        enter()
+        loops.push({ body: false, depth: opens.length, scope })
+      }
       opens.push(open)
       if (open === '(') groups.push({ depth: opens.length, names: [] })
-      if (open === 'block') {
-        scopes.push({ names: new Set(pending?.map(({ name }) => name)), parent: scope })
-        scope = scopes.length - 1
-        for (const { aside } of pending ?? []) if (aside) aside[3] = scope
-      }
+      if (open === 'block') enter(pending ?? [])
       if (first === '{') pending = null
       last = first
       keyPlace = first === '{' && !block
@@ -185,12 +209,19 @@ function nameless(text) {
     } else if (first === ')' || first === ']' || first === '}') {
       key.push(token)
       const open = opens.pop()
+      endArrows(opens.length + 1)
       if (open === 'block') scope = scopes[scope].parent
+      if (open === 'control' && loops.at(-1)?.depth === opens.length) loops.at(-1).body = true
+      else endLoops(first === '}' ? opens.length : opens.length + 1)
       if (open === '(') {
         const group = groups.pop()
         BODY.lastIndex = ARROW.lastIndex = at
-        if (BODY.test(text)) pending = group.names
-        else if (ARROW.test(text)) for (const { name } of group.names) declare(name)
+        if (BODY.test(text)) pending = self ? [...group.names, self] : group.names
+        else if (ARROW.test(text)) {
+          enter(group.names)
+          arrows.push(opens.length)
+        }
+        self = null
       }
       // After a statement's condition, as after `;`, a statement starts.
       last = open === 'control' ? ';' : first
@@ -214,15 +245,24 @@ function nameless(text) {
       ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
       const read = text[at] === ':' || last === '.'
-      if (!read && (naming || binding)) declare(token)
+      // A function expression's name is its own body's, a class expression's nobody's.
+      if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
+        if (named.word === 'function') self = { aside, name: token }
+      } else if (!read && (naming || binding)) declare(token)
       else if (!read && ARROW_BODY.test(text)) pending = [{ aside, name: token }]
-      else if (!read && ARROW.test(text)) declare(token)
+      else if (!read && ARROW.test(text)) {
+        enter([{ aside, name: token }])
+        arrows.push(opens.length)
+      }
       if (!read && group && !inDefault(group.depth) && !inComputed(group.depth)) group.names.push({ aside, name: token })
       if (token === 'extends') extending = opens.length
       if (binding && (token === 'in' || token === 'of')) declaration.binding = false
       if (token === 'const' || token === 'let' || token === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
       if (token === 'export') exporting = true
       else if (!DECLARES.has(token)) exporting = false
+      if (token === 'async') named = { statement: statement(last), word: null }
+      if (token === 'function' || token === 'class') named = { statement: last === 'async' ? named.statement : statement(last), word: token }
+      else if (NAMING.has(token)) named = { statement: true, word: token }
       naming = NAMING.has(token) || (naming && token === 'async')
       // `for await (` is a `for`'s condition still.
       if (!(keyPlace && MODIFIERS.has(token)) && !(token === 'await' && last === 'for')) {
