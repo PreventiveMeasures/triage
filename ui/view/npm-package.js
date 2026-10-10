@@ -8,13 +8,18 @@ import { LitElement, html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-packages.js'
-import { fetchNpmPackage, fetchNpmVersions } from './client-managed.js'
+import { compareModeField, compareModeOf } from '../../common/managed/routes.js'
+import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
-import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from './icons.js'
+import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
+import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
+import { sourceFileIcon } from './source-file-icon.js'
+import { overviewColumn } from './bundle-overview-column.js'
+import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
 const NPM_PACKAGE_URL = /^https?:\/\/(?:www\.)?npmjs\.(?:com|org)\/package\/((?:@[^/]+\/)?[^/?#]+)(?:\/v\/([^/?#]+))?\/?(?:[?#].*)?$/u
@@ -42,12 +47,22 @@ export function npmPackageEntries(manifest, paths) {
   const entries = []
   for (const field of [manifest?.main, manifest?.module, 'index.js']) {
     if (typeof field !== 'string') continue
-    const base = field.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '')
-    const found = [base, `${base}.js`, `${base}.cjs`, `${base}.mjs`, `${base}/index.js`].find(path => path && files.has(path))
+    const found = npmEntryFile(field, files)
     if (found && !entries.includes(found)) entries.push(found)
   }
   return entries
 }
+
+// The file of `files` an entry point names, as require would find it:
+// `./lib/a` as `lib/a`, `lib/a.js`, `.cjs` or `.mjs`, or `lib/a/index.js`;
+// undefined where none is there. The Overview's entry points and the file
+// Code opens on both resolve this way.
+export function npmEntryFile(field, files) {
+  const base = npmEntryPath(field)
+  return [base, `${base}.js`, `${base}.cjs`, `${base}.mjs`, `${base}/index.js`].find(path => path && files?.has(path))
+}
+
+const npmEntryPath = field => field.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '')
 
 // The bundle view's entry for a package version. It has no managed id, so
 // nothing reads it through the bundle routes; `npm` names the version.
@@ -90,19 +105,21 @@ export function npmPackageRoute(entry, tab = 'overview', location = null) {
 // since, as to a team's npm scopes.
 const KEPT_VERSIONS = 3
 const keptVersions = new Map()
-const versionLists = new Map()
-// A list that failed is asked for again after a pause, twice as long after
-// each failure in a row, on a render scheduled for then: not on every render,
+// What else is read about a package (its version list, figures, advisories),
+// by kind and name.
+const packageData = new Map()
+// What failed is asked for again after a pause, twice as long after each
+// failure in a row, on a render scheduled for then: not on every render,
 // which each answer brings.
-const VERSION_LIST_RETRY_MS = 10_000
-const VERSION_LIST_RETRY_MAX_MS = 5 * 60_000
+const DATA_RETRY_MS = 10_000
+const DATA_RETRY_MAX_MS = 5 * 60_000
 let keptFor = null
 
 function sessionKept() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
   if (session !== keptFor) {
     keptVersions.clear()
-    versionLists.clear()
+    packageData.clear()
     keptFor = session
   }
   return keptVersions
@@ -130,33 +147,39 @@ export async function loadNpmVersion(name, spec, options) {
   return { entry, details }
 }
 
-// A package's versions, newest first, and dist-tags: `{ status }` while the
-// server is asked ('loading', then 'ready' with `versions` and `distTags`,
-// or 'error' until a retry), each a new object, so the view repaints when it
-// arrives.
-export function npmVersionList(name) {
+// Something read about a package for this session, as `ask` answers and
+// `shape` keeps it: `{ status }` while the server is asked ('loading', then
+// 'ready' with what `shape` gives, or 'error' until a retry), each a new
+// object, so the view repaints when it arrives.
+export function npmPackageData(kind, name, ask, shape) {
   sessionKept()
-  const known = versionLists.get(name)
+  const key = `${kind}\0${name}`
+  const known = packageData.get(key)
   if (known && !(known.status === 'error' && Date.now() >= known.retryAt)) return known
   const loading = { status: 'loading', failures: known?.failures ?? 0 }
-  versionLists.set(name, loading)
-  fetchNpmVersions(name).then(
-    data => ({ status: 'ready', versions: data.versions ?? [], distTags: data.distTags ?? {} }),
+  packageData.set(key, loading)
+  ask().then(
+    data => ({ status: 'ready', ...shape(data) }),
     () => {
       const failures = loading.failures + 1
-      const wait = Math.min(VERSION_LIST_RETRY_MS * 2 ** (failures - 1), VERSION_LIST_RETRY_MAX_MS)
+      const wait = Math.min(DATA_RETRY_MS * 2 ** (failures - 1), DATA_RETRY_MAX_MS)
       return { status: 'error', failures, wait, retryAt: Date.now() + wait }
     },
-  ).then(list => {
-    if (versionLists.get(name) !== loading) return null
-    versionLists.set(name, list)
+  ).then(answer => {
+    if (packageData.get(key) !== loading) return null
+    packageData.set(key, answer)
     // A page left open repaints when the retry is due, and asks again if it
     // still shows the package.
-    if (list.status === 'error') setTimeout(() => { if (versionLists.get(name) === list) render() }, list.wait)
+    if (answer.status === 'error') setTimeout(() => { if (packageData.get(key) === answer) render() }, answer.wait)
     render()
     return null
   }).catch(() => {})
   return loading
+}
+
+// A package's versions, newest first, and dist-tags.
+export function npmVersionList(name) {
+  return npmPackageData('versions', name, () => fetchNpmVersions(name), data => ({ versions: data.versions ?? [], distTags: data.distTags ?? {} }))
 }
 
 function tagsByVersion(distTags = {}) {
@@ -165,22 +188,29 @@ function tagsByVersion(distTags = {}) {
   return tags
 }
 
+// A package's versions to pick from, newest first, `version` among them
+// though the list has not (or not yet) got it: `{ id, detail }`, its dist-tags
+// as its detail.
+function versionChoices(list, version) {
+  const tags = tagsByVersion(list.distTags)
+  const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
+  return versions.map(id => ({ id, detail: tags.get(id)?.join(', ') ?? '' }))
+}
+
 // What Compare offers a package version (bundle-compare.js `source`): the
 // package's other versions, newest first, compared with by their numbers,
 // and for its own side, every version, its own among them.
 export function npmCompareSource(entry) {
   const { name, version } = entry.npm
   const list = npmVersionList(name)
-  const tags = tagsByVersion(list.distTags)
-  const option = id => ({ id, name: `${name}@${id}`, format: 'npm', detail: tags.get(id)?.join(', ') ?? '' })
-  const versions = list.versions?.includes(version) ? list.versions : [version, ...list.versions ?? []]
+  const choices = versionChoices(list, version).map(({ id, detail }) => ({ id, name: `${name}@${id}`, displayLabel: id, format: 'npm', detail }))
   return {
     noun: 'version',
     base: version,
     pending: list.status === 'loading',
     error: list.status === 'error' ? `Couldn't list the versions of ${name}.` : null,
-    options: versions.filter(other => other !== version).map(option),
-    choices: versions.map(option),
+    options: choices.filter(choice => choice.id !== version),
+    choices,
     name: id => id === entry.integrity || id === version ? entry.name : `${name}@${id}`,
     load: async id => (await loadNpmVersion(name, id)).details,
     // In place of Packages, which a single package has no use for.
@@ -189,15 +219,15 @@ export function npmCompareSource(entry) {
     open: (base, target, mode) => {
       if (!isManagedUiMode() || !managedHistory?.active) return
       void managedHistory.navigate({ view: 'npm', packageName: name, packageSpec: base, bundleTab: 'compare',
-        ...(target ? { compareSpec: target, ...(mode === 'code' ? { compareMode: 'code' } : {}) } : {}) })
+        ...(target ? { compareSpec: target, ...compareModeField(mode) } : {}) })
     },
   }
 }
 
-export function navigateToNpm(packageName = null, packageSpec = null) {
+export function navigateToNpm(packageName = null, packageSpec = null, bundleTab = 'overview') {
   if (!isManagedUiMode() || !managedHistory?.active) return
   void managedHistory.navigate(packageName == null ? { view: 'npm' }
-    : { view: 'npm', packageName, packageSpec, bundleTab: 'overview' })
+    : { view: 'npm', packageName, packageSpec, bundleTab })
 }
 
 function showLookup(lookup) {
@@ -248,7 +278,7 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
       ...(route.line == null ? {} : { line: route.line }), ...(route.endLine == null ? {} : { endLine: route.endLine }) }
   }
   if (tab === 'compare' && route.compareSpec != null) {
-    state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: route.compareMode === 'code' ? 'code' : 'overview' }
+    state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: compareModeOf(route.compareMode) }
   }
   state.bundleDetails = details
   state.npmLookup = { input: entry.name, pending: false, error: null }
@@ -329,75 +359,128 @@ export function npmDependencyChanges(base, other) {
 }
 
 // The Overview's Dependencies column, in place of the Packages one a single
-// package has no use for. Each dependency opens in the viewer, at its latest.
+// package has no use for, where it has any (npmOverviewExtras says where it
+// has none). Each dependency opens in the viewer, at its latest.
 export function npmDependenciesColumn(entry) {
   const rows = npmDependencies(entry.npm.manifest)
-  return html`<section class="bundles-overview-col">
-    <header class="bundles-overview-col-head">
-      <span class="bundles-overview-col-title">Dependencies <span class="bundles-overview-col-count">${rows.length}</span></span>
-    </header>
-    <div class="bundles-overview-col-body bundles-overview-col-body--list">${rows.length === 0
-      ? html`<p class="bundles-overview-col-empty">No dependencies.</p>`
-      : html`<ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
-        const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
-          ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
-          <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
-        return html`<li>${opens
-          ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${row}</button>`
-          : html`<div class="bundles-source-row npm-dependency-row is-resource">${row}</div>`}</li>`
-      })}</ul>`}</div>
-  </section>`
+  if (rows.length === 0) return nothing
+  return overviewColumn({ title: 'Dependencies', count: rows.length, list: true, body: html`<ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
+      const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
+        ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
+        <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
+      return html`<li>${opens
+        ? html`<button type="button" class="bundles-source-row npm-dependency-row" data-npm-dependency=${opens} @click=${() => navigateToNpm(opens)}>${row}</button>`
+        : html`<div class="bundles-source-row npm-dependency-row is-resource">${row}</div>`}</li>`
+    })}</ul>` })
+}
+
+// The tags pointing to a version's publish commit, after it as a bundle's
+// follow its commit, each linking to its release on GitHub; nothing until
+// they arrive, or where the server has none (npm-insights.ts npmCommitTags).
+function npmCommitTags(entry, github) {
+  const { name, version } = entry.npm
+  const data = npmPackageData('tags', `${name}@${version}`, () => fetchNpmTags(name, version),
+    answer => ({ tags: Array.isArray(answer.tags) ? answer.tags.filter(tag => typeof tag === 'string' && tag) : [] }))
+  if (data.status !== 'ready' || data.tags.length === 0) return nothing
+  return html`<span class="bundle-origin-tags">${data.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link"
+    href=${githubTagHref(github, tag)} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag}</span></a>`)}</span>`
+}
+
+// A file of the package, as a fact names it: a button opening it in the
+// source viewer where the package has it (`files`, by path, none until its
+// files are read), else its name.
+function factFile(path, files, label = path) {
+  return files?.has(path) ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${path} data-tooltip=${`Open ${path}`}>${label}</button>` : label
+}
+
+// Its license files at its root: `LICENSE`, or one a license, such as
+// `LICENSE-MIT`, `LICENCE-APACHE.md`.
+export const NPM_LICENSE_FILE = /^licen[cs]e(?:-[\w.]+)?(?:\.(?:md|txt))?$/iu
+
+// A license expression's parts, `{ text, file }`, each license in it with
+// the file of `paths` it opens: the one named after it (`LICENSE-APACHE` for
+// `Apache-2.0`), else the package's only license file; null for none, and
+// for the operators and parentheses between them.
+export function npmLicenseParts(license, paths) {
+  const licenseFiles = paths.filter(path => NPM_LICENSE_FILE.test(path))
+  const fileFor = id => {
+    const key = id.toLowerCase().match(/^[a-z]+/u)?.[0] ?? ''
+    const named = licenseFiles.find(path => {
+      const suffix = path.toLowerCase().match(/^licen[cs]e-([a-z]+)/u)?.[1]
+      return suffix !== undefined && key !== '' && (suffix.startsWith(key) || key.startsWith(suffix))
+    })
+    return named ?? (licenseFiles.length === 1 ? licenseFiles[0] : null)
+  }
+  return license.split(/(\s+(?:OR|AND|WITH)\s+|[()])/u).filter(Boolean)
+    .map(text => ({ text, file: /^[\w.+-]+$/u.test(text) && !/^(?:OR|AND|WITH)$/u.test(text) ? fileFor(text) : null }))
 }
 
 // The Overview's metadata for a package version, beside the file inventory
-// the bundle Overview lists: `meta` names it, `extras` describes it.
-export function npmOverviewMeta(entry, prefix = '') {
-  const { name, version, manifest } = entry.npm
+// the bundle Overview lists: `meta` names it, `extras` describes it. `files`
+// are the package's file paths, once read.
+export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, files = null } = {}) {
+  const { manifest } = entry.npm
   const github = manifest.github?.github
-  // The commit it was published from, where npm recorded one, and the
-  // directory it sits in, where its repository names one.
-  const directory = manifest.github?.directory ?? ''
-  const tree = github && (manifest.gitHead || directory)
-    ? `https://github.com/${github}/tree/${manifest.gitHead ?? 'HEAD'}${directory ? `/${directory.split('/').map(encodeURIComponent).join('/')}` : ''}`
-    : github ? `https://github.com/${github}` : null
-  return html`<dl class="bundles-detail-meta">
-    <dt>Package</dt><dd class="mono">${name}</dd>
-    <dt>Version</dt><dd><npm-version-select .name=${name} .version=${version} .list=${npmVersionList(name)}></npm-version-select></dd>
+  // Its repository, at the commit it was published from where npm recorded
+  // one, and in the directory its repository names, as a bundle's links.
+  const origin = github ? bundleOriginLinks({ repo: { github, directory: manifest.github.directory ?? '', commit: manifest.gitHead } })[0] : null
+  // Its name and version are the header's (render-bundle.js), the version
+  // to switch to there too.
+  return html`<dl class="bundles-detail-meta npm-facts">
     ${entry.npm.private ? html`<dt>Access</dt><dd>Private</dd>` : nothing}
     ${manifest.deprecated ? html`<dt>Deprecated</dt><dd class="npm-deprecated">${manifest.deprecated}</dd>` : nothing}
     ${manifest.description ? html`<dt>Description</dt><dd>${manifest.description}</dd>` : nothing}
-    ${manifest.license ? html`<dt>License</dt><dd>${manifest.license}</dd>` : nothing}
-    ${manifest.author ? html`<dt>Author</dt><dd>${manifest.author}</dd>` : nothing}
-    ${tree ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
-      <a class="bundle-origin-link" href=${tree} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${github}${directory ? `/${directory}` : ''}</span></a>
-      ${manifest.gitHead ? html`<a class="bundle-origin-link bundle-commit-link" href=${`https://github.com/${github}/commit/${manifest.gitHead}`} data-tooltip=${manifest.gitHead} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${manifest.gitHead.slice(0, 7)}</span></a>` : nothing}
-    </dd>` : nothing}
+    ${manifest.license ? html`<dt>License</dt><dd>${npmLicenseParts(manifest.license, [...files ?? []]).map(({ text, file }) => factFile(file, files, text))}</dd>` : nothing}
+    ${manifest.author || manifest.publisher ? html`<dt>Author</dt><dd class="bundle-origin-row">${manifest.publisher
+      ? html`<a class="bundle-origin-link" href=${`https://www.npmjs.com/~${encodeURIComponent(manifest.publisher)}`} target="_blank" rel="noopener noreferrer"
+          data-tooltip=${`Published by ~${manifest.publisher}: their profile on npmjs.com`}><span>${manifest.author ?? `~${manifest.publisher}`}</span></a>
+        ${manifest.author ? html`<span class="npm-publisher">~${manifest.publisher}</span>` : nothing}`
+      : manifest.author}</dd>` : nothing}
+    ${origin ? html`<dt>GitHub</dt><dd class="bundle-origin-row">
+      <a class="bundle-origin-link" href=${origin.href} target="_blank" rel="noopener noreferrer">${unsafeHTML(GITHUB_ICON_SVG)}<span>${origin.text}</span></a>
+      ${githubFigures}
+    </dd>
+    <dt>Commit</dt><dd class="bundle-origin-row">${origin.commit
+      ? html`<a class="bundle-origin-link bundle-commit-link" href=${origin.commit.href} data-tooltip=${origin.commit.hash} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${origin.commit.text}</span></a>
+        ${npmCommitTags(entry, github)}`
+      : html`<span class="npm-commit-missing">Not recorded at publish</span>`}</dd>` : nothing}
     ${manifest.homepage && /^https?:\/\//iu.test(manifest.homepage) ? html`<dt>Homepage</dt><dd><a class="bundle-origin-link" href=${manifest.homepage} target="_blank" rel="noopener noreferrer"><span>${manifest.homepage}</span></a></dd>` : nothing}
-    <dt>npm</dt><dd><a class="bundle-origin-link" href=${`https://www.npmjs.com/package/${name}/v/${version}`} target="_blank" rel="noopener noreferrer"><span>npmjs.com/package/${name}</span></a></dd>
-    <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
+    <dt>Integrity</dt><dd class="mono bundle-integrity" data-tooltip-truncated data-tooltip=${entry.integrity}>${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
   </dl>`
 }
 
-export function npmOverviewExtras(entry) {
+// The package's entry points, each with its file's icon, Main and Module in
+// one row where they name the same file; its kind of module, bins, engines,
+// install scripts and, where it has none, its dependencies.
+export function npmOverviewExtras(entry, files = null) {
   const { manifest } = entry.npm
-  const entryFields = ['main', 'module', 'types', 'type'].filter(field => manifest[field])
+  const entries = ['main', 'module', 'types'].filter(field => typeof manifest[field] === 'string')
+    .map(field => ({ label: `${field[0].toUpperCase()}${field.slice(1)}`, path: manifest[field], file: npmEntryFile(manifest[field], files) ?? npmEntryPath(manifest[field]) }))
+  const main = entries.find(row => row.label === 'Main'), module = entries.find(row => row.label === 'Module')
+  if (main && module && main.file === module.file) {
+    main.label = 'Main, Module'
+    entries.splice(entries.indexOf(module), 1)
+  }
   const bins = Object.keys(manifest.bin ?? {})
   const scripts = Object.keys(manifest.installScripts ?? {})
   return html`
-    ${entryFields.map(field => html`<dt>${field[0].toUpperCase()}${field.slice(1)}</dt><dd class="mono">${manifest[field]}</dd>`)}
+    ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file)}${factFile(file, files, path)}</span></dd>`)}
+    ${manifest.type ? html`<dt>Type</dt><dd class="mono">${manifest.type}</dd>` : nothing}
     ${bins.length > 0 ? html`<dt>Bin</dt><dd class="mono">${bins.join(', ')}</dd>` : nothing}
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="mono npm-install-scripts"
-      data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}`
+      data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}
+    ${npmDependencies(manifest).length === 0 ? html`<dt>Dependencies</dt><dd>None</dd>` : nothing}`
 }
 
-// The version shown, with the package's other versions to switch to
-// (npmVersionList). Until they arrive, or without them, as when the registry
-// can't be reached, the same select holds just the version, disabled, so the
-// row keeps its height when they do.
+// The version shown, in the header, with the package's other versions to
+// switch to (npmVersionList), as Compare's pickers offer them: searchable,
+// newest first, each with its dist-tags. Switching keeps the tab shown. Until
+// they arrive, or without them, as when the registry can't be reached, it
+// holds just the version, disabled.
 class NpmVersionSelect extends LitElement {
-  static properties = { name: {}, version: {}, list: { attribute: false } }
+  static properties = { name: {}, version: {}, tab: {}, list: { attribute: false } }
 
   createRenderRoot() { return this }
 
@@ -405,17 +488,17 @@ class NpmVersionSelect extends LitElement {
     super()
     this.name = ''
     this.version = ''
+    this.tab = 'overview'
     this.list = null
   }
 
   render() {
-    const data = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
-    const tags = tagsByVersion(data.distTags)
-    const versions = data.versions.includes(this.version) ? data.versions : [this.version, ...data.versions]
-    return html`<select class="npm-version-select mono" aria-label=${`Version of ${this.name}`} ?disabled=${versions.length <= 1}
-      aria-busy=${this.list?.status === 'loading' ? 'true' : nothing} @change=${event => navigateToNpm(this.name, event.target.value)}>
-      ${versions.map(version => html`<option value=${version} ?selected=${version === this.version}>${version}${tags.has(version) ? ` (${tags.get(version).join(', ')})` : ''}</option>`)}
-    </select>`
+    const list = this.list?.status === 'ready' ? this.list : { versions: [], distTags: {} }
+    const options = versionChoices(list, this.version).map(({ id, detail }) => ({ value: id, label: id, detail }))
+    return html`<bundle-selector .options=${options} .value=${this.version} noun="version" versions
+      label=${`Version of ${this.name}`} placeholder=${this.version} ?disabled=${options.length <= 1}
+      aria-busy=${this.list?.status === 'loading' ? 'true' : nothing}
+      @bundle-change=${event => { if (event.detail.value !== this.version) navigateToNpm(this.name, event.detail.value, this.tab) }}></bundle-selector>`
   }
 }
 if (!customElements.get('npm-version-select')) customElements.define('npm-version-select', NpmVersionSelect)

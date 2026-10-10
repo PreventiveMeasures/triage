@@ -61,6 +61,18 @@ export async function fetchNpmVersions(name, options) {
   return (await loadManagedBundle()).fetchNpmVersions(name, options)
 }
 
+export async function fetchNpmStats(name, options) {
+  return (await loadManagedBundle()).fetchNpmStats(name, options)
+}
+
+export async function fetchNpmAdvisories(name, options) {
+  return (await loadManagedBundle()).fetchNpmAdvisories(name, options)
+}
+
+export async function fetchNpmTags(name, version, options) {
+  return (await loadManagedBundle()).fetchNpmTags(name, version, options)
+}
+
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }

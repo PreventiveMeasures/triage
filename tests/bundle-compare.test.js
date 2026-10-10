@@ -12,6 +12,11 @@ mock.module('../ui/view/bundle-load.js', { namedExports: {
   takeHandedOffBundle(integrity) { const parsed = handedOff?.bundles.get(integrity) ?? null; handedOff?.bundles.delete(integrity); return parsed },
 } })
 mock.module('../ui/view/bundle-compare-code.js', { namedExports: {} })
+// The rows the Diff view would list, as each test sets them.
+let combinedRows = 10
+mock.module('../ui/view/bundle-compare-all.js', { namedExports: {
+  COMBINED_DIFF_MAX: 8000, combinedDiffRows: () => ({ rows: combinedRows, models: new Map() }),
+} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('../ui/view/bundle-scope-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
@@ -40,16 +45,31 @@ function compare() {
   return view
 }
 
-test('the summary row offers Overview and Code, Overview first, and a file row opens its diff in Code', () => {
+test('the summary row offers Overview, Code and Diff, Overview first, and a file row opens its diff in Code', () => {
   const view = compare()
   view._status = 'ready'
   const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
-  assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false'])
-  assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
+  assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false', 'false'])
+  assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code', 'Diff'])
   assert.match(renderText(view.render()), /class="bundle-compare-body"/u)
   view._openFile('app.js')
   assert.equal(view._mode, 'code')
   assert.equal(view._codePath, 'app.js')
+})
+
+test('Diff is offered only while its list is under 8000 rows; a link to a longer one shows the Overview', t => {
+  t.after(() => { combinedRows = 10 })
+  const view = compare()
+  view._status = 'ready'
+  view._mode = 'diff'
+  assert.match(renderText(view.render()), /<bundle-compare-all /u)
+  combinedRows = 8000
+  delete view._diffFor().combined
+  const tabs = renderText(view._renderSummary(view._diffFor())).match(/<div class="bundle-compare-modes"[^]*?<\/div>/u)?.[0] ?? ''
+  assert.deepEqual([...tabs.matchAll(/>(\w+)<\/button>/gu)].map(m => m[1]), ['Overview', 'Code'])
+  assert.deepEqual([...tabs.matchAll(/aria-selected=(\w+)/gu)].map(m => m[1]), ['true', 'false'])
+  assert.match(renderText(view.render()), /class="bundle-compare-body"/u)
+  assert.equal(view._mode, 'diff', 'the mode asked for stands, for when it fits')
 })
 
 test('Differences renders resolution-only changes as a collapsed File | Import | Before | After | Conditions table and a summary count', () => {
@@ -363,11 +383,11 @@ test('the Overview lists a renamed file under Changed as `{old → new}`, and th
 
 // A `source` offers what to compare with in place of the bundles on hand, as
 // an npm package version offers the package's other versions.
-function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', format: 'npm', detail: 'old' }], pending = false, error = null } = {}) {
+function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: 'old' }], pending = false, error = null } = {}) {
   const npm = (integrity, text) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: ['a.js'], sourcesContent: [text] } })
   const calls = { loads: [], opens: [] }
   const source = base => ({
-    noun: 'version', base, pending, error, options, choices: [{ id: base, name: `pkg@${base}`, format: 'npm', detail: '' }, ...options],
+    noun: 'version', base, pending, error, options, choices: [{ id: base, name: `pkg@${base}`, displayLabel: base, format: 'npm', detail: '' }, ...options],
     name: id => `pkg@${id.replace(/^sha512-/u, '')}`,
     load: id => { calls.loads.push(id); return Promise.resolve(npm(`sha512-${id}`, id)) },
     open: (opened, target, mode) => calls.opens.push([opened, target, mode]),
@@ -382,7 +402,7 @@ function sourced({ options = [{ id: '1.0.0', name: 'pkg@1.0.0', format: 'npm', d
 
 test('a source\'s options, names and loads stand in for the bundles on hand', async () => {
   const { view, calls } = sourced()
-  assert.deepEqual(view._otherOptions(), [{ id: '1.0.0', integrity: '1.0.0', kind: 'npm', format: 'npm', detail: 'old', filename: 'pkg@1.0.0', size: '—', summary: null }])
+  assert.deepEqual(view._otherOptions(), [{ id: '1.0.0', integrity: '1.0.0', kind: 'npm', format: 'npm', detail: 'old', filename: 'pkg@1.0.0', displayLabel: '1.0.0', size: '—', summary: null }])
   view.request = { bundle: 'sha512-2.0.0', target: '1.0.0', mode: 'code' }
   view.willUpdate(new Map([['request', null]]))
   assert.equal(view._targetIntegrity, '1.0.0')

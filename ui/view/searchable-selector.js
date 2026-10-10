@@ -1,6 +1,21 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 
+// The option the arrow `key` moves to from `options[index]`: in a list, the
+// next or the previous; in rows of as many as the first row holds, the one
+// beside it, or in line with it on the row below or above (the last where
+// the row below is short). Up from the first row is -1, the search field.
+function besideOption(options, index, key) {
+  const top = options[0].getBoundingClientRect().top
+  let columns = 1
+  while (columns < options.length && Math.abs(options[columns].getBoundingClientRect().top - top) < 1) columns++
+  if (columns === 1 && (key === 'ArrowLeft' || key === 'ArrowRight')) return index
+  const next = index + { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns }[key]
+  if (next < 0) return key === 'ArrowUp' ? -1 : index
+  const lastRow = Math.floor((options.length - 1) / columns)
+  return next < options.length ? next : Math.floor(index / columns) < lastRow ? options.length - 1 : index
+}
+
 // Shared presentation and keyboard behavior for repository, user, and bundle pickers.
 // Subclasses provide choices and labels; consumers own data and selection.
 export class SearchableSelector extends LitElement {
@@ -124,6 +139,8 @@ export class SearchableSelector extends LitElement {
     </div>`
   }
 
+  // The menu's least width, wider where it lists facets beside the options.
+  get menuWidth() { return 360 }
   optionIcon(option) { return option.initials ? html`<span class="avatar" aria-hidden="true">${option.initials}</span>` : nothing }
   optionTooltip(option) { return option.label }
 
@@ -162,7 +179,7 @@ export class SearchableSelector extends LitElement {
     const rect = this.renderRoot.querySelector('.trigger').getBoundingClientRect()
     const margin = 8
     const wide = menu.querySelector('.facets') != null
-    const width = Math.min(Math.max(rect.width, wide ? 560 : 360), window.innerWidth - margin * 2)
+    const width = Math.min(Math.max(rect.width, wide ? 560 : this.menuWidth), window.innerWidth - margin * 2)
     const below = window.innerHeight - rect.bottom - margin - 4
     const above = rect.top - margin - 4
     menu.style.width = `${width}px`
@@ -201,11 +218,14 @@ export class SearchableSelector extends LitElement {
       return
     }
     let next
-    if (event.key === 'ArrowDown') next = Math.min(index + 1, options.length - 1)
-    else if (event.key === 'ArrowUp') next = index - 1
-    else if (active !== input && event.key === 'Home') next = 0
-    else if (active !== input && event.key === 'End') next = options.length - 1
-    else if (active !== input && event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (active === input) {
+      if (event.key === 'ArrowDown') next = 0
+      else if (event.key === 'ArrowUp') next = -1
+      else return
+    } else if (event.key.startsWith('Arrow')) next = besideOption(options, index, event.key)
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = options.length - 1
+    else if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault(); this._query += event.key; input.focus(); return
     } else return
     event.preventDefault()

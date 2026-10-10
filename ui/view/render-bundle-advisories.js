@@ -10,18 +10,11 @@ import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
 import { bundleReasons } from '../../common/bundle-reasons.js'
-import { GITHUB_ICON_SVG, SCAN_ICON_SVG } from './icons.js'
-import { sourceNpmIcon } from './source-file-icon.js'
-import osvIcon from './osv-icon.svg'
+import { SCAN_ICON_SVG } from './icons.js'
+import { advisoryRow } from './advisory-parts.js'
 import './bundle-scope-selector.js'
 import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
 import { openWhyDialog } from './dialogs/why-dialog.js'
-
-const ADVISORY_SOURCES = new Map([
-  ['registry', { label: 'Source: npm registry', icon: sourceNpmIcon }],
-  ['repository', { label: 'Source: GitHub repository', icon: unsafeHTML(GITHUB_ICON_SVG) }],
-  ['osv', { label: 'Source: OSV', icon: osvIcon }],
-])
 
 const localCache = new Map()
 let managedCache = new Map(), managedScope = []
@@ -272,12 +265,6 @@ function severityRank(s) {
   return SEVERITY_RANK[s] ?? 999
 }
 
-// Capitalise the npm severity tag for display.
-function severityLabel(s) {
-  if (s === 'unknown') return 'Unrated'
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
-
 // First-time consent UI for the Advisories tab: explains what gets
 // sent (package names + versions, via the same-origin relay) before
 // the first request. The preference persists — no per-bundle re-prompt
@@ -438,82 +425,8 @@ function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurr
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">
-      ${sorted.map((a) => renderAdvisoryRow(a, isCurrent))}
+      ${sorted.map((a) => advisoryRow(a, ({ title, severity, details: markdown }) => openAdvisoryDetailsDialog({ heading: title, severity, markdown, isCurrent })))}
     </ul>
   </li>`
 }
 
-// Extract the GHSA id from the advisory URL. The npm registry's
-// response carries the id only as part of the URL
-// (`https://github.com/advisories/GHSA-xxxx-xxxx-xxxx`), not as a
-// dedicated field — pull it out via regex so we can render it as a
-// stable chip alongside the title. Returns null when the URL is
-// missing or doesn't follow the documented shape.
-function ghsaIdFrom(url) {
-  if (typeof url !== 'string') return null
-  const m = /\/(GHSA-[a-z0-9-]+)(?:[/?#]|$)/iu.exec(url)
-  return m ? m[1] : null
-}
-
-// External-link glyph rendered next to the GHSA id — bare diagonal
-// arrow filling the full 16×16 viewBox. `currentColor` so it tints
-// with the surrounding text (muted by default, accent on hover).
-const EXTERNAL_LINK_SVG = html`<svg class="bundle-advisory-ghsa-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M3 13L13 3"/>
-  <path d="M5 3h8v8"/>
-</svg>`
-
-// MITRE CWE link for a `CWE-1234`-shaped id — link form is
-// https://cwe.mitre.org/data/definitions/<n>.html. Anything else
-// (a non-canonical CWE label, a plain string like "n/a") renders
-// as plain text. Surfaces the numeric id only; the link is the
-// only side-channel the user gets to the upstream definition.
-function cweTemplate(c) {
-  const m = /^CWE-(\d+)$/u.exec(c)
-  if (!m) return html`<span>${c}</span>`
-  const url = `https://cwe.mitre.org/data/definitions/${m[1]}.html`
-  return html`<a class="bundle-advisory-cwe" href=${url} target="_blank" rel="noopener noreferrer">${c}</a>`
-}
-
-function renderAdvisoryRow(a, isCurrent) {
-  const sev = a.severity
-  const title = a.title
-  const cvssScore = typeof a.cvss?.score === 'number' ? a.cvss.score.toFixed(1) : ''
-  const cvssVector = typeof a.cvss?.vectorString === 'string' && a.cvss.vectorString ? a.cvss.vectorString : ''
-  const vulnerable = typeof a.vulnerable_versions === 'string' ? a.vulnerable_versions : null
-  const matched = Array.isArray(a.versions) ? a.versions.filter(version => typeof version === 'string') : []
-  const url = typeof a.url === 'string' && /^https?:\/\//iu.test(a.url) ? a.url : null
-  const advisoryId = a.ghsa ?? ghsaIdFrom(url) ?? (typeof a.id === 'string' ? a.id : null)
-  const source = ADVISORY_SOURCES.get(a.source)
-  const cwes = Array.isArray(a.cwe) ? a.cwe.filter((c) => typeof c === 'string') : []
-  // The ID is the canonical link to the advisory record.
-  const idEl = advisoryId && url
-    ? html`<a class="bundle-advisory-ghsa" href=${url} target="_blank" rel="noopener noreferrer">${advisoryId}${EXTERNAL_LINK_SVG}</a>`
-    : nothing
-  return html`<li class="bundle-advisory-row">
-    <div class="bundle-advisory-rail">
-      <span class=${`bundle-advisory-severity sev-${sev}`}>${severityLabel(sev)}</span>
-      ${cvssScore ? html`<span class="bundle-advisory-cvss-score">CVSS <span class="mono">${cvssScore}</span></span>` : nothing}
-    </div>
-    <div class="bundle-advisory-body">
-      <div class="bundle-advisory-header">
-        ${typeof a.details === 'string' && a.details.trim()
-          ? html`<button type="button" class="bundle-advisory-title" aria-haspopup="dialog" @click=${() => openAdvisoryDetailsDialog({ heading: title, severity: sev, markdown: a.details, isCurrent })}>${title}</button>`
-          : html`<span class="bundle-advisory-title">${title}</span>`}
-        ${source || idEl !== nothing ? html`<span class="bundle-advisory-reference">
-          ${source ? html`<span class="bundle-advisory-source" role="img" aria-label=${source.label}>${source.icon}</span>` : nothing}
-          ${idEl}
-        </span>` : nothing}
-      </div>
-      <div class="bundle-advisory-subrow">
-        <div class="bundle-advisory-meta">
-          ${a.informational ? html`<span>${a.informational}</span>` : nothing}
-          ${vulnerable ? html`<span>Affected <span class="mono">${vulnerable}</span></span>` : nothing}
-          ${matched.length > 0 ? html`<span>Matches <span class="mono">${matched.join(', ')}</span></span>` : nothing}
-          ${cwes.length > 0 ? html`<span class="bundle-advisory-cwes">${cwes.map((c, i) => html`${i === 0 ? '' : ', '}${cweTemplate(c)}`)}</span>` : nothing}
-        </div>
-        ${cvssVector ? html`<div class="bundle-advisory-cvss-vector mono">${cvssVector}</div>` : nothing}
-      </div>
-    </div>
-  </li>`
-}

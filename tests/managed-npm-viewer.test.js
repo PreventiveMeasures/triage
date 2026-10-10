@@ -19,9 +19,10 @@ mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
   fetchNpmVersions(name) { versionRequests.push(name); return versionsAnswer(name) },
+  fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { npmCompareSource, npmDependencies, npmDependencyChanges, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
+const { npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -96,8 +97,8 @@ test('Compare offers the package\'s other versions, read once a session, and loa
   const source = npmCompareSource(entry)
   assert.equal(source.pending, false)
   assert.deepEqual(source.options, [
-    { id: '1.2.2', name: '@scope/pkg@1.2.2', format: 'npm', detail: '' },
-    { id: '1.0.0', name: '@scope/pkg@1.0.0', format: 'npm', detail: 'old' },
+    { id: '1.2.2', name: '@scope/pkg@1.2.2', displayLabel: '1.2.2', format: 'npm', detail: '' },
+    { id: '1.0.0', name: '@scope/pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: 'old' },
   ], 'newest first, the version shown left out')
   assert.deepEqual(source.choices.map(choice => [choice.id, choice.detail]), [['1.2.3', 'latest'], ['1.2.2', ''], ['1.0.0', 'old']],
     'its own side offers every version, its own among them')
@@ -162,6 +163,11 @@ test('Code opens on what main names, resolved as require would', () => {
   assert.deepEqual(npmPackageEntries({ main: 'lib/util', module: 'esm/index.mjs' }, paths), ['lib/util.cjs', 'esm/index.mjs', 'index.js'])
   assert.deepEqual(npmPackageEntries({ main: 'lib/' }, paths), ['lib/index.js', 'index.js'])
   assert.deepEqual(npmPackageEntries({}, ['a.js']), [])
+  // The Overview's entry points resolve as Code does.
+  const files = new Set(paths)
+  assert.equal(npmEntryFile('./lib/util', files), 'lib/util.cjs')
+  assert.equal(npmEntryFile('esm/index', files), 'esm/index.mjs')
+  assert.equal(npmEntryFile('./missing', files), undefined)
 })
 
 test('a version shows as a bundle of its files, sized by their bytes, text alone as source', () => {

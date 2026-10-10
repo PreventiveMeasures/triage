@@ -1,5 +1,5 @@
 import { bundleSourceOrder, bundleSourcesAsMap } from '../../common/bundle-sources.js'
-import { managedRouteForIds } from '../../common/managed/routes.js'
+import { compareModeField, managedRouteForIds } from '../../common/managed/routes.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 
 export function managedBundleEntry(bundle) {
@@ -60,11 +60,11 @@ export function managedCompareLocation(state, tab = state.bundleDetailsTab) {
   if (tab !== 'compare' || !compare?.target || compare.bundle !== state.selectedBundle) return null
   // An npm package version compares with another version, by its number.
   if (state.bundles?.find(bundle => bundle.integrity === state.selectedBundle)?.npm) {
-    return { compareSpec: compare.target, ...(compare.mode === 'code' ? { compareMode: 'code' } : {}) }
+    return { compareSpec: compare.target, ...compareModeField(compare.mode) }
   }
   const target = bundleComparisonCandidates(state.bundles ?? [], state.selectedBundle).find(bundle => bundle.integrity === compare.target)
   if (!target?.managedId) return null
-  return { compareId: target.managedId, ...(compare.mode === 'code' ? { compareMode: 'code' } : {}) }
+  return { compareId: target.managedId, ...compareModeField(compare.mode) }
 }
 
 // The open bundle's tab location, whichever tab names one (Code, Compare).

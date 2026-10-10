@@ -3396,14 +3396,14 @@ button.bundle-advisory-title:focus-visible { outline: 2px solid var(--accent); o
 a.bundle-advisory-ghsa:hover {
   color: var(--accent, #60a5fa);
 }
-.bundle-advisory-ghsa-icon {
+.bundle-advisory-ghsa .external-link-icon {
   flex-shrink: 0;
   opacity: .75;
   /* Icon is not text — keep it out of any text-selection that
      starts on the GHSA id beside it. */
   user-select: none;
 }
-a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
+a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
 /* CWE links — plain inline text, no external-link arrow (the
    CWE list reads as a comma-separated phrase, and a row of
    arrows next to each id would be visual noise). Selectable
@@ -3451,19 +3451,331 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
 /* npm package Overview (view/npm-package.js). Its Dependencies column lists
    rows as Files does, each opening in the viewer at its latest version. */
 .npm-dependency-row .bundles-source-size { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.npm-dependency-kind {
+/* A small tag after a row's name: a dependency's kind, a file's category. */
+:is(.npm-dependency-kind, .npm-encoding-tag) {
   flex-shrink: 0; padding: 0 .3rem;
   color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
-  font-family: system-ui, sans-serif; font-size: .62rem; line-height: 1.3;
+  font-family: system-ui, sans-serif; font-size: .6rem; line-height: 1.35; white-space: nowrap;
 }
-.bundles-detail-meta {
-  & .npm-deprecated { color: var(--critical); }
-  & .npm-version-select {
-    max-width: 100%; padding: .1rem .3rem;
-    &:disabled { opacity: 1; }
-    color: var(--text); background: var(--surface);
-    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem;
+.bundles-detail-meta .npm-deprecated { color: var(--critical); }
+/* An entry point, after its file's icon, on one line, cut short where it
+   doesn't fit. */
+.npm-entry-point {
+  display: inline-flex; align-items: center; gap: .35rem; max-width: 100%;
+
+  & > .source-file-icon { width: 13px; height: 13px; }
+  & > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* A fact that opens a file of the package, underlined as a link is. */
+.npm-overview .bundles-detail-meta button.bundle-entry-point {
+  text-decoration: underline dotted color-mix(in srgb, currentcolor 45%, transparent); text-underline-offset: 3px;
+
+  &:hover { color: var(--accent); text-decoration-color: currentcolor; }
+}
+/* An npm package's header: its name, the version shown as a picker of its
+   versions (npm-package.js NpmVersionSelect), and its page on npm. */
+.bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }
+/* As wide as the version it shows, with its tags. */
+npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16rem; }
+.npm-header-link {
+  display: inline-flex; align-items: center; gap: .25rem; flex-shrink: 0;
+  color: var(--muted); font-size: .74rem; text-decoration: none;
+
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--ui-radius, 3px); }
+}
+
+/* The npm Overview's summary (view/render-bundle.js renderNpmPackageOverview),
+   laid out by the Overview's own width: the package's facts, its build's
+   beside them with the download under those, its figures in a card on the
+   right, and what its files hold under the facts. Every label takes one
+   width, so values line up down the facts and the contents alike. */
+.npm-overview {
+  --npm-label: 6.75rem;
+  container: npm-overview / inline-size;
+  /* Where the summary leaves the columns too little height, the Overview
+     scrolls as a whole instead of squeezing them. */
+  overflow-y: auto;
+
+  /* Rows are spaced by their items' margins, not a row gap, so the warning's
+     row takes no room where there is no warning. */
+  & .bundles-overview-summary {
+    display: grid;
+    grid-template:
+      'warning warning warning' auto
+      'meta build figures' auto
+      'meta actions figures' auto
+      'contents contents figures' 1fr / minmax(0, 1.5fr) minmax(0, 1fr) minmax(19rem, 1.3fr);
+    gap: 0 2rem;
+    align-items: start;
+
+    & > *, & > .bundles-detail-meta-row > * { margin-bottom: .6rem; }
+  }
+  & .npm-readability-warning { grid-area: warning; }
+  & .bundles-detail-meta-row { display: contents; }
+  & .bundles-detail-meta-row > :is(.npm-facts, .is-build).bundles-detail-meta {
+    min-width: 0; margin: 0 0 .6rem;
+    grid-template-columns: var(--npm-label) minmax(0, 1fr);
+  }
+  & .npm-facts { grid-area: meta; }
+  & .bundles-detail-meta.is-build { grid-area: build; }
+  & .bundles-detail-meta-row > .bundles-overview-exports { grid-area: actions; min-width: 0; }
+  & .bundles-overview-exports-row { place-content: flex-start; }
+  & .npm-contents { grid-area: contents; }
+  & .npm-figures { grid-area: figures; min-width: 0; }
+  /* Labels sit on their values' first line, however many lines a value takes;
+     values wrap between words, and break within one only where it can't fit. */
+  & .bundles-detail-meta :is(dt, dd) { align-self: baseline; }
+  & .bundles-detail-meta dd { word-break: normal; overflow-wrap: anywhere; }
+  & .bundles-detail-meta .bundle-origin-row { flex-wrap: wrap; gap: .2rem 1rem; }
+  & .bundles-detail-meta .bundle-origin-link { white-space: nowrap; }
+  /* The integrity in one line, whole in its tooltip. */
+  & .bundles-detail-meta dd.bundle-integrity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  & .bundles-overview-columns { flex: 1 0 0; min-height: min(26rem, 75vh); }
+}
+@container npm-overview (width < 66rem) {
+  .npm-overview .bundles-overview-summary {
+    grid-template:
+      'warning warning' auto
+      'meta build' auto
+      'meta actions' auto
+      'contents contents' auto
+      'figures figures' auto / minmax(0, 1.5fr) minmax(0, 1fr);
+  }
+}
+@container npm-overview (width < 40rem) {
+  .npm-overview .bundles-overview-summary { grid-template: 'warning' 'meta' 'build' 'actions' 'contents' 'figures' / minmax(0, 1fr); }
+}
+/* Its repository's stars and forks, on the GitHub row of its facts. */
+.bundles-detail-meta .bundle-origin-link.npm-github-figure {
+  color: var(--muted); font-variant-numeric: tabular-nums;
+
+  &:hover { color: var(--text); }
+}
+.bundles-detail-meta :is(.npm-commit-missing, .npm-publisher) { color: var(--muted); }
+.bundles-detail-meta .npm-publisher { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; }
+.npm-github-archived {
+  padding: 0 .35rem;
+  color: var(--text);
+  background: color-mix(in srgb, var(--medium) 22%, var(--bg));
+  border: 1px solid var(--medium); border-radius: var(--ui-radius, 3px);
+  font-size: .66rem;
+}
+/* What the package's files hold: rows labelled as the facts above them are,
+   the languages' label level with their bar, on a line of their own; the
+   rows after them side by side where they fit, each label as wide as the
+   facts', so their values line up when they don't. */
+.npm-contents {
+  display: flex; flex-wrap: wrap; gap: .45rem 1.75rem;
+  margin: .15rem 0 0;
+
+  & > div { display: flex; align-items: baseline; gap: .65rem; min-width: 0; }
+  & dt { flex: none; width: var(--npm-label); color: var(--muted); font-size: .72rem; font-weight: 600; }
+  & dd { margin: 0; min-width: 0; }
+  & > div:has(> dd > .bundles-languages-bar) { flex-basis: 100%; align-items: start; }
+  & dd:has(> .bundles-languages-bar) { flex: 1; }
+  & .bundles-languages-bar { margin: .25rem 0 0; }
+}
+.bundles-languages-legend {
+  display: flex; flex-wrap: wrap; gap: .2rem 1rem;
+  margin: .35rem 0 0; padding: 0;
+  list-style: none;
+  color: var(--text); font-size: .72rem;
+
+  & li { display: inline-flex; align-items: center; gap: .35rem; }
+}
+.bundles-languages-swatch { width: .55rem; height: .55rem; border-radius: 50%; flex-shrink: 0; }
+.bundles-languages-share { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Read out by screen readers, out of sight. */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* The tarball's download, under the figures' card. */
+.npm-figures-actions { display: flex; justify-content: flex-end; margin-top: .5rem; }
+/* Its downloads, in a card (view/npm-downloads-chart.js): its figures, each
+   with its unit, over its downloads for the last year, one series in the
+   accent over a faint wash of it, on hairline gridlines. */
+npm-downloads-chart {
+  display: block;
+  padding: .65rem .8rem .5rem;
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
+}
+/* The figures, and at the top right the switch between weeks and months;
+   under it where both don't fit. */
+.npm-downloads-head {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: .3rem 1rem;
+  margin-bottom: .2rem;
+}
+.npm-stats {
+  display: flex; flex-wrap: wrap; gap: .3rem 1.25rem;
+  margin: 0;
+}
+.npm-stat {
+  & dd {
+    margin: 0;
+    color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+}
+.npm-stat-per { margin-left: .1rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
+/* Under the switch, the period under the pointer's downloads, on a line
+   kept for them, so the chart doesn't move as they come and go; they run
+   left from the switch's end, past it where they need to. */
+.npm-downloads-controls { position: relative; margin-left: auto; padding-bottom: 1.05rem; }
+.npm-downloads-readout {
+  position: absolute; right: 0; bottom: 0;
+  display: flex; align-items: baseline; gap: .4rem;
+  color: var(--muted); font-size: .7rem; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+
+  & strong { color: var(--text); font-size: .78rem; font-weight: 600; }
+}
+.npm-downloads-plot {
+  position: relative;
+
+  &:focus { outline: none; }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  & svg { display: block; overflow: visible; }
+}
+.npm-downloads-grid { stroke: var(--border); stroke-width: 1; shape-rendering: crispedges; }
+.npm-downloads-tick { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.npm-downloads-area { fill: var(--accent); fill-opacity: .1; }
+.npm-downloads-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.npm-downloads-crosshair { stroke: var(--muted); stroke-width: 1; shape-rendering: crispedges; }
+.npm-downloads-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+/* Its advisories across every version (view/npm-overview.js), grouped by how
+   they stand for the version shown, each row as a bundle advisory's: those
+   affecting it boxed and marked, those it fixes struck through. */
+.npm-advisories-col .bundles-overview-col-body { container: npm-advisories / inline-size; }
+.npm-advisories-note { margin: 0 0 .5rem; color: var(--muted); font-size: .72rem; }
+.npm-advisory-group + .npm-advisory-group { margin-top: .9rem; }
+.npm-advisory-group-head {
+  display: flex; align-items: baseline; gap: .4rem;
+  margin: 0 0 .25rem; padding: 0 .55rem;
+  color: var(--muted);
+  font-size: .68rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+}
+/* Every group inset alike, so titles line up across them too. */
+.npm-advisory-group > .bundle-advisories-rows {
+  padding: .1rem .55rem;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius, 4px);
+}
+.npm-advisory-group.is-affects {
+  & .npm-advisory-group-head { color: var(--critical); }
+  & > .bundle-advisories-rows {
+    background: color-mix(in srgb, var(--critical) 6%, var(--bg));
+    border-color: color-mix(in srgb, var(--critical) 55%, var(--border));
+  }
+}
+.npm-advisory-group.is-fixed {
+  & .bundle-advisory-title { color: var(--muted); text-decoration: line-through; }
+  & .bundle-advisory-severity { opacity: .55; }
+}
+/* How many affect the version shown, in the column's head: marked where any do. */
+.npm-advisories-active {
+  padding: 0 .4rem;
+  color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px;
+  font-size: .62rem; font-weight: 600; letter-spacing: .02em; text-transform: none;
+  font-variant-numeric: tabular-nums;
+
+  &.is-active { color: #fff; background: var(--critical); border-color: var(--critical); }
+}
+/* The range and CWEs closer, as a row's last line. */
+.npm-advisories-col .bundle-advisory-meta { gap: .1rem .9rem; }
+.npm-advisories-col .bundle-advisory-cwes { margin-left: 0; }
+/* One badge width whichever the severity, so every title starts in line. */
+.npm-advisories-col .bundle-advisory-rail { width: 5rem; align-items: stretch; text-align: center; }
+/* Narrow, the rail runs across the top with the source and GHSA at its end,
+   wrapping under it where they don't fit beside it, and the title and what
+   it covers take the full width below. */
+@container npm-advisories (width < 26rem) {
+  .npm-advisories-col {
+    & .bundle-advisory-row { flex-wrap: wrap; align-items: center; gap: .2rem .5rem; }
+    & :is(.bundle-advisory-body, .bundle-advisory-header, .bundle-advisory-subrow) { display: contents; }
+    & .bundle-advisory-rail { width: auto; flex-direction: row; align-items: center; gap: .5rem; }
+    & .bundle-advisory-reference { order: 1; margin-left: auto; }
+    & .bundle-advisory-title { order: 2; flex-basis: 100%; }
+    & .bundle-advisory-meta { order: 3; flex-basis: 100%; }
+  }
+}
+/* A row of chips in an npm package's summary (view/npm-overview.js): its
+   categories, readable files and file types. */
+.npm-extensions {
+  display: flex; flex-wrap: wrap; gap: .3rem;
+  margin: 0; padding: 0;
+  list-style: none;
+}
+.npm-extension {
+  display: inline-flex; align-items: baseline; gap: .35rem;
+  padding: .05rem .4rem;
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
+  font-size: .7rem; line-height: 1.45;
+}
+.npm-extension-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Files that can't be reviewed by reading them, marked in their tags and
+   chips: `warn` for what to look into (not UTF-8, control characters,
+   unexpected long lines), `notice` for minified code and source maps. */
+:is(.npm-extension, .npm-encoding-tag).is-warn {
+  color: var(--text);
+  background: color-mix(in srgb, var(--high) 22%, var(--bg));
+  border-color: var(--high);
+}
+:is(.npm-extension, .npm-encoding-tag).is-notice {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 14%, var(--bg));
+  border-style: dashed;
+}
+/* A category's chip narrows the Files list to its files. */
+button.npm-category {
+  font-family: inherit;
+
+  &:hover { border-color: var(--accent); }
+  &[aria-pressed='true'] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+.npm-readability-warning {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem;
+  padding: .45rem .7rem;
+  background: color-mix(in srgb, var(--muted) 8%, var(--bg));
+  border: 1px solid var(--border); border-left: 3px solid var(--muted);
+  border-radius: var(--ui-radius, 4px);
+  font-size: .76rem;
+
+  &.is-warn {
+    background: color-mix(in srgb, var(--high) 9%, var(--bg));
+    border-color: color-mix(in srgb, var(--high) 45%, var(--border));
+    border-left-color: var(--high);
+  }
+}
+/* The Files column narrowed to a category: named in its head, with a way back. */
+.bundles-overview-filter {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: 0 .35rem;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--accent); border-radius: var(--ui-radius, 3px);
+  font: inherit; font-size: .65rem; font-weight: 500; letter-spacing: 0; text-transform: none;
+
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+/* In the Files list, tags and sizes each keep one width, so both line up
+   down the list whatever a row's size. */
+.bundles-source-row:has(> .npm-encoding-tag) {
+  & > .npm-encoding-tag { box-sizing: border-box; width: 4.4rem; text-align: center; }
+  & > .bundles-source-size { width: 4.6rem; text-align: right; }
+}
+.npm-extension-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* An npm package's columns — Dependencies, Advisories, Files, and Binary
+   files where it has any — share the row while it is wide, and below
+   1200px fill a two-column grid in order, a last odd one spanning it. */
+@media (width < 1200px) {
+  .npm-overview > .bundles-overview-columns {
+    grid-template-rows: none;
+    grid-auto-rows: minmax(0, 1fr);
+
+    & > .bundles-overview-col { grid-column: auto; grid-row: auto; }
+    & > .bundles-overview-col:last-child:nth-child(odd) { grid-column: 1 / -1; }
   }
 }
 
@@ -3508,3 +3820,5 @@ a.bundle-advisory-ghsa:hover .bundle-advisory-ghsa-icon { opacity: 1; }
 .npm-lookup-error { margin: .75rem 0 0; font-size: .85rem; }
 .npm-lookup-status { color: var(--muted); }
 .npm-lookup-error { color: var(--critical); }
+/* A file's type icon, before its path in the npm Overview's lists. */
+.bundles-source-row > .source-file-icon { margin-right: -.15rem; }

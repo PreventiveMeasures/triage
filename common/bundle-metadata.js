@@ -60,6 +60,14 @@ export function bundleSourceLineCount(content) {
   return lines
 }
 
+// Each source's lines of code, by path: the index's where `details` has them,
+// else counted once and kept on it. `bundleSourcesAsMap` holds only textual
+// sources: Stasis resources (images, fonts, and other binary payloads) have
+// no lines, so they cannot distort the language shares.
+export function bundleLineCounts(details) {
+  return details.lineCounts ??= new Map([...bundleSourcesAsMap(details)].map(([path, content]) => [path, bundleSourceLineCount(content)]))
+}
+
 function mapObject(value) {
   return value instanceof Map ? Object.fromEntries([...value].map(([key, v]) => [key, mapObject(v)])) : value
 }
@@ -73,8 +81,7 @@ function mapObject(value) {
 export async function createBundleMetadata(details) {
   const hashes = await computeBundleFileHashes(details)
   const sizes = bundleFileSizes(details)
-  const sourceLines = details.lineCounts ??= new Map([...bundleSourcesAsMap(details)]
-    .map(([path, content]) => [path, bundleSourceLineCount(content)]))
+  const sourceLines = bundleLineCounts(details)
   const result = { version: INDEX_VERSION, integrity: details.integrity, kind: details.kind, size: details.size, codeStats: bundleCodeStats(sourceLines, sizes),
     files: [...sizes].map(([path, size]) => [path, size, hashes.get(path) ?? null, sourceLines.get(path) ?? null]) }
   const unsized = bundleUnsizedFiles(details)

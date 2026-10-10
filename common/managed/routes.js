@@ -3,6 +3,15 @@ import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
 import { isNpmPackageName, isNpmPackageSpec } from './npm-packages.js'
 
+// How Compare reviews the changes, past its Overview: `code`, a file at a
+// time beside the tree of changed files, or `diff`, every file's diff in
+// one list. A link names the mode after the bundle or version compared with.
+export const COMPARE_MODES = new Set(['code', 'diff'])
+export const compareModeOf = mode => COMPARE_MODES.has(mode) ? mode : 'overview'
+// A route's `compareMode` field, where `mode` is one; none for the Overview.
+export const compareModeField = mode => COMPARE_MODES.has(mode) ? { compareMode: mode } : {}
+const compareModeSuffix = mode => COMPARE_MODES.has(mode) ? `/${mode}` : ''
+
 export const MANAGED_PAGES = Object.freeze({
   manage: '/manage',
   'manage-bundles': '/manage/bundle',
@@ -42,10 +51,10 @@ export function managedRoutePath(route) {
     const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
     const lines = file && isLineNumber(route.line)
       ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
-    // Compare names the bundle compared with by its slug, then `/code` while
-    // it reviews the changes as a diff.
+    // Compare names the bundle compared with by its slug, then its mode
+    // (COMPARE_MODES) past the Overview.
     const compare = tab === 'compare' && route.compareSlug != null
-      ? `/${route.compareSlug}${route.compareMode === 'code' ? '/code' : ''}` : ''
+      ? `/${route.compareSlug}${compareModeSuffix(route.compareMode)}` : ''
     return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
   }
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
@@ -73,7 +82,7 @@ export function managedRoutePath(route) {
 // Compare or Treemap tab, `/npm/<name>[@<version or dist-tag>][/<tab>…]`. Code names
 // its file by number and its lines in the fragment, as a bundle's Code
 // does: `/code/<file>#L4`. Compare names the version compared with, then
-// `/code` while it reviews the changes as a diff: `/compare/<version>/code`.
+// its mode past the Overview: `/compare/<version>/code` or `/diff`.
 export const NPM_TABS = new Set(['overview', 'code', 'compare', 'treemap'])
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
@@ -83,19 +92,19 @@ function npmPackagePath(route) {
   const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
   const lines = file && isLineNumber(route.line)
     ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
-  const compare = tab === 'compare' && route.compareSpec != null ? `/${route.compareSpec}${route.compareMode === 'code' ? '/code' : ''}` : ''
+  const compare = tab === 'compare' && route.compareSpec != null ? `/${route.compareSpec}${compareModeSuffix(route.compareMode)}` : ''
   return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
 }
 
 function parseNpmRoute(path, hash) {
-  const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|compare|treemap)(?:\/([^/]+)(?:\/(code))?)?)?)?$/u.exec(path)
+  const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined
   if (match[1] == null) return { view: 'npm' }
   if (!isNpmPackageName(match[1]) || (match[2] != null && !isNpmPackageSpec(match[2]))) return null
   const route = { view: 'npm', packageName: match[1], packageSpec: match[2] ?? null, bundleTab: match[3] ?? 'overview' }
   if (match[4] == null) return route
   if (route.bundleTab === 'compare') {
-    return isNpmPackageSpec(match[4]) ? { ...route, compareSpec: match[4], ...(match[5] ? { compareMode: 'code' } : {}) } : null
+    return isNpmPackageSpec(match[4]) && (match[5] == null || COMPARE_MODES.has(match[5])) ? { ...route, compareSpec: match[4], ...compareModeField(match[5]) } : null
   }
   if (route.bundleTab !== 'code') return null
   const file = Number(match[4])
@@ -129,13 +138,13 @@ export function parseManagedRoute(url) {
           ...(url.searchParams.get('mode') === 'dependencies' ? { scanMode: 'dependencies' } : {}) } : {} : {}),
     }
   }
-  const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+)(?:\/([A-Za-z0-9_-]+)(?:\/(code))?)?)?$/u.exec(path)
+  const bundle = /^(?:\/team\/([A-Za-z0-9_-]+)|\/manage)\/bundle\/([A-Za-z0-9_-]+)(?:\/([a-z]+)(?:\/([A-Za-z0-9_-]+)(?:\/([a-z]+))?)?)?$/u.exec(path)
   if (bundle) {
     const bundleTab = bundle[3] ?? 'overview'
     if (!BUNDLE_TABS.has(bundleTab)) return null
     const route = { view: 'bundles', teamSlug: bundle[1] ?? null, bundleSlug: bundle[2], bundleTab }
     if (bundle[4] == null) return route
-    if (bundleTab === 'compare') return { ...route, compareSlug: bundle[4], ...(bundle[5] ? { compareMode: 'code' } : {}) }
+    if (bundleTab === 'compare') return bundle[5] == null || COMPARE_MODES.has(bundle[5]) ? { ...route, compareSlug: bundle[4], ...compareModeField(bundle[5]) } : null
     const file = Number(bundle[4])
     if (bundleTab !== 'code' || bundle[5] || !/^[1-9]\d*$/u.test(bundle[4]) || !Number.isSafeInteger(file)) return null
     return { ...route, file, ...codeLines(url.hash) }
@@ -177,7 +186,7 @@ export function resolveManagedRoute(route, teams, adminBundles = []) {
     // The bundle compared with, by the same rule; one no longer listed drops
     // out, leaving Compare to pick again.
     const compared = compareSlug == null ? null : idsOf(compareSlug)
-    const compare = compared?.size === 1 ? { compareId: [...compared][0], ...(compareMode === 'code' ? { compareMode } : {}) } : {}
+    const compare = compared?.size === 1 ? { compareId: [...compared][0], ...compareModeField(compareMode) } : {}
     return { ...rest, teamId: team?.id ?? null, bundleId: bundle.id, ...compare }
   }
   if (!['findings', 'files'].includes(route.view)) return route
@@ -207,7 +216,7 @@ export function managedRouteForIds(route, teams, adminBundles = []) {
     const compared = compareId == null ? null
       : (teamId == null ? adminBundles : teams.flatMap(entry => entry.bundles ?? [])).find(entry => entry.id === compareId)
     const result = { ...rest, teamSlug: team?.slug ?? null, bundleSlug: bundle.slug,
-      ...(compared?.slug ? { compareSlug: compared.slug, ...(compareMode === 'code' ? { compareMode } : {}) } : {}) }
+      ...(compared?.slug ? { compareSlug: compared.slug, ...compareModeField(compareMode) } : {}) }
     const resolved = resolveManagedRoute(result, teams, adminBundles)
     if (!resolved) return null
     // A compared bundle whose slug doesn't name it alone leaves the route.

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer, request } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
@@ -10,8 +10,9 @@ import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
-import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball } from '../server-managed/npm-loads.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
+import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
+import { npmCommitTags } from '../server-managed/npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -55,7 +56,7 @@ function packageOf(name, version, files, extra = {}) {
   const base = name.split('/').at(-1)
   const doc = { name, version, description: `${name} for tests`, license: 'MIT', main: 'lib/index.js',
     repository: { type: 'git', url: 'git+https://github.com/org/repo.git', directory: 'packages/pkg' }, gitHead: 'a'.repeat(40),
-    dependencies: { dep: '^1.0.0' }, scripts: { postinstall: 'node setup.js', test: 'node --test' },
+    dependencies: { dep: '^1.0.0' }, scripts: { postinstall: 'node setup.js', test: 'node --test' }, _npmUser: { name: 'publisher-1', email: 'p@example.com' },
     dist: { tarball: `${REGISTRY}/${name}/-/${base}-${version}.tgz`, integrity: `sha512-${createHash('sha512').update(tgz).digest('base64')}`, unpackedSize: 100, fileCount: 2 }, ...extra }
   return { doc, tgz }
 }
@@ -201,8 +202,8 @@ test('anyone with workspace access opens a public version, asked of the registry
     const png = `sha256-${createHash('sha256').update(Buffer.from([137, 80, 78, 71, 0])).digest('base64')}`
     assert.deepEqual(body.files, [['lib/index.js', 17, 'export default 1\n'], ['logo.png', 5, null, png], ['package.json', 19, '{"name":"@pub/pkg"}']],
       'a file that is not text carries its digest instead')
-    assert.deepEqual(body.manifest, { description: '@pub/pkg for tests', license: 'MIT', main: 'lib/index.js', gitHead: 'a'.repeat(40),
-      dependencies: { dep: '^1.0.0' }, installScripts: { postinstall: 'node setup.js' }, github: { github: 'org/repo', directory: 'packages/pkg' } })
+    assert.deepEqual(body.manifest, { description: '@pub/pkg for tests', license: 'MIT', main: 'lib/index.js', gitHead: 'a'.repeat(40), publisher: 'publisher-1',
+      dependencies: { dep: '^1.0.0' }, installScripts: { postinstall: 'node setup.js' }, github: { github: 'org/repo', directory: 'packages/pkg' } }, 'the publisher\'s account, never their email')
     assert.equal(calls[0].url, `${REGISTRY}/@pub/pkg/latest`)
     assert.equal(calls[0].auth, null, 'the version document is asked for anonymously')
   }
@@ -220,7 +221,8 @@ test('a private version is read with the token for admins and managers only, eve
   withToken(t)
   const cache = await mkdtemp(join(tmpdir(), 'triage-npm-cache-'))
   setCacheDir(cache)
-  t.after(async () => { setCacheDir(false); await rm(cache, { recursive: true, force: true }) })
+  setNpmTarballCache(cache)
+  t.after(async () => { setCacheDir(false); setNpmTarballCache(null); await rm(cache, { recursive: true, force: true }) })
   const pkg = { ...packageOf('@acme/secret', '2.0.0', { 'index.js': 'secret source' }), private: true }
   const calls = registry(t, [pkg])
   for (const who of ['admin', 'manage']) {
@@ -230,9 +232,9 @@ test('a private version is read with the token for admins and managers only, eve
     assert.deepEqual(res.json().files, [['index.js', 13, 'secret source']])
   }
   assert.ok(calls.some(call => call.url === pkg.doc.dist.tarball), 'the tarball was fetched with the token')
-  // A bundle build fills upstream's cache using the token, which leaves it
-  // readable without one. A reader without private access is answered by the
-  // anonymous registry all the same.
+  // The viewer kept the tarball, and a bundle build fills upstream's cache
+  // using the token too, which leaves it readable without one. A reader
+  // without private access is answered by the anonymous registry all the same.
   await getTarball('@acme/secret', '2.0.0', { tarball: pkg.doc.dist.tarball, integrity: pkg.doc.dist.integrity })
   for (const who of ['view', 'triage']) {
     calls.length = 0
@@ -407,6 +409,55 @@ test('a tarball is read from the package\'s own path on the registry, bounded as
   assert.deepEqual(calls, [], 'nothing off the package\'s path is asked for')
 })
 
+test('tarballs are kept where bundle builds keep theirs, and served from there or npm\'s cache only when they match the sha512', async t => {
+  const cache = await mkdtemp(join(tmpdir(), 'triage-npm-kept-')), npmCache = await mkdtemp(join(tmpdir(), 'triage-npm-cacache-'))
+  const configured = process.env['npm_config_cache']
+  process.env['npm_config_cache'] = npmCache
+  t.after(async () => {
+    setCacheDir(false)
+    setNpmTarballCache(null)
+    if (configured === undefined) delete process.env['npm_config_cache']
+    else process.env['npm_config_cache'] = configured
+    await rm(cache, { recursive: true, force: true })
+    await rm(npmCache, { recursive: true, force: true })
+  })
+  const [kept, built, npm] = [packageOf('@kept/pkg', '1.0.0', { 'index.js': 'kept' }), packageOf('@built/pkg', '2.0.0', { 'index.js': 'built' }),
+    packageOf('from-npm', '3.0.0', { 'index.js': 'npm' })]
+  const calls = registry(t, [kept, built, npm])
+  const downloads = () => calls.filter(call => call.url.includes('/-/')).length
+  const tarballOf = async ({ doc }) => {
+    const load = loadNpmTarball({ name: doc.name, version: doc.version, private: false, dist: { ...doc.dist, unpackedSize: null, fileCount: null }, manifest: {} })
+    try { return Buffer.from(await load.result) } finally { load.release() }
+  }
+  assert.deepEqual(await tarballOf(kept), kept.tgz)
+  assert.equal(downloads(), 1, 'no cache set, nothing kept')
+  setNpmTarballCache(cache)
+  const file = join(cache, 'npm', 'tarballs', '@kept+pkg@1.0.0.tgz')
+  assert.deepEqual(await tarballOf(kept), kept.tgz)
+  assert.deepEqual(await readFile(file), kept.tgz, 'kept under upstream\'s name for it')
+  assert.deepEqual(await tarballOf(kept), kept.tgz)
+  assert.equal(downloads(), 2, 'then read from the cache')
+  await writeFile(file, gzipSync('other'))
+  assert.deepEqual(await tarballOf(kept), kept.tgz, 'bytes the integrity does not name are passed over')
+  assert.equal(downloads(), 3)
+  assert.deepEqual(await readFile(file), kept.tgz, 'and replaced')
+  await truncate(file, MAX_TAR_BYTES + 1)
+  assert.deepEqual(await tarballOf(kept), kept.tgz, 'as is a file past the tar stream\'s bound, unread')
+  assert.equal(downloads(), 4)
+  // What a bundle build fetched is read as it left it.
+  setCacheDir(cache)
+  await getTarball('@built/pkg', '2.0.0', { tarball: built.doc.dist.tarball, integrity: built.doc.dist.integrity })
+  calls.length = 0
+  assert.deepEqual(await tarballOf(built), built.tgz)
+  // npm files a tarball by its sha512.
+  const hex = Buffer.from(npm.doc.dist.integrity.slice('sha512-'.length), 'base64').toString('hex')
+  const content = join(npmCache, '_cacache', 'content-v2', 'sha512', hex.slice(0, 2), hex.slice(2, 4))
+  await mkdir(content, { recursive: true })
+  await writeFile(join(content, hex.slice(4)), npm.tgz)
+  assert.deepEqual(await tarballOf(npm), npm.tgz)
+  assert.equal(downloads(), 0, 'neither was downloaded')
+})
+
 test('registry documents read at once are held to a budget: four version lists, or their bytes in versions', async t => {
   const pkgs = ['a', 'b', 'c', 'd', 'e'].map(name => packageOf(`listed-${name}`, '1.0.0', { 'index.js': '' }))
   registry(t, pkgs)
@@ -420,6 +471,261 @@ test('registry documents read at once are held to a budget: four version lists, 
   gate.resolve()
   assert.deepEqual((await Promise.all(lists)).map(list => list.versions), [['1.0.0'], ['1.0.0'], ['1.0.0'], ['1.0.0']])
   assert.equal((await readNpmVersion('listed-e', '1.0.0', false, signal)).version, '1.0.0', 'a read frees its bytes once done')
+})
+
+// npm's downloads API, GitHub and npm's bulk advisories, beside the registry
+// `registry` mocks; what each was asked, with its credentials.
+function insights(t, { downloads = {}, repos = {}, advisories = {}, repoAdvisories = {} }) {
+  const asked = [], registryFetch = globalThis.fetch
+  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+    const auth = new Headers(init.headers).get('authorization'), url = String(input)
+    const listing = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/security-advisories\?/u)
+    if (listing) {
+      asked.push(['repository', listing[1], auth])
+      const answer = repoAdvisories[listing[1]] ?? []
+      return Promise.resolve(answer instanceof Response ? answer : Response.json(answer))
+    }
+    const day = url.match(/^https:\/\/api\.npmjs\.org\/downloads\/range\/last-year\/(.+)$/u)
+    if (day) {
+      asked.push(['downloads', day[1], auth])
+      return Promise.resolve(downloads[day[1]] ? Response.json(downloads[day[1]]) : Response.json({ error: 'not found' }, { status: 404 }))
+    }
+    const pulls = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/?]+)\/pulls\?state=open&per_page=1$/u)
+    if (pulls) {
+      asked.push(['pulls', pulls[1], auth])
+      const answer = repos[pulls[1]]?.pulls
+      return Promise.resolve(answer === undefined ? Response.json({ message: 'Not Found' }, { status: 404 })
+        : Response.json(answer > 0 ? [{}] : [], { headers: answer > 1 ? { link: `<https://api.github.com/repositories/1/pulls?state=open&per_page=1&page=${answer}>; rel="last"` } : {} }))
+    }
+    const repo = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/?]+)$/u)
+    if (repo) {
+      asked.push(['github', repo[1], auth])
+      return Promise.resolve(repos[repo[1]] ? Response.json(repos[repo[1]]) : Response.json({ message: 'Not Found' }, { status: 404 }))
+    }
+    if (url === `${REGISTRY}/-/npm/v1/security/advisories/bulk`) {
+      const body = JSON.parse(init.body)
+      asked.push(['advisories', Object.keys(body), auth])
+      return Promise.resolve(Response.json(Object.fromEntries(Object.keys(body).map(name => [name, advisories[name] ?? []]))))
+    }
+    return registryFetch(input, init)
+  })
+  return asked
+}
+
+test('a package\'s figures: its downloads, and its public repository\'s, asked without credentials', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const pkg = packageOf('@pub/figures', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/figures.git' } })
+  const calls = registry(t, [pkg])
+  const asked = insights(t, {
+    downloads: { '@pub/figures': { start: '2026-01-01', end: '2026-01-04', package: '@pub/figures', downloads: [{ day: '2026-01-01', downloads: 5 }, { day: '2026-01-03', downloads: 7 }, { day: '2026-01-04', downloads: 9 }] } },
+    repos: { 'org/figures': { full_name: 'org/figures', private: false, visibility: 'public', stargazers_count: 1200, forks_count: 30, open_issues_count: 4, archived: false, pushed_at: '2026-09-01T00:00:00Z', pulls: 3 } },
+  })
+  const res = await h.send('/api/npm/stats?name=%40pub%2Ffigures')
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), {
+    name: '@pub/figures',
+    downloads: { start: '2026-01-01', end: '2026-01-04', days: [5, 0, 7, 9] },
+    github: { repo: 'org/figures', stars: 1200, forks: 30, openIssues: 4, openPulls: 3, archived: false, pushedAt: '2026-09-01T00:00:00Z' },
+  }, 'a day npm leaves out counts none')
+  assert.deepEqual(asked, [['downloads', '@pub/figures', null], ['github', 'org/figures', null], ['pulls', 'org/figures', null]])
+  // Kept an hour; the access check is not.
+  calls.length = 0
+  assert.equal((await h.send('/api/npm/stats?name=%40pub%2Ffigures')).status, 200)
+  assert.equal(asked.length, 3, 'figures are kept')
+  assert.deepEqual(calls.map(call => [call.url, call.auth]), [[`${REGISTRY}/@pub/figures/latest`, null]], 'the registry is asked again, anonymously')
+})
+
+test('a private repository, or a package npm has no downloads for, has no figures', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('quiet-figures', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/hidden.git' } })
+  const internal = packageOf('internal-figures', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/internal.git' } })
+  registry(t, [pkg, internal])
+  insights(t, { repos: {
+    'org/hidden': { full_name: 'org/hidden', private: true, visibility: 'private', stargazers_count: 9 },
+    'org/internal': { full_name: 'org/internal', private: false, visibility: 'internal', stargazers_count: 9 },
+  } })
+  assert.deepEqual((await h.send('/api/npm/stats?name=quiet-figures')).json(), { name: 'quiet-figures', downloads: null, github: null })
+  assert.equal((await h.send('/api/npm/stats?name=internal-figures')).json().github, null, 'an internal repository answers private: false, and is no more public')
+})
+
+test('advisories cover every published version, each naming the versions it affects', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('advised', '1.2.0', { 'index.js': '' })
+  registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0', '1.2.0'] }])
+  const asked = insights(t, { repos: { 'org/repo': { full_name: 'org/repo', private: false, visibility: 'public' } }, advisories: { advised: [
+    { id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', vulnerable_versions: '<1.1.0', cwe: ['CWE-1321'], cvss: { score: 7.5, vectorString: 'CVSS:3.1/AV:N' } },
+    { id: 2, url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', vulnerable_versions: '>=1.1.0 <1.3.0', cwe: [], cvss: { score: 0 } },
+  ] } })
+  const res = await h.send('/api/npm/advisories?name=advised')
+  assert.equal(res.status, 200)
+  const body = res.json()
+  assert.deepEqual(body.versions, ['1.2.0', '1.1.0', '1.0.0'], 'newest first, as the version list has them')
+  assert.deepEqual(body.advisories, [
+    { id: 'GHSA-aaaa-bbbb-cccc', source: 'registry', ghsa: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', cvss: 7.5, cwe: ['CWE-1321'], range: '<1.1.0', affected: [2] },
+    { id: 'GHSA-dddd-eeee-ffff', source: 'registry', ghsa: 'GHSA-dddd-eeee-ffff', url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', cwe: [], range: '>=1.1.0 <1.3.0', affected: [0, 1] },
+  ])
+  assert.equal(body.repository, true)
+  assert.deepEqual(asked.filter(([what]) => what !== 'pulls'), [['github', 'org/repo', null], ['advisories', ['advised'], null], ['repository', 'org/repo', null]],
+    'its repository found public first; every version asked at once, without credentials')
+})
+
+test('an advisory npm answers once a range it covers is one row, its ranges, versions and CWEs together', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('ranged', '4.5.0', { 'index.js': '' })
+  registry(t, [{ ...pkg, versions: ['3.10.0', '4.0.0', '4.4.0', '4.5.0'] }])
+  insights(t, { advisories: { ranged: [
+    { id: 1, url: 'https://github.com/advisories/GHSA-gpvr-g6gh-9mc2', title: 'No charset', severity: 'moderate', vulnerable_versions: '>=4.0.0 <4.5.0', cwe: ['CWE-79'], cvss: { score: 6.1 } },
+    { id: 2, url: 'https://github.com/advisories/GHSA-gpvr-g6gh-9mc2', title: 'No charset', severity: 'moderate', vulnerable_versions: '<3.11.0', cwe: ['CWE-79', 'CWE-20'], cvss: { score: 0 } },
+  ] } })
+  const body = (await h.send('/api/npm/advisories?name=ranged')).json()
+  assert.deepEqual(body.advisories, [{ id: 'GHSA-gpvr-g6gh-9mc2', source: 'registry', ghsa: 'GHSA-gpvr-g6gh-9mc2', url: 'https://github.com/advisories/GHSA-gpvr-g6gh-9mc2',
+    title: 'No charset', severity: 'moderate', cvss: 6.1, cwe: ['CWE-79', 'CWE-20'], range: '>=4.0.0 <4.5.0 || <3.11.0', affected: [1, 2, 3] }])
+})
+
+test('advisories its repository publishes on GitHub join npm\'s, its listing kept as bundle advisories keep it', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('repo-advised', '1.2.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/advised.git' } })
+  registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0', '1.2.0'] }])
+  const repoAdvisory = (ghsa, name, range) => ({ ghsa_id: ghsa, state: 'published', summary: `Unreviewed ${ghsa}`, severity: 'medium', cwe_ids: ['CWE-79'],
+    vulnerabilities: [{ package: { ecosystem: 'npm', name }, vulnerable_version_range: range }] })
+  const asked = insights(t, {
+    repos: { 'org/advised': { full_name: 'org/advised', private: false, visibility: 'public' } },
+    advisories: { 'repo-advised': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'high', vulnerable_versions: '<1.1.0', cwe: [] }] },
+    repoAdvisories: { 'org/advised': [
+      repoAdvisory('GHSA-gggg-hhhh-jjjj', 'repo-advised', '< 1.2.0'), repoAdvisory('GHSA-kkkk-mmmm-pppp', 'other-package', '< 9.0.0'),
+      // Already reviewed into npm's for the versions npm reports it on.
+      repoAdvisory('GHSA-aaaa-bbbb-cccc', 'repo-advised', '< 1.1.0'),
+    ] },
+  })
+  const body = (await h.send('/api/npm/advisories?name=repo-advised')).json()
+  assert.deepEqual(body.advisories, [
+    { id: 'GHSA-aaaa-bbbb-cccc', source: 'registry', ghsa: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'high', cwe: [], range: '<1.1.0', affected: [2] },
+    { id: 'GHSA-gggg-hhhh-jjjj', source: 'repository', ghsa: 'GHSA-gggg-hhhh-jjjj', url: 'https://github.com/org/advised/security/advisories/GHSA-gggg-hhhh-jjjj', title: 'Unreviewed GHSA-gggg-hhhh-jjjj', severity: 'moderate', cwe: ['CWE-79'], range: '< 1.2.0', affected: [1, 2] },
+  ], 'only those naming the package, and only versions npm does not report under the same GHSA')
+  assert.equal(body.repository, true)
+  assert.deepEqual(asked.filter(([what]) => what === 'repository'), [['repository', 'org/advised', null]])
+  assert.ok(await h.db.getUpstreamCacheEntry('github/advisories/org/advised'), 'the listing is kept where bundle advisories keep it')
+})
+
+test('npm\'s advisories are answered while GitHub refuses, and its repository asked again next time', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('rate-limited', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/limited.git' } })
+  registry(t, [pkg])
+  const repoAdvisories = { 'org/limited': Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0' } }) }
+  const asked = insights(t, { repos: { 'org/limited': { full_name: 'org/limited', private: false, visibility: 'public' } },
+    advisories: { 'rate-limited': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }] }, repoAdvisories })
+  const refused = (await h.send('/api/npm/advisories?name=rate-limited')).json()
+  assert.equal(refused.repository, false)
+  assert.deepEqual(refused.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'])
+  repoAdvisories['org/limited'] = []
+  const answered = (await h.send('/api/npm/advisories?name=rate-limited')).json()
+  assert.equal(answered.repository, true)
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 2)
+})
+
+test('advisories of a repository that isn\'t public, an internal one included, are not asked for, nor where GitHub can\'t say', async t => {
+  const h = await setup(t)
+  const reviewed = [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }]
+  const hidden = packageOf('hidden-advised', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/hidden.git' } })
+  const untold = packageOf('untold-advised', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/untold.git' } })
+  registry(t, [hidden, untold])
+  const asked = insights(t, {
+    repos: { 'org/hidden': { full_name: 'org/hidden', private: false, visibility: 'internal' } },
+    advisories: { 'hidden-advised': reviewed, 'untold-advised': reviewed },
+    repoAdvisories: { 'org/hidden': [{ ghsa_id: 'GHSA-xxxx-yyyy-zzzz', state: 'published', summary: 'Private', severity: 'high', cwe_ids: [],
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'hidden-advised' }, vulnerable_version_range: '< 2.0.0' }] }] },
+  })
+  const hiddenBody = (await h.send('/api/npm/advisories?name=hidden-advised')).json()
+  assert.deepEqual(hiddenBody.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'], 'npm\'s alone')
+  assert.equal(hiddenBody.repository, true, 'there is no public repository to ask')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'the internal repository\'s listing is never asked for, though it answers private: false')
+  // GitHub's answer for the repository fails: it can't be told public.
+  t.mock.method(globalThis, 'fetch', ((fetch) => (input, init) => String(input) === 'https://api.github.com/repos/org/untold'
+    ? Promise.resolve(Response.json({ message: 'Server Error' }, { status: 500 })) : fetch(input, init))(globalThis.fetch))
+  const untoldBody = (await h.send('/api/npm/advisories?name=untold-advised')).json()
+  assert.deepEqual(untoldBody.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'])
+  assert.equal(untoldBody.repository, false, 'not kept, so asked again next time')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0)
+})
+
+test('a repository\'s visibility is asked afresh for its advisories, not taken from its kept figures', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('turned-private', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/turned.git' } })
+  registry(t, [pkg])
+  const repos = { 'org/turned': { full_name: 'org/turned', private: false, visibility: 'public' } }
+  const asked = insights(t, { repos, repoAdvisories: { 'org/turned': [] } })
+  assert.equal((await h.send('/api/npm/stats?name=turned-private')).json().github.repo, 'org/turned', 'kept as public')
+  Object.assign(repos['org/turned'], { private: true, visibility: 'private' })
+  const body = (await h.send('/api/npm/advisories?name=turned-private')).json()
+  assert.equal(body.repository, true)
+  assert.equal(asked.filter(([what, repo]) => what === 'github' && repo === 'org/turned').length, 2, 'GitHub asked again')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'and the now private repository\'s listing never asked for')
+})
+
+test('a version\'s publish commit\'s tags, from a public repository, asked with a token', async t => {
+  const other = 'd'.repeat(40), sha = 'c'.repeat(40)
+  const asked = []
+  let repository = null
+  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+    asked.push({ url: String(input), auth: new Headers(init.headers).get('authorization'), body: JSON.parse(init.body) })
+    return Promise.resolve(Response.json({ data: { repository } }))
+  })
+  const token = value => () => Promise.resolve(value)
+  const commit = oid => ({ __typename: 'Commit', oid })
+  const annotated = target => ({ __typename: 'Tag', oid: 'e'.repeat(40), target })
+  repository = { visibility: 'PUBLIC', refs: { nodes: [
+    { name: 'v1.2.3', target: commit(sha) },
+    { name: 'pkg@1.2.3', target: annotated(commit(sha)) },
+    { name: 'nested@1.2.3', target: annotated(annotated(commit(sha))) },
+    { name: 'v1.2.3-rc.1', target: commit(other) },
+  ] } }
+  assert.deepEqual(await npmCommitTags('Org/Tagged', sha, '1.2.3', token('user-token')), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'], 'annotated tags followed to their commit, others left out')
+  assert.equal(asked.length, 1)
+  assert.equal(asked[0].url, 'https://api.github.com/graphql')
+  assert.equal(asked[0].auth, 'Bearer user-token')
+  assert.deepEqual(asked[0].body.variables, { owner: 'Org', name: 'Tagged', query: '1.2.3' })
+  assert.deepEqual(await npmCommitTags('org/tagged', sha, '1.2.3', token('another-token')), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'])
+  assert.equal(asked.length, 1, 'kept for the repository and commit, whoever asks')
+  repository = { visibility: 'PRIVATE', refs: { nodes: [{ name: 'v2.0.0', target: commit(sha) }] } }
+  assert.deepEqual(await npmCommitTags('org/private', sha, '2.0.0', token('user-token')), [], 'a private repository\'s tags are no one\'s to see here')
+  repository = { visibility: 'INTERNAL', refs: { nodes: [{ name: 'v2.0.0', target: commit(sha) }] } }
+  assert.deepEqual(await npmCommitTags('org/internal', sha, '2.0.0', token('user-token')), [], 'nor an internal one\'s')
+  repository = null
+  assert.deepEqual(await npmCommitTags('org/gone', sha, '2.0.0', token('user-token')), [])
+  asked.length = 0
+  assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', token(null)), [])
+  assert.equal(asked.length, 0, 'GraphQL needs a token: without one, nothing is asked')
+  repository = { visibility: 'PUBLIC', refs: { nodes: [{ name: 'v3.0.0', target: commit(sha) }] } }
+  assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', token('user-token')), ['v3.0.0'], 'nor kept for a reader with one')
+  let tokensAsked = 0
+  await npmCommitTags('org/untold', sha, '3.0.0', () => { tokensAsked++; return Promise.resolve('user-token') })
+  assert.equal(tokensAsked, 0, 'a token is asked for only where the tags are not kept')
+})
+
+test('the tags route reads the version as the reader may, and asks GitHub only with their token', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('tagged-route', '1.0.0', { 'index.js': '' })
+  const calls = registry(t, [pkg])
+  const res = await h.send('/api/npm/tags?name=tagged-route&version=1.0.0')
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), { name: 'tagged-route', version: '1.0.0', tags: [] })
+  assert.ok(!calls.some(call => call.url.includes('api.github.com')), 'a reader without a GitHub token asks GitHub nothing')
+  assert.deepEqual((await h.send('/api/npm/tags?name=missing-package&version=1.0.0')).json(), { error: 'package-not-found' })
+})
+
+test('figures and advisories of a private package stay closed to readers without private access', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const pkg = { ...packageOf('@acme/insight', '1.0.0', { 'index.js': '' }), private: true }
+  registry(t, [pkg])
+  const asked = insights(t, { downloads: { '@acme/insight': { start: '2026-01-01', end: '2026-01-01', downloads: [] } } })
+  for (const path of ['/api/npm/stats?name=%40acme%2Finsight', '/api/npm/advisories?name=%40acme%2Finsight', '/api/npm/tags?name=%40acme%2Finsight&version=1.0.0']) {
+    assert.deepEqual((await h.send(path, 'view')).json(), { error: 'package-not-found' }, path)
+    assert.equal((await h.send(path, 'admin')).status, 200, path)
+  }
+  assert.ok(asked.every(([, , auth]) => auth === null), 'never with the server\'s token')
+  assert.deepEqual((await h.send('/api/npm/stats?name=..%2Fx')).json(), { error: 'bad-package' })
 })
 
 test('team npm scopes are admin-only, normalized, listed with teams and recorded', async t => {
@@ -446,4 +752,19 @@ test('SQLite team npm scopes normalize, follow membership and hidden teams, and 
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   await checkTeamNpmScopes(db)
+})
+
+test('a homepage that leads only where the repository does is left out of the manifest', () => {
+  const repository = (url, directory) => ({ repository: { type: 'git', url, ...directory ? { directory } : {} } })
+  const homepage = json => npmManifest(json).homepage ?? null
+  const axios = repository('git+https://github.com/axios/axios.git')
+  assert.equal(homepage({ ...axios, homepage: 'https://github.com/axios/axios#readme' }), null, 'npm\'s default homepage')
+  assert.equal(homepage({ ...axios, homepage: 'https://github.com/Axios/axios' }), null)
+  assert.equal(homepage({ ...axios, homepage: 'https://axios-http.com' }), 'https://axios-http.com')
+  assert.equal(homepage({ ...axios, homepage: 'https://github.com/axios/axios/wiki' }), 'https://github.com/axios/axios/wiki')
+  const core = repository('git+https://github.com/babel/babel.git', 'packages/babel-core')
+  assert.equal(homepage({ ...core, homepage: 'https://github.com/babel/babel/tree/main/packages/babel-core#readme' }), null, 'its directory')
+  assert.equal(homepage({ ...core, homepage: 'https://github.com/babel/babel/tree/main/packages/babel-parser' }),
+    'https://github.com/babel/babel/tree/main/packages/babel-parser', 'another package\'s directory')
+  assert.equal(homepage({ homepage: 'https://example.com/' }), 'https://example.com/', 'no repository')
 })

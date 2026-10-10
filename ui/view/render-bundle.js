@@ -35,7 +35,10 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
-import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute } from './npm-package.js'
+import { EXTERNAL_LINK_ICON } from './advisory-parts.js'
+import { overviewColumn } from './bundle-overview-column.js'
+import { navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
+import { npmAdvisoriesColumn, npmBinaryColumn, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmReadabilityTag, npmReadabilityWarning, npmStatsRow } from './npm-overview.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -48,7 +51,7 @@ import { utf8ByteLength } from '../../common/utf8.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs, bundleSourceLines, bundleSourceOrder, bundleSourceSizes, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleCodeStats } from '../../common/bundle-stats.js'
 import { bundleCommitTooltip, bundleOriginLinks } from './bundle-origin-links.js'
-import { bundleNeedsSources, bundleSourceLineCount, computeBundleFileHashes } from './bundle-metadata.js'
+import { bundleLineCounts, bundleNeedsSources, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
 import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
@@ -448,9 +451,16 @@ function openBundleWhy(details, query) {
 //
 // `unpackedSize` is the bytes every listed file adds up to once unpacked —
 // what the Packages column totals — shown beside the artifact's own Size.
-// Null leaves the row out.
-// `leadColumn` replaces the Packages column, as an npm package's Dependencies do.
-function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, { bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null } = {}) {
+// Null leaves the row out. `lines` are the lines of code its sources add up
+// to, shown beside their count where given.
+// `leadColumn` replaces the Packages column, as an npm package's Dependencies do;
+// `trailColumns` follow Files, `summaryExtra` follows the summary's meta, and
+// `overviewClass` names the Overview's own layout. `fileIcon` and `fileTag`
+// render before and after each Files row's path.
+function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, {
+  bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
+  fileTag = null, fileIcon = null, overviewClass = '', fileFilter = null, lines = null,
+} = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
   // the stripped paths are only for displaying the file list.
@@ -522,11 +532,15 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // (the click handler checks bundleSourcesAsMap and shows an
   // empty placeholder when content is missing). A resource has no
   // source to view at all, so its row is plain text.
+  // `fileFilter` narrows the Files list alone, `{ label, keeps, clear }`:
+  // what it keeps, named in the column's head, with a way back to every file.
+  const listed = fileFilter ? order.filter((i) => fileFilter.keeps(sources[i])) : order
   const filesTpl = sources.length > 0 ? html`<ul class="bundles-sources-list">
-    ${order.map((i) => {
+    ${listed.map((i) => {
       const src = sources[i]
       const size = sizes[i]
-      const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${src}>${stripped[i]}</span>
+      const row = html`${fileIcon ? fileIcon(src) : nothing}<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${src}>${stripped[i]}</span>
+        ${fileTag ? fileTag(src) : nothing}
         ${size == null ? nothing : html`<span class="bundles-source-size">${formatBytes(size)}</span>`}`
       return html`<li>${resources?.has(src)
         ? html`<div class="bundles-source-row is-resource">${row}</div>`
@@ -563,13 +577,14 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   // for an analyzer dump). The outer wrapper is a flex column so
   // the columns row takes the remaining height after the meta /
   // chips, and CSS handles the per-column scroll.
-  return html`<div class="bundles-overview">
+  const textCount = sources.length - (resources?.size ?? 0)
+  return html`<div class="bundles-overview ${overviewClass}">
     <div class="bundles-overview-summary">
       <div class="bundles-detail-meta-row">
         ${renderMeta(prefix)}
-        <dl class="bundles-detail-meta">
+        <dl class="bundles-detail-meta is-build">
           ${extras}
-          <dt>Sources</dt><dd>${sources.length - (resources?.size ?? 0)}</dd>
+          <dt>Sources</dt><dd>${lines == null ? textCount : `${textCount} ${textCount === 1 ? 'file' : 'files'} · ${lines.toLocaleString('en')} LoC`}</dd>
           ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
           ${unpackedSize == null ? nothing : html`<dt>Unpacked</dt><dd>${formatBytes(unpackedSize)}</dd>`}
           ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
@@ -577,32 +592,20 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
         ${exportsCol ?? nothing}
       </div>
       ${issueTotal > 0 ? html`<div class="bundles-issue-summary tree-count-chips">${issueChips}</div>` : nothing}
+      ${summaryExtra}
     </div>
     <div class="bundles-overview-columns">
-      ${leadColumn ?? html`<section class="bundles-overview-col">
-        <header class="bundles-overview-col-head">
-          <span class="bundles-overview-col-title">Packages <span class="bundles-overview-col-count">${packages.size}</span></span>
-          <span class="bundles-overview-sort" role="group" aria-label="Package order">
-            ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(packagesSort === value)} @click=${() => { state.bundleOverviewPackagesSort = value; render() }}>${label}</button>`)}
-          </span>
-        </header>
-        <div class="bundles-overview-col-body">${distTpl}</div>
-      </section>`}
-      <section class="bundles-overview-col">
-        <header class="bundles-overview-col-head">
-          <span class="bundles-overview-col-title">Files <span class="bundles-overview-col-count">${sources.length}</span></span>
-          <span class="bundles-overview-sort" role="group" aria-label="File order">
-            ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
-          </span>
-        </header>
-        <div class="bundles-overview-col-body bundles-overview-col-body--list">${filesTpl}</div>
-      </section>
-      ${reports.length > 0 ? html`<section class="bundles-overview-col">
-        <header class="bundles-overview-col-head">
-          Reports <span class="bundles-overview-col-count">${reports.length}</span>
-        </header>
-        <div class="bundles-overview-col-body bundles-overview-col-body--list">${reportsTpl}</div>
-      </section>` : nothing}
+      ${leadColumn ?? overviewColumn({ title: 'Packages', count: packages.size, body: distTpl,
+        tools: html`<span class="bundles-overview-sort" role="group" aria-label="Package order">
+          ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(packagesSort === value)} @click=${() => { state.bundleOverviewPackagesSort = value; render() }}>${label}</button>`)}
+        </span>` })}
+      ${overviewColumn({ title: 'Files', count: fileFilter ? `${listed.length} of ${sources.length}` : sources.length, body: filesTpl, list: true,
+        extra: fileFilter ? html` <button type="button" class="bundles-overview-filter" aria-label=${`Show every file, not only ${fileFilter.label}`} @click=${fileFilter.clear}>${fileFilter.label}<span aria-hidden="true">×</span></button>` : nothing,
+        tools: html`<span class="bundles-overview-sort" role="group" aria-label="File order">
+          ${[['name', 'Name'], ['size', 'Size']].map(([value, label]) => html`<button type="button" aria-pressed=${String(filesSort === value)} @click=${() => { state.bundleOverviewFilesSort = value; render() }}>${label}</button>`)}
+        </span>` })}
+      ${reports.length > 0 ? overviewColumn({ title: 'Reports', count: reports.length, body: reportsTpl, list: true }) : nothing}
+      ${trailColumns}
     </div>
   </div>`
 }
@@ -2027,7 +2030,11 @@ function renderBundleSlide(entry) {
       </span>` : nothing}
       <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
-        <div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>
+        ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.npm.name}>${entry.npm.name}</div>
+          <npm-version-select .name=${entry.npm.name} .version=${entry.npm.version} .tab=${tab} .list=${npmVersionList(entry.npm.name)}></npm-version-select>
+          <a class="npm-header-link" href=${`https://www.npmjs.com/package/${entry.npm.name}/v/${entry.npm.version}`} target="_blank" rel="noopener noreferrer"
+            data-tooltip=${`${entry.npm.name}@${entry.npm.version} on npmjs.com`}>npmjs.com${EXTERNAL_LINK_ICON}</a>`
+          : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
       <div class="bundles-slide-tabs" role="tablist">
@@ -2454,18 +2461,25 @@ function languageBarPointerLeave(e) {
   hideTooltip()
 }
 
-function renderBundleLanguagesBar(details) {
+// Its sources' lines, in all and by language: the index's where it has
+// them, else counted once and kept with them.
+const bundleDetailsCodeStats = details => details.codeStats ??= bundleCodeStats(bundleLineCounts(details), bundleFileSizes(details))
+
+function renderBundleLanguagesBar(details, { legend = false } = {}) {
   if (!(details?.kind === 'stasis' && details.bundle) && !(details?.npm && details.json)) return nothing
-  // `bundleSourcesAsMap` includes only textual sources. Stasis resources
-  // (images, fonts, and other binary payloads) are intentionally absent,
-  // so they cannot distort the language shares or get a fake extension.
-  const lines = details.lineCounts?.size > 0
-    ? details.lineCounts
-    : new Map([...bundleSourcesAsMap(details)].map(([path, content]) => [path, bundleSourceLineCount(content)]))
-  const stats = details.codeStats ?? bundleCodeStats(lines, bundleFileSizes(details))
+  const stats = bundleDetailsCodeStats(details)
   const total = stats.lines
   const segments = stats.languages.filter(language => language.lines > 0)
   if (total <= 0 || segments.length === 0) return nothing
+  const share = lineCount => {
+    const pct = lineCount / total * 100
+    return pct < .1 ? '<0.1' : pct < 1 ? pct.toFixed(1) : pct.toFixed(0)
+  }
+  // With `legend`, the largest few name themselves beside it, the rest
+  // left to the bar's tooltips.
+  const named = legend ? html`<ul class="bundles-languages-legend">${segments.slice(0, 4).map(({ key, label, lines: lineCount }) => html`<li>
+    <span class="bundles-languages-swatch" style=${styleMap({ background: bundleLanguageColor(key) })}></span>${label}<span class="bundles-languages-share">${share(lineCount)}%</span>
+  </li>`)}</ul>` : nothing
   return html`<div
     class="bundles-languages-bar"
     data-tooltip-managed
@@ -2473,15 +2487,12 @@ function renderBundleLanguagesBar(details) {
     @pointerover=${languageBarPointerOver}
     @pointerleave=${languageBarPointerLeave}
   >
-    ${segments.map(({ key, label, lines: lineCount }) => {
-      const pct = lineCount / total * 100
-      return html`<span
-        class="bundles-languages-segment"
-        style=${styleMap({ flexGrow: lineCount, background: bundleLanguageColor(key) })}
-        data-language-tooltip=${`${label} · ${pct < 1 ? pct.toFixed(1) : pct.toFixed(0)}% · ${lineCount.toLocaleString()} LoC`}
-      ></span>`
-    })}
-  </div>`
+    ${segments.map(({ key, label, lines: lineCount }) => html`<span
+      class="bundles-languages-segment"
+      style=${styleMap({ flexGrow: lineCount, background: bundleLanguageColor(key) })}
+      data-language-tooltip=${`${label} · ${share(lineCount)}% · ${lineCount.toLocaleString()} LoC`}
+    ></span>`)}
+  </div>${named}`
 }
 
 // Exports column for the Overview's `.bundles-detail-meta-row` — a
@@ -2524,8 +2535,8 @@ function bundleExportsColumn(entry, details) {
 // Shared `.bundles-overview` shell for the Overview branches that
 // have no parsed sources to show (loading / error / un-parsed) —
 // metadata row on top, optional placeholder line below.
-function renderBundleOverviewFallback(meta, exportsCol, placeholder = nothing) {
-  return html`<div class="bundles-overview">
+function renderBundleOverviewFallback(meta, exportsCol, { placeholder = nothing, overviewClass = '' } = {}) {
+  return html`<div class="bundles-overview ${overviewClass}">
     <div class="bundles-overview-summary">
       <div class="bundles-detail-meta-row">${meta}${exportsCol}</div>
     </div>
@@ -2590,7 +2601,7 @@ function renderBundleDetails(entry, details) {
   if (!loaded) return renderBundleOverviewFallback(meta('', true), exportsCol)
   if (details.error) {
     return renderBundleOverviewFallback(meta('', true), exportsCol,
-      html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>`)
+      { placeholder: html`<div class="bundles-overview-placeholder is-error">Failed to parse: ${details.error}</div>` })
   }
   if (details.kind === 'sourcemap' && details.json) {
     const json = details.json
@@ -2651,27 +2662,37 @@ function renderBundleDetails(entry, details) {
   // the metadata block above plus a generic "not parsed" line,
   // wrapped in the same shell so layout is consistent.
   return renderBundleOverviewFallback(meta('', true), exportsCol,
-    html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>`)
+    { placeholder: html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>` })
 }
 
 // An npm package version's Overview: its manifest beside the files its
 // tarball holds, with the tarball to download. Its details arrive with it,
-// whole, so there is no loading state to show.
+// whole, so there is no loading state to show. The summary lays out as the
+// package's facts, its build's beside them with the download, its figures in
+// a card of their own, and what its files hold under the facts, labelled as
+// they are (report.css .npm-overview).
 function renderNpmPackageOverview(entry, details) {
   const download = `/api/npm/download?${new URLSearchParams({ name: entry.npm.name, version: entry.npm.version })}`
+  const downloadButton = html`<a class="bundles-download-btn" href=${download}>${DOWNLOAD_ICON}<span>Download tarball</span></a>`
+  // Under the downloads chart once the version is read; beside the facts
+  // until then.
   const exportsCol = html`<div class="bundles-overview-exports">
-    <div class="bundles-overview-exports-row">
-      <a class="bundles-download-btn" href=${download}>${DOWNLOAD_ICON}<span>Download tarball</span></a>
-    </div>
-    ${renderBundleLanguagesBar(details)}
+    <div class="bundles-overview-exports-row">${downloadButton}</div>
   </div>`
   if (details?.integrity !== entry.integrity || !details.json) {
-    return renderBundleOverviewFallback(npmOverviewMeta(entry), exportsCol)
+    return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry) }), exportsCol, { overviewClass: 'npm-overview' })
   }
-  const sources = details.json.sources
+  // Files lists every file, tagged by what its bytes hold; the binary ones,
+  // which have no text to show, are listed again in a column of their own.
+  const { sources } = details.json
   const sizeMap = bundleFileSizes(details)
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
-  const resources = new Set(sources.filter((_, i) => typeof details.json.sourcesContent[i] !== 'string'))
-  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix), npmOverviewExtras(entry), sources, sizes, null, exportsCol,
-    { bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources, leadColumn: npmDependenciesColumn(entry) })
+  const { paths, binaries, byPath } = npmFilesRead(details)
+  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files: paths }), npmOverviewExtras(entry, paths), sources, sizes, null, nothing, {
+    bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
+    leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
+    summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
+    overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines,
+    fileTag: path => npmReadabilityTag(byPath.get(path)), fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
+  })
 }

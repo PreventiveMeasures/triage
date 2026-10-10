@@ -6,9 +6,10 @@
 // manager, or a member of a visible team listing its scope (team-npm-scopes.ts).
 // For everyone else, a version is public only when the registry answers for
 // it without credentials, asked on every request and never from a cache:
-// upstream's caches, which bundle builds fill using the token, are never
-// read here. The tarball is then read without credentials too, and held to
-// the integrity that anonymous answer gives.
+// upstream's caches, which bundle builds fill using the token, hold no
+// answer here. Its tarball may come from them (npm-loads.ts), as only bytes
+// matching the integrity that anonymous answer gives are served; else it is
+// read without credentials too, and held to that integrity.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { getRepo } from '@preventive/upstream/package.js'
@@ -38,7 +39,7 @@ export class NpmPackageError extends Error {
 
 // Who reads, as the session has it now: the role, and the scopes of the
 // visible teams they are a member of.
-export interface NpmReader { role: Role; scopes: ReadonlySet<string> }
+export interface NpmReader { role: Role; scopes: ReadonlySet<string>; userId: string }
 
 // Whether a reader may have a package read with the server's token.
 export function canReadPrivateNpm(reader: NpmReader, name: string): boolean {
@@ -119,13 +120,15 @@ export interface NpmVersionDocument {
   manifest: Record<string, unknown>
 }
 
-const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+export const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const stringRecord = (value: unknown) => plainObject(value)
   ? Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item === 'string')) as Record<string, string> : undefined
 
 // The fields the Overview shows, in the shapes package.json gives them; each
-// left out where the document has none, or has another shape.
-function manifestOf(json: Record<string, unknown>): Record<string, unknown> {
+// left out where the document has none, or has another shape. A homepage that
+// leads only where its repository does (the repository, its directory there,
+// or its readme, npm's homepage where the package names none) is left out.
+export function npmManifest(json: Record<string, unknown>): Record<string, unknown> {
   const pick: Record<string, unknown> = {}
   for (const key of ['description', 'license', 'homepage', 'main', 'module', 'types', 'type', 'deprecated', 'gitHead']) {
     if (typeof json[key] === 'string') pick[key] = json[key]
@@ -133,6 +136,9 @@ function manifestOf(json: Record<string, unknown>): Record<string, unknown> {
   const author = json['author']
   if (typeof author === 'string') pick['author'] = author
   else if (plainObject(author) && typeof author['name'] === 'string') pick['author'] = author['name']
+  // The npm account that published it, for its profile.
+  const publisher = json['_npmUser']
+  if (plainObject(publisher) && typeof publisher['name'] === 'string' && /^[\w.-]{1,214}$/u.test(publisher['name'])) pick['publisher'] = publisher['name']
   if (Array.isArray(json['keywords'])) pick['keywords'] = json['keywords'].filter(item => typeof item === 'string').slice(0, 50)
   if (typeof json['bin'] === 'string') pick['bin'] = { [String(json['name'])]: json['bin'] }
   else if (stringRecord(json['bin'])) pick['bin'] = stringRecord(json['bin'])
@@ -146,7 +152,11 @@ function manifestOf(json: Record<string, unknown>): Record<string, unknown> {
   if (install.length > 0) pick['installScripts'] = Object.fromEntries(install.map(script => [script, scripts![script]]))
   try {
     const repo = getRepo(json)
-    if (repo.github) pick['github'] = { github: repo.github, ...(repo.directory === undefined ? {} : { directory: repo.directory }) }
+    if (repo.github) {
+      pick['github'] = { github: repo.github, ...(repo.directory === undefined ? {} : { directory: repo.directory }) }
+      const home = typeof pick['homepage'] === 'string' ? getRepo({ homepage: pick['homepage'] }) : {}
+      if (home.github?.toLowerCase() === repo.github.toLowerCase() && (home.directory ?? '') === (repo.directory ?? '')) delete pick['homepage']
+    }
   } catch {}
   return pick
 }
@@ -167,7 +177,7 @@ export function readNpmVersion(name: string, spec: string, privileged: boolean, 
     return {
       name, version: json['version'], private: found.private,
       dist: { tarball: dist['tarball'], integrity: dist['integrity'], unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
-      manifest: manifestOf(json),
+      manifest: npmManifest(json),
     }
   })
 }

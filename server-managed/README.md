@@ -167,6 +167,7 @@ window also navigate to their managed page URL.
 | `/team/:teamSlug/report/:reportSlug/finding/:findingId` | Finding in a report |
 | `/team/:teamSlug/bundle/:bundleSlug[/:tab]` | Team bundle; active tab is part of the URL |
 | `/manage/bundle/:bundleSlug[/:tab]` | Bundle opened without an accessible team (manager/admin) |
+| `…/bundle/:bundleSlug/compare[/:otherSlug[/code\|/diff]]` | Its Compare tab, with another bundle, in its Code or Diff mode |
 | `/manage` | Manage overview |
 | `/manage/bundle` | Bundles |
 | `/manage/scans` | Scans |
@@ -178,7 +179,7 @@ window also navigate to their managed page URL.
 | `/npm` | npm package lookup |
 | `/npm/:name[@:version][/:tab]` | npm package version; `:version` may be a dist-tag |
 | `/npm/:name@:version/code[/:file]` | Its Code tab, at a file |
-| `/npm/:name@:version/compare[/:otherVersion[/code]]` | Its Compare tab, with another version |
+| `/npm/:name@:version/compare[/:otherVersion[/code\|/diff]]` | Its Compare tab, with another version, in its Code or Diff mode |
 
 Page tokens are persistent server-assigned slugs: the last UUID component when
 unique, otherwise the full ID, with the same allocation rules for teams, reports,
@@ -199,7 +200,12 @@ both pickers: the open bundle's opens the bundle picked, compared with the same
 one (picking that one swaps the two), and the other's picks what to compare
 with. Compare offers accessible
 bundles assigned to the same repository, including bundles not previously opened.
-Unattached bundles cannot be compared with each other.
+Unattached bundles cannot be compared with each other. Past its Overview,
+Compare reviews the changes in **Code**, a file at a time beside the tree of
+changed files, or in **Diff**, every changed file's diff one after another in
+a single list, each under its name. Diff is offered only while that list is
+under 8,000 rows, its folded unchanged runs and each file's head counted; a
+link to a longer one opens the Overview.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require
 the current user's team access. Unavailable pages return to the landing page;
@@ -1020,42 +1026,122 @@ Every role but `none` can open a published npm package version from the
 landing page's **npm packages** card, or at `/npm/<name>[@<version>]`. It shows
 in the bundle view with four tabs:
 
-- **Overview**: the manifest's description, license, author, GitHub
-  repository and publish commit, entry points, engines and install scripts,
-  a tarball download, and two columns: Dependencies, peer and optional ones
-  included, which open in the viewer at their latest version (an `npm:`
-  alias at the package it names), and the tarball's Files. The version
-  picker lists the package's versions and dist-tags; it holds the version
-  shown, disabled, until they arrive.
+- **Overview**: its header names the package beside a picker of its
+  versions, as wide as the version shown, listing them as Compare's pickers
+  do (searchable, newest first, several to a row as wide as the longest
+  needs, with their dist-tags; the arrow keys move along a row and between
+  rows; switching keeps the tab shown, and until the versions arrive it holds
+  the version shown, disabled), and links its page on npm.
+  Over the summary, where any file can't be reviewed by reading it, a
+  warning says how many and why, in categories, the first that holds of: not
+  UTF-8 (the server could not read it as UTF-8, or it holds a NUL), control
+  characters (the C0 ones but tab, line feed and carriage return, DEL, the
+  C1 ones, and the bidirectional controls U+202A–U+202E and U+2066–U+2069),
+  unexpected long lines (lines over 1,000 characters among readable ones),
+  minified (most of its text on such lines, or named `.min.` with any), and
+  source maps (`.map`). Prose (Markdown, text, licenses and changelogs) is
+  readable whatever its lines' lengths, and a `sourceMappingURL` comment's
+  line counts for none. Then the manifest's facts: description, license
+  (each license in its expression opening its file in the package: the one
+  named after it, as `LICENSE-APACHE` for `Apache-2.0`, else its only license
+  file), author (linking the npm profile of the account that published it),
+  GitHub repository with its stars, forks, open issues and open pull requests
+  (GitHub counts them together; the pull requests are counted apart from its
+  list of them, and where that fails they show together), publish commit with
+  the tags that point to it, homepage (left out where it only leads to its
+  GitHub repository, or its directory or readme there, as npm's default
+  does) and integrity; beside them entry points,
+  each with its file's icon and opening its file, Main and Module in one row
+  where they name the same file, engines, install scripts, and its files with
+  the lines of code they add up to; and a card of its downloads: the latest
+  week's (or month's) and the last year's, each with its unit (`1.2K/week`,
+  `9.6K/year`), over a chart of them across the year by week, or by calendar
+  month (complete ones only), with the switch between the two at its top
+  right and under it the hovered period's downloads; and the tarball
+  download under it. Under the facts, its languages, then its readable files
+  as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
+  has at its root (`package.json`, a readme, and license files such as
+  `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
+  count, one only those files have left out, one other files have too
+  counting them as well. Each category's chip, and each file type's, narrows
+  the Files list to its files, one at a time; the Files head names it, with a
+  way back to every file. Then its columns: Dependencies, where
+  it has any (peer and optional ones included), which open in the viewer at
+  their latest version (an `npm:` alias at the package it names);
+  Advisories, across every published version, one row each, its head
+  counting those that affect the version shown, those first and marked,
+  those fixed in it (affecting only older versions) struck through, and
+  those affecting later versions, older ones perhaps too, plain; Files, each with its type's icon and tagged with its category, its
+  tag naming the control characters or long lines it holds; and, where the
+  package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names.
-- **Treemap**: the files by size, as for bundles.
+- **Treemap**: the files by size, as for bundles, colored by the top-most
+  directories that tell them apart, as package colors can't tell one
+  package's files apart: below the directories every file shares, each
+  directory has its color, and the files loose in a directory passed on the
+  way have one more (`src/a/`, `src/b/` and `src/*.js` for `src/a/a.js`,
+  `src/b/b.js` and `src/c.js`), the largest first; a package of loose files
+  alone is colored by extension. Any bundle of a single package is colored
+  the same way.
 - **Compare**: the bundle Compare, with another version of the same package,
   picked from its versions newest first. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
   that changed. Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
   are pickers, as for bundles: picking the open side's opens that version
-  compared with the same one, and picking the other side's swaps them.
+  compared with the same one, and picking the other side's swaps them. Code
+  and Diff review the changes as for bundles.
 
 A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
 version it opened. Code links name files by number and lines in the fragment,
 and Compare links the version compared with and its mode, as for bundles. The
 browser keeps the last three public versions it read, and the package's
-version list, in memory for the session and role that read them, so a swap or
-Back reopens one without another request. A private version is asked for each
-time it opens, so the server checks again access the reader may have lost
-since, as to a team's npm scopes. A version list that failed is asked for
-again after ten seconds, twice as long after each failure in a row up to five
-minutes, on a repaint scheduled for then.
+version list, figures and advisories, in memory for the session and role that
+read them, so a swap or Back reopens one without another request. A private
+version is asked for each time it opens, so the server checks again access the
+reader may have lost since, as to a team's npm scopes. A version list,
+figures or advisories that failed are asked for again after ten seconds, twice
+as long after each failure in a row up to five minutes, on a repaint scheduled
+for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
-integrity, tarballSize, manifest, files }`, where each file row is `[path,
+integrity, tarballSize, manifest, files }`, the manifest's `publisher` the npm
+account that published it (never its email), and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
 'sha256-<base64>']`. `version` defaults to `latest`. `GET
 /api/npm/versions?name=` returns `{ name, private, distTags, versions }`,
 newest first, and `GET /api/npm/download?name=&version=` the tarball.
-Responses are `private, no-store`, and nothing derived from a package is kept
-on the server.
+`GET /api/npm/stats?name=` returns `{ name, downloads, github }`: `downloads`
+is `{ start, end, days }`, a count a day over the last year from npm's
+downloads API, and `github` is `{ repo, stars, forks, openIssues, openPulls,
+archived, pushedAt }` for the repository the latest version's manifest names,
+`openIssues` taking in the open pull requests `openPulls` counts apart (from
+the last page of their list, one a page; null where GitHub didn't say); either
+is null where it can't be had, `github` for a repository GitHub does not
+say is public. `GET /api/npm/tags?name=&version=` returns `{ name, version,
+tags }`: the tags of its GitHub repository that point to its publish commit
+(`gitHead`), among those whose names hold the version (`v1.2.3`,
+`pkg@1.2.3`), which the Overview shows after the commit. GitHub's GraphQL API
+finds them by name, and needs a token: the reader's own, where they have one,
+and none are asked without. Only a public repository's are answered, kept an
+hour for that repository and commit. `GET /api/npm/advisories?name=` returns `{ name, versions,
+advisories, repository }`, asked as bundle advisories with repository
+advisories are: what `npm audit` asks npm's registry, for every published
+version at once (`source: 'registry'`), and what the package's GitHub
+repository publishes that npm does not report yet (`source: 'repository'`):
+the repository its latest version names, asked for only where GitHub says it
+is public, asked afresh rather than from its figures' kept answer, since the list is kept for every reader and
+the reader's token could read a private repository's; its listing is kept
+where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
+url?, title?, severity?, cvss?, cwe, range?, affected }`, `affected` indexing
+`versions`, one row an advisory: npm's registry answers one a range it covers,
+merged here, their ranges joined with `||`. `repository` is false where GitHub refused (its anonymous rate
+limit, say), or couldn't say whether the repository is public, leaving npm's
+alone; such a list is asked again on the next request. Responses are `private, no-store`. Nothing derived from a package's
+files is kept on the server; its figures and advisories, which are public,
+are kept an hour, npm's asked for without the server's npm token, and GitHub
+with the reader's own token where they have one. Access to the package is
+checked first on every request, as for its versions.
 
 Anyone with workspace access can read public packages. Private packages need
 the server's `NPM_TOKEN`, the same one bundle builds use, and a reader with
@@ -1069,11 +1155,14 @@ their team.
 
 For everyone else, a version is public only when the registry answers for it
 without credentials. That request is made on every read and never answered
-from a cache: tarballs that a bundle build fetched with the token can remain
-in upstream's caches, readable without one, so leaving the token out is not
-enough. The viewer never reads those caches: the tarball comes from the
-registry, at the package's own path, without credentials for a public version,
-and is checked against the sha512 that anonymous answer gives. Readers with
+from a cache: documents and tarballs that a bundle build fetched with the token
+can remain in upstream's caches, readable without one, so leaving the token out
+is not enough. Tarballs are read from there all the same, as the answer names the sha512 the
+tarball must have: one kept in upstream's cache directory (`npm/tarballs`,
+where bundle builds keep theirs), or in npm's own cache, is served only when it
+matches. Otherwise the tarball comes from the registry, at the package's own
+path, without credentials for a public version, is checked against that sha512,
+and is then kept in upstream's cache, where the server has one. Readers with
 private access also try the registry anonymously first, and retry a scoped
 package with the token; their answer says `private: true` when only the token
 could read it. Access is checked again after the registry answers, and a

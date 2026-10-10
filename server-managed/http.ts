@@ -51,6 +51,9 @@
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/502
 //   GET  /api/npm/versions?name= → its dist-tags and versions | 400/401/404/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
+//   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
+//   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
+//   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -88,6 +91,7 @@ import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ServerInfo } from '../common/server-info.ts'
+import { bundleCommitHash } from '../common/bundle-commit.js'
 import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
@@ -114,8 +118,9 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
+import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats } from './npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -160,6 +165,10 @@ const TEAM_SET_NPM_SCOPES_PATH = '/api/admin/teams/set-npm-scopes'
 const NPM_PACKAGE_PATH = '/api/npm/package'
 const NPM_VERSIONS_PATH = '/api/npm/versions'
 const NPM_DOWNLOAD_PATH = '/api/npm/download'
+const NPM_STATS_PATH = '/api/npm/stats'
+const NPM_ADVISORIES_PATH = '/api/npm/advisories'
+const NPM_TAGS_PATH = '/api/npm/tags'
+const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -2365,17 +2374,18 @@ async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse,
 async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Promise<NpmReader | null> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   if (s == null || !roleAtLeast(s.user.role, 'view')) return null
-  return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)) }
+  return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
-// GET /api/npm/{package,versions,download}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
 async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
-  if (!isNpmPackageName(name) || (path !== NPM_VERSIONS_PATH && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
+  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH
+  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
@@ -2389,6 +2399,11 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (isPrivate && !canReadPrivateNpm(current, name)) { sendJson(res, 404, { error: 'package-not-found' }); return false }
     return !res.destroyed
   }
+  // The reader's GitHub token, for GitHub's rate limits and never for what it
+  // shows: asked for once, and only where an answer isn't kept (npm-insights.ts).
+  let token: Promise<string | null> | undefined
+  const githubToken = () => token ??= ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
+  const githubRepoOf = (doc: NpmVersionDocument) => (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
   try {
     const privileged = canReadPrivateNpm(reader, name)
     if (path === NPM_VERSIONS_PATH) {
@@ -2397,8 +2412,48 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if (await recheck(versions.private)) sendJson(res, 200, versions)
       return
     }
+    // Across every published version, as the version list has them, which
+    // each advisory's `affected` indexes; those of the repository its latest
+    // version names, where GitHub says it is public, asked with the reader's
+    // GitHub token, its listing kept as bundle advisories keep it.
+    if (path === NPM_ADVISORIES_PATH) {
+      const versions = await readNpmVersions(name, privileged, controller.signal)
+      if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      const { advisories, repository } = await npmAdvisories(name, versions.versions, {
+        githubToken,
+        repo: async () => {
+          const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
+          return doc && githubRepoOf(doc)
+        },
+        cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
+        debug: deps.config.debug,
+      })
+      if (await recheck(versions.private)) sendJson(res, 200, { name, versions: versions.versions, advisories, repository })
+      return
+    }
+    // The package's, with the repository its latest version names; either
+    // is null where it can't be had.
+    if (path === NPM_STATS_PATH) {
+      // npm's downloads, which need nothing of the version, are asked at once;
+      // none is answered before the package's access is.
+      const downloadsAsked = npmDownloads(name).catch(() => null)
+      const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
+      if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      const repo = githubRepoOf(doc)
+      const [downloads, github] = await Promise.all([downloadsAsked, repo === null ? null : npmGithubStats(repo, githubToken).catch(() => null)])
+      if (await recheck(doc.private)) sendJson(res, 200, { name, downloads, github })
+      return
+    }
     const doc = await readNpmVersion(name, spec, privileged, controller.signal)
     if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    // Its publish commit's tags, where its repository is public on GitHub and
+    // the reader has a token to ask with; none where they can't be had.
+    if (path === NPM_TAGS_PATH) {
+      const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
+      const tags = repo === null || sha === null ? [] : await npmCommitTags(repo, sha, doc.version, githubToken).catch(() => [])
+      if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, tags })
+      return
+    }
     // The load stays held until this response is written or abandoned, and
     // a reader who stops reading it gives it up after a while. One already
     // gone takes none, as its close has passed.
@@ -2779,7 +2834,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetTeamNpmScopes(req, res, deps, cookie); return
     }
-    if (path === NPM_PACKAGE_PATH || path === NPM_VERSIONS_PATH || path === NPM_DOWNLOAD_PATH) {
+    if (NPM_PATHS.has(path)) {
       await handleNpm(req, res, deps, cookie, path, url.searchParams); return
     }
     if (path === LOGOUT_PATH) { await handleLogout(req, res, deps, cookie); return }
