@@ -117,6 +117,8 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('v4/checks.js', `export { ${Array.from({ length: 30 }, (_, i) => `_check${i} as check${i}`).join(', ')} } from "../core/index.js";\n`), 'ascii')
   assert.equal(category('types/bufferTime.d.ts', Array.from({ length: 4 }, () =>
     'export declare function bufferTime<T>(bufferTimeSpan: number, bufferCreationInterval: number | null | undefined, scheduler?: SchedulerLike): OperatorFunction<T, T[]>;').join('\n')), 'ascii')
+  assert.equal(category('lib/table.js', Array.from({ length: 3 }, (_, i) => `${'value'.repeat(20)}${i}${' '.repeat(20)}=${' '.repeat(20)}${'other'.repeat(20)};`).join('\n')), 'ascii',
+    'spaces aligning `=` count by character, not by run')
   assert.equal(category('dist/a.mjs', 'export{a as b}from"./c.js";\n'), 'ascii', 'lines as short as anyone writes')
   assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
 })

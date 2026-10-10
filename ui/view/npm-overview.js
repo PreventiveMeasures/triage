@@ -247,7 +247,8 @@ const MINIFIED_SPACES = .01
 const STRING = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gu
 function minifiedSpacing(text) {
   const code = text.replaceAll(STRING, '""').replaceAll(/^[ \t]+/gmu, '')
-  return (code.match(/(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu) ?? []).length < MINIFIED_SPACES * code.length
+  // Counted by character: a run aligning `=` is as many spaces as it is wide.
+  return (code.match(/(?<![\w$])[ \t]+|[ \t]+(?![\w$])/gu) ?? []).join('').length < MINIFIED_SPACES * code.length
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
