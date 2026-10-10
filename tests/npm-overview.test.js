@@ -127,10 +127,14 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     + `throw new Error(\n\t\`${'Your application imported from svelte/internal, a private module that no longer exists. '.repeat(3)}\`\n);\n`), 'ascii',
     'lines long by their comments and strings, not their code')
   assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
-  // Only where its strings and comments are read: JavaScript, TypeScript and CSS.
+  // Only in what minifiers write, JavaScript and CSS, whose strings and comments are read.
   assert.equal(category('tool.py', `x = 1\n# ${'ordinary words '.repeat(15)}\n# ${'ordinary words '.repeat(15)}\n`), 'ascii', 'nor a language it can\'t read')
   assert.equal(category('index.html', `<!-- ${'ordinary words '.repeat(15)}-->\n`), 'ascii')
   assert.equal(category('dist/a.css', '.a{color:red;margin:0 auto;padding:0}.b{display:flex;align-items:center;justify-content:space-between}.c{font:12px/1.5 sans-serif}\n'), 'minified')
+  assert.equal(category('dist/b.css', '.a{background:url(https://cdn.example.com/a.svg) no-repeat}.b{display:flex;align-items:center;justify-content:space-between}.c{margin:0}\n'), 'minified',
+    'a URL in CSS is no `//` comment')
+  assert.equal(category('src/About.jsx', `export const About = () => <p>${'We build tools that make reviewing code a little easier for everyone '.repeat(8)}</p>\n`), 'ascii',
+    'nor what minifiers never write, as JSX')
 })
 
 test('an advisory affects the version shown, is fixed in it, or covers later versions', () => {

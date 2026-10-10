@@ -242,16 +242,17 @@ const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 // comments (`/* @__PURE__ */`), its lines average more than anyone writes and
 // next to none of its spaces are ones a minifier drops, beside punctuation
 // (`a, b`, `x = 1`) rather than between two words (`return a`). Told only in
-// the languages whose strings and comments these are, as GitHub Linguist
-// tells minified files only in JavaScript and CSS.
-const MINIFIABLE = /\.(?:[cm]?[jt]sx?|css)$/iu
+// what minifiers write, as GitHub Linguist tells minified files only in
+// JavaScript and CSS, by their strings and comments: matched in one pass, so
+// that neither starts inside the other, a comment with the spaces around it.
 const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
-// In one pass, so that neither starts inside the other; a comment goes with
-// the spaces around it.
-const STRING_OR_COMMENT = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gu
-function minifiedCode(text) {
-  const code = text.replaceAll(STRING_OR_COMMENT, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
+const JS_STRING_OR_COMMENT = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*)[ \t]*/gu
+// No `//` comments, so `url(https://…)` is code.
+const CSS_STRING_OR_COMMENT = /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|[ \t]*\/\*[\s\S]*?\*\/[ \t]*/gu
+const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS_STRING_OR_COMMENT : /\.css$/iu.test(path) ? CSS_STRING_OR_COMMENT : null
+function minifiedCode(text, stringOrComment) {
+  const code = text.replaceAll(stringOrComment, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
   const lines = code.split('\n').filter(line => line.trim() !== '').length
   // Counted by character: a run aligning `=` is as many spaces as it is wide.
   return code.length > MINIFIED_AVERAGE * lines
@@ -297,7 +298,8 @@ export function npmFileReadability(path, text) {
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
     // Its lines as a whole first, which is cheaper.
-    const minified = MINIFIABLE.test(path) && codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text)
+    const stringOrComment = minifiable(path)
+    const minified = stringOrComment !== null && codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text, stringOrComment)
     return { ...read, category: inlineMap > 0 ? 'inline-map' : minified ? 'minified' : encoding.kind }
   }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
