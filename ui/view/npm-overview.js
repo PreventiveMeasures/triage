@@ -4,14 +4,20 @@
 // file extensions, and its binary files in a column of their own.
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
+import { advisoryCwes, advisoryRail, advisoryReference } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
 import { fetchNpmAdvisories, fetchNpmStats } from './client-managed.js'
 import { npmPackageData } from './npm-package.js'
 import './npm-downloads-chart.js'
 
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
-const SEVERITY_LABELS = { critical: 'Critical', high: 'High', moderate: 'Moderate', low: 'Low' }
-const STATUS_ORDER = { affects: 0, later: 1, fixed: 2 }
+const SEVERITIES = new Set(['critical', 'high', 'moderate', 'low'])
+// Groups of the Advisories column, in order, each headed by what it holds.
+const ADVISORY_GROUPS = [
+  ['affects', version => `Affects ${version}`],
+  ['later', () => 'Later versions only'],
+  ['fixed', version => `Fixed in ${version}`],
+]
 
 // A package's figures for this session: `downloads` and `github`, each null
 // where the server could not have them.
@@ -23,7 +29,7 @@ export function npmPackageStats(name) {
 // which each one's `affected` indexes.
 export function npmPackageAdvisories(name) {
   return npmPackageData('advisories', name, () => fetchNpmAdvisories(name),
-    data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [] }))
+    data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false }))
 }
 
 function stat(label, value, title = nothing) {
@@ -68,40 +74,52 @@ export function npmAdvisoryStatus(advisory, versions, version) {
   return affected.some(other => compareSemver(other, version) < 0) ? 'fixed' : 'later'
 }
 
-// The package's advisories across every version, those affecting the version
-// shown first and marked, those it fixes struck through.
+// The package's advisories across every version, npm's and its repository's
+// on GitHub, grouped by how they stand for the version shown: those affecting
+// it first and marked, those it fixes last and struck through.
 export function npmAdvisoriesColumn(entry) {
   const { name, version } = entry.npm
   const data = npmPackageAdvisories(name)
-  const rows = data.status === 'ready'
-    ? data.advisories.map(advisory => ({ advisory, status: npmAdvisoryStatus(advisory, data.versions, version) }))
-      .toSorted((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
-    : []
-  const affecting = rows.filter(row => row.status === 'affects').length
-  const fixed = rows.filter(row => row.status === 'fixed').length
+  const ready = data.status === 'ready'
+  const statuses = ready ? data.advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version)) : []
+  const groups = ADVISORY_GROUPS.map(([status, heading]) => ({
+    status, heading: heading(version), advisories: data.advisories?.filter((_, i) => statuses[i] === status) ?? [],
+  })).filter(group => group.advisories.length > 0)
+  const unchecked = ready && !data.repository
+    ? html`<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown.</p>` : nothing
   const body = data.status === 'loading' ? html`<p class="bundles-overview-col-empty">Checking advisories…</p>`
     : data.status === 'error' ? html`<p class="bundles-overview-col-empty">Couldn't check advisories.</p>`
-    : rows.length === 0 ? html`<p class="bundles-overview-col-empty">No advisories for any version.</p>`
-    : html`<p class="npm-advisories-summary">${affecting} ${affecting === 1 ? 'affects' : 'affect'} ${version} · ${fixed} fixed in it</p>
-      <ul class="npm-advisory-list">${rows.map(({ advisory, status }) => npmAdvisoryRow(advisory, status, version))}</ul>`
+    : groups.length === 0 ? html`${unchecked}<p class="bundles-overview-col-empty">No advisories for any version.</p>`
+    : html`${unchecked}${groups.map(group => html`<section class=${`npm-advisory-group is-${group.status}`}>
+      <h4 class="npm-advisory-group-head">${group.heading} <span class="bundles-overview-col-count">${group.advisories.length}</span></h4>
+      <ul class="bundle-advisories-rows">${group.advisories.map(npmAdvisoryRow)}</ul>
+    </section>`)}`
   return html`<section class="bundles-overview-col npm-advisories-col">
     <header class="bundles-overview-col-head">
-      <span class="bundles-overview-col-title">Advisories <span class="bundles-overview-col-count">${data.status === 'ready' ? rows.length : '…'}</span></span>
+      <span class="bundles-overview-col-title">Advisories <span class="bundles-overview-col-count">${ready ? data.advisories.length : '…'}</span></span>
     </header>
     <div class="bundles-overview-col-body">${body}</div>
   </section>`
 }
 
-function npmAdvisoryRow(advisory, status, version) {
-  const severity = SEVERITY_LABELS[advisory.severity] ? advisory.severity : 'unknown'
-  const title = advisory.title ?? advisory.id
-  return html`<li class=${`npm-advisory is-${status}`}>
-    <span class=${`bundle-advisory-severity sev-${severity}`}>${SEVERITY_LABELS[severity] ?? 'Unrated'}</span>
-    <span class="npm-advisory-body">
-      ${advisory.url ? html`<a class="npm-advisory-title" href=${advisory.url} target="_blank" rel="noopener noreferrer">${title}</a>` : html`<span class="npm-advisory-title">${title}</span>`}
-      <span class="npm-advisory-meta"><span class="mono">${advisory.id}</span>${advisory.range ? html`<span class="npm-advisory-sep" aria-hidden="true">·</span><span class="mono">${advisory.range}</span>` : nothing}</span>
-      <span class="npm-advisory-status">${status === 'affects' ? `Affects ${version}` : status === 'fixed' ? `Fixed in ${version}` : 'Later versions only'}</span>
-    </span>
+// As a bundle's advisory row has it: severity and CVSS in a rail of their
+// own, so titles line up; its source and GHSA beside the title; the range it
+// covers and its CWEs under it.
+function npmAdvisoryRow(advisory) {
+  const severity = SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown'
+  const cwes = advisoryCwes(advisory.cwe)
+  return html`<li class="bundle-advisory-row">
+    ${advisoryRail(severity, advisory.cvss)}
+    <div class="bundle-advisory-body">
+      <div class="bundle-advisory-header">
+        <span class="bundle-advisory-title">${advisory.title ?? advisory.id}</span>
+        ${advisoryReference(advisory)}
+      </div>
+      ${advisory.range || cwes !== nothing ? html`<div class="bundle-advisory-meta">
+        ${advisory.range ? html`<span>Affected <span class="mono">${advisory.range}</span></span>` : nothing}
+        ${cwes}
+      </div>` : nothing}
+    </div>
   </li>`
 }
 

@@ -2,19 +2,21 @@
 // version's files (npm-packages.ts, npm-loads.ts): the package's downloads
 // over the last year, from npm's public downloads API; its GitHub
 // repository's stars, forks and open issues; and its advisories across every
-// published version, as `npm audit` has them. All of it is public: npm is
-// asked without the server's token, and a repository's figures are kept only
-// where GitHub says it is public. Each answer is kept for an hour, a failure
-// not at all; the reader's access to the package is checked on every request
-// before any of it is answered (http.ts handleNpm).
-import { type Advisory, advisories } from '@preventive/upstream/advisories.js'
+// published version, as `npm audit` has them and as its repository publishes
+// them on GitHub, asked as bundle advisories ask (bundle-advisories.ts). All
+// of it is public: npm is asked without the server's token, and a
+// repository's figures are kept only where GitHub says it is public. Each
+// answer is kept for an hour, a failure not at all; the reader's access to
+// the package is checked on every request before any of it is answered
+// (http.ts handleNpm).
+import type { Advisory, CacheStore } from '@preventive/upstream/advisories.js'
 import { HttpError, createClient } from '@preventive/upstream/github.js'
+import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { NpmPackageError, readLimited } from './npm-packages.ts'
 
 const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range/last-year'
 const KEPT_MS = 60 * 60_000
 const API_TIMEOUT_MS = 30_000
-const ADVISORIES_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
 const DAY_MS = 24 * 60 * 60_000
 // npm's semver, as upstream checks every version it is asked about.
@@ -23,8 +25,8 @@ const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, moderate: 
 
 // Answers kept for an hour by what they answer, at most `max` of them, the
 // oldest asked going first; one still being asked for is shared, and one that
-// failed is dropped.
-function kept<T>(max: number) {
+// failed, or that `whole` says is partial, is dropped once it is answered.
+function kept<T>(max: number, whole: (value: T) => boolean = () => true) {
   const answers = new Map<string, { at: number; value: Promise<T> }>()
   return (key: string, ask: () => Promise<T>): Promise<T> => {
     const now = Date.now()
@@ -34,7 +36,8 @@ function kept<T>(max: number) {
     answers.delete(key)
     answers.set(key, { at: now, value })
     while (answers.size > max) answers.delete(answers.keys().next().value!)
-    value.catch(() => { if (answers.get(key)?.value === value) answers.delete(key) })
+    const drop = () => { if (answers.get(key)?.value === value) answers.delete(key) }
+    value.then(answer => { if (!whole(answer)) drop(); return answer }, drop)
     return value
   }
 }
@@ -108,32 +111,58 @@ export function npmGithubStats(repo: string, token: string | null): Promise<NpmG
 }
 
 // An advisory on the package, with the versions it covers as their indexes in
-// the list it was asked with.
+// the list it was asked with: npm's (`registry`), or one its repository
+// publishes on GitHub before GitHub reviews it into npm's (`repository`).
 export interface NpmAdvisory {
-  id: string; ghsa?: string; url?: string; title?: string; severity?: string; cvss?: number; cwe: string[]; range?: string; affected: number[]
+  id: string; source: Advisory['source']; ghsa?: string; url?: string; title?: string; severity?: string; cvss?: number; cwe: string[]; range?: string
+  affected: number[]
 }
 
-async function askAdvisories(name: string, versions: string[]): Promise<NpmAdvisory[]> {
+// `repository` false where the repository's advisories could not be had
+// (GitHub refusing, its rate limit spent), leaving npm's alone.
+export interface NpmAdvisoryList { advisories: NpmAdvisory[]; repository: boolean }
+
+export interface NpmAdvisoryOptions {
+  // The reader's GitHub token, asked for only where the list is not kept.
+  githubToken: () => Promise<string | null>
+  // Where repositories' listings are kept, as bundle advisories keep them
+  // (upstream-cache.ts auditCache), for as long as `signal` asks.
+  cache: (signal: AbortSignal) => CacheStore | undefined
+  debug?: boolean
+}
+
+async function askAdvisories(name: string, versions: string[], { githubToken, cache, debug = false }: NpmAdvisoryOptions): Promise<NpmAdvisoryList> {
   const asked = versions.filter(version => SEMVER.test(version))
-  if (asked.length === 0) return []
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const deadline = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('timeout')), ADVISORIES_TIMEOUT_MS) })
-  let rows: Advisory[]
-  try { rows = await Promise.race([advisories([{ ecosystem: 'npm', name, versions: asked }]), deadline]) }
-  catch { throw new NpmPackageError(502, 'upstream-unavailable') }
-  finally { clearTimeout(timer) }
+  if (asked.length === 0) return { advisories: [], repository: true }
+  const packages = [{ ecosystem: 'npm' as const, name, versions: asked }]
+  const ask = (repoAdvisories: boolean, token: string | null) => {
+    const signal = AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)
+    return fetchBundleAdvisories(packages, signal, { debug, repoAdvisories, githubToken: token, cache: cache(signal) })
+  }
+  let repository = true
+  let result = await ask(true, await githubToken())
+  if (result.status !== 200) {
+    repository = false
+    result = await ask(false, null)
+  }
+  if (result.status !== 200) throw new NpmPackageError(502, 'upstream-unavailable')
   const index = new Map(versions.map((version, i) => [version, i]))
-  return rows.map(row => ({
-    id: row.id, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
-    ...row.severity && { severity: row.severity }, ...row.cvss !== undefined && { cvss: row.cvss }, cwe: row.cwe, ...row.range && { range: row.range },
-    affected: row.versions.map(version => index.get(version)).filter(at => at !== undefined).toSorted((a, b) => a - b),
-  })).toSorted((a, b) => (SEVERITY_RANK[a.severity ?? ''] ?? 4) - (SEVERITY_RANK[b.severity ?? ''] ?? 4) || a.id.localeCompare(b.id))
+  return {
+    repository,
+    advisories: result.body.map(row => ({
+      id: row.id, source: row.source, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
+      ...row.severity && { severity: row.severity }, ...row.cvss !== undefined && { cvss: row.cvss }, cwe: row.cwe, ...row.range && { range: row.range },
+      affected: row.versions.map(version => index.get(version)).filter(at => at !== undefined).toSorted((a, b) => a - b),
+    })).filter(row => row.affected.length > 0)
+      .toSorted((a, b) => (SEVERITY_RANK[a.severity ?? ''] ?? 4) - (SEVERITY_RANK[b.severity ?? ''] ?? 4) || a.id.localeCompare(b.id)),
+  }
 }
 
-const advisoryLists = kept<NpmAdvisory[]>(100)
+const advisoryLists = kept<NpmAdvisoryList>(100, list => list.repository)
 
 // The package's advisories, `versions` its published versions as the version
-// list has them; asked again once a version is published.
-export function npmAdvisories(name: string, versions: string[]): Promise<NpmAdvisory[]> {
-  return advisoryLists(`${name}\0${versions.length}\0${versions[0] ?? ''}`, () => askAdvisories(name, versions))
+// list has them; asked again once a version is published, and a list without
+// its repository's, next time.
+export function npmAdvisories(name: string, versions: string[], options: NpmAdvisoryOptions): Promise<NpmAdvisoryList> {
+  return advisoryLists(`${name}\0${versions.length}\0${versions[0] ?? ''}`, () => askAdvisories(name, versions, options))
 }

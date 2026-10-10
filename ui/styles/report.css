@@ -3516,36 +3516,52 @@ npm-downloads-chart { display: block; }
 
   & strong { color: var(--text); font-size: .8rem; }
 }
-/* Its advisories across every version: those affecting the version shown
-   marked, with their status in words too; those it fixes struck through. */
-.npm-advisories-summary { margin: 0 0 .5rem; color: var(--muted); font-size: .72rem; }
-.npm-advisory-list {
-  display: flex; flex-direction: column; gap: .35rem;
-  margin: 0; padding: 0;
-  list-style: none;
+/* Its advisories across every version (view/npm-overview.js), grouped by how
+   they stand for the version shown, each row as a bundle advisory's: those
+   affecting it boxed and marked, those it fixes struck through. */
+.npm-advisories-col .bundles-overview-col-body { container: npm-advisories / inline-size; }
+.npm-advisories-note { margin: 0 0 .5rem; color: var(--muted); font-size: .72rem; }
+.npm-advisory-group + .npm-advisory-group { margin-top: .9rem; }
+.npm-advisory-group-head {
+  display: flex; align-items: baseline; gap: .4rem;
+  margin: 0 0 .25rem; padding: 0 .55rem;
+  color: var(--muted);
+  font-size: .68rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
 }
-.npm-advisory {
-  display: flex; align-items: flex-start; gap: .5rem;
-  padding: .4rem .5rem;
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-
-  & .bundle-advisory-severity { flex-shrink: 0; margin-top: .1rem; }
+/* Every group inset alike, so titles line up across them too. */
+.npm-advisory-group > .bundle-advisories-rows {
+  padding: .1rem .55rem;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius, 4px);
 }
-.npm-advisory-body { display: flex; flex-direction: column; gap: .1rem; min-width: 0; font-size: .78rem; }
-.npm-advisory-title { color: var(--text); overflow-wrap: anywhere; }
-a.npm-advisory-title:hover { color: var(--accent); }
-.npm-advisory-meta { color: var(--muted); font-size: .7rem; overflow-wrap: anywhere; }
-.npm-advisory-sep { margin: 0 .3rem; }
-.npm-advisory-status { color: var(--muted); font-size: .68rem; }
-.npm-advisory.is-affects {
-  border-color: var(--critical);
-  background: color-mix(in srgb, var(--critical) 7%, var(--bg));
-
-  & .npm-advisory-status { color: var(--critical); font-weight: 600; }
+.npm-advisory-group.is-affects {
+  & .npm-advisory-group-head { color: var(--critical); }
+  & > .bundle-advisories-rows {
+    background: color-mix(in srgb, var(--critical) 6%, var(--bg));
+    border-color: color-mix(in srgb, var(--critical) 55%, var(--border));
+  }
 }
-.npm-advisory.is-fixed {
-  & .npm-advisory-title { color: var(--muted); text-decoration: line-through; }
+.npm-advisory-group.is-fixed {
+  & .bundle-advisory-title { color: var(--muted); text-decoration: line-through; }
   & .bundle-advisory-severity { opacity: .55; }
+}
+/* One badge width whichever the severity, so every title starts in line. */
+.npm-advisories-col .bundle-advisory-rail { width: 5rem; align-items: stretch; text-align: center; }
+/* Narrow, the rail runs across the top with the source and GHSA at its end,
+   and the title and what it covers take the full width under it. */
+@container npm-advisories (width < 26rem) {
+  .npm-advisories-col {
+    & .bundle-advisory-row {
+      display: grid; grid-template: 'rail reference' auto 'title title' auto 'meta meta' auto / auto minmax(0, 1fr);
+      gap: .2rem .5rem;
+    }
+    & :is(.bundle-advisory-body, .bundle-advisory-header) { display: contents; }
+    & .bundle-advisory-rail { grid-area: rail; width: auto; flex-direction: row; align-items: center; gap: .5rem; }
+    & .bundle-advisory-reference { grid-area: reference; justify-self: end; }
+    & .bundle-advisory-title { grid-area: title; }
+    & .bundle-advisory-meta { grid-area: meta; }
+    & .bundle-advisory-cwes { margin-left: 0; }
+  }
 }
 /* Every file extension in an npm package, as chips under its summary
    (view/npm-overview.js). */

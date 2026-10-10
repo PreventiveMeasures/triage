@@ -52,7 +52,7 @@
 //   GET  /api/npm/versions?name= → its dist-tags and versions | 400/401/404/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
-//   GET  /api/npm/advisories?name= → its advisories across every published version | 400/401/404/502
+//   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -2405,12 +2405,18 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       return
     }
     // Across every published version, as the version list has them, which
-    // each advisory's `affected` indexes.
+    // each advisory's `affected` indexes; its repository's asked with the
+    // reader's GitHub token, its listing kept as bundle advisories keep it.
     if (path === NPM_ADVISORIES_PATH) {
       const versions = await readNpmVersions(name, privileged, controller.signal)
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      const advisories = await npmAdvisories(name, versions.versions)
-      if (await recheck(versions.private)) sendJson(res, 200, { name, versions: versions.versions, advisories })
+      const { advisories, repository } = await npmAdvisories(name, versions.versions, {
+        githubToken: () => reader.userId === undefined ? Promise.resolve(null)
+          : ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null),
+        cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
+        debug: deps.config.debug,
+      })
+      if (await recheck(versions.private)) sendJson(res, 200, { name, versions: versions.versions, advisories, repository })
       return
     }
     // The package's, with the repository its latest version names; either

@@ -474,10 +474,16 @@ test('registry documents read at once are held to a budget: four version lists, 
 
 // npm's downloads API, GitHub and npm's bulk advisories, beside the registry
 // `registry` mocks; what each was asked, with its credentials.
-function insights(t, { downloads = {}, repos = {}, advisories = {} }) {
+function insights(t, { downloads = {}, repos = {}, advisories = {}, repoAdvisories = {} }) {
   const asked = [], registryFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
     const auth = new Headers(init.headers).get('authorization'), url = String(input)
+    const listing = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/security-advisories\?/u)
+    if (listing) {
+      asked.push(['repository', listing[1], auth])
+      const answer = repoAdvisories[listing[1]] ?? []
+      return Promise.resolve(answer instanceof Response ? answer : Response.json(answer))
+    }
     const day = url.match(/^https:\/\/api\.npmjs\.org\/downloads\/range\/last-year\/(.+)$/u)
     if (day) {
       asked.push(['downloads', day[1], auth])
@@ -543,10 +549,50 @@ test('advisories cover every published version, each naming the versions it affe
   const body = res.json()
   assert.deepEqual(body.versions, ['1.2.0', '1.1.0', '1.0.0'], 'newest first, as the version list has them')
   assert.deepEqual(body.advisories, [
-    { id: 'GHSA-aaaa-bbbb-cccc', ghsa: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', cvss: 7.5, cwe: ['CWE-1321'], range: '<1.1.0', affected: [2] },
-    { id: 'GHSA-dddd-eeee-ffff', ghsa: 'GHSA-dddd-eeee-ffff', url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', cwe: [], range: '>=1.1.0 <1.3.0', affected: [0, 1] },
+    { id: 'GHSA-aaaa-bbbb-cccc', source: 'registry', ghsa: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', cvss: 7.5, cwe: ['CWE-1321'], range: '<1.1.0', affected: [2] },
+    { id: 'GHSA-dddd-eeee-ffff', source: 'registry', ghsa: 'GHSA-dddd-eeee-ffff', url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', cwe: [], range: '>=1.1.0 <1.3.0', affected: [0, 1] },
   ])
-  assert.deepEqual(asked, [['advisories', ['advised'], null]], 'every version asked at once, without credentials')
+  assert.equal(body.repository, true)
+  assert.deepEqual(asked, [['advisories', ['advised'], null], ['repository', 'org/repo', null]], 'every version asked at once, without credentials')
+})
+
+test('advisories its repository publishes on GitHub join npm\'s, its listing kept as bundle advisories keep it', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('repo-advised', '1.2.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/advised.git' } })
+  registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0', '1.2.0'] }])
+  const repoAdvisory = (ghsa, name, range) => ({ ghsa_id: ghsa, state: 'published', summary: `Unreviewed ${ghsa}`, severity: 'medium', cwe_ids: ['CWE-79'],
+    vulnerabilities: [{ package: { ecosystem: 'npm', name }, vulnerable_version_range: range }] })
+  const asked = insights(t, {
+    advisories: { 'repo-advised': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'high', vulnerable_versions: '<1.1.0', cwe: [] }] },
+    repoAdvisories: { 'org/advised': [
+      repoAdvisory('GHSA-gggg-hhhh-jjjj', 'repo-advised', '< 1.2.0'), repoAdvisory('GHSA-kkkk-mmmm-pppp', 'other-package', '< 9.0.0'),
+      // Already reviewed into npm's for the versions npm reports it on.
+      repoAdvisory('GHSA-aaaa-bbbb-cccc', 'repo-advised', '< 1.1.0'),
+    ] },
+  })
+  const body = (await h.send('/api/npm/advisories?name=repo-advised')).json()
+  assert.deepEqual(body.advisories, [
+    { id: 'GHSA-aaaa-bbbb-cccc', source: 'registry', ghsa: 'GHSA-aaaa-bbbb-cccc', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'high', cwe: [], range: '<1.1.0', affected: [2] },
+    { id: 'GHSA-gggg-hhhh-jjjj', source: 'repository', ghsa: 'GHSA-gggg-hhhh-jjjj', url: 'https://github.com/org/advised/security/advisories/GHSA-gggg-hhhh-jjjj', title: 'Unreviewed GHSA-gggg-hhhh-jjjj', severity: 'moderate', cwe: ['CWE-79'], range: '< 1.2.0', affected: [1, 2] },
+  ], 'only those naming the package, and only versions npm does not report under the same GHSA')
+  assert.equal(body.repository, true)
+  assert.deepEqual(asked.filter(([what]) => what === 'repository'), [['repository', 'org/advised', null]])
+  assert.ok(await h.db.getUpstreamCacheEntry('github/advisories/org/advised'), 'the listing is kept where bundle advisories keep it')
+})
+
+test('npm\'s advisories are answered while GitHub refuses, and its repository asked again next time', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('rate-limited', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/limited.git' } })
+  registry(t, [pkg])
+  const repoAdvisories = { 'org/limited': Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0' } }) }
+  const asked = insights(t, { advisories: { 'rate-limited': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }] }, repoAdvisories })
+  const refused = (await h.send('/api/npm/advisories?name=rate-limited')).json()
+  assert.equal(refused.repository, false)
+  assert.deepEqual(refused.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'])
+  repoAdvisories['org/limited'] = []
+  const answered = (await h.send('/api/npm/advisories?name=rate-limited')).json()
+  assert.equal(answered.repository, true)
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 2)
 })
 
 test('figures and advisories of a private package stay closed to readers without private access', async t => {

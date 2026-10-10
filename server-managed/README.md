@@ -1076,14 +1076,20 @@ downloads API, and `github` is `{ repo, stars, forks, openIssues, archived,
 pushedAt }` for the repository the latest version's manifest names; either
 is null where it can't be had, `github` for a repository GitHub does not
 say is public. `GET /api/npm/advisories?name=` returns `{ name, versions,
-advisories }`: what `npm audit` asks npm's registry, for every published
-version at once, each advisory `{ id, ghsa?, url?, title?, severity?, cvss?,
-cwe, range?, affected }`, `affected` indexing `versions`. Responses are
-`private, no-store`. Nothing derived from a package's files is kept on the
-server; its figures and advisories, which are public, are kept an hour, asked
-for without the server's npm token, and GitHub with the reader's own token
-where they have one. Access to the package is checked first on every
-request, as for its versions.
+advisories, repository }`, asked as bundle advisories with repository
+advisories are: what `npm audit` asks npm's registry, for every published
+version at once (`source: 'registry'`), and what the package's GitHub
+repository publishes that npm does not report yet (`source: 'repository'`),
+the repository looked up from its newest version's document and its listing
+kept where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
+url?, title?, severity?, cvss?, cwe, range?, affected }`, `affected` indexing
+`versions`. `repository` is false where GitHub refused (its anonymous rate
+limit, say), leaving npm's alone; such a list is asked again on the next
+request. Responses are `private, no-store`. Nothing derived from a package's
+files is kept on the server; its figures and advisories, which are public,
+are kept an hour, npm's asked for without the server's npm token, and GitHub
+with the reader's own token where they have one. Access to the package is
+checked first on every request, as for its versions.
 
 Anyone with workspace access can read public packages. Private packages need
 the server's `NPM_TOKEN`, the same one bundle builds use, and a reader with
