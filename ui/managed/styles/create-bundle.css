@@ -62,6 +62,8 @@ button:disabled, input:disabled { opacity: .5; }
   display: inline-flex; align-items: center; flex: none; gap: .3rem; margin-left: auto; color: var(--muted); text-decoration: none;
 }
 .commit-link svg { width: 1rem; height: 1rem; }
+/* The hash is part of the link, not text to select. */
+.commit-link code { cursor: inherit; }
 .commit-link:hover { color: var(--accent); }
 .commit-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: var(--ui-radius, 2px); }
 .breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; min-width: 0; }
