@@ -351,8 +351,9 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
 // A tag where a value starts (`(<a />`, `if (x) <b />`, `x + <i />`, `...<a />`, `return <i>`,
 // `yield <p>`, not after `<` but a spaced one (`x < <a />`), as `a<<b>>>0` has it; a fragment's `<>` before
 // what it holds, not `[&<>"']`'s): JSX, whose
-// tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[\p{L}_$][\p{L}\p{N}_$.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
+// tags are no bindings, so its file's names are not set aside. After the
+// words a regular expression may follow, BEFORE_VALUE (`extends <a />`).
+const JSX = new RegExp(String.raw`(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:${[...BEFORE_VALUE].join('|')}))[ \t]*<(?:\/?[\p{L}_$][\p{L}\p{N}_$.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))`, 'mu')
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
