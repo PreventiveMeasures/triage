@@ -326,9 +326,10 @@ export function npmFileReadability(path, text) {
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
-    // Its lines as a whole first, which is cheaper.
+    // None of its lines longer than MINIFIED_AVERAGE, none of its code's can
+    // average more: told without reading its code.
     const language = minifiable(path)
-    const minified = language !== null && codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text, language)
+    const minified = language !== null && longest > MINIFIED_AVERAGE && minifiedCode(text, language)
     return { ...read, category: inlineMap > 0 ? 'inline-map' : minified ? 'minified' : encoding.kind }
   }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
