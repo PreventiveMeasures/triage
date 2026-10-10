@@ -11,6 +11,7 @@ import { defaultBundleConditions } from './bundle-conditions.js'
 const commitIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/></svg>`
 const chevronIcon = html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>`
 const MAX_CACHED_DIRECTORIES = 100
+let measureContext
 
 const REVISION_TYPES = [
   { kind: 'branch', label: 'Branch', icon: html`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="3" r="1.5"/><path d="M4 4.5v7m0-3h3a5 5 0 0 0 5-4"/></svg>` },
@@ -237,10 +238,10 @@ export class ManagedCreateBundle extends LitElement {
   }
 
   // The menu's rows: branches group by prefix until a query filters them.
-  revisionEntries() {
+  revisionEntries(expanded = this._expandedPrefixes) {
     const names = this.revisionSuggestions()
     return this._refKind === 'branch' && !this._revisionQuery.trim()
-      ? groupBranches(names, this._expandedPrefixes, this._refs.defaultBranch) : names.map(name => ({ name }))
+      ? groupBranches(names, expanded, this._refs.defaultBranch) : names.map(name => ({ name }))
   }
 
   toggleRevisionGroup(prefix) {
@@ -278,24 +279,28 @@ export class ManagedCreateBundle extends LitElement {
     const margin = 8
     const gap = 6
     const fontSize = parseFloat(getComputedStyle(this).fontSize)
-    // Size columns to the longest untruncated name and its option's padding, so
-    // compact names such as version tags fit more per row. Longer names still
-    // ellipsize past 15em.
-    let labelWidth = 0
-    const range = document.createRange()
-    for (const label of options.querySelectorAll('[role=option]:not(.revision-group) > span')) {
-      range.selectNodeContents(label)
-      labelWidth = Math.max(labelWidth, range.getBoundingClientRect().width)
+    // Size columns to the longest name and its option's padding, so compact
+    // names such as version tags fit more per row. Longer names still
+    // ellipsize past 15em. Names in collapsed groups count too, so opening a
+    // group never reflows the menu.
+    const all = this.revisionEntries({ has: () => true })
+    const option = options.querySelector('[role=option]:not(.revision-group)')
+    let columnWidth = 5 * fontSize
+    if (option) {
+      const style = getComputedStyle(option)
+      measureContext ??= document.createElement('canvas').getContext('2d')
+      measureContext.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+      measureContext.letterSpacing = style.letterSpacing
+      const labelWidth = all.reduce((widest, entry) => entry.prefix == null ? Math.max(widest, measureContext.measureText(entry.label ?? entry.name).width) : widest, 0)
+      const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+      columnWidth = Math.max(columnWidth, Math.min(15 * fontSize, Math.ceil(labelWidth + padding) + 1))
     }
-    const option = options.querySelector('button')
-    const padding = option ? parseFloat(getComputedStyle(option).paddingLeft) + parseFloat(getComputedStyle(option).paddingRight) : 0
-    const columnWidth = Math.max(5 * fontSize, Math.min(15 * fontSize, Math.ceil(labelWidth + padding) + 1))
     const spacing = parseFloat(getComputedStyle(options).columnGap) || 0
     const chrome = menu.offsetWidth - options.clientWidth
     const fits = width => Math.max(1, Math.floor((width - chrome + spacing) / (columnWidth + spacing)))
     // Fill the field's width, widening past a narrow field to up to three
     // columns once there are more than eight suggestions per column.
-    const count = this.revisionEntries().length
+    const count = all.length
     const fit = Math.min(fits(window.innerWidth - 2 * margin), Math.max(fits(rect.width), Math.min(3, Math.ceil(count / 8))))
     // Short lists stay one column; longer ones spread evenly over the rows they need.
     const columns = count <= 8 ? 1 : Math.ceil(count / Math.ceil(count / fit))
