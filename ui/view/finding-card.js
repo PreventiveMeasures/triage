@@ -39,6 +39,7 @@ import { groupKey } from './group.js'
 import { findingCardClasses, findingCardInnerTemplate } from './render-finding.js'
 import { revealCitedLines } from './reveal-cited.js'
 import cardCSS from './finding-card.css'
+import marksCSS from './finding-marks.css'
 import tabsCSS from './finding-tabs.css'
 import fileIconsCSS from '../styles/file-icon.css'
 import reportButtonCSS from '../styles/report-button.css'
@@ -72,7 +73,7 @@ class FindingCard extends StateElement {
 
   // Share group tabs with table rows and the Prism token palette with
   // the export preview dialog. The remaining styles belong to the card.
-  static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(cardCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS), unsafeCSS(codeTokensCSS), unsafeCSS(managedCommentCSS)]
+  static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(marksCSS), unsafeCSS(cardCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS), unsafeCSS(codeTokensCSS), unsafeCSS(managedCommentCSS)]
 
   // Whether the body is (to be) rendered. Always true for an eager
   // card; for a lazy one it flips when the observer reports the card
