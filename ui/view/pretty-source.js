@@ -88,7 +88,13 @@ async function load(key, copy, entry, path, content, known) {
     next = { status: 'ready', text }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
-    if (err?.name === 'AbortError') { if (copies.get(key) === copy) copies.delete(key); return }
+    if (err?.name === 'AbortError') {
+      if (copies.get(key) === copy) {
+        copies.delete(key)
+        notifiers.delete(key)
+      }
+      return
+    }
     next = { status: 'error', message: err?.message ?? String(err), retry: !(err?.status >= 400 && err.status < 500 && err.status !== 429) }
   }
   if (copies.get(key) !== copy) return
