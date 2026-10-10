@@ -18,6 +18,7 @@ import { managedCommentsFor } from './managed-comments.js'
 import { automaticFixFor, managedIssueFor } from './managed-issues.js'
 import { managedCommentTemplate } from './managed-comment.js'
 import { renderCommentText } from './comment-text.js'
+import { COPY_ICON } from './lit-icons.js'
 
 export { renderCommentText } from './comment-text.js'
 
@@ -588,14 +589,6 @@ export const COMMENT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11"
 // FLAG_ICON) for the kanban card's compact fix shortcut in render.js.
 export const FIX_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
   <path class="wrench" d="M10.4 2.6a3 3 0 0 0-3.6 4.5L2 12l2 2 4.9-4.8a3 3 0 0 0 4.5-3.6l-1.8 1.8-1.5-.4-.4-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-</svg>`
-
-// Clipboard / copy glyph for the `[copy]` shortcut button. Same
-// size + stroke weight as the comment / fix icons so the row reads
-// as a uniform action strip.
-const COPY_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-  <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-  <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>`
 
 // Chain-link glyph for the `[link]` shortcut button — copies a

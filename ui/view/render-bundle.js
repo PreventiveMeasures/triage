@@ -79,6 +79,7 @@ import { renderHighlighted } from './render-finding.js'
 // for hoisted function declarations, and the call sites are async
 // (always after init).
 import { render } from './render.js'
+import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, WRAP_ICON } from './lit-icons.js'
 
 // Bundles graph — like the findings-tab graph but sourced from a
 // parsed bundle (sourcemap / stasis). The refresh helpers below
@@ -627,11 +628,8 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
 const _bundleHighlightCache = new Map()
 const _bundleHighlightPending = new Set()
 
-// Copy glyph for the Code slide's copy-path button — same two-rect
-// shape and stroke weight as the finding card's copy action.
 // Wrap toggle for a source viewer's bar. Hidden until source-wrap.js finds
 // wrapping makes a difference to the open file at the viewer's width.
-const WRAP_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3.5h12M2 8h9a2.5 2.5 0 0 1 0 5H8.5M10 11.5 8.5 13l1.5 1.5M2 13h3.5"/></svg>`
 const renderSourceWrapToggle = () => html`<button type="button" class="bundle-source-wrap-toggle" data-bundle-source-wrap hidden
   aria-pressed=${state.bundleSourceWrap ? 'true' : 'false'} aria-label="Wrap lines" data-tooltip="Wrap lines">${WRAP_ICON}</button>`
 
@@ -646,11 +644,6 @@ function renderPrettyToggle(copy) {
     data-bundle-source-pretty aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
     aria-label="Pretty-print" data-tooltip=${tooltip}>${PRETTY_ICON}</button>`
 }
-
-const COPY_PATH_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-  <rect x="3" y="2.5" width="8" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-  <rect x="5.5" y="5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-</svg>`
 
 // Auto-pick bookkeeping for the Code slide. When the pick ran
 // before any findings were indexed (page refresh straight into the
@@ -1531,7 +1524,7 @@ function renderBundleCodeView(details, entry = null) {
           </button>
           <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
             ?disabled=${searchMode !== 'files' || !!query || tree.dirs.size === 0} @click=${() => collapseBundleTree(tree)}>
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><path d="M5 2h8a1 1 0 0 1 1 1v8M3 5h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1ZM4.5 9.5h4"/></svg>
+            ${COLLAPSE_DIRS_ICON}
           </button>
         </span>
       </div>
@@ -1561,11 +1554,11 @@ function renderBundleCodeFileNav(history) {
   return html`<span class="bundle-code-file-nav">
     <button type="button" class="focus-code-nav-btn" data-bundle-code-history="back"
       aria-label="Back to the previously shown file" ?disabled=${history.at === 0}>
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 3-5 5 5 5"/></svg>
+      ${PREV_ICON}
     </button>
     <button type="button" class="focus-code-nav-btn" data-bundle-code-history="forward"
       aria-label="Forward to the next shown file" ?disabled=${history.at >= history.files.length - 1}>
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+      ${NEXT_ICON}
     </button>
   </span>`
 }
@@ -1603,7 +1596,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
         class="bundle-code-copy-path"
         data-copy-path=${path}
         aria-label="Copy file path"
-      >${COPY_PATH_ICON}</button>
+      >${COPY_ICON}</button>
       ${github ? html`<a
         class="bundle-code-github-link"
         href=${github.href}
@@ -1963,6 +1956,10 @@ function renderBundleSearchView(details) {
   </div>`
 }
 
+// One button of the bundle slide's tab strip.
+const bundleTab = (key, label, tab) => html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
+  data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab">${label}</button>`
+
 // Top-level bundle view. The header carries the bundle's filename
 // (the canonical user-facing label; integrity lives in the Overview
 // tab's metadata block) and the tab strip; the body dispatches on
@@ -1974,6 +1971,7 @@ function renderBundleSearchView(details) {
 // the long-removed nested-overview tabs ('packages' / 'files' /
 // 'reports') fail BUNDLE_TABS validation in view.js's boot restore
 // and fall back to 'overview' there — no migration needed.
+
 function renderBundleSlide(entry) {
   // An npm package version shows its Overview, Code, Treemap and Compare,
   // which compares it with the package's other versions.
@@ -2061,69 +2059,15 @@ function renderBundleSlide(entry) {
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
       <div class="bundles-slide-tabs" role="tablist">
-        ${showAdvisories ? html`<button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'advisories' })}
-          data-bundle-tab="advisories"
-          aria-selected=${String(tab === 'advisories')}
-          role="tab"
-        >Advisories</button>` : nothing}
-        ${showIssues ? html`<button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'issues' })}
-          data-bundle-tab="issues"
-          aria-selected=${String(tab === 'issues')}
-          role="tab"
-        >Issues</button>` : nothing}
-        ${npm ? nothing : html`<button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'terminal' })}
-          data-bundle-tab="terminal"
-          aria-selected=${String(tab === 'terminal')}
-          role="tab"
-        >Terminal</button>`}
-        <button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'treemap' })}
-          data-bundle-tab="treemap"
-          aria-selected=${String(tab === 'treemap')}
-          role="tab"
-        >Treemap</button>
-        ${npm ? nothing : html`<button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'graph' })}
-          data-bundle-tab="graph"
-          aria-selected=${String(tab === 'graph')}
-          role="tab"
-        >Graph</button>`}
-        <button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'code' })}
-          data-bundle-tab="code"
-          aria-selected=${String(tab === 'code')}
-          role="tab"
-        >Code</button>
-        ${npm ? nothing : html`<button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'search' })}
-          data-bundle-tab="search"
-          aria-selected=${String(tab === 'search')}
-          role="tab"
-        >Search</button>`}
-        ${canCompare ? html`<button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: tab === 'compare' })}
-          data-bundle-tab="compare"
-          aria-selected=${String(tab === 'compare')}
-          role="tab"
-        >Compare</button>` : nothing}
-        <button
-          type="button"
-          class=${classMap({ 'bundles-tab': true, active: overviewActive })}
-          data-bundle-tab="overview"
-          aria-selected=${String(overviewActive)}
-          role="tab"
-        >Overview</button>
+        ${showAdvisories ? bundleTab('advisories', 'Advisories', tab) : nothing}
+        ${showIssues ? bundleTab('issues', 'Issues', tab) : nothing}
+        ${npm ? nothing : bundleTab('terminal', 'Terminal', tab)}
+        ${bundleTab('treemap', 'Treemap', tab)}
+        ${npm ? nothing : bundleTab('graph', 'Graph', tab)}
+        ${bundleTab('code', 'Code', tab)}
+        ${npm ? nothing : bundleTab('search', 'Search', tab)}
+        ${canCompare ? bundleTab('compare', 'Compare', tab) : nothing}
+        ${bundleTab('overview', 'Overview', tab)}
       </div>
     </header></bundle-slide-header>
     <div class=${classMap({ 'bundles-slide-body': true, 'bundles-slide-body-overview': overviewActive })}>
@@ -2414,11 +2358,7 @@ export function renderBundlesList(bundles) {
   const selectedEntry = selected ? bundles.find((b) => b.integrity === selected) : null
   if (!selectedEntry) {
     return html`<div class="bundles-view bundles-view-empty">
-      <p class="bundles-empty-hint">
-        ${bundles.length === 0
-          ? html`No bundles yet. Drop a <code>.map</code> sourcemap or a <code>.stasis.code.br</code> bundle to start.`
-          : 'Pick a bundle from the sidebar to open it.'}
-      </p>
+      <p class="bundles-empty-hint">Pick a bundle from the sidebar to open it.</p>
     </div>`
   }
   return renderBundleSlide(selectedEntry)
@@ -2426,7 +2366,7 @@ export function renderBundlesList(bundles) {
 
 // Tray-with-down-arrow glyph for the Overview's "Download bundle"
 // button. Stroke-based (`currentColor`) so it tracks the button's
-// text color on hover, same treatment as the COPY_PATH_ICON above.
+// text color on hover, same treatment as the COPY_ICON.
 const DOWNLOAD_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M8 2v8"/>
   <path d="m4.5 7 3.5 3.5L11.5 7"/>

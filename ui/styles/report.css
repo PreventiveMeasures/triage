@@ -2089,10 +2089,6 @@ bundle-search {
     text-align: center;
     margin: 0;
   }
-  & .bundles-empty-hint code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: .9em;
-  }
 }
 
 /* The readability cap lives on the CONTENT, not on the wrapper, so

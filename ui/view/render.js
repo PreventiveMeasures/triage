@@ -55,6 +55,13 @@ import { renderNpmLookup } from './npm-package.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
+import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
+
+// Bring the report pane up over the landing page.
+function showReport() {
+  report.classList.add('active')
+  dropZone.classList.add('hidden')
+}
 
 // View-mode icons + titles + click handling all live in
 // `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
@@ -871,17 +878,6 @@ const COLLAPSE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill=
   <path d="M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2"/>
 </svg>`
 
-// Chevrons for the prev / next controls. Two headers carry the pair —
-// the focus view's queue and the kanban detail dialog's same-column
-// rail — and both walk their list with the same ←/→ keys, so they
-// share the glyphs as well as the `.focus-nav` chrome.
-const PREV_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M10 3 5 8l5 5"/>
-</svg>`
-const NEXT_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M6 3 11 8l-5 5"/>
-</svg>`
-
 // Compact kanban card — tiny colored letter-chip + multi-line
 // title + file:line. The full card (tabs, action buttons, the
 // description body) lives behind a click that opens a centered
@@ -1641,8 +1637,7 @@ export function renderEmptyWorkspace() {
   document.title = context ? `${context.title} — findings` : 'DeepView'
   const slot = ensureReportSlot('empty-workspace-slot')
   if (slot) litRender(html`${headerTemplate([], [], false, null, 0)}<p class="workspace-content-empty">No findings available.</p>`, slot)
-  report.classList.add('active')
-  dropZone.classList.add('hidden')
+  showReport()
 }
 
 // Managed admin full-page views. The lazily-loaded admin bundle
@@ -1865,8 +1860,7 @@ function renderImpl() {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
         if (terminalSlot) attachTerminal(terminalSlot, state.bundleDetails)
       }
-      report.classList.add('active')
-      dropZone.classList.add('hidden')
+      showReport()
       const npm = state.bundles.find(entry => entry.integrity === state.selectedBundle)?.npm
       document.title = npm ? `DeepView — ${npm.name}@${npm.version}` : 'DeepView — bundles'
       return
@@ -1876,8 +1870,7 @@ function renderImpl() {
   if (state.currentView === 'npm') {
     const slot = ensureReportSlot('npm-slot')
     if (slot) litRender(renderNpmLookup(), slot)
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
+    showReport()
     document.title = 'DeepView — npm packages'
     return
   }
@@ -1888,8 +1881,7 @@ function renderImpl() {
   if (state.currentView === 'packages') {
     const slot = ensureReportSlot('packages-slot')
     if (slot) litRender(renderPackagesView(), slot)
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
+    showReport()
     document.title = 'DeepView — packages'
     return
   }
@@ -1901,8 +1893,7 @@ function renderImpl() {
   if (state.currentView === 'repositories') {
     const slot = ensureReportSlot('repositories-slot')
     if (slot) litRender(renderRepositoriesView(), slot)
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
+    showReport()
     document.title = 'DeepView — repositories'
     return
   }
@@ -1931,8 +1922,7 @@ function renderImpl() {
           preview ? kanbanDetailTemplate(preview.group, null, [], preview) : nothing
         }`, slot)
       }
-      report.classList.add('active')
-      dropZone.classList.add('hidden')
+      showReport()
       document.title = `DeepView — ${state.currentLinks.name}`
       return
     }
@@ -1949,8 +1939,7 @@ function renderImpl() {
         gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
       }))
     }
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
+    showReport()
     document.title = 'DeepView — scans'
     return
   }
@@ -2004,8 +1993,7 @@ function renderImpl() {
     }
     if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
     if (state.currentView === 'manage-bundles' && slot?.firstElementChild) slot.firstElementChild.createRepoId = state.bundleCreationRepoId
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
+    showReport()
     document.title = adminView.title
     return
   }
@@ -2410,8 +2398,7 @@ function renderImpl() {
     }
     if (fHeader) litRender(headerTpl, fHeader)
     if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
-    report.classList.add('active')
-    dropZone.classList.add('hidden')
+    showReport()
     document.title = `DeepView — ${typeLabel || 'no analyzer'}`
     return
   }
@@ -2651,8 +2638,7 @@ function renderImpl() {
       }
     }
   }
-  report.classList.add('active')
-  dropZone.classList.add('hidden')
+  showReport()
   document.title = `DeepView — ${typeLabel || 'no analyzer'}`
   if (isManagedUiMode()) managedHistory?.replaceFindingRoute(managedFindingSelectionRoute(selectedGroup, state))
 }
