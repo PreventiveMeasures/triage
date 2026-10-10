@@ -9,10 +9,10 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-packages.js'
 import { COMPARE_MODES, compareModeOf } from '../../common/managed/routes.js'
-import { fetchNpmPackage, fetchNpmVersions } from './client-managed.js'
+import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { cleanupGraph2 } from './graph/state.js'
-import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from './icons.js'
+import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
@@ -359,6 +359,19 @@ export function npmDependenciesColumn(entry) {
   </section>`
 }
 
+// The tags pointing to a version's publish commit, after it as a bundle's
+// follow its commit, each linking to its release on GitHub; nothing until
+// they arrive, or where the server has none (npm-insights.ts npmCommitTags).
+function npmCommitTags(entry, github) {
+  const { name, version } = entry.npm
+  const data = npmPackageData('tags', `${name}@${version}`, () => fetchNpmTags(name, version), answer => ({ tags: Array.isArray(answer.tags) ? answer.tags : [] }))
+  const tags = data.status === 'ready' ? data.tags.filter(tag => typeof tag === 'string' && tag) : []
+  if (tags.length === 0) return nothing
+  const repo = github.split('/').map(encodeURIComponent).join('/')
+  return html`<span class="bundle-origin-tags">${tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link"
+    href=${`https://github.com/${repo}/releases/tag/${tag.split('/').map(encodeURIComponent).join('/')}`} target="_blank" rel="noopener noreferrer">${unsafeHTML(TAG_ICON_SVG)}<span>${tag}</span></a>`)}</span>`
+}
+
 // The Overview's metadata for a package version, beside the file inventory
 // the bundle Overview lists: `meta` names it, `extras` describes it.
 export function npmOverviewMeta(entry, prefix = '', githubFigures = nothing) {
@@ -387,7 +400,8 @@ export function npmOverviewMeta(entry, prefix = '', githubFigures = nothing) {
       ${githubFigures}
     </dd>
     <dt>Commit</dt><dd class="bundle-origin-row">${manifest.gitHead
-      ? html`<a class="bundle-origin-link bundle-commit-link" href=${`https://github.com/${github}/commit/${manifest.gitHead}`} data-tooltip=${manifest.gitHead} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${manifest.gitHead.slice(0, 12)}</span></a>`
+      ? html`<a class="bundle-origin-link bundle-commit-link" href=${`https://github.com/${github}/commit/${manifest.gitHead}`} data-tooltip=${manifest.gitHead} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer">${unsafeHTML(COMMIT_ICON_SVG)}<span>${manifest.gitHead.slice(0, 12)}</span></a>
+        ${npmCommitTags(entry, github)}`
       : html`<span class="npm-commit-missing">Not recorded at publish</span>`}</dd>` : nothing}
     ${manifest.homepage && /^https?:\/\//iu.test(manifest.homepage) ? html`<dt>Homepage</dt><dd><a class="bundle-origin-link" href=${manifest.homepage} target="_blank" rel="noopener noreferrer"><span>${manifest.homepage}</span></a></dd>` : nothing}
     <dt>Integrity</dt><dd class="mono bundle-integrity" data-tooltip-truncated data-tooltip=${entry.integrity}>${entry.integrity}</dd>

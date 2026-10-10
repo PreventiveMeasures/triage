@@ -12,6 +12,7 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmTarballFilename, readNpmTar, readNpmVersion, readNpmVersions } from '../server-managed/npm-packages.ts'
 import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
+import { npmCommitTags } from '../server-managed/npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec, normalizeNpmScope, npmPackageScope } from '../common/managed/npm-packages.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 
@@ -595,13 +596,56 @@ test('npm\'s advisories are answered while GitHub refuses, and its repository as
   assert.equal(asked.filter(([what]) => what === 'repository').length, 2)
 })
 
+test('a version\'s publish commit\'s tags, from a public repository, asked with a token', async t => {
+  const other = 'd'.repeat(40), sha = 'c'.repeat(40)
+  const asked = []
+  let repository = null
+  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+    asked.push({ url: String(input), auth: new Headers(init.headers).get('authorization'), body: JSON.parse(init.body) })
+    return Promise.resolve(Response.json({ data: { repository } }))
+  })
+  const commit = oid => ({ __typename: 'Commit', oid })
+  const annotated = target => ({ __typename: 'Tag', oid: 'e'.repeat(40), target })
+  repository = { isPrivate: false, refs: { nodes: [
+    { name: 'v1.2.3', target: commit(sha) },
+    { name: 'pkg@1.2.3', target: annotated(commit(sha)) },
+    { name: 'nested@1.2.3', target: annotated(annotated(commit(sha))) },
+    { name: 'v1.2.3-rc.1', target: commit(other) },
+  ] } }
+  assert.deepEqual(await npmCommitTags('Org/Tagged', sha, '1.2.3', 'user-token'), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'], 'annotated tags followed to their commit, others left out')
+  assert.equal(asked.length, 1)
+  assert.equal(asked[0].url, 'https://api.github.com/graphql')
+  assert.equal(asked[0].auth, 'Bearer user-token')
+  assert.deepEqual(asked[0].body.variables, { owner: 'Org', name: 'Tagged', query: '1.2.3' })
+  assert.deepEqual(await npmCommitTags('org/tagged', sha, '1.2.3', 'another-token'), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'])
+  assert.equal(asked.length, 1, 'kept for the repository and commit, whoever asks')
+  repository = { isPrivate: true, refs: { nodes: [{ name: 'v2.0.0', target: commit(sha) }] } }
+  assert.deepEqual(await npmCommitTags('org/private', sha, '2.0.0', 'user-token'), [], 'a private repository\'s tags are no one\'s to see here')
+  repository = null
+  assert.deepEqual(await npmCommitTags('org/gone', sha, '2.0.0', 'user-token'), [])
+  asked.length = 0
+  assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', null), [])
+  assert.equal(asked.length, 0, 'GraphQL needs a token: without one, nothing is asked')
+})
+
+test('the tags route reads the version as the reader may, and asks GitHub only with their token', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('tagged-route', '1.0.0', { 'index.js': '' })
+  const calls = registry(t, [pkg])
+  const res = await h.send('/api/npm/tags?name=tagged-route&version=1.0.0')
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), { name: 'tagged-route', version: '1.0.0', tags: [] })
+  assert.ok(!calls.some(call => call.url.includes('api.github.com')), 'a reader without a GitHub token asks GitHub nothing')
+  assert.deepEqual((await h.send('/api/npm/tags?name=missing-package&version=1.0.0')).json(), { error: 'package-not-found' })
+})
+
 test('figures and advisories of a private package stay closed to readers without private access', async t => {
   const h = await setup(t)
   withToken(t)
   const pkg = { ...packageOf('@acme/insight', '1.0.0', { 'index.js': '' }), private: true }
   registry(t, [pkg])
   const asked = insights(t, { downloads: { '@acme/insight': { start: '2026-01-01', end: '2026-01-01', downloads: [] } } })
-  for (const path of ['/api/npm/stats?name=%40acme%2Finsight', '/api/npm/advisories?name=%40acme%2Finsight']) {
+  for (const path of ['/api/npm/stats?name=%40acme%2Finsight', '/api/npm/advisories?name=%40acme%2Finsight', '/api/npm/tags?name=%40acme%2Finsight&version=1.0.0']) {
     assert.deepEqual((await h.send(path, 'view')).json(), { error: 'package-not-found' }, path)
     assert.equal((await h.send(path, 'admin')).status, 200, path)
   }

@@ -110,6 +110,59 @@ export function npmGithubStats(repo: string, token: string | null): Promise<NpmG
   return repositories(repo.toLowerCase(), () => askGithub(repo, token))
 }
 
+const GITHUB_GRAPHQL = 'https://api.github.com/graphql'
+// A ref's target is a commit, or for an annotated tag a tag object, which may
+// itself name another tag before the commit.
+const TAGS_QUERY = `query($owner: String!, $name: String!, $query: String!) {
+  repository(owner: $owner, name: $name) {
+    isPrivate
+    refs(refPrefix: "refs/tags/", query: $query, first: 100) {
+      nodes { name target { __typename oid ... on Tag { target { __typename oid ... on Tag { target { __typename oid } } } } } }
+    }
+  }
+}`
+
+function taggedCommit(target: unknown): unknown {
+  let at = target
+  for (let depth = 0; depth < 3 && plainObject(at) && at['__typename'] === 'Tag'; depth++) at = at['target']
+  return plainObject(at) && at['__typename'] === 'Commit' ? at['oid'] : null
+}
+
+async function askTags(repo: string, sha: string, version: string, token: string): Promise<string[]> {
+  const [owner, name] = repo.split('/')
+  let res: Response
+  try {
+    res = await fetch(GITHUB_GRAPHQL, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'deepview-triage' },
+      body: JSON.stringify({ query: TAGS_QUERY, variables: { owner, name, query: version } }),
+    })
+  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
+  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
+  let json: unknown
+  try { json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8')) }
+  catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  const data = plainObject(json) ? json['data'] : null
+  const repository = plainObject(data) ? data['repository'] : null
+  // A repository gone, or not public, has none to show anyone.
+  if (!plainObject(repository) || repository['isPrivate'] !== false) return []
+  const refs = repository['refs']
+  const nodes = plainObject(refs) && Array.isArray(refs['nodes']) ? refs['nodes'] as unknown[] : []
+  return nodes.filter((node): node is { name: string; target: unknown } => plainObject(node) && typeof node['name'] === 'string' && node['name'] !== '')
+    .filter(node => taggedCommit(node.target) === sha).map(node => node.name).toSorted()
+}
+
+const commitTags = kept<string[]>(500)
+
+// The tags of a public repository (owner/name) that point to `sha`, a
+// version's publish commit, among those naming its `version` (`v1.2.3`,
+// `pkg@1.2.3`, …), as GitHub's GraphQL API finds them by name. GraphQL needs
+// a token: the reader's own, where they have one; without, none are asked.
+export function npmCommitTags(repo: string, sha: string, version: string, token: string | null): Promise<string[]> {
+  if (token === null) return Promise.resolve([])
+  return commitTags(`${repo.toLowerCase()}\0${sha}\0${version}`, () => askTags(repo, sha, version, token))
+}
+
 // An advisory on the package, with the versions it covers as their indexes in
 // the list it was asked with: npm's (`registry`), or one its repository
 // publishes on GitHub before GitHub reviews it into npm's (`repository`).

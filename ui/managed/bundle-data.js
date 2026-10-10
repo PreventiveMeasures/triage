@@ -109,3 +109,7 @@ export function fetchNpmStats(name, { signal } = {}) {
 export function fetchNpmAdvisories(name, { signal } = {}) {
   return requestNpm('advisories', { name }, signal)
 }
+
+export function fetchNpmTags(name, version, { signal } = {}) {
+  return requestNpm('tags', { name, version }, signal)
+}

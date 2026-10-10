@@ -11,7 +11,7 @@ mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: name => advisoriesAnswer(name), fetchNpmStats: () => Promise.resolve({}),
-  fetchNpmPackage() {}, fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
+  fetchNpmPackage() {}, fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmMergedAdvisories, npmTextEncoding } = await import('../ui/view/npm-overview.js')
 

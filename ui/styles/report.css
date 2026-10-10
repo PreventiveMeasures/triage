@@ -3506,7 +3506,7 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
   & .bundles-detail-meta-row > .bundles-overview-exports { grid-area: actions; min-width: 0; }
   & .bundles-overview-exports-row { place-content: flex-start; }
   & .npm-contents { grid-area: contents; }
-  & .npm-insights { grid-area: figures; }
+  & .npm-figures { grid-area: figures; min-width: 0; }
   /* Labels sit on their values' first line, however many lines a value takes;
      values wrap between words, and break within one only where it can't fit. */
   & .bundles-detail-meta :is(dt, dd) { align-self: baseline; }
@@ -3574,6 +3574,8 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
 }
 .bundles-languages-swatch { width: .55rem; height: .55rem; border-radius: 50%; flex-shrink: 0; }
 .bundles-languages-share { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The tarball's download, under the figures' card. */
+.npm-figures-actions { display: flex; justify-content: flex-end; margin-top: .5rem; }
 /* Its figures, in a card (view/npm-overview.js): stat tiles over its weekly
    downloads for the last year, one series in the accent over a faint wash of
    it, on hairline gridlines. */

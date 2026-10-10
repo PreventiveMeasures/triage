@@ -19,6 +19,7 @@ mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmPackage(name, version) { requests.push([name, version]); return answer(name, version) },
   fetchNpmVersions(name) { versionRequests.push(name); return versionsAnswer(name) },
+  fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { npmCompareSource, npmDependencies, npmDependencyChanges, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmVersionList, openNpmRoute, parseNpmPackageInput } = await import('../ui/view/npm-package.js')

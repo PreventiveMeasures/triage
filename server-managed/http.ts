@@ -53,6 +53,7 @@
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/502
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
 //   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
+//   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -118,7 +119,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { npmAdvisories, npmDownloads, npmGithubStats } from './npm-insights.ts'
+import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats } from './npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -165,7 +166,8 @@ const NPM_VERSIONS_PATH = '/api/npm/versions'
 const NPM_DOWNLOAD_PATH = '/api/npm/download'
 const NPM_STATS_PATH = '/api/npm/stats'
 const NPM_ADVISORIES_PATH = '/api/npm/advisories'
-const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH])
+const NPM_TAGS_PATH = '/api/npm/tags'
+const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -2435,6 +2437,17 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     }
     const doc = await readNpmVersion(name, spec, privileged, controller.signal)
     if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    // Its publish commit's tags, where its repository is public on GitHub and
+    // the reader has a token to ask with; none where they can't be had.
+    if (path === NPM_TAGS_PATH) {
+      const repo = (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
+      const sha = typeof doc.manifest['gitHead'] === 'string' && /^[\da-f]{40}$/u.test(doc.manifest['gitHead']) ? doc.manifest['gitHead'] : null
+      const token = repo === null || sha === null || reader.userId === undefined ? null
+        : await ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
+      const tags = repo === null || sha === null ? [] : await npmCommitTags(repo, sha, doc.version, token).catch(() => [])
+      if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, tags })
+      return
+    }
     // The load stays held until this response is written or abandoned, and
     // a reader who stops reading it gives it up after a while. One already
     // gone takes none, as its close has passed.

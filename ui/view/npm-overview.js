@@ -38,10 +38,11 @@ function stat(label, value, title = nothing) {
   return html`<div class="npm-stat"><dt>${label}</dt><dd data-tooltip=${title}>${value}</dd></div>`
 }
 
-// The package's figures under its summary: downloads and its repository's,
-// beside its weekly downloads over the last year. While they load, the row
-// holds its place, so nothing below it moves when they arrive.
-export function npmStatsRow(entry) {
+// The package's figures in the summary: its downloads beside its weekly
+// downloads over the last year, with `actions` (the tarball's download)
+// under them. While they load, the card holds its place, so nothing around
+// it moves when they arrive.
+export function npmStatsRow(entry, actions = nothing) {
   const stats = npmPackageStats(entry.npm.name)
   const ready = stats.status === 'ready'
   const { downloads = null } = ready ? stats : {}
@@ -50,7 +51,7 @@ export function npmStatsRow(entry) {
   const week = days.slice(-7).reduce((sum, count) => sum + count, 0)
   const year = days.reduce((sum, count) => sum + count, 0)
   const exact = count => count.toLocaleString('en')
-  return html`<section class="npm-insights" aria-label="Package figures">
+  return html`<div class="npm-figures"><section class="npm-insights" aria-label="Package figures">
     <dl class="npm-stats">
       ${stat('Weekly downloads', downloads ? compact.format(week) : pending, downloads ? exact(week) : nothing)}
       ${stat('Downloads, 12 months', downloads ? compact.format(year) : pending, downloads ? exact(year) : nothing)}
@@ -59,7 +60,7 @@ export function npmStatsRow(entry) {
       <figcaption>Weekly downloads, last 12 months</figcaption>
       <npm-downloads-chart .downloads=${downloads}></npm-downloads-chart>
     </figure>`}
-  </section>`
+  </section>${actions === nothing ? nothing : html`<div class="npm-figures-actions">${actions}</div>`}</div>`
 }
 
 const STAR_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><path d="m8 1.75 1.9 3.9 4.3.6-3.1 3 .75 4.25L8 11.5l-3.85 2 .75-4.25-3.1-3 4.3-.6Z"/></svg>`
@@ -280,22 +281,35 @@ export function npmReadabilityTag(readability) {
   return html`<span class=${`npm-encoding-tag${mark ? ` is-${mark}` : ''}`} data-tooltip=${readabilityNote(readability)}>${tag}</span>`
 }
 
-// The category the Files list is narrowed to, for the version shown.
-let filesShown = { key: null, category: null }
+// What the Files list is narrowed to, for the version shown: a category or
+// an extension, as `{ kind, value }`, or null for every file.
+let filesShown = { key: null, filter: null }
 const shownKey = entry => `${entry.npm.name}@${entry.npm.version}`
-const shownCategory = entry => filesShown.key === shownKey(entry) ? filesShown.category : null
+const shownFilter = entry => filesShown.key === shownKey(entry) ? filesShown.filter : null
+const isShown = (entry, kind, value) => shownFilter(entry)?.kind === kind && shownFilter(entry)?.value === value
 
-function showFiles(entry, category) {
-  filesShown = { key: shownKey(entry), category: shownCategory(entry) === category ? null : category }
+// A chip's click: narrows to its files, or back to every file where it
+// already does.
+function showFiles(entry, kind, value) {
+  filesShown = { key: shownKey(entry), filter: isShown(entry, kind, value) ? null : { kind, value } }
   render()
 }
 
 // The Files list's narrowing, for renderBundleSourcesPanel: null for every file.
 export function npmFilesFilter(entry, details) {
-  const category = shownCategory(entry)
-  if (category === null) return null
+  const filter = shownFilter(entry)
+  if (filter === null) return null
+  const clear = () => showFiles(entry, filter.kind, filter.value)
+  if (filter.kind === 'extension') return { label: filter.value || 'No extension', keeps: path => npmFileExtension(path) === filter.value, clear }
   const known = npmFilesReadability(details)
-  return { label: READABILITY.get(category).name, keeps: path => known.get(path)?.category === category, clear: () => showFiles(entry, category) }
+  return { label: READABILITY.get(filter.value).name, keeps: path => known.get(path)?.category === filter.value, clear }
+}
+
+// A chip narrowing the Files list to its files: `kind` and `value` what it
+// narrows by, `label` its content, `classes` its marks beyond a chip's.
+function filterChip(entry, kind, value, label, count, { classes = '', tooltip = 'Show only these in Files' } = {}) {
+  return html`<li><button type="button" class=${`npm-extension npm-category${classes}`} aria-pressed=${String(isShown(entry, kind, value))}
+    data-tooltip=${tooltip} @click=${() => showFiles(entry, kind, value)}>${label}<span class="npm-extension-count">${count.toLocaleString('en')}</span></button></li>`
 }
 
 function countsOf(details) {
@@ -304,12 +318,10 @@ function countsOf(details) {
   return counts
 }
 
-// A category's chip, narrowing the Files list to its files.
+// A category's chip.
 function categoryChip(entry, category, count) {
   const { name, mark } = READABILITY.get(category)
-  return html`<li><button type="button" class=${`npm-extension npm-category${mark ? ` is-${mark}` : ''}`}
-    aria-pressed=${String(shownCategory(entry) === category)} data-tooltip=${`Show only these in Files`}
-    @click=${() => showFiles(entry, category)}><span>${name}</span><span class="npm-extension-count">${count.toLocaleString('en')}</span></button></li>`
+  return filterChip(entry, 'category', category, html`<span>${name}</span>`, count, { classes: mark ? ` is-${mark}` : '' })
 }
 
 // Over the summary, where any file can't be reviewed by reading it: how many,
@@ -361,14 +373,14 @@ export function npmFileExtensions(paths, sizes) {
   return [...byExtension.values()].toSorted((a, b) => b.files - a.files || a.extension.localeCompare(b.extension))
 }
 
-// Every extension in the package, as chips under its summary.
-export function npmExtensionsRow(paths, sizes) {
+// Every extension in the package, as chips under its summary, each
+// narrowing the Files list to its files as a category's does.
+export function npmExtensionsRow(entry, paths, sizes) {
   const rows = npmFileExtensions(paths, sizes)
   if (rows.length === 0) return nothing
   return html`<ul class="npm-extensions" aria-label="File extensions">
-    ${rows.map(({ extension, files, bytes }) => html`<li class="npm-extension" data-tooltip=${`${files.toLocaleString()} ${files === 1 ? 'file' : 'files'} · ${formatBytes(bytes)}`}>
-      <span class="npm-extension-name">${extension || 'no extension'}</span><span class="npm-extension-count">${files.toLocaleString()}</span>
-    </li>`)}
+    ${rows.map(({ extension, files, bytes }) => filterChip(entry, 'extension', extension, html`<span class="npm-extension-name">${extension || 'no extension'}</span>`, files,
+      { tooltip: `${files.toLocaleString('en')} ${files === 1 ? 'file' : 'files'} · ${formatBytes(bytes)}: show only these in Files` }))}
   </ul>`
 }
 
@@ -376,7 +388,7 @@ export function npmExtensionsRow(paths, sizes) {
 // languages by lines (`languages`, the bar the bundle Overview draws), its
 // readable files, and their extensions.
 export function npmContents(entry, languages, details, paths, sizes) {
-  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['Extensions', npmExtensionsRow(paths, sizes)]]
+  const rows = [['Languages', languages], ['Readable', npmReadableRow(entry, details)], ['Extensions', npmExtensionsRow(entry, paths, sizes)]]
     .filter(([, body]) => body !== nothing)
   if (rows.length === 0) return nothing
   return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([label, body]) => html`<dt>${label}</dt><dd>${body}</dd>`)}</dl>`

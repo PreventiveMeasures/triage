@@ -1036,13 +1036,14 @@ in the bundle view with four tabs:
   readable whatever its lines' lengths, and a `sourceMappingURL` comment's
   line counts for none. Then the manifest's facts: description, license,
   author (linking the npm profile of the account that published it), GitHub
-  repository with its stars and forks, publish commit, homepage and
-  integrity; beside them entry points, engines, install scripts and the
-  tarball download; and a card of its figures: weekly downloads and
-  downloads over 12 months, with a chart of its weekly downloads over the
-  last year. Under the facts, its languages, its readable files as UTF-8 or
-  ASCII, and every file extension with its count. Each category's chip
-  narrows the Files list to its files. Then its columns: Dependencies, where
+  repository with its stars and forks, publish commit with the tags that
+  point to it, homepage and integrity; beside them entry points, engines and
+  install scripts; and a card of its figures: weekly downloads and downloads
+  over 12 months, with a chart of its weekly downloads over the last year,
+  and the tarball download under it. Under the facts, its languages, its readable files as UTF-8 or
+  ASCII, and every file extension with its count. Each category's chip,
+  and each extension's, narrows the Files list to its files, one at a time;
+  the Files head names it, with a way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
   their latest version (an `npm:` alias at the package it names);
   Advisories, across every published version, one row each, its head
@@ -1093,7 +1094,13 @@ is `{ start, end, days }`, a count a day over the last year from npm's
 downloads API, and `github` is `{ repo, stars, forks, openIssues, archived,
 pushedAt }` for the repository the latest version's manifest names; either
 is null where it can't be had, `github` for a repository GitHub does not
-say is public. `GET /api/npm/advisories?name=` returns `{ name, versions,
+say is public. `GET /api/npm/tags?name=&version=` returns `{ name, version,
+tags }`: the tags of its GitHub repository that point to its publish commit
+(`gitHead`), among those whose names hold the version (`v1.2.3`,
+`pkg@1.2.3`), which the Overview shows after the commit. GitHub's GraphQL API
+finds them by name, and needs a token: the reader's own, where they have one,
+and none are asked without. Only a public repository's are answered, kept an
+hour for that repository and commit. `GET /api/npm/advisories?name=` returns `{ name, versions,
 advisories, repository }`, asked as bundle advisories with repository
 advisories are: what `npm audit` asks npm's registry, for every published
 version at once (`source: 'registry'`), and what the package's GitHub

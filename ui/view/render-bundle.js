@@ -2686,10 +2686,11 @@ const EXTERNAL_ARROW = html`<svg viewBox="0 0 16 16" width="10" height="10" fill
 // they are (report.css .npm-overview).
 function renderNpmPackageOverview(entry, details) {
   const download = `/api/npm/download?${new URLSearchParams({ name: entry.npm.name, version: entry.npm.version })}`
+  const downloadButton = html`<a class="bundles-download-btn" href=${download}>${DOWNLOAD_ICON}<span>Download tarball</span></a>`
+  // Under the downloads chart once the version is read; beside the facts
+  // until then.
   const exportsCol = html`<div class="bundles-overview-exports">
-    <div class="bundles-overview-exports-row">
-      <a class="bundles-download-btn" href=${download}>${DOWNLOAD_ICON}<span>Download tarball</span></a>
-    </div>
+    <div class="bundles-overview-exports-row">${downloadButton}</div>
   </div>`
   if (details?.integrity !== entry.integrity || !details.json) {
     return renderBundleOverviewFallback(npmOverviewMeta(entry, '', npmGithubFigures(entry)), exportsCol, nothing, 'npm-overview')
@@ -2701,10 +2702,10 @@ function renderNpmPackageOverview(entry, details) {
   const sizes = sources.map(path => sizeMap.get(path) ?? null)
   const binaries = sources.filter((_, i) => typeof sourcesContent[i] !== 'string')
   const readability = npmFilesReadability(details)
-  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix, npmGithubFigures(entry)), npmOverviewExtras(entry), sources, sizes, null, exportsCol, {
+  return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, prefix, npmGithubFigures(entry)), npmOverviewExtras(entry), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: new Set(binaries),
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
-    summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details, sources, sizeMap)}${npmStatsRow(entry)}`,
+    summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details, sources, sizeMap)}${npmStatsRow(entry, downloadButton)}`,
     columnsClass: 'npm-overview-columns', overviewClass: 'npm-overview',
     fileTag: path => npmReadabilityTag(readability.get(path)), fileIcon: path => sourceFileIcon(path), fileFilter: npmFilesFilter(entry, details),
   })
