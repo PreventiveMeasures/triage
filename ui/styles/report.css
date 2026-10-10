@@ -3661,6 +3661,14 @@ npm-downloads-chart {
   }
 }
 .npm-stat-per { margin-left: .1rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
+/* The latest week's and month's in one place, the one not shown keeping its
+   room, so switching between them moves nothing. */
+.npm-stat dd.npm-stat-units {
+  display: grid;
+
+  & > * { grid-area: 1 / 1; }
+  & > .is-held { visibility: hidden; }
+}
 /* Its tier among npm's packages by downloads, beside its figures: solid
    green for the top 100, then tinted from green to orange for the unpopular,
    blended with the text's colors as a hint. */

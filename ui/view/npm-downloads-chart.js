@@ -143,12 +143,14 @@ class NpmDownloadsChart extends LitElement {
   willUpdate(changed) {
     const period = PERIODS[this._unit]
     const { downloads } = this
-    if (changed.has('downloads') || changed.has('_unit')) {
-      this._periods = period.of(downloads)
-      const latest = this._periods.at(-1)
-      this._latest = downloads == null ? null : { total: latest?.total ?? 0, tooltip: latest && downloadsIn(latest.total, period.name(latest)) }
-    }
+    if (changed.has('downloads') || changed.has('_unit')) this._periods = period.of(downloads)
     if (changed.has('downloads')) {
+      // The latest week's and month's both, each its own figure: the one not
+      // shown keeps its room, so switching moves nothing.
+      this._latest = downloads == null ? null : Object.fromEntries(Object.entries(PERIODS).map(([unit, { of, name }]) => {
+        const latest = of(downloads).at(-1)
+        return [unit, { total: latest?.total ?? 0, tooltip: latest && downloadsIn(latest.total, name(latest)) }]
+      }))
       this._tier = npmDownloadTier(downloads)
       // The last 365 days: the downloads reach back further, to the first of
       // the month they start in, so that month is whole.
@@ -200,7 +202,20 @@ class NpmDownloadsChart extends LitElement {
   // tooltip; while it isn't known, what stands for it.
   _stat(label, figure, per) {
     return html`<div class="npm-stat"><dt class="sr-only">${label}</dt>
-      <dd data-tooltip=${figure?.tooltip || nothing}>${figure ? compact.format(figure.total) : this.status === 'loading' ? '…' : '—'}<span class="npm-stat-per">/${per}</span></dd></div>`
+      <dd data-tooltip=${figure?.tooltip || nothing}>${this._figure(figure, per)}</dd></div>`
+  }
+
+  _figure(figure, per) {
+    return html`${figure ? compact.format(figure.total) : this.status === 'loading' ? '…' : '—'}<span class="npm-stat-per">/${per}</span>`
+  }
+
+  // The latest week's or month's, as the switch has it, over the other's,
+  // hidden, so the figure is as wide as the wider of the two.
+  _latestStat() {
+    const shown = this._latest?.[this._unit]
+    return html`<div class="npm-stat"><dt class="sr-only">${PERIODS[this._unit].label} downloads</dt>
+      <dd class="npm-stat-units" data-tooltip=${shown?.tooltip || nothing}>${Object.keys(PERIODS).map(unit => html`<span
+        class=${unit === this._unit ? '' : 'is-held'} aria-hidden=${unit === this._unit ? nothing : 'true'}>${this._figure(this._latest?.[unit], unit)}</span>`)}</dd></div>`
   }
 
   // Weekly or monthly, over the readout of the period under the pointer,
@@ -223,7 +238,7 @@ class NpmDownloadsChart extends LitElement {
     const at = this._at === null ? null : this._periods[this._at] ?? null
     return html`<div class="npm-downloads-head">
       <dl class="npm-stats">
-        ${this._stat(`${PERIODS[this._unit].label} downloads`, this._latest, this._unit)}
+        ${this._latestStat()}
         ${this._stat('Downloads, last 12 months', this._year, 'year')}
         ${this._tier ? html`<div class="npm-stat"><dt class="sr-only">Popularity</dt>${tierChip(this._tier)}</div>` : nothing}
       </dl>
