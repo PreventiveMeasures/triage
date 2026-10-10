@@ -153,7 +153,7 @@ test('code minified into shorter lines is minified too, by its lines\' length an
     'a regular expression after `else` too')
   assert.equal(category('dist/a.mjs', `const f=x=>/["']/.test(x);${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l="x";\n`), 'minified',
     'a regular expression after `=>` too')
-  for (const keyword of ['new', 'v instanceof']) {
+  for (const keyword of ['new', 'v instanceof', 'class extends']) {
     assert.equal(category('dist/a.mjs', `var y=${keyword} /'/.constructor;${'var c=Object.defineProperty;var r=(s,t)=>c(s,t);'.repeat(4)}const l='x';\n`), 'minified',
       `a regular expression after \`${keyword}\` too`)
   }
