@@ -1160,8 +1160,8 @@ control. A version shows in the bundle view with four tabs:
   on, a file minified on both sides diffs as the server formatted each, and
   **Hide renamed names** leaves out lines of a JavaScript file (`.js`, `.mjs`,
   `.cjs`, what a minifier renames) that differ only in short names (three
-  characters at most, as a minifier gives them) renamed alike throughout the
-  file. A line is left out only where each of its names
+  characters at most, as a minifier gives them) the file declares, renamed
+  alike throughout it; a global it doesn't declare (`Map`, `$`) is kept. A line is left out only where each of its names
   stands for one other in every line, unchanged ones included, and neither
   side's name ever stands for a second one; such lines are marked `≈`, naming
   the line they were. A name renamed two ways, or two names renamed to one

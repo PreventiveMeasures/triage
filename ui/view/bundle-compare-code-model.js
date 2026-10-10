@@ -43,36 +43,49 @@ const RENAMED_MAX_LENGTH = 3
 // divides), a name, a bracket, or what lies between, operators and numbers.
 const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
 // Words after which a value starts, so a `/` begins a regular expression.
-const BEFORE_VALUE = new Set(['await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw', 'typeof',
-  'void', 'yield'])
+const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw',
+  'typeof', 'void', 'yield'])
 // Words a `{` after which opens a block, as do `)`, `;`, `{`, `}`, `=>` and
 // the start; any other opens an object, a pattern or a class body.
 const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
 // Words between a key's place and its key: `{ async a() {} }`.
 const MODIFIERS = new Set(['async', 'get', 'set', 'static'])
-// Words whose `(…)` a statement follows: `if (a) /b/.test(c)`.
-const CONTROL = new Set(['for', 'if', 'while', 'with'])
+// Words whose `(…)` a statement follows (`if (a) /b/.test(c)`), declaring
+// nothing as a function's `(…)` does.
+const CONTROL = new Set(['for', 'if', 'switch', 'while', 'with'])
 // Words between `export` and the name it exports: `export async function a`,
 // `export * as a`.
 const DECLARES = new Set(['as', 'async', 'class', 'function'])
+// Words the name after which a file declares: `function a`, `import b`.
+const NAMING = new Set(['as', 'class', 'function', 'import'])
+// After a function's `(…)`: its names were its parameters.
+const PARAMETERS = /\s*(?:=>|\{)/uy
+const ARROW = /\s*=>/uy
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
 // A text with its short names set aside (`key`, its lines where the text's
 // are), and each line's names in order (`names`). Read as a whole, so a
-// comment or a template spanning lines keeps all of them. Kept as they are:
-// strings, templates, comments, regular expressions, keywords, names longer
-// than a minifier gives, properties: after `.`, before `:`, or in an
-// object's, a pattern's or a class's key place (`{ a, b() {}, c = 1 }`),
-// and what a module exports (`export { a as b }`, `export const c = 1`),
-// since renaming one changes what reads it.
+// comment or a template spanning lines keeps all of them. Set aside only
+// where the file declares them (`var`, `let`, `const`, `function`, `class`,
+// `import`, `catch` and parameters), a global it doesn't (`Map`, `$`) being
+// no minifier's to rename. Kept as they are: strings, templates, comments,
+// regular expressions, keywords, names longer than a minifier gives,
+// properties: after `.`, before `:`, or in an object's, a pattern's or a
+// class's key place (`{ a, b() {}, c = 1 }`), and what a module exports
+// (`export { a as b }`, `export const c = 1`), since renaming one changes
+// what reads it.
 function nameless(text) {
-  const key = [], names = [[]]
+  const declared = new Set(), key = [], names = [[]], setAside = []
   const opens = []
-  // `exporting` between `export` and its name; `declaring`, the depth of an
-  // exported `const`, `let` or `var`, `binding` while in its names (before a
-  // declarator's `=`, patterns too) rather than what they are set to.
-  let at = 0, binding = false, declaring = -1, exporting = false, keyPlace = false, last = null
+  // Each `var`, `let` or `const` under way: the depth of its declarators,
+  // whether in their names (before `=`, patterns too) rather than what they
+  // are set to, whether exported. Each `(…)` under way but a statement's,
+  // and the names in it but defaults: parameters, if `=>` or `{` follows.
+  const declarations = [], groups = []
+  // `exporting` between `export` and its name; `naming` before a name
+  // declared as `function a` is.
+  let at = 0, exporting = false, keyPlace = false, last = null, naming = false
   const keep = segment => {
     key.push(segment)
     for (let i = segment.indexOf('\n'); i !== -1; i = segment.indexOf('\n', i + 1)) names.push([])
@@ -83,14 +96,14 @@ function nameless(text) {
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
     last = segment[end - 1]
-    if (opens.length === declaring) {
-      const next = segment.lastIndexOf(','), set = segment.lastIndexOf('=')
-      if (set !== next) binding = next > set
-    }
-    if (segment.includes(';') && opens.length <= declaring) declaring = -1
-    // A generator method's `*` leaves its name in its key place.
+    const declaration = declarations.at(-1), group = groups.at(-1)
+    const next = segment.lastIndexOf(','), set = segment.search(/(?<![=!<>])=(?![=>])[^=]*$/u)
+    if (declaration?.depth === opens.length && set !== next) declaration.binding = next > set
+    if (group?.depth === opens.length && set !== next) group.defaulted = set > next
+    if (segment.includes(';')) while (declarations.length > 0 && opens.length <= declarations.at(-1).depth) declarations.pop()
+    // A generator's `*` leaves its name in its key place, or to be declared.
     if (last === '*' && segment.slice(0, end - 1).trim() === '') return
-    exporting = false
+    exporting = naming = false
     const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
     keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
   }
@@ -113,42 +126,59 @@ function nameless(text) {
     else if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
       last = '"'
-      exporting = keyPlace = false
+      exporting = keyPlace = naming = false
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
       const block = first === '{' && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
-      opens.push(first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object' : first === '(' && CONTROL.has(last) ? 'control' : first)
+      const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object' : first === '(' && CONTROL.has(last) ? 'control' : first
+      opens.push(open)
+      if (open === '(') groups.push({ defaulted: false, depth: opens.length, names: [] })
       last = first
       keyPlace = first === '{' && !block
-      exporting = false
+      exporting = naming = false
     } else if (first === ')' || first === ']' || first === '}') {
       key.push(token)
+      const open = opens.pop()
+      if (open === '(') {
+        const group = groups.pop()
+        PARAMETERS.lastIndex = at
+        if (PARAMETERS.test(text)) for (const name of group.names) declared.add(name)
+      }
       // After a statement's condition, as after `;`, a statement starts.
-      last = opens.pop() === 'control' ? ';' : first
+      last = open === 'control' ? ';' : first
       keyPlace = first === '}' && opens.at(-1) === 'object'
-      exporting = false
-      if (opens.length < declaring) declaring = -1
+      exporting = naming = false
+      while (declarations.length > 0 && opens.length < declarations.at(-1).depth) declarations.pop()
     } else {
-      const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (declaring !== -1 && binding)
+      const declaration = declarations.at(-1), group = groups.at(-1)
+      const binding = declaration?.binding && opens.length >= declaration.depth
+      const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:` after it.
       const property = last === '.' || text[at] === ':'
       if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || property) key.push(token)
       else {
+        setAside.push([key.length, names.length - 1, token])
         key.push(NAMELESS)
-        names.at(-1).push(token)
       }
+      ARROW.lastIndex = at
+      if (naming || binding || ARROW.test(text)) declared.add(token)
+      if (group && !group.defaulted) group.names.push(token)
+      if (binding && (token === 'in' || token === 'of')) declaration.binding = false
+      if (token === 'const' || token === 'let' || token === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
       if (token === 'export') exporting = true
-      else if (exporting && (token === 'const' || token === 'let' || token === 'var')) {
-        declaring = opens.length
-        binding = true
-        exporting = false
-      } else if (!DECLARES.has(token)) exporting = false
+      else if (!DECLARES.has(token)) exporting = false
+      naming = NAMING.has(token) || (naming && token === 'async')
       // `for await (` is a `for`'s condition still.
       if (!(keyPlace && MODIFIERS.has(token)) && !(token === 'await' && last === 'for')) {
         last = token
         keyPlace = false
       }
     }
+  }
+  // A name the file never declares is a global's, kept.
+  for (const [piece, line, name] of setAside) {
+    if (declared.has(name)) names[line].push(name)
+    else key[piece] = name
   }
   return { key: key.join(''), names }
 }
