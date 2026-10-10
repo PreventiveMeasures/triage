@@ -5,7 +5,8 @@
 // published version, as `npm audit` has them and as its repository publishes
 // them on GitHub, asked as bundle advisories ask (bundle-advisories.ts). All
 // of it is public: npm is asked without the server's token, and a
-// repository's figures are kept only where GitHub says it is public. Each
+// repository's figures, tags and advisories are asked for, and kept, only
+// where GitHub says it is public. Each
 // answer is kept for an hour, a failure not at all; the reader's access to
 // the package is checked on every request before any of it is answered
 // (http.ts handleNpm).
@@ -204,26 +205,38 @@ export interface NpmAdvisory {
 export interface NpmAdvisoryList { advisories: NpmAdvisory[]; repository: boolean }
 
 export interface NpmAdvisoryOptions {
-  // The reader's GitHub token, asked for only where the list is not kept.
+  // The reader's GitHub token, and the repository the package names (owner/
+  // name, null where it names none), each asked for only where the list is
+  // not kept.
   githubToken: () => Promise<string | null>
+  repo: () => Promise<string | null>
   // Where repositories' listings are kept, as bundle advisories keep them
   // (upstream-cache.ts auditCache), for as long as `signal` asks.
   cache: (signal: AbortSignal) => CacheStore | undefined
   debug?: boolean
 }
 
-async function askAdvisories(name: string, versions: string[], { githubToken, cache, debug = false }: NpmAdvisoryOptions): Promise<NpmAdvisoryList> {
+async function askAdvisories(name: string, versions: string[], { githubToken, repo, cache, debug = false }: NpmAdvisoryOptions): Promise<NpmAdvisoryList> {
   // Every version upstream takes, as it checks each one it is asked about.
   const asked = versions.filter(version => isExactVersion(version))
   if (asked.length === 0) return { advisories: [], repository: true }
-  const packages = [{ ecosystem: 'npm' as const, name, versions: asked }]
+  // Its repository's own advisories are asked for only where GitHub says it
+  // is public, and that repository is the one asked: the list is kept for
+  // every reader of the package, and the reader's token could read a private
+  // repository's, or a listing of one kept for another reader. Where that
+  // can't be told, the list is npm's alone, and not kept.
+  let github: string | null = null, repository = true
+  try {
+    const named = await repo()
+    github = named === null ? null : (await npmGithubStats(named, githubToken))?.repo ?? null
+  } catch { repository = false }
+  const packages = [{ ecosystem: 'npm' as const, name, versions: asked, ...github !== null && { github } }]
   const ask = (repoAdvisories: boolean, token: string | null) => {
     const signal = AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)
     return fetchBundleAdvisories(packages, signal, { debug, repoAdvisories, githubToken: token, cache: cache(signal) })
   }
-  let repository = true
-  let result = await ask(true, await githubToken())
-  if (result.status !== 200) {
+  let result = await (github === null ? ask(false, null) : ask(true, await githubToken()))
+  if (result.status !== 200 && github !== null) {
     repository = false
     result = await ask(false, null)
   }

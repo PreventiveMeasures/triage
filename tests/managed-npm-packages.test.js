@@ -548,7 +548,7 @@ test('advisories cover every published version, each naming the versions it affe
   const h = await setup(t)
   const pkg = packageOf('advised', '1.2.0', { 'index.js': '' })
   registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0', '1.2.0'] }])
-  const asked = insights(t, { advisories: { advised: [
+  const asked = insights(t, { repos: { 'org/repo': { full_name: 'org/repo', private: false } }, advisories: { advised: [
     { id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', vulnerable_versions: '<1.1.0', cwe: ['CWE-1321'], cvss: { score: 7.5, vectorString: 'CVSS:3.1/AV:N' } },
     { id: 2, url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', vulnerable_versions: '>=1.1.0 <1.3.0', cwe: [], cvss: { score: 0 } },
   ] } })
@@ -561,7 +561,8 @@ test('advisories cover every published version, each naming the versions it affe
     { id: 'GHSA-dddd-eeee-ffff', source: 'registry', ghsa: 'GHSA-dddd-eeee-ffff', url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', cwe: [], range: '>=1.1.0 <1.3.0', affected: [0, 1] },
   ])
   assert.equal(body.repository, true)
-  assert.deepEqual(asked, [['advisories', ['advised'], null], ['repository', 'org/repo', null]], 'every version asked at once, without credentials')
+  assert.deepEqual(asked.filter(([what]) => what !== 'pulls'), [['github', 'org/repo', null], ['advisories', ['advised'], null], ['repository', 'org/repo', null]],
+    'its repository found public first; every version asked at once, without credentials')
 })
 
 test('an advisory npm answers once a range it covers is one row, its ranges, versions and CWEs together', async t => {
@@ -584,6 +585,7 @@ test('advisories its repository publishes on GitHub join npm\'s, its listing kep
   const repoAdvisory = (ghsa, name, range) => ({ ghsa_id: ghsa, state: 'published', summary: `Unreviewed ${ghsa}`, severity: 'medium', cwe_ids: ['CWE-79'],
     vulnerabilities: [{ package: { ecosystem: 'npm', name }, vulnerable_version_range: range }] })
   const asked = insights(t, {
+    repos: { 'org/advised': { full_name: 'org/advised', private: false } },
     advisories: { 'repo-advised': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'high', vulnerable_versions: '<1.1.0', cwe: [] }] },
     repoAdvisories: { 'org/advised': [
       repoAdvisory('GHSA-gggg-hhhh-jjjj', 'repo-advised', '< 1.2.0'), repoAdvisory('GHSA-kkkk-mmmm-pppp', 'other-package', '< 9.0.0'),
@@ -606,7 +608,8 @@ test('npm\'s advisories are answered while GitHub refuses, and its repository as
   const pkg = packageOf('rate-limited', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/limited.git' } })
   registry(t, [pkg])
   const repoAdvisories = { 'org/limited': Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0' } }) }
-  const asked = insights(t, { advisories: { 'rate-limited': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }] }, repoAdvisories })
+  const asked = insights(t, { repos: { 'org/limited': { full_name: 'org/limited', private: false } },
+    advisories: { 'rate-limited': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }] }, repoAdvisories })
   const refused = (await h.send('/api/npm/advisories?name=rate-limited')).json()
   assert.equal(refused.repository, false)
   assert.deepEqual(refused.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'])
@@ -614,6 +617,31 @@ test('npm\'s advisories are answered while GitHub refuses, and its repository as
   const answered = (await h.send('/api/npm/advisories?name=rate-limited')).json()
   assert.equal(answered.repository, true)
   assert.equal(asked.filter(([what]) => what === 'repository').length, 2)
+})
+
+test('a private repository\'s advisories are not asked for, nor one GitHub can\'t say is public', async t => {
+  const h = await setup(t)
+  const reviewed = [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }]
+  const hidden = packageOf('hidden-advised', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/hidden.git' } })
+  const untold = packageOf('untold-advised', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/untold.git' } })
+  registry(t, [hidden, untold])
+  const asked = insights(t, {
+    repos: { 'org/hidden': { full_name: 'org/hidden', private: true } },
+    advisories: { 'hidden-advised': reviewed, 'untold-advised': reviewed },
+    repoAdvisories: { 'org/hidden': [{ ghsa_id: 'GHSA-xxxx-yyyy-zzzz', state: 'published', summary: 'Private', severity: 'high', cwe_ids: [],
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'hidden-advised' }, vulnerable_version_range: '< 2.0.0' }] }] },
+  })
+  const hiddenBody = (await h.send('/api/npm/advisories?name=hidden-advised')).json()
+  assert.deepEqual(hiddenBody.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'], 'npm\'s alone')
+  assert.equal(hiddenBody.repository, true, 'there is no public repository to ask')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'the private repository\'s listing is never asked for')
+  // GitHub's answer for the repository fails: it can't be told public.
+  t.mock.method(globalThis, 'fetch', ((fetch) => (input, init) => String(input) === 'https://api.github.com/repos/org/untold'
+    ? Promise.resolve(Response.json({ message: 'Server Error' }, { status: 500 })) : fetch(input, init))(globalThis.fetch))
+  const untoldBody = (await h.send('/api/npm/advisories?name=untold-advised')).json()
+  assert.deepEqual(untoldBody.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'])
+  assert.equal(untoldBody.repository, false, 'not kept, so asked again next time')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0)
 })
 
 test('a version\'s publish commit\'s tags, from a public repository, asked with a token', async t => {

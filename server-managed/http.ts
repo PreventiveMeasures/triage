@@ -2413,13 +2413,18 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       return
     }
     // Across every published version, as the version list has them, which
-    // each advisory's `affected` indexes; its repository's asked with the
-    // reader's GitHub token, its listing kept as bundle advisories keep it.
+    // each advisory's `affected` indexes; those of the repository its latest
+    // version names, where GitHub says it is public, asked with the reader's
+    // GitHub token, its listing kept as bundle advisories keep it.
     if (path === NPM_ADVISORIES_PATH) {
       const versions = await readNpmVersions(name, privileged, controller.signal)
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
       const { advisories, repository } = await npmAdvisories(name, versions.versions, {
         githubToken,
+        repo: async () => {
+          const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
+          return doc && githubRepoOf(doc)
+        },
         cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
         debug: deps.config.debug,
       })

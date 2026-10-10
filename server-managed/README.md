@@ -1123,14 +1123,16 @@ hour for that repository and commit. `GET /api/npm/advisories?name=` returns `{ 
 advisories, repository }`, asked as bundle advisories with repository
 advisories are: what `npm audit` asks npm's registry, for every published
 version at once (`source: 'registry'`), and what the package's GitHub
-repository publishes that npm does not report yet (`source: 'repository'`),
-the repository looked up from its newest version's document and its listing
-kept where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
+repository publishes that npm does not report yet (`source: 'repository'`):
+the repository its latest version names, asked for only where GitHub says it
+is public (its figures' answer), since the list is kept for every reader and
+the reader's token could read a private repository's; its listing is kept
+where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
 url?, title?, severity?, cvss?, cwe, range?, affected }`, `affected` indexing
 `versions`, one row an advisory: npm's registry answers one a range it covers,
 merged here, their ranges joined with `||`. `repository` is false where GitHub refused (its anonymous rate
-limit, say), leaving npm's alone; such a list is asked again on the next
-request. Responses are `private, no-store`. Nothing derived from a package's
+limit, say), or couldn't say whether the repository is public, leaving npm's
+alone; such a list is asked again on the next request. Responses are `private, no-store`. Nothing derived from a package's
 files is kept on the server; its figures and advisories, which are public,
 are kept an hour, npm's asked for without the server's npm token, and GitHub
 with the reader's own token where they have one. Access to the package is
