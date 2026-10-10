@@ -83,7 +83,9 @@ test('names a minifier renamed alike throughout are left out, and only those', (
     ['function f(a) {}\na();', 'function f(b) {}\nb();'], ['{ let a; }\na();', '{ let b; }\nb();'],
     ['const f = function a() {};\na();', 'const g = function b() {};\nb();'], ['const f = a => a;\na();', 'const g = b => b;\nb();'],
     ['for (let a of x) {}\na();', 'for (let b of x) {}\nb();'], ['({ const: a }); a();', '({ const: b }); b();'],
-    ['({ function: a }); a();', '({ function: b }); b();'], ['x.var = a; a();', 'x.var = b; b();']]) {
+    ['({ function: a }); a();', '({ function: b }); b();'], ['x.var = a; a();', 'x.var = b; b();'],
+    ['let a = 1; eval("a");', 'let b = 1; eval("a");'], ['let a; with (o) { a; }', 'let b; with (o) { b; }'], ['let a; x + <a />;', 'let b; x + <b />;'],
+    ['let a; debugger\n/a/.test(x)', 'let b; debugger\n/b/.test(x)']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
