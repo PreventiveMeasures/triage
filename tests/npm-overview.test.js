@@ -13,7 +13,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
   fetchNpmPackage() {}, fetchNpmSocket: () => Promise.resolve({ socket: null }), fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmFileTypes, npmTextEncoding } = await import('../ui/view/npm-overview.js')
+const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmFileTypes, npmTakenDown, npmTextEncoding } = await import('../ui/view/npm-overview.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [
@@ -142,4 +142,16 @@ test('each license in an expression opens its own file, else the package\'s only
   assert.deepEqual(parts('MIT OR Apache-2.0', ['LICENSE-MIT', 'LICENSE-APACHE', 'LICENSE']), ['MIT→LICENSE-MIT', ' OR ', 'Apache-2.0→LICENSE-APACHE'])
   assert.deepEqual(parts('ISC', ['LICENSE-MIT', 'LICENSE-APACHE']), ['ISC'], 'no file of its own, and no only one')
   assert.deepEqual(parts('MIT', []), ['MIT'])
+})
+
+test('npm\'s placeholder for a package its security team took down is told by its version and npm\'s marks', () => {
+  const holder = (version, manifest) => npmTakenDown({ npm: { version, manifest } })
+  assert.equal(holder('2.0.0', { description: 'security holding package', publisher: 'npm' }), true, 'its description, published by npm')
+  assert.equal(holder('2.0.0', { github: { github: 'NPM/security-holder' }, publisher: 'npm' }), true, 'its repository, published by npm')
+  assert.equal(holder('0.0.1-security', { description: 'security holding package', github: { github: 'npm/security-holder' }, publisher: 'staff' }), true,
+    'published by npm\'s staff, as npm numbers it')
+  assert.equal(holder('2.0.0', { description: 'security holding package', github: { github: 'npm/security-holder' }, publisher: 'someone' }), false,
+    'npm\'s marks on a version of its own')
+  assert.equal(holder('0.0.1-security', { publisher: 'npm' }), false, 'without npm\'s marks')
+  assert.equal(holder('1.0.0-security', { description: 'a security scanner', publisher: 'someone' }), false)
 })

@@ -1071,9 +1071,14 @@ control. A version shows in the bundle view with four tabs:
   month (the last twelve complete ones), with the switch between the two at its top
   right and under it the hovered period's downloads; and under it the
   version's pages on npmjs.com and, for a public package, Socket, beside the
-  tarball download. Over the facts, the alerts Socket raises on the version,
-  such as malware, each with its severity, the file it names (opening it) and
-  Socket's note. Under the facts, its languages, then its readable files
+  tarball download. Over the facts, where npm's security team took the
+  package down (npm's "security holding package" placeholder, told by its
+  description or its npm/security-holder repository with npm as its
+  publisher, or with a `-security` version as npm's staff publish it), a
+  banner saying so; and the alerts Socket raises on the version, such as
+  malware, each with its severity, the file it names (opening it) and
+  Socket's note, left out on npm's placeholder, which holds nothing but the
+  files every package has. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
@@ -1083,7 +1088,7 @@ control. A version shows in the bundle view with four tabs:
   package (supply chain, vulnerability, quality, maintenance and license, out
   of 100, as Socket's page shows them; its overall score is only the lowest), each a small chip as wide as its text after a ring
   gauge filled to it, tinted for 80 and over, 50 and over, and under 50,
-  that one marked, a full score's number green. Each category's chip, and each file type's, narrows
+  that one in red, a full score's number green. Each category's chip, and each file type's, narrows
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at

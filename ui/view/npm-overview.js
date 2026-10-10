@@ -67,13 +67,13 @@ const SOCKET_SCORES = [['supplyChain', 'Supply chain'], ['vulnerability', 'Vulne
 
 // Its Socket scores, out of 100, each a chip as wide as its text, after a
 // ring filled to it, tinted by how it stands: 80 and over, 50 and over, and
-// under 50, that one marked as well; a full score's number green too.
+// under 50, that one in red; a full score's number green.
 function npmSocketRow(entry) {
   const scores = npmSocketReport(entry)?.scores
   if (!scores) return nothing
   return html`<ul class="npm-extensions npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label]) => {
     const score = Math.round(scores[key] * 100)
-    const level = score === 100 ? 'is-good is-max' : score >= 80 ? 'is-good' : score >= 50 ? 'is-fair' : 'is-poor is-warn'
+    const level = score === 100 ? 'is-good is-max' : score >= 80 ? 'is-good' : score >= 50 ? 'is-fair' : 'is-poor'
     return html`<li><a class=${`npm-extension npm-socket-score ${level}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">
       <svg class="npm-socket-gauge" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" pathLength="100"></circle>
         <circle class="npm-socket-gauge-fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray=${`${score} 100`}></circle></svg>
@@ -86,13 +86,37 @@ const SOCKET_SEVERITIES = new Map([['critical', 'critical'], ['high', 'high'], [
 // `installScripts` → `Install scripts`.
 const socketAlertName = type => type.replaceAll(/(?<=[a-z])(?=[A-Z])/gu, ' ').toLowerCase().replace(/^./u, first => first.toUpperCase())
 
-// Over the summary, where Socket raises alerts on the version, as on malware:
-// each with its severity, the file it names, opening it where the package
-// has it (`files`), and Socket's note on it.
-export function npmSocketAlerts(entry, files) {
-  const alerts = npmSocketReport(entry)?.alerts ?? []
-  if (alerts.length === 0) return nothing
-  return html`<div class="npm-socket-alerts" role="note">
+// A version npm publishes in place of a package its security team took down,
+// as it does for malicious code: a "security holding package" from
+// npm/security-holder, published by npm, or by one of its staff as
+// `0.0.1-security`.
+export function npmTakenDown({ npm: { version, manifest } }) {
+  const npms = manifest.description === 'security holding package' || manifest.github?.github?.toLowerCase() === 'npm/security-holder'
+  return npms && (manifest.publisher === 'npm' || /-security(?:\.\d+)?$/u.test(version))
+}
+
+// Over the summary: where npm took the package down, saying so, its readme
+// (npm's word on it) opening where the package has it (`files`); and where
+// Socket raises alerts on the version, as on malware, each with its severity,
+// the file it names, opening it as well, and Socket's note on it. Socket's
+// say nothing more of npm's placeholder, holding no files but the ones every
+// package has, so they are left out there; a version that only looks like
+// one keeps them.
+export function npmAlerts(entry, files) {
+  const takenDown = npmTakenDown(entry)
+  const placeholder = takenDown && files !== null && [...files].every(isNpmPackageFile)
+  const alerts = placeholder ? [] : npmSocketReport(entry)?.alerts ?? []
+  if (!takenDown && alerts.length === 0) return nothing
+  const readme = [...files ?? []].find(path => /^readme(?:\.md)?$/iu.test(path))
+  return html`<div class="npm-alerts">
+    ${takenDown ? html`<p class="npm-alert" role="note"><strong>Taken down by npm.</strong> npm's security team removed this package's
+      versions, as it does for malicious code, and serves this placeholder in their place${readme ? html`: ${factFile(readme, files, 'its readme')}` : ''}.</p>` : nothing}
+    ${alerts.length > 0 ? npmSocketAlerts(entry, alerts, files) : nothing}
+  </div>`
+}
+
+function npmSocketAlerts(entry, alerts, files) {
+  return html`<div class="npm-alert npm-socket-alerts" role="note">
     <span class="npm-socket-alerts-head"><strong>Socket raises ${alerts.length === 1 ? 'an alert' : `${alerts.length} alerts`} on this version</strong>
       <a class="npm-package-link" href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">socket.dev${EXTERNAL_LINK_ICON}</a></span>
     <ul>${alerts.map(alert => {

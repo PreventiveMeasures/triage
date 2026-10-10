@@ -3496,8 +3496,8 @@ a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
   & > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 /* A fact that opens a file of the package, underlined as a link is. */
-.npm-socket-alerts button.bundle-entry-point { padding: 0; color: inherit; background: none; border: 0; font: inherit; }
-:is(.npm-overview .bundles-detail-meta, .npm-socket-alerts) button.bundle-entry-point {
+.npm-alert button.bundle-entry-point { padding: 0; color: inherit; background: none; border: 0; font: inherit; }
+:is(.npm-overview .bundles-detail-meta, .npm-alert) button.bundle-entry-point {
   text-decoration: underline dotted color-mix(in srgb, currentcolor 45%, transparent); text-underline-offset: 3px;
 
   &:hover { color: var(--accent); text-decoration-color: currentcolor; }
@@ -3535,7 +3535,7 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 
     & > *, & > .bundles-detail-meta-row > * { margin-bottom: .6rem; }
   }
-  & .npm-socket-alerts { grid-area: alerts; }
+  & .npm-alerts { grid-area: alerts; display: grid; gap: .5rem; }
   & .npm-readability-warning { grid-area: warning; }
   & .bundles-detail-meta-row { display: contents; }
   & .bundles-detail-meta-row > :is(.npm-facts, .is-build).bundles-detail-meta {
@@ -3807,7 +3807,12 @@ a.npm-socket-score {
 
   &.is-good { --meter: var(--green); }
   &.is-fair { --meter: var(--medium); }
-  &.is-poor { --meter: var(--high); }
+  &.is-poor {
+    --meter: var(--critical);
+    background: color-mix(in srgb, var(--critical) 14%, var(--bg)); border-color: color-mix(in srgb, var(--critical) 70%, var(--border));
+
+    & .npm-extension-count { color: color-mix(in srgb, var(--critical) 70%, var(--text)); }
+  }
   &.is-max .npm-extension-count { color: color-mix(in srgb, var(--green) 80%, var(--text)); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
@@ -3820,13 +3825,15 @@ a.npm-socket-score {
   & circle { fill: none; stroke: color-mix(in srgb, var(--muted) 30%, transparent); stroke-width: 2.5; }
   & .npm-socket-gauge-fill { stroke: color-mix(in srgb, var(--meter) 70%, var(--muted)); }
 }
-.npm-socket-alerts {
-  padding: .5rem .7rem;
+/* What npm or Socket says is wrong with the version, over the summary. */
+.npm-alert {
+  margin: 0; padding: .5rem .7rem;
   background: color-mix(in srgb, var(--critical) 9%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--critical) 45%, var(--border)); border-left: 3px solid var(--critical);
   border-radius: var(--ui-radius, 4px);
-  font-size: .76rem;
-
+  font-size: .76rem; line-height: 1.5;
+}
+.npm-socket-alerts {
   & ul { display: grid; gap: .5rem; margin: .45rem 0 0; padding: 0; list-style: none; }
   & li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .5rem; }
   & .npm-socket-alert-type { font-weight: 600; }
