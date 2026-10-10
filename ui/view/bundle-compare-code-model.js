@@ -38,23 +38,91 @@ const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 
 // Names a minifier gives: longer ones are an API's or a person's, and one
 // changed is a change.
 const RENAMED_MAX_LENGTH = 3
-// A string, a comment or a regular expression, kept as it is, or a name:
-// not a property's (after `.`, or before `:` as an object's key), nor an
-// escape's letter. Any `/…/` on a line counts as a regular expression, the
-// operands between two divisions too: kept, a renamed one shows.
-const NAME = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/.*|\/\*.*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*(?![\p{L}\p{N}_$:])/gu
+// What a text is read in, from where it is: a string, a template, a
+// comment, a regular expression (where a value starts: `/` after one
+// divides), a name, a bracket, or what lies between, operators and numbers.
+const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
+// Words after which a value starts, so a `/` begins a regular expression.
+const BEFORE_VALUE = new Set(['await', 'case', 'delete', 'do', 'else', 'in', 'instanceof', 'new', 'of', 'return', 'throw', 'typeof',
+  'void', 'yield'])
+// Words a `{` after which opens a block, as do `)`, `;`, `{`, `}`, `=>` and
+// the start; any other opens an object, a pattern or a class body.
+const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
+// Words between a key's place and its key: `{ async a() {} }`.
+const MODIFIERS = new Set(['async', 'get', 'set', 'static'])
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
-// A line with its short names set aside, and those names in order.
-function nameless(line) {
-  const names = []
-  const key = line.replaceAll(NAME, token => {
-    if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || /^["'`/]/u.test(token)) return token
-    names.push(token)
-    return NAMELESS
-  })
-  return { key, names }
+// A text with its short names set aside (`key`, its lines where the text's
+// are), and each line's names in order (`names`). Read as a whole, so a
+// comment or a template spanning lines keeps all of them. Kept as they are:
+// strings, templates, comments, regular expressions, keywords, names longer
+// than a minifier gives, and properties: after `.`, before `:`, or in an
+// object's, a pattern's or a class's key place (`{ a, b() {}, c = 1 }`),
+// since renaming one changes what reads it.
+function nameless(text) {
+  const key = [], names = [[]]
+  const opens = []
+  let at = 0, keyPlace = false, last = null
+  const keep = segment => {
+    key.push(segment)
+    for (let i = segment.indexOf('\n'); i !== -1; i = segment.indexOf('\n', i + 1)) names.push([])
+  }
+  const between = segment => {
+    keep(segment)
+    let end = segment.length
+    while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
+    if (end === 0) return
+    last = segment[end - 1]
+    // A generator method's `*` leaves its name in its key place.
+    if (last === '*' && segment.slice(0, end - 1).trim() === '') return
+    const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
+    keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
+  }
+  for (READ.lastIndex = 0; ;) {
+    const match = READ.exec(text)
+    between(text.slice(at, match?.index ?? text.length))
+    if (!match) break
+    const [token] = match
+    const first = token[0]
+    if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last) || (last?.length > 1 && !BEFORE_VALUE.has(last)))) {
+      // A division: the `/` is an operator, and what follows is read again.
+      at = match.index
+      READ.lastIndex = at + 1
+      between('/')
+      at++
+      continue
+    }
+    at = READ.lastIndex
+    if (first === '/' && (token[1] === '/' || token[1] === '*')) keep(token)
+    else if (first === '"' || first === "'" || first === '`' || first === '/') {
+      keep(token)
+      last = '"'
+      keyPlace = false
+    } else if (first === '(' || first === '[' || first === '{') {
+      key.push(token)
+      const block = first === '{' && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
+      opens.push(first === '{' ? block ? 'block' : 'object' : first)
+      last = first
+      keyPlace = first === '{' && !block
+    } else if (first === ')' || first === ']' || first === '}') {
+      key.push(token)
+      opens.pop()
+      last = first
+      keyPlace = first === '}' && opens.at(-1) === 'object'
+    } else {
+      if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || text[at] === ':') key.push(token)
+      else {
+        key.push(NAMELESS)
+        names.at(-1).push(token)
+      }
+      if (!(keyPlace && MODIFIERS.has(token))) {
+        last = token
+        keyPlace = false
+      }
+    }
+  }
+  return { key: key.join(''), names }
 }
 
 // The change blocks between two texts' lines with names renamed alike left
@@ -66,10 +134,8 @@ function nameless(line) {
 // renamed to one, as a line's `a` → `b` beside unchanged lines naming both)
 // is a change.
 function renameBlocks(before, after, a, b, ignoreWhitespace) {
-  const na = a.map(nameless), nb = b.map(nameless)
-  // Ending as the text does, so a newline added or dropped at the end stays a change.
-  const keys = (list, text) => list.map(line => line.key).join('\n') + (text.endsWith('\n') ? '\n' : '')
-  const found = changeBlocks(keys(na, before), keys(nb, after), ignoreWhitespace)
+  const na = nameless(before), nb = nameless(after)
+  const found = changeBlocks(na.key, nb.key, ignoreWhitespace)
   const pairs = []
   let i = 0, j = 0
   for (const block of [...found, { a0: a.length, a1: a.length, b0: b.length, b1: b.length }]) {
@@ -79,7 +145,7 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   }
   const backward = new Map(), forward = new Map()
   const link = (map, from, to) => { if (!map.has(from)) map.set(from, new Set()); map.get(from).add(to) }
-  for (const [pa, pb] of pairs) na[pa].names.forEach((name, k) => { link(forward, name, nb[pb].names[k]); link(backward, nb[pb].names[k], name) })
+  for (const [pa, pb] of pairs) na.names[pa].forEach((name, k) => { link(forward, name, nb.names[pb][k]); link(backward, nb.names[pb][k], name) })
   const sole = (from, to) => forward.get(from).size === 1 && backward.get(to).size === 1
   const blocks = [], renamed = new Set()
   const add = block => {
@@ -89,7 +155,7 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   let next = 0
   for (const [pa, pb] of pairs) {
     while (next < found.length && found[next].a0 <= pa) add(found[next++])
-    const names = na[pa].names, others = nb[pb].names
+    const names = na.names[pa], others = nb.names[pb]
     if (names.every((name, k) => name === others[k])) continue
     if (names.every((name, k) => sole(name, others[k]))) renamed.add(pa)
     else add({ a0: pa, a1: pa + 1, b0: pb, b1: pb + 1 })

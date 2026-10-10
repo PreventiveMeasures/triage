@@ -1165,8 +1165,10 @@ control. A version shows in the bundle view with four tabs:
   side's name ever stands for a second one; such lines are marked `≈`, naming
   the line they were. A name renamed two ways, or two names renamed to one
   (a line's `a` becoming `b` beside lines that keep both), keeps its lines
-  shown. Keywords, properties (after `.`, or an object's keys), strings and
-  longer names are never left out.
+  shown. Keywords, properties (after `.`, or an object's, a pattern's or a
+  class's keys, methods and shorthand ones too), strings, templates, regular
+  expressions, comments (spanning lines or not) and longer names are never
+  left out.
 
 A dist-tag link, such as `/npm/lodash`, is committed to history at the exact
 version it opened. Code links name files by number and lines in the fragment,
