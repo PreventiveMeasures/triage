@@ -133,7 +133,8 @@ function nameless(text) {
   // renaming one then changes what runs. `parameters` where a `(…)` would
   // be a function's parameters (after `function`, its name, a method's key
   // or `catch`), not a call's arguments.
-  let at = 0, dynamic = false, exporting = false, extending = -1, keyPlace = false, last = null, naming = false, parameters = false
+  // `labeled` between a label and its `:`, after which a statement starts.
+  let at = 0, dynamic = false, exporting = false, extending = -1, keyPlace = false, labeled = false, last = null, naming = false, parameters = false
   let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
@@ -146,14 +147,17 @@ function nameless(text) {
     // A line break no operator spans may end a statement, as `;` does, or a
     // class field: even one alone between two names (`let x⏎f()`).
     const line = segment.lastIndexOf('\n')
-    const ends = line !== -1 && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd()) && !/^[,=+\-*/%&|^<>?:.)\]}]/u.test(segment.slice(line + 1).trimStart())
+    // A `++` or `--` either side of it is the line's own (`a++⏎b`, `x⏎++a`).
+    const ends = line !== -1 && !/(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u.test(segment.slice(0, line).trimEnd())
+      && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(segment.slice(line + 1).trimStart())
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     if (ends || segment.includes(',') || segment.includes(';')) endArrows(opens.length)
     if (ends || segment.includes(';')) endLoops(opens.length)
     let end = segment.length
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
-    last = segment[end - 1]
+    last = segment[end - 1] === ':' && labeled ? ';' : segment[end - 1]
+    labeled = false
     const declaration = declarations.at(-1)
     const next = segment.lastIndexOf(','), set = segment.search(/(?<![=!<>])=(?![=>])[^=]*$/u)
     if (declaration?.depth === opens.length && set !== next) declaration.binding = next > set
@@ -241,8 +245,11 @@ function nameless(text) {
       const binding = declaration?.binding && opens.length >= declaration.depth && !inDefault(declaration.depth + 1)
         && !inComputed(declaration.depth)
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
-      // A property: `.` before it, spaces or a comment between (`a . b`), or `:` after it.
-      const property = last === '.' || text[at] === ':'
+      // A property: `.` before it, spaces or a comment between (`a . b`), or `:`
+      // after it; or a label, after `break` or `continue` (`break a`).
+      const property = last === '.' || text[at] === ':' || last === 'break' || last === 'continue'
+      // A label where a statement starts (`a: {`), not a key: its block a block.
+      if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
       let aside = null
       if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || property) key.push(token)
       else {
