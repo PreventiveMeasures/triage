@@ -96,14 +96,15 @@ function nameless(text) {
   }
   const between = segment => {
     keep(segment)
+    // A line break no operator spans may end a statement, as `;` does, or a
+    // class field: even one alone between two names (`let x⏎f()`).
+    const line = segment.lastIndexOf('\n')
+    const ends = line !== -1 && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd()) && !/^[,=+\-*/%&|^<>?:.)\]}]/u.test(segment.slice(line + 1).trimStart())
+    if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     let end = segment.length
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
     last = segment[end - 1]
-    // A line break no operator spans may end a statement, as `;` does, or a class field.
-    const line = segment.lastIndexOf('\n')
-    const ends = line !== -1 && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd()) && !/^[,=+\-*/%&|^<>?:.)\]}]/u.test(segment.slice(line + 1).trimStart())
-    if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     const declaration = declarations.at(-1)
     const next = segment.lastIndexOf(','), set = segment.search(/(?<![=!<>])=(?![=>])[^=]*$/u)
     if (declaration?.depth === opens.length && set !== next) declaration.binding = next > set
@@ -250,7 +251,7 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
 // A tag where a value starts (`(<a />`, `=> <b>`, `return <i>`, `yield <p>`, a
 // fragment's `<>` before what it holds, not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|[(=,:?&|!{};>[]|\b(?:await|case|default|do|else|return|throw|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
+const JSX = /(?:^|[(=,:?&|!{};>[]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
