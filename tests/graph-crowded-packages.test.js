@@ -32,7 +32,7 @@ test('only edges from other packages count, and only for the listed package', ()
   assert.deepEqual([...crowdedPackages(edges, 101)], [], 'internal imports never count')
 })
 
-for (const name of ['minimalistic-assert', 'react']) {
+for (const name of ['minimalistic-assert', 'react', 'reselect']) {
   test(`${name} is hidden past the same limits`, () => {
     const target = `node_modules/${name}/index.js`
     const crowdedGraph = importers => {
