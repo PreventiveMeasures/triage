@@ -3449,8 +3449,19 @@ a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
 }
 
 /* npm package Overview (view/npm-package.js). Its Dependencies column lists
-   rows as Files does, each opening in the viewer at its latest version. */
-.npm-dependency-row .bundles-source-size { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+   rows as Files does, each opening in the viewer at its latest version. Its
+   rows share their columns, the name, its kind and its range, so kinds and
+   ranges line up down the list, a range cut short past a width. */
+.bundles-sources-list.npm-dependency-list {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, max-content); column-gap: .5rem;
+
+  & > li, & .npm-dependency-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; }
+  & .npm-dependency-kind { grid-column: 2; justify-self: end; }
+  & .bundles-source-size {
+    grid-column: 3; max-width: 12rem;
+    overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap;
+  }
+}
 /* A small tag after a row's name: a dependency's kind, a file's category. */
 :is(.npm-dependency-kind, .npm-encoding-tag) {
   flex-shrink: 0; padding: 0 .3rem;
@@ -3467,23 +3478,17 @@ a.bundle-advisory-ghsa:hover .external-link-icon { opacity: 1; }
   & > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 /* A fact that opens a file of the package, underlined as a link is. */
-.npm-overview .bundles-detail-meta button.bundle-entry-point {
+.npm-socket-alerts button.bundle-entry-point { padding: 0; color: inherit; background: none; border: 0; font: inherit; }
+:is(.npm-overview .bundles-detail-meta, .npm-socket-alerts) button.bundle-entry-point {
   text-decoration: underline dotted color-mix(in srgb, currentcolor 45%, transparent); text-underline-offset: 3px;
 
   &:hover { color: var(--accent); text-decoration-color: currentcolor; }
 }
-/* An npm package's header: its name, the version shown as a picker of its
-   versions (npm-package.js NpmVersionSelect), and its page on npm. */
+/* An npm package's header: its name and the version shown as a picker of
+   its versions (npm-package.js NpmVersionSelect). */
 .bundles-slide-title:has(> npm-version-select) { display: flex; align-items: center; gap: .55rem; }
 /* As wide as the version it shows, with its tags. */
 npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16rem; }
-.npm-header-link {
-  display: inline-flex; align-items: center; gap: .25rem; flex-shrink: 0;
-  color: var(--muted); font-size: .74rem; text-decoration: none;
-
-  &:hover { color: var(--accent); }
-  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--ui-radius, 3px); }
-}
 
 /* The npm Overview's summary (view/render-bundle.js renderNpmPackageOverview),
    laid out by the Overview's own width: the package's facts, its build's
@@ -3497,11 +3502,12 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
      scrolls as a whole instead of squeezing them. */
   overflow-y: auto;
 
-  /* Rows are spaced by their items' margins, not a row gap, so the warning's
-     row takes no room where there is no warning. */
+  /* Rows are spaced by their items' margins, not a row gap, so the alerts'
+     and the warning's rows take no room where there are none. */
   & .bundles-overview-summary {
     display: grid;
     grid-template:
+      'alerts alerts alerts' auto
       'warning warning warning' auto
       'meta build figures' auto
       'meta actions figures' auto
@@ -3511,6 +3517,7 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 
     & > *, & > .bundles-detail-meta-row > * { margin-bottom: .6rem; }
   }
+  & .npm-socket-alerts { grid-area: alerts; }
   & .npm-readability-warning { grid-area: warning; }
   & .bundles-detail-meta-row { display: contents; }
   & .bundles-detail-meta-row > :is(.npm-facts, .is-build).bundles-detail-meta {
@@ -3536,6 +3543,7 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 @container npm-overview (width < 66rem) {
   .npm-overview .bundles-overview-summary {
     grid-template:
+      'alerts alerts' auto
       'warning warning' auto
       'meta build' auto
       'meta actions' auto
@@ -3544,7 +3552,9 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   }
 }
 @container npm-overview (width < 40rem) {
-  .npm-overview .bundles-overview-summary { grid-template: 'warning' 'meta' 'build' 'actions' 'contents' 'figures' / minmax(0, 1fr); }
+  .npm-overview .bundles-overview-summary {
+    grid-template: 'alerts' 'warning' 'meta' 'build' 'actions' 'contents' 'figures' / minmax(0, 1fr);
+  }
 }
 /* Its repository's stars and forks, on the GitHub row of its facts. */
 .bundles-detail-meta .bundle-origin-link.npm-github-figure {
@@ -3580,7 +3590,7 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
   .npm-overview .npm-contents {
     grid-template-columns: var(--npm-label) auto auto minmax(0, 1fr);
 
-    & dd:has(> .bundles-languages-bar) { grid-column: 2 / -1; }
+    & :is(dd:has(> .bundles-languages-bar), .npm-contents-socket > dd) { grid-column: 2 / -1; }
     & .npm-contents-types > dt { grid-column: 3; margin-left: 1.25rem; }
   }
 }
@@ -3596,8 +3606,17 @@ npm-version-select { display: block; flex: 0 1 auto; min-width: 0; max-width: 16
 .bundles-languages-share { color: var(--muted); font-variant-numeric: tabular-nums; }
 /* Read out by screen readers, out of sight. */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-/* The tarball's download, under the figures' card. */
-.npm-figures-actions { display: flex; justify-content: flex-end; margin-top: .5rem; }
+/* Under the figures' card: the version's pages elsewhere, then the
+   tarball's download at the right. */
+.npm-figures-actions { display: flex; align-items: center; gap: .75rem; margin-top: .5rem; }
+.npm-package-links { display: flex; flex-wrap: wrap; align-self: center; gap: .3rem .9rem; margin-right: auto; }
+.npm-package-link {
+  display: inline-flex; align-items: center; gap: .25rem;
+  color: var(--muted); font-size: .74rem; text-decoration: none;
+
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--ui-radius, 3px); }
+}
 /* Its downloads, in a card (view/npm-downloads-chart.js): its figures, each
    with its unit, over its downloads for the last year, one series in the
    accent over a faint wash of it, on hairline gridlines. */
@@ -3758,6 +3777,39 @@ button.npm-category {
     border-color: color-mix(in srgb, var(--high) 45%, var(--border));
     border-left-color: var(--high);
   }
+}
+/* Socket's scores, each a chip linking to its report; and over the summary,
+   the alerts it raises on the version, as on malware, each with its note. */
+a.npm-socket-score {
+  color: var(--text); text-decoration: none;
+
+  &:hover { border-color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+}
+.npm-socket-alerts {
+  padding: .5rem .7rem;
+  background: color-mix(in srgb, var(--critical) 9%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--critical) 45%, var(--border)); border-left: 3px solid var(--critical);
+  border-radius: var(--ui-radius, 4px);
+  font-size: .76rem;
+
+  & ul { display: grid; gap: .5rem; margin: .45rem 0 0; padding: 0; list-style: none; }
+  & li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .5rem; }
+  & .npm-socket-alert-type { font-weight: 600; }
+  & .npm-socket-alert-file { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .72rem; }
+  & .npm-socket-alert-note { flex-basis: 100%; margin: 0; color: var(--muted); line-height: 1.5; }
+}
+.npm-socket-alerts-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .9rem; }
+/* How big the package is by each measure its facts give (npm-size-class.js),
+   from tiny to gigantic, by its value's colour. */
+.npm-sized {
+  color: color-mix(in srgb, var(--size) 35%, var(--text));
+
+  &.is-tiny { --size: var(--green); }
+  &.is-small { --size: color-mix(in srgb, var(--green) 50%, var(--medium)); }
+  &.is-medium { --size: var(--medium); }
+  &.is-large { --size: var(--high); }
+  &.is-gigantic { --size: var(--critical); }
 }
 /* The Files column narrowed to a category: named in its head, with a way back. */
 .bundles-overview-filter {

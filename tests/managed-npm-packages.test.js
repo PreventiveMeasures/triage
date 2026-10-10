@@ -475,10 +475,23 @@ test('registry documents read at once are held to a budget: four version lists, 
 
 // npm's downloads API, GitHub and npm's bulk advisories, beside the registry
 // `registry` mocks; what each was asked, with its credentials.
-function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {} }) {
+function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, socket = {} }) {
   const asked = [], registryFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
     const auth = new Headers(init.headers).get('authorization'), url = String(input)
+    const record = url.match(/^https:\/\/api\.osv\.dev\/v1\/vulns\/(.+)$/u)
+    if (record) {
+      asked.push(['osv', record[1], auth])
+      return Promise.resolve(osv[record[1]] ? Response.json({ id: record[1], details: osv[record[1]] }) : Response.json({ message: 'Not Found' }, { status: 404 }))
+    }
+    const purl = url.match(/^https:\/\/firewall-api\.socket\.dev\/purl\/(.+)$/u)
+    if (purl) {
+      const id = decodeURIComponent(purl[1])
+      asked.push(['socket', id, auth])
+      const answer = socket[id]
+      return Promise.resolve(answer instanceof Response ? answer : new Response(answer === undefined ? ''
+        : `${JSON.stringify(answer)}\n`, { status: answer === undefined ? 500 : 200, headers: { 'content-type': 'application/x-ndjson' } }))
+    }
     const listing = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/security-advisories\?/u)
     if (listing) {
       asked.push(['repository', listing[1], auth])
@@ -583,8 +596,9 @@ test('advisories cover every published version, each naming the versions it affe
     { id: 'GHSA-dddd-eeee-ffff', source: 'registry', ghsa: 'GHSA-dddd-eeee-ffff', url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', cwe: [], range: '>=1.1.0 <1.3.0', affected: [0, 1] },
   ])
   assert.equal(body.repository, true)
-  assert.deepEqual(asked.filter(([what]) => what !== 'pulls'), [['github', 'org/repo', null], ['advisories', ['advised'], null], ['repository', 'org/repo', null]],
-    'its repository found public first; every version asked at once, without credentials')
+  assert.deepEqual(asked.filter(([what]) => what !== 'pulls'), [['github', 'org/repo', null], ['advisories', ['advised'], null],
+    ['osv', 'GHSA-aaaa-bbbb-cccc', null], ['osv', 'GHSA-dddd-eeee-ffff', null], ['repository', 'org/repo', null]],
+    'its repository found public first; every version asked at once, then each advisory\'s text, without credentials')
 })
 
 test('an advisory npm answers once a range it covers is one row, its ranges, versions and CWEs together', async t => {
@@ -623,6 +637,65 @@ test('advisories its repository publishes on GitHub join npm\'s, its listing kep
   assert.equal(body.repository, true)
   assert.deepEqual(asked.filter(([what]) => what === 'repository'), [['repository', 'org/advised', null]])
   assert.ok(await h.db.getUpstreamCacheEntry('github/advisories/org/advised'), 'the listing is kept where bundle advisories keep it')
+})
+
+test('advisories carry their text where their source has one: OSV\'s record of npm\'s, the repository\'s own', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('texted', '1.1.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/texted.git' } })
+  registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0'] }])
+  const asked = insights(t, {
+    repos: { 'org/texted': { full_name: 'org/texted', private: false, visibility: 'public' } },
+    advisories: { texted: [
+      { id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Described', severity: 'high', vulnerable_versions: '<1.1.0', cwe: [] },
+      { id: 2, url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'Undescribed', severity: 'low', vulnerable_versions: '<1.1.0', cwe: [] },
+    ] },
+    osv: { 'GHSA-aaaa-bbbb-cccc': '## Impact\n\nPrototype pollution.' },
+    repoAdvisories: { 'org/texted': [{ ghsa_id: 'GHSA-gggg-hhhh-jjjj', state: 'published', summary: 'Unreviewed', description: 'Found in `parse`.', severity: 'low', cwe_ids: [],
+      vulnerabilities: [{ package: { ecosystem: 'npm', name: 'texted' }, vulnerable_version_range: '< 1.2.0' }] }] },
+  })
+  const { advisories } = (await h.send('/api/npm/advisories?name=texted')).json()
+  assert.deepEqual(advisories.map(({ id, details }) => [id, details]), [
+    ['GHSA-aaaa-bbbb-cccc', '## Impact\n\nPrototype pollution.'], ['GHSA-dddd-eeee-ffff', undefined], ['GHSA-gggg-hhhh-jjjj', 'Found in `parse`.'],
+  ], 'none where OSV has no record')
+  assert.ok(asked.filter(([what]) => what === 'osv').every(([, , auth]) => auth === null), 'OSV asked without credentials')
+})
+
+test('Socket\'s scores and alerts for a public version, the file each names as the package has it', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const pkg = packageOf('scored', '1.0.0', { 'index.js': '' })
+  const scope = packageOf('@pub/scored', '2.0.0', { 'index.js': '' })
+  const unseen = packageOf('unseen', '1.0.0', { 'index.js': '' })
+  registry(t, [pkg, scope, unseen])
+  const score = { overall: 0.5, supplyChain: 0.25, vulnerability: 1, quality: 0.86, maintenance: 0.8, license: 1 }
+  const asked = insights(t, { socket: {
+    'pkg:npm/scored@1.0.0': { id: '1', type: 'npm', name: 'scored', version: '1.0.0', score, alerts: [
+      { type: 'installScripts', severity: 'middle', category: 'supplyChainRisk' },
+      { type: 'malware', severity: 'critical', category: 'supplyChainRisk', file: 'package/lib/index.js', props: { note: 'Steals tokens.' } },
+      { type: 'unknownSeverity', severity: 'bogus' },
+    ] },
+    'pkg:npm/@pub/scored@2.0.0': { id: '2', type: 'npm', namespace: '@pub', name: 'scored', version: '2.0.0', score, alerts: [] },
+    'pkg:npm/unseen@1.0.0': { id: 'synthetic:notFound:1', type: 'npm', name: 'unseen', version: '1.0.0', alerts: [] },
+  } })
+  assert.deepEqual((await h.send('/api/npm/socket?name=scored&version=1.0.0')).json(), { name: 'scored', version: '1.0.0', socket: { scores: score, alerts: [
+    { type: 'malware', severity: 'critical', category: 'supplyChainRisk', file: 'lib/index.js', note: 'Steals tokens.' },
+    { type: 'installScripts', severity: 'middle', category: 'supplyChainRisk', file: null, note: null },
+  ] } }, 'most severe first; one of a severity Socket doesn\'t name left out')
+  assert.deepEqual((await h.send('/api/npm/socket?name=%40pub%2Fscored&version=2.0.0')).json().socket, { scores: score, alerts: [] })
+  assert.equal((await h.send('/api/npm/socket?name=unseen&version=1.0.0')).json().socket, null, 'a version Socket hasn\'t seen')
+  await h.send('/api/npm/socket?name=scored&version=1.0.0')
+  assert.deepEqual(asked, [['socket', 'pkg:npm/scored@1.0.0', null], ['socket', 'pkg:npm/@pub/scored@2.0.0', null], ['socket', 'pkg:npm/unseen@1.0.0', null]],
+    'asked without credentials, and kept')
+})
+
+test('Socket is never asked about a private package, whoever reads it', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [{ ...packageOf('@acme/secret', '1.0.0', { 'index.js': '' }), private: true }])
+  const asked = insights(t, {})
+  assert.deepEqual((await h.send('/api/npm/socket?name=%40acme%2Fsecret&version=1.0.0', 'view')).json(), { error: 'package-not-found' })
+  assert.deepEqual((await h.send('/api/npm/socket?name=%40acme%2Fsecret&version=1.0.0', 'admin')).json(), { name: '@acme/secret', version: '1.0.0', socket: null })
+  assert.deepEqual(asked, [], 'its name never leaves for Socket')
 })
 
 test('npm\'s advisories are answered while GitHub refuses, and its repository asked again next time', async t => {

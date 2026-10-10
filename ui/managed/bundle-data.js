@@ -113,3 +113,7 @@ export function fetchNpmAdvisories(name, { signal } = {}) {
 export function fetchNpmTags(name, version, { signal } = {}) {
   return requestNpm('tags', { name, version }, signal)
 }
+
+export function fetchNpmSocket(name, version, { signal } = {}) {
+  return requestNpm('socket', { name, version }, signal)
+}

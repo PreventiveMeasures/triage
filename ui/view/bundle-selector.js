@@ -67,7 +67,7 @@ class BundleSelector extends SearchableSelector {
   get noMatchesLabel() { return `No matching ${this.noun}s` }
   get emptyLabel() { return this.noun === 'bundle' ? 'No stored bundles' : `No other ${this.noun}s` }
   get changeEvent() { return 'bundle-change' }
-  get menuWidth() { return this.versions ? 440 : super.menuWidth }
+  get menuWidth() { return this.versions ? 500 : super.menuWidth }
   willUpdate(changed) {
     if (changed.has('bundles') && this.bundles) this.options = bundleOptions(this.bundles)
     if (changed.has('options') && this.versions) {

@@ -5,11 +5,13 @@
 import { html, nothing } from 'lit'
 import { formatBytes } from '../scan/metrics.js'
 import { bundleFileSizes } from '../../common/bundle-sources.js'
-import { advisoryRow } from './advisory-parts.js'
+import { EXTERNAL_LINK_ICON, advisoryRow } from './advisory-parts.js'
 import { compareSemver } from './bundle-compare-diff.js'
-import { fetchNpmAdvisories, fetchNpmStats } from './client-managed.js'
-import { NPM_LICENSE_FILE, npmPackageData } from './npm-package.js'
+import { fetchNpmAdvisories, fetchNpmSocket, fetchNpmStats } from './client-managed.js'
+import { NPM_LICENSE_FILE, factFile, npmPackageData } from './npm-package.js'
 import { render } from './render.js'
+import { state } from '#client/index.js'
+import { openAdvisoryDetailsDialog } from './dialogs/advisory-details-dialog.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { encodePath } from './bundle-origin-links.js'
@@ -36,13 +38,75 @@ function npmPackageAdvisories(name) {
     data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false }))
 }
 
+// The version's pages elsewhere: npm's, and Socket's report on it where the
+// package is public.
+export function npmPackageLinks(entry) {
+  const { name, version } = entry.npm
+  const link = (href, text, tooltip) => html`<a class="npm-package-link" href=${href} target="_blank" rel="noopener noreferrer"
+    data-tooltip=${tooltip}>${text}${EXTERNAL_LINK_ICON}</a>`
+  return html`<span class="npm-package-links">
+    ${link(`https://www.npmjs.com/package/${name}/v/${encodeURIComponent(version)}`, 'npmjs', `${name}@${version} on npmjs.com`)}
+    ${entry.npm.private ? nothing : link(npmSocketHref(entry), 'socket.dev', `Socket's report on ${name}@${version}`)}
+  </span>`
+}
+
+const npmSocketHref = entry => `https://socket.dev/npm/package/${entry.npm.name}/overview/${encodeURIComponent(entry.npm.version)}`
+
+// Socket's report on the version, for a public package (npm-insights.ts
+// npmSocketReport): null until it arrives, and where Socket has none.
+function npmSocketReport(entry) {
+  const { name, version } = entry.npm
+  if (entry.npm.private) return null
+  const data = npmPackageData('socket', `${name}@${version}`, () => fetchNpmSocket(name, version), answer => ({ socket: answer.socket ?? null }))
+  return data.status === 'ready' ? data.socket : null
+}
+
+const SOCKET_SCORES = [['overall', 'Overall'], ['supplyChain', 'Supply chain'], ['vulnerability', 'Vulnerability'], ['quality', 'Quality'], ['maintenance', 'Maintenance'], ['license', 'License']]
+
+// Its Socket scores, out of 100, each a chip, one under 50 marked.
+function npmSocketRow(entry) {
+  const scores = npmSocketReport(entry)?.scores
+  if (!scores) return nothing
+  return html`<ul class="npm-extensions" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label]) => {
+    const score = Math.round(scores[key] * 100)
+    return html`<li><a class=${`npm-extension npm-socket-score${score < 50 ? ' is-warn' : ''}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer"
+      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${score} of 100`}><span>${label}</span><span class="npm-extension-count">${score}</span></a></li>`
+  })}</ul>`
+}
+
+// Socket's severities, as advisories name theirs.
+const SOCKET_SEVERITIES = new Map([['critical', 'critical'], ['high', 'high'], ['middle', 'moderate'], ['low', 'low']])
+// `installScripts` → `Install scripts`.
+const socketAlertName = type => type.replaceAll(/(?<=[a-z])(?=[A-Z])/gu, ' ').toLowerCase().replace(/^./u, first => first.toUpperCase())
+
+// Over the summary, where Socket raises alerts on the version, as on malware:
+// each with its severity, the file it names, opening it where the package
+// has it (`files`), and Socket's note on it.
+export function npmSocketAlerts(entry, files) {
+  const alerts = npmSocketReport(entry)?.alerts ?? []
+  if (alerts.length === 0) return nothing
+  return html`<div class="npm-socket-alerts" role="note">
+    <span class="npm-socket-alerts-head"><strong>Socket raises ${alerts.length === 1 ? 'an alert' : `${alerts.length} alerts`} on this version</strong>
+      <a class="npm-package-link" href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">socket.dev${EXTERNAL_LINK_ICON}</a></span>
+    <ul>${alerts.map(alert => {
+      const severity = SOCKET_SEVERITIES.get(alert.severity) ?? 'info'
+      return html`<li>
+        <span class=${`bundle-advisory-severity sev-${severity}`}>${severity}</span>
+        <span class="npm-socket-alert-type">${socketAlertName(alert.type)}</span>
+        ${alert.file ? html`<span class="npm-socket-alert-file">in ${factFile(alert.file, files)}</span>` : nothing}
+        ${alert.note ? html`<p class="npm-socket-alert-note">${alert.note}</p>` : nothing}
+      </li>`
+    })}</ul>
+  </div>`
+}
+
 // The package's downloads in the summary, in a card (npm-downloads-chart.js),
-// with `actions` (the tarball's download) under it.
+// with its pages elsewhere and `actions` (the tarball's download) under it.
 export function npmStatsRow(entry, actions) {
   const stats = npmPackageStats(entry.npm.name)
   return html`<div class="npm-figures">
     <npm-downloads-chart role="region" aria-label="Downloads" .downloads=${stats.downloads} .status=${stats.status}></npm-downloads-chart>
-    <div class="npm-figures-actions">${actions}</div>
+    <div class="npm-figures-actions">${npmPackageLinks(entry)}${actions}</div>
   </div>`
 }
 
@@ -89,6 +153,10 @@ export function npmAdvisoryStatus(advisory, versions, version) {
 export function npmAdvisoriesColumn(entry) {
   const { name, version } = entry.npm
   const data = npmPackageAdvisories(name)
+  // Its text, where it has one, in the dialog the Advisories tab opens, until
+  // the session changes.
+  const session = state.managedSession?.id
+  const showDetails = ({ title, severity, details: markdown }) => openAdvisoryDetailsDialog({ heading: title, severity, markdown, isCurrent: () => state.managedSession?.id === session })
   const ready = data.status === 'ready'
   const advisories = ready ? data.advisories : []
   const statuses = advisories.map(advisory => npmAdvisoryStatus(advisory, data.versions, version))
@@ -104,7 +172,7 @@ export function npmAdvisoriesColumn(entry) {
     : html`${unchecked}${groups.map(group => html`<section class=${`npm-advisory-group is-${group.status}`}>
       <h4 class="npm-advisory-group-head">${group.heading} <span class="bundles-overview-col-count">${group.advisories.length}</span></h4>
       <ul class="bundle-advisories-rows">${group.advisories.map(advisory => advisoryRow({ ...advisory, title: advisory.title ?? advisory.id,
-        severity: SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown', cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range }))}</ul>
+        severity: SEVERITIES.has(advisory.severity) ? advisory.severity : 'unknown', cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range }, showDetails))}</ul>
     </section>`)}`
   return overviewColumn({ title: 'Advisories', count: ready ? advisories.length : '…', body, className: 'npm-advisories-col',
     extra: ready ? html` <span class=${`npm-advisories-active${active > 0 ? ' is-active' : ''}`} data-tooltip=${`${active} affecting ${version}`}>${active} active</span>` : nothing })
@@ -343,9 +411,10 @@ function npmFileTypesRow(entry, details) {
 
 // What the package holds, under its facts and labelled as they are: its
 // languages by lines (`languages`, the bar the bundle Overview draws), its
-// readable files and their types.
+// readable files and their types; then Socket's scores for it.
 export function npmContents(entry, languages, details) {
-  const rows = [['languages', 'Languages', languages], ['readable', 'Readable', npmReadableRow(entry, details)], ['types', 'File types', npmFileTypesRow(entry, details)]]
+  const rows = [['languages', 'Languages', languages], ['readable', 'Readable', npmReadableRow(entry, details)], ['types', 'File types', npmFileTypesRow(entry, details)],
+    ['socket', 'Socket', npmSocketRow(entry)]]
     .filter(([, , body]) => body !== nothing)
   if (rows.length === 0) return nothing
   return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([key, label, body]) => html`<div class=${`npm-contents-${key}`}><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`

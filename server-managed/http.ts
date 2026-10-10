@@ -54,6 +54,7 @@
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/502
 //   GET  /api/npm/advisories?name= → its advisories across every published version, npm's and its repository's | 400/401/404/502
 //   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404
+//   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -120,7 +121,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats } from './npm-insights.ts'
+import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmSocketReport } from './npm-insights.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -168,7 +169,8 @@ const NPM_DOWNLOAD_PATH = '/api/npm/download'
 const NPM_STATS_PATH = '/api/npm/stats'
 const NPM_ADVISORIES_PATH = '/api/npm/advisories'
 const NPM_TAGS_PATH = '/api/npm/tags'
-const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH])
+const NPM_SOCKET_PATH = '/api/npm/socket'
+const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -2377,14 +2379,14 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Pro
   return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
-// GET /api/npm/{package,versions,download,stats,advisories,tags}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags,socket}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
 async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
-  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH
+  const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH || path === NPM_SOCKET_PATH
   if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
@@ -2452,6 +2454,13 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
       const tags = repo === null || sha === null ? [] : await npmCommitTags(repo, sha, doc.version, githubToken).catch(() => [])
       if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, tags })
+      return
+    }
+    // Socket's report, asked only where npm answers for the version without a
+    // token: a private package's name never leaves for Socket.
+    if (path === NPM_SOCKET_PATH) {
+      const socket = doc.private ? null : await npmSocketReport(name, doc.version).catch(() => null)
+      if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, socket })
       return
     }
     // The load stays held until this response is written or abandoned, and

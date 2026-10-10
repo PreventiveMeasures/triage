@@ -35,10 +35,10 @@ import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
-import { EXTERNAL_LINK_ICON } from './advisory-parts.js'
 import { overviewColumn } from './bundle-overview-column.js'
 import { NPM_LICENSE_FILE, navigateToNpm, npmCompareSource, npmDependenciesColumn, npmOverviewExtras, npmOverviewMeta, npmPackageRoute, npmVersionList } from './npm-package.js'
-import { npmAdvisoriesColumn, npmBinaryColumn, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmReadabilityTag, npmReadabilityWarning, npmStatsRow } from './npm-overview.js'
+import { npmAdvisoriesColumn, npmBinaryColumn, npmContents, npmFilesFilter, npmFilesRead, npmGithubFigures, npmPackageLinks, npmReadabilityTag, npmReadabilityWarning, npmSocketAlerts, npmStatsRow } from './npm-overview.js'
+import { npmSized } from './npm-size-class.js'
 import { canScanBundle, openScan } from './scan-navigation.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { isManagedUiMode, findingsForFileHash as localFindingsForFileHash, indexedHashFindingCount as localIndexedHashFindingCount, reportsForFinding, reportsForFindingByPackage, reportsForFindingByRepo, state } from '#client/index.js'
@@ -459,7 +459,7 @@ function openBundleWhy(details, query) {
 // render before and after each Files row's path.
 function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDirs, exportsCol, {
   bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
-  fileTag = null, fileIcon = null, overviewClass = '', fileFilter = null, lines = null,
+  fileTag = null, fileIcon = null, overviewClass = '', fileFilter = null, lines = null, sized = (measure, value, text) => text,
 } = {}) {
   const { prefix, stripped } = stripCommonPathPrefix(sources)
   // Package identities use original paths and recorded module boundaries;
@@ -584,9 +584,10 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
         ${renderMeta(prefix)}
         <dl class="bundles-detail-meta is-build">
           ${extras}
-          <dt>Sources</dt><dd>${lines == null ? textCount : `${textCount} ${textCount === 1 ? 'file' : 'files'} · ${lines.toLocaleString('en')} LoC`}</dd>
+          <dt>Sources</dt><dd>${lines == null ? sized('files', textCount, textCount)
+            : html`${sized('files', textCount, `${textCount} ${textCount === 1 ? 'file' : 'files'}`)} · ${sized('lines', lines, `${lines.toLocaleString('en')} LoC`)}`}</dd>
           ${bundleSize == null ? nothing : html`<dt>Size</dt><dd>${formatBytes(bundleSize)}</dd>`}
-          ${unpackedSize == null ? nothing : html`<dt>Unpacked</dt><dd>${formatBytes(unpackedSize)}</dd>`}
+          ${unpackedSize == null ? nothing : html`<dt>Unpacked</dt><dd>${sized('unpacked', unpackedSize, formatBytes(unpackedSize))}</dd>`}
           ${resources?.size ? html`<dt>Resources</dt><dd>${resources.size}</dd>` : nothing}
         </dl>
         ${exportsCol ?? nothing}
@@ -2031,9 +2032,7 @@ function renderBundleSlide(entry) {
       <span class="bundles-slide-icon" aria-hidden="true">${unsafeHTML(npm ? NPM_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class="bundles-slide-title">
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.npm.name}>${entry.npm.name}</div>
-          <npm-version-select .name=${entry.npm.name} .version=${entry.npm.version} .tab=${tab} .list=${npmVersionList(entry.npm.name)}></npm-version-select>
-          <a class="npm-header-link" href=${`https://www.npmjs.com/package/${entry.npm.name}/v/${entry.npm.version}`} target="_blank" rel="noopener noreferrer"
-            data-tooltip=${`${entry.npm.name}@${entry.npm.version} on npmjs.com`}>npmjs.com${EXTERNAL_LINK_ICON}</a>`
+          <npm-version-select .name=${entry.npm.name} .version=${entry.npm.version} .tab=${tab} .list=${npmVersionList(entry.npm.name)}></npm-version-select>`
           : html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${entry.name}>${entry.name}</div>`}
       </div>
       <button type="button" class="bundles-download-btn bundles-scan-button" ?hidden=${!canScanBundle(entry)} @click=${() => void openScan(entry)}>${unsafeHTML(SCAN_ICON_SVG)}<span>Scan</span></button>
@@ -2675,11 +2674,11 @@ function renderBundleDetails(entry, details) {
 // they are (report.css .npm-overview).
 function renderNpmPackageOverview(entry, details) {
   const download = `/api/npm/download?${new URLSearchParams({ name: entry.npm.name, version: entry.npm.version })}`
-  const downloadButton = html`<a class="bundles-download-btn" href=${download}>${DOWNLOAD_ICON}<span>Download tarball</span></a>`
+  const downloadButton = html`<a class="bundles-download-btn" href=${download} data-tooltip="Download the tarball">${DOWNLOAD_ICON}<span>Tarball</span></a>`
   // Under the downloads chart once the version is read; beside the facts
   // until then.
   const exportsCol = html`<div class="bundles-overview-exports">
-    <div class="bundles-overview-exports-row">${downloadButton}</div>
+    <div class="bundles-overview-exports-row">${npmPackageLinks(entry)}${downloadButton}</div>
   </div>`
   if (details?.integrity !== entry.integrity || !details.json) {
     return renderBundleOverviewFallback(npmOverviewMeta(entry, { githubFigures: npmGithubFigures(entry) }), exportsCol, { overviewClass: 'npm-overview' })
@@ -2693,8 +2692,8 @@ function renderNpmPackageOverview(entry, details) {
   return renderBundleSourcesPanel(prefix => npmOverviewMeta(entry, { prefix, githubFigures: npmGithubFigures(entry), files: paths }), npmOverviewExtras(entry, paths), sources, sizes, null, nothing, {
     bundleSize: details.size, unpackedSize: bundleUnpackedSize(sizes), resources: binaries,
     leadColumn: html`${npmDependenciesColumn(entry)}${npmAdvisoriesColumn(entry)}`, trailColumns: npmBinaryColumn(binaries, sizeMap),
-    summaryExtra: html`${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
-    overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines,
+    summaryExtra: html`${npmSocketAlerts(entry, paths)}${npmReadabilityWarning(entry, details)}${npmContents(entry, renderBundleLanguagesBar(details, { legend: true }), details)}${npmStatsRow(entry, downloadButton)}`,
+    overviewClass: 'npm-overview', lines: bundleDetailsCodeStats(details).lines, sized: npmSized,
     fileTag: path => npmReadabilityTag(byPath.get(path)), fileIcon: sourceFileIcon, fileFilter: npmFilesFilter(entry),
   })
 }

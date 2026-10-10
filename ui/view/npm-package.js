@@ -19,6 +19,7 @@ import { render } from './render.js'
 import { bundleOriginLinks, githubTagHref } from './bundle-origin-links.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { overviewColumn } from './bundle-overview-column.js'
+import { npmSized } from './npm-size-class.js'
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
 
@@ -409,7 +410,7 @@ export function npmDependencyChanges(base, other) {
 export function npmDependenciesColumn(entry) {
   const rows = npmDependencies(entry.npm.manifest)
   if (rows.length === 0) return nothing
-  return overviewColumn({ title: 'Dependencies', count: rows.length, list: true, body: html`<ul class="bundles-sources-list">${rows.map(({ name, range, kind, opens }) => {
+  return overviewColumn({ title: 'Dependencies', count: rows.length, list: true, body: html`<ul class="bundles-sources-list npm-dependency-list">${rows.map(({ name, range, kind, opens }) => {
       const row = html`<span class="bundles-source-path" data-tooltip-truncated data-tooltip=${name}>${name}</span>
         ${kind ? html`<span class="npm-dependency-kind">${kind}</span>` : nothing}
         <span class="bundles-source-size" data-tooltip-truncated data-tooltip=${range}>${range}</span>`
@@ -433,9 +434,9 @@ function npmCommitTags(entry, github) {
 
 // A file of the package, as a fact names it: a button opening it in the
 // source viewer where the package has it (`files`, by path, none until its
-// files are read), else its name.
-function factFile(path, files, label = path) {
-  return files?.has(path) ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${path} data-tooltip=${`Open ${path}`}>${label}</button>` : label
+// files are read), its path in its tooltip (`./LICENSE`), else its name.
+export function factFile(path, files, label = path) {
+  return files?.has(path) ? html`<button type="button" class="bundle-entry-point" data-bundle-view-source=${path} data-tooltip=${`./${path}`}>${label}</button>` : label
 }
 
 // Its license files at its root: `LICENSE`, or one a license, such as
@@ -497,7 +498,7 @@ export function npmOverviewMeta(entry, { prefix = '', githubFigures = nothing, f
 
 // The package's entry points, each with its file's icon, Main and Module in
 // one row where they name the same file; its kind of module, bins, engines,
-// install scripts and, where it has none, its dependencies.
+// install scripts and how many dependencies it has, sized as its files are.
 export function npmOverviewExtras(entry, files = null) {
   const { manifest } = entry.npm
   const entries = ['main', 'module', 'types'].filter(field => typeof manifest[field] === 'string')
@@ -509,6 +510,7 @@ export function npmOverviewExtras(entry, files = null) {
   }
   const bins = Object.keys(manifest.bin ?? {})
   const scripts = Object.keys(manifest.installScripts ?? {})
+  const dependencies = npmDependencies(manifest).length
   return html`
     ${entries.map(({ label, path, file }) => html`<dt>${label}</dt><dd class="mono"><span class="npm-entry-point">${sourceFileIcon(file)}${factFile(file, files, path)}</span></dd>`)}
     ${manifest.type ? html`<dt>Type</dt><dd class="mono">${manifest.type}</dd>` : nothing}
@@ -516,7 +518,7 @@ export function npmOverviewExtras(entry, files = null) {
     ${manifest.engines ? html`<dt>Engines</dt><dd class="mono">${Object.entries(manifest.engines).map(([engine, range]) => `${engine} ${range}`).join(', ')}</dd>` : nothing}
     ${scripts.length > 0 || manifest.hasInstallScript ? html`<dt>Install scripts</dt><dd class="mono npm-install-scripts"
       data-tooltip=${scripts.map(script => `${script}: ${manifest.installScripts[script]}`).join('\n') || nothing}>${scripts.join(', ') || 'yes'}</dd>` : nothing}
-    ${npmDependencies(manifest).length === 0 ? html`<dt>Dependencies</dt><dd>None</dd>` : nothing}`
+    <dt>Dependencies</dt><dd>${npmSized('dependencies', dependencies, dependencies === 0 ? 'None' : dependencies)}</dd>`
 }
 
 // The version shown, in the header, with the package's other versions to

@@ -3,10 +3,11 @@
 // over the last year, from npm's public downloads API; its GitHub
 // repository's stars, forks and open issues; and its advisories across every
 // published version, as `npm audit` has them and as its repository publishes
-// them on GitHub, asked as bundle advisories ask (bundle-advisories.ts). All
-// of it is public: npm is asked without the server's token, and a
-// repository's figures, tags and advisories are asked for, and kept, only
-// where GitHub says it is public. Each
+// them on GitHub, asked as bundle advisories ask (bundle-advisories.ts); and
+// Socket's scores and alerts for a version. All of it is public: npm is asked
+// without the server's token, Socket only about a version npm answers for
+// without one (http.ts), and a repository's figures, tags and advisories are
+// asked for, and kept, only where GitHub says it is public. Each
 // answer is kept for an hour, a failure not at all; the reader's access to
 // the package is checked on every request before any of it is answered
 // (http.ts handleNpm).
@@ -17,6 +18,9 @@ import { isExactVersion } from '@preventive/upstream/semver.js'
 import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
 
 const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
+// Socket's answer for a package version, by its purl, as Socket Firewall
+// asks it: no key needed.
+const SOCKET_API = 'https://firewall-api.socket.dev/purl'
 const KEPT_MS = 60 * 60_000
 const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
@@ -89,6 +93,59 @@ const downloads = kept<NpmDownloads | null>(500)
 
 export function npmDownloads(name: string): Promise<NpmDownloads | null> {
   return downloads(name, () => askDownloads(name))
+}
+
+export const SOCKET_SCORES = ['overall', 'supplyChain', 'vulnerability', 'quality', 'maintenance', 'license'] as const
+const SOCKET_SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, middle: 2, low: 3 }
+const SOCKET_ALERTS = 50
+const SOCKET_NOTE_CHARS = 4000
+
+// Socket's report on a version: its scores, each 0 to 1 (null where Socket
+// gave none), and the alerts it raises, such as malware, most severe first,
+// each with the file it was found in, by its path in the package (the
+// tarball's root left out, as the package's files have it), where it names
+// one, and Socket's note on it.
+export interface NpmSocketAlert { type: string; severity: string; category: string | null; file: string | null; note: string | null }
+export interface NpmSocketReport { scores: Record<typeof SOCKET_SCORES[number], number> | null; alerts: NpmSocketAlert[] }
+
+const text = (value: unknown) => typeof value === 'string' && value !== '' ? value : null
+
+async function askSocket(name: string, version: string): Promise<NpmSocketReport | null> {
+  let res: Response
+  try {
+    res = await fetch(`${SOCKET_API}/${encodeURIComponent(`pkg:npm/${name}@${version}`)}`,
+      { headers: { accept: 'application/x-ndjson' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) })
+  } catch { throw new NpmPackageError(502, 'upstream-unavailable') }
+  if (res.status === 404) { await res.body?.cancel(); return null }
+  if (!res.ok) { await res.body?.cancel(); throw new NpmPackageError(502, 'upstream-unavailable') }
+  // One line, as one purl was asked.
+  let json: unknown
+  try { json = JSON.parse((await readLimited(res, API_BYTES)).toString('utf8').split('\n', 1)[0]!) }
+  catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  if (!plainObject(json) || json['version'] !== version || [json['namespace'], json['name']].filter(Boolean).join('/') !== name) throw new NpmPackageError(502, 'upstream-invalid')
+  // A version Socket hasn't seen is answered with a made-up id and nothing else.
+  if (String(json['id']).startsWith('synthetic:')) return null
+  const score = json['score']
+  const scores = plainObject(score) && SOCKET_SCORES.every(key => typeof score[key] === 'number' && score[key] >= 0 && score[key] <= 1)
+    ? Object.fromEntries(SOCKET_SCORES.map(key => [key, score[key]])) as NpmSocketReport['scores'] : null
+  const alerts = (Array.isArray(json['alerts']) ? json['alerts'] : [])
+    .filter((alert): alert is Record<string, unknown> => plainObject(alert) && text(alert['type']) !== null && typeof alert['severity'] === 'string' && alert['severity'] in SOCKET_SEVERITY_RANK)
+    .slice(0, SOCKET_ALERTS)
+    .map(alert => ({
+      type: alert['type'] as string, severity: alert['severity'] as string, category: text(alert['category']),
+      file: text(text(alert['file'])?.replace(/^[^/]*\//u, '')),
+      note: text(plainObject(alert['props']) ? alert['props']['note'] : null)?.slice(0, SOCKET_NOTE_CHARS) ?? null,
+    }))
+    .toSorted((a, b) => SOCKET_SEVERITY_RANK[a.severity]! - SOCKET_SEVERITY_RANK[b.severity]!)
+  return scores === null && alerts.length === 0 ? null : { scores, alerts }
+}
+
+const socketReports = kept<NpmSocketReport | null>(1000)
+
+// Socket's report on a version of a public package; null where Socket has
+// none. Its name goes to Socket: never ask it about a private one.
+export function npmSocketReport(name: string, version: string): Promise<NpmSocketReport | null> {
+  return socketReports(`${name}@${version}`, () => askSocket(name, version))
 }
 
 // A public repository's figures: GitHub's `openIssues` takes in its open pull
@@ -218,10 +275,11 @@ export async function npmCommitTags(repo: string, sha: string, version: string, 
 
 // An advisory on the package, with the versions it covers as their indexes in
 // the list it was asked with: npm's (`registry`), or one its repository
-// publishes on GitHub before GitHub reviews it into npm's (`repository`).
+// publishes on GitHub before GitHub reviews it into npm's (`repository`); its
+// text (markdown) where its source has one.
 export interface NpmAdvisory {
   id: string; source: Advisory['source']; ghsa?: string; url?: string; title?: string; severity?: string; cvss?: number; cwe: string[]; range?: string
-  affected: number[]
+  details?: string; affected: number[]
 }
 
 // `repository` false where the repository's advisories could not be had
@@ -258,7 +316,7 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
   const packages = [{ ecosystem: 'npm' as const, name, versions: asked, ...github !== null && { github } }]
   const ask = (repoAdvisories: boolean, token: string | null) => {
     const signal = AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)
-    return fetchBundleAdvisories(packages, signal, { debug, repoAdvisories, githubToken: token, cache: cache(signal) })
+    return fetchBundleAdvisories(packages, signal, { debug, repoAdvisories, details: true, githubToken: token, cache: cache(signal) })
   }
   let result = await (github === null ? ask(false, null) : ask(true, await githubToken()))
   if (result.status !== 200 && github !== null) {
@@ -278,7 +336,8 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     if (!known) {
       merged.set(key, {
         id: row.id, source: row.source, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
-        ...row.severity && { severity: row.severity }, ...row.cvss !== undefined && { cvss: row.cvss }, cwe: row.cwe, ...row.range && { range: row.range }, affected,
+        ...row.severity && { severity: row.severity }, ...row.cvss !== undefined && { cvss: row.cvss }, cwe: row.cwe, ...row.range && { range: row.range },
+        ...row.details && { details: row.details }, affected,
       })
       continue
     }

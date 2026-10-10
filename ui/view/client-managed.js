@@ -73,6 +73,10 @@ export async function fetchNpmTags(name, version, options) {
   return (await loadManagedBundle()).fetchNpmTags(name, version, options)
 }
 
+export async function fetchNpmSocket(name, version, options) {
+  return (await loadManagedBundle()).fetchNpmSocket(name, version, options)
+}
+
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }

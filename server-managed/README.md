@@ -1055,26 +1055,36 @@ control. A version shows in the bundle view with four tabs:
   GitHub repository, or its directory or readme there, as npm's default
   does) and integrity; beside them entry points,
   each with its file's icon and opening its file, Main and Module in one row
-  where they name the same file, engines, install scripts, and its files with
-  the lines of code they add up to; and a card of its downloads: the latest
+  where they name the same file, engines, install scripts, how many
+  dependencies it has, and its files with the lines of code they add up to,
+  its tarball's size and what it unpacks to, each but the tarball's size tinted by
+  how big it is (tiny, small, medium, large or gigantic, in steps of about
+  eight times); and a card of its downloads: the latest
   week's (or month's) and the last year's, each with its unit (`1.2K/week`,
   `9.6K/year`), over a chart of them across the year by week, or by calendar
   month (the last twelve complete ones), with the switch between the two at its top
-  right and under it the hovered period's downloads; and the tarball
-  download under it. Under the facts, its languages, then its readable files
+  right and under it the hovered period's downloads; and under it the
+  version's pages on npmjs.com and, for a public package, Socket, beside the
+  tarball download. Over the facts, the alerts Socket raises on the version,
+  such as malware, each with its severity, the file it names (opening it) and
+  Socket's note. Under the facts, its languages, then its readable files
   as UTF-8 or ASCII and its file types, side by side where they fit: Package, for the files every package
   has at its root (`package.json`, a readme, and license files such as
   `LICENSE`, `LICENSE-MIT` or `LICENCE.md`), then each extension with its
   count, one only those files have left out, one other files have too
-  counting them as well. Each category's chip, and each file type's, narrows
+  counting them as well; then Socket's scores for a public package (overall,
+  supply chain, vulnerability, quality, maintenance and license, out of 100,
+  one under 50 marked). Each category's chip, and each file type's, narrows
   the Files list to its files, one at a time; the Files head names it, with a
   way back to every file. Then its columns: Dependencies, where
   it has any (peer and optional ones included), which open in the viewer at
-  their latest version (an `npm:` alias at the package it names);
+  their latest version (an `npm:` alias at the package it names), their kinds
+  and ranges lined up;
   Advisories, across every published version, one row each, its head
   counting those that affect the version shown, those first and marked,
   those fixed in it (affecting only older versions) struck through, and
-  those affecting later versions, older ones perhaps too, plain; Files, each with its type's icon and tagged with its category, its
+  those affecting later versions, older ones perhaps too, plain, each with
+  its text, where its source has one, opening as on the Advisories tab; Files, each with its type's icon and tagged with its category, its
   tag naming the control characters or long lines it holds; and, where the
   package has any, its binary files again on their own.
 - **Code**: the file tree and source viewer, opening on what `main` names.
@@ -1137,11 +1147,20 @@ the repository its latest version names, asked for only where GitHub says it
 is public, asked afresh rather than from its figures' kept answer, since the list is kept for every reader and
 the reader's token could read a private repository's; its listing is kept
 where bundle audits keep theirs. Each advisory is `{ id, source, ghsa?,
-url?, title?, severity?, cvss?, cwe, range?, affected }`, `affected` indexing
+url?, title?, severity?, cvss?, cwe, range?, details?, affected }`, `details`
+its text (Markdown): OSV's record of an npm advisory's GHSA, a repository
+advisory's own description; `affected` indexing
 `versions`, one row an advisory: npm's registry answers one a range it covers,
 merged here, their ranges joined with `||`. `repository` is false where GitHub refused (its anonymous rate
 limit, say), or couldn't say whether the repository is public, leaving npm's
-alone; such a list is asked again on the next request. Responses are `private, no-store`. Nothing derived from a package's
+alone; such a list is asked again on the next request. `GET
+/api/npm/socket?name=&version=` returns `{ name, version, socket }`: Socket's
+report on the version, as Socket Firewall asks it (no key), `{ scores,
+alerts }`, `scores` each 0 to 1 (`overall`, `supplyChain`, `vulnerability`,
+`quality`, `maintenance`, `license`) and `alerts` most severe first, each
+`{ type, severity, category, file, note }`, `file` its path in the package;
+null where Socket has none. Socket is asked only about a version npm answers
+for without a token: a private package's name never leaves for it. Responses are `private, no-store`. Nothing derived from a package's
 files is kept on the server; its figures and advisories, which are public,
 are kept an hour, npm's asked for without the server's npm token, and GitHub
 with the reader's own token where they have one. Access to the package is
