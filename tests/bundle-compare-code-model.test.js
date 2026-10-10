@@ -80,7 +80,9 @@ test('names a minifier renamed alike throughout are left out, and only those', (
     ['const { [a]: x } = o;', 'const { [b]: x } = o;'], ['let x = 1\nf(), a()', 'let y = 1\nf(), b()'], ['let a; f(<>a</>);', 'let b; f(<>b</>);'],
     ['const { a: x, b: y } = o; a();', 'const { a: x, b: y } = o; b();'], ['function f({ a: x, b: y }) {} a();', 'function f({ a: x, b: y }) {} b();'],
     ['let x\nfoo()', 'let y\nbar()'], ['let a; typeof <a />;', 'let b; typeof <b />;'], ['let a; if (x) <a />;', 'let b; if (x) <b />;'],
-    ['function f(a) {}\na();', 'function f(b) {}\nb();'], ['{ let a; }\na();', '{ let b; }\nb();']]) {
+    ['function f(a) {}\na();', 'function f(b) {}\nb();'], ['{ let a; }\na();', '{ let b; }\nb();'],
+    ['const f = function a() {};\na();', 'const g = function b() {};\nb();'], ['const f = a => a;\na();', 'const g = b => b;\nb();'],
+    ['for (let a of x) {}\na();', 'for (let b of x) {}\nb();']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
@@ -120,6 +122,8 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['function f(a, c = 1) { a(c); }', 'function f(b, c = 1) { b(c); }'], ['f((a) => a(c));', 'f((b) => b(c));'], ['f(a => a(c));', 'f(b => b(c));'],
     ['try {} catch (a) { a(c); }', 'try {} catch (b) { b(c); }'], ['import a from "m"; a(c);', 'import b from "m"; b(c);'],
     ['import { k as a } from "m"; a(c);', 'import { k as b } from "m"; b(c);'], ['x = { k(a) { a(c); } };', 'x = { k(b) { b(c); } };'],
+    ['f(function a() { a(c); });', 'f(function b() { b(c); });'], ['f(a => a(c), 1);', 'f(b => b(c), 1);'], ['for (let a of c) a(c);', 'for (let b of c) b(c);'],
+    ['for (let a = 0; a < c; a++) { f(a); }', 'for (let b = 0; b < c; b++) { f(b); }'], ['function a() {} a(c);', 'function b() {} b(c);'],
   ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')
   assert.equal(lineDiff('function f(a,  b) {}\n', 'function f(c, d) {}\n', { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
