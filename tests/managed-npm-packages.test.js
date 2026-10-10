@@ -475,7 +475,7 @@ test('registry documents read at once are held to a budget: four version lists, 
 
 // npm's downloads API, GitHub and npm's bulk advisories, beside the registry
 // `registry` mocks; what each was asked, with its credentials.
-function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, socket = {} }) {
+function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, socket = {}, badges = {} }) {
   const asked = [], registryFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
     const auth = new Headers(init.headers).get('authorization'), url = String(input)
@@ -483,6 +483,14 @@ function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {},
     if (record) {
       asked.push(['osv', record[1], auth])
       return Promise.resolve(osv[record[1]] ? Response.json({ id: record[1], details: osv[record[1]] }) : Response.json({ message: 'Not Found' }, { status: 404 }))
+    }
+    const badge = url.match(/^https:\/\/badge\.socket\.dev\/npm\/package\/(.+)$/u)
+    if (badge) {
+      const id = decodeURIComponent(badge[1])
+      asked.push(['badge', id, auth])
+      const shown = badges[id]
+      return Promise.resolve(new Response(`<svg role="img" aria-label="Socket: ${shown ?? 'not found'}"><title>Socket: ${shown ?? 'not found'}</title></svg>`,
+        { status: shown === undefined ? 404 : 200, headers: { 'content-type': 'image/svg+xml' } }))
     }
     const purl = url.match(/^https:\/\/firewall-api\.socket\.dev\/purl\/(.+)$/u)
     if (purl) {
@@ -666,9 +674,10 @@ test('Socket\'s scores and alerts for a public version, the file each names as t
   const pkg = packageOf('scored', '1.0.0', { 'index.js': '' })
   const scope = packageOf('@pub/scored', '2.0.0', { 'index.js': '' })
   const unseen = packageOf('unseen', '1.0.0', { 'index.js': '' })
-  registry(t, [pkg, scope, unseen])
+  const capped = packageOf('capped', '1.0.0', { 'index.js': '' })
+  registry(t, [pkg, scope, unseen, capped])
   const score = { overall: 0.5, supplyChain: 0.25, vulnerability: 1, quality: 0.86, maintenance: 0.8, license: 1 }
-  const asked = insights(t, { socket: {
+  const asked = insights(t, { badges: { 'scored/1.0.0': 26, '@pub/scored/2.0.0': 10, 'capped/1.0.0': 40 }, socket: {
     'pkg:npm/scored@1.0.0': { id: '1', type: 'npm', name: 'scored', version: '1.0.0', score, alerts: [
       { type: 'installScripts', severity: 'middle', category: 'supplyChainRisk' },
       { type: 'malware', severity: 'critical', category: 'supplyChainRisk', file: 'package/lib/index.js', props: { note: 'Steals tokens.' } },
@@ -676,16 +685,21 @@ test('Socket\'s scores and alerts for a public version, the file each names as t
     ] },
     'pkg:npm/@pub/scored@2.0.0': { id: '2', type: 'npm', namespace: '@pub', name: 'scored', version: '2.0.0', score, alerts: [] },
     'pkg:npm/unseen@1.0.0': { id: 'synthetic:notFound:1', type: 'npm', name: 'unseen', version: '1.0.0', alerts: [] },
+    'pkg:npm/capped@1.0.0': { id: '3', type: 'npm', name: 'capped', version: '1.0.0', score, alerts: [] },
   } })
-  assert.deepEqual((await h.send('/api/npm/socket?name=scored&version=1.0.0')).json(), { name: 'scored', version: '1.0.0', socket: { scores: score, alerts: [
+  assert.deepEqual((await h.send('/api/npm/socket?name=scored&version=1.0.0')).json(), { name: 'scored', version: '1.0.0', socket: { scores: { ...score, supplyChain: 0.26 }, alerts: [
     { type: 'malware', severity: 'critical', category: 'supplyChainRisk', file: 'lib/index.js', note: 'Steals tokens.' },
     { type: 'installScripts', severity: 'middle', category: 'supplyChainRisk', file: null, note: null },
-  ] } }, 'most severe first; one of a severity Socket doesn\'t name left out')
-  assert.deepEqual((await h.send('/api/npm/socket?name=%40pub%2Fscored&version=2.0.0')).json().socket, { scores: score, alerts: [] })
+  ] } }, 'most severe first; one of a severity Socket doesn\'t name left out; supply chain as the badge rounds it')
+  assert.deepEqual((await h.send('/api/npm/socket?name=%40pub%2Fscored&version=2.0.0')).json().socket, { scores: { ...score, supplyChain: 0.1 }, alerts: [] },
+    'a badge lower than the score wins')
+  assert.deepEqual((await h.send('/api/npm/socket?name=capped&version=1.0.0')).json().socket.scores.supplyChain, 0.26, 'one higher at most')
   assert.equal((await h.send('/api/npm/socket?name=unseen&version=1.0.0')).json().socket, null, 'a version Socket hasn\'t seen')
   await h.send('/api/npm/socket?name=scored&version=1.0.0')
-  assert.deepEqual(asked, [['socket', 'pkg:npm/scored@1.0.0', null], ['socket', 'pkg:npm/@pub/scored@2.0.0', null], ['socket', 'pkg:npm/unseen@1.0.0', null]],
-    'asked without credentials, and kept')
+  assert.deepEqual(asked.filter(([what]) => what === 'socket').map(([, id, auth]) => [id, auth]),
+    [['pkg:npm/scored@1.0.0', null], ['pkg:npm/@pub/scored@2.0.0', null], ['pkg:npm/capped@1.0.0', null], ['pkg:npm/unseen@1.0.0', null]], 'asked without credentials, and kept')
+  assert.deepEqual(asked.filter(([what]) => what === 'badge').map(([, id, auth]) => [id, auth]),
+    [['scored/1.0.0', null], ['@pub/scored/2.0.0', null], ['capped/1.0.0', null], ['unseen/1.0.0', null]], 'its badge too, kept with it')
 })
 
 test('Socket is never asked about a private package, whoever reads it', async t => {

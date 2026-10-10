@@ -1166,7 +1166,9 @@ alone; such a list is asked again on the next request. `GET
 /api/npm/socket?name=&version=` returns `{ name, version, socket }`: Socket's
 report on the version, as Socket Firewall asks it (no key), `{ scores,
 alerts }`, `scores` each 0 to 1 (`overall`, `supplyChain`, `vulnerability`,
-`quality`, `maintenance`, `license`) and `alerts` most severe first, each
+`quality`, `maintenance`, `license`), cut to two decimals, `supplyChain` as
+the version's Socket badge rounds it where that is lower or at most 0.01
+higher and `alerts` most severe first, each
 `{ type, severity, category, file, note }`, `file` its path in the package;
 null where Socket has none. Socket is asked only about a version npm answers
 for without a token: a private package's name never leaves for it. Responses are `private, no-store`. Nothing derived from a package's

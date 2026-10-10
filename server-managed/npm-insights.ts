@@ -19,8 +19,11 @@ import { NpmPackageError, plainObject, readLimited } from './npm-packages.ts'
 
 const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
 // Socket's answer for a package version, by its purl, as Socket Firewall
-// asks it: no key needed.
+// asks it: no key needed. Its scores are cut to two decimals; its badge's,
+// the supply chain score, is rounded (askSocketBadge).
 const SOCKET_API = 'https://firewall-api.socket.dev/purl'
+const SOCKET_BADGE = 'https://badge.socket.dev/npm/package'
+const BADGE_BYTES = 16 * 1024
 const KEPT_MS = 60 * 60_000
 const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
@@ -110,7 +113,20 @@ export interface NpmSocketReport { scores: Record<typeof SOCKET_SCORES[number], 
 
 const text = (value: unknown) => typeof value === 'string' && value !== '' ? value : null
 
+// The supply chain score, out of 100, that the version's badge shows; null
+// where it shows none, or can't be had.
+async function askSocketBadge(name: string, version: string): Promise<number | null> {
+  try {
+    const res = await fetch(`${SOCKET_BADGE}/${name}/${encodeURIComponent(version)}`,
+      { headers: { accept: 'image/svg+xml' }, redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS) })
+    if (!res.ok) { await res.body?.cancel(); return null }
+    const shown = /<title>Socket: (\d{1,3})<\/title>/u.exec((await readLimited(res, BADGE_BYTES)).toString('utf8'))
+    return shown ? Number(shown[1]) : null
+  } catch { return null }
+}
+
 async function askSocket(name: string, version: string): Promise<NpmSocketReport | null> {
+  const badge = askSocketBadge(name, version)
   let res: Response
   try {
     res = await fetch(`${SOCKET_API}/${encodeURIComponent(`pkg:npm/${name}@${version}`)}`,
@@ -128,6 +144,11 @@ async function askSocket(name: string, version: string): Promise<NpmSocketReport
   const score = json['score']
   const scores = plainObject(score) && SOCKET_SCORES.every(key => typeof score[key] === 'number' && score[key] >= 0 && score[key] <= 1)
     ? Object.fromEntries(SOCKET_SCORES.map(key => [key, score[key]])) as NpmSocketReport['scores'] : null
+  // The supply chain score as the badge rounds it, at most one more than the
+  // score cut to two decimals; lower where the badge is, as when the score
+  // has fallen since.
+  const shown = await badge
+  if (scores && shown !== null) scores.supplyChain = Math.min(Math.round(scores.supplyChain * 100) + 1, shown) / 100
   const alerts = (Array.isArray(json['alerts']) ? json['alerts'] : [])
     .filter((alert): alert is Record<string, unknown> => plainObject(alert) && text(alert['type']) !== null && typeof alert['severity'] === 'string' && alert['severity'] in SOCKET_SEVERITY_RANK)
     .slice(0, SOCKET_ALERTS)
