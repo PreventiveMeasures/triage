@@ -272,7 +272,7 @@ function readabilityNote({ average, category, controls, longLines, longest, inli
     case 'controls': return controlsNote(controls)
     case 'map': return 'A source map'
     case 'inline-map': return `Inline source map, ${formatBytes(inlineMap)}${longLines > 0 ? `; minified: ${lines()}` : ''}`
-    case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines ${average.toLocaleString('en')} characters long on average, with few spaces`}`
+    case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines of code ${average.toLocaleString('en')} characters long on average, strings and comments aside, with few spaces`}`
     case 'long': return `${lines()}, among readable ones`
     default: return nothing
   }
