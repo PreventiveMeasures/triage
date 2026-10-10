@@ -100,6 +100,21 @@ test('a failure is shown, and asked again only where asking again may succeed', 
   assert.equal(requests.length, 3)
 })
 
+test('a view asking for more copies than are kept keeps every one it waits for', async () => {
+  togglePrettySource()
+  // Compare's Diff view: both sides of five minified files, in one paint.
+  const files = Array.from({ length: 10 }, (_, i) => `f${i}.min.js`)
+  const details = bundleOf(Object.fromEntries(files.map((path, i) => [path, `${minified}${i}`])))
+  for (let i = 0; i < files.length; i++) answers.push(`copy ${i}`)
+  const paint = () => files.map((path, i) => prettyCopy(details, managed, path, `${minified}${i}`).status)
+  assert.deepEqual(new Set(paint()), new Set(['loading']))
+  await setImmediate()
+  assert.deepEqual(new Set(paint()), new Set(['ready']), 'none dropped while it came')
+  await new Promise(resolve => { setTimeout(resolve, 1) })
+  assert.deepEqual(new Set(paint()), new Set(['ready']), 'nor on a later paint')
+  assert.equal(requests.length, 10, 'and none asked for twice')
+})
+
 test('a request a session change aborted is asked again on the next paint', async () => {
   togglePrettySource()
   const details = bundleOf({ 'a.min.js': minified })

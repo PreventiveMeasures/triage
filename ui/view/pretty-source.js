@@ -47,11 +47,26 @@ export function prettyPrintable(details, entry, path, content) {
   return files.get(path)
 }
 
+// Copies asked for in the task now running and in the last one that asked,
+// as a view painting asks for all it shows (Compare's Diff view, both sides
+// of every changed file): kept past KEPT_COPIES, as are those still coming,
+// so a view showing more than that never drops one it shows or waits for and
+// asks for it again.
+let asking = false, wanted = new Set(), wantedBefore = new Set()
+
 function keep(key, copy) {
   copies.delete(key)
   copies.set(key, copy)
-  for (const old of copies.keys()) {
+  if (!asking) {
+    asking = true
+    wantedBefore = wanted
+    wanted = new Set()
+    setTimeout(() => { asking = false })
+  }
+  wanted.add(key)
+  for (const [old, kept] of copies) {
     if (copies.size <= KEPT_COPIES) break
+    if (wanted.has(old) || wantedBefore.has(old) || kept.status === 'loading') continue
     copies.delete(old)
     notifiers.delete(old)
   }

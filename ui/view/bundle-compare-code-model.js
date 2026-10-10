@@ -38,9 +38,11 @@ const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 
 // Names a minifier gives: longer ones are an API's or a person's, and one
 // changed is a change.
 const RENAMED_MAX_LENGTH = 3
-// A string, or a name: not a property's (after `.`, or before `:` as an
-// object's key), nor an escape's letter.
-const NAME = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*(?![\p{L}\p{N}_$:])/gu
+// A string, a comment or a regular expression, kept as it is, or a name:
+// not a property's (after `.`, or before `:` as an object's key), nor an
+// escape's letter. Any `/…/` on a line counts as a regular expression, the
+// operands between two divisions too: kept, a renamed one shows.
+const NAME = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/.*|\/\*.*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*(?![\p{L}\p{N}_$:])/gu
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
@@ -48,7 +50,7 @@ const NAMELESS = ''
 function nameless(line) {
   const names = []
   const key = line.replaceAll(NAME, token => {
-    if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || /^["'`]/u.test(token)) return token
+    if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || /^["'`/]/u.test(token)) return token
     names.push(token)
     return NAMELESS
   })

@@ -123,7 +123,8 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   assert.match(off, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'a minified file offers pretty-printing')
   state.bundleSourcePretty = true
   assert.match(renderText(element.render()), /is-loading/u, 'busy while both copies are asked for')
-  await new Promise(resolve => { setTimeout(resolve, 10) })
+  // Until both copies came, each hashed first.
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const formatted = renderText(element.render())
   assert.match(formatted, /class="add">\+5<\/span><span class="del">−4/u, 'each copy line by line')
   element._setRenames(true)
