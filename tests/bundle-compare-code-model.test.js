@@ -82,7 +82,8 @@ test('names a minifier renamed alike throughout are left out, and only those', (
     ['let x\nfoo()', 'let y\nbar()'], ['let a; typeof <a />;', 'let b; typeof <b />;'], ['let a; if (x) <a />;', 'let b; if (x) <b />;'],
     ['function f(a) {}\na();', 'function f(b) {}\nb();'], ['{ let a; }\na();', '{ let b; }\nb();'],
     ['const f = function a() {};\na();', 'const g = function b() {};\nb();'], ['const f = a => a;\na();', 'const g = b => b;\nb();'],
-    ['for (let a of x) {}\na();', 'for (let b of x) {}\nb();']]) {
+    ['for (let a of x) {}\na();', 'for (let b of x) {}\nb();'], ['({ const: a }); a();', '({ const: b }); b();'],
+    ['({ function: a }); a();', '({ function: b }); b();'], ['x.var = a; a();', 'x.var = b; b();']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')

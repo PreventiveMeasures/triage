@@ -255,18 +255,20 @@ function nameless(text) {
         arrows.push(opens.length)
       }
       if (!read && group && !inDefault(group.depth) && !inComputed(group.depth)) group.names.push({ aside, name: token })
-      if (token === 'extends') extending = opens.length
-      if (binding && (token === 'in' || token === 'of')) declaration.binding = false
-      if (token === 'const' || token === 'let' || token === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
-      if (token === 'export') exporting = true
-      else if (!DECLARES.has(token)) exporting = false
-      if (token === 'async') named = { statement: statement(last), word: null }
-      if (token === 'function' || token === 'class') named = { statement: last === 'async' ? named.statement : statement(last), word: token }
-      else if (NAMING.has(token)) named = { statement: true, word: token }
-      naming = NAMING.has(token) || (naming && token === 'async')
+      // A key or a property is no keyword: `{ const: a }`, `x.var`.
+      const word = keyPlace || property ? null : token
+      if (word === 'extends') extending = opens.length
+      if (binding && (word === 'in' || word === 'of')) declaration.binding = false
+      if (word === 'const' || word === 'let' || word === 'var') declarations.push({ binding: true, depth: opens.length, exported: exporting })
+      if (word === 'export') exporting = true
+      else if (!DECLARES.has(word)) exporting = false
+      if (word === 'async') named = { statement: statement(last), word: null }
+      if (word === 'function' || word === 'class') named = { statement: last === 'async' ? named.statement : statement(last), word }
+      else if (NAMING.has(word)) named = { statement: true, word }
+      naming = NAMING.has(word) || (naming && word === 'async')
       // `for await (` is a `for`'s condition still.
       if (!(keyPlace && MODIFIERS.has(token)) && !(token === 'await' && last === 'for')) {
-        last = token
+        last = word ?? '_'
         keyPlace = false
       }
     }
