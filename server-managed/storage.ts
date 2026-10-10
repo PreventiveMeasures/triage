@@ -51,9 +51,9 @@ export async function openManagedStorage(config: ManagedConfig) {
         await storage.reportStore.delete(report.id).catch(error => console.warn('managed: legacy link cleanup failed:', error))
       }
     }
-    return { ...storage, db, uploadStore: config.neonUrl ? storage.uploadStore : undefined,
-      bundleCache: createBundleCache(storage.cacheStorage, db, storage.bundleStore),
-      reportSourcesCache: createReportSourcesCache(storage.reportSourcesStorage, db, storage.reportStore, storage.bundleStore),
+    const bundleCache = createBundleCache(storage.cacheStorage, db, storage.bundleStore)
+    return { ...storage, db, uploadStore: config.neonUrl ? storage.uploadStore : undefined, bundleCache,
+      reportSourcesCache: createReportSourcesCache(storage.reportSourcesStorage, db, storage.reportStore, storage.bundleStore, bundle => bundleCache.sourcemapEdges(bundle)),
       async reapStorage(signal?: AbortSignal) {
         if (!config.storageEncryptionMigrate || signal?.aborted) return
         const state = await db.getStorageEncryption()

@@ -78,7 +78,7 @@ async function setupBackend(t, kind = 'sourcemap', backend = 'disk', stasisModul
       ['browser', new Map([['src/main.js', new Map([['proof', 'src/evidence.js'], ['conditional', 'secret.js'], ['./evidence.js', 'unrelated.js']])]])],
     ]),
     ...stasisOptions,
-  }).serialize())) : Buffer.from(JSON.stringify({ version: 3, sources: [...Object.keys(files), 'missing.js'], sourcesContent: [...Object.values(files), null] }))
+  }).serialize())) : Buffer.from(JSON.stringify({ version: 3, sources: [...Object.keys(files), 'missing.js'], sourcesContent: [...Object.values(files), null], mappings: '' }))
   const bundle = { id: randomUUID(), integrity: bundleIntegrity(bytes), filename: kind === 'stasis' ? 'app.stasis.code.br' : 'app.map', kind, byteSize: bytes.length, uploadedBy: users.admin.userId, uploadedByLogin: 'admin', repoId: 1 }
   await bundles.put(bundle.id, bytes, kind); await db.insertBundle(bundle, Date.now())
   async function seed(content = JSON.stringify({ findings }), bundleId = bundle.id, filename = 'report.json') {
@@ -418,6 +418,21 @@ function sourcesTests(backend) {
   }
 }
 for (const backend of ['disk', 'vercel']) describe(backend, () => sourcesTests(backend))
+
+test('sourcemap previews follow the edges the bundle metadata keeps, to visible files alone', async t => {
+  const h = await setupBackend(t, 'sourcemap')
+  const read = async (cache) => {
+    const opened = await cache.open(h.report, h.bundle, { dependencies: true, security: true })
+    return new Map(JSON.parse(gunzipSync(Buffer.concat(await Array.fromAsync(opened.stream)))).imports)
+  }
+  const edges = [['src/main.js', 'src/evidence.js', './evidence'], ['src/main.js', 'unrelated.js', './unrelated'], ['src/main.js', 'secret.js']]
+  const metadata = createReportSourcesCache(h.cacheStorage, h.db, h.reports, h.bundles, bundle => Promise.resolve(bundle.id === h.bundle.id ? edges : undefined))
+  assert.deepEqual(new Map((await read(metadata)).get('src/main.js')), new Map([['./evidence', 'src/evidence.js'], ['./unrelated', null]]))
+  // Metadata it cannot read lends nothing: the preview reads what edges-lite.js does.
+  await h.cacheStorage.delete(h.bundle.id)
+  const failing = createReportSourcesCache(h.cacheStorage, h.db, h.reports, h.bundles, () => Promise.reject(new Error('no metadata')))
+  assert.equal((await read(failing)).has('src/main.js'), false)
+})
 
 test('Vercel sources remain shared across cold instances and stream when Blob omits its size', async t => {
   const h = await setupBackend(t, 'sourcemap', 'vercel')

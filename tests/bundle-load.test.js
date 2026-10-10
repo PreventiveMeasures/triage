@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { beforeEach, it, mock } from 'node:test'
 import { createBundleMetadata } from '../ui/view/bundle-metadata.js'
+import { bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
 import { bundleFileHistory, stepBundleFile, visitBundleFile } from '../ui/view/bundle-code-history.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
-const json = { version: 3, sources: ['src/main.js'], sourcesContent: ['export default 1'], names: [] }
+const json = { version: 3, sources: ['src/main.js'], sourcesContent: ['export default 1'], names: [], mappings: '' }
+const contents = (details) => [...bundleSourcesAsMap(details).values()]
 const entry = { integrity: 'sha512-test', name: 'test.map' }
 const recorded = new Map(), state = { bundles: [entry] }, stored = new Map()
 let decodes = 0, indexReads = 0, managed = false, readGate = null, reads = 0, renders = 0, saved = Promise.withResolvers(), writes = 0
@@ -121,7 +123,7 @@ it('opens metadata without reading the bundle, then shares an on-demand full-sou
   const full = await a
   assert.equal(reads, 1)
   assert.equal(full.metadataOnly, undefined)
-  assert.deepEqual(full.json.sourcesContent, json.sourcesContent)
+  assert.deepEqual(contents(full), json.sourcesContent)
   assert.equal(full.fileHashes, metadata.fileHashes)
   assert.equal(full.fileSizes, metadata.fileSizes)
   assert.equal(writes, 0, 'precomputed hashes are reused without rebuilding the index')
@@ -139,7 +141,7 @@ it('source tabs load full bundles directly and stale upgrades cannot replace a n
   for (const tab of ['terminal', 'code', 'search', 'compare']) {
     selectBundle(entry.integrity, tab)
     await openBundle(entry.integrity)
-    assert.deepEqual(state.bundleDetails.json.sourcesContent, json.sourcesContent)
+    assert.deepEqual(contents(state.bundleDetails), json.sourcesContent)
     assert.equal(state.bundleDetails.fileHashes.size, 1)
   }
   assert.equal(reads, 4)
@@ -158,11 +160,11 @@ it('source tabs load full bundles directly and stale upgrades cannot replace a n
 it('a corrupt index falls back to parsing and regenerates a valid index after the explicit open', async () => {
   stored.set(entry.integrity, { ...index, version: -1 })
   const full = await buildBundleDetails(entry.integrity, entry, { sources: false })
-  assert.deepEqual(full.json.sourcesContent, json.sourcesContent)
+  assert.deepEqual(contents(full), json.sourcesContent)
   assert.equal(reads, 1)
   // Let the asynchronous hash and best-effort persistence finish.
   await saved.promise
-  assert.equal(stored.get(entry.integrity).version, 5)
+  assert.equal(stored.get(entry.integrity).version, 6)
   const metadata = await buildBundleDetails(entry.integrity, entry, { sources: false })
   assert.equal(metadata.metadataOnly, true)
   assert.equal(reads, 1)
@@ -176,7 +178,7 @@ it('an index from an older version is not served, lends nothing to the parse, an
   assert.equal(reads, 1)
   assert.equal(full.fileSizes, undefined, 'its sizes are not copied onto the parse')
   await saved.promise
-  assert.equal(stored.get(entry.integrity).version, 5)
+  assert.equal(stored.get(entry.integrity).version, 6)
   assert.deepEqual(stored.get(entry.integrity).files, index.files)
   const metadata = await buildBundleDetails(entry.integrity, entry, { sources: false })
   assert.equal(metadata.metadataOnly, true)
@@ -291,7 +293,7 @@ it('managed bundle metadata and deferred contents stay in memory without reading
   assert.equal(first, second)
   const full = await first
   assert.equal(full.managedId, 'managed-id')
-  assert.deepEqual(full.json.sourcesContent, json.sourcesContent)
+  assert.deepEqual(contents(full), json.sourcesContent)
   assert.equal(full.codeStats, metadata.codeStats)
   assert.equal(contentRequests, 1)
   assert.equal(indexReads, 0); assert.equal(reads, 0); assert.equal(writes, 0)
@@ -384,7 +386,7 @@ it('immediately reopening a managed bundle starts a fresh download and still ded
   assert.notEqual(reopened, abandoned)
   assert.equal(buildBundleDetails(entry.integrity, managedEntry), reopened)
   await rejected
-  assert.deepEqual((await reopened).json.sourcesContent, json.sourcesContent)
+  assert.deepEqual(contents(await reopened), json.sourcesContent)
   assert.equal(contentRequests, 2)
   assert.equal(contentSignals[1].aborted, false)
   gate.resolve()
@@ -424,7 +426,7 @@ it('an immediate source-tab return retries the same metadata and cannot inherit 
   assert.equal(ensureBundleSources(), retry, 'the old rejection cannot remove the new pending upgrade')
   assert.equal(contentRequests, 2)
   gate.resolve()
-  assert.deepEqual((await retry).json.sourcesContent, json.sourcesContent)
+  assert.deepEqual(contents(await retry), json.sourcesContent)
 })
 
 it('source tabs share a download and keep completed contents when returning to metadata', async () => {

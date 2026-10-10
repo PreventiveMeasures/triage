@@ -4,6 +4,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
 import { utf8ByteLength } from './utf8.js'
 import { bundleFileSizes, bundleSourcesAsMap, bundleUnsizedFiles } from './bundle-sources.js'
+import { bundleSourcemapEdges, parseSourcemap, sourcemapEntries } from './bundle-sourcemap.js'
 
 // Version 2 sizes every file by its bytes, resources included. A version 1
 // index sized by what the source map held when it was written: before the
@@ -14,7 +15,10 @@ import { bundleFileSizes, bundleSourcesAsMap, bundleUnsizedFiles } from './bundl
 // Version 3 also retains the bundle's repository and package origin metadata.
 // Version 4 retains dependency repositories as well.
 // Version 5 counts lines of code, leaving blank lines out.
-export const BUNDLE_METADATA_VERSION = 5
+// Version 6 reads a sourcemap whole (bundle-sourcemap.js): an index map's
+// files too, each once, keyed with `sourceRoot` in front, and the edges
+// between them.
+export const BUNDLE_METADATA_VERSION = 6
 const INDEX_VERSION = BUNDLE_METADATA_VERSION
 const hashJobs = new WeakMap()
 const SOURCE_TABS = new Set(['terminal', 'code', 'search', 'compare'])
@@ -76,12 +80,17 @@ export async function createBundleMetadata(details) {
   const unsized = bundleUnsizedFiles(details)
   if (unsized.size > 0) result.unsized = [...unsized]
   if (details.kind === 'sourcemap') {
-    const { version, file, sourceRoot, names, sources = [], sourcesContent = [] } = details.json
-    result.json = { version, file, sourceRoot, sources }
-    // Sourcemaps can repeat a path with different/absent content. Keep the
-    // Overview's positional inventory, alongside the path-keyed graph index.
-    result.sourceSizes = sources.map((_, i) => typeof sourcesContent[i] === 'string' ? utf8ByteLength(sourcesContent[i]) : null)
-    result.namesCount = names?.length ?? null
+    const { version, file, sourceRoot, names } = details.json
+    const entries = sourcemapEntries(details)
+    result.json = { version, file, sourceRoot, sources: entries.map(([path]) => path) }
+    // A map's arrays as written can repeat a path with different/absent
+    // content. Keep the Overview's positional inventory, alongside the
+    // path-keyed graph index.
+    result.sourceSizes = entries.map(([, content]) => typeof content === 'string' ? utf8ByteLength(content) : null)
+    result.namesCount = details.namesCount ?? names?.length ?? null
+    // `[from, to]` or `[from, to, specifier]`, `from` and `to` rows of `files`.
+    const rows = new Map(result.files.map(([path], i) => [path, i]))
+    result.edges = bundleSourcemapEdges(details).map(([from, to, ...specifier]) => [rows.get(from), rows.get(to), ...specifier])
   } else {
     const b = details.bundle
     const bundle = { version: b.version, config: b.config, repo: b.repo, package: b.package, formats: mapObject(b.formats), imports: mapObject(b.imports), reason: b.reason, executable: [...b.executable] }
@@ -123,7 +132,7 @@ export function createBundleSummary(details, metadata) {
 // answer report lookups, but an open rebuilds it for current sizes, line
 // counts and origin metadata.
 export function parseBundleMetadata(data, integrity) {
-  if (![1, 2, 3, 4, INDEX_VERSION].includes(data?.version) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
+  if (![1, 2, 3, 4, 5, INDEX_VERSION].includes(data?.version) || data.integrity !== integrity || !['stasis', 'sourcemap'].includes(data.kind)
       || !Number.isSafeInteger(data.size) || data.size < 0 || !Array.isArray(data.files)) throw new Error('Invalid bundle metadata')
   const stale = data.version !== INDEX_VERSION
   const legacySizes = data.version === 1
@@ -166,6 +175,8 @@ export function parseBundleMetadata(data, integrity) {
     details.json = data.json
     details.sourceSizes = data.sourceSizes
     details.namesCount = data.namesCount
+    // An index before version 6 has none: the view reads no edges for it.
+    if (data.edges !== undefined) details.edges = parseSourcemapEdges(data.edges, data.files)
   }
   if (data.codeStats === undefined) details.codeStats = bundleCodeStats(lineCounts, fileSizes)
   else {
@@ -179,12 +190,18 @@ export function parseBundleMetadata(data, integrity) {
   return details
 }
 
+function parseSourcemapEdges(rows, files) {
+  if (!Array.isArray(rows)) throw new Error('Invalid sourcemap edges')
+  return rows.map((row) => {
+    if (!Array.isArray(row) || ![2, 3].includes(row.length) || row[0] === row[1] || (row.length === 3 && typeof row[2] !== 'string')
+        || row.slice(0, 2).some((i) => !Number.isSafeInteger(i) || i < 0 || i >= files.length)) throw new Error('Invalid sourcemap edges')
+    return [files[row[0]][0], files[row[1]][0], ...row.slice(2)]
+  })
+}
+
 // HTTP content encoding handles compression before this shared JSON parser.
 export function parseBundleContents(text, { integrity, kind, size }) {
   if (kind === 'stasis') return { integrity, kind, size, bundle: Bundle.parse(text) }
   if (kind !== 'sourcemap') throw new Error('Unsupported bundle format')
-  const json = JSON.parse(text)
-  if (!Array.isArray(json?.sources) || json.sources.some(path => typeof path !== 'string')
-      || (json.sourcesContent !== undefined && (!Array.isArray(json.sourcesContent) || json.sourcesContent.some(content => content !== null && typeof content !== 'string')))) throw new Error('Invalid sourcemap')
-  return { integrity, kind, size, json }
+  return { integrity, kind, size, ...parseSourcemap(text) }
 }

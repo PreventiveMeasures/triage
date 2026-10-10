@@ -830,6 +830,9 @@ installations.
 `GET /api/bundles/:id/metadata` returns the shared `common/bundle-metadata.js`
 format: file inventory, byte sizes, source hashes and lines of code (blank lines excluded), package
 identity, repository/package origins, imports, entry points, executable flags and language/code statistics.
+A sourcemap's imports are the edges between its files, which the server reads with oxc-parser
+(`@preventive/sourcemap/edges.js`) for every map; a client reading a map itself sees Metro's alone (`edges-lite.js`).
+The graph draws them, and Code links follow each import's specifier to the file its edge leads to.
 It excludes source bodies and binary resources. `GET /api/bundles/:id/contents`
 returns the original sourcemap or Stasis JSON after HTTP decoding.
 Both endpoints use `Content-Encoding: br`. Metadata is cached as Brotli;
@@ -949,6 +952,8 @@ finding members (including evidence, even when members share a finding ID),
 and removed when their final report reference or bundle is deleted. Cold
 builders recheck references after publishing to reconcile concurrent deletion
 on another instance. Authorization is checked again before streaming sources.
+A sourcemap's import links there follow the edges its bundle metadata keeps,
+read with the parser once, rather than read again for each derivative.
 
 Admins can read/manage every bundle. Managers can read/manage bundles they own
 or can access through their teams. View/triage users need a visible bundle and team access; the none

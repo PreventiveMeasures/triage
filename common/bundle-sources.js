@@ -1,10 +1,9 @@
 // Shared helper: given a parsed bundle `details`, return a
 // Map<file, content-string> of its source files. Stasis bundles
 // expose sources via `@exodus/stasis-core`'s `Bundle.sources` getter
-// (flat Map<projectRelPath, content> from `.modules`); sourcemaps
-// split them across parallel `sources` / `sourcesContent` arrays on
-// the raw .map JSON. Sourcemap sources whose `sourcesContent[i]` was
-// omitted are skipped.
+// (flat Map<projectRelPath, content> from `.modules`); sourcemaps list
+// their files as bundle-sourcemap.js reads them. Sourcemap sources whose
+// `sourcesContent[i]` was omitted are skipped.
 //
 // What a stasis bundle records is not all source: `Bundle.formats`
 // marks each entry, and three of those formats are files only in the
@@ -28,6 +27,7 @@
 // a new bundle kind or field handled here is visible to both.
 
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { sourcemapEntries } from './bundle-sourcemap.js'
 import { utf8ByteLength } from './utf8.js'
 
 const sourcesCache = new WeakMap()
@@ -57,11 +57,8 @@ export function bundleSourcesAsMap(details) {
       result.set(file, content)
     }
   } else if (details.kind === 'sourcemap') {
-    if (!details.json) return result
-    const srcs = details.json.sources ?? []
-    const contents = details.json.sourcesContent ?? []
-    for (let i = 0; i < srcs.length; i++) {
-      if (typeof contents[i] === 'string') result.set(srcs[i], contents[i])
+    for (const [path, content] of sourcemapEntries(details)) {
+      if (typeof content === 'string') result.set(path, content)
     }
   }
   if (key) sourcesCache.set(key, result)
@@ -189,7 +186,7 @@ export function bundleFileSizes(details) {
   if (key && sizesCache.has(key)) return sizesCache.get(key)
   const sizes = new Map()
   const files = bundleFilesAsMap(details)
-  const paths = details?.kind === 'stasis' ? details.bundle?.sources.keys() : details?.json?.sources
+  const paths = details?.kind === 'stasis' ? details.bundle?.sources.keys() : details && sourcemapEntries(details).map(([path]) => path)
   for (const path of paths ?? []) sizes.set(path, bundleFileByteLength(files.get(path)))
   if (key) sizesCache.set(key, sizes)
   return sizes
