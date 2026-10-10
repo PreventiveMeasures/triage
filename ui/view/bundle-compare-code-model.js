@@ -131,7 +131,8 @@ function nameless(text) {
   // the next `{` there, a class in another's `extends` on top
   // (`extends mixin(class extends B {}) {`).
   // `dynamic` once `eval` or a `with (…)` can read a name by its spelling:
-  // renaming one then changes what runs. `parameters` where a `(…)` would
+  // renaming one then changes what runs; so once a name is escaped
+  // (`\u0065val`), the one `\` code holds outside strings. `parameters` where a `(…)` would
   // be a function's parameters (after `function`, its name, a method's key
   // or `catch`), not a call's arguments.
   // `labeled` between a label and its `:`, after which a statement starts.
@@ -144,6 +145,7 @@ function nameless(text) {
   }
   const between = segment => {
     keep(segment)
+    if (segment.includes('\\')) dynamic = true
     // A line break ends these statements, a `/` after it starting a value.
     if (segment.includes('\n') && (last === 'break' || last === 'continue' || last === 'debugger')) last = ';'
     // A line break no operator spans may end a statement, as `;` does, or a
@@ -346,10 +348,10 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
 }
 
 // A tag where a value starts (`(<a />`, `if (x) <b />`, `x + <i />`, `...<a />`, `return <i>`,
-// `yield <p>`, not after `<`, as `a<<b>>>0` has it; a fragment's `<>` before
+// `yield <p>`, not after `<` but a spaced one (`x < <a />`), as `a<<b>>>0` has it; a fragment's `<>` before
 // what it holds, not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside.
-const JSX = /(?:^|\.\.\.|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
+const JSX = /(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:await|case|default|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*<(?:\/?[A-Za-z][\w.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]))/mu
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
