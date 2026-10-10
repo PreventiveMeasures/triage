@@ -83,7 +83,7 @@ test('an advisory affects the version shown, is fixed in it, or covers later ver
 })
 
 test('downloads group into 7-day weeks ending on the last day, a partial oldest week left out', async () => {
-  const { niceCeiling, npmDownloadWeeks } = await import('../ui/view/npm-downloads-chart.js')
+  const { niceCeiling, npmDownloadMonths, npmDownloadWeeks } = await import('../ui/view/npm-downloads-chart.js')
   const days = Array.from({ length: 16 }, (_, i) => i + 1)
   const weeks = npmDownloadWeeks({ start: '2026-01-01', end: '2026-01-16', days })
   assert.deepEqual(weeks.map(week => [week.from.toISOString().slice(0, 10), week.to.toISOString().slice(0, 10), week.total]), [
@@ -93,6 +93,13 @@ test('downloads group into 7-day weeks ending on the last day, a partial oldest 
   assert.deepEqual(npmDownloadWeeks({ start: '2026-01-01', end: '2026-01-03', days: [1, 2, 3] }), [])
   assert.deepEqual(npmDownloadWeeks(null), [])
   assert.deepEqual([0, 1, 7, 12, 23, 180, 2600, 999_999].map(niceCeiling), [1, 1, 10, 20, 25, 200, 5000, 1_000_000])
+  // From Jan 30 to Apr 2: February and March whole, the partial months at
+  // either end left out.
+  const months = npmDownloadMonths({ start: '2026-01-30', end: '2026-04-02', days: Array.from({ length: 63 }, () => 1) })
+  assert.deepEqual(months.map(month => [month.from.toISOString().slice(0, 10), month.to.toISOString().slice(0, 10), month.total]),
+    [['2026-02-01', '2026-02-28', 28], ['2026-03-01', '2026-03-31', 31]])
+  assert.deepEqual(npmDownloadMonths({ start: '2026-03-01', end: '2026-03-31', days: Array.from({ length: 31 }, () => 2) }).map(month => month.total), [62], 'a month whole at both ends')
+  assert.deepEqual(npmDownloadMonths(null), [])
 })
 
 test('an advisory npm answers once a range is one row, its ranges, versions and CWEs together', () => {

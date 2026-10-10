@@ -3529,7 +3529,7 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
   /* The card spans the summary: its figures stack beside the chart. */
   .npm-overview .npm-insights { flex-direction: row; align-items: flex-start; gap: 1.5rem; }
   .npm-overview .npm-stats { flex-direction: column; flex-shrink: 0; }
-  .npm-overview .npm-downloads { flex: 1; max-width: 36rem; }
+  .npm-overview .npm-downloads { flex: 1; min-width: 0; }
 }
 @container npm-overview (width < 40rem) {
   .npm-overview .bundles-overview-summary { grid-template: 'warning' 'meta' 'build' 'actions' 'contents' 'figures' / minmax(0, 1fr); }
@@ -3596,11 +3596,7 @@ npm-version-select { display: block; flex: 0 0 auto; width: 11rem; }
   & dt { color: var(--muted); font-size: .7rem; }
   & dd { margin: 0; color: var(--text); font-size: 1.15rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
 }
-.npm-downloads {
-  min-width: 0; margin: 0;
-
-  & figcaption { margin-bottom: .2rem; color: var(--muted); font-size: .7rem; }
-}
+.npm-downloads { min-width: 0; margin: 0; }
 npm-downloads-chart { display: block; }
 .npm-downloads-plot {
   position: relative;
@@ -3615,19 +3611,21 @@ npm-downloads-chart { display: block; }
 .npm-downloads-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .npm-downloads-crosshair { stroke: var(--muted); stroke-width: 1; shape-rendering: crispedges; }
 .npm-downloads-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
-.npm-downloads-tip {
-  position: absolute; top: 0; z-index: 1;
-  display: flex; flex-direction: column; align-items: center;
-  padding: .2rem .5rem;
-  color: var(--muted); background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
-  box-shadow: 0 2px 6px rgb(0 0 0 / .12);
-  font-size: .68rem; white-space: nowrap;
-  transform: translate(-50%, calc(-100% - 4px));
-  pointer-events: none;
-
-  & strong { color: var(--text); font-size: .8rem; }
+/* Over the chart: one period's downloads, the hovered one's in place, and
+   the switch between weeks and months at its end, under it where both
+   don't fit. */
+.npm-downloads-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .75rem;
+  margin-bottom: .3rem;
 }
+.npm-downloads-readout {
+  display: flex; align-items: baseline; gap: .45rem; min-width: 0;
+  color: var(--muted); font-size: .7rem; white-space: nowrap; overflow: hidden;
+  font-variant-numeric: tabular-nums;
+
+  & strong { color: var(--text); font-size: .78rem; font-weight: 600; }
+}
+.npm-downloads-units { margin-left: auto; }
 /* Its advisories across every version (view/npm-overview.js), grouped by how
    they stand for the version shown, each row as a bundle advisory's: those
    affecting it boxed and marked, those it fixes struck through. */

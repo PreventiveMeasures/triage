@@ -1039,8 +1039,10 @@ in the bundle view with four tabs:
   repository with its stars and forks, publish commit with the tags that
   point to it, homepage and integrity; beside them entry points, engines and
   install scripts; and a card of its figures: weekly downloads and downloads
-  over 12 months, with a chart of its weekly downloads over the last year,
-  and the tarball download under it. Under the facts, its languages, its readable files as UTF-8 or
+  over 12 months, with a chart of its downloads over the last year by week,
+  or by calendar month (complete ones only), a switch at its top right, the
+  latest period's, or the hovered one's, read out over it; and the tarball
+  download under it. Under the facts, its languages, its readable files as UTF-8 or
   ASCII, and every file extension with its count. Each category's chip,
   and each extension's, narrows the Files list to its files, one at a time;
   the Files head names it, with a way back to every file. Then its columns: Dependencies, where

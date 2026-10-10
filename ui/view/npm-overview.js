@@ -56,8 +56,7 @@ export function npmStatsRow(entry, actions = nothing) {
       ${stat('Weekly downloads', downloads ? compact.format(week) : pending, downloads ? exact(week) : nothing)}
       ${stat('Downloads, 12 months', downloads ? compact.format(year) : pending, downloads ? exact(year) : nothing)}
     </dl>
-    ${ready && !downloads ? nothing : html`<figure class="npm-downloads">
-      <figcaption>Weekly downloads, last 12 months</figcaption>
+    ${ready && !downloads ? nothing : html`<figure class="npm-downloads" aria-label="Weekly downloads, last 12 months">
       <npm-downloads-chart .downloads=${downloads}></npm-downloads-chart>
     </figure>`}
   </section>${actions === nothing ? nothing : html`<div class="npm-figures-actions">${actions}</div>`}</div>`
