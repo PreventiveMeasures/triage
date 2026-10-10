@@ -60,7 +60,7 @@ function mounted(t, { dense = false } = {}) {
     const ctx = {
       setTransform() {}, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, setLineDash() {}, stroke() {},
       fillText(...args) { texts.push(args) },
-      fill(path) { fills.push(path) }, fillRect(...rect) { fills.push(rect) },
+      fill(path) { fills.push(path) }, fillRect(...rect) { fills.push(Object.assign(rect, { style: this.fillStyle })) },
       strokeRect(...rect) { strokes.push({ rect, width: this.lineWidth }) },
       clearRect() { clears++ }, drawImage(...args) { copies++; copyCalls.push(args) }, isPointInPath: () => true,
     }
@@ -269,11 +269,14 @@ test('fit, viewport resize, and changed graph filters bypass the zoom preview', 
   assert.equal(chart.overview, null, 'an outdated overview is never reused for new filter results')
 })
 
-test('canvas filters invalidate both layers, and borders occupy at most half a bar at every zoom', t => {
+test('canvas filters invalidate both layers, and borders cover at most half a bar at every zoom', t => {
   const { chart, host, root, base, bars, frame } = mounted(t)
   for (const zoom of [.01, 1, 8]) {
     host.zoom = zoom; chart.viewportChanged(); frame()
-    for (const { rect, width } of bars.strokes) assert.ok(width * 2 <= (rect[2] + width) / 2 + 1e-9)
+    for (const node of host.layout.nodes) {
+      const sides = bars.fills.filter(rect => rect.style === chart.background && rect[3] === 26 && rect[1] === node.y && rect[0] >= node.x && rect[0] + rect[2] <= node.x + node.width + 1e-9)
+      assert.ok(sides.reduce((sum, rect) => sum + rect[2], 0) <= node.width / 2 + 1e-9)
+    }
   }
   const barPaints = bars.clears(), before = base.clears()
   host.graph.issuesHidden = true; chart.update(root); frame()
@@ -298,4 +301,28 @@ test('theme changes repaint both layers with the Layers colors without reparsing
   assert.equal(paths(), parsed, 'changing colors never rebuilds geometry')
   assert.equal(textOnPackage('#e15759'), '#000', 'the red bar in the reported dark-theme example needs dark text')
   assert.equal(textOnPackage('#8a5d40'), '#fff', 'darker bars retain white text')
+})
+
+test('thin bars keep their top, bottom and row-end borders and give way between neighbors', t => {
+  const { chart, host, root, bars, frame } = mounted(t)
+  // Borders drawn on the bar layer for one row of the given widths at zoom 1.
+  const borders = widths => {
+    let x = 0
+    const nodes = widths.map((width, i) => {
+      const node = { ...host.layout.nodes[i % host.layout.nodes.length], id: `n${i}`, x, y: 0, width, level: 0, rowStart: i === 0, rowEnd: i === widths.length - 1 }
+      x += width
+      return node
+    })
+    host.zoom = 1; host.pan = { x: 0, y: 0 }
+    host.layout = { ...host.layout, nodes, edges: [], byId: new Map(nodes.map(n => [n.id, n])) }
+    chart.update(root); chart.viewportChanged(); bars.fills.length = 0; chart.invalidateRaster(); chart.requestDraw(); frame()
+    return bars.fills.filter(rect => rect.style === chart.background && rect[2] > 0).map(rect => rect.slice(0, 4))
+  }
+  assert.deepEqual(borders([.5, 4, .5]), [
+    [.5, 0, .5, 26], [4, 0, .5, 26],
+    [0, 0, 5, .5], [0, 25.5, 5, .5], [0, 0, .25, 26], [4.75, 0, .25, 26],
+  ], 'shared sides of thin row ends give way; tops, bottoms and outer sides are drawn once for the row')
+  assert.deepEqual(borders([1.5, 1.5]), [[1.25, 0, .25, 26], [1.5, 0, .25, 26], [0, 0, 3, .5], [0, 25.5, 3, .5], [0, 0, .5, 26], [2.5, 0, .5, 26]])
+  assert.deepEqual(borders([.5]), [[0, 0, .5, .5], [0, 25.5, .5, .5], [0, 0, .125, 26], [.375, 0, .125, 26]], 'a lone thin bar keeps half its width')
+  assert.deepEqual(borders([4, 4]), [[3.5, 0, .5, 26], [4, 0, .5, 26], [0, 0, 8, .5], [0, 25.5, 8, .5], [0, 0, .5, 26], [7.5, 0, .5, 26]], 'wide bars keep every border')
 })

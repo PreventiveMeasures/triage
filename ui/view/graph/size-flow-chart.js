@@ -31,6 +31,23 @@ export function flowEdgeTooltip(e, model) {
   return `${model.byId.get(e.from).label} → ${model.byId.get(e.to).label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
 }
 
+// Inset bar borders use no layout space and stay at most half a bar high.
+const flowBorder = zoom => Math.min(.5 / zoom, 13)
+
+// A bar's left and right inset borders. Row ends keep the full border; on thin
+// bars the sides shared with a neighbor give way first, and at least half of
+// every bar stays visible. Tops and bottoms always keep the full border.
+export function flowBarSides(node, full) {
+  const half = node.width / 2
+  if (node.rowStart === node.rowEnd) {
+    const side = Math.min(full, half / 2)
+    return { left: side, right: side }
+  }
+  const outer = Math.min(full, half)
+  const inner = Math.min(full, half - outer)
+  return node.rowStart ? { left: outer, right: inner } : { left: inner, right: outer }
+}
+
 // Ribbons, bars and highlights are separate canvas layers over the full
 // geometry, so graphs of any size pan, zoom and hover without DOM per element.
 // The overlay carries keyboard navigation and the hovered element's tooltip.
@@ -53,6 +70,7 @@ export class SizeFlowChart {
     this.layout = this.host.layout; this.model = this.host.model
     this.paths = this.layout.edges.map((edge, order) => ({ edge, order, path: new Path2D(flowRibbon(edge)), ...flowEdgeBounds(edge) }))
     this.pathById = new Map(this.paths.map(entry => [entry.edge.id, entry]))
+    this.rows = [...Map.groupBy(this.layout.nodes, node => node.y).values()]
     const nodes = this.layout.nodes.map((node, i) => ({ node, order: this.paths.length + i,
       left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }))
     this.index = flowHitIndex([...this.paths, ...nodes])
@@ -225,7 +243,24 @@ export class SizeFlowChart {
     // sharp and borders thin. Hover alone never repaints this layer.
     const ctx = this.context(this.bars, dpr, !preview)
     for (const node of this.visibleNodes) this.paintNode(ctx, node)
+    this.paintRowBorders(ctx)
     this.barsKey = key
+  }
+
+  // Each row's top and bottom border and its two outer sides, drawn once over
+  // the whole row instead of per bar.
+  paintRowBorders(ctx) {
+    const full = flowBorder(this.host.zoom)
+    ctx.globalAlpha = 1; ctx.fillStyle = this.background
+    for (const row of this.rows) {
+      const first = row[0], last = row.at(-1), right = last.x + last.width
+      if (flowOutside({ left: first.x, right, top: first.y, bottom: first.y + 26 }, this.view)) continue
+      ctx.fillRect(first.x, first.y, right - first.x, full)
+      ctx.fillRect(first.x, first.y + 26 - full, right - first.x, full)
+      ctx.fillRect(first.x, first.y, flowBarSides(first, full).left, 26)
+      const end = flowBarSides(last, full).right
+      ctx.fillRect(right - end, first.y, end, 26)
+    }
   }
 
   edgeAlpha(edge) { return !this.matches.has(edge.from) && !this.matches.has(edge.to) ? .04 : .22 }
@@ -244,10 +279,11 @@ export class SizeFlowChart {
     const { zoom } = this.host, color = this.colors.get(node.pkg)
     ctx.globalAlpha = this.matches.has(node.id) ? 1 : .15
     ctx.fillStyle = color; ctx.fillRect(node.x, node.y, node.width, 26)
-    // Inset borders use no layout space and occupy at most half the width.
-    const border = Math.min(.5 / zoom, node.width / 4, 13)
-    ctx.strokeStyle = this.background; ctx.lineWidth = border
-    ctx.strokeRect(node.x + border / 2, node.y + border / 2, node.width - border, 26 - border)
+    // Sides shared with a neighbor; paintRowBorders draws the rest.
+    const { left, right } = flowBarSides(node, flowBorder(zoom))
+    ctx.fillStyle = this.background
+    if (!node.rowStart && left > 0) ctx.fillRect(node.x, node.y, left, 26)
+    if (!node.rowEnd && right > 0) ctx.fillRect(node.x + node.width - right, node.y, right, 26)
     // Don't paint unreadable subpixel glyphs. Bars and hit targets stay present.
     if (node.width >= 40 && node.width * zoom >= 24 && 14 * zoom >= 6) {
       ctx.save(); ctx.beginPath(); ctx.rect(node.x + 5, node.y, Math.max(0, node.width - 10), 26); ctx.clip()

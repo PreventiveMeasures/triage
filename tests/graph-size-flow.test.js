@@ -305,7 +305,7 @@ test('wide rows pack small dependencies without gaps or obscuring the large flow
     assert.equal(row.length, 201)
     for (let i = 1; i < row.length; i++) assert.equal(row[i].x, row[i - 1].x + row[i - 1].width)
     assert.ok(row[0].width > .75 * row.reduce((sum, n) => sum + n.width, 0), 'the large dependency dominates despite hundreds of small neighbors')
-    assert.equal(row[1].width, .25, 'small nodes keep a twenty-fourth of the former 6px floor, so sizes stay comparable')
+    assert.equal(row[1].width, .1, 'small nodes keep a sixtieth of the former 6px floor, so sizes stay comparable')
     const largeEdge = layout.edges.find(e => e.size === 1e6), smallEdge = layout.edges.find(e => e.size === 1)
     assert.ok(smallEdge.width1 < largeEdge.width1 / 3900, 'minimum ribbon weight is also reduced fourfold')
     for (const edge of layout.edges) {

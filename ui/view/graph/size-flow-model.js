@@ -277,9 +277,13 @@ export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 
   const widest = [...bands.values()].reduce((max, band) => Math.max(max, band.reduce((s, n) => s + n.removable, 0)), 1)
   const rowStep = 88, scale = Math.max(1, width) / widest
   let actualWidth = 0, height = 0
-  for (const n of sized) { n.y = 12 + n.level * rowStep; n.width = Math.max(.25, n.removable * scale); height = Math.max(height, n.y + 26) }
+  for (const n of sized) { n.y = 12 + n.level * rowStep; n.width = Math.max(.1, n.removable * scale); height = Math.max(height, n.y + 26) }
   untangleBands(bands, edges, byId)
-  for (const band of bands.values()) actualWidth = Math.max(actualWidth, band.reduce((x, n) => x + n.width, 0))
+  for (const band of bands.values()) {
+    actualWidth = Math.max(actualWidth, band.reduce((x, n) => x + n.width, 0))
+    // Row ends have no neighbor to share a border with (see paintNode).
+    band.forEach((n, i) => { n.rowStart = i === 0; n.rowEnd = i === band.length - 1 })
+  }
   // Keyboard navigation and paint order read each row left to right.
   const nodes = [...bands.values()].flat()
   for (const edge of edges) {
