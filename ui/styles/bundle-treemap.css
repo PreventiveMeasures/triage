@@ -96,7 +96,7 @@
   color: var(--muted);
   font-size: .7rem;
 }
-/* Right edge: file stats, reason filter, then the projection switch. */
+/* Right edge: file stats, reason filter, Code switch, then the projection switch. */
 .bundle-treemap-head-right {
   display: flex;
   align-items: baseline;

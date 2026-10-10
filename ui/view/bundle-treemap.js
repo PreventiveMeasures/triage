@@ -42,6 +42,11 @@
 // and the center disc zooms out one level. Focus, breadcrumbs and the
 // tooltip are shared, so switching projections never loses your place.
 //
+// A Code switch beside it, offered only when the bundle carries
+// resources (images, fonts), leaves them out of the tree so only code
+// is weighed — the graph never draws resources, so this is the
+// treemap's alone.
+//
 // Cells are plain `<div>`s, not buttons, and carry no `:hover` style.
 // A treemap can hold thousands of them; making each a focusable button
 // bloated the accessibility tree, and per-cell hover repaints (the fill
@@ -84,6 +89,10 @@ const _reasonByBundle = new Map()
 // than per-bundle because the preferred projection is a viewing habit,
 // not a property of the bundle being viewed.
 let _sharedMode = 'treemap'
+
+// Code switch: leave resources out of the tree. A viewing habit too, so
+// one slot like the projection; bundles without resources ignore it.
+let _sharedCodeOnly = false
 
 // Black or white label text for legibility over an arbitrary hex
 // fill — leaf cells paint the package hue edge to edge. Standard sRGB
@@ -293,6 +302,8 @@ class BundleTreemap extends LitElement {
     // Active projection, 'treemap' | 'sunburst' (the header switch).
     _mode: { state: true },
     _reason: { state: true },
+    // Code switch: resources left out of the tree.
+    _codeOnly: { state: true },
   }
 
   // Light DOM so report.css rules apply and file-cell clicks bubble to
@@ -308,6 +319,8 @@ class BundleTreemap extends LitElement {
     this._focus = []
     this._mode = _sharedMode
     this._reason = ''
+    this._codeOnly = _sharedCodeOnly
+    this._hasResources = false
     this._reasons = new Map()
     this._dirByPath = new Map()
     this._status = 'loading'
@@ -320,7 +333,7 @@ class BundleTreemap extends LitElement {
 
   willUpdate(changed) {
     if (changed.has('details')) this._reason = _reasonByBundle.get(this.details?.integrity) ?? ''
-    if (changed.has('details') || changed.has('_reason')) this._rebuild()
+    if (changed.has('details') || changed.has('_reason') || changed.has('_codeOnly')) this._rebuild()
   }
 
   firstUpdated() {
@@ -406,6 +419,7 @@ class BundleTreemap extends LitElement {
     this._focus = []
     this._dirByPath = new Map()
     this._reasons = new Map()
+    this._hasResources = false
     this._meta = { total: 0, prefix: '' }
     this._hideTooltip()
     if (!this.details) { this._status = 'loading'; return }
@@ -425,8 +439,12 @@ class BundleTreemap extends LitElement {
     // heuristic alone.
     const packageDirs = bundlePackageDirs(this.details)
     // Resources (images, fonts) are cells like any file, but have no source
-    // for the viewer to open, so their cells carry no viewer link.
+    // for the viewer to open, so their cells carry no viewer link. The Code
+    // switch is offered for resources anywhere in the bundle, not just the
+    // selected scope, so picking a scope doesn't take it away.
     const kinds = bundleFileKinds(this.details)
+    this._hasResources = origPaths.some((path) => kinds.get(path) === 'resource' && sizes.get(path) > 0)
+    const codeOnly = this._codeOnly && this._hasResources
     const { prefix, stripped } = stripCommonPathPrefix(origPaths)
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
@@ -434,6 +452,7 @@ class BundleTreemap extends LitElement {
       // Keep the full bundle's display prefix and original source paths
       // stable while filtering either projection.
       if (reasonFiles && !reasonFiles.has(origPaths[i])) continue
+      if (codeOnly && kinds.get(origPaths[i]) === 'resource') continue
       const size = sizes.get(origPaths[i])
       if (size <= 0) continue
       const parts = stripped[i].split('/')
@@ -542,6 +561,13 @@ class BundleTreemap extends LitElement {
     this._mode = this._mode === 'sunburst' ? 'treemap' : 'sunburst'
     _sharedMode = this._mode
     this._hideTooltip()
+  }
+
+  // Code switch: like the projection, remembered module-wide so it
+  // survives the element teardown a tab switch triggers.
+  _toggleCode() {
+    this._codeOnly = !this._codeOnly
+    _sharedCodeOnly = this._codeOnly
   }
 
   _changeReason(e) {
@@ -771,6 +797,11 @@ class BundleTreemap extends LitElement {
             .value=${this._reason ? `reason:${this._reason}` : ''} label="Filter files"
             @scope-change=${this._changeReason}
           ></bundle-scope-selector>` : nothing}
+          ${this._hasResources ? html`<mode-switch compact
+            label="Code" .checked=${this._codeOnly}
+            accessible-label="Show code only, without resources"
+            @click=${this._toggleCode}
+          ></mode-switch>` : nothing}
           <mode-switch compact
             label="Sunburst" .checked=${sunburst}
             accessible-label="Toggle sunburst view"
@@ -782,7 +813,9 @@ class BundleTreemap extends LitElement {
         ${this._status === 'loading'
           ? html`<div class="bundle-treemap-empty">Loading…</div>`
           : this._status === 'empty'
-            ? html`<div class="bundle-treemap-empty">This bundle doesn't carry any source content.</div>`
+            ? html`<div class="bundle-treemap-empty">${this._codeOnly && this._hasResources
+              ? 'No code here, only resources.'
+              : "This bundle doesn't carry any source content."}</div>`
             : sunburst
               ? (ready ? this._renderSunburst(focus) : nothing)
               : cells.map((c) => this._cell(c))}
