@@ -241,7 +241,10 @@ const MINIFIED_NAME = /\.min\.[^/.]+$/iu
 // Code minified into lines shorter than NPM_LONG_LINE: outside its strings and
 // comments (`/* @__PURE__ */`), its lines average more than anyone writes and
 // next to none of its spaces are ones a minifier drops, beside punctuation
-// (`a, b`, `x = 1`) rather than between two words (`return a`).
+// (`a, b`, `x = 1`) rather than between two words (`return a`). Told only in
+// the languages whose strings and comments these are, as GitHub Linguist
+// tells minified files only in JavaScript and CSS.
+const MINIFIABLE = /\.(?:[cm]?[jt]sx?|css)$/iu
 const MINIFIED_AVERAGE = 110
 const MINIFIED_SPACES = .01
 // In one pass, so that neither starts inside the other; a comment goes with
@@ -294,7 +297,7 @@ export function npmFileReadability(path, text) {
   if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
   if (longLines === 0) {
     // Its lines as a whole first, which is cheaper.
-    const minified = codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text)
+    const minified = MINIFIABLE.test(path) && codeChars > MINIFIED_AVERAGE * codeLines && minifiedCode(text)
     return { ...read, category: inlineMap > 0 ? 'inline-map' : minified ? 'minified' : encoding.kind }
   }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
