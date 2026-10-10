@@ -126,6 +126,7 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('src/internal/index.js', `// ${'We may reimplement some of the legacy private APIs here. '.repeat(3)}\n\n`
     + `throw new Error(\n\t\`${'Your application imported from svelte/internal, a private module that no longer exists. '.repeat(3)}\`\n);\n`), 'ascii',
     'lines long by their comments and strings, not their code')
+  assert.equal(category('lib/stub.js', `// ${'We may reimplement some of the legacy private APIs here. '.repeat(3)}\n`), 'ascii', 'nor one of comments alone')
   assert.equal(category('README.md', `${minified}${minified}`), 'ascii', 'prose is never minified')
   // Only in what minifiers write, JavaScript and CSS, whose strings and comments are read.
   assert.equal(category('tool.py', `x = 1\n# ${'ordinary words '.repeat(15)}\n# ${'ordinary words '.repeat(15)}\n`), 'ascii', 'nor a language it can\'t read')

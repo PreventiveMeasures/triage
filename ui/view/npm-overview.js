@@ -264,7 +264,7 @@ function minifiedCode(text, { stringOrComment, droppable }) {
   const code = text.replaceAll(stringOrComment, (_, string) => string === undefined ? '' : '""').replaceAll(/^[ \t]+/gmu, '')
   const lines = code.split('\n').filter(line => line.trim() !== '').length
   // Counted by character: a run aligning `=` is as many spaces as it is wide.
-  return code.length > MINIFIED_AVERAGE * lines && (code.match(droppable) ?? []).join('').length < MINIFIED_SPACES * code.length
+  return lines > 0 && code.length > MINIFIED_AVERAGE * lines && (code.match(droppable) ?? []).join('').length < MINIFIED_SPACES * code.length
 }
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
