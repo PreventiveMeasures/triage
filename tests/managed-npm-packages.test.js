@@ -519,7 +519,7 @@ test('a package\'s figures: its downloads, and its public repository\'s, asked w
   const calls = registry(t, [pkg])
   const asked = insights(t, {
     downloads: { '@pub/figures': { start: '2026-01-01', end: '2026-01-04', package: '@pub/figures', downloads: [{ day: '2026-01-01', downloads: 5 }, { day: '2026-01-03', downloads: 7 }, { day: '2026-01-04', downloads: 9 }] } },
-    repos: { 'org/figures': { full_name: 'org/figures', private: false, stargazers_count: 1200, forks_count: 30, open_issues_count: 4, archived: false, pushed_at: '2026-09-01T00:00:00Z', pulls: 3 } },
+    repos: { 'org/figures': { full_name: 'org/figures', private: false, visibility: 'public', stargazers_count: 1200, forks_count: 30, open_issues_count: 4, archived: false, pushed_at: '2026-09-01T00:00:00Z', pulls: 3 } },
   })
   const res = await h.send('/api/npm/stats?name=%40pub%2Ffigures')
   assert.equal(res.status, 200)
@@ -539,16 +539,21 @@ test('a package\'s figures: its downloads, and its public repository\'s, asked w
 test('a private repository, or a package npm has no downloads for, has no figures', async t => {
   const h = await setup(t)
   const pkg = packageOf('quiet-figures', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/hidden.git' } })
-  registry(t, [pkg])
-  insights(t, { repos: { 'org/hidden': { full_name: 'org/hidden', private: true, stargazers_count: 9 } } })
+  const internal = packageOf('internal-figures', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/internal.git' } })
+  registry(t, [pkg, internal])
+  insights(t, { repos: {
+    'org/hidden': { full_name: 'org/hidden', private: true, visibility: 'private', stargazers_count: 9 },
+    'org/internal': { full_name: 'org/internal', private: false, visibility: 'internal', stargazers_count: 9 },
+  } })
   assert.deepEqual((await h.send('/api/npm/stats?name=quiet-figures')).json(), { name: 'quiet-figures', downloads: null, github: null })
+  assert.equal((await h.send('/api/npm/stats?name=internal-figures')).json().github, null, 'an internal repository answers private: false, and is no more public')
 })
 
 test('advisories cover every published version, each naming the versions it affects', async t => {
   const h = await setup(t)
   const pkg = packageOf('advised', '1.2.0', { 'index.js': '' })
   registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0', '1.2.0'] }])
-  const asked = insights(t, { repos: { 'org/repo': { full_name: 'org/repo', private: false } }, advisories: { advised: [
+  const asked = insights(t, { repos: { 'org/repo': { full_name: 'org/repo', private: false, visibility: 'public' } }, advisories: { advised: [
     { id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Prototype pollution', severity: 'high', vulnerable_versions: '<1.1.0', cwe: ['CWE-1321'], cvss: { score: 7.5, vectorString: 'CVSS:3.1/AV:N' } },
     { id: 2, url: 'https://github.com/advisories/GHSA-dddd-eeee-ffff', title: 'ReDoS', severity: 'moderate', vulnerable_versions: '>=1.1.0 <1.3.0', cwe: [], cvss: { score: 0 } },
   ] } })
@@ -585,7 +590,7 @@ test('advisories its repository publishes on GitHub join npm\'s, its listing kep
   const repoAdvisory = (ghsa, name, range) => ({ ghsa_id: ghsa, state: 'published', summary: `Unreviewed ${ghsa}`, severity: 'medium', cwe_ids: ['CWE-79'],
     vulnerabilities: [{ package: { ecosystem: 'npm', name }, vulnerable_version_range: range }] })
   const asked = insights(t, {
-    repos: { 'org/advised': { full_name: 'org/advised', private: false } },
+    repos: { 'org/advised': { full_name: 'org/advised', private: false, visibility: 'public' } },
     advisories: { 'repo-advised': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'high', vulnerable_versions: '<1.1.0', cwe: [] }] },
     repoAdvisories: { 'org/advised': [
       repoAdvisory('GHSA-gggg-hhhh-jjjj', 'repo-advised', '< 1.2.0'), repoAdvisory('GHSA-kkkk-mmmm-pppp', 'other-package', '< 9.0.0'),
@@ -608,7 +613,7 @@ test('npm\'s advisories are answered while GitHub refuses, and its repository as
   const pkg = packageOf('rate-limited', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/limited.git' } })
   registry(t, [pkg])
   const repoAdvisories = { 'org/limited': Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: { 'x-ratelimit-remaining': '0' } }) }
-  const asked = insights(t, { repos: { 'org/limited': { full_name: 'org/limited', private: false } },
+  const asked = insights(t, { repos: { 'org/limited': { full_name: 'org/limited', private: false, visibility: 'public' } },
     advisories: { 'rate-limited': [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }] }, repoAdvisories })
   const refused = (await h.send('/api/npm/advisories?name=rate-limited')).json()
   assert.equal(refused.repository, false)
@@ -619,14 +624,14 @@ test('npm\'s advisories are answered while GitHub refuses, and its repository as
   assert.equal(asked.filter(([what]) => what === 'repository').length, 2)
 })
 
-test('a private repository\'s advisories are not asked for, nor one GitHub can\'t say is public', async t => {
+test('advisories of a repository that isn\'t public, an internal one included, are not asked for, nor where GitHub can\'t say', async t => {
   const h = await setup(t)
   const reviewed = [{ id: 1, url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc', title: 'Reviewed', severity: 'low', vulnerable_versions: '*', cwe: [] }]
   const hidden = packageOf('hidden-advised', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/hidden.git' } })
   const untold = packageOf('untold-advised', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/untold.git' } })
   registry(t, [hidden, untold])
   const asked = insights(t, {
-    repos: { 'org/hidden': { full_name: 'org/hidden', private: true } },
+    repos: { 'org/hidden': { full_name: 'org/hidden', private: false, visibility: 'internal' } },
     advisories: { 'hidden-advised': reviewed, 'untold-advised': reviewed },
     repoAdvisories: { 'org/hidden': [{ ghsa_id: 'GHSA-xxxx-yyyy-zzzz', state: 'published', summary: 'Private', severity: 'high', cwe_ids: [],
       vulnerabilities: [{ package: { ecosystem: 'npm', name: 'hidden-advised' }, vulnerable_version_range: '< 2.0.0' }] }] },
@@ -634,7 +639,7 @@ test('a private repository\'s advisories are not asked for, nor one GitHub can\'
   const hiddenBody = (await h.send('/api/npm/advisories?name=hidden-advised')).json()
   assert.deepEqual(hiddenBody.advisories.map(row => row.id), ['GHSA-aaaa-bbbb-cccc'], 'npm\'s alone')
   assert.equal(hiddenBody.repository, true, 'there is no public repository to ask')
-  assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'the private repository\'s listing is never asked for')
+  assert.equal(asked.filter(([what]) => what === 'repository').length, 0, 'the internal repository\'s listing is never asked for, though it answers private: false')
   // GitHub's answer for the repository fails: it can't be told public.
   t.mock.method(globalThis, 'fetch', ((fetch) => (input, init) => String(input) === 'https://api.github.com/repos/org/untold'
     ? Promise.resolve(Response.json({ message: 'Server Error' }, { status: 500 })) : fetch(input, init))(globalThis.fetch))
@@ -648,10 +653,10 @@ test('a repository\'s visibility is asked afresh for its advisories, not taken f
   const h = await setup(t)
   const pkg = packageOf('turned-private', '1.0.0', { 'index.js': '' }, { repository: { type: 'git', url: 'git+https://github.com/org/turned.git' } })
   registry(t, [pkg])
-  const repos = { 'org/turned': { full_name: 'org/turned', private: false } }
+  const repos = { 'org/turned': { full_name: 'org/turned', private: false, visibility: 'public' } }
   const asked = insights(t, { repos, repoAdvisories: { 'org/turned': [] } })
   assert.equal((await h.send('/api/npm/stats?name=turned-private')).json().github.repo, 'org/turned', 'kept as public')
-  repos['org/turned'].private = true
+  Object.assign(repos['org/turned'], { private: true, visibility: 'private' })
   const body = (await h.send('/api/npm/advisories?name=turned-private')).json()
   assert.equal(body.repository, true)
   assert.equal(asked.filter(([what, repo]) => what === 'github' && repo === 'org/turned').length, 2, 'GitHub asked again')
@@ -669,7 +674,7 @@ test('a version\'s publish commit\'s tags, from a public repository, asked with 
   const token = value => () => Promise.resolve(value)
   const commit = oid => ({ __typename: 'Commit', oid })
   const annotated = target => ({ __typename: 'Tag', oid: 'e'.repeat(40), target })
-  repository = { isPrivate: false, refs: { nodes: [
+  repository = { visibility: 'PUBLIC', refs: { nodes: [
     { name: 'v1.2.3', target: commit(sha) },
     { name: 'pkg@1.2.3', target: annotated(commit(sha)) },
     { name: 'nested@1.2.3', target: annotated(annotated(commit(sha))) },
@@ -682,14 +687,16 @@ test('a version\'s publish commit\'s tags, from a public repository, asked with 
   assert.deepEqual(asked[0].body.variables, { owner: 'Org', name: 'Tagged', query: '1.2.3' })
   assert.deepEqual(await npmCommitTags('org/tagged', sha, '1.2.3', token('another-token')), ['nested@1.2.3', 'pkg@1.2.3', 'v1.2.3'])
   assert.equal(asked.length, 1, 'kept for the repository and commit, whoever asks')
-  repository = { isPrivate: true, refs: { nodes: [{ name: 'v2.0.0', target: commit(sha) }] } }
+  repository = { visibility: 'PRIVATE', refs: { nodes: [{ name: 'v2.0.0', target: commit(sha) }] } }
   assert.deepEqual(await npmCommitTags('org/private', sha, '2.0.0', token('user-token')), [], 'a private repository\'s tags are no one\'s to see here')
+  repository = { visibility: 'INTERNAL', refs: { nodes: [{ name: 'v2.0.0', target: commit(sha) }] } }
+  assert.deepEqual(await npmCommitTags('org/internal', sha, '2.0.0', token('user-token')), [], 'nor an internal one\'s')
   repository = null
   assert.deepEqual(await npmCommitTags('org/gone', sha, '2.0.0', token('user-token')), [])
   asked.length = 0
   assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', token(null)), [])
   assert.equal(asked.length, 0, 'GraphQL needs a token: without one, nothing is asked')
-  repository = { isPrivate: false, refs: { nodes: [{ name: 'v3.0.0', target: commit(sha) }] } }
+  repository = { visibility: 'PUBLIC', refs: { nodes: [{ name: 'v3.0.0', target: commit(sha) }] } }
   assert.deepEqual(await npmCommitTags('org/untold', sha, '3.0.0', token('user-token')), ['v3.0.0'], 'nor kept for a reader with one')
   let tokensAsked = 0
   await npmCommitTags('org/untold', sha, '3.0.0', () => { tokensAsked++; return Promise.resolve('user-token') })

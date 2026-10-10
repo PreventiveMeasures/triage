@@ -107,7 +107,8 @@ async function countOpenPulls(repo: string, token: string | null): Promise<numbe
 // What GitHub answers for `repo` where it says it is public, with the token
 // it was asked with: `token`, or none where that is revoked. Null where GitHub
 // has no such repository to show, or it is not public; anything else fails,
-// to be asked again next time.
+// to be asked again next time. Public is `visibility: 'public'`, as
+// github-app.ts requires: an internal repository answers `private: false`.
 async function publicRepo(repo: string, token: string | null): Promise<{ json: Record<string, unknown> & { full_name: string }; auth: string | null } | null> {
   const ask = (auth: string | null) => createClient({ token: auth, userAgent: 'deepview-triage' }).getRepo({ repo }) as Promise<unknown>
   let auth = token, json: unknown
@@ -119,7 +120,7 @@ async function publicRepo(repo: string, token: string | null): Promise<{ json: R
     try { json = await ask(null) }
     catch (retry) { if (retry instanceof HttpError && retry.status === 404) return null; throw retry }
   }
-  if (!plainObject(json) || json['private'] !== false || typeof json['full_name'] !== 'string') return null
+  if (!plainObject(json) || json['private'] !== false || json['visibility'] !== 'public' || typeof json['full_name'] !== 'string') return null
   return { json: json as Record<string, unknown> & { full_name: string }, auth }
 }
 
@@ -148,7 +149,7 @@ const GITHUB_GRAPHQL = 'https://api.github.com/graphql'
 // itself name another tag before the commit.
 const TAGS_QUERY = `query($owner: String!, $name: String!, $query: String!) {
   repository(owner: $owner, name: $name) {
-    isPrivate
+    visibility
     refs(refPrefix: "refs/tags/", query: $query, first: 100) {
       nodes { name target { __typename oid ... on Tag { target { __typename oid ... on Tag { target { __typename oid } } } } } }
     }
@@ -177,8 +178,9 @@ async function askTags(repo: string, sha: string, version: string, token: string
   catch { throw new NpmPackageError(502, 'upstream-invalid') }
   const data = plainObject(json) ? json['data'] : null
   const repository = plainObject(data) ? data['repository'] : null
-  // A repository gone, or not public, has none to show anyone.
-  if (!plainObject(repository) || repository['isPrivate'] !== false) return []
+  // A repository gone, or not public (private, or internal to an enterprise),
+  // has none to show anyone.
+  if (!plainObject(repository) || repository['visibility'] !== 'PUBLIC') return []
   const refs = repository['refs']
   const nodes = plainObject(refs) && Array.isArray(refs['nodes']) ? refs['nodes'] as unknown[] : []
   return nodes.filter((node): node is { name: string; target: unknown } => plainObject(node) && typeof node['name'] === 'string' && node['name'] !== '')
