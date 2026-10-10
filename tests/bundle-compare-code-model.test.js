@@ -78,7 +78,8 @@ test('names a minifier renamed alike throughout are left out, and only those', (
   for (const [global, other] of [['new Map();', 'new Set();'], ['$(x);', '_(x);'], ['a();', 'b();'], ['const { x = a } = o;', 'const { x = b } = o;'],
     ['function f({ x = a }) {}', 'function f({ x = b }) {}'], ['let a; f(<a />);', 'let b; f(<b />);'], ['let a; throw <a />;', 'let b; throw <b />;'],
     ['const { [a]: x } = o;', 'const { [b]: x } = o;'], ['let x = 1\nf(), a()', 'let y = 1\nf(), b()'], ['let a; f(<>a</>);', 'let b; f(<>b</>);'],
-    ['const { a: x, b: y } = o; a();', 'const { a: x, b: y } = o; b();'], ['function f({ a: x, b: y }) {} a();', 'function f({ a: x, b: y }) {} b();']]) {
+    ['const { a: x, b: y } = o; a();', 'const { a: x, b: y } = o; b();'], ['function f({ a: x, b: y }) {} a();', 'function f({ a: x, b: y }) {} b();'],
+    ['let x\nfoo()', 'let y\nbar()'], ['let a; typeof <a />;', 'let b; typeof <b />;']]) {
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
