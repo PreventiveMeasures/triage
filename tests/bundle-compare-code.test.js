@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import '../ui/view/frontend-install.js'
 
 mock.module('../client/index.js', { namedExports: { state: {}, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })

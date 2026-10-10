@@ -4,14 +4,6 @@ import assert from 'node:assert/strict'
 import { beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
 const { state } = await import('../client/state.ts')
 const { applyFilters, applyScopeFilters, isAppStackedGroup, isCrossContextGroup, resetFilters } = await import('../ui/view/filters.js')
 const { configureDepsDir, configureRevalidation } = await import('../ui/view/format.js')

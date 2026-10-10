@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { batchedReachability } from '../ui/view/graph/size-flow-reachability.js'
 import { buildSizeFlow } from '../ui/view/graph/size-flow-model.js'
 

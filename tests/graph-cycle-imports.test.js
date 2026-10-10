@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { buildDependencyMatrix } from '../ui/view/graph/matrix-model.js'

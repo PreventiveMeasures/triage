@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
-globalThis[Symbol.for('@rray/frontend')] ??= { html: () => null, nothing: null, LitElement: class {}, StateElement: class {} }
 const { workspaceAppMetadata } = await import('../common/workspace-app.js')
 const { configureRevalidation } = await import('../ui/view/format.js')
 const { state } = await import('../client/state.ts')

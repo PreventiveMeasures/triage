@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, mock, test } from 'node:test'
 import './_polyfills.js'
-import '../ui/view/frontend-install.js'
 import { state } from '../client/state.ts'
 import { deleteFile, saveFile } from '../client/storage.js'
 import { ensureBundleFindingsIndexed } from '../client/bundle-finding-index.js'

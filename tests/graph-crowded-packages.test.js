@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { buildGraph, buildPackageGraph, withoutPackages } from '../ui/view/graph/data.js'
 import { crowdedGraphPackages, crowdedPackages } from '../ui/view/graph/crowded-packages.js'
 import { buildSizeFlow, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'

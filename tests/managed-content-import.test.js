@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { prepareLocalContentImport, runLocalContentImport } from '../client/managed/content-import.js'
-import { localContentSyncStatus } from '../client/sync/objstore-presence.js'
+import { localContentSyncStatus } from '../client/sync/presence-cache.js'
 
 const hash = text => createHash('sha256').update(text).digest('base64url')
 const integrity = text => `sha512-${createHash('sha512').update(text).digest('base64')}`

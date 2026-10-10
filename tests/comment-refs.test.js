@@ -17,19 +17,6 @@ import { describe, it } from 'node:test'
 // evaluates. Test files run in their own process, so this doesn't leak.
 globalThis.location = { protocol: 'https:', host: 'triage.space' }
 
-// format.js → frontend-global.js throws at module load when the
-// `@rray/frontend` slot isn't installed. Tests don't run the boot path
-// that installs it, and parseCommentRefs never touches any of these
-// symbols, so a bare stub is enough to let the import chain evaluate.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { displayFindingId, parseCommentRefs, shortFindingId } = await import('../ui/view/format.js')
 
 describe('finding ID display', () => {

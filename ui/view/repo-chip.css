@@ -73,7 +73,6 @@
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
   .edit-btn,
-  .url-input,
   input {
     -webkit-app-region: no-drag;
     app-region: no-drag;

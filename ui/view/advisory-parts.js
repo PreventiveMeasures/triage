@@ -5,6 +5,7 @@ import { html, nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { GITHUB_ICON_SVG } from './icons.js'
 import { sourceNpmIcon } from './source-file-icon.js'
+// OSV symbol from https://github.com/google/osv.dev/blob/master/docs/images/osv_logo_light-full.svg
 import osvIcon from './osv-icon.svg'
 
 const ADVISORY_SOURCES = new Map([

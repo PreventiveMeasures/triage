@@ -27,21 +27,6 @@ import { describe, it } from 'node:test'
 
 import './_polyfills.js'
 
-// `ui/view/group.js` reaches `./format.js` → `./frontend-global.js`,
-// which throws at module-load when the `@rray/frontend` slot isn't
-// installed (production: view.js installs lit + StateElement at
-// boot). Tests don't run that boot path, so install a stub before
-// the import chain evaluates — none of the symbols are called by
-// the helpers under test, the stub just lets the module load.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { state } = await import('../client/state.ts')
 const {
   activeTabFor, canApplyFixToGroup, canTriageFinding, fixApplies, getMergedGroups, groupState, groupTabsByLevel, groupWithPassRows, isIgnored,

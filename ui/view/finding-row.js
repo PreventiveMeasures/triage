@@ -41,6 +41,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { groupKey } from './group.js'
 import { tableRowClasses, tableRowInnerTemplate } from './render-finding.js'
 import rowCSS from './finding-row.css'
+import marksCSS from './finding-marks.css'
 import tabsCSS from './finding-tabs.css'
 import fileIconsCSS from '../styles/file-icon.css'
 import reportButtonCSS from '../styles/report-button.css'
@@ -65,7 +66,7 @@ class FindingRow extends StateElement {
     selected: { type: Boolean },
   }
 
-  static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(rowCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS)]
+  static styles = [unsafeCSS(fileIconsCSS), unsafeCSS(reportButtonCSS), unsafeCSS(marksCSS), unsafeCSS(rowCSS), unsafeCSS(actionsCSS), unsafeCSS(tabsCSS)]
 
   // Whether the row's content is (to be) rendered — flipped by the
   // observer's answer in `_onNear`, and back on a reconnect that lands

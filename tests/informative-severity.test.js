@@ -2,9 +2,6 @@ import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import './_polyfills.js'
 
-globalThis[Symbol.for('@rray/frontend')] ??= {
-  LitElement: class {}, StateElement: class {}, html: () => null, nothing: null,
-}
 const { state } = await import('../client/state.ts')
 const { matchesFilters, resetFilters } = await import('../ui/view/filters.js')
 const { computeFindingCountsByFile } = await import('../ui/view/file-counts.js')

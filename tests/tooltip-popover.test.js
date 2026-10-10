@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import '../ui/view/graph/size-flow.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, GITHUB_ICON_SVG, TAG_ICON_SVG } from '../ui/view/icons.js'
 import { bundleCommitTooltip } from '../ui/view/bundle-origin-links.js'

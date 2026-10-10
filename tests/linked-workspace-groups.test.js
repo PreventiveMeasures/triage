@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
-globalThis[Symbol.for('@rray/frontend')] ??= { html: () => null, nothing: null, LitElement: class {}, StateElement: class {} }
 
 const { mergeLinkedWorkspaceGroups } = await import('../common/linked-workspace-groups.js')
 const { collectDuplicates, LINKS_KIND } = await import('../client/linked-findings.js')

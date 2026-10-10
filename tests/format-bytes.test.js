@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { formatBytes } from '../ui/view/format.js'
 import { formatBytes as formatByteSize } from '../ui/scan/metrics.js'
 

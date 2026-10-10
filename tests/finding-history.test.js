@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
-import '../ui/view/frontend-install.js'
 import { state } from '../client/state.ts'
 import { canViewFindingHistory } from '../ui/view/finding-history.js'
 import { findingHistoryChanges } from '../ui/view/finding-history-changes.js'

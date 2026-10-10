@@ -15,19 +15,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-// analyzer-tags.js → format.js → frontend-global.js throws at module
-// load when the `@rray/frontend` slot isn't installed. Tests don't run
-// the boot path that installs it, so stub it before the import chain
-// evaluates; the tag projection never calls any of these symbols.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { COMBO_FIELDS, buildAnalyzerTags } = await import('../ui/view/analyzer-tags.js')
 
 // One finding per run combo, spelled the way a native report stamps

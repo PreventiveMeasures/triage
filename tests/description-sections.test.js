@@ -20,19 +20,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-// format.js → frontend-global.js throws at module load when the
-// `@rray/frontend` slot isn't installed. Tests don't run the boot path
-// that installs it, and descriptionSections never touches any of these
-// symbols, so a bare stub is enough to let the import chain evaluate.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 const { codeBlockSegments, descriptionSections, evidenceMarkdown, evidenceNote, findingTitle, flowText, handoffBlock, lineRange, lineRangeLabel, listSegments, snippetWindow, splitDescription, titledDescription } = await import('../ui/view/format.js')
 
 describe('descriptionSections — empty input', () => {

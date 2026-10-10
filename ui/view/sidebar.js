@@ -251,19 +251,13 @@ function groupHeaderTemplate(label, opts = {}) {
 const WORKSPACE_PLUS_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>`
 const LOGOUT_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5H3.5v11H8M10 5l3 3-3 3M13 8H6"/></svg>`
 function workspaceHeaderTemplate() {
-  // Managed mode has no client-side workspace creation — a different management
-  // surface is coming — so drop the "+" affordance there.
-  const actions = isManagedUiMode()
-    ? nothing
-    : html`<span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span>`
-  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span>${actions}</li>`
+  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
 }
 
 // The signed-in user's team memberships (managed mode), rendered ABOVE the
 // Workspaces section. Opening a team combines its reports in a workspace view;
 // repository-owned bundles are listed alongside those reports.
 function teamsSectionTemplate() {
-  if (!isManagedUiMode()) return nothing
   const teams = filterManagedTeams(state.managedTeams, searchQuery)
   if (teams.length === 0) return nothing
   return html`
@@ -682,8 +676,7 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
   litRender(html`
-    ${teamsSectionTemplate()}
-    ${isManagedUiMode() && workspaces.length === 0 ? nothing : workspaceHeaderTemplate()}
+    ${workspaceHeaderTemplate()}
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => {
       // Reports split into present vs missing, mirroring the bundle
       // split below:
@@ -1160,15 +1153,12 @@ async function onSidebarClick(e) {
     }
     return
   }
-  // Admin/manage rows in the account menu — close the popover, then
-  // navigate (lazily loading the admin bundle that defines the page's
-  // element; see ADMIN_PAGES).
-  for (const view of Object.keys(ADMIN_PAGES)) {
-    if (e.target.closest(`[data-action="${view}"]`)) {
-      root?.querySelector('#user-menu')?.hidePopover?.()
-      void navigateToAdminPage(view)
-      return
-    }
+  // The Manage entry beside the account control — close the popover, then
+  // navigate (lazily loading the managed bundle that defines the page).
+  if (e.target.closest('[data-action="manage"]')) {
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void navigateToAdminPage('manage')
+    return
   }
   if (e.target.closest('[data-action="view-as-stop"]')) {
     root?.querySelector('#user-menu')?.hidePopover?.()
@@ -2032,7 +2022,7 @@ async function revalidateManagedSession() {
       resetManagedTriage()
       managedHistory.reset()
       void goHome({ history: false })
-    } else if (state.currentView in ADMIN_PAGES && canAccessManagedPage(state.currentView)) {
+    } else if (Object.hasOwn(MANAGED_PAGES, state.currentView) && canAccessManagedPage(state.currentView)) {
       render({ animate: false })
     }
     renderAuthStatus()
@@ -2149,25 +2139,10 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
   return true
 }
 
-// Admin / manage pages reachable from the account menu. Keys double
-// as the `data-action` value AND the `state.currentView` name (each
-// painted by render() as its `<managed-admin-*>` element); the value
-// is the console prefix on a failed bundle load. Users, repositories,
-// and teams are admin-only; reports and bundles are also reachable by
-// managers (the account menu gates the entry points).
-const ADMIN_PAGES = {
-  manage: 'admin: bundle load failed:',
-  'admin-users': 'admin: bundle load failed:',
-  'manage-repos': 'admin: repos bundle load failed:',
-  'manage-reports': 'admin: reports bundle load failed:',
-  'manage-bundles': 'admin: bundles bundle load failed:',
-  'manage-history': 'admin: history bundle load failed:',
-  'manage-teams': 'admin: teams bundle load failed:',
-  'manage-import': 'admin: import bundle load failed:',
-  'manage-links': 'admin: links bundle load failed:',
-  'manage-deduplication': 'admin: deduplication bundle load failed:',
-  'manage-scans': 'admin: scans bundle load failed:',
-}
+// Manage pages are the MANAGED_PAGES routes; each key is also the
+// `state.currentView` render() paints as its `<managed-admin-*>` element.
+// Users, repositories, teams, import and deduplication are admin-only;
+// the rest are also open to managers.
 const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-teams', 'manage-import', 'manage-deduplication'])
 let readyManagedView = null
 
@@ -2301,14 +2276,14 @@ export async function navigateToAdminPage(view, options = {}) {
     if (!managedHistory.active) await refreshManagedSession()
     if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(['link', 'dependencies'].includes(options.scanMode) ? { scanMode: options.scanMode } : {}), ...(options.linkId ? { linkId: options.linkId } : {}) })
   }
-  if (!(view in ADMIN_PAGES) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
+  if (!Object.hasOwn(MANAGED_PAGES, view) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
   const generation = clientModeGeneration
   try {
     const managed = await loadManagedBundle()
     if (view === 'manage-import' && canAccessManagedPage(view)) await managed.loadWorkspaceImportPage()
   }
-  catch (err) { console.warn(ADMIN_PAGES[view], err); return false }
+  catch (err) { console.warn(`${view}: managed bundle load failed:`, err); return false }
   if (generation !== clientModeGeneration || navigation !== currentViewGeneration() || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   state.currentView = view
   state.scanSelection = view === 'manage-scans' ? options.scanMode === 'link' ? { mode: 'report', reportMode: 'link' }

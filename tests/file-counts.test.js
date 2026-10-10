@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { makeLargeGraph } from '../examples/large-graph-sample.js'
-globalThis[Symbol.for('@rray/frontend')] ??= {}
 const { computeTransitiveCounts } = await import('../ui/view/file-counts.js')
 const { SEVERITIES } = await import('../ui/view/format.js')
 

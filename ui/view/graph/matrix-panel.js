@@ -1,4 +1,4 @@
-import { html } from '../frontend-global.js'
+import { html } from 'lit'
 import { formatBytes } from '../format.js'
 import { pkgColor } from './utils.js'
 import { countsTowardsCycles } from './cycle-imports.js'

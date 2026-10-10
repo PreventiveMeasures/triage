@@ -3,7 +3,6 @@ import { afterEach, describe, it } from 'node:test'
 import { autorun, store } from '@rray/frontend/state-management'
 import './_polyfills.js'
 
-globalThis[Symbol.for('@rray/frontend')] ??= { html: () => null }
 
 const { saveFile, deleteFile } = await import('../client/storage.js')
 const { state, saveRepoUrlFor } = await import('../client/state.ts')

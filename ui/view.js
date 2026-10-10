@@ -2,14 +2,6 @@
 // hooks at evaluation time, so importing them here is what makes the
 // page interactive. Order is mostly free; sidebar before ingest so the
 // sidebar click delegate exists when `addFiles` calls `renderSidebar`.
-// MUST be first: publishes lit + StateElement on a Symbol-keyed global
-// ahead of every other transitive import. `./view/format.js` (pulled
-// in transitively via `./view/sidebar.js` etc.) reads the slot through
-// `./view/frontend-global.js` and throws if it loads before the slot
-// is set. Lazy bundles (`ui/terminal.js`, `ui/graph.js`) don't import
-// this; they pick up the slot post-boot via the same
-// `Symbol.for('@rray/frontend')`.
-import './view/frontend-install.js'
 import { dropZone, sidebar } from './view/dom.js'
 import { attachSharedWorkspace, ensureKnownLinkedFindingsIndexed, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
 import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
-import '../ui/view/frontend-install.js'
 import { state } from '../client/state.ts'
 
 const invalidations = [], paints = []

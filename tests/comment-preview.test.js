@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { beforeEach, mock, test } from 'node:test'
-import '../ui/view/frontend-install.js'
 
 const state = { managedComments: new Map(), managedSession: { id: 'user' },
   managedReports: [{ id: 'report' }], reports: [] }

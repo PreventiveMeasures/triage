@@ -13,18 +13,6 @@ import { beforeEach, describe, it } from 'node:test'
 
 import './_polyfills.js'
 
-// markdown-export → format.js → frontend-global.js throws at module
-// load without the `@rray/frontend` slot; the boot path that installs
-// it doesn't run under the test runner.
-const slotKey = Symbol.for('@rray/frontend')
-if (!globalThis[slotKey]) {
-  globalThis[slotKey] = {
-    LitElement: class {}, html: () => null, nothing: null, render: () => null,
-    unsafeCSS: () => null, StateElement: class {}, classMap: () => null,
-    repeat: () => null, styleMap: () => null,
-  }
-}
-
 // markdown-export also pulls in `./dom.js`, which caches element
 // references at module load, and lit-html, whose node build reaches
 // for `document.createTreeWalker` when a `document` exists at all.

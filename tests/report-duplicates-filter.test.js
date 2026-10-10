@@ -2,10 +2,6 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
-globalThis[Symbol.for('@rray/frontend')] ??= {
-  LitElement: class {}, StateElement: class {}, html: () => null, nothing: null,
-  render: () => null, unsafeCSS: () => null, classMap: () => null, repeat: () => null, styleMap: () => null,
-}
 const { state, saveFile, deleteFile, setCount, LINKS_KIND, ensureLinkedFindingsIndexed, ensureBundleFindingsIndexed } = await import('../client/index.js')
 const { reportDuplicateIds } = await import('../ui/view/report-duplicates.js')
 const { applyFilters, applyScopeFilters, cloneFilterFields, resetFilters } = await import('../ui/view/filters.js')

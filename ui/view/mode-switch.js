@@ -1,7 +1,7 @@
 // Shared switch for display modes in toolbars, graphs, and bundle views.
 // Owners control `checked` and handle the native composed click event; the
 // shadow root keeps every instance styled by the same rules in any view.
-import { LitElement, html, unsafeCSS } from './frontend-global.js'
+import { LitElement, html, unsafeCSS } from 'lit'
 import switchCSS from './mode-switch.css'
 
 class ModeSwitch extends LitElement {

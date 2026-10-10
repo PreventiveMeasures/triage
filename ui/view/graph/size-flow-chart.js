@@ -1,4 +1,4 @@
-import { html } from '../frontend-global.js'
+import { html } from 'lit'
 import { formatBytes } from '../format.js'
 import { hideTooltip, scheduleTooltip } from '../tooltip.js'
 import { graphBackground, textOnPackage } from './colors.js'

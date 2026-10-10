@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { buildSizeFlow, flowRibbon, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
 
 function fixture(tree, entries = ['entry']) {

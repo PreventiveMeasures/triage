@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import '../ui/view/frontend-install.js'
 import { buildSizeFlow, layoutSizeFlow, sizeFlowLargeThreshold } from '../ui/view/graph/size-flow-model.js'
 import { filterSizes } from '../ui/view/graph/size-flow-filter.js'
 
