@@ -3661,6 +3661,12 @@ npm-downloads-chart {
   }
 }
 .npm-stat-per { margin-left: .1rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
+/* Its tier among npm's packages by downloads, beside its figures. */
+.npm-stat dd.npm-downloads-tier {
+  align-self: center; padding: 0 .4rem;
+  color: var(--muted); border: 1px solid var(--border); border-radius: var(--ui-radius, 3px);
+  font-size: .7rem; font-weight: 500; line-height: 1.5;
+}
 /* Under the switch, the period under the pointer's downloads, on a line
    kept for them, so the chart doesn't move as they come and go: centered
    between the switch and the chart's top gridline (the head's margin and

@@ -56,6 +56,24 @@ export function npmDownloadMonths(downloads) {
   return months
 }
 
+// The weekly downloads from which a package is among npm's top 10, 50, 100,
+// …, 100,000 packages: download-counts' snapshot of a month's downloads
+// (Jan 30 – Feb 28, 2026), each rank's count scaled to a week by the
+// registry's weeks then, and grown by the median growth, to Sep 21 – Oct 4,
+// 2026, of the packages ranked around it, over weeks npm counted whole.
+const TIERS = [[10, 640e6], [50, 330e6], [100, 260e6], [500, 105e6], [1000, 60e6], [5000, 4.6e6], [10_000, 1e6], [50_000, 20e3], [100_000, 2.1e3]]
+
+// The tier a package's downloads put it in (TIERS), by the most it had in any
+// of its latest six 7-day weeks (npmDownloadWeeks): a week lower for a day
+// npm failed to count, as it now and then does, or for a holiday, is passed
+// over. Null below the last tier, or without a week.
+export function npmDownloadTier(downloads) {
+  const latest = npmDownloadWeeks(downloads).slice(-6)
+  if (latest.length === 0) return null
+  const most = Math.max(...latest.map(week => week.total))
+  return TIERS.find(([, from]) => most >= from)?.[0] ?? null
+}
+
 const PERIODS = {
   week: { label: 'Weekly', of: downloads => npmDownloadWeeks(downloads).slice(-52), name: period => `${shortDate(period.from)} – ${fullDate(period.to)}` },
   month: { label: 'Monthly', of: npmDownloadMonths, name: period => monthName(period.from) },
@@ -122,6 +140,7 @@ class NpmDownloadsChart extends LitElement {
       this._latest = downloads == null ? null : { total: latest?.total ?? 0, tooltip: latest && downloadsIn(latest.total, period.name(latest)) }
     }
     if (changed.has('downloads')) {
+      this._tier = npmDownloadTier(downloads)
       // The last 365 days: the downloads reach back further, to the first of
       // the month they start in, so that month is whole.
       const year = downloads?.days.slice(-365)
@@ -197,6 +216,7 @@ class NpmDownloadsChart extends LitElement {
       <dl class="npm-stats">
         ${this._stat(`${PERIODS[this._unit].label} downloads`, this._latest, this._unit)}
         ${this._stat('Downloads, last 12 months', this._year, 'year')}
+        ${this._tier ? html`<div class="npm-stat"><dt class="sr-only">Popularity</dt><dd class="npm-downloads-tier">top ${this._tier.toLocaleString('en')}</dd></div>` : nothing}
       </dl>
       ${charted ? this._controls(at) : nothing}
     </div>
