@@ -135,6 +135,8 @@ test('code minified into shorter lines is minified too, by its lines\' length an
   assert.equal(category('dist/b.css', '.a{background:url(https://cdn.example.com/a.svg) no-repeat}.b{display:flex;align-items:center;justify-content:space-between}.c{margin:0}\n'), 'minified',
     'a URL in CSS is no `//` comment')
   assert.equal(category('dist/c.css', `${'.a .b{color:red}'.repeat(8)}\n`), 'minified', 'a descendant selector\'s space is no minifier\'s to drop')
+  assert.equal(category('src/e.css', `${'.a + .b{color:red}'.repeat(8)}\n`), 'ascii', 'a sibling selector\'s is')
+  assert.equal(category('dist/f.css', `${'.a{width:calc(1px + 2px)}'.repeat(6)}\n`), 'minified', 'but not a sum\'s in calc()')
   assert.equal(category('src/d.css', `${Array.from({ length: 6 }, (_, i) => `.list .item-${i}`).join(', ')} { color: red; margin: 0 auto; }\n`), 'ascii')
   assert.equal(category('src/About.jsx', `export const About = () => <p>${'We build tools that make reviewing code a little easier for everyone '.repeat(8)}</p>\n`), 'ascii',
     'nor what minifiers never write, as JSX')

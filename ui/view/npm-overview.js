@@ -255,9 +255,10 @@ const JS = {
 const CSS = {
   // No `//` comments, so `url(https://…)` is code.
   stringOrComment: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|[ \t]*\/\*[\s\S]*?\*\/[ \t]*/gu,
-  // Beside braces, `;`, `,`, `>`, parentheses and after `:` (`a { color: red }`),
+  // Beside braces, `;`, `,`, `>`, parentheses, after `:` (`a { color: red }`)
+  // and beside `+` or `~` outside parentheses (`.a + .b`, not `calc(1px + 2px)`),
   // not those a selector or a value needs (`.a .b`, `1px solid #fff`, `a :hover`).
-  droppable: /(?<=[{};,:>(])[ \t]+|[ \t]+(?=[{};,>)!])/gu,
+  droppable: /(?<=[{};,:>(])[ \t]+|[ \t]+(?=[{};,>)!])|(?<=[+~])[ \t]+(?![^(\n]*\))|[ \t]+(?=[+~])(?![^(\n]*\))/gu,
 }
 const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
 function minifiedCode(text, { stringOrComment, droppable }) {
