@@ -253,7 +253,7 @@ class SizeFlow extends LitElement {
   }
 
   matchesNode(node) {
-    if (sizeFlowFilterSize(node) < this.minSize) return false
+    if (sizeFlowFilterSize(node) < this.minSize || this.layout?.hiddenPackages?.has(node.pkg)) return false
     const query = graph2.pathFilter.trim().toLowerCase()
     if (query && !`${node.label} ${node.pkg}`.toLowerCase().includes(query)) return false
     if (this.graph.issuesHidden) return true

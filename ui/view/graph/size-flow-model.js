@@ -3,6 +3,7 @@ import { countsTowardsCycles } from './cycle-imports.js'
 import { stronglyConnected } from './matrix-model.js'
 import { removalSizes } from './size-flow-removal.js'
 import { filterSizes } from './size-flow-filter.js'
+import { MAX_FILE_EDGES, MAX_PACKAGE_EDGES, crowdedPackages } from './crowded-packages.js'
 import { batchedReachability } from './size-flow-reachability.js'
 
 const bytes = n => Number.isFinite(n) && n >= 0 ? n : 0
@@ -249,11 +250,20 @@ function untangleBands(bands, edges, byId) {
   }
 }
 
+// Packages left out of the drawn flow, counted over the whole model so Large
+// and focus never change whether they show (see crowded-packages.js).
+export function sizeFlowHiddenPackages(model) {
+  const pkg = id => model.byId.get(id).pkg
+  return crowdedPackages(model.edges.map(e => [pkg(e.from), pkg(e.to)]), model.packages ? MAX_PACKAGE_EDGES : MAX_FILE_EDGES)
+}
+
 export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 } = {}) {
-  const roots = (focus && model.byId.has(focus) ? [focus] : model.roots).filter(id => sizeFlowFilterSize(model.byId.get(id)) >= minSize)
+  const hiddenPackages = sizeFlowHiddenPackages(model)
+  const shown = id => sizeFlowFilterSize(model.byId.get(id)) >= minSize && !hiddenPackages.has(model.byId.get(id).pkg)
+  const roots = (focus && model.byId.has(focus) ? [focus] : model.roots).filter(shown)
   const levels = flowLevels(model, roots, minSize)
   const candidates = [...levels.keys()]
-    .filter(id => sizeFlowFilterSize(model.byId.get(id)) >= minSize)
+    .filter(shown)
     .toSorted((a, b) => levels.get(a) - levels.get(b) || model.byId.get(b).removable - model.byId.get(a).removable || a.localeCompare(b))
   const visible = new Set(candidates)
   const edges = model.edges.filter(e => visible.has(e.from) && visible.has(e.to))
@@ -282,7 +292,7 @@ export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 
     if (edge.returning) height = Math.max(height, Math.max(edge.y1, edge.y2) + 35)
   }
   spreadFlowPorts(nodes, edges, byId)
-  return { nodes, byId, edges, roots, width: Math.max(1, actualWidth), height: height + 12 }
+  return { nodes, byId, edges, roots, hiddenPackages, width: Math.max(1, actualWidth), height: height + 12 }
 }
 
 // Keep one byte scale across all rows, while filling the viewport horizontally

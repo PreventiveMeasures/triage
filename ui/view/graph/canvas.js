@@ -18,6 +18,7 @@ import { circleOutside, createRenderCache, edgeGradient, edgeOutside, edgePaints
 import { graphViewKey } from './view-key.js'
 import { createNodePicker } from './node-picker.js'
 import { outsideDamage, panDamage } from './pan-damage.js'
+import { MAX_FILE_EDGES, MAX_PACKAGE_EDGES, crowdedGraphPackages } from './crowded-packages.js'
 
 // Severity palette baked into the canvas. Vivid hot colors for
 // critical/high pop above the package hue; calmer tones for
@@ -435,8 +436,18 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   // filter are NOT here on purpose: they dim non-matching nodes
   // to 0.1 instead of hiding them, so they still occupy space and
   // read as context (where the matching subgraph sits in the whole).
+  // Package names hidden from the Graph view's file or package graph because
+  // too many edges lead into them (see crowded-packages.js). Graphs are
+  // immutable while attached, so each one is counted once.
+  const crowdedSets = new WeakMap()
+  function crowdedIn(G, limit) {
+    if (!crowdedSets.has(G)) crowdedSets.set(G, crowdedGraphPackages(G, limit))
+    return crowdedSets.get(G)
+  }
+
   function nodeVisible(n) {
-    return !graph2.hidden.has(n.pkg)
+    if (graph2.hidden.has(n.pkg)) return false
+    return !(pkgViewOn() ? crowdedIn(getPkgGraph(), MAX_PACKAGE_EDGES) : crowdedIn(graph, MAX_FILE_EDGES)).has(n.pkg)
   }
 
   // Severity ring around a node dot — larger radius + thicker stroke
