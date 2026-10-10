@@ -50,6 +50,11 @@ const BEFORE_VALUE = new Set(['await', 'case', 'delete', 'do', 'else', 'in', 'in
 const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
 // Words between a key's place and its key: `{ async a() {} }`.
 const MODIFIERS = new Set(['async', 'get', 'set', 'static'])
+// Words whose `(…)` a statement follows: `if (a) /b/.test(c)`.
+const CONTROL = new Set(['for', 'if', 'while', 'with'])
+// Words between `export` and the name it exports: `export async function a`,
+// `export * as a`.
+const DECLARES = new Set(['as', 'async', 'class', 'function'])
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
@@ -57,13 +62,17 @@ const NAMELESS = ''
 // are), and each line's names in order (`names`). Read as a whole, so a
 // comment or a template spanning lines keeps all of them. Kept as they are:
 // strings, templates, comments, regular expressions, keywords, names longer
-// than a minifier gives, and properties: after `.`, before `:`, or in an
+// than a minifier gives, properties: after `.`, before `:`, or in an
 // object's, a pattern's or a class's key place (`{ a, b() {}, c = 1 }`),
+// and what a module exports (`export { a as b }`, `export const c = 1`),
 // since renaming one changes what reads it.
 function nameless(text) {
   const key = [], names = [[]]
   const opens = []
-  let at = 0, keyPlace = false, last = null
+  // `exporting` between `export` and its name; `declaring`, the depth of an
+  // exported `const`, `let` or `var`, `binding` while in its names (before a
+  // declarator's `=`, patterns too) rather than what they are set to.
+  let at = 0, binding = false, declaring = -1, exporting = false, keyPlace = false, last = null
   const keep = segment => {
     key.push(segment)
     for (let i = segment.indexOf('\n'); i !== -1; i = segment.indexOf('\n', i + 1)) names.push([])
@@ -74,8 +83,14 @@ function nameless(text) {
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
     last = segment[end - 1]
+    if (opens.length === declaring) {
+      const next = segment.lastIndexOf(','), set = segment.lastIndexOf('=')
+      if (set !== next) binding = next > set
+    }
+    if (segment.includes(';') && opens.length <= declaring) declaring = -1
     // A generator method's `*` leaves its name in its key place.
     if (last === '*' && segment.slice(0, end - 1).trim() === '') return
+    exporting = false
     const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
     keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
   }
@@ -98,24 +113,34 @@ function nameless(text) {
     else if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
       last = '"'
-      keyPlace = false
+      exporting = keyPlace = false
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
       const block = first === '{' && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
-      opens.push(first === '{' ? block ? 'block' : 'object' : first)
+      opens.push(first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object' : first === '(' && CONTROL.has(last) ? 'control' : first)
       last = first
       keyPlace = first === '{' && !block
+      exporting = false
     } else if (first === ')' || first === ']' || first === '}') {
       key.push(token)
-      opens.pop()
-      last = first
+      // After a statement's condition, as after `;`, a statement starts.
+      last = opens.pop() === 'control' ? ';' : first
       keyPlace = first === '}' && opens.at(-1) === 'object'
+      exporting = false
+      if (opens.length < declaring) declaring = -1
     } else {
-      if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || text[at] === ':') key.push(token)
+      const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (declaring !== -1 && binding)
+      if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || text[at] === ':') key.push(token)
       else {
         key.push(NAMELESS)
         names.at(-1).push(token)
       }
+      if (token === 'export') exporting = true
+      else if (exporting && (token === 'const' || token === 'let' || token === 'var')) {
+        declaring = opens.length
+        binding = true
+        exporting = false
+      } else if (!DECLARES.has(token)) exporting = false
       if (!(keyPlace && MODIFIERS.has(token))) {
         last = token
         keyPlace = false
