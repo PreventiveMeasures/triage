@@ -3661,9 +3661,9 @@ npm-downloads-chart {
   }
 }
 .npm-stat-per { margin-left: .1rem; color: var(--muted); font-size: .72rem; font-weight: 400; }
-/* Its tier among npm's packages by downloads, beside its figures, tinted
-   from green for the most downloaded to orange for the unpopular, blended
-   with the text's colors as a hint. */
+/* Its tier among npm's packages by downloads, beside its figures: solid
+   green for the top 100, then tinted from green to orange for the unpopular,
+   blended with the text's colors as a hint. */
 .npm-stat dd.npm-downloads-tier {
   align-self: center; padding: 0 .4rem;
   color: color-mix(in srgb, var(--tier) 55%, var(--text));
@@ -3671,8 +3671,8 @@ npm-downloads-chart {
   border: 1px solid color-mix(in srgb, var(--tier) 50%, var(--border)); border-radius: var(--ui-radius, 3px);
   font-size: .7rem; font-weight: 500; line-height: 1.5;
 
+  &.is-solid { color: var(--bg); background: var(--green); border-color: var(--green); }
   &.is-top { --tier: var(--green); }
-  &.is-high { --tier: color-mix(in srgb, var(--green) 65%, var(--medium)); }
   &.is-mid { --tier: color-mix(in srgb, var(--green) 30%, var(--medium)); }
   &.is-low { --tier: var(--medium); }
   &.is-unpopular { --tier: var(--high); }
