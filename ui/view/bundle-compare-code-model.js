@@ -147,9 +147,12 @@ function nameless(text) {
     // A line break no operator spans may end a statement, as `;` does, or a
     // class field: even one alone between two names (`let x⏎f()`).
     const line = segment.lastIndexOf('\n')
-    // A `++` or `--` either side of it is the line's own (`a++⏎b`, `x⏎++a`).
-    const ends = line !== -1 && !/(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u.test(segment.slice(0, line).trimEnd())
-      && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(segment.slice(line + 1).trimStart())
+    const after = segment.slice(line + 1).trimStart(), before = segment.slice(0, line).trimEnd()
+    // A `++` or `--` either side of it is the line's own (`a++⏎b`, `x⏎++a`);
+    // after a declared name with no value (`let x⏎+a`), only `=` or `,` goes on.
+    const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
+    const ends = line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
+      : !/(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     if (ends || segment.includes(',') || segment.includes(';')) endArrows(opens.length)
     if (ends || segment.includes(';')) endLoops(opens.length)
