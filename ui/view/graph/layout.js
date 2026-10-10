@@ -43,22 +43,31 @@ function crossDegByPkg(graph) {
   return map
 }
 
-// Pick the entry-point package — the one nothing else points
-// at. Qualifies when no file has an importer in a DIFFERENT
+// Pick the package pinned at the center: own source when the bundle has
+// any (see below), else the entry-point package — the one nothing else
+// points at. Qualifies when no file has an importer in a DIFFERENT
 // package (same-package importers are fine, intra-package
 // coupling is expected); among qualifiers, pick the largest by
 // file count.
 //
-// Typically lands on the user's own source: nothing in
-// node_modules imports app code, the reverse is constant. With
-// multiple candidates (e.g. sibling `src/` and `lib/`, neither
-// with npm inbound) the largest usually carries the main intent.
+// The fallback usually lands on the user's own source: node_modules
+// rarely imports app code. With multiple candidates (e.g. sibling
+// `src/` and `lib/`, neither with npm inbound) the largest usually
+// carries the main intent.
 //
-// Returns null when every package has cross-package inbound
-// (full cycle / no clear root); callers then fall back to a
-// no-pinned-center layout.
+// Returns null when there is no own source and every package has
+// cross-package inbound (full cycle / no clear root); callers then
+// fall back to a no-pinned-center layout.
 function findEntryPkg(graph) {
   if (graph.packages.length === 0) return null
+  // Own source sits at the center: the largest own package holding an entry
+  // point, else the largest own package. Packages are sorted by file count.
+  // Only bundles without own source fall back to the largest package nothing
+  // imports; that test alone picks native packages Metro captures add
+  // without any imports, as soon as anything imports own source.
+  const own = (pkg) => pkg === '__own__' || graph.ownSourcePackages?.has(pkg)
+  const ownEntry = graph.packages.find((pkg) => own(pkg) && graph.entryPackages?.has(pkg)) ?? graph.packages.find(own)
+  if (ownEntry) return ownEntry
   const hasInbound = new Set()
   for (const [target, importers] of graph.importedBy) {
     const targetNode = graph.nodeByFile.get(target)
@@ -106,6 +115,32 @@ function findEntryPkg(graph) {
 // occupy the innermost available slots. Optimization can reorder hubs among
 // themselves and members among themselves, but cannot exchange the two.
 const HUB_PULL_LIMIT = 5
+
+// Package disks placed so far, bucketed by cell. `cellSize` is at least twice
+// the largest radius, so every disk a new one could overlap is in the 3 × 3
+// cells around its center.
+function diskGrid(cellSize) {
+  const cells = new Map()
+  const cell = (x, y) => [Math.floor(x / cellSize), Math.floor(y / cellSize)]
+  return {
+    add(x, y, r) {
+      const key = cell(x, y).join(':')
+      if (!cells.has(key)) cells.set(key, [])
+      cells.get(key).push({ x, y, r })
+    },
+    fits(x, y, r) {
+      const [cx, cy] = cell(x, y)
+      for (let i = cx - 1; i <= cx + 1; i++) {
+        for (let j = cy - 1; j <= cy + 1; j++) {
+          for (const disk of cells.get(`${i}:${j}`) ?? []) {
+            if ((disk.x - x) ** 2 + (disk.y - y) ** 2 < (disk.r + r) ** 2 - 1e-7) return false
+          }
+        }
+      }
+      return true
+    },
+  }
+}
 
 function hubGroups(nodes) {
   return [nodes.filter(node => node.isHub), nodes.filter(node => !node.isHub)]
@@ -435,6 +470,11 @@ export function layoutSpiral(graph, w, h) {
   // barycenter sits at center — only entry-coupled) take the next-
   // available slot in Vogel index order, which inherits the original
   // spiral's golden-angle spread.
+  // Slots ignore disk sizes, so prefer a slot where the package's disk
+  // clears every disk placed so far; fall back to the usual choice only when
+  // none does. Others start past the entry's rim (minRUnit), so only other
+  // packages need checking.
+  const placed = diskGrid(2 * othersCap * unitToPx)
   for (let k = 0; k < numRings; k++) {
     const startIdx = ringStart[k]
     const endIdx = ringStart[k + 1]
@@ -444,6 +484,9 @@ export function layoutSpiral(graph, w, h) {
 
     for (let i = startIdx; i < endIdx; i++) {
       const pkg = others[i]
+      const size = graph.pkgCount.get(pkg) ?? 0
+      const groupR = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor) * unitToPx
+      const fits = (j) => placed.fits(vogelX[startIdx + j], vogelY[startIdx + j], groupR)
       // Weighted barycenter of already-placed neighbours.
       const neighbours = pkgEdgesOf.get(pkg)
       let bx = 0, by = 0, totalW = 0
@@ -466,45 +509,80 @@ export function layoutSpiral(graph, w, h) {
         // collapsing the entry-only packages onto the same arc.
         if (dx * dx + dy * dy > 1) useBary = true
       }
-      let bestSlot = -1
-      if (useBary) {
-        // Pick the unused slot in this ring with smallest
-        // Euclidean distance to the barycenter. Within a ring all
-        // slots share approximately the same radius, so this is
-        // effectively angular matching with a small radial bias
-        // when the barycenter sits inside / outside the ring.
-        let bestDist2 = Infinity
-        for (let j = 0; j < M; j++) {
-          if (used[j]) continue
-          const slotIdx = startIdx + j
-          const ddx = vogelX[slotIdx] - bx
-          const ddy = vogelY[slotIdx] - by
-          const d2 = ddx * ddx + ddy * ddy
-          if (d2 < bestDist2) { bestDist2 = d2; bestSlot = j }
+      const pick = (allowed) => {
+        let bestSlot = -1
+        if (useBary) {
+          // Pick the unused slot in this ring with smallest
+          // Euclidean distance to the barycenter. Within a ring all
+          // slots share approximately the same radius, so this is
+          // effectively angular matching with a small radial bias
+          // when the barycenter sits inside / outside the ring.
+          let bestDist2 = Infinity
+          for (let j = 0; j < M; j++) {
+            if (used[j] || !allowed(j)) continue
+            const slotIdx = startIdx + j
+            const ddx = vogelX[slotIdx] - bx
+            const ddy = vogelY[slotIdx] - by
+            const d2 = ddx * ddx + ddy * ddy
+            if (d2 < bestDist2) { bestDist2 = d2; bestSlot = j }
+          }
+        } else {
+          // Unconstrained — take the lowest unused index, which
+          // delivers the next golden-angle slot in Vogel order.
+          for (let j = 0; j < M; j++) {
+            if (!used[j] && allowed(j)) { bestSlot = j; break }
+          }
         }
-      } else {
-        // Unconstrained — take the lowest unused index, which
-        // delivers the next golden-angle slot in Vogel order.
-        for (let j = 0; j < M; j++) {
-          if (!used[j]) { bestSlot = j; break }
-        }
+        return bestSlot
+      }
+      // Most packages fit their usual slot; scan for another only when not.
+      let bestSlot = pick(() => true)
+      if (!fits(bestSlot)) {
+        const fitting = pick(fits)
+        if (fitting >= 0) bestSlot = fitting
       }
       used[bestSlot] = true
       const slotIdx = startIdx + bestSlot
-      const size = graph.pkgCount.get(pkg) ?? 0
-      const gRUnit = Math.min(othersCap, (0.012 + Math.sqrt(size) * 0.004) * sparsityFactor)
-      pkgInfo.set(pkg, {
-        x: vogelX[slotIdx],
-        y: vogelY[slotIdx],
-        size,
-        groupR: gRUnit * unitToPx,
-      })
+      pkgInfo.set(pkg, { x: vogelX[slotIdx], y: vogelY[slotIdx], size, groupR })
+      placed.add(vogelX[slotIdx], vogelY[slotIdx], groupR)
     }
   }
 
   const rings = Array.from({ length: numRings }, (_, k) => others.slice(ringStart[k], ringStart[k + 1]))
   optimizePackageRings(pkgInfo, pkgEdgesOf, rings)
+  separateDisks(pkgInfo, entryPkg)
   placeFilesInDisk(graph, pkgInfo)
+}
+
+// A ring can lack a slot where every large disk fits. Push overlapping disks
+// apart, the smaller moving more and the center package staying put, until
+// none overlap by more than half a pixel or the passes run out. A sweep over
+// left edges finds the pairs.
+function separateDisks(pkgInfo, pinned) {
+  const disks = [...pkgInfo].map(([pkg, info]) => ({ info, pinned: pkg === pinned }))
+  for (let pass = 0; pass < 100; pass++) {
+    disks.sort((a, b) => (a.info.x - a.info.groupR) - (b.info.x - b.info.groupR))
+    let moved = false
+    for (let i = 0; i < disks.length; i++) {
+      const a = disks[i].info
+      for (let j = i + 1; j < disks.length; j++) {
+        const b = disks[j].info
+        if (b.x - b.groupR > a.x + a.groupR) break
+        const dx = b.x - a.x, dy = b.y - a.y
+        const distance = Math.hypot(dx, dy), need = a.groupR + b.groupR
+        if (distance >= need - 0.5) continue
+        // Each side moves in proportion to the other's area.
+        const shareA = disks[i].pinned ? 0 : b.groupR ** 2, shareB = disks[j].pinned ? 0 : a.groupR ** 2
+        if (shareA + shareB === 0) continue
+        const push = (need - distance) / (shareA + shareB)
+        const ux = distance > 1e-9 ? dx / distance : 1, uy = distance > 1e-9 ? dy / distance : 0
+        a.x -= ux * push * shareA; a.y -= uy * push * shareA
+        b.x += ux * push * shareB; b.y += uy * push * shareB
+        moved = true
+      }
+    }
+    if (!moved) return
+  }
 }
 
 // File-level Vogel sunflower — used by the package-focus mode
