@@ -1,8 +1,8 @@
 // The first step of Compare's diff with renamed names hidden (rename-diff.ts):
 // the old side of a JavaScript file minified on both sides given the new
 // side's names, wherever a minifier renamed a variable alike throughout, so
-// that the two then diff as they are. Checked safe: the renamed text reads
-// every name as the old one did.
+// that the two then diff as they are. Checked safe by oxc's own minifier: the
+// renamed text binds every name as the old one did (bindsAlike).
 //
 // Both sides are parsed (oxc-parser) and each name resolved, by JavaScript's
 // scopes, to the variable it stands for. Lines pair up as they are with their
@@ -14,8 +14,10 @@
 // as it is none of the new side's: a line reading it never reads as one
 // reading the new side's. The names so given must leave each name read where
 // it was resolving to the same variable, a global's to none, and those that
-// would not are renamed apart instead; the renamed text is then parsed again
-// and must bind as the old one did, else it is not used.
+// would not are renamed apart instead. The renamed text must then bind as the
+// old one did by oxc's minifier, whose scope analysis is apart from this one,
+// else it is not used: a mistake here costs a file its names, never its sense.
+import { minifySync } from 'oxc-minify'
 import { parseSync } from 'oxc-parser'
 import { changeBlocks } from '../common/line-diff.js'
 
@@ -109,6 +111,7 @@ function analyze(text, extension) {
   // Two variables that must keep one name, read from then on as the first.
   const join = (kept, gone) => {
     if (kept === gone || !variables.includes(gone)) return
+    for (const path of gone.through ?? []) (kept.through ??= []).push(path)
     for (const at of scopes) for (const [name, variable] of at.names) if (variable === gone) at.names.set(name, kept)
     for (const [node, [variable, where]] of declarations) if (variable === gone) declarations.set(node, [kept, where])
     variables.splice(variables.indexOf(gone), 1)
@@ -132,6 +135,10 @@ function analyze(text, extension) {
         for (const declarator of node.declarations) {
           for (const id of declared(declarator.id)) {
             const variable = declare(node.kind === 'var' ? fnOf(where) : where, id)
+            // A `var` written within blocks passes through each to its function's scope, innermost first.
+            const path = []
+            for (let at = where; node.kind === 'var' && !at.fn; at = at.parent) path.push(at)
+            if (path.length > 0) (variable.through ??= []).push(path)
             // A `var` named as a `catch`'s parameter it is in declares its
             // function's, its value going to the nearest such parameter
             // (`catch (a) { var a = 2 }`): the two keep one name.
@@ -209,7 +216,7 @@ function analyze(text, extension) {
     else if (node.type === 'ClassBody') inner = Object.assign(scope(where, false), { strict: true })
     else if (node.type === 'StaticBlock') inner = scope(where, true)
     else if (node.type === 'CatchClause') {
-      inner = Object.assign(scope(where, false), { caught: true })
+      inner = Object.assign(scope(where, false), { caught: true, simple: node.param?.type === 'Identifier' })
       for (const id of declared(node.param)) declare(inner, id)
     }
     for (const field in node) {
@@ -243,7 +250,7 @@ function analyze(text, extension) {
   globals.sort(byStart)
   const deduplicated = occurrences.filter((entry, i) => i === 0 || entry[0].start !== occurrences[i - 1][0].start)
   const names = new Set([...variables.map(({ name }) => name), ...globals.map(([node]) => node.name)])
-  return { scopes, variables, occurrences: deduplicated, globals, names }
+  return { scopes, variables, occurrences: deduplicated, globals, names, module: program.sourceType === 'module', commonjs: program.sourceType === 'commonjs', own }
 }
 
 // A text's lines with its renamable variables' names set aside (`key`), and
@@ -334,9 +341,13 @@ function pairing(before, after, a, b) {
 }
 
 // The variables the names given (`given`) would read wrongly: two of one
-// scope named alike, a name read resolving to another variable than its own,
-// or a global's to a variable.
-function misread({ scopes, occurrences, globals }, given) {
+// scope named alike, a `var` named as one declared in a block it is written
+// in (`{ let a; { var a } }` does not compile, and a `catch (a)` parameter
+// would take its value, unless a nearer one of its own took it already), one
+// of a function's body named as its parameter (which it would then be, or
+// start as, past a default: `(a, b = 1) => { var c }` → `var b`), a name read
+// resolving to another variable than its own, or a global's to a variable.
+function misread({ scopes, variables, occurrences, globals }, given) {
   const names = new Map(scopes.map(at => [at, new Map()]))
   const wrong = new Set()
   for (const at of scopes) {
@@ -344,6 +355,23 @@ function misread({ scopes, occurrences, globals }, given) {
       const taken = names.get(at).get(given.get(variable))
       if (taken) wrong.add(taken).add(variable)
       else names.get(at).set(given.get(variable), variable)
+    }
+  }
+  for (const variable of variables) {
+    for (const path of variable.through ?? []) {
+      let caught = false
+      for (const at of path) {
+        const there = names.get(at).get(given.get(variable))
+        if (there === variable) caught ||= Boolean(at.caught)
+        else if (there && !(at.caught && at.simple && caught)) wrong.add(there).add(variable)
+      }
+    }
+  }
+  for (const at of scopes) {
+    if (!at.parameters) continue
+    for (const variable of new Set(at.names.values())) {
+      const parameter = names.get(at.parameters).get(given.get(variable))
+      if (parameter && parameter !== variable) wrong.add(parameter).add(variable)
     }
   }
   const named = at => names.get(at)
@@ -358,19 +386,27 @@ function misread({ scopes, occurrences, globals }, given) {
   return wrong
 }
 
-// Whether `renamed` binds as `analysis` (of the text it was renamed from)
-// does: the same names in the same places, each read of one variable there
-// one of one variable here, and the same globals read.
-function bindsAlike(analysis, renamed) {
-  if (renamed.reason || renamed.occurrences.length !== analysis.occurrences.length || renamed.globals.length !== analysis.globals.length) return false
-  const backward = new Map(), forward = new Map()
-  return analysis.occurrences.every(([, variable], i) => {
-    const other = renamed.occurrences[i][1]
-    if ((forward.get(variable) ?? other) !== other || (backward.get(other) ?? variable) !== variable) return false
-    forward.set(variable, other)
-    backward.set(other, variable)
-    return true
-  }) && analysis.globals.every(([node], i) => renamed.globals[i][0].name === node.name)
+// Whether `renamed` binds as `before` does, by oxc's minifier: each mangled,
+// every variable named by its place alone and never by its name, they read
+// the same. A variable that would read another, a global one, a property or an
+// export renamed, any of them makes the two differ. The top level as
+// `analysis` (of the old text) has it: a module's or a CommonJS module's
+// mangled with the rest, a script's, whose names are globals, left as it is.
+// Each check holds where the other may not, and both must pass: oxc reads a
+// function declared in a block as the block's alone even outside strict code
+// (analyze refuses one: `block-function`), does not tell a `var` named as a
+// `let` of a block it is written in (misread does), and reads a name beside a
+// `catch`'s `var` of its parameter's name otherwise than JavaScript does.
+export function bindsAlike(before, renamed, { module = false, commonjs = false, own = module || commonjs } = {}) {
+  const file = module ? 'file.mjs' : commonjs ? 'file.cjs' : 'file.js'
+  const mangled = text => {
+    try {
+      const result = minifySync(file, text, { module, compress: false, mangle: { toplevel: own }, codegen: { removeWhitespace: true } })
+      return result.errors.length === 0 ? result.code : null
+    } catch { return null }
+  }
+  const code = mangled(before)
+  return code !== null && code === mangled(renamed)
 }
 
 // The old text with the new one's names, as above: `{ text, renamed, apart }`,
@@ -407,7 +443,7 @@ export function renameMap(before, after, { extension = 'js', otherExtension = ex
     at = node.end
   }
   text += before.slice(at)
-  if (!bindsAlike(a, analyze(text, extension))) return { reason: 'unverified' }
+  if (!bindsAlike(before, text, a)) return { reason: 'unverified' }
   let renamed = 0, separated = 0
   for (const variable of a.variables) {
     if (given.get(variable) === variable.name) continue

@@ -886,12 +886,17 @@ it most stands for, where that one most stands for it, on every line,
 removed ones too. An old variable no new one stands for whose name the new
 copy uses is renamed apart (`r_old`), so that no line reads it as the new one.
 The names given must leave every name read resolving to the same variable,
-and a global's to none, and the renamed copy is parsed again and must bind as
-the old one did; it is then formatted again, checked to change only its
-layout. The two copies are then diffed as they are, `ignoreWhitespace=true`
-diff -w. It answers Brotli-encoded `{ before, blocks, reason }`: the old copy
-as diffed, each change block `{ a0, a1, b0, b1 }` (its lines `[a0, a1)`
-replaced by the new copy's `[b0, b1)`), and, where its names could not be
+and a global's to none, with no `var` named as a declaration of a block it
+passes through, nor a function body's variable as a parameter. The renamed
+copy must then bind as the old one did by oxc's minifier (oxc-minify), whose
+scope analysis is apart from this one: both copies are mangled, every
+variable named by its place alone, and must read the same, so that a mistake
+in the first analysis costs a file its names, never its sense. It is then
+formatted again, checked to change only its layout. The two copies are then
+diffed as they are, `ignoreWhitespace=true` diff -w. It answers
+Brotli-encoded `{ before, blocks, reason }`: the old copy as diffed, each
+change block `{ a0, a1, b0, b1 }` (its lines `[a0, a1)` replaced by the new
+copy's `[b0, b1)`), and, where its names could not be
 given safely, why (`unparsed`, `dynamic` for `eval` or `with`, `jsx`,
 `block-function` for a function declared in a block outside strict code,
 where it sets its function's variable of that name too, `unverified`), the
