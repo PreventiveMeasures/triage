@@ -16,7 +16,8 @@ import { openManagedBundle } from './managed-bundle-open.js'
 import { openNpmRoute } from './npm-package.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
-import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath, teamLetters } from './managed-sidebar.js'
+import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
+import { railLetters } from './sidebar-rail.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -210,10 +211,7 @@ function fileItemTemplate(n, opts = {}) {
   // leaving the previously-loaded report visually selected reads
   // as a stale state. The same suppression applies to the
   // workspace-row template below.
-  const isCurrent = n === state.currentFile
-    && (opts.workspaceId ?? null) === reportWorkspaceFor(n)
-    && (state.currentView === 'findings' || state.currentView === 'files'
-      || state.currentView === 'links')
+  const isCurrent = reportRowIsCurrent(n, opts.workspaceId ?? null)
   const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
   const label = displayName(n)
   const count = getCount(n)
@@ -233,6 +231,12 @@ function fileItemTemplate(n, opts = {}) {
     data-workspace-id=${opts.workspaceId ?? nothing}
     draggable="true"
   ><button type="button" class="file-name" data-tooltip=${label}>${unsafeHTML(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
+}
+
+function reportRowIsCurrent(n, workspaceId) {
+  return n === state.currentFile && workspaceId === reportWorkspaceFor(n)
+    && (state.currentView === 'findings' || state.currentView === 'files'
+      || state.currentView === 'links')
 }
 
 function groupHeaderTemplate(label, opts = {}) {
@@ -287,14 +291,24 @@ function teamsSectionTemplate() {
     })}`
 }
 
-// The collapsed sidebar shows teams alone: each as its icon over two letters,
-// opening the team as its row does, and current while anything of it is open.
+// The collapsed sidebar shows teams (managed) or workspaces alone: each as its
+// icon over two letters, opening it as its row does, and current while anything
+// of it is open.
+function railItemTemplate(name, icon, current, open) {
+  return html`<li><button type="button" class=${current ? 'rail-item current' : 'rail-item'} aria-label=${name} aria-current=${current ? 'true' : nothing}
+    data-tooltip=${name} @click=${open}>${icon}<span aria-hidden="true">${railLetters(name)}</span></button></li>`
+}
+
 function teamRailTemplate() {
-  return repeat(state.managedTeams ?? [], t => t.id, t => {
-    const current = teamIsCurrent(t) || (t.reports ?? []).some(r => teamReportIsCurrent(t, r)) || (t.bundles ?? []).some(b => teamBundleIsCurrent(t, b))
-    return html`<li><button type="button" class=${current ? 'team-rail-item current' : 'team-rail-item'} aria-label=${t.name} aria-current=${current ? 'true' : nothing}
-      data-tooltip=${t.name} @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span aria-hidden="true">${teamLetters(t.name)}</span></button></li>`
-  })
+  return repeat(state.managedTeams ?? [], t => t.id, t => railItemTemplate(t.name, TEAM_ICON,
+    teamIsCurrent(t) || (t.reports ?? []).some(r => teamReportIsCurrent(t, r)) || (t.bundles ?? []).some(b => teamBundleIsCurrent(t, b)),
+    () => void switchToManagedTeam(t)))
+}
+
+function workspaceRailTemplate(workspaces) {
+  return repeat(workspaces, w => w.id, w => railItemTemplate(w.name, WORKSPACE_ICON,
+    workspaceIsCurrent(w) || w.reports.some(r => reportRowIsCurrent(r, w.id)) || w.bundles.some(integrity => bundleRowIsCurrent(integrity, w.id)),
+    () => openWorkspace(w.id)))
 }
 
 function teamIsCurrent(team) {
@@ -369,6 +383,11 @@ function bundlesHeaderTemplate() {
 // can drop `${BUNDLE_ICON}` into their templates as before.
 const BUNDLE_ICON = html`${unsafeHTML(BUNDLE_ICON_SVG)}`
 
+function bundleRowIsCurrent(integrity, workspaceId) {
+  return state.selectedBundle === integrity && state.currentView === 'bundles'
+    && workspaceId === state.selectedBundleWorkspace
+}
+
 // Single bundle row under the always-expanded Bundles header.
 // `.current` lights up when this bundle is the open selection in the
 // main pane (selectedBundle matches its integrity). The integrity is
@@ -376,8 +395,7 @@ const BUNDLE_ICON = html`${unsafeHTML(BUNDLE_ICON_SVG)}`
 // for hover disambiguation when two bundles share a basename.
 function bundleItemTemplate(bundle, opts = {}) {
   const { integrity, name } = bundle
-  const isCurrent = state.selectedBundle === integrity && state.currentView === 'bundles'
-    && (opts.workspaceId ?? null) === state.selectedBundleWorkspace
+  const isCurrent = bundleRowIsCurrent(integrity, opts.workspaceId ?? null)
   // `indented` only when the row sits under a workspace — the tree-line
   // decoration anchors it to its parent. Top-level rows under the
   // Bundles category render flush with the other category rows
@@ -465,9 +483,13 @@ const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11
 // (export) and the door-arrow (leave). Sized to match the other
 // hover-revealed action buttons in the workspace row.
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
-function workspaceItemTemplate(w, { app, compact, reports, bundles, showReports, showBundles }) {
-  const isCurrent = state.currentWorkspace === w.id
+function workspaceIsCurrent(w) {
+  return state.currentWorkspace === w.id
     && ['findings', 'files', 'workspace-reports', 'workspace-bundles'].includes(state.currentView)
+}
+
+function workspaceItemTemplate(w, { app, compact, reports, bundles, showReports, showBundles }) {
+  const isCurrent = workspaceIsCurrent(w)
   const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
   // Clicking the main button loads every report in the workspace
   // into a single merged view (the `.file-item` click delegate
@@ -542,8 +564,9 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     renderLandingWorkspaces([])
     if (!root) return
     litRender(html`${teamsSectionTemplate()}`, fileList)
-    const teamRail = root.querySelector('#team-rail')
-    if (teamRail) litRender(teamRailTemplate(), teamRail)
+    const rail = root.querySelector('#sidebar-rail')
+    rail?.setAttribute('aria-label', 'Teams')
+    if (rail) litRender(teamRailTemplate(), rail)
     root.querySelector('sidebar-view-button[kind="packages"]')?.setAttribute('hidden', '')
     root.querySelector('sidebar-view-button[kind="repositories"]')?.setAttribute('hidden', '')
     root.querySelector('#storage-status')?.setAttribute('hidden', '')
@@ -774,6 +797,9 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     ${unfiledBundles.length > 0 || isDraggingBundle ? bundlesHeaderTemplate() : null}
     ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
   `, fileList)
+  const rail = root.querySelector('#sidebar-rail')
+  rail?.setAttribute('aria-label', 'Workspaces')
+  if (rail) litRender(workspaceRailTemplate(workspaces), rail)
 
   // Packages + Repositories navigation buttons live to the right of
   // the sidebar search input. Both are `<sidebar-view-button>`
@@ -845,6 +871,13 @@ async function switchClientMode() {
   root?.querySelector('#user-menu')?.hidePopover?.()
   if (forcedManagedReturn) await restoreForcedManagedMode()
   else if (toggleClientMode()) await finishClientModeTransition()
+}
+
+// Opening the SAME workspace from another view (Bundles / Packages) drops the
+// user back into its findings, mirroring the file-row check in the delegate.
+function openWorkspace(id) {
+  const onFindings = state.currentView === 'findings' || state.currentView === 'files'
+  if (id !== state.currentWorkspace || !onFindings) switchToWorkspace(id)
 }
 
 // Sidebar event delegation: file-list click switches; Delete removes
@@ -1036,12 +1069,7 @@ async function onSidebarClick(e) {
   const wsRow = e.target.closest('.file-item.workspace-item[data-workspace-id]')
   if (wsRow) {
     const id = wsRow.dataset.workspaceId
-    // Re-run when the user clicks the SAME workspace but is on a
-    // different view (Bundles / Packages) — the click should drop
-    // them back into the findings view for that workspace, mirroring
-    // the file-row check below.
-    const onFindings = state.currentView === 'findings' || state.currentView === 'files'
-    if (id && (id !== state.currentWorkspace || !onFindings)) switchToWorkspace(id)
+    if (id) openWorkspace(id)
     return
   }
   const fileEl = e.target.closest('.file-item[data-file]')
@@ -2505,6 +2533,11 @@ class AppSidebar extends LitElement {
           </svg>
         </button>
       </div>
+      <button id="sidebar-home" class="rail-item" type="button" data-action="go-home" aria-label="Home" data-tooltip="Home">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2.5 7.5 8 3l5.5 4.5M4 6.5V13h3V9.5h2V13h3V6.5"/>
+        </svg>
+      </button>
       <div class="sidebar-search">
         <svg class="sidebar-search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
           <circle cx="6.5" cy="6.5" r="4.5"/>
@@ -2515,7 +2548,7 @@ class AppSidebar extends LitElement {
         <sidebar-view-button kind="repositories"></sidebar-view-button>
       </div>
       <ul id="file-list"></ul>
-      <ul id="team-rail" aria-label="Teams"></ul>
+      <ul id="sidebar-rail"></ul>
       <button id="storage-status" type="button" hidden>
         <span class="storage-dot" aria-hidden="true"></span>
         <span class="storage-label"></span>

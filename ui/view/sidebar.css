@@ -31,6 +31,8 @@
 :host([inert]) .sidebar-actions,
 :host([inert]) #file-list,
 :host([inert]) #sidebar-toggle,
+:host([inert]) #sidebar-home,
+:host([inert]) #sidebar-rail,
 :host([inert]) #encryption-toggle,
 :host([inert]) #storage-status { visibility: hidden; }
 
@@ -55,29 +57,30 @@
   padding: .25rem; border: 0;
 }
 /* Collapsed managed footer: the avatar alone opens the account menu, stacked
-   over the Manage icon. It stays at the bottom, as when expanded, since the
-   menu opens upward from the avatar. The view-as banner and public-link text
-   have no room, so viewing as another user rings the avatar in the banner's
-   accent, set off by a gap since the fallback avatar is accent-filled. */
-:host(.collapsed[data-mode='managed']) .sidebar-actions { margin-top: auto; }
+   over the Manage icon, kept at the bottom by the rail below as the menu opens
+   upward from the avatar. The view-as banner and public-link text have no
+   room, so viewing as another user rings the avatar in the banner's accent,
+   set off by a gap since the fallback avatar is accent-filled. */
 :host(.collapsed) #view-as-status,
 :host(.collapsed) #public-status,
 :host(.collapsed) .auth-login { display: none; }
 :host(.collapsed) #auth-status[data-authed='1'] { padding: .2rem; }
 :host(.collapsed[data-view-as]) #auth-status .user-avatar { box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--accent); }
 
-/* Collapsed managed sidebar: the teams take the file list's place, each as
-   its icon over two letters (sidebar.js teamRailTemplate). The current team
-   reads as the sidebar view buttons' active state. */
-#team-rail { display: none; }
-:host(.collapsed[data-mode='managed']) #team-rail {
+/* Collapsed sidebar: Home under the menu icon, then the teams (managed) or
+   workspaces take the file list's place, each as its icon over two letters
+   (sidebar.js railItemTemplate). The current one reads as the sidebar view
+   buttons' active state. */
+#sidebar-home, #sidebar-rail { display: none; }
+:host(.collapsed) #sidebar-home { display: grid; margin: 0 auto; padding: .3rem 0; }
+:host(.collapsed) #sidebar-rail {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column; align-items: center; gap: .2rem;
   padding: .35rem 0;
   list-style: none;
   overflow-y: auto; overscroll-behavior: none; scrollbar-width: none;
 }
-.team-rail-item {
+.rail-item {
   width: 26px; padding: .25rem 0 .2rem;
   display: grid; justify-items: center; gap: .15rem;
   background: transparent; color: var(--muted);
