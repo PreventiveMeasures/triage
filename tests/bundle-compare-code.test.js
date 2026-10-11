@@ -253,6 +253,35 @@ test('a repointed file stays a source view with its line links while whitespace 
   assert.doesNotMatch(markup, /Unified<\/button>/u)
 })
 
+test('a file whose whitespace changes mix kinds of blank is diffed as it is while whitespace changes are hidden, its toggle off', async t => {
+  const tabbed = [{ 'src/tabs.js': '  a()\n  b()\n' }, { 'src/tabs.js': '\ta()\n\tb()\n' }]
+  const spaced = [{ 'src/spaces.js': '  a()\n' }, { 'src/spaces.js': '    a()\n' }]
+  const toggle = markup => /<button type="button" class="bundle-compare-code-toggle" aria-pressed=(\w+) aria-disabled=(\w*)\s*aria-label=([^>]*?) data-tooltip/u.exec(markup)
+  const shownAll = renderText(view('src/tabs.js', tabbed).render())
+  assert.deepEqual(toggle(shownAll).slice(1, 3), ['false', ''], 'offered while whitespace changes show, as nothing is hidden')
+  const element = view('src/tabs.js', tabbed)
+  element._setWhitespace(true)
+  t.after(() => element._setWhitespace(false))
+  const markup = renderText(element.render())
+  assert.match(markup, /class=bundle-compare-diff-table/u, 'its whitespace changes show')
+  assert.doesNotMatch(markup, /Only whitespace changed/u)
+  assert.deepEqual(toggle(markup).slice(1), ['false', 'true', 'Its whitespace changes mix spaces with tabs or other blanks, so all of them show'])
+  const plain = renderText(view('src/spaces.js', spaced).render())
+  assert.match(plain, /Only whitespace changed in this file/u, 'one only re-indented hides them')
+  assert.deepEqual(toggle(plain).slice(1, 3), ['true', ''])
+  const { combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
+  const CompareAll = customElements.get('bundle-compare-all')
+  const code = view(null, [{ ...tabbed[0], ...spaced[0] }, { ...tabbed[1], ...spaced[1] }])
+  const all = new CompareAll()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.models = combinedDiffRows(code.base, code.other, code.files).models
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  const sections = Object.fromEntries([...renderText(all.render()).matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+)>([^]*?)<\/section>/gu)].map(m => [m[1], m[2]]))
+  assert.match(sections['src/tabs.js'], /aria-disabled=true/u, 'the Diff view marks it in its head')
+  assert.match(sections['src/tabs.js'], /class=bundle-compare-diff-table/u)
+  assert.doesNotMatch(sections['src/spaces.js'], /aria-disabled|bundle-compare-diff-table/u)
+})
+
 test('Next change past the rows shown brings the next change in instead of leaving the file', () => {
   const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
   const big = list => `${list.join('\n')}\n`

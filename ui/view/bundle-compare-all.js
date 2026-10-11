@@ -91,6 +91,7 @@ class BundleCompareAll extends BundleCompareCode {
               ${this._fileName(path, entry, prefix)}
               <span class="bundle-code-main-spacer"></span>
               ${this._fileFigures(entry, file.model)}
+              ${file.mixedWhitespace ? this._whitespaceToggle(true) : nothing}
             </header>
             ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}
           </section>`)}
