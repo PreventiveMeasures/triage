@@ -123,7 +123,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmSocketReport } from './npm-insights.ts'
+import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { type PrettyCache, PrettyError, prettyRequest } from './pretty-print.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
@@ -2435,7 +2435,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (path === NPM_ADVISORIES_PATH) {
       const versions = await readNpmVersions(name, privileged, controller.signal)
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      const { advisories, repository } = await npmAdvisories(name, versions.versions, {
+      const list = await npmAdvisories(name, versions.versions, {
         githubToken,
         repo: async () => {
           const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
@@ -2444,7 +2444,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
         cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
         debug: deps.config.debug,
       })
-      if (await recheck(versions.private)) sendJson(res, 200, { name, versions: versions.versions, advisories, repository })
+      if (await recheck(versions.private)) sendJson(res, 200, { name, ...list })
       return
     }
     // The package's, with the repository its latest version names; either
@@ -2456,6 +2456,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
       if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
       const repo = githubRepoOf(doc)
+      npmLatestRepo(name, repo)
       const [downloads, github] = await Promise.all([downloadsAsked, repo === null ? null : npmGithubStats(repo, githubToken).catch(() => null)])
       if (await recheck(doc.private)) sendJson(res, 200, { name, downloads, github })
       return
@@ -2492,7 +2493,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // gone takes none, as its close has passed.
     if (res.destroyed) return
     const download = path === NPM_DOWNLOAD_PATH
-    const load = download ? loadNpmTarball(doc) : loadNpmPackageBody(doc)
+    const load = download ? loadNpmTarball(doc)
+      : loadNpmPackageBody(doc, () => npmKnown(name, doc.version, doc.private, githubRepoOf(doc), bundleCommitHash(doc.manifest['gitHead'])))
     res.once('close', load.release)
     const bytes = await load.result
     if (!(await recheck(doc.private))) return

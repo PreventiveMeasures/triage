@@ -33,20 +33,27 @@ const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, moderate: 
 // Answers kept for an hour by what they answer, at most `max` of them, the
 // oldest asked going first; one still being asked for is shared, and one that
 // failed, or that `whole` says is partial, is dropped once it is answered.
+// `peek` gives one already answered, asking for nothing; undefined where none is.
 function kept<T>(max: number, whole: (value: T) => boolean = () => true) {
-  const answers = new Map<string, { at: number; value: Promise<T> }>()
-  return (key: string, ask: () => Promise<T>): Promise<T> => {
+  const answers = new Map<string, { at: number; value: Promise<T>; answered?: { value: T } }>()
+  const get = (key: string, ask: () => Promise<T>): Promise<T> => {
     const now = Date.now()
     const hit = answers.get(key)
     if (hit && now - hit.at < KEPT_MS) return hit.value
     const value = ask()
+    const entry: { at: number; value: Promise<T>; answered?: { value: T } } = { at: now, value }
     answers.delete(key)
-    answers.set(key, { at: now, value })
+    answers.set(key, entry)
     while (answers.size > max) answers.delete(answers.keys().next().value!)
-    const drop = () => { if (answers.get(key)?.value === value) answers.delete(key) }
-    value.then(answer => { if (!whole(answer)) drop(); return answer }, drop)
+    const drop = () => { if (answers.get(key) === entry) answers.delete(key) }
+    value.then(answer => { if (whole(answer)) entry.answered = { value: answer }; else drop(); return answer }, drop)
     return value
   }
+  const peek = (key: string): T | undefined => {
+    const hit = answers.get(key)
+    return hit?.answered && Date.now() - hit.at < KEPT_MS ? hit.answered.value : undefined
+  }
+  return Object.assign(get, { peek })
 }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
@@ -93,6 +100,12 @@ async function askRange(range: string, name: string): Promise<NpmDownloads | nul
 }
 
 const downloads = kept<NpmDownloads | null>(500)
+// The repository each package's latest version names (owner/name, null where
+// it names none), as its figures were last asked with: what npmKnown finds
+// them by.
+const latestRepos = kept<string | null>(500)
+
+export const npmLatestRepo = (name: string, repo: string | null): void => void latestRepos(name, () => Promise.resolve(repo))
 
 export function npmDownloads(name: string): Promise<NpmDownloads | null> {
   return downloads(name, () => askDownloads(name))
@@ -303,9 +316,10 @@ export interface NpmAdvisory {
   details?: string; affected: number[]
 }
 
-// `repository` false where the repository's advisories could not be had
-// (GitHub refusing, its rate limit spent), leaving npm's alone.
-export interface NpmAdvisoryList { advisories: NpmAdvisory[]; repository: boolean }
+// `versions` those `affected` indexes; `repository` false where the
+// repository's advisories could not be had (GitHub refusing, its rate limit
+// spent), leaving npm's alone.
+export interface NpmAdvisoryList { versions: string[]; advisories: NpmAdvisory[]; repository: boolean }
 
 export interface NpmAdvisoryOptions {
   // The reader's GitHub token, and the repository the package names (owner/
@@ -322,7 +336,7 @@ export interface NpmAdvisoryOptions {
 async function askAdvisories(name: string, versions: string[], { githubToken, repo, cache, debug = false }: NpmAdvisoryOptions): Promise<NpmAdvisoryList> {
   // Every version upstream takes, as it checks each one it is asked about.
   const asked = versions.filter(version => isExactVersion(version))
-  if (asked.length === 0) return { advisories: [], repository: true }
+  if (asked.length === 0) return { versions, advisories: [], repository: true }
   // Its repository's own advisories are asked for only where GitHub says, now
   // and not from an answer kept, that it is public, and that repository is the
   // one asked: the list is kept for every reader of the package, and the
@@ -367,17 +381,54 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     merged.set(key, { ...known, ...range && { range }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])], affected: [...known.affected, ...affected] })
   }
   return {
-    repository,
+    versions, repository,
     advisories: [...merged.values()].map(row => ({ ...row, affected: [...new Set(row.affected)].toSorted((a, b) => a - b) })).filter(row => row.affected.length > 0)
       .toSorted((a, b) => (SEVERITY_RANK[a.severity ?? ''] ?? 4) - (SEVERITY_RANK[b.severity ?? ''] ?? 4) || a.id.localeCompare(b.id)),
   }
 }
 
-const advisoryLists = kept<NpmAdvisoryList>(100, list => list.repository)
+const ADVISORY_LISTS = 100
+const advisoryLists = kept<NpmAdvisoryList>(ADVISORY_LISTS, list => list.repository)
+// What each package's list was last asked by, for npmKnown.
+const advisoryKeys = new Map<string, string>()
 
 // The package's advisories, `versions` its published versions as the version
 // list has them; asked again once a version is published, and a list without
 // its repository's, next time.
 export function npmAdvisories(name: string, versions: string[], options: NpmAdvisoryOptions): Promise<NpmAdvisoryList> {
-  return advisoryLists(`${name}\0${versions.length}\0${versions[0] ?? ''}`, () => askAdvisories(name, versions, options))
+  const key = `${name}\0${versions.length}\0${versions[0] ?? ''}`
+  advisoryKeys.delete(name)
+  advisoryKeys.set(name, key)
+  while (advisoryKeys.size > ADVISORY_LISTS) advisoryKeys.delete(advisoryKeys.keys().next().value!)
+  return advisoryLists(key, () => askAdvisories(name, versions, options))
+}
+
+// What is kept about a version's package, each part as its own route answers
+// it (http.ts handleNpm), for the version's response to carry: its figures,
+// where those of the repository its latest version names are kept too; its
+// advisories, where kept for a version list that has this version; the tags
+// of its publish commit (`sha`, in `repo`, the repository it names); and
+// Socket's report on it. Nothing is asked for: what isn't kept is left out,
+// for the viewer to ask for. A private package's name never leaves for
+// Socket, so its report is none.
+export interface NpmKnown {
+  stats?: { name: string; downloads: NpmDownloads | null; github: NpmGithubStats | null }
+  advisories?: { name: string } & NpmAdvisoryList
+  tags?: { name: string; version: string; tags: string[] }
+  socket?: { name: string; version: string; socket: NpmSocketReport | null }
+}
+
+export function npmKnown(name: string, version: string, isPrivate: boolean, repo: string | null, sha: string | null): NpmKnown {
+  const known: NpmKnown = {}
+  const days = downloads.peek(name), latest = latestRepos.peek(name)
+  const github = latest === null ? null : latest === undefined ? undefined : repositories.peek(latest.toLowerCase())
+  if (days !== undefined && github !== undefined) known.stats = { name, downloads: days, github }
+  const key = advisoryKeys.get(name)
+  const list = key === undefined ? undefined : advisoryLists.peek(key)
+  if (list?.versions.includes(version)) known.advisories = { name, ...list }
+  const tags = repo === null || sha === null ? [] : commitTags.peek(`${repo.toLowerCase()}\0${sha}\0${version}`)
+  if (tags) known.tags = { name, version, tags }
+  const socket = isPrivate ? null : socketReports.peek(`${name}@${version}`)
+  if (socket !== undefined) known.socket = { name, version, socket }
+  return known
 }

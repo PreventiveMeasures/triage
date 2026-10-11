@@ -1173,10 +1173,18 @@ as long after each failure in a row up to five minutes, on a repaint scheduled
 for then.
 
 `GET /api/npm/package?name=&version=` returns `{ name, version, private,
-integrity, tarballSize, manifest, files }`, the manifest's `publisher` the npm
+integrity, tarballSize, manifest, files, known }`, the manifest's `publisher` the npm
 account that published it (never its email), and each file row `[path,
 bytes, text]`, or for a file that is not UTF-8 `[path, bytes, null,
-'sha256-<base64>']`. `version` defaults to `latest`. `GET
+'sha256-<base64>']`. `version` defaults to `latest`. `known` carries what the
+server already keeps about the package, so the viewer need not ask for it:
+`stats`, `advisories`, `tags` and `socket`, each as its own route below
+answers it, `stats` where the figures of the repository the latest version
+names are kept too, `advisories` where kept for a version list that has this
+version, and `tags` and `socket` for this version. Nothing is asked for it,
+and what isn't kept is left out, for the viewer to ask its route; the version
+list, never kept, is always asked for apart. A version naming no repository
+or commit has no tags to ask for, and a private one no Socket report. `GET
 /api/npm/versions?name=` returns `{ name, private, distTags, versions,
 times }`, newest first, `times` when each was published (ISO dates, from the
 registry's whole document rather than its abbreviated one), and `GET /api/npm/download?name=&version=` the tarball.

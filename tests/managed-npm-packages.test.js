@@ -282,7 +282,7 @@ test('reads of a version share its load and its encoded body; four load at once,
   assert.ok(bodies.every(body => body === bodies[0]), 'one encoded body for every reader')
   assert.equal(downloadsOf(pkgs[0]), 1)
   assert.deepEqual(JSON.parse(brotliDecompressSync(bodies[0])), { name: 'shared-a', version: '1.0.0', private: false, integrity: pkgs[0].doc.dist.integrity,
-    tarballSize: pkgs[0].tgz.length, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]] })
+    tarballSize: pkgs[0].tgz.length, manifest: { description: 'shared-a for tests' }, files: [['index.js', 21, "module.exports = 'a'\n"]], known: {} })
   await Promise.all(others.map(other => other.result))
   // Done, but their readers are still writing them out.
   await assert.rejects(loadNpmTarball(version(pkgs[4])).result, /npm-busy/u, 'a body still being written keeps its place')
@@ -641,6 +641,35 @@ test('Socket\'s scores and alerts for a public version, the file each names as t
     [['pkg:npm/scored@1.0.0', null], ['pkg:npm/@pub/scored@2.0.0', null], ['pkg:npm/capped@1.0.0', null], ['pkg:npm/unseen@1.0.0', null]], 'asked without credentials, and kept')
   assert.deepEqual(asked.filter(([what]) => what === 'badge').map(([, id, auth]) => [id, auth]),
     [['scored/1.0.0', null], ['@pub/scored/2.0.0', null], ['capped/1.0.0', null], ['unseen/1.0.0', null]], 'its badge too, kept with it')
+})
+
+test('a version carries what is kept about its package, each part as its own route answers it, asking for none of it', async t => {
+  const h = await setup(t)
+  withToken(t)
+  const repository = { type: 'git', url: 'git+https://github.com/org/known.git' }
+  const pkg = packageOf('known-pkg', '1.1.0', { 'index.js': '' }, { repository })
+  const bare = packageOf('known-bare', '1.0.0', { 'index.js': '' }, { repository: undefined })
+  const secret = { ...packageOf('@acme/known', '1.0.0', { 'index.js': '' }), private: true }
+  registry(t, [{ ...pkg, versions: ['1.0.0', '1.1.0'] }, packageOf('known-pkg', '1.0.0', { 'index.js': '' }, { repository }), bare, secret])
+  const asked = insights(t, {
+    downloads: { 'known-pkg': { start: '2026-01-01', end: '2026-01-01', package: 'known-pkg', downloads: [{ day: '2026-01-01', downloads: 5 }] } },
+    repos: { 'org/known': { full_name: 'org/known', private: false, visibility: 'public', stargazers_count: 1, forks_count: 0, open_issues_count: 0, archived: false, pushed_at: '2026-09-01T00:00:00Z', pulls: 0 } },
+    advisories: { 'known-pkg': [] },
+    socket: { 'pkg:npm/known-pkg@1.1.0': { id: '1', type: 'npm', name: 'known-pkg', version: '1.1.0', alerts: [{ type: 'malware', severity: 'critical', category: 'supplyChainRisk' }] } },
+  })
+  const knownOf = async (name, version, who) => (await h.send(packagePath(name, version), who)).json().known
+  assert.deepEqual(await knownOf('known-pkg', '1.1.0'), {}, 'nothing kept yet')
+  assert.deepEqual(asked, [], 'and nothing asked for')
+  const stats = (await h.send('/api/npm/stats?name=known-pkg')).json()
+  const advisories = (await h.send('/api/npm/advisories?name=known-pkg')).json()
+  const socket = (await h.send('/api/npm/socket?name=known-pkg&version=1.1.0')).json()
+  const answered = asked.length
+  assert.deepEqual(await knownOf('known-pkg', '1.1.0'), { stats, advisories, socket }, 'the tags of its commit need the reader\'s token, so none are kept')
+  assert.deepEqual(await knownOf('known-pkg', '1.0.0'), { stats, advisories }, 'Socket\'s report is on the version')
+  assert.equal(asked.length, answered, 'what is kept is all it carries')
+  assert.deepEqual(await knownOf('known-bare', '1.0.0'), { tags: { name: 'known-bare', version: '1.0.0', tags: [] } }, 'a version naming no repository has no tags to ask for')
+  assert.deepEqual(await knownOf('@acme/known', '1.0.0', 'admin'), { socket: { name: '@acme/known', version: '1.0.0', socket: null } }, 'nor a private package a report')
+  assert.equal(asked.length, answered, 'Socket is never asked about it')
 })
 
 test('Socket is never asked about a private package, whoever reads it', async t => {

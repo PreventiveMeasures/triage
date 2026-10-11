@@ -440,7 +440,7 @@ test('a source says when its options are loading, missing or failed, and a faile
   assert.match(text({ pending: true, options: [] }), /Loading versions…/u)
   assert.match(text({ options: [] }), /No other versions to compare <strong>pkg@2\.0\.0<\/strong> with\./u)
   assert.match(text({ error: "Couldn't list the versions of pkg.", options: [] }), /is-error[^]*Couldn't list the versions of pkg\./u)
-  assert.match(text(), /Pick a version above to compare against/u)
+  assert.match(text(), /Pick a version above to compare <strong>pkg@2\.0\.0<\/strong> against\./u)
   const { view } = sourced()
   view.source = { ...view.source, load: () => Promise.reject(new Error('No such package version, or it is not available to you.')) }
   view._choose('9.9.9')

@@ -145,17 +145,37 @@ export async function loadNpmVersion(name, spec, options) {
   const entry = npmPackageEntry(data)
   const details = npmPackageDetails(entry, data)
   if (!entry.npm.private) keep(entry, details)
+  keepKnown(data)
   return { entry, details }
+}
+
+// What the server sent with a version about its package (npm-insights.ts
+// npmKnown), each part as its own request answers it, kept as if asked for:
+// where the session has none of it yet, or only one being asked for, whose
+// answer then gives way.
+function keepKnown({ name, version, known }) {
+  if (!known || typeof known !== 'object') return
+  const keys = { stats: name, advisories: name, tags: `${name}@${version}`, socket: `${name}@${version}` }
+  for (const [kind, of] of Object.entries(keys)) {
+    const key = `${kind}\0${of}`
+    if (known[kind] && packageData.get(key)?.status !== 'ready') packageData.set(key, { status: 'known', data: known[kind] })
+  }
 }
 
 // Something read about a package for this session, as `ask` answers and
 // `shape` keeps it: `{ status }` while the server is asked ('loading', then
 // 'ready' with what `shape` gives, or 'error' until a retry), each a new
-// object, so the view repaints when it arrives.
+// object, so the view repaints when it arrives. What came with a version
+// (keepKnown) is ready without asking.
 export function npmPackageData(kind, name, ask, shape) {
   sessionKept()
   const key = `${kind}\0${name}`
   const known = packageData.get(key)
+  if (known?.status === 'known') {
+    const ready = { status: 'ready', ...shape(known.data) }
+    packageData.set(key, ready)
+    return ready
+  }
   if (known && !(known.status === 'error' && Date.now() >= known.retryAt)) return known
   const loading = { status: 'loading', failures: known?.failures ?? 0 }
   packageData.set(key, loading)

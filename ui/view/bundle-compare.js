@@ -775,7 +775,7 @@ class BundleCompare extends LitElement {
     } else if (others.length === 0 && !this.source) {
       body = html`<div class="bundle-compare-empty">No other bundles to compare with. Drop a second <code>.map</code> or <code>.stasis.code.br</code> bundle to diff against this one.</div>`
     } else if (!hasTarget) {
-      body = html`<div class="bundle-compare-empty">Pick a ${noun} above to compare against <strong>${this._nameFor(this.integrity)}</strong>.</div>`
+      body = html`<div class="bundle-compare-empty">Pick a ${noun} above to compare <strong>${this._nameFor(this.integrity)}</strong> against.</div>`
     } else if (this._status === 'loading' || !this._otherDetails) {
       body = html`<div class="bundle-compare-empty">Comparing…</div>`
     } else if (this._otherDetails.error) {

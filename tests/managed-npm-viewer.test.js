@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmPublished, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmPublished, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -239,6 +239,18 @@ test('history commits a dist-tag link at the version it opened', async () => {
   assert.equal(browser.location.pathname, '/npm/@scope/pkg@1.2.3/code')
   assert.equal(requests.length, 1, 'a version read in this session opens again without asking')
   assert.equal(entries.length, 2)
+})
+
+test('what the server keeps about a package comes with a version, ready without asking; the rest is asked for', async () => {
+  const socket = { name: '@scope/pkg', version: '1.2.3', socket: null }, stats = { name: '@scope/pkg', downloads: null, github: null }
+  answer = () => Promise.resolve({ ...data, known: { stats, socket } })
+  await loadNpmVersion('@scope/pkg', '1.2.3')
+  const asked = []
+  const ask = kind => () => { asked.push(kind); return Promise.resolve({}) }
+  assert.deepEqual(npmPackageData('stats', '@scope/pkg', ask('stats'), answered => ({ figures: answered.downloads })), { status: 'ready', figures: null })
+  assert.deepEqual(npmPackageData('socket', '@scope/pkg@1.2.3', ask('socket'), answered => ({ socket: answered.socket })), { status: 'ready', socket: null })
+  assert.equal(npmPackageData('advisories', '@scope/pkg', ask('advisories'), answered => answered).status, 'loading')
+  assert.deepEqual(asked, ['advisories'])
 })
 
 test('a private version is asked for each time it opens, as access may be lost meanwhile', async () => {

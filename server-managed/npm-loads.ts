@@ -194,18 +194,20 @@ export function loadNpmFiles(doc: NpmVersionDocument): NpmLoad<NpmPackageFile[]>
 }
 
 // The version as the viewer reads it, as brotli-encoded JSON: `{ name,
-// version, private, integrity, tarballSize, manifest, files }`, its files as
-// npmFileRows gives them. Encoding is where a load holds the most, so it
-// takes its place among the active loads until its body is done, and readers
-// asking meanwhile share that body, the first one's manifest in it; nothing
-// is kept once its readers are done.
-export function loadNpmPackageBody(doc: NpmVersionDocument): NpmLoad<Buffer> {
+// version, private, integrity, tarballSize, manifest, files, known }`, its
+// files as npmFileRows gives them, and with them what `known` gives as its
+// files are encoded: what is kept about its package (npm-insights.ts
+// npmKnown), which the viewer need not then ask for. Encoding is where a load
+// holds the most, so it takes its place among the active loads until its body
+// is done, and readers asking meanwhile share that body, the first one's
+// manifest and `known` in it; nothing is kept once its readers are done.
+export function loadNpmPackageBody(doc: NpmVersionDocument, known: () => object = () => ({})): NpmLoad<Buffer> {
   return shared(`package ${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`, doc, async () => {
     const tarball = await readTarball(doc)
     const files = await readFiles(tarball)
     return encodeBrotli(Buffer.from(JSON.stringify({
       name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
-      manifest: doc.manifest, files: npmFileRows(files),
+      manifest: doc.manifest, files: npmFileRows(files), known: known(),
     })))
   })
 }
