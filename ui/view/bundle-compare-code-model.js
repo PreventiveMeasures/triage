@@ -87,11 +87,10 @@ const LET = /\s*[\p{L}_$[{]/uy
 // What ends a concise arrow's body or begins a conditional in it: a `?` (not
 // `?.`, `??`), a `:`, a `,` or a `;`.
 const ARROW_ENDS = /(?<!\?)\?(?!\?|\.(?!\d))|[:,;]/gu
-// What follows a `for`'s `(…)` whose body is braced or a `do`, and an
-// unbraced body's statement still going on: an `if`'s `else`, a `try`'s
-// `catch` or `finally`, a `do`'s `while`; spaces or comments first.
+// What follows a `for`'s `(…)` whose body is braced, and an unbraced body's
+// statement still going on: an `if`'s `else`, a `try`'s `catch` or
+// `finally`, a `do`'s `while`; spaces or comments first.
 const BRACED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/uy
-const DO = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*do(?![\p{ID_Continue}$])/uy
 const GOES_ON = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(catch|else|finally|while)(?![\p{ID_Continue}$])/uy
 // What follows a key before its value: spaces or comments, then `:`.
 const KEYED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*:/uy
@@ -147,12 +146,20 @@ function nameless(text) {
   }
   const enter = (entries = [], { fn = false, group = null } = {}) => {
     const outer = scope
-    scopes.push({ fn, names: new Set(entries.map(({ name }) => name)), parent: scope })
+    scopes.push({ fn: fn && !group, names: new Set(entries.map(({ name }) => name)), params: group !== null, parent: scope })
     scope = scopes.length - 1
     for (const { aside } of entries) if (aside) aside[3] = scope
     if (!group) return
     for (let i = group.asides; i < setAside.length; i++) if (setAside[i][3] === outer) setAside[i][3] = scope
     for (let i = group.scopes; i < scope; i++) if (scopes[i].parent === outer) scopes[i].parent = scope
+    // Its body's declarations a scope apart, a default reading none (`(a = b) => { var b }`).
+    scopes.push({ fn, names: new Set(), parent: scope })
+    scope = scopes.length - 1
+  }
+  // Left, a body leaves its parameters' scope too.
+  const leave = () => {
+    scope = scopes[scope].parent
+    if (scopes[scope].params) scope = scopes[scope].parent
   }
   // A conditional's `:` (`colon`) is the innermost one's begun, ending the
   // arrows begun after its `?` alone.
@@ -160,19 +167,19 @@ function nameless(text) {
     while (arrows.length > 0 && arrows.at(-1).depth >= depth) {
       if (colon && arrows.at(-1).conditionals > 0) return void arrows.at(-1).conditionals--
       arrows.pop()
-      scope = scopes[scope].parent
+      leave()
     }
   }
   // A braced body ends at its `}`; an unbraced one with its statement, an
   // `if`'s with its `else` (`for (…) if (x) f(); else g()`), a `try`'s with
-  // its `catch` or `finally`, a `do`'s (`doing`) with its `while`, read from
+  // its `catch` or `finally`, a `do`'s (`doing`, those begun in it) with its `while`, read from
   // `from`: a `while` past a body that is no `do` begins one of its own.
   const endLoops = (depth, from) => {
     GOES_ON.lastIndex = from
     const next = GOES_ON.exec(text)?.[1]
     while (loops.length > 0 && loops.at(-1).body && loops.at(-1).depth >= depth) {
       const loop = loops.at(-1)
-      if (!loop.braced && next && (next !== 'while' || loop.doing)) return void (loop.doing &&= next !== 'while')
+      if (!loop.braced && next && (next !== 'while' || loop.doing > 0)) return void (loop.doing -= next === 'while' ? 1 : 0)
       scope = scopes[loops.pop().scope].parent
     }
   }
@@ -372,14 +379,13 @@ function nameless(text) {
       program.push(token)
       const open = opens.pop()
       endArrows(opens.length + 1)
-      if (open === 'block') scope = scopes[scope].parent
+      if (open === 'block') leave()
       if (classBodies.at(-1) === opens.length + 1) {
         classBodies.pop()
-        scope = scopes[scope].parent
+        leave()
       }
       BRACED.lastIndex = at
-      DO.lastIndex = at
-      if (open === 'control' && loops.at(-1)?.depth === opens.length && !loops.at(-1).body) Object.assign(loops.at(-1), { body: true, braced: BRACED.test(text), doing: DO.test(text) })
+      if (open === 'control' && loops.at(-1)?.depth === opens.length && !loops.at(-1).body) Object.assign(loops.at(-1), { body: true, braced: BRACED.test(text), doing: 0 })
       else endLoops(first === '}' ? opens.length : opens.length + 1, at)
       if (open === '(') {
         const group = groups.pop()
@@ -451,6 +457,7 @@ function nameless(text) {
       if (word === 'extends' && within?.word !== 'class') extending.push({ depth: opens.length, word })
       else if ((word === 'class' || word === 'function') && within) extending.push({ depth: opens.length, word })
       else if (word === 'extends') within.word = word
+      if (word === 'do' && loops.at(-1)?.body && loops.at(-1).depth === opens.length) loops.at(-1).doing++
       if (word === 'extends' && classes.at(-1)?.depth === opens.length && classes.at(-1).marker === null) classes.at(-1).marker = extending.at(-1)
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       LET.lastIndex = at
