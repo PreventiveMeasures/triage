@@ -884,7 +884,7 @@ it stands for; the lines that match with short names set aside tell which
 variable became which, and each old variable takes the name of the new one
 it most stands for, where that one most stands for it, on every line,
 removed ones too. An old variable no new one stands for whose name the new
-copy uses is renamed apart (`rʹ`), so that no line reads it as the new one.
+copy uses is renamed apart (`r_old`), so that no line reads it as the new one.
 The names given must leave every name read resolving to the same variable,
 and a global's to none, and the renamed copy is parsed again and must bind as
 the old one did; it is then formatted again, checked to change only its
@@ -1204,7 +1204,7 @@ control. A version shows in the bundle view with four tabs:
   alike throughout: short names (three characters at most, as a minifier
   gives them) a declaration in scope stands for, on every line, removed ones
   too, so that the two sides then diff as they are. An old variable no new
-  one stands for reads with `ʹ` (`rʹ`) where the new side uses its name, never
+  one stands for reads as `r_old` where the new side uses its name `r`, never
   as the new one. The server works it out from the two copies (`GET
   /api/npm/rename-diff` below, `GET /api/bundles/:id/rename-diff` for bundles),
   so it is offered with the pretty-print toggle on, for a managed bundle's or

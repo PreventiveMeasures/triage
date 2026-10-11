@@ -10,7 +10,7 @@ import { formatChecked } from './pretty-format.ts'
 import { renameMap } from './rename-map.js'
 
 const { before, after, extension, ignoreWhitespace } = workerData
-const mapped = renameMap(before, after)
+const mapped = renameMap(before, after, { extension })
 let renamed = before
 if (!mapped.reason) {
   // A name's new length may move the lines it is on; formatted again, and

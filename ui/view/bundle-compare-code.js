@@ -30,7 +30,7 @@ import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { npmFileReadability } from './file-readability.js'
-import { renameDiff, renameDiffable } from './rename-diff.js'
+import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { renameParts } from './bundle-compare-diff.js'
 import { renameTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
@@ -607,7 +607,7 @@ export class BundleCompareCode extends LitElement {
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
         </button>
         ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
-          data-tooltip="Hide renamed names: the old side given the new side's names wherever a minifier renamed a variable alike throughout, an old one no new one stands for marked ʹ"
+          data-tooltip="Hide renamed names: the old side given the new side's names wherever a minifier renamed a variable alike throughout, an old one no new one stands for named apart (r_old)"
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
         </button>` : nothing}` : nothing}
@@ -715,6 +715,7 @@ export class BundleCompareCode extends LitElement {
 
   _setRenames(value) {
     prefs.ignoreRenames = value
+    if (value) retryRenameDiffs()
     this.requestUpdate()
   }
 

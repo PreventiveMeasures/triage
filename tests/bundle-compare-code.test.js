@@ -387,6 +387,30 @@ test('a diff shows control characters as boxes, and a CRLF\'s CR only where it i
   assert.deepEqual(rows.ctx.map(boxes), [['ESC']])
 })
 
+test('a rename diff that failed for a reason that may pass is asked for again when renamed names are hidden again', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/busy.min.js', [{ 'dist/busy.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/busy.min.js': `var X=1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b9'
+  element.other.managedId = 'b10'
+  pretty.set('b9:dist/busy.min.js', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
+  pretty.set('b10:dist/busy.min.js', 'var X = 1;\nq(X);\nmodule.exports = X;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
+  pretty.set('b9:dist/busy.min.js', Object.assign(new Error('Too many files are being compared. Try again shortly.'), { status: 429 }))
+  element._setRenames(true)
+  await settle()
+  assert.match(renderText(element.render()), /Couldn't hide renamed names: Too many files are being compared/u)
+  pretty.set('b9:dist/busy.min.js', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
+  assert.match(renderText(element.render()), /Couldn't hide renamed names/u, 'kept while shown, not asked for on every paint')
+  element._setRenames(false)
+  element._setRenames(true)
+  await settle()
+  const shown = renderText(element.render())
+  assert.doesNotMatch(shown, /Couldn't hide renamed names/u)
+  assert.match(shown, /Only renamed names changed in this file\./u)
+})
+
 test('a file whose names the server could not give the new side\'s says why, its renamed names shown', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
   const element = view('dist/eval.min.js', [{ 'dist/eval.min.js': `var Y=1;eval("Y");${'q(Y);'.repeat(250)}\n` }, { 'dist/eval.min.js': `var X=1;eval("X");${'q(X);'.repeat(250)}\n` }])

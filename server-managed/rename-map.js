@@ -10,7 +10,7 @@
 // became which: an old one and a new one each the other's most told of
 // (pairing) is renamed to the new one's name, on every line, removed ones too
 // (a changed line's variables count where unchanged lines say nothing). Any
-// other old variable whose name the new side uses is renamed apart (`rʹ`),
+// other old variable whose name the new side uses is renamed apart (`r_old`),
 // as it is none of the new side's: a line reading it never reads as one
 // reading the new side's. The names so given must leave each name read where
 // it was resolving to the same variable, a global's to none, and those that
@@ -22,9 +22,12 @@ import { changeBlocks } from '../common/line-diff.js'
 // Names a minifier gives: longer ones are an API's or a person's, and one
 // changed is a change.
 const RENAMED_MAX_LENGTH = 3
-// What a name renamed apart ends in, as many times as it takes to be one
-// neither side uses: a modifier letter prime, which a name may hold.
-const APART = 'ʹ'
+// What a name renamed apart ends in, numbered past the first as it takes to
+// be one neither side uses: `e_old`, `e_old2`.
+const APART = '_old'
+// The fewest unchanged lines in a row between changes whose pairs count as
+// unchanged lines do in pairing variables.
+const ANCHORED_RUN = 3
 const FUNCTIONS = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'])
 // What holds `let`, `const`, `class` and functions declared in it as its own.
 const BLOCKS = new Set(['BlockStatement', 'ForStatement', 'ForInStatement', 'ForOfStatement', 'SwitchStatement'])
@@ -60,6 +63,8 @@ const within = (from, of) => {
 // (`unparsed`), reads a name by its spelling (`eval`, `with`: `dynamic`) or
 // holds JSX (`jsx`), or, outside a module, reads a function declared in a
 // block past it, its function's in sloppy code alone (`block-function`).
+// Parsed as its `extension` has it: an `.mjs` file a module, a `.cjs` one a
+// CommonJS module, any other a module where it says so (`import`, `export`).
 // A variable is renamable (`aside`) where its name is short and a declaration
 // stands for it (`var`, `let`, `const`, `function`, `class`, `import`,
 // `catch`, parameters), but not at a script's top level, where it is a global
@@ -67,10 +72,11 @@ const within = (from, of) => {
 // exported by that name (`export { a }`, `export const a`), imported by it
 // (`import { a }`), or a shorthand property's (`{ a }`, `const { a } = o`).
 // Properties, keys, labels and strings are no variable's.
-function analyze(text) {
+function analyze(text, extension) {
   let program
   try {
-    const parsed = parseSync('file.js', text, { lang: 'jsx', sourceType: 'unambiguous' })
+    const sourceType = extension === 'mjs' ? 'module' : extension === 'cjs' ? 'commonjs' : 'unambiguous'
+    const parsed = parseSync('file.js', text, { lang: 'jsx', sourceType })
     if (parsed.errors.length > 0) return { reason: 'unparsed' }
     program = parsed.program
   } catch { return { reason: 'unparsed' } }
@@ -193,7 +199,7 @@ function analyze(text) {
       && blockFunctions.some(fn => fn.name === node.name && fn !== variable && !within(where, fn.scope) && within(where, fnOf(fn.scope)))) return { reason: 'block-function' }
   }
   for (const [node, variable] of occurrences) if (keeping.has(node)) variable.kept = true
-  const own = program.sourceType === 'module' || commonjs
+  const own = program.sourceType === 'module' || program.sourceType === 'commonjs' || commonjs
   for (const variable of variables) variable.aside = variable.name.length <= RENAMED_MAX_LENGTH && !variable.kept && (own || variable.scope !== root)
   // A shorthand property's two names are one, at one place.
   const byStart = (x, y) => x[0].start - y[0].start
@@ -250,7 +256,11 @@ function pairing(before, after, a, b) {
   let i = 0, j = 0
   // Lines differing in whitespace alone pair too: it never tells a name apart.
   for (const block of [...changeBlocks(ka.key, kb.key, true), { a0: ka.lines.length, a1: ka.lines.length, b0: kb.lines.length, b1: kb.lines.length }]) {
-    while (i < block.a0) tally(unchanged, i++, j++)
+    // A short run of unchanged lines between changes may pair two alike lines
+    // of different places (`function K(t, e) {` with an added `function ls(t,
+    // e) {`, their names set aside): told as a changed line is.
+    const anchored = block.a0 - i >= ANCHORED_RUN
+    while (i < block.a0) tally(anchored ? unchanged : changed, i++, j++)
     if (block.a1 - block.a0 === block.b1 - block.b0) for (let k = 0; k < block.a1 - block.a0; k++) tally(changed, block.a0 + k, block.b0 + k)
     i = block.a1
     j = block.b1
@@ -330,14 +340,15 @@ function bindsAlike(analysis, renamed) {
 // The old text with the new one's names, as above: `{ text, renamed, apart }`,
 // counting the variables renamed to a new one's name and those renamed apart,
 // or `{ reason }` where it can't be, as analyze has it, or where the renamed
-// text would not bind as the old one does (`unverified`).
-export function renameMap(before, after) {
-  const a = analyze(before), b = analyze(after)
+// text would not bind as the old one does (`unverified`); both texts a file's
+// with `extension`.
+export function renameMap(before, after, { extension = 'js' } = {}) {
+  const a = analyze(before, extension), b = analyze(after, extension)
   if (a.reason || b.reason) return { reason: a.reason ?? b.reason }
   const { map, weak } = pairing(before, after, a, b)
   const apart = name => {
     let named = name + APART
-    while (a.names.has(named) || b.names.has(named)) named += APART
+    for (let n = 2; a.names.has(named) || b.names.has(named); n++) named = `${name}${APART}${n}`
     return named
   }
   const given = new Map()
@@ -360,7 +371,7 @@ export function renameMap(before, after) {
     at = node.end
   }
   text += before.slice(at)
-  if (!bindsAlike(a, analyze(text))) return { reason: 'unverified' }
+  if (!bindsAlike(a, analyze(text, extension))) return { reason: 'unverified' }
   let renamed = 0, separated = 0
   for (const variable of a.variables) {
     if (given.get(variable) === variable.name) continue

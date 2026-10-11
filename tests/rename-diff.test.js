@@ -228,10 +228,10 @@ test('an old variable no new one stands for reads apart, never as the new one of
   // `abc` and `x` swapped their values: `f(abc)` reads the other one now.
   const swapped = ignoring(['var abc = 1,', '  x = 2;', 'f(abc);'], ['var x = 1,', '  abc = 2;', 'f(abc);'])
   assert.deepEqual(swapped.blocks, [{ a0: 0, a1: 3, b0: 0, b1: 3 }], 'the same text reading another variable is a change')
-  assert.deepEqual(swapped.a.slice(0, 3), ['var abcʹ = 1,', '  xʹ = 2;', 'f(abcʹ);'])
+  assert.deepEqual(swapped.a.slice(0, 3), ['var abc_old = 1,', '  x_old = 2;', 'f(abc_old);'])
   // One removed, a new one of its name added: no line reads the old as the new.
   const replaced = ignoring(['let n = f();', 'g(n);', 'h(1);'], ['h(1);', 'let n = k();', 'g(n);'])
-  assert.ok(replaced.a.includes('g(nʹ);'))
+  assert.ok(replaced.a.includes('g(n_old);'))
 })
 
 test('names are given only where the old side then reads as it did', () => {
@@ -273,4 +273,24 @@ test('variables pair each with the one it most stands for, a stray line outweigh
   // Two old variables each told once for one new one: neither paired.
   const tie = ignoring(['let a = 1, b = 2;', 'f(a);', 'f(b);'], ['let c = 1;', 'f(c);', 'f(c);'])
   assert.deepEqual(tie.a.slice(1, 3), ['f(a);', 'f(b);'])
+})
+
+test('a file is parsed as its extension has it: an .mjs one a module, a .cjs one CommonJS, its top level its own', () => {
+  const [before, after] = ['let a = 1;\nf(a);\n', 'let b = 1;\nf(b);\n']
+  assert.equal(renameMap(before, after).text, before, 'a script\'s top level is every script\'s')
+  assert.equal(renameMap(before, after, { extension: 'mjs' }).text, after, 'a module\'s with no import or export')
+  assert.equal(renameMap(before, after, { extension: 'cjs' }).text, after, 'a CommonJS module\'s reading none of its own names')
+  assert.equal(renameMap('if (x) return;\nlet a = 1;\nf(a);\n', 'if (x) return;\nlet b = 1;\nf(b);\n', { extension: 'cjs' }).text.endsWith('f(b);\n'), true,
+    'its top level a function\'s, `return` there too')
+})
+
+test('a line alike another place\'s with names set aside, paired between changes alone, does not undo what runs of unchanged lines say', () => {
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
+  // `function Ht(t, e) {` added before `function K(t, e) {`: alike with names set
+  // aside, the first may pair with K's, its body's lines saying otherwise.
+  const before = ['function K(t, e) {', '  let n = f(t);', '  if (n) return n;', '  return g(t, e);', '}', 'K(1, 2);']
+  const after = ['function Ht(t, e) {', '  return h(t, e);', '}', 'function K(t, e) {', '  let n = f(t);', '  if (n) return n;', '  return g(t, e);', '}', 'K(1, 2);', 'Ht(3, 4);']
+  const model = ignoring(before, after)
+  assert.deepEqual(model.a.slice(0, 6), before, 'K and its own names as they were')
+  assert.deepEqual(model.blocks, [{ a0: 0, a1: 0, b0: 0, b1: 3 }, { a0: 6, a1: 6, b0: 9, b1: 10 }], 'what was added alone')
 })

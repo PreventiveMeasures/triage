@@ -13,7 +13,8 @@ const KEPT_DIFFS = 16
 // Diffs by both sides' integrity and path and the whitespace setting:
 // `{ status: 'loading' }`, `{ status: 'ready', before, blocks, reason }` (the
 // old side as diffed, the change blocks, and why its names are its own where
-// they could not be given safely), or `{ status: 'error', message }`.
+// they could not be given safely), or `{ status: 'error', message, retry }`,
+// `retry` where asking again may succeed (the server busy, a timeout).
 const diffs = new Map()
 // What a diff asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
@@ -42,7 +43,7 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
       }
       return
     }
-    next = { status: 'error', message: err?.message ?? String(err) }
+    next = { status: 'error', message: err?.message ?? String(err), retry: !(err?.status >= 400 && err.status < 500 && err.status !== 429) }
   }
   if (diffs.get(key) !== asked) return
   diffs.set(key, next)
@@ -69,4 +70,10 @@ export function renameDiff(base, basePath, before, other, path, after, ignoreWhi
     notifiers.delete(old)
   }
   return diff
+}
+
+// Turned back on, "Hide renamed names" asks again for diffs that failed for a
+// reason that may have passed.
+export function retryRenameDiffs() {
+  for (const [key, diff] of diffs) if (diff.status === 'error' && diff.retry) diffs.delete(key)
 }
