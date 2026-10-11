@@ -283,9 +283,11 @@ function nameless(text) {
       keep(token)
       program.push(`""${token.replaceAll(/[^\n]/gu, '')}`)
       // After a `}` a `/` may divide what a function, a class or an object
-      // was (`function(){} / \u0065val(a) / y`), unknown here: read as a
-      // regular expression, one holding what may read a name turns renames off.
-      if (first === '/' && last === '}' && /\\u|\b(?:eval|with)\b/u.test(token)) dynamic = true
+      // was (`function(){} / a / y`), and after `await` or `yield`, names
+      // outside an `async` function or a generator (`await / a / y`): unknown
+      // here, read as a regular expression, one holding what may be a name
+      // or an escaped one turns renames off.
+      if (first === '/' && (last === '}' || last === 'await' || last === 'yield') && /[\p{ID_Start}_$\\]/u.test(token)) dynamic = true
       // A module's name ends its `import` or `export … from`, as `;` does.
       last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
       exporting = keyPlace = naming = parameters = false
