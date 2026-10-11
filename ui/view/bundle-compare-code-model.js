@@ -194,6 +194,8 @@ function nameless(text) {
       scope = scopes[loops.pop().scope].parent
     }
   }
+  // In a `for`'s `(…)`, where `of` is its word: a name elsewhere (`of⏎a()`).
+  const inHead = () => loops.at(-1)?.body === false && loops.at(-1).depth === opens.length - 1
   // Where a statement starts, a `function` or `class` declares its name.
   const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default'
   // A script's top level is every script's: a name declared there is a
@@ -263,7 +265,8 @@ function nameless(text) {
     // A line beginning with `(`, `[` or a template goes on the line before
     // (`fn⏎(a)`, a call).
     // Nor after a word a value must follow (`typeof⏎a`), but `return` and the like.
-    const ends = !(line !== -1 && BEFORE_VALUE.has(last) && !restricted) && (restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
+    const value = BEFORE_VALUE.has(last) && (last !== 'of' || inHead())
+    const ends = !(line !== -1 && value && !restricted) && (restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
       : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !(after === '' && /[([`]/u.test(text[at + raw.length] ?? '')))))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
@@ -333,7 +336,7 @@ function nameless(text) {
     const modified = modifier
     modifier = null
     // `of` is a `for`'s in its `(…)` alone, a name elsewhere (`of / 2`).
-    const head = loops.at(-1)?.body === false && loops.at(-1).depth === opens.length - 1
+    const head = inHead()
     if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last)
       || (last?.length > 1 && (!BEFORE_VALUE.has(last) || (last === 'of' && !head))) || VALUE_END.test(code.trimEnd()))) {
       // A division: the `/` is an operator, and what follows is read again.
@@ -390,7 +393,11 @@ function nameless(text) {
         loops.push({ body: false, depth: opens.length, scope })
       }
       opens.push(open)
-      if (open === '(') groups.push({ asides: setAside.length, caught: last === 'catch', depth: opens.length, names: [], parameters, scopes: scopes.length })
+      // A function expression's own name its `(…)`'s, not a call's in it (`function a(p = f()) {`).
+      if (open === '(') {
+        groups.push({ asides: setAside.length, caught: last === 'catch', depth: opens.length, names: [], parameters, scopes: scopes.length, self })
+        self = null
+      }
       // A function's body is its scope, a `catch`'s not.
       if (open === 'block') enter(pending ?? [], { fn: (pending !== null && !pendingGroup?.caught) || initializer, group: pendingGroup })
       if (first === '{') pending = pendingGroup = null
@@ -412,13 +419,12 @@ function nameless(text) {
         BODY.lastIndex = ARROW.lastIndex = at
         ARROW_BODY.lastIndex = at
         if (ARROW_BODY.test(text) || (group.parameters && BODY.test(text))) {
-          pending = self ? [...group.names, self] : group.names
+          pending = group.self ? [...group.names, group.self] : group.names
           pendingGroup = group
         } else if (ARROW.test(text)) {
           enter(group.names, { fn: true, group })
           arrows.push({ conditionals: 0, depth: opens.length })
         }
-        self = null
       }
       // After a statement's condition, as after `;`, a statement starts.
       last = open === 'control' ? ';' : first
