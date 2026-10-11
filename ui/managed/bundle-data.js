@@ -143,3 +143,27 @@ export function fetchPrettyBundleFile(id, path, hash, { signal } = {}) {
 export function fetchPrettyNpmFile(name, version, path, hash, { signal } = {}) {
   return requestPretty(`/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`, signal)
 }
+
+const RENAME_DIFF_ERRORS = {
+  ...PRETTY_ERRORS,
+  413: 'This file is too large to compare with renamed names hidden.',
+  422: "This file couldn't be compared as code.",
+  'diff-busy': 'Too many files are being compared. Try again shortly.',
+  504: 'Comparing this file took too long.',
+}
+
+// A JavaScript file diffed by the server with one of another bundle or
+// version, both pretty-printed, renamed names hidden: its change blocks and
+// the removed lines left out as renamed (rename-diff.js). `params` name both
+// files, a base's `path` and `hash`, the other's `otherPath` and `otherHash`.
+const requestRenameDiff = (url, signal) => request(url, RENAME_DIFF_ERRORS, response => response.json(), signal)
+
+export function fetchBundleRenameDiff(id, other, { path, hash, otherPath, otherHash, ignoreWhitespace }, { signal } = {}) {
+  const params = new URLSearchParams({ path, hash, other, otherPath, otherHash, ignoreWhitespace: String(ignoreWhitespace) })
+  return requestRenameDiff(`/api/bundles/${encodeURIComponent(id)}/rename-diff?${params}`, signal)
+}
+
+export function fetchNpmRenameDiff(name, version, otherVersion, { path, hash, otherPath, otherHash, ignoreWhitespace }, { signal } = {}) {
+  const params = new URLSearchParams({ name, version, path, hash, otherVersion, otherPath, otherHash, ignoreWhitespace: String(ignoreWhitespace) })
+  return requestRenameDiff(`/api/npm/rename-diff?${params}`, signal)
+}

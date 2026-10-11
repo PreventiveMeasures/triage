@@ -729,8 +729,6 @@ bundle-compare-code > .bundle-code-view {
   color: var(--muted);
   user-select: none;
 }
-/* An unchanged line whose names were renamed alike: its tooltip names the line it was. */
-.diff-renamed { color: var(--accent); cursor: default; }
 .diff-code {
   flex: 1;
   padding-right: 1rem;
@@ -840,6 +838,15 @@ bundle-compare-code > .bundle-code-view {
   align-items: center;
   gap: .75rem;
   padding: .75rem;
+  color: var(--muted);
+  font-size: .72rem;
+  position: sticky;
+  left: 0;
+}
+/* Why a diff with renamed names hidden shows them after all. */
+.bundle-compare-code-note {
+  margin: 0;
+  padding: .5rem .75rem;
   color: var(--muted);
   font-size: .72rem;
   position: sticky;

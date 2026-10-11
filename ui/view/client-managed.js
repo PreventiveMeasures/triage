@@ -85,6 +85,14 @@ export async function fetchPrettyNpmFile(name, version, path, hash, options) {
   return (await loadManagedBundle()).fetchPrettyNpmFile(name, version, path, hash, options)
 }
 
+export async function fetchBundleRenameDiff(id, other, params, options) {
+  return (await loadManagedBundle()).fetchBundleRenameDiff(id, other, params, options)
+}
+
+export async function fetchNpmRenameDiff(name, version, otherVersion, params, options) {
+  return (await loadManagedBundle()).fetchNpmRenameDiff(name, version, otherVersion, params, options)
+}
+
 export async function openManagedShareDialog(team) {
   return (await loadManagedBundle()).openManagedShareDialog(team, '', state.managedSession)
 }

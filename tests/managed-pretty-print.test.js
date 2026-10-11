@@ -14,8 +14,10 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { PRETTY_OPTIONS, createPrettyCache, prettyBody, sameCode } from '../server-managed/pretty-print.ts'
+import { renameDiffOf } from '../server-managed/rename-diff.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
+import { changeBlocks } from '../common/line-diff.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
 import { managedStores } from './_managed-storage.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
@@ -96,6 +98,19 @@ async function setup(t) {
 
 const npmPretty = (name, version, path, hash) => `/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`
 const bundlePretty = (id, path, hash) => `/api/bundles/${id}/pretty?${new URLSearchParams({ path, hash })}`
+const bundleRenameDiff = (id, other, params) => `/api/bundles/${id}/rename-diff?${new URLSearchParams({ other, ...params })}`
+const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion, ...params })}`
+
+// What a rename diff of the two builds below answers: the old one with the
+// new one's names, formatted, diffed with the new one.
+async function renamedBuilds(ignoreWhitespace = false) {
+  const before = (await formatted(built)).replace('add(a, b)', 'add(c, d)').replace('a + b', 'c + d')
+  return { before, blocks: changeBlocks(before, await formatted(rebuilt), ignoreWhitespace), reason: null }
+}
+// A minifier's two builds of a module: a function's names renamed, a number changed.
+const built = 'function add(a,b){return a+b}export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
+const rebuilt = 'function add(c,d){return c+d}export const x=add(1,2),y=[1,2,3].map(n=>n*3);\n'
+const builds = (path = 'dist/app.min.js', otherPath = path) => ({ path, hash: fileHash(built), otherPath, otherHash: fileHash(rebuilt) })
 
 test('pretty-printing takes code by extension, up to a size, and leaves template literals as they are', async () => {
   assert.deepEqual(['a.min.js', 'b.MJS', 'c.d.ts', 'd.tsx', 'e.css', 'f.json', 'g.md', 'h', 'i.js.map'].map(prettyExtension),
@@ -250,4 +265,158 @@ test('a public link reads its bundles\' files pretty-printed', async t => {
   assert.equal(res.text(), await formatted(minified))
   const refused = await h.send(bundlePretty(id, 'dist/app.min.js', 'sha512-nope'), null, { headers })
   assert.equal(refused.status, 400)
+})
+
+test('a bundle file is diffed with another bundle\'s, both pretty-printed, renamed names hidden', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed({ 'dist/app.min.js': built }), await h.seed({ 'dist/app.min.js': rebuilt })]
+  const res = await h.send(bundleRenameDiff(base, other, builds()))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/json')
+  assert.equal(res.headers['content-encoding'], 'br')
+  const expected = await renamedBuilds()
+  assert.deepEqual(res.json(), expected)
+  assert.equal(expected.blocks.length, 1, 'the renamed lines alike, the changed one shown')
+  assert.deepEqual((await h.send(bundleRenameDiff(base, other, { ...builds(), ignoreWhitespace: 'true' }))).json(), await renamedBuilds(true))
+  // Both copies were kept, as the pretty-print toggle's are.
+  for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v1'))).length, 1)
+  assert.deepEqual((await h.send(bundleRenameDiff(base, other, builds()), 'admin')).json(), expected, 'kept, for any reader of both')
+})
+
+test('a rename diff is kept by both files\' types as well as their texts: a script\'s top level is not a module\'s', async t => {
+  const h = await setup(t)
+  const [before, after] = ['let a=1;f(a);\n', 'let b=1;f(b);\n']
+  const [base, other] = [await h.seed({ 'a.js': before, 'a.mjs': before }), await h.seed({ 'a.js': after, 'a.mjs': after })]
+  const params = path => ({ path, hash: fileHash(before), otherPath: path, otherHash: fileHash(after) })
+  const script = (await h.send(bundleRenameDiff(base, other, params('a.js')))).json()
+  assert.equal(script.blocks.length, 1, 'a script\'s top-level names are globals, kept')
+  const module = (await h.send(bundleRenameDiff(base, other, params('a.mjs')))).json()
+  assert.deepEqual(module.blocks, [], 'a module\'s are its own, renamed')
+})
+
+// A Diff view's four files, built (0) and rebuilt (1), and each one's diff's parameters.
+const files = n => Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`dist/${i}.min.js`, n === 0 ? built.replace('n*2', `n*${i + 2}`) : rebuilt.replace('n*3', `n*${i + 9}`)]))
+const fileDiffs = () => Object.keys(files(0)).map(path => ({ path, hash: fileHash(files(0)[path]), otherPath: path, otherHash: fileHash(files(1)[path]) }))
+
+test('rename diffs asked for at once past the workers running wait their turn', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(files(0)), await h.seed(files(1))]
+  // Each copy pretty-printed first, as the view has them by then.
+  for (const [id, texts] of [[base, files(0)], [other, files(1)]]) for (const [path, text] of Object.entries(texts)) assert.equal((await h.send(bundlePretty(id, path, fileHash(text)))).status, 200)
+  const asked = await Promise.all(fileDiffs().map(params => h.send(bundleRenameDiff(base, other, params))))
+  assert.deepEqual(asked.map(res => res.status), [200, 200, 200, 200], 'a Diff view\'s four files')
+})
+
+test('a private npm version\'s files diffed at once are formatted in their turns, none refused, and nothing kept', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [{ ...packageOf('@corp/lib', '1.0.0', files(0)), private: true }, { ...packageOf('@corp/lib', '1.1.0', files(1)), private: true }])
+  const diff = params => npmRenameDiff('@corp/lib', '1.0.0', '1.1.0', params)
+  assert.equal((await h.send(diff(fileDiffs()[0]))).status, 404, 'a reader without private access gets nothing')
+  // Each side is formatted again for its diff, two formats at most at once.
+  const asked = await Promise.all(fileDiffs().map(params => h.send(diff(params), 'admin')))
+  assert.deepEqual(asked.map(res => res.status), [200, 200, 200, 200], 'a Diff view\'s four files')
+  await assert.rejects(readdir(join(h.dir, 'cache', 'npm')), { code: 'ENOENT' })
+})
+
+// A rename diff's answer, read.
+async function renameDiffRead(job) {
+  const chunks = []
+  for await (const chunk of (await job).stream) chunks.push(chunk)
+  return JSON.parse(brotliDecompressSync(Buffer.concat(chunks)).toString())
+}
+const diffSide = text => ({ path: 'a.js', hash: fileHash(text), extension: 'js' })
+const diffed = { base: diffSide(built), other: diffSide(rebuilt), ignoreWhitespace: false }
+const readBuilds = () => Promise.resolve([built, rebuilt])
+
+test('a rename diff waiting its turn has its minute run out there, and leaves the queue', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 30_000 })
+  let release
+  const held = new Promise(resolve => { release = resolve })
+  // Both workers' turns taken by diffs whose sides (a private version's, so
+  // read in their turn) are still being read, their minutes running past
+  // those of the diffs then queued behind them: the clock set back once they
+  // have their turns.
+  const running = [0, 1].map(() => renameDiffOf(diffed, () => held, false))
+  await new Promise(resolve => { setImmediate(resolve) })
+  t.mock.timers.setTime(0)
+  const queued = Array.from({ length: 16 }, () => renameDiffOf(diffed, readBuilds, false))
+  await assert.rejects(renameDiffOf(diffed, readBuilds, false), { status: 429, message: 'diff-busy' })
+  t.mock.timers.tick(60_000)
+  for (const job of queued) await assert.rejects(job, { status: 504, message: 'diff-timeout' })
+  // Gone from the queue: the next one waits its turn, and gets it.
+  const next = renameDiffOf(diffed, readBuilds, false)
+  release([built, rebuilt])
+  const answers = await Promise.all([...running, next].map(renameDiffRead))
+  for (const answer of answers) assert.deepEqual(answer, answers[0])
+  assert.equal(answers[0].reason, null, 'each one diffed, its names given')
+})
+
+test('a private rename diff still reading its sides when its minute runs out answers 504 and gives up its turn', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  // Its version's files still downloading, say.
+  const running = [0, 1].map(() => renameDiffOf(diffed, () => new Promise(() => {}), false))
+  await new Promise(resolve => { setImmediate(resolve) })
+  t.mock.timers.tick(60_000)
+  for (const job of running) await assert.rejects(job, { status: 504, message: 'diff-timeout' })
+  assert.equal((await renameDiffRead(renameDiffOf(diffed, readBuilds, false))).reason, null, 'the next one has a turn at once')
+})
+
+test('a bundle rename diff checks access to both bundles and refuses what it cannot answer', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed({ 'dist/app.min.js': built, 'app.css': 'a{b:c}' }), await h.seed({ 'dist/app.min.js': rebuilt })]
+  // Diffed once, so that a refusal below is no kept diff's.
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()))).status, 200)
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()), 'outsider')).status, 404, 'no team grants the outsider the repository')
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()), null)).status, 401)
+  const cases = [
+    [bundleRenameDiff(base, other, { ...builds(), hash: 'sha512-nope' }), 400, 'bad-file'],
+    [bundleRenameDiff(base, other, { ...builds(), path: 'app.css', hash: fileHash('a{b:c}') }), 400, 'bad-file'],
+    [bundleRenameDiff(base, 'nope', builds()), 400, 'bad-file'],
+    [bundleRenameDiff(base, randomUUID(), builds()), 404, 'no-bundle'],
+    // A copy is its text's, at any path (as above): a file no copy is kept of.
+    [bundleRenameDiff(base, other, { ...builds('dist/missing.js', 'dist/app.min.js'), hash: fileHash('missing') }), 404, 'no-file'],
+    [bundleRenameDiff(base, other, { ...builds(), otherHash: fileHash('else') }), 409, 'hash-mismatch'],
+    // Each side is its own bundle's: the other's file named on this one is none of its.
+    [bundleRenameDiff(other, base, builds()), 409, 'hash-mismatch'],
+  ]
+  for (const [path, status, error] of cases) {
+    const res = await h.send(path)
+    assert.equal(res.status, status, path)
+    assert.equal(res.json().error, error, path)
+  }
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()), 'viewer', { method: 'HEAD' })).status, 405)
+})
+
+test('an npm file is diffed with another version\'s, both pretty-printed, renamed names hidden', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('lib', '1.0.0', { 'dist/lib.min.js': built }), packageOf('lib', '1.1.0', { 'dist/lib.min.js': rebuilt })])
+  const res = await h.send(npmRenameDiff('lib', '1.0.0', '1.1.0', builds('dist/lib.min.js')))
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), await renamedBuilds())
+  const cases = [
+    [npmRenameDiff('lib', '1.0.0', '', builds('dist/lib.min.js')), 400, 'bad-package'],
+    [npmRenameDiff('lib', '1.0.0', '1.1.0', { ...builds('dist/lib.min.js'), otherHash: 'sha512-nope' }), 400, 'bad-file'],
+    [npmRenameDiff('lib', '1.0.0', '2.0.0', builds('dist/lib.min.js')), 404, 'package-not-found'],
+    [npmRenameDiff('lib', '1.0.0', '1.1.0', { ...builds('dist/lib.min.js', 'dist/missing.js'), otherHash: fileHash('missing') }), 404, 'no-file'],
+    [npmRenameDiff('lib', '1.0.0', '1.1.0', { ...builds('dist/lib.min.js'), otherHash: fileHash('else') }), 409, 'hash-mismatch'],
+  ]
+  for (const [path, status, error] of cases) {
+    const reply = await h.send(path)
+    assert.equal(reply.status, status, path)
+    assert.equal(reply.json().error, error, path)
+  }
+  assert.equal((await h.send(npmRenameDiff('lib', '1.0.0', '1.1.0', builds('dist/lib.min.js')), null)).status, 401)
+})
+
+test('a public link diffs its bundles\' files with renamed names hidden, between its own bundles alone', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed({ 'dist/app.min.js': built }), await h.seed({ 'dist/app.min.js': rebuilt })]
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  const res = await h.send(bundleRenameDiff(base, other, builds()), null, { headers })
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), await renamedBuilds())
+  assert.equal((await h.send(bundleRenameDiff(base, randomUUID(), builds()), null, { headers })).status, 404)
+  assert.equal((await h.send(bundleRenameDiff(base, other, { ...builds(), hash: 'nope' }), null, { headers })).status, 400)
 })

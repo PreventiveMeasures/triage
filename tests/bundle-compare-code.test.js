@@ -1,15 +1,29 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { computeFileHash } from '@preventive/report'
+import { changeBlocks } from '../common/line-diff.js'
+import { renameMap } from '../server-managed/rename-map.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
-// The server's pretty-printed copies, by bundle and path.
-const pretty = new Map()
+// The server's pretty-printed copies, by bundle and path, and its diffs of
+// two with renamed names hidden, worked out from them as it does, the old side
+// given the new side's names (each asked for noted; an error in place of the
+// base's copy fails its diff).
+const pretty = new Map(), renameDiffs = []
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
   fetchPrettyNpmFile() {},
+  fetchBundleRenameDiff(id, other, params) {
+    renameDiffs.push({ id, other, ...params })
+    const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
+    if (before instanceof Error) return Promise.reject(before)
+    const { text = before, reason = null } = renameMap(before, after)
+    return Promise.resolve({ before: text, blocks: changeBlocks(text, after, params.ignoreWhitespace), reason })
+  },
+  fetchNpmRenameDiff() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
@@ -121,6 +135,7 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   pretty.set('b2:dist/app.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
   const off = renderText(element.render())
   assert.match(off, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'a minified file offers pretty-printing')
+  assert.doesNotMatch(off, /Hide renamed names/u, 'renamed names are hidden in the copies alone')
   state.bundleSourcePretty = true
   assert.match(renderText(element.render()), /is-loading/u, 'busy while both copies are asked for')
   // Until both copies came, each hashed first.
@@ -128,10 +143,38 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   const formatted = renderText(element.render())
   assert.match(formatted, /class="add">\+6<\/span><span class="del">−5/u, 'each copy line by line')
   element._setRenames(true)
+  // The server diffs the two copies, asked by the files' paths and hashes.
+  assert.match(renderText(element.render()), /aria-busy="true">Hiding renamed names…/u)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const renames = renderText(element.render())
   assert.match(renames, /class="add">\+1<\/span><span class="del">−0/u, 'what is new alone')
-  assert.match(renames, /class="diff-renamed" data-tooltip=Renamed from: var Y = 1;>≈/u)
+  assert.match(renames, /var X = 1;/u, 'the old side read with the new names')
+  assert.doesNotMatch(renames, /var Y = 1;/u)
   assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
+  const files = bundleFilesAsMap(element.base).get('dist/app.min.js'), others = bundleFilesAsMap(element.other).get('dist/app.min.js')
+  assert.deepEqual(renameDiffs, [{ id: 'b1', other: 'b2', path: 'dist/app.min.js', hash: await computeFileHash(files), otherPath: 'dist/app.min.js',
+    otherHash: await computeFileHash(others), ignoreWhitespace: false }], 'asked once, for the files as published')
+  renderText(element.render())
+  assert.equal(renameDiffs.length, 1, 'kept')
+})
+
+test('a diff the server could not hide renamed names in says why and shows them', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/lib.min.js', [{ 'dist/lib.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/lib.min.js': `var X=1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b5'
+  element.other.managedId = 'b6'
+  pretty.set('b5:dist/lib.min.js', 'var Y = 1;\nq(Y);\n')
+  pretty.set('b6:dist/lib.min.js', 'var X = 1;\nq(X);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  pretty.set('b5:dist/lib.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const failed = renderText(element.render())
+  assert.match(failed, /Couldn't hide renamed names: Comparing this file took too long\./u)
+  assert.match(failed, /Show renamed names<\/button>/u)
+  element._setRenames(false)
+  assert.match(renderText(element.render()), /class="add">\+2<\/span><span class="del">−2/u, 'shown, as the copies differ')
 })
 
 test('names are hidden renamed only as a minifier gave them, each side minified: an author\'s renamed shows', t => {
@@ -342,4 +385,58 @@ test('a diff shows control characters as boxes, and a CRLF\'s CR only where it i
   assert.deepEqual(rows.del.map(boxes), [['CR'], []], 'the CR a line lost shows, not the one both sides end a line with')
   assert.deepEqual(rows.add.map(boxes), [[], []])
   assert.deepEqual(rows.ctx.map(boxes), [['ESC']])
+})
+
+test('a rename diff that failed for a reason that may pass is asked for again when renamed names are hidden again', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/busy.min.js', [{ 'dist/busy.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/busy.min.js': `var X=1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b9'
+  element.other.managedId = 'b10'
+  pretty.set('b9:dist/busy.min.js', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
+  pretty.set('b10:dist/busy.min.js', 'var X = 1;\nq(X);\nmodule.exports = X;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
+  pretty.set('b9:dist/busy.min.js', Object.assign(new Error('Too many files are being compared. Try again shortly.'), { status: 429 }))
+  element._setRenames(true)
+  await settle()
+  assert.match(renderText(element.render()), /Couldn't hide renamed names: Too many files are being compared/u)
+  pretty.set('b9:dist/busy.min.js', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
+  assert.match(renderText(element.render()), /Couldn't hide renamed names/u, 'kept while shown, not asked for on every paint')
+  element._setRenames(false)
+  element._setRenames(true)
+  await settle()
+  const shown = renderText(element.render())
+  assert.doesNotMatch(shown, /Couldn't hide renamed names/u)
+  assert.match(shown, /Only renamed names changed in this file\./u)
+})
+
+test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const minifiedLib = name => `var ${name}=1;${`q(${name});`.repeat(250)}module.exports=${name};\n`
+  const element = view('dist/lib.min.js', [{ 'dist/lib.min.jsx': minifiedLib('Y') }, { 'dist/lib.min.js': minifiedLib('X') }])
+  assert.equal(element._entries.get('dist/lib.min.js')?.basePath, 'dist/lib.min.jsx', 'a re-extensioned file')
+  element.base.managedId = 'b11'
+  element.other.managedId = 'b12'
+  pretty.set('b11:dist/lib.min.jsx', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
+  pretty.set('b12:dist/lib.min.js', 'var X = 1;\nq(X);\nmodule.exports = X;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.doesNotMatch(renderText(element.render()), /Hide renamed names/u)
+})
+
+test('a file whose names the server could not give the new side\'s says why, its renamed names shown', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/eval.min.js', [{ 'dist/eval.min.js': `var Y=1;eval("Y");${'q(Y);'.repeat(250)}\n` }, { 'dist/eval.min.js': `var X=1;eval("X");${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b7'
+  element.other.managedId = 'b8'
+  pretty.set('b7:dist/eval.min.js', 'var Y = 1;\neval("Y");\nq(Y);\n')
+  pretty.set('b8:dist/eval.min.js', 'var X = 1;\neval("X");\nq(X);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const shown = renderText(element.render())
+  assert.match(shown, /Renamed names are shown: the file reads names by their spelling \(eval or with\)\./u)
+  assert.match(shown, /class="add">\+3<\/span><span class="del">−3/u)
 })

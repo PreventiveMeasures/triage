@@ -152,6 +152,16 @@
     },
     {
       "files": [
+        "server-managed/rename-map.js"
+      ],
+      "rules": {
+        "max-depth": "off",
+        "max-lines": "off",
+        "max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": [
         "common/finding-filters.js",
         "common/linked-workspace-groups.js",
         "common/workspace-groups.js"
