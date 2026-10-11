@@ -1,4 +1,5 @@
 import { lineDiff } from './bundle-compare-code-model.js'
+import { bundleFileByteLength } from '../../common/bundle-sources.js'
 
 // Directories before files at every depth, matching the review tree even when
 // some folders are collapsed. All file navigation uses this same order.
@@ -12,6 +13,19 @@ export function compareReviewPaths(a, b) {
 }
 
 const lines = text => text === '' ? 0 : (text.match(/\n/gu)?.length ?? 0) + Number(!text.endsWith('\n'))
+export function reviewViewMode(files) {
+  let bytes = 0, lineCount = 0
+  for (const { before, after } of files) {
+    for (const content of [before, after]) {
+      bytes += bundleFileByteLength(content) ?? 0
+      if (bytes >= 2 * 1024 * 1024) return 'code'
+      if (typeof content === 'string') lineCount += lines(content)
+      if (lineCount >= 50_000) return 'code'
+    }
+  }
+  return 'diff'
+}
+
 export function reviewLineCounts({ before, after }) {
   if (typeof before !== 'string' || typeof after !== 'string') return null
   if (before === '') return { additions: lines(after), deletions: 0 }

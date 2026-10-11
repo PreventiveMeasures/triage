@@ -11,18 +11,9 @@ export const reviewDate = time => html`<time datetime=${new Date(time).toISOStri
 export const reviewProgress = (checked, total) => html`<div class="npm-review-progress" role="progressbar" aria-label="Files checked"
   aria-valuemin="0" aria-valuemax=${total || 1} aria-valuenow=${checked}><span style=${`width:${total ? checked / total * 100 : 0}%`}></span></div>`
 
-// Older sets can contain several notes/verdicts for a file. Keep all of them:
-// its least favorable verdict is the same constraint publication uses.
 export function reviewFileStates(entries = []) {
-  const order = Object.keys(REVIEW_VERDICTS), states = new Map()
-  for (const entry of entries) {
-    if (entry.file === null) continue
-    const current = states.get(entry.file) ?? { status: null, notes: 0 }
-    if (order.indexOf(entry.status) > order.indexOf(current.status)) current.status = entry.status
-    if (entry.comment.trim()) current.notes++
-    states.set(entry.file, current)
-  }
-  return states
+  return new Map(entries.filter(entry => entry.file !== null).map(entry =>
+    [entry.file, { status: entry.status, notes: Number(Boolean(entry.comment.trim())) }]))
 }
 
 export const reviewNote = comment => comment ? html`<p class="npm-review-note">${comment}</p>` : nothing

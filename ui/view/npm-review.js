@@ -6,7 +6,8 @@ import { managedHistory } from './managed-history.js'
 import { allowedReviewVerdicts, summarizeReview } from '../../common/dependency-reviews.js'
 import { bundleCompareFiles } from './bundle-compare-inputs.js'
 import { computeBundleDiff } from './bundle-compare-diff.js'
-import { compareReviewPaths } from './npm-review-files.js'
+import { compareReviewPaths, reviewViewMode } from './npm-review-files.js'
+import { bundleLineCounts } from '../../common/bundle-metadata.js'
 import { reviewFileStates, takeReviewSelection } from './npm-review-presentation.js'
 import { renderReview, renderReviewConfirmation, renderReviewEditor, renderReviewPublished } from './npm-review-view.js'
 import './npm-review-code.js'
@@ -88,9 +89,13 @@ export class NpmReview extends LitElement {
     this._diff = computeBundleDiff(bundleCompareFiles(base), bundleCompareFiles(this.details), () => '.')
     this._files = [...this._diff.files.onlyBase, ...this._diff.files.onlyOther, ...this._diff.files.changed].map(file => file.path).toSorted(compareReviewPaths)
     const after = bundleCompareFiles(this.details), before = bundleCompareFiles(base)
+    const baseLines = bundleLineCounts(base), otherLines = bundleLineCounts(this.details)
+    const linesOf = (counts, files) => [...files.keys()].reduce((total, path) => total + (counts.get(path) ?? 0), 0)
+    Object.assign(this._diff.totals, { baseLines: linesOf(baseLines, before), otherLines: linesOf(otherLines, after) })
     this._treeFiles = [['onlyBase', 'removed'], ['onlyOther', 'added'], ['changed', 'changed']].flatMap(([group, kind]) =>
       this._diff.files[group].map(file => ({ path: file.path, kind: file.renamedFrom == null ? kind : 'renamed',
         before: group === 'onlyOther' ? '' : before.get(file.basePath ?? file.path), after: group === 'onlyBase' ? '' : after.get(file.path) }))).toSorted((a, b) => compareReviewPaths(a.path, b.path))
+    this._mode = reviewViewMode(this._treeFiles)
     this._key = key; this._teams = []; this._reviews = []; this._selectedTeams = new Set(); this._additionalTeams = new Map()
     this._selectedReview = null; this._drafts.clear(); this._path = this._files[0] ?? null; this._panel = null; this._notice = ''
     this._resetEditor(this._path); this._saving = false
@@ -120,19 +125,17 @@ export class NpmReview extends LitElement {
     } catch (error) { if (key === this._key && error.name !== 'AbortError') this._error = error.message }
     finally { if (key === this._key) this._loading = false }
   }
-  _resetEditor(file = null, draft = undefined) {
+  _resetEditor(file = null) {
     this._publishStep = false
-    const saved = draft === undefined && this._canEdit ? this._drafts.get(file) : null
-    const rows = this._shownReview?.entries.filter(row => row.file === file) ?? []
-    this._file = file; this._edit = saved?.edit ?? draft ?? rows.findLast(row => row.status !== null) ?? rows.at(-1) ?? null
+    const saved = this._canEdit ? this._drafts.get(file) : null
+    this._file = file; this._edit = saved?.edit ?? this._shownReview?.entries.find(row => row.file === file) ?? null
     this._editRevision = saved?.revision ?? this._activeReview?.revision ?? null
     this._comment = saved?.comment ?? this._edit?.comment ?? ''; this._status = saved?.status ?? this._edit?.status ?? ''
   }
   _editorState(file) {
     if (file === this._file) return { edit: this._edit, status: this._status, comment: this._comment, dirty: this._dirty }
-    const rows = this._shownReview?.entries.filter(row => row.file === file) ?? []
     const buffer = this._canEdit ? this._drafts.get(file) : null
-    const edit = buffer?.edit ?? rows.findLast(row => row.status !== null) ?? rows.at(-1) ?? null
+    const edit = buffer?.edit ?? this._shownReview?.entries.find(row => row.file === file) ?? null
     return { edit, status: buffer?.status ?? edit?.status ?? '', comment: buffer?.comment ?? edit?.comment ?? '', dirty: !!buffer }
   }
   _editFile(file, values = {}) {
@@ -156,10 +159,9 @@ export class NpmReview extends LitElement {
     if (this._saving || !this._files.includes(path)) return
     this._rememberEditor(); this._path = path; this._resetEditor(path)
   }
-  _open(file = null, draft = undefined) {
+  _open(file = null) {
     if (this._saving) return
-    if (draft && this._dirty && file === this._file) { this._error = 'Save or discard your changes before editing another note.'; return }
-    this._rememberEditor(); this._resetEditor(file, draft)
+    this._rememberEditor(); this._resetEditor(file)
     if (file === null) this._panel = 'notes'
     else { this._path = file; this._panel = null }
   }
@@ -235,7 +237,6 @@ export class NpmReview extends LitElement {
     if (!this.entry?.npm || !this.details) return nothing
     const request = this.request?.bundle === this.entry.integrity ? this.request : {}
     this._target = request.reviewPackage ? dependency(request.reviewPackage, request.reviewSpec) : '(empty)'
-    this._mode = request.reviewMode === 'diff' ? 'diff' : 'code'
     void this._loadBase(this._target)
     return renderReview(this)
   }

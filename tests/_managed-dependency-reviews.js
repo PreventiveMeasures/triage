@@ -34,9 +34,17 @@ export async function checkDependencyReviews(db) {
   assert.equal(Object.hasOwn(review, 'draft'), false)
   assert.deepEqual(await db.listDependencyReviews(reviewContext, users.bob.userId), [], 'unpublished reviews are private')
   assert.deepEqual(await db.listDependencyReviews({ ...reviewContext, integrity: 'different' }, users.alice.userId), [])
+  const fileId = review.entries[0].id
+  review = await change(save(review, 'index.js', 'reject', 'Replace this note.'))
+  review = await change(save(review, 'index.js', 'accept-with-nits', 'Rename this.'))
+  assert.equal(review.entries.length, 1, 'saving by file replaces its note and verdict instead of adding a row')
+  assert.equal(review.entries[0].id, fileId)
+  assert.equal(review.entries[0].comment, 'Rename this.')
+  assert.equal(review.verdictLimit, 'accept-with-nits', 'a replaced verdict does not constrain the final verdict')
   const old = review
   review = await change(save(review, 'other.js', 'request-changes', 'Fix before updating.'))
   review = await change(save(review, 'README.md', null, 'A note without a verdict.'))
+  await assert.rejects(change(save(review, 'other.js', 'accept', '', fileId)), /review-conflict/u, 'entry IDs cannot change another file')
   await assert.rejects(change(save(old, 'index.js', 'reject')), /review-conflict/u, 'stale edits do not overwrite')
   await assert.rejects(change(save(review, null, 'reject'), 'bob'), /review-conflict/u, 'another author cannot edit')
   for (const teamIds of [[], ['disabled'], ['not-member'], ['hidden'], ['one', 'disabled']]) {
@@ -114,6 +122,7 @@ async function checkCoverage(db, session) {
     review = await change({ action: 'save', reviewId: review?.id ?? null, revision: review?.revision ?? null, entryId: null,
       entry: { file, status: index < 3 ? index === 1 ? 'accept-with-nits' : 'accept' : null, comment: index === 3 ? 'Still to review.' : '' } })
   }
+  assert.equal(review.entries.length, files.length, 'the initial note and subsequent verdict share one file row')
   const publish = (final, paths = files) => ({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files: paths, final })
   await assert.rejects(change(publish({ status: 'accept', comment: '' })), /bad-final-verdict/u)
   review = await change(publish({ status: 'accept-with-nits', comment: 'Three files checked; one remains.' }))

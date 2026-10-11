@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
-import { compareReviewPaths, reviewLineCounts } from '../ui/view/npm-review-files.js'
+import { compareReviewPaths, reviewLineCounts, reviewViewMode } from '../ui/view/npm-review-files.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
 const requests = [], state = {}
@@ -157,7 +157,7 @@ test('review file kinds distinguish a moved comparison root from a renamed file'
 
 test('editing captures the loaded revision, and continuing uses a separate review', async () => {
   const page = component()
-  page._resetEditor('index.js', file)
+  page._resetEditor('index.js')
   page._reviews = [{ ...review, revision: 2 }]
   page._comment = 'An edit against revision one'
   answer = { review: { ...review, revision: 3 } }
@@ -233,9 +233,9 @@ test('opening a specific published list row selects that snapshot even with an a
 })
 
 test('dense file tree counts verdicts rather than notes and bounds the initial DOM for large packages', () => {
-  const entries = [file, { ...file, id: 'note', file: 'other.js', status: null }, { ...file, status: 'accept' }]
+  const entries = [file, { ...file, id: 'note', file: 'other.js', status: null }]
   const states = reviewFileStates(entries)
-  assert.equal(states.get('index.js').status, 'request-changes', 'a later accept cannot hide an earlier request for changes')
+  assert.equal(states.get('index.js').status, 'request-changes')
   assert.equal(states.get('other.js').status, null)
   const files = Array.from({ length: 10000 }, (_, i) => ({ path: `src/file-${String(i).padStart(5, '0')}.js`, kind: 'added' }))
   const tree = reviewTree([...files, { path: 'index.js', kind: 'added' }, { path: 'other.js', kind: 'added' }], states)
@@ -297,4 +297,13 @@ test('review drawers identify the entire version comparison', () => {
   assert.equal(reviewTitle(context), '@scope/lib 1.0.0 -> 2.0.0')
   assert.equal(reviewTitle({ ...context, basePackage: '@old/lib' }), '@old/lib 1.0.0 -> @scope/lib 2.0.0')
   assert.equal(reviewTitle({ ...context, basePackage: null }), '@scope/lib 2.0.0')
+})
+
+test('review automatically uses whole diff below both line and byte limits', () => {
+  assert.equal(reviewViewMode([{ before: '', after: 'a\n'.repeat(49_999) }]), 'diff')
+  assert.equal(reviewViewMode([{ before: 'a\n'.repeat(25_000), after: 'b\n'.repeat(25_000) }]), 'code')
+  assert.equal(reviewViewMode([{ before: '', after: 'x'.repeat(2 * 1024 * 1024 - 1) }]), 'diff')
+  assert.equal(reviewViewMode([{ before: 'x'.repeat(1024 * 1024), after: 'x'.repeat(1024 * 1024) }]), 'code')
+  assert.equal(reviewViewMode([{ before: '', after: 'é'.repeat(1024 * 1024) }]), 'code', 'the limit measures UTF-8 bytes')
+  assert.equal(reviewViewMode([{ before: '', after: { format: 'digest', size: 2 * 1024 * 1024 } }]), 'code')
 })

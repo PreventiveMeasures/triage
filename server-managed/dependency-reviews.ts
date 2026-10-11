@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ManagedMutationError } from './management.ts'
 import type { ManagedSql } from './sql.ts'
-import { type ReviewSummary, type ReviewVerdict, allowedReviewVerdicts, summarizeReview } from '../common/dependency-reviews.js'
+import { REVIEW_VERDICTS, type ReviewSummary, type ReviewVerdict, allowedReviewVerdicts, summarizeReview } from '../common/dependency-reviews.js'
 
 export interface ReviewContext {
   ecosystem: 'npm'; package: string; version: string; integrity: string
@@ -67,6 +67,20 @@ const columns = `id, user_id AS user, user_login AS userLogin, ecosystem, packag
   time, revision, published_at AS publishedAt, revoked_at AS revokedAt, files, status, comment`
 const conflict = () => { throw new ManagedMutationError(409, 'review-conflict') }
 
+// Fold legacy multi-note files into one text field without changing a frozen
+// snapshot's stored rows. Continuing or saving uses one row per file.
+function fileEntries(entries: ReviewEntry[]): ReviewEntry[] {
+  const files = new Map<string | null, ReviewEntry>(), verdicts = Object.keys(REVIEW_VERDICTS)
+  for (const entry of entries) {
+    const current = files.get(entry.file)
+    if (!current) { files.set(entry.file, { ...entry }); continue }
+    current.comment = [current.comment, entry.comment].filter(Boolean).join('\n\n')
+    if (verdicts.indexOf(entry.status ?? '') > verdicts.indexOf(current.status ?? '')) current.status = entry.status
+    current.time = Math.max(current.time, entry.time)
+  }
+  return [...files.values()]
+}
+
 async function actor(db: ManagedSql, sessionId: string, admin = false) {
   const user = await db.prepare(`SELECT u.id, u.login, u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
     WHERE s.id = ? AND s.expires_at > ? AND s.viewer_session IS NULL`).get(sessionId, Date.now()) as { id: string; login: string; role: string } | undefined
@@ -92,7 +106,7 @@ async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Pro
     ORDER BY t.name, t.id`).all(...ids, user, user) as (ReviewTeam & { reviewId: string })[]
   return reviews.map(review => {
     const files = review.files === null ? null : JSON.parse(review.files) as string[]
-    const ownEntries = entries.filter(entry => entry.reviewId === review.id).map(({ reviewId: _reviewId, ...entry }) => entry)
+    const ownEntries = fileEntries(entries.filter(entry => entry.reviewId === review.id).map(({ reviewId: _reviewId, ...entry }) => entry))
     return { ...review, files, entries: ownEntries, ...summarizeReview(ownEntries, files),
       teams: linked.filter(team => team.reviewId === review.id).map(({ reviewId: _reviewId, ...team }) => team) }
   })
@@ -123,6 +137,24 @@ async function listOwn(db: ManagedSql, user: string, before: { time: number; id:
   const page = rows.slice(0, 50)
   const last = page.at(-1)
   return { reviews: await expandReviews(db, page, user), next: rows.length > 50 && last ? { time: last.time, id: last.id } : null }
+}
+
+async function saveFile(db: ManagedSql, reviewId: string, entry: ReviewInput, requestedId: string | null, now: number) {
+  const existing = await db.prepare(`SELECT id FROM managed_dependency_file_review
+    WHERE review_id = ? AND COALESCE(file, '') = ? ORDER BY time, id`).all(reviewId, entry.file ?? '') as { id: string }[]
+  if (requestedId && !existing.some(row => row.id === requestedId)) return conflict()
+  if (existing.length > 0) {
+    const entryId = existing[0]!.id
+    await db.prepare('UPDATE managed_dependency_file_review SET comment = ?, status = ?, time = ? WHERE id = ?')
+      .run(entry.comment, entry.status, now, entryId)
+    if (existing.length > 1) {
+      await db.prepare(`DELETE FROM managed_dependency_file_review
+        WHERE review_id = ? AND COALESCE(file, '') = ? AND id <> ?`).run(reviewId, entry.file ?? '', entryId)
+    }
+  } else {
+    await db.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, comment, status, time) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(randomUUID(), reviewId, entry.file, entry.comment, entry.status, now)
+  }
 }
 
 export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
@@ -170,8 +202,8 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
         if (!current?.publishedAt) return conflict()
         id = await create()
         await db.prepare('UPDATE managed_dependency_review SET comment = ? WHERE id = ?').run(current.comment, id)
-        const entries = await db.prepare('SELECT file, comment, status, time FROM managed_dependency_file_review WHERE review_id = ?').all(current.id) as ReviewEntry[]
-        for (const entry of entries) {
+        const entries = await db.prepare('SELECT id, file, comment, status, time FROM managed_dependency_file_review WHERE review_id = ? ORDER BY time, id').all(current.id) as ReviewEntry[]
+        for (const entry of fileEntries(entries)) {
           await db.prepare(`INSERT INTO managed_dependency_file_review
           (id, review_id, file, comment, status, time) VALUES (?, ?, ?, ?, ?, ?)`)
           .run(randomUUID(), id, entry.file, entry.comment, entry.status, entry.time)
@@ -185,15 +217,7 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
         if (current?.publishedAt != null) return conflict()
         if (id) await db.prepare('UPDATE managed_dependency_review SET time = ?, revision = revision + 1 WHERE id = ?').run(now, id)
         else { if (change.entryId) return conflict(); id = await create() }
-        const entry = change.entry
-        if (change.entryId) {
-          const changed = await db.prepare(`UPDATE managed_dependency_file_review SET comment = ?, status = ?, time = ?
-            WHERE id = ? AND review_id = ? AND COALESCE(file, '') = ?`).run(entry.comment, entry.status, now, change.entryId, id, entry.file ?? '')
-          if (Number(changed.changes) !== 1) return conflict()
-        } else {
-          await db.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, comment, status, time) VALUES (?, ?, ?, ?, ?, ?)')
-            .run(randomUUID(), id, entry.file, entry.comment, entry.status, now)
-        }
+        await saveFile(db, id, change.entry, change.entryId, now)
       }
       return (await expandReviews(db, [await read(id!)], user.id))[0]!
     },

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { checkDependencyReviews } from './_managed-dependency-reviews.js'
+import { checkDependencyReviews, reviewContext } from './_managed-dependency-reviews.js'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 
@@ -13,6 +13,44 @@ test('dependency review lifecycle, ownership, team access and frozen snapshots (
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   await checkDependencyReviews(db)
+})
+
+test('legacy notes become one editable note when continuing, without rewriting frozen rows', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'dependency-review-notes-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'db.sqlite')
+  const original = openSqliteManagedDb(path)
+  const session = await createSession({ sessionCookieName: 'sid', sessionTtlMs: 3600000 }, original,
+    { githubUserId: 100, login: 'author', name: null, avatarUrl: null }, Date.now())
+  await original.setUserRole(session.userId, 'admin')
+  const sid = hashToken(session.setCookie.split(';')[0].slice(4))
+  await original.createTeam('team', 'Team', 100)
+  await original.setTeamMember('team', session.userId, { dependencies: false, security: false })
+  await original.setTeamDependencyReview(sid, 'team', true)
+  let review = await original.changeDependencyReview(reviewContext, sid, { action: 'save', reviewId: null, revision: null, entryId: null,
+    entry: { file: 'index.js', status: 'reject', comment: 'First concern.' } }, 100)
+  review = await original.changeDependencyReview(reviewContext, sid, { action: 'publish', reviewId: review.id, revision: review.revision,
+    teamIds: ['team'], files: ['index.js'], final: { status: 'reject', comment: '' } }, 300)
+  await original.close()
+  const raw = new DatabaseSync(path)
+  t.after(() => raw.close())
+  raw.prepare('INSERT INTO managed_dependency_file_review (id, review_id, file, status, comment, time) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('legacy-note', review.id, 'index.js', 'accept-with-nits', 'Second concern.', 200)
+  const db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  const frozen = (await db.listDependencyReviews(reviewContext, session.userId))[0]
+  assert.equal(frozen.entries.length, 1)
+  assert.equal(frozen.entries[0].comment, 'First concern.\n\nSecond concern.')
+  assert.equal(frozen.entries[0].status, 'reject')
+  let continued = await db.changeDependencyReview(reviewContext, sid, { action: 'continue', reviewId: review.id, revision: review.revision }, 400)
+  assert.equal(continued.entries.length, 1)
+  continued = await db.changeDependencyReview(reviewContext, sid, { action: 'save', reviewId: continued.id, revision: continued.revision,
+    entryId: null, entry: { file: 'index.js', status: 'accept', comment: 'Both resolved.' } }, 500)
+  assert.equal(continued.entries.length, 1)
+  assert.equal(continued.verdictLimit, 'accept')
+  assert.equal(continued.entries[0].comment, 'Both resolved.')
+  assert.equal(raw.prepare('SELECT count(*) AS n FROM managed_dependency_file_review WHERE review_id = ?').get(review.id).n, 2)
+  assert.deepEqual((await db.listDependencyReviews(reviewContext, session.userId)).find(row => row.id === review.id).entries, frozen.entries)
 })
 
 

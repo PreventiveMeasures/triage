@@ -1976,9 +1976,10 @@ A package's **Review** tab opens `/npm/<package>@<version>/review`. With no base
 all package files are reviewed as additions. Append `/<basePackage>@<baseVersion>`
 to review an update; a bare base version is accepted as a same-package shortcut.
 The tab is shown only to users belonging to a visible team with dependency review enabled.
-Tags resolve to exact versions. Code shows one changed file at a time; Diff lists
-all changes, with more files loaded on request for large packages. Both views
-support file reviews and whole-diff notes (a null file path).
+Tags resolve to exact versions. Review uses the Compare header and stats.
+Changed files totaling less than 50,000 lines and 2 MiB across both versions use
+the whole diff; larger reviews use the per-file Code view. Both views support
+file reviews and whole-diff notes (a null file path).
 
 Triage users and above can save private review sets with notes and optional
 verdicts: **Accept**, **Accept with nits (non-blocking)**, **Request changes**, or
@@ -1990,6 +1991,8 @@ The account menu and review page link to **My reviews** (`/reviews`), a paginate
 list of the user's unpublished, published, and revoked review sets.
 
 Selecting a file verdict saves it immediately. Review always wraps source lines.
+Each file has one verdict and one text note; later saves update that same row.
+The note editor is shown for Accept with nits, Request changes, and Reject.
 At least one changed file must have a saved verdict before publishing.
 
 **Finalize review** opens a separate confirmation step with a required final

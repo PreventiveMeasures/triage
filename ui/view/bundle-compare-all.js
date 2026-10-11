@@ -58,7 +58,7 @@ export function combinedDiffRows(base, other, files, { resolutions = [], max = C
 }
 
 export class BundleCompareAll extends BundleCompareCode {
-  static properties = { ...BundleCompareCode.properties, models: { attribute: false } }
+  static properties = { ...BundleCompareCode.properties, models: { attribute: false }, reviewAfter: { type: Boolean } }
 
   // Every file's model is drawn on every render, so all are kept for the
   // comparison, starting from those Compare found counting its rows, each
@@ -220,8 +220,9 @@ export class BundleCompareAll extends BundleCompareCode {
                 <span class="bundle-code-main-spacer"></span>
                 ${this._fileFigures(entry, file.model)}
               </header>
-              ${this.reviewFile?.(path, this.base) ?? nothing}
+              ${this.reviewAfter ? nothing : this.reviewFile?.(path, this.base) ?? nothing}
               ${this._fileBody(path, entry, file)}
+              ${this.reviewAfter ? this.reviewFile?.(path, this.base) ?? nothing : nothing}
             </section>`)}
           ${shown.length > this._fileLimit ? html`<button type="button" class="bundle-compare-code-action bundle-compare-all-more" @click=${() => this._more()}>Show more files (${(shown.length - this._fileLimit).toLocaleString()} remaining)</button>` : nothing}
         </div>

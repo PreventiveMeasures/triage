@@ -57,7 +57,7 @@ export class NpmReviewTree extends LitElement {
     if (!this._counts.has(file)) this._counts.set(file, reviewLineCounts(file))
     const counts = this._counts.get(file)
     return counts ? html`<span class="npm-review-line-counts" aria-label=${`${counts.additions} added, ${counts.deletions} removed lines`}>
-      <span class="add">+${counts.additions}</span><span class="del">−${counts.deletions}</span></span>` : nothing
+      <span class="add">+${counts.additions}</span><span class=${file.kind === 'added' ? 'del npm-review-empty-count' : 'del'}>−${counts.deletions}</span></span>` : nothing
   }
   render() {
     const tree = this._tree ?? reviewTree(this.files, this.states)
