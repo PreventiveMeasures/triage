@@ -16,7 +16,7 @@ import { openManagedBundle } from './managed-bundle-open.js'
 import { openNpmRoute } from './npm-package.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
-import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath } from './managed-sidebar.js'
+import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath, teamLetters } from './managed-sidebar.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, isRole } from '../../common/managed/roles.ts'
@@ -269,7 +269,7 @@ function teamsSectionTemplate() {
       const showBundles = teamSections.shown(t.id, 'bundles', compact, searchActive)
       const reportCount = reports.filter(r => r.analyzer !== LINKS_KIND).length
       return html`
-      <li class=${`file-item team-item${state.currentManagedTeam === t.id && state.currentWorkspace && ['findings', 'files', 'workspace-reports', 'workspace-bundles'].includes(state.currentView) ? ' current' : ''}`} data-team-id=${t.id}>
+      <li class=${`file-item team-item${teamIsCurrent(t) ? ' current' : ''}`} data-team-id=${t.id}>
         <div class="workspace-heading">
           <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
           ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
@@ -287,13 +287,36 @@ function teamsSectionTemplate() {
     })}`
 }
 
+// The collapsed sidebar shows teams alone: each as its icon over two letters,
+// opening the team as its row does, and current while anything of it is open.
+function teamRailTemplate() {
+  return repeat(state.managedTeams ?? [], t => t.id, t => {
+    const current = teamIsCurrent(t) || (t.reports ?? []).some(r => teamReportIsCurrent(t, r)) || (t.bundles ?? []).some(b => teamBundleIsCurrent(t, b))
+    return html`<li><button type="button" class=${current ? 'team-rail-item current' : 'team-rail-item'} aria-label=${t.name} aria-current=${current ? 'true' : nothing}
+      data-tooltip=${t.name} @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span aria-hidden="true">${teamLetters(t.name)}</span></button></li>`
+  })
+}
+
+function teamIsCurrent(team) {
+  return state.currentManagedTeam === team.id && Boolean(state.currentWorkspace)
+    && ['findings', 'files', 'workspace-reports', 'workspace-bundles'].includes(state.currentView)
+}
+
+function teamReportIsCurrent(team, r) {
+  return state.currentManagedTeam === team.id && state.currentManagedReport === r.id && ['findings', 'links'].includes(state.currentView)
+}
+
+function teamBundleIsCurrent(team, bundle) {
+  return state.currentManagedTeam === team.id && shownManagedBundleId(state) === bundle.id
+}
+
 // A clickable report row under its team (managed mode). Reuses the indented
 // file-row chrome but carries no `data-file`, so the file-click delegate ignores
 // it — opening is handled by its own @click, which renders the report from the
 // server WITHOUT caching it to OPFS.
 function teamReportTemplate(team, r) {
   const name = displayName(r.filename)
-  const current = state.currentManagedTeam === team.id && state.currentManagedReport === r.id && ['findings', 'links'].includes(state.currentView)
+  const current = teamReportIsCurrent(team, r)
   return html`<li class=${`file-item indented team-report-item${r.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
     <button type="button" class="file-name" aria-label=${r.visible === false ? `${name} (hidden from teams)` : nothing} data-tooltip=${name} data-tooltip-repo=${managedRepositoryPath(r) || nothing} data-tooltip-placement="right-start" @click=${() => void openTeamReport(team, r)}>
       ${unsafeHTML(FILE_ICONS[reportGroup(r.filename, r.analyzer)])}<span class="file-label">${name}</span>
@@ -309,7 +332,7 @@ function openTeamReport(team, r) {
 // Team bundle rows open the server-backed metadata view. The repository
 // tooltip distinguishes similarly named uploads from different repositories.
 function teamBundleTemplate(team, bundle) {
-  const current = state.currentManagedTeam === team.id && shownManagedBundleId(state) === bundle.id
+  const current = teamBundleIsCurrent(team, bundle)
   return html`<li class=${`file-item indented team-bundle-item${bundle.visible === false ? ' content-hidden' : ''}${current ? ' current' : ''}`}>
     <button type="button" class="file-name" aria-label=${bundle.visible === false ? `${bundle.filename} (hidden from teams)` : nothing} data-managed-bundle=${bundle.id} data-managed-team=${team.id} data-tooltip=${bundle.filename} data-tooltip-repo=${managedRepositoryPath(bundle) || nothing}
       data-tooltip-bundle=${bundle.kind || nothing} data-tooltip-built=${bundle.provenance === 'build' ? 'true' : nothing} data-tooltip-stats=${managedBundleStats(bundle) || nothing} data-tooltip-commit=${bundle.summary?.commit || nothing}
@@ -519,6 +542,8 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     renderLandingWorkspaces([])
     if (!root) return
     litRender(html`${teamsSectionTemplate()}`, fileList)
+    const teamRail = root.querySelector('#team-rail')
+    if (teamRail) litRender(teamRailTemplate(), teamRail)
     root.querySelector('sidebar-view-button[kind="packages"]')?.setAttribute('hidden', '')
     root.querySelector('sidebar-view-button[kind="repositories"]')?.setAttribute('hidden', '')
     root.querySelector('#storage-status')?.setAttribute('hidden', '')
@@ -2490,6 +2515,7 @@ class AppSidebar extends LitElement {
         <sidebar-view-button kind="repositories"></sidebar-view-button>
       </div>
       <ul id="file-list"></ul>
+      <ul id="team-rail" aria-label="Teams"></ul>
       <button id="storage-status" type="button" hidden>
         <span class="storage-dot" aria-hidden="true"></span>
         <span class="storage-label"></span>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { filterManagedTeams } from '../ui/view/managed-sidebar.js'
+import { filterManagedTeams, teamLetters } from '../ui/view/managed-sidebar.js'
 
 const shared = Object.freeze({ id: 'shared', filename: 'Web-App.map' })
 const teams = Object.freeze([
@@ -70,4 +70,14 @@ test('App team sections match workspace navigation, search and manual collapse b
   assert.equal(sections.shown('a', 'reports', true, false), false)
   sections.sync({ ...state, managedSession: { id: 'other', role: 'manage' } })
   assert.equal(sections.shown('a', 'bundles', true, false), false, 'account changes reset choices')
+})
+
+test('collapsed sidebar names a team by two letters', () => {
+  assert.equal(teamLetters('Security fixtures'), 'SF')
+  assert.equal(teamLetters('platform-review team'), 'PR')
+  assert.equal(teamLetters('Frontend'), 'Fr')
+  assert.equal(teamLetters('  ops  '), 'Op')
+  assert.equal(teamLetters('Ö'), 'Ö')
+  assert.equal(teamLetters('🦊 Fox'), '🦊F')
+  assert.equal(teamLetters(''), '')
 })

@@ -66,6 +66,30 @@
 :host(.collapsed) #auth-status[data-authed='1'] { padding: .2rem; }
 :host(.collapsed[data-view-as]) #auth-status .user-avatar { box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3px var(--accent); }
 
+/* Collapsed managed sidebar: the teams take the file list's place, each as
+   its icon over two letters (sidebar.js teamRailTemplate). The current team
+   reads as the sidebar view buttons' active state. */
+#team-rail { display: none; }
+:host(.collapsed[data-mode='managed']) #team-rail {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; gap: .2rem;
+  padding: .35rem 0;
+  list-style: none;
+  overflow-y: auto; overscroll-behavior: none; scrollbar-width: none;
+}
+.team-rail-item {
+  width: 26px; padding: .25rem 0 .2rem;
+  display: grid; justify-items: center; gap: .15rem;
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: var(--ui-radius, 4px);
+  font: inherit; font-size: .58rem; font-weight: 600; line-height: 1;
+  white-space: nowrap;
+
+  &:hover { color: var(--text); background: rgb(from var(--text) r g b / .08); }
+  &.current { color: var(--accent); background: rgb(from var(--text) r g b / .10); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+}
+
 /* Search requires workspace access; sign-out only requires authentication. */
 :host([data-mode='managed']:not([data-workspace-access])) .sidebar-search,
 :host([data-mode='managed']:not([data-authenticated])) .sidebar-actions { display: none; }
