@@ -371,10 +371,10 @@ function nameless(text) {
         && !inComputed(declaration.depth)
       const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:`
-      // after it; or a label, after `break` or `continue` (`break a`), which a
-      // line break still ends.
+      // after it; a private one, `#` before it (`this.#a`); or a label, after
+      // `break` or `continue` (`break a`), which a line break still ends.
       const jump = last === 'break' || last === 'continue'
-      const property = last === '.' || text[at] === ':' || jump
+      const property = last === '.' || last === '#' || text[at] === ':' || jump
       // A label where a statement starts (`a: {`), not a key: its block a block.
       if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
       program.push(token)
@@ -386,7 +386,7 @@ function nameless(text) {
       }
       ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
-      const read = text[at] === ':' || last === '.'
+      const read = text[at] === ':' || last === '.' || last === '#'
       // A function expression's name is its own body's, a class expression's nobody's.
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
