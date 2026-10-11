@@ -336,21 +336,18 @@ test('a file whose whitespace changes mix kinds of blank is diffed as it is whil
   assert.doesNotMatch(sections['src/spaces.js'], /aria-disabled|bundle-compare-diff-table/u)
 })
 
-test('Next change past the rows shown brings the next change in instead of leaving the file', () => {
-  const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
-  const big = list => `${list.join('\n')}\n`
-  const element = view('src/big.js', [{ 'src/big.js': big(lines) }, { 'src/big.js': big(lines.map((line, i) => i % 2 ? `${line} changed` : line)) }])
-  renderText(element.render())
-  const { key, rows, limit } = element._shownRows
-  assert.ok(rows.length > limit, 'more rows than one page')
-  // Every rendered change is above the viewport top.
-  element.querySelector = () => ({ getBoundingClientRect: () => ({ top: 0 }), querySelectorAll: () => [] })
-  let selected = null
-  element.addEventListener('compare-code-select', event => { selected = event.detail.path })
-  element._stepChange(1)
-  const next = rows.findIndex((row, i) => i >= limit && row.change !== undefined && rows[i - 1].change !== row.change)
-  assert.equal(element._limits.get(key), next + 2000)
-  assert.equal(selected, null, 'stays on the file')
+test('Previous and Next file step through the files in the order the file menu lists them, filtered or not', () => {
+  const files = ['a.js', 'a/b.js', 'Z.js', 'src/z/y.js', 'src/b.js', 'lib/x/y/z.js']
+  const element = view(null, [Object.fromEntries(files.map(path => [path, '1'])), Object.fromEntries(files.map(path => [path, '2']))])
+  const menu = () => [...renderText(element.render()).matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)]
+    .map(([row]) => /bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1])
+  const listed = menu()
+  assert.deepEqual(element._order, listed)
+  assert.deepEqual(listed.slice(0, 3), ['a/b.js', 'assets/logo.png', 'lib/x/y/z.js'], 'directories first, as the menu lists them')
+  element._query = 'src/'
+  const narrowed = menu()
+  assert.deepEqual(element._order, narrowed, 'and as a search narrows it')
+  assert.ok(narrowed.length > 0 && narrowed.length < listed.length, narrowed.join())
 })
 
 test('a specifier repointed under several conditions links and marks every line that imports it', () => {

@@ -85,8 +85,7 @@ class BundleCompareAll extends BundleCompareCode {
         ${root.from ? html`<span class="bundle-compare-all-prefix mono" data-tooltip=${`Root moved: ${root.from} → ${root.to}`}>${rootTemplate(root)}</span>`
           : prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
         <span class="bundle-code-main-spacer"></span>
-        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual), pretty,
-          shown.some(({ file }) => file.generated))}
+        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), pretty, shown.some(({ file }) => file.generated))}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label="Every change">
         ${entries.length === 0 ? html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`

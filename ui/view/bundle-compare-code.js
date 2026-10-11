@@ -19,7 +19,7 @@ import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
-import { BUNDLE_SOURCE_WRAP_KEY, state } from '#client/index.js'
+import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
@@ -27,14 +27,14 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, changeStart, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { npmFileReadability } from './file-readability.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
-import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, WRAP_ICON } from './lit-icons.js'
+import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
@@ -618,15 +618,7 @@ export class BundleCompareCode extends LitElement {
         </button>
         <span class="bundle-code-main-spacer"></span>
         ${this._fileFigures(entry, model)}
-        ${model && model.blocks.length > 0 ? html`<span class="bundle-code-file-nav">
-          <button type="button" class="focus-code-nav-btn" aria-label="Previous change" data-tooltip="Previous change" @click=${() => this._stepChange(-1)}>
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 5-5 5 5"/></svg>
-          </button>
-          <button type="button" class="focus-code-nav-btn" aria-label="Next change" data-tooltip="Next change" @click=${() => this._stepChange(1)}>
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg>
-          </button>
-        </span>` : nothing}
-        ${this._toggles(diffable, textual, file.pretty, file.generated, file.mixedWhitespace, file.reading)}
+        ${this._toggles(diffable, file.pretty, file.generated, file.mixedWhitespace, file.reading)}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
@@ -634,11 +626,11 @@ export class BundleCompareCode extends LitElement {
       </div>`
   }
 
-  // The diff's pretty-print, layout, whitespace, renamed names and wrap
-  // toggles, as a file has use for them: pretty-printing a minified file
-  // (`pretty` from _pretty), a diff the next two and, in JavaScript minified
-  // on both sides (`renames`, _generated), renamed names, a text the wrap.
-  _toggles(diffable, textual, pretty = null, renames = false, mixedWhitespace = false, reading = false) {
+  // The diff's pretty-print, layout, whitespace and renamed names toggles, as
+  // a file has use for them: pretty-printing a minified file (`pretty` from
+  // _pretty), a diff the next two and, in JavaScript minified on both sides
+  // (`renames`, _generated), renamed names. Lines always wrap.
+  _toggles(diffable, pretty = null, renames = false, mixedWhitespace = false, reading = false) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
           data-tooltip=${pretty.status === 'limited' ? 'Too many minified files to pretty-print together: open one in Code' : prettyTooltip(pretty)}
@@ -652,11 +644,7 @@ export class BundleCompareCode extends LitElement {
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
         </button>` : nothing}
-        ${renames && prefs.ignoreRenames ? this._marksToggle(reading) : nothing}` : nothing}
-        ${textual ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(!!state.bundleSourceWrap)} aria-label="Wrap lines" data-tooltip="Wrap lines" ?hidden=${diffable && prefs.layout === 'split'}
-          @click=${() => this._toggleWrap()}>
-          ${WRAP_ICON}
-        </button>` : nothing}`
+        ${renames && prefs.ignoreRenames ? this._marksToggle(reading) : nothing}` : nothing}`
   }
 
   // Every line quoting each repointed specifier. Rows for one specifier
@@ -738,7 +726,7 @@ export class BundleCompareCode extends LitElement {
     const key = `${path}\0source`
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const lines = model.b.length > limit ? model.b.slice(0, limit) : model.b
-    return html`<div class=${classMap({ 'bundle-compare-diff-table': true, single: true, wrapped: !!state.bundleSourceWrap })}
+    return html`<div class="bundle-compare-diff-table single"
         style=${styleMap({ '--diff-num-width': `${String(model.b.length).length + 1}ch` })} role="table" aria-label="Source">
         ${repeat(lines, (_, i) => i, (_, i) => html`<div class=${classMap({ 'diff-row': true, ctx: true, 'is-import': marked.has(i) })} role="row" data-line=${i + 1}>
           <span class="diff-num">${i + 1}</span>${this._codeCell(lit, 'b', i, null)}
@@ -789,61 +777,12 @@ export class BundleCompareCode extends LitElement {
     this.requestUpdate()
   }
 
-  _toggleWrap() {
-    state.bundleSourceWrap = !state.bundleSourceWrap
-    try { localStorage.setItem(BUNDLE_SOURCE_WRAP_KEY, String(state.bundleSourceWrap)) } catch {}
-    this.requestUpdate()
-  }
-
-  // Scroll to the next change below the top of the diff (or the last one
-  // above it); past the file's last change, step on to the next file. At
-  // either end of the scroll, where a change can't reach the top, step past
-  // the change last stepped to instead, while it is still in view. A change past the rows shown brings
-  // them in first.
-  _stepChange(direction) {
-    const body = this.querySelector('.bundle-compare-diff')
-    if (!body) return
-    const top = body.getBoundingClientRect().top
-    const starts = [...body.querySelectorAll('[data-change-start]')]
-    const offset = el => el.getBoundingClientRect().top - top
-    const changeOf = el => Number(el.dataset.changeStart)
-    // A change stepped to rests its scroll margin below the top.
-    const rest = starts.length > 0 ? parseFloat(getComputedStyle(starts[0]).scrollMarginTop) || 0 : 0
-    let target = direction > 0 ? starts.find(el => offset(el) > rest + 8) : starts.findLast(el => offset(el) < rest - 8)
-    const stuck = direction > 0 ? body.scrollTop + body.clientHeight >= body.scrollHeight - 2 : body.scrollTop <= 1
-    // Only while that change is still on screen: a scroll since moves on.
-    const last = this._stepped?.path === this._current ? this._stepped.change : null
-    const lastStart = last === null ? null : starts.find(el => changeOf(el) === last)
-    if (stuck && lastStart && offset(lastStart) >= 0 && offset(lastStart) <= body.clientHeight) {
-      target = direction > 0 ? starts.find(el => changeOf(el) > last) : starts.findLast(el => changeOf(el) < last)
-    }
-    const reach = change => {
-      this._stepped = { path: this._current, change }
-      this.querySelector(`.bundle-compare-diff [data-change-start="${change}"]`)?.scrollIntoView({ block: 'start' })
-    }
-    if (target) {
-      reach(changeOf(target))
-      return
-    }
-    const shown = this._shownRows
-    const hidden = direction > 0 && shown?.path === this._current ? changeStart(shown.rows, shown.limit) : -1
-    if (hidden !== -1) {
-      this._limits.set(shown.key, hidden + ROW_LIMIT)
-      this.requestUpdate()
-      void this.updateComplete.then(() => reach(shown.rows[hidden].change))
-      return
-    }
-    const index = this._order.indexOf(this._current)
-    this._select(this._order[index + direction])
-  }
-
   _renderDiff(path, { kind, basePath = path }, { after, before, key, model, pretty, changes, hiding, reading }) {
     const expansion = this._expansions.get(key) ?? new Map()
     const split = prefs.layout === 'split'
     const rows = diffRows(model, expansion, { split })
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const shown = rows.length > limit ? rows.slice(0, limit) : rows
-    this._shownRows = { path, key, rows, limit }
     const lit = {
       model,
       a: kind === 'added' ? null : this._highlighted(this.base, basePath, before,
@@ -857,21 +796,15 @@ export class BundleCompareCode extends LitElement {
       },
     }
     const digits = String(Math.max(model.a.length, model.b.length, 1)).length
-    let started = -1
-    const startOf = change => {
-      if (change === started) return false
-      started = change
-      return true
-    }
     return html`${changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
       ${reading && !prefs.markRenames ? html`<p class="bundle-compare-code-note">Renamed lines are marked rather than hidden: the file reads names (${changes.reads.map(read => `.${read}`).join(', ')}), which a rename changes.</p>` : nothing}
-      <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split, wrapped: split || !!state.bundleSourceWrap })}
+      <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
         ${split ? html`<div class="diff-row diff-split-head" role="row">
           <span class="diff-half">Before<strong data-tooltip-truncated data-tooltip=${this.baseName}>${this.baseName}</strong></span>
           <span class="diff-half">After<strong data-tooltip-truncated data-tooltip=${this.otherName}>${this.otherName}</strong></span>
         </div>` : nothing}
-        ${repeat(shown, row => this._rowKey(row), row => split ? this._splitRow(row, lit, startOf) : this._unifiedRow(row, lit, startOf))}
+        ${repeat(shown, row => this._rowKey(row), row => split ? this._splitRow(row, lit) : this._unifiedRow(row, lit))}
       </div>
       ${rows.length > shown.length ? html`<div class="bundle-compare-code-more">
         <button type="button" class="bundle-compare-code-action" @click=${() => { this._limits.set(key, limit + ROW_LIMIT); this.requestUpdate() }}>Show ${Math.min(ROW_LIMIT, rows.length - shown.length).toLocaleString()} more rows</button>
@@ -937,7 +870,7 @@ export class BundleCompareCode extends LitElement {
     </div>`
   }
 
-  _unifiedRow(row, lit, startOf) {
+  _unifiedRow(row, lit) {
     const { model } = lit
     if (row.kind === 'fold') return this._fold(row, lit)
     if (row.kind === 'ctx') {
@@ -946,7 +879,7 @@ export class BundleCompareCode extends LitElement {
     const del = row.kind === 'del'
     const words = del ? this._words(model, row.a, row.pair)?.a : this._words(model, row.pair, row.b)?.b
     const renamed = model.marked?.has(row.change)
-    return html`<div class=${`diff-row ${row.kind}${renamed ? ' renamed' : ''}`} role="row" data-change-start=${startOf(row.change) ? row.change : nothing}
+    return html`<div class=${`diff-row ${row.kind}${renamed ? ' renamed' : ''}`} role="row"
       data-tooltip=${renamed ? 'Renamed names alone' : nothing}>
       ${del
         ? html`<span class="diff-num">${row.a + 1}</span><span class="diff-num"></span><span class="diff-sign">−</span>${this._codeCell(lit, 'a', row.a, words)}`
@@ -960,7 +893,7 @@ export class BundleCompareCode extends LitElement {
     return html`<span class=${classMap({ 'diff-code': true, 'diff-long': text.length > LONG_LINE })}>${this._code(text, lit[side]?.[line], ranges, !noEol)}${noEol ? html`<span class="diff-no-eol" data-tooltip="No newline at end of file" aria-label="No newline at end of file">⊘</span>` : nothing}</span>`
   }
 
-  _splitRow(row, lit, startOf) {
+  _splitRow(row, lit) {
     const { model } = lit
     if (row.kind === 'fold') return this._fold(row, lit)
     if (row.kind === 'ctx') {
@@ -971,7 +904,7 @@ export class BundleCompareCode extends LitElement {
     }
     const words = row.paired ? this._words(model, row.left, row.right) : null
     const renamed = model.marked?.has(row.change)
-    return html`<div class=${`diff-row change${renamed ? ' renamed' : ''}`} role="row" data-change-start=${startOf(row.change) ? row.change : nothing}
+    return html`<div class=${`diff-row change${renamed ? ' renamed' : ''}`} role="row"
       data-tooltip=${renamed ? 'Renamed names alone' : nothing}>
       <span class=${classMap({ 'diff-half': true, del: row.left !== null, blank: row.left === null })}>${this._cell(lit, 'a', row.left, '−', words?.a)}</span>
       <span class=${classMap({ 'diff-half': true, add: row.right !== null, blank: row.right === null })}>${this._cell(lit, 'b', row.right, '+', words?.b)}</span>

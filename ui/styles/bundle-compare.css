@@ -696,21 +696,17 @@ bundle-compare-code > .bundle-code-view {
   --diff-del-num: color-mix(in oklch, var(--critical) 20%, var(--bg));
   --diff-del-word: rgb(from var(--critical) r g b / .32);
   --diff-fold: color-mix(in oklch, var(--accent) 8%, var(--bg));
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
   padding-bottom: .5rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .78rem;
   line-height: 1.45;
   color: var(--text);
   tab-size: 2;
-
-  &.wrapped { width: 100%; }
 }
 .diff-row {
   display: flex;
   align-items: stretch;
-  scroll-margin-top: 2.5rem;
 }
 .diff-num {
   flex: none;
@@ -744,14 +740,11 @@ bundle-compare-code > .bundle-code-view {
   color: var(--muted);
   user-select: none;
 }
+/* Lines always wrap. */
 .diff-code {
   flex: 1;
-  padding-right: 1rem;
-  white-space: pre;
-}
-.wrapped .diff-code,
-.diff-code.diff-long {
   min-width: 0;
+  padding-right: 1rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

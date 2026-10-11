@@ -206,10 +206,11 @@ files) on each side; a file's lines are in its size's tooltip. Compare offers ac
 bundles assigned to the same repository, including bundles not previously opened.
 Unattached bundles cannot be compared with each other. Past its Overview,
 Compare reviews the changes in **Code**, a file at a time beside the tree of
-changed files, or in **Diff**, every changed file's diff one after another in
+changed files, its Previous and Next file buttons stepping through them in
+the tree's order, or in **Diff**, every changed file's diff one after another in
 a single list, each under its name. Diff is offered only while that list is
 under 8,000 rows, its folded unchanged runs and each file's head counted; a
-link to a longer one opens the Overview. Both can hide whitespace changes, as
+link to a longer one opens the Overview. Their lines always wrap. Both can hide whitespace changes, as
 `diff -w` does, except in a file where that would hide blanks of more than
 one kind changing between the same two characters, such as spaces turned to
 tabs or a tab put among spaces: its changes all show, and the toggle is off
