@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, renameLabel, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleLayout, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, detectRoot, layoutDir, layoutPackageDirs, renameLabel, rootDir, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
 
 // All fixtures use ASCII content so a string's byte length equals its
 // `.length` — keeps the expected-bytes assertions readable.
@@ -418,7 +419,7 @@ describe('renames', () => {
     const base = m({ 'own/src/a.js': 'aaaa', 'own/keep.js': 'k', 'own/gone.js': 'g' })
     const other = m({ 'own/lib/a.ts': 'aaaaaa', 'own/keep.js': 'k', 'own/new.js': 'n' })
     const { totals, files, packages } = computeBundleDiff(base, other, firstSeg)
-    assert.deepEqual(files.changed, [{ path: 'own/lib/a.ts', basePath: 'own/src/a.js', baseBytes: 4, otherBytes: 6, delta: 2, modified: true }])
+    assert.deepEqual(files.changed, [{ path: 'own/lib/a.ts', renamedFrom: 'own/src/a.js', basePath: 'own/src/a.js', baseBytes: 4, otherBytes: 6, delta: 2, modified: true }])
     assert.deepEqual(files.onlyBase.map(row => row.path), ['own/gone.js'])
     assert.deepEqual(files.onlyOther.map(row => row.path), ['own/new.js'])
     assert.equal(totals.changedFiles, 1)
@@ -429,7 +430,7 @@ describe('renames', () => {
     assert.equal(totals.identical, false)
     assert.deepEqual(packages.changed.map(row => row.pkg), ['own'])
     const pure = computeBundleDiff(m({ 'own/src/a.js': 'a' }), m({ 'own/lib/a.js': 'a' }), firstSeg)
-    assert.deepEqual(pure.files.changed, [{ path: 'own/lib/a.js', basePath: 'own/src/a.js', baseBytes: 1, otherBytes: 1, delta: 0, modified: false }])
+    assert.deepEqual(pure.files.changed, [{ path: 'own/lib/a.js', renamedFrom: 'own/src/a.js', basePath: 'own/src/a.js', baseBytes: 1, otherBytes: 1, delta: 0, modified: false }])
     assert.equal(pure.totals.identical, false, 'a rename alone is a change')
   })
 
@@ -441,5 +442,123 @@ describe('renames', () => {
     assert.equal(renameLabel('src/a.js', 'lib/a.js'), '{src → lib}/a.js')
     assert.equal(renameLabel('x/src/y/a.js', 'x/lib/y/a.js'), 'x/{src → lib}/y/a.js')
     assert.equal(renameLabel('node_modules/a/src/x.ts', 'node_modules/a/lib/x.js'), 'node_modules/a/{src/x.ts → lib/x.js}')
+  })
+})
+
+describe('bundles taken from different roots', () => {
+  const own = () => 'own'
+  const flat = m({ 'dir/file/a.js': 'a', 'dir/file/b.js': 'b' })
+  const nested = m({ 'src/dir/file/a.js': 'a', 'src/dir/file/b.js': 'b', __prelude__: 'p' })
+
+  it('compares one bundle as if under the directory the other holds it in', () => {
+    const { files, totals } = computeBundleDiff(flat, nested, own)
+    assert.deepEqual(files.root, { base: '', other: 'src/' })
+    assert.deepEqual(files.changed, [], 'not changed, nor renamed')
+    assert.deepEqual(files.onlyBase, [])
+    assert.deepEqual(files.onlyOther.map(row => row.path), ['__prelude__'], "the other's own extra stays added")
+    assert.equal(totals.renamedFiles, 0)
+    assert.equal(totals.unchangedFiles, 2)
+    assert.deepEqual([...files.basePaths], [['dir/file/a.js', 'src/dir/file/a.js'], ['dir/file/b.js', 'src/dir/file/b.js']])
+  })
+
+  it('works the other way round, a base file outside the root above it', () => {
+    const { files } = computeBundleDiff(nested, flat, own)
+    assert.deepEqual(files.root, { base: 'src/', other: '' })
+    assert.deepEqual(files.changed, [])
+    assert.deepEqual(files.onlyBase, [{ path: '../__prelude__', basePath: '__prelude__', bytes: 1 }])
+  })
+
+  it('names the base file wherever it differs, for changed, removed and renamed files', () => {
+    const base = m({ 'dir/a.js': 'a', 'dir/b.js': 'b', 'dir/c.js': 'c', 'dir/gone.js': 'g', 'dir/d.js': 'd' })
+    const other = m({ 'src/dir/a.js': 'aa', 'src/dir/b.js': 'b', 'src/dir/c.js': 'c', 'src/dir/d.ts': 'd', __prelude__: 'p' })
+    const { files, totals } = computeBundleDiff(base, other, own)
+    assert.deepEqual(files.root, { base: '', other: 'src/' })
+    assert.deepEqual(files.changed, [
+      { path: 'src/dir/a.js', basePath: 'dir/a.js', baseBytes: 1, otherBytes: 2, delta: 1 },
+      { path: 'src/dir/d.ts', renamedFrom: 'src/dir/d.js', basePath: 'dir/d.js', baseBytes: 1, otherBytes: 1, delta: 0, modified: false },
+    ])
+    assert.deepEqual(files.onlyBase, [{ path: 'src/dir/gone.js', basePath: 'dir/gone.js', bytes: 1 }])
+    assert.equal(totals.renamedFiles, 1)
+  })
+
+  it('pairs a file both keep at their own root as it is', () => {
+    const base = m({ 'package.json': '{}', 'dir/a.js': 'a', 'dir/b.js': 'b' })
+    const other = m({ 'package.json': '{}', 'src/dir/a.js': 'a', 'src/dir/b.js': 'b' })
+    const { files, totals } = computeBundleDiff(base, other, own)
+    assert.deepEqual(files.root, { base: '', other: 'src/' })
+    assert.equal(totals.identical, true)
+  })
+
+  it('gives every base file a path of its own, one the root cannot place a `../` further out', () => {
+    const base = m({ 'src/a.js': 'a', 'src/b.js': 'b', 'a.js': 'x', '../a.js': 'y' })
+    const other = m({ 'a.js': 'a', 'b.js': 'b', '../a.js': 'y' })
+    const { files, totals } = computeBundleDiff(base, other, own)
+    assert.deepEqual(files.root, { base: 'src/', other: '' })
+    assert.equal(new Set(files.basePaths.values()).size, 4)
+    assert.deepEqual(files.onlyBase, [{ path: '../../a.js', basePath: 'a.js', bytes: 1 }])
+    assert.equal(totals.unchangedFiles, 3)
+    assert.equal(totals.baseBytes, 4)
+  })
+
+  it('keeps package boundaries across the root, recorded on one side or both', () => {
+    const base = m({ 'crates/foo/lib.rs': 'v1', 'crates/foo/old.rs': 'o', 'node_modules/x/i.js': 'x', 'a.js': 'a', 'b.js': 'b' })
+    const baseDirs = new Map([['crates/foo/lib.rs', 'crates/foo'], ['crates/foo/old.rs', 'crates/foo'], ['node_modules/x/i.js', 'node_modules/x'], ['a.js', '.'], ['b.js', '.']])
+    const other = m({ 'src/crates/foo/lib.rs': 'v2', 'src/node_modules/x/i.js': 'x', 'src/a.js': 'a', 'src/b.js': 'b', __prelude__: 'p' })
+    const compare = otherDirs => {
+      const layout = bundleLayout(base.keys(), other)
+      const dirs = layoutPackageDirs(baseDirs, otherDirs, layout)
+      return { dirs, diff: computeBundleDiff(base, other, path => bundlePkgOf(path, { packageDir: dirs?.get(path) }), layout) }
+    }
+    const { dirs, diff: againstMap } = compare(null)
+    assert.deepEqual([...dirs], [['src/crates/foo/lib.rs', 'src/crates/foo'], ['src/crates/foo/old.rs', 'src/crates/foo'],
+      ['src/node_modules/x/i.js', 'src/node_modules/x'], ['src/a.js', '.'], ['src/b.js', '.']])
+    assert.deepEqual(againstMap.packages.changed.map(row => row.pkg).toSorted(), ['__own__', 'src/crates/foo'], 'a sourcemap side keeps the boundary the base records, own source gaining __prelude__')
+    const otherDirs = new Map([['src/crates/foo/lib.rs', 'src/crates/foo'], ['src/node_modules/x/i.js', 'src/node_modules/x'], ['src/a.js', '.'], ['src/b.js', '.'], ['__prelude__', '.']])
+    const { diff: againstStasis } = compare(otherDirs)
+    assert.deepEqual(againstStasis.packages.changed.map(row => row.pkg).toSorted(), ['__own__', 'src/crates/foo'], 'one package, not removed and added')
+    assert.deepEqual([...againstStasis.packages.onlyBase, ...againstStasis.packages.onlyOther], [])
+    assert.equal(layoutPackageDirs(null, null, { root: null, paths: new Map() }), null)
+    assert.deepEqual([...layoutPackageDirs(new Map([['src/a.js', 'src'], ['src/b/c.js', 'src/b'], ['tools/t.js', 'tools']]), null,
+      { root: { base: 'src/', other: '' }, paths: new Map([['src/a.js', 'a.js'], ['src/b/c.js', 'b/c.js'], ['tools/t.js', '../tools/t.js']]) })],
+    [['a.js', '.'], ['b/c.js', 'b'], ['../tools/t.js', '../tools']], 'the root itself reads as `.`, a directory outside it as its files do')
+  })
+
+  it('takes no root where two would pair as many, so the open bundle never decides', () => {
+    const one = ['a.js', 'b.js', 'x/c.js', 'x/d.js'], two = ['x/a.js', 'x/b.js', 'c.js', 'd.js']
+    assert.equal(detectRoot(one, two), null, 'x/ either way')
+    assert.equal(detectRoot(two, one), null)
+    const contents = paths => m(Object.fromEntries(paths.map(path => [path, path.at(-4)])))
+    const forward = computeBundleDiff(contents(one), contents(two), own)
+    const backward = computeBundleDiff(contents(two), contents(one), own)
+    assert.deepEqual([forward.totals.unchangedFiles, forward.totals.onlyBaseFiles], [backward.totals.unchangedFiles, backward.totals.onlyOtherFiles])
+    assert.equal(detectRoot(['a.js', 'b.js'], ['x/a.js', 'x/b.js', 'y/a.js', 'y/b.js']), null, 'two directories holding as many')
+  })
+
+  it('places a module where its files went, a ../ further out where the root could not place them clear', () => {
+    const base = m({ 'src/a.js': 'a', 'src/b.js': 'b', 'tools/crate/lib.rs': 'r' })
+    const other = m({ 'a.js': 'a', 'b.js': 'b', '../tools/crate/lib.rs': 'other' })
+    const layout = bundleLayout(base.keys(), other)
+    assert.equal(layout.paths.get('tools/crate/lib.rs'), '../../tools/crate/lib.rs')
+    assert.equal(layoutDir(layout, 'tools/crate', ['lib.rs']), '../../tools/crate')
+    assert.equal(layoutDir(layout, 'tools/other', ['x.rs']), '../tools/other', 'a module none of whose files are laid out moves with the root')
+    assert.equal(layoutDir(layout, '.', ['src/a.js']), '.')
+    assert.deepEqual(layoutPackageDirs(new Map([['tools/crate/lib.rs', 'tools/crate']]), null, layout).get('../../tools/crate/lib.rs'), '../../tools/crate')
+  })
+
+  it('moves a base directory with the root', () => {
+    assert.equal(rootDir(null, 'crates/foo'), 'crates/foo')
+    assert.equal(rootDir({ base: '', other: 'src/' }, 'crates/foo'), 'src/crates/foo')
+    assert.equal(rootDir({ base: '', other: 'src/' }, '.'), '.')
+    assert.equal(rootDir({ base: 'src/', other: '' }, 'src/crates/foo'), 'crates/foo')
+    assert.equal(rootDir({ base: 'src/', other: '' }, 'src'), '.')
+    assert.equal(rootDir({ base: 'src/', other: '' }, 'tools'), '../tools', 'outside the root, as its files read')
+    assert.equal(rootDir({ base: 'a/b/', other: '' }, 'tools'), '../../tools')
+  })
+
+  it('keeps paths as they are where they line up, or only a few would move', () => {
+    assert.equal(detectRoot(['a.js', 'b.js', 'lib/a.js'], ['a.js', 'b.js', 'lib/a.js']), null)
+    assert.equal(detectRoot(['a.js', 'b.js', 'c.js', 'd.js'], ['src/a.js', 'x.js', 'y.js', 'z.js']), null, 'one file of four')
+    assert.equal(detectRoot(['own/src/a.js', 'own/keep.js'], ['own/lib/a.ts', 'own/keep.js']), null)
+    assert.equal(computeBundleDiff(m({ 'a.js': 'a' }), m({ 'a.js': 'b' }), own).files.root, null)
   })
 })

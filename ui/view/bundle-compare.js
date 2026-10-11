@@ -52,8 +52,8 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
-import { renameTemplate } from './bundle-compare-rename.js'
+import { bundleLayout, comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates, layoutPackageDirs, rootLabel } from './bundle-compare-diff.js'
+import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
@@ -435,8 +435,8 @@ class BundleCompare extends LitElement {
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
     const tagged = kind !== 'removed'
-    const row = r => r.basePath == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged)
-      : this._fileRow(r.path, renameTemplate(displayOf(r.basePath), displayOf(r.path)), this._sizeCells(r), `${r.basePath} → ${r.path}`, tagged)
+    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged)
+      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged)
     return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file'), { lanes })
   }
 
@@ -604,26 +604,26 @@ class BundleCompare extends LitElement {
       const baseSources = bundleCompareFiles(from, this._scope)
       const otherSources = bundleCompareFiles(to, this._scope)
       // Classify original paths and preserve recorded Stasis package
-      // boundaries from either side. Own source has one identity.
-      const baseDirs = bundlePackageDirs(from)
-      const otherDirs = bundlePackageDirs(to)
-      const packageDirs = baseDirs || otherDirs
-        ? new Map([...(baseDirs ?? []), ...(otherDirs ?? [])])
-        : null
+      // boundaries from either side, as the open one lays its files out
+      // where their roots differ. Own source has one identity.
+      const layout = bundleLayout(baseSources.keys(), otherSources)
+      const packageDirs = layoutPackageDirs(bundlePackageDirs(from), bundlePackageDirs(to), layout)
       const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
-      this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
+      this._diff = computeBundleDiff(baseSources, otherSources, pkgOf, layout)
       // Each side's lines of code (bundleLineCounts), on its rows and in
       // the totals; a file that isn't text has none.
       const baseLines = bundleLineCounts(from), otherLines = bundleLineCounts(to)
       const linesOf = (lines, paths) => { let total = 0; for (const path of paths) total += lines.get(path) ?? 0; return total }
       Object.assign(this._diff.totals, { baseLines: linesOf(baseLines, baseSources.keys()), otherLines: linesOf(otherLines, otherSources.keys()) })
-      for (const row of this._diff.files.onlyBase) row.lines = baseLines.get(row.path) ?? 0
+      for (const row of this._diff.files.onlyBase) row.lines = baseLines.get(row.basePath ?? row.path) ?? 0
       for (const row of this._diff.files.onlyOther) row.lines = otherLines.get(row.path) ?? 0
       for (const row of this._diff.files.changed) Object.assign(row, { baseLines: baseLines.get(row.basePath ?? row.path) ?? 0, otherLines: otherLines.get(row.path) ?? 0 })
       this._diff.resolutions = computeResolutionDiff(
         bundleCompareResolutions(from, this._scope),
         bundleCompareResolutions(to, this._scope),
-        new Map(this._diff.files.changed.filter(row => row.basePath != null).map(row => [row.basePath, row.path])),
+        new Map(this._diff.files.changed.filter(row => row.renamedFrom != null).map(row => [row.basePath, row.path])),
+        this._diff.files.basePaths,
+        this._diff.files.root,
       )
       // Dependency versions come from the stasis per-module `{ name,
       // version }` metadata, not the path/byte walk above, so they're
@@ -658,9 +658,10 @@ class BundleCompare extends LitElement {
     return this._mode === 'diff' && !this._diffFits ? 'overview' : this._mode
   }
 
-  // Summary band — file + size (+ dependency) deltas plus the four
-  // bucket chips, wrapping on their own so the mode tabs keep to the right
-  // of the first line. Sits under the picker once a comparison is live.
+  // Summary band — dependency, size and line deltas, then the file delta
+  // with its four bucket chips beside it, wrapping on their own so the mode
+  // tabs keep to the right of the first line. Sits under the picker once a
+  // comparison is live.
   _renderSummary(diff) {
     const totals = diff.totals
     const vt = diff.versionUpdates.totals
@@ -671,11 +672,11 @@ class BundleCompare extends LitElement {
     const depDelta = vt.otherDeps - vt.baseDeps
     const pct = formatPct(totals.byteDelta, totals.baseBytes)
     return html`<div class="bundle-compare-summary"><div class="bundle-compare-stats">
-      <div class="bundle-compare-metric">
-        <span class="bundle-compare-metric-label">Files</span>
-        <span class="bundle-compare-metric-value">${totals.baseFiles.toLocaleString()} → ${totals.otherFiles.toLocaleString()}</span>
-        <span class=${`bundle-compare-metric-delta ${dirClass(totals.fileDelta)}`}>${formatCountDelta(totals.fileDelta)}</span>
-      </div>
+      ${showDeps ? html`<div class="bundle-compare-metric">
+        <span class="bundle-compare-metric-label">Deps</span>
+        <span class="bundle-compare-metric-value">${vt.baseDeps.toLocaleString()} → ${vt.otherDeps.toLocaleString()}</span>
+        <span class=${`bundle-compare-metric-delta ${dirClass(depDelta)}`}>${formatCountDelta(depDelta)}</span>
+      </div>` : nothing}
       <div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Size</span>
         <span class="bundle-compare-metric-value">${formatBytes(totals.baseBytes)} → ${formatBytes(totals.otherBytes)}</span>
@@ -686,17 +687,19 @@ class BundleCompare extends LitElement {
         <span class="bundle-compare-metric-value">${totals.baseLines.toLocaleString()} → ${totals.otherLines.toLocaleString()}</span>
         <span class=${`bundle-compare-metric-delta ${dirClass(totals.otherLines - totals.baseLines)}`}>${formatCountDelta(totals.otherLines - totals.baseLines)}</span>
       </div>` : nothing}
-      ${showDeps ? html`<div class="bundle-compare-metric">
-        <span class="bundle-compare-metric-label">Deps</span>
-        <span class="bundle-compare-metric-value">${vt.baseDeps.toLocaleString()} → ${vt.otherDeps.toLocaleString()}</span>
-        <span class=${`bundle-compare-metric-delta ${dirClass(depDelta)}`}>${formatCountDelta(depDelta)}</span>
-      </div>` : nothing}
-      <div class="bundle-compare-chips">
-        <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
-        <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
-        <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>
-        <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
-        ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
+      <div class="bundle-compare-files">
+        <div class="bundle-compare-metric">
+          <span class="bundle-compare-metric-label">Files</span>
+          <span class="bundle-compare-metric-value">${totals.baseFiles.toLocaleString()} → ${totals.otherFiles.toLocaleString()}</span>
+          <span class=${`bundle-compare-metric-delta ${dirClass(totals.fileDelta)}`}>${formatCountDelta(totals.fileDelta)}</span>
+        </div>
+        <div class="bundle-compare-chips">
+          <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
+          <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
+          <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>
+          <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
+          ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
+        </div>
       </div></div>
       <div class="bundle-compare-modes" role="tablist" aria-label="Comparison view">
         ${[['overview', 'Overview'], ['code', 'Code'], ...this._diffFits ? [['diff', 'Diff']] : []]
@@ -839,12 +842,12 @@ class BundleCompare extends LitElement {
     const allPaths = [
       ...diff.files.onlyBase.map((r) => r.path),
       ...diff.files.onlyOther.map((r) => r.path),
-      ...diff.files.changed.flatMap((r) => r.basePath == null ? [r.path] : [r.path, r.basePath]),
+      ...diff.files.changed.flatMap((r) => r.renamedFrom == null ? [r.path] : [r.path, r.renamedFrom]),
     ]
-    const { prefix, stripped } = stripCommonPathPrefix(allPaths)
-    const displayMap = new Map()
-    for (let i = 0; i < allPaths.length; i++) displayMap.set(allPaths[i], stripped[i])
-    const displayOf = (p) => displayMap.get(p) ?? p
+    // Where the bundles' roots differ, the heading reads the move at the root.
+    const root = rootLabel(diff.files.root, stripCommonPathPrefix(allPaths).prefix)
+    const { prefix } = root
+    const displayOf = (p) => prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
 
     const fileCount = diff.files.onlyBase.length + diff.files.onlyOther.length + diff.files.changed.length
     const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
@@ -869,11 +872,11 @@ class BundleCompare extends LitElement {
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
-          : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
+          : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'})${root.from ? html`, moved <span class="mono">${rootTemplate(root)}</span>` : ''}.</div>`
         : this._collapsible('files', 'Files', fileCount, () => this._cols(fileLanes, html`
             ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, fileLanes)}
             ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, fileLanes)}
-            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`), prefix)}
+            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`), root.from ? `${root.from} → ${root.to}` : prefix)}
       ${this._renderResolutions(diff.resolutions)}
     `
   }

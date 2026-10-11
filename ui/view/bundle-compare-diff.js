@@ -29,14 +29,21 @@ import { resolutionKey } from './bundle-compare-inputs.js'
 // `renames` (base path → other path, see detectRenames) names base files as
 // the other bundle does: a renamed importer's resolutions pair with its new
 // path's, reported under it, and a target renamed is the same target.
-export function computeResolutionDiff(base, other, renames = new Map()) {
-  const renamed = path => renames.get(path) ?? path
+// `basePaths` and `root` (computeBundleDiff's `files`) name the rest where
+// the bundles' roots differ, a base target shown as the other bundle would
+// lay it out; a path no file has (an importer the bundle didn't capture, a
+// builtin) may read either as it is or through the root.
+export function computeResolutionDiff(base, other, renames = new Map(), basePaths = new Map(), root = null) {
+  const names = path => {
+    const known = renames.get(path) ?? basePaths.get(path)
+    return known === undefined ? [...new Set([path, through(root, path) ?? path])] : [known]
+  }
   const changed = []
   for (const before of base.values()) {
-    const after = other.get(resolutionKey(renamed(before.parent), before.specifier, before.conditions, before.platform))
-    if (after && renamed(before.target) !== after.target) {
+    const after = names(before.parent).map(parent => other.get(resolutionKey(parent, before.specifier, before.conditions, before.platform))).find(Boolean)
+    if (after && !names(before.target).includes(after.target)) {
       const { target: otherTarget, ...identity } = after
-      changed.push({ ...identity, baseTarget: before.target, otherTarget })
+      changed.push({ ...identity, baseTarget: basePaths.get(before.target) ?? before.target, otherTarget })
     }
   }
   changed.sort((a, b) => a.key.localeCompare(b.key))
@@ -140,6 +147,82 @@ export function detectRenames(removed, added, pkgOf) {
   return renames
 }
 
+// Each base file's path as the other bundle lays its files out, with `root`
+// (see detectRoot) between them: through the root where the other has the
+// file there, else as it is where the other has that, else through the root
+// all the same — one outside a base root a `../` for each of its levels
+// above it. `paired` counts the files the other has, `moved` those reached
+// through the root.
+function rootPaths(base, other, root) {
+  const paths = new Map(), taken = new Set()
+  let moved = 0
+  for (const path of base) {
+    const to = through(root, path)
+    if (to === null || !other.has(to)) continue
+    paths.set(path, to)
+    taken.add(to)
+    if (to !== path) moved++
+  }
+  for (const path of base) {
+    if (paths.has(path) || !other.has(path) || taken.has(path)) continue
+    paths.set(path, path)
+    taken.add(path)
+  }
+  const paired = paths.size
+  // The rest clear of every path taken, a `../` more where one is.
+  for (const path of base) {
+    if (paths.has(path)) continue
+    let to = through(root, path) ?? `${'../'.repeat(root.base.split('/').length - 1)}${path}`
+    while (other.has(to) || taken.has(to)) to = `../${to}`
+    paths.set(path, to)
+    taken.add(to)
+  }
+  return { paths, paired, moved }
+}
+
+// A base path through `root` as the other bundle lays it out, or null for
+// one outside a base root.
+function through(root, path) {
+  if (!root) return path
+  if (root.base === '') return `${root.other}${path}`
+  return path.startsWith(root.base) ? path.slice(root.base.length) : null
+}
+
+// The directory one bundle's files sit under in the other, where that is
+// how they line up: `{ base: '', other: 'src/' }` for the base bundle's
+// `a.js` at the other's `src/a.js`, `{ base: 'src/', other: '' }` the other
+// way round, or null. Either side may hold more (a `__prelude__` beside
+// `src/`, a file added inside it). The move holds only where it pairs more
+// files than the paths as they are, and at least half of the side it moves.
+export function detectRoot(basePaths, otherPaths) {
+  const base = new Set(basePaths), other = new Set(otherPaths)
+  // The directory of `within` holding the most paths of `from` under it, or
+  // null where two hold as many.
+  const likeliest = (within, from) => {
+    const counts = new Map()
+    for (const path of within) {
+      for (let at = path.indexOf('/'); at !== -1; at = path.indexOf('/', at + 1)) {
+        if (from.has(path.slice(at + 1))) counts.set(path.slice(0, at + 1), (counts.get(path.slice(0, at + 1)) ?? 0) + 1)
+      }
+    }
+    let best = null, tied = false
+    for (const [dir, count] of counts) {
+      if (count > (counts.get(best) ?? 0)) [best, tied] = [dir, false]
+      else if (count === counts.get(best)) tied = true
+    }
+    return tied ? null : best
+  }
+  const same = rootPaths(base, other, null).paired
+  const found = [[{ base: '', other: likeliest(other, base) }, base], [{ base: likeliest(base, other), other: '' }, other]]
+    .filter(([root]) => root.base !== null && root.other !== null)
+    .map(([root, side]) => ({ root, side, ...rootPaths(base, other, root) }))
+    .filter(({ side, paired, moved }) => paired > same && moved * 2 >= side.size)
+  // A move either way pairing as many is no answer: which bundle is open
+  // would decide what pairs.
+  if (found.length === 2 && found[0].paired === found[1].paired) return null
+  return found.toSorted((a, b) => b.paired - a.paired)[0]?.root ?? null
+}
+
 // A rename the way `git diff --stat` writes one: the directories both
 // paths share, then the part that changed (`{src → lib}/a.js`), down to
 // the extension when that is all (`src/a{.js → .ts}`; `extension: false`
@@ -164,6 +247,59 @@ export function renameParts(from, to, { extension = true } = {}) {
     return { ...parts, head: parts.head + parts.from.slice(0, dot), from: parts.from.slice(dot), to: parts.to.slice(dot) }
   }
   return parts
+}
+
+// How the base bundle's files read in the other's layout: the root between
+// them (detectRoot) and each base path through it (rootPaths).
+export function bundleLayout(base, other) {
+  const paths = [...base]
+  const root = detectRoot(paths, other.keys())
+  return { root, paths: rootPaths(paths, other, root).paths }
+}
+
+// Both bundles' recorded package boundaries (`bundlePackageDirs`, either
+// may be null) by path as the other lays its files out, the base's
+// directories moved with the root: a workspace package keyed by its
+// directory stays one package, and a base-only boundary still applies to
+// the file paired with it. The root's own `.` stays itself.
+export function layoutPackageDirs(baseDirs, otherDirs, layout) {
+  if (!baseDirs && !otherDirs) return null
+  const files = Map.groupBy([...baseDirs ?? []], ([, dir]) => dir)
+  const dirs = new Map([...files].map(([dir, entries]) => [dir, layoutDir(layout, dir, entries.map(([path]) => path.slice(dir.length + 1)))]))
+  return new Map([...[...baseDirs ?? []].map(([path, dir]) => [layout.paths.get(path) ?? path, dirs.get(dir)]), ...otherDirs ?? []])
+}
+
+// A base module's directory as the other bundle lays out its files: where
+// `paths` placed one of them (`files`, by their paths in the module), a
+// fallback the root could not place clear of others included, else moved
+// with the root (rootDir). The root's own `.` stays itself.
+export function layoutDir({ root, paths }, dir, files) {
+  if (!root || dir === '.') return dir
+  for (const file of files) {
+    const to = paths.get(`${dir}/${file}`)
+    if (to?.endsWith(`/${file}`)) return to.slice(0, -file.length - 1)
+  }
+  return rootDir(root, dir)
+}
+
+// A base directory as the other bundle lays it out, as rootPaths lays out its
+// files: moved with the root, the root itself `.`, one outside a base root a
+// `../` for each of its levels above it, and `.` as it is.
+export function rootDir(root, dir) {
+  if (!root || dir === '.') return dir
+  const to = through(root, `${dir}/`)
+  if (to === null) return `${'../'.repeat(root.base.split('/').length - 1)}${dir}`
+  return to.slice(0, -1) || '.'
+}
+
+// The directory a view leaves off paths, `prefix` (the other bundle's
+// layout), with the root the bundles differ by read at it: `{ prefix, from:
+// './dir/', to: './src/dir/' }` — the base's place for it and the other's. A
+// prefix the root doesn't lead is dropped, the root read at the top.
+export function rootLabel(root, prefix) {
+  if (!root) return { prefix, from: null, to: null }
+  const kept = prefix.startsWith(root.other) ? prefix : ''
+  return { prefix: kept, from: `./${root.base}${kept.slice(root.other.length)}`, to: `./${kept || root.other}` }
 }
 
 export function renameLabel(from, to) {
@@ -206,12 +342,24 @@ function emptyPkgAcc() {
 //
 // `delta` is always `other − base` (positive = the compared bundle is
 // larger). A file clearly renamed (see detectRenames) is changed, not
-// removed and added: its row's `path` is the other side's, `basePath` the
-// base's, `modified` whether its contents changed too, and it counts in
+// removed and added: its row's `path` is the other side's, `renamedFrom`
+// the base's, `modified` whether its contents changed too, and it counts in
 // `renamedFiles` as well, its contents moved or not.
-// `identical` is true when the two bundles carry the exact same set of
-// paths with byte-identical content, resources included.
-export function computeBundleDiff(base, other, pkgOf) {
+// Where one bundle's files sit under a directory of the other's (`root`, see
+// detectRoot), the base's are compared as the other lays them out: a row's
+// `path` (and `renamedFrom`) reads that way, and `basePath` names the file
+// in the base bundle wherever that differs from `path`. `files.basePaths`
+// maps every base file to how it reads. `layout` (bundleLayout) may come
+// from the caller, to key `pkgOf` by the same paths: it is asked of files
+// as the other bundle lays them out.
+// `identical` is true when the two bundles carry the same files with
+// byte-identical content, resources included.
+export function computeBundleDiff(base, other, pkgOf, layout = bundleLayout(base.keys(), other)) {
+  const { root, paths: basePaths } = layout
+  // The base's files as the other lays them out, and back.
+  const baseFile = new Map([...basePaths].map(([from, to]) => [to, from]))
+  base = new Map([...base].map(([path, content]) => [basePaths.get(path), content]))
+  const atBase = path => baseFile.get(path) === path ? {} : { basePath: baseFile.get(path) }
   const onlyBase = []
   const onlyOther = []
   const changed = []
@@ -250,7 +398,7 @@ export function computeBundleDiff(base, other, pkgOf) {
         unchangedFiles++
       } else {
         const delta = oB - bB
-        changed.push({ path, baseBytes: bB, otherBytes: oB, delta })
+        changed.push({ path, ...atBase(path), baseBytes: bB, otherBytes: oB, delta })
         changedDelta += delta
         acc.changedFiles++
       }
@@ -260,7 +408,7 @@ export function computeBundleDiff(base, other, pkgOf) {
       onlyBaseBytes += bB
       acc.baseBytes += bB
       acc.onlyBaseFiles++
-      onlyBase.push({ path, bytes: bB })
+      onlyBase.push({ path, ...atBase(path), bytes: bB })
     } else {
       const oB = byteLen(other.get(path))
       otherBytes += oB
@@ -280,7 +428,7 @@ export function computeBundleDiff(base, other, pkgOf) {
       const bB = byteLen(bC), oB = same ? bB : byteLen(oC)
       onlyBaseBytes -= bB
       onlyOtherBytes -= oB
-      changed.push({ path: to, basePath: from, baseBytes: bB, otherBytes: oB, delta: oB - bB, modified: !same })
+      changed.push({ path: to, renamedFrom: from, basePath: baseFile.get(from), baseBytes: bB, otherBytes: oB, delta: oB - bB, modified: !same })
       changedDelta += oB - bB
       // Both in one package (its key is in the rename's).
       const acc = pkgAcc(from)
@@ -349,7 +497,7 @@ export function computeBundleDiff(base, other, pkgOf) {
       byteDelta: otherBytes - baseBytes,
       identical: onlyBase.length === 0 && onlyOther.length === 0 && changed.length === 0,
     },
-    files: { onlyBase, onlyOther, changed },
+    files: { onlyBase, onlyOther, changed, root, basePaths },
     // `unchanged` lends a version-only change its (equal) sizes.
     packages: { onlyBase: pkgOnlyBase, onlyOther: pkgOnlyOther, changed: pkgChanged, unchanged: pkgUnchanged },
   }

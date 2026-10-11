@@ -24,9 +24,14 @@ describe('bundlePkgOf', () => {
     assert.equal(bundlePkgOf('node_modules/@scope/pkg/x.js'), '@scope/pkg')
   })
 
-  it('buckets dependencies/ files (no node_modules) by package name', () => {
-    assert.equal(bundlePkgOf('dependencies/bar/a.js'), 'bar')
-    assert.equal(bundlePkgOf('dependencies/@s/p/a.js'), '@s/p')
+  it('buckets Soldeer dependencies/ Solidity files by package, and nothing else there', () => {
+    assert.equal(bundlePkgOf('dependencies/forge-std-1.9.4/src/Test.sol'), 'forge-std-1.9.4')
+    assert.equal(bundlePkgOf('lib/dependencies/@s/p/a.sol'), '@s/p')
+    assert.equal(bundlePkgOf('dependencies/bar/a.js'), '__own__', 'no ecosystem installs JavaScript there')
+    assert.equal(bundlePkgOf('somewhere/in/tree/dependencies/a.js'), '__own__')
+    assert.equal(bundlePkgOf('somewhere/in/tree/dependencies/utils/x.ts'), '__own__')
+    assert.equal(bundlePkgOf('dependencies/Lone.sol'), '__own__', 'a package is a directory')
+    assert.equal(bundlePkgOf('src/node_modules/foo/a.sol'), 'foo')
   })
 
   it('walks past pnpm\'s synthetic .pnpm dir to the real package', () => {
@@ -103,8 +108,9 @@ describe('bundlePkgOf', () => {
       assert.equal(bundlePkgOf(path, { packageDir: '.' }), '__own__')
       assert.equal(bundlePkgOf(path, { packageDir: 'subdir' }), 'subdir')
       assert.equal(bundlePkgOf('dependencies/filename.js', { packageDir: 'packages/app' }), 'packages/app')
-      // Without metadata, the legacy dependency-directory heuristic still applies.
-      assert.equal(bundlePkgOf(path), 'filename.js')
+      // Without metadata, a dependencies/ folder holds packages only for Solidity.
+      assert.equal(bundlePkgOf(path), '__own__')
+      assert.equal(bundlePkgOf('subdir/dependencies/dep/filename.sol'), 'dep')
     })
 
     it('treats the `.` root module as own source', () => {
@@ -116,8 +122,8 @@ describe('bundlePkgOf', () => {
 
 describe('ownSourceFirst', () => {
   it('moves dependencies below own source, keeping each group in its given order', () => {
-    const paths = ['node_modules/a/x.js', 'lib/z.js', 'dependencies/b/y.js', 'app.js', 'node_modules/.pnpm/c@1/node_modules/c/i.js']
-    assert.deepEqual(ownSourceFirst(paths), ['lib/z.js', 'app.js', 'node_modules/a/x.js', 'dependencies/b/y.js', 'node_modules/.pnpm/c@1/node_modules/c/i.js'])
+    const paths = ['node_modules/a/x.js', 'lib/z.js', 'dependencies/b/y.sol', 'app.js', 'node_modules/.pnpm/c@1/node_modules/c/i.js', 'src/dependencies/own.js']
+    assert.deepEqual(ownSourceFirst(paths), ['lib/z.js', 'app.js', 'src/dependencies/own.js', 'node_modules/a/x.js', 'dependencies/b/y.sol', 'node_modules/.pnpm/c@1/node_modules/c/i.js'])
   })
 
   it('classifies by recorded package dirs when given, counting workspace modules as own code', () => {

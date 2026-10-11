@@ -8,6 +8,8 @@
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { stripCommonPathPrefix } from './format.js'
+import { rootLabel } from './bundle-compare-diff.js'
+import { rootTemplate } from './bundle-compare-rename.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
 
@@ -68,7 +70,8 @@ class BundleCompareAll extends BundleCompareCode {
 
   render() {
     const entries = combinedEntries(this._entries)
-    const { prefix } = stripCommonPathPrefix(entries.map(([path]) => path))
+    const root = rootLabel(this.files?.root, stripCommonPathPrefix(entries.map(([path]) => path)).prefix)
+    const { prefix } = root
     const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
@@ -79,7 +82,8 @@ class BundleCompareAll extends BundleCompareCode {
     return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
         <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
         ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
-        ${prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
+        ${root.from ? html`<span class="bundle-compare-all-prefix mono" data-tooltip=${`Root moved: ${root.from} → ${root.to}`}>${rootTemplate(root)}</span>`
+          : prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
         <span class="bundle-code-main-spacer"></span>
         ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual), pretty,
           shown.some(({ file }) => file.generated))}
