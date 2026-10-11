@@ -48,6 +48,28 @@ const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s
 const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
 // The comments READ reads, in what lies between.
 const COMMENT = /\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
+// What in code may read a name by its spelling or is past reading: see
+// `dynamic` in nameless.
+const DYNAMIC = /\b(?:eval|with)\b|[\\@]|<>/u
+
+// The code in a template's substitutions (`${…}`), its braces counted.
+function substitutions(template) {
+  let code = '', depth = 0
+  for (let i = 1; i < template.length - 1; i++) {
+    const char = template[i]
+    if (depth === 0) {
+      if (char === '\\') i++
+      else if (char === '$' && template[i + 1] === '{') {
+        depth = 1
+        i++
+      }
+    } else {
+      depth += char === '{' ? 1 : char === '}' ? -1 : 0
+      code += depth === 0 ? '\n' : char
+    }
+  }
+  return code
+}
 // Words after which a value starts, so a `/` begins a regular expression.
 const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'extends', 'in', 'instanceof', 'new', 'of', 'return',
   'throw', 'typeof', 'void', 'yield'])
@@ -226,6 +248,8 @@ function nameless(text) {
     at = READ.lastIndex
     if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
+      // A template's substitutions are code, kept whole: `${eval("a")}`.
+      if (first === '`' && DYNAMIC.test(substitutions(token))) dynamic = true
       // A module's name ends its `import` or `export … from`, as `;` does.
       last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
       exporting = keyPlace = naming = parameters = false
