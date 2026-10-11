@@ -29,17 +29,11 @@ const RENAMED_MAX_LENGTH = 3
 const MINIFIED = /^[A-Za-z_$][\w$]*$/u
 // Properties through which code reads names: a function's or a class's
 // (`name`, its source by `toString`, a stack's frames, `arguments.callee` and
-// `caller`), which renaming changes. Read where it says so (`f.name`,
-// `f["name"]`, `const { name } = f`), not where it does otherwise (`'' + f`,
-// `f[k]`).
+// `caller`), which renaming changes. Read where code says so: a member or a
+// pattern's key (`f.name`, `const { name } = f`), or any string written out
+// as one (`f["name"]`, `Reflect.get(f, "name")`, `const k = "name"; f[k]`),
+// not where it reads one otherwise (`'' + f`, a key built up).
 const NAME_READS = new Set(['name', 'toString', 'stack', 'callee', 'caller'])
-// A property's name as a member or a pattern has it: its key's, or a
-// computed one's where it is a string written out (`["name"]`, `` [`name`] ``).
-function propertyName(key, computed) {
-  if (!computed) return key.type === 'Literal' ? String(key.value) : key.name
-  if (key.type === 'Literal' && typeof key.value === 'string') return key.value
-  return key.type === 'TemplateLiteral' && key.expressions.length === 0 ? key.quasis[0].value.cooked : null
-}
 // What a name renamed apart ends in, numbered past the first as it takes to
 // be one neither side uses: `e_old`, `e_old2`.
 const APART = '_old'
@@ -210,18 +204,15 @@ function analyze(text, extension) {
       case 'ExportDefaultDeclaration': if (node.declaration.id) keeping.add(node.declaration.id); break
       case 'ExportAllDeclaration': if (node.exported) others.add(node.exported); break
       case 'ImportAttribute': others.add(node.key); break
-      case 'MemberExpression': {
+      case 'MemberExpression':
         if (!node.computed) others.add(node.property)
-        const property = propertyName(node.property, node.computed)
-        if (NAME_READS.has(property)) reads.add(property)
+        if (!node.computed && NAME_READS.has(node.property.name)) reads.add(node.property.name)
         break
-      }
       case 'ObjectPattern':
-        for (const property of node.properties) {
-          const name = property.type === 'Property' ? propertyName(property.key, property.computed) : null
-          if (NAME_READS.has(name)) reads.add(name)
-        }
+        for (const { type, computed, key } of node.properties) if (type === 'Property' && !computed && NAME_READS.has(key.name)) reads.add(key.name)
         break
+      case 'Literal': if (NAME_READS.has(node.value)) reads.add(node.value); break
+      case 'TemplateLiteral': for (const { value } of node.quasis) if (NAME_READS.has(value.cooked)) reads.add(value.cooked); break
       case 'Property': case 'MethodDefinition': case 'PropertyDefinition': case 'AccessorProperty':
         if (node.computed) break
         if (node.shorthand) keeping.add(node.key)

@@ -921,8 +921,9 @@ b1)`), and, where its names could not be given safely, why (`unparsed`,
 declared in a block outside strict code, where it sets its function's
 variable of that name too, `unverified`), the old copy then as it was;
 `reads`, the properties either copy reads through which a program may read
-a name (`name`, `toString`, `stack`, `callee`, `caller`, as `.name`,
-`["name"]` or `const { name } = f`), so that a rename may change what it
+a name (`name`, `toString`, `stack`, `callee`, `caller`, as a member's or a
+pattern's key, `.name` or `const { name } = f`, or any string written out as
+one, as `Reflect.get(f, "name")` reads it), so that a rename may change what it
 does; and `marks`, the change blocks of the diff of the two copies as
 pretty-printed whose old lines, given the new names, are their new lines,
 no newline added or dropped after the last (none where names were not
