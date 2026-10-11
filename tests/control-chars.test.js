@@ -17,6 +17,19 @@ test('controls, format characters, lone surrogates and separators show as labell
   assert.equal(parts(controlParts('x\u{E0068}\u{E0069}')), 'x[h|U+E0068 TAG h][i|U+E0069 TAG i]', 'tags read as the text they hide')
 })
 
+test('the controls run C0 but tab and newline, DEL, and C1 to U+009F; the character after them is text', () => {
+  const controls = [...Array.from({ length: 0x20 }, (_, i) => i).filter(code => code !== 0x09 && code !== 0x0A), ...Array.from({ length: 0x21 }, (_, i) => 0x7F + i)]
+  const text = String.fromCodePoint(...controls)
+  assert.equal(controlParts(text).length, controls.length, 'each one a box')
+  assert.equal(parts(controlParts('\u009F\u00A0')), '[APC|U+009F APPLICATION PROGRAM COMMAND]\u00A0')
+})
+
+test('private use characters, noncharacters and unassigned code points show by number', () => {
+  assert.equal(parts(controlParts('\uE0B0\u{F0000}')), '[U+E0B0|U+E0B0 private use character][U+F0000|U+F0000 private use character]')
+  assert.equal(parts(controlParts('\uFFFE\uFDD0\u{10FFFF}')), '[U+FFFE|U+FFFE noncharacter][U+FDD0|U+FDD0 noncharacter][U+10FFFF|U+10FFFF noncharacter]')
+  assert.equal(parts(controlParts('\u0378')), '[U+0378|U+0378 unassigned code point]')
+})
+
 test('tabs, newlines, CRLF line ends and the joiners and tags of an emoji stay text', () => {
   assert.deepEqual(controlParts('a\tb\nc\r\nd'), ['a\tb\nc\r\nd'])
   assert.equal(hasControls('a\tb\nc'), false)

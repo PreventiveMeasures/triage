@@ -697,24 +697,27 @@ function _topSeverityOf(findings) {
 // it spans several, and a line over LONG_LINE wrapped whether the viewer
 // wraps lines or not, in a block of its own (see `.bundle-source-long-line`).
 // Highlighted sources, 1 MiB at most, have no line that long. Control
-// characters show as boxes (control-chars.js).
+// characters show as boxes (control-chars.js). Kept for the next render of
+// the same file: looking for them takes a while over a large one.
 let _plainSource = { content: '', parts: '' }
 function plainSource(content) {
-  if (content.length <= TEXT_NODE_MAX && !hasControls(content)) return content
   if (_plainSource.content === content) return _plainSource.parts
-  const text = slice => [sourceText(slice)].flat()
-  const parts = []
-  let plain = 0
-  for (let from = 0; from < content.length;) {
-    const at = content.indexOf('\n', from)
-    const end = at === -1 ? content.length : at + 1
-    if ((at === -1 ? end : at) - from > LONG_LINE) {
-      parts.push(...text(content.slice(plain, from)), html`<span class="bundle-source-long-line">${text(content.slice(from, end))}</span>`)
-      plain = end
+  let parts = content
+  if (content.length > TEXT_NODE_MAX || hasControls(content)) {
+    const text = slice => [sourceText(slice)].flat()
+    parts = []
+    let plain = 0
+    for (let from = 0; from < content.length;) {
+      const at = content.indexOf('\n', from)
+      const end = at === -1 ? content.length : at + 1
+      if ((at === -1 ? end : at) - from > LONG_LINE) {
+        parts.push(...text(content.slice(plain, from)), html`<span class="bundle-source-long-line">${text(content.slice(from, end))}</span>`)
+        plain = end
+      }
+      from = end
     }
-    from = end
+    parts.push(...text(content.slice(plain)))
   }
-  parts.push(...text(content.slice(plain)))
   _plainSource = { content, parts }
   return parts
 }

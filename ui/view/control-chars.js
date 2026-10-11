@@ -1,10 +1,13 @@
 // Characters a code viewer shows as a labelled box, since as text they show
-// as nothing, or as something they are not: the controls (C0 but tab and
-// newline, DEL, C1), the format characters (Cf: the zero-width ones, the bidi
-// controls that reorder what a line reads as, tags), lone surrogates (Cs),
-// and the line and paragraph separators, which end a line in JavaScript but
-// not in the viewer. A CR stays as it is where it ends a line with the LF
-// after it, and so do the joiners and tags that spell an emoji.
+// as nothing, or as something they are not: Unicode's other characters (C),
+// which are the controls (Cc: C0 but tab and newline, DEL, C1), the format
+// characters (Cf: the zero-width ones, the bidi controls that reorder what a
+// line reads as, tags), lone surrogates (Cs), private use characters (Co),
+// whose glyph is whatever a font puts there, and unassigned code points and
+// noncharacters (Cn); and the line and paragraph separators, which end a
+// line in JavaScript but not in the viewer. A CR stays as it is where it
+// ends a line with the LF after it, and so do the joiners and tags that
+// spell an emoji.
 //
 // The box is a label in place of the character, which leaves the DOM: in
 // highlighted markup the HTML parser drops a NUL and reads a lone CR as a
@@ -15,7 +18,7 @@ import { html } from 'lit'
 // The characters, a pair of surrogates read as the one it spells (`u`), so
 // \p{Cs} is only ever a lone one. A candidate, not yet one to show: see shown.
 // eslint-disable-next-line no-control-regex
-const CANDIDATE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029\p{Cf}\p{Cs}]/u
+const CANDIDATE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029\p{Cf}\p{Cs}\p{Co}\p{Cn}]/u
 const CANDIDATES = new RegExp(CANDIDATE.source, 'gu')
 
 // Labels and names of the ones a viewer meets, the rest labelled by number.
@@ -127,8 +130,18 @@ function describe(code) {
     const ascii = String.fromCodePoint(code - 0xe0000)
     return { label: ascii, title: `${hex(code)} TAG ${ascii}` }
   }
-  if (code >= 0xd800 && code < 0xe000) return { label: hex(code), title: `${hex(code)} lone surrogate` }
-  return { label: hex(code), title: `${hex(code)} format character` }
+  return { label: hex(code), title: `${hex(code)} ${kind(code)}` }
+}
+
+// What an unnamed one is. The last two code points of every plane are
+// noncharacters, the private use planes' too, and so is a block of 32 in
+// Arabic Presentation Forms-A.
+const FORMAT = /\p{Cf}/u
+function kind(code) {
+  if (code >= 0xd800 && code < 0xe000) return 'lone surrogate'
+  if ((code & 0xfffe) === 0xfffe || code >= 0xfdd0 && code <= 0xfdef) return 'noncharacter'
+  if (code >= 0xe000 && code <= 0xf8ff || code >= 0xf0000) return 'private use character'
+  return FORMAT.test(String.fromCodePoint(code)) ? 'format character' : 'unassigned code point'
 }
 
 const EMOJI_BEFORE = /\p{Extended_Pictographic}(?:\u{FE0F}|[\u{1F3FB}-\u{1F3FF}])?$/u
