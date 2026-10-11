@@ -215,7 +215,8 @@ function analyze(text, extension) {
     for (const field in node) {
       const value = node[field]
       if (Array.isArray(value)) { for (const child of value) if (child && typeof child.type === 'string') work.push([child, inner]) }
-      else if (value && typeof value.type === 'string' && field !== 'type') work.push([value, inner])
+      // A switch's discriminant is read before its cases' scope is entered.
+      else if (value && typeof value.type === 'string' && field !== 'type') work.push([value, field === 'discriminant' ? where : inner])
     }
   }
   // Every name read resolved, from where it is read outward; one no
