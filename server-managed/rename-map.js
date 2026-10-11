@@ -224,9 +224,11 @@ function analyze(text, extension) {
   let commonjs = false
   const globals = [], occurrences = [...declarations].map(([node, [variable, where]]) => [node, variable, where])
   for (const [node, where] of references) {
+    // `eval(…)` reads names by their spelling wherever `eval` is declared:
+    // a variable holding the real one calls it as itself.
+    if (node.name === 'eval') return { reason: 'dynamic' }
     const variable = resolve(node.name, where)
     if (variable) occurrences.push([node, variable, where])
-    else if (node.name === 'eval') return { reason: 'dynamic' }
     else {
       globals.push([node, where])
       if (COMMONJS.has(node.name)) commonjs = true

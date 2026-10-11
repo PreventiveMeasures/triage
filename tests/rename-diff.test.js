@@ -250,6 +250,9 @@ test('names are given only where the old side then reads as it did', () => {
     ['function f() {\n  if (x) {\n    function a() {}\n  }\n  return a;\n}\nmodule.exports = f;\n', 'block-function']]) {
     assert.equal(renameMap(before, before.replaceAll('a', 'b')).reason, reason, reason)
   }
+  // Given the real `eval`, `f` reads its `a` by name: `f(eval, 1)` returns 1, renamed it would throw.
+  const local = 'function f(eval, a) {\n  return eval("a");\n}\nmodule.exports = f;\n'
+  assert.equal(renameMap(local, local.replace('eval, a', 'eval, b')).reason, 'dynamic', 'an `eval` declared in the file is called as itself')
 })
 
 test('a variable on changed lines alone keeps its counterpart where those lines pair in order', () => {
