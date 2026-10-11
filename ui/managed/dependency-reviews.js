@@ -7,6 +7,7 @@ const ERRORS = {
   'package-not-found': 'One of these package versions is no longer available to you.',
   'unknown-review-file': 'This file is not in either package version.',
   'bad-review-teams': 'Select at least one team you belong to with dependency review enabled. Refresh if team access changed.',
+  'no-reviewed-files': 'Review at least one changed file before publishing.',
   'bad-final-verdict': 'Choose a final verdict no more favorable than the file verdicts.',
   forbidden: 'Reviewing requires triage access.',
 }

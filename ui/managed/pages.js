@@ -1,4 +1,3 @@
-import { live } from 'lit/directives/live.js'
 import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage custom elements, registered by the lazy client-managed.js entry.
 // Manage data stays in the lazy bundle; the host supplies session updates and
@@ -32,6 +31,7 @@ import locationStyles from './styles/location.css'
 import teamsStyles from './styles/teams.css'
 import '../scan/page.js'
 import './create-bundle.js'
+import '../view/mode-switch.js'
 import { loadManagedScanBundle, managedScanSource } from './scan-source.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { managedReportSources } from '../scan/report-source.js'
@@ -1493,8 +1493,8 @@ class ManagedAdminTeams extends ManagedPage {
     return html`<div class="sub npm-scopes">
       <div class="sub-head">
         <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span>
-          <label class="npm-review-toggle"><input type="checkbox" .checked=${live(Boolean(team.dependencyReview))} ?disabled=${this._busy}
-            @change=${event => this._do(() => postTeam('/api/admin/teams/set-dependency-review', this._csrf, { teamId: team.id, enabled: event.target.checked }))}> Enable dependency review</label>
+          <mode-switch class="npm-review-toggle" label="Enable dependency review" .checked=${Boolean(team.dependencyReview)} .disabled=${this._busy}
+            @click=${() => { if (!this._busy) void this._do(() => postTeam('/api/admin/teams/set-dependency-review', this._csrf, { teamId: team.id, enabled: !team.dependencyReview })) }}></mode-switch>
         </h3>
         <p class="muted ui-hint">Members can open private packages in these scopes. Everyone can open public packages.</p>
       </div>

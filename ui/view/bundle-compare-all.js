@@ -57,7 +57,7 @@ export function combinedDiffRows(base, other, files, { resolutions = [], max = C
   return { rows, models }
 }
 
-class BundleCompareAll extends BundleCompareCode {
+export class BundleCompareAll extends BundleCompareCode {
   static properties = { ...BundleCompareCode.properties, models: { attribute: false } }
 
   // Every file's model is drawn on every render, so all are kept for the

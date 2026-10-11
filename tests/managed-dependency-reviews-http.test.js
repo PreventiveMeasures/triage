@@ -130,3 +130,18 @@ test('final verdict is mandatory and constrained, while coverage is derived from
   assert.equal((await h.send('/api/npm/reviews/mine', { who: 'anonymous' })).status, 401)
   assert.equal((await h.send('/api/npm/reviews/mine?beforeTime=oops&beforeId=id')).status, 400)
 })
+
+
+test('a saved verdict can be cleared without adding a note, leaving publication unavailable', async t => {
+  const h = await fixture(t), pkg = packageOf('clear-verdict', '1.0.0', { 'index.js': 'new\n' })
+  registry(t, [pkg])
+  const context = { ecosystem: 'npm', package: pkg.doc.name, version: '1.0.0', integrity: pkg.doc.dist.integrity }
+  const saved = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'index.js', status: 'accept', comment: '' } })
+  assert.equal(saved.status, 200)
+  const review = saved.body.review
+  const cleared = await h.send('/api/npm/reviews', { body: { ...context, action: 'save', file: 'index.js', status: null, comment: '',
+    reviewId: review.id, revision: review.revision, entryId: review.entries[0].id } })
+  assert.equal(cleared.status, 200)
+  assert.equal(cleared.body.review.entries[0].status, null)
+  assert.equal(cleared.body.review.entries[0].comment, '')
+})

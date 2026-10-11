@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
+import { compareReviewPaths, reviewLineCounts } from '../ui/view/npm-review-files.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 
 const requests = [], state = {}
@@ -20,13 +21,14 @@ mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: n
 mock.module('../ui/view/bundle-compare.js', { namedExports: {} })
 mock.module('../ui/view/npm-review-code.js', { namedExports: {} })
 mock.module('../ui/view/bundle-compare-all.js', { namedExports: {} })
+mock.module('../ui/view/npm-review-diff.js', { namedExports: {} })
 mock.module('../ui/view/bundle-selector.js', { namedExports: {} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, render) => items.map(render) } })
 const { NpmReview, reviewContext } = await import('../ui/view/npm-review.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
 const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
 const { NpmReviewTree, reviewTree } = await import('../ui/view/npm-review-tree.js')
-const { reviewFileStates, selectReviewOnOpen } = await import('../ui/view/npm-review-presentation.js')
+const { reviewFileStates, reviewTitle, selectReviewOnOpen } = await import('../ui/view/npm-review-presentation.js')
 
 function text(value) {
   if (Array.isArray(value)) return value.map(text).join('')
@@ -88,11 +90,15 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   assert.equal(text(copy.render()), '')
 })
 
-test('all eligible teams selected initially; Publish requires at least one and saved changes', async () => {
+test('only a sole eligible team is selected initially; Publish requires at least one and saved changes', async () => {
   const page = component()
   answer = { reviews: [review], teams: [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }] }
   await page._refresh(true)
-  assert.deepEqual([...page._selectedTeams], ['one', 'two'])
+  assert.deepEqual([...page._selectedTeams], [])
+  answer = { reviews: [review], teams: [{ id: 'two', name: 'Two' }] }
+  await page._refresh(true)
+  assert.deepEqual([...page._selectedTeams], ['two'])
+  page._teams = [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }]
   page._selectedTeams = new Set()
   requests.length = 0
   await page._publish()
@@ -146,7 +152,7 @@ test('review file kinds distinguish a moved comparison root from a renamed file'
   page.details = sources(['lib/index.js', 'lib/helper.ts'], ['new entry', 'helper'])
   answer = { reviews: [], teams: [] }
   page._ensureContext({ ...sources(['index.js', 'helper.js'], ['old entry', 'helper']), ...base })
-  assert.deepEqual(page._treeFiles, [{ path: 'lib/helper.ts', kind: 'renamed' }, { path: 'lib/index.js', kind: 'changed' }])
+  assert.deepEqual(page._treeFiles.map(({ path, kind }) => ({ path, kind })), [{ path: 'lib/helper.ts', kind: 'renamed' }, { path: 'lib/index.js', kind: 'changed' }])
 })
 
 test('editing captures the loaded revision, and continuing uses a separate review', async () => {
@@ -241,4 +247,54 @@ test('dense file tree counts verdicts rather than notes and bounds the initial D
   treeView._query = 'file-09999'
   assert.match(text(treeView.render()), /file-09999.js/u)
   assert.doesNotMatch(text(treeView.render()), /file-00000.js/u)
+})
+
+
+test('verdict selection autosaves in place and keeps other files pending edits', async () => {
+  const page = component()
+  page._mode = 'diff'; page._files = ['index.js', 'other.js']; page._path = 'index.js'
+  page._resetEditor('index.js'); page._comment = 'Pending note on the first file'
+  answer = { review: { ...review, revision: 2, entries: [...review.entries, { ...file, id: 'other', file: 'other.js', status: 'accept', comment: '' }] } }
+  requests.length = 0
+  await page._setFileStatus('other.js', 'accept')
+  assert.equal(requests[0][1].file, 'other.js')
+  assert.equal(requests[0][1].status, 'accept')
+  assert.equal(page._mode, 'diff')
+  assert.equal(page._path, 'index.js', 'saving does not navigate or scroll the whole diff')
+  assert.equal(page._editorState('index.js').comment, 'Pending note on the first file')
+  assert.equal(page._editorState('index.js').dirty, true)
+  assert.equal(page._editorState('other.js').dirty, false)
+  answer = new Error('Review changed in another tab')
+  await page._setFileStatus('other.js', 'reject')
+  assert.equal(page._editorState('other.js').status, 'reject')
+  assert.equal(page._editorState('other.js').dirty, true, 'failed autosaves remain available to retry')
+})
+
+test('finalization requires at least one checked changed file, not just a note', () => {
+  const page = component()
+  page._files = ['index.js']
+  for (const entries of [[], [{ ...file, status: null }], [{ ...file, file: 'unrelated.js' }]]) {
+    page._reviews = [{ ...review, entries }]
+    page._beginPublish()
+    assert.equal(page._panel, null)
+  }
+  page._reviews = [review]
+  page._beginPublish()
+  assert.equal(page._panel, 'publish')
+})
+
+test('review file order is directories first at every depth and line counts reflect additions and removals', () => {
+  const files = ['index.js', 'z/a.js', 'a.js', 'a/z.js', 'a/nested/b.js', 'z/b.js']
+  assert.deepEqual(files.toSorted(compareReviewPaths), ['a/nested/b.js', 'a/z.js', 'z/a.js', 'z/b.js', 'a.js', 'index.js'])
+  assert.deepEqual(reviewLineCounts({ before: '', after: 'one\ntwo\n' }), { additions: 2, deletions: 0 })
+  assert.deepEqual(reviewLineCounts({ before: 'one\ntwo', after: 'one\nthree' }), { additions: 1, deletions: 1 })
+  assert.deepEqual(reviewLineCounts({ before: 'gone\n', after: '' }), { additions: 0, deletions: 1 })
+  assert.equal(reviewLineCounts({ before: '', after: { format: 'digest' } }), null)
+})
+
+
+test('review drawers identify the entire version comparison', () => {
+  assert.equal(reviewTitle(context), '@scope/lib 1.0.0 -> 2.0.0')
+  assert.equal(reviewTitle({ ...context, basePackage: '@old/lib' }), '@old/lib 1.0.0 -> @scope/lib 2.0.0')
+  assert.equal(reviewTitle({ ...context, basePackage: null }), '@scope/lib 2.0.0')
 })

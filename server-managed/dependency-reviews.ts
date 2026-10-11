@@ -105,6 +105,7 @@ async function publish(db: ManagedSql, current: DependencyReview | undefined, us
   if (selected.length === 0 || selected.some(team => !allowed.has(team))) throw new ManagedMutationError(400, 'bad-review-teams')
   const entries = await db.prepare('SELECT file, status FROM managed_dependency_file_review WHERE review_id = ?').all(current.id) as ReviewInput[]
   if (current.publishedAt === null) {
+    if (!summarizeReview(entries, change.files).checkedFiles) throw new ManagedMutationError(400, 'no-reviewed-files')
     if (!change.final || !allowedReviewVerdicts(entries).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
     await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, files = ?, status = ?, comment = ?, revision = revision + 1 WHERE id = ?`)
       .run(now, JSON.stringify([...new Set(change.files)].toSorted()), change.final.status, change.final.comment, current.id)

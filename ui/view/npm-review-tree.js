@@ -2,6 +2,8 @@ import { LitElement, html, nothing } from 'lit'
 import { live } from 'lit/directives/live.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { COLLAPSE_DIRS_ICON, NEXT_ICON } from './lit-icons.js'
+import { sourceFileIcon } from './source-file-icon.js'
+import { reviewLineCounts } from './npm-review-files.js'
 import { verdictIcon, verdictLabels } from './npm-review-presentation.js'
 
 export function reviewTree(files, states) {
@@ -24,7 +26,7 @@ export class NpmReviewTree extends LitElement {
   static properties = { files: { attribute: false }, states: { attribute: false }, path: {}, unchecked: { type: Boolean },
     _query: { state: true }, _expanded: { state: true }, _limit: { state: true } }
   createRenderRoot() { return this }
-  constructor() { super(); this.files = []; this.states = new Map(); this._query = ''; this._expanded = new Set(); this._limit = 300 }
+  constructor() { super(); this.files = []; this.states = new Map(); this._query = ''; this._expanded = new Set(); this._limit = 300; this._counts = new WeakMap() }
   willUpdate(changed) {
     if (changed.has('files') || changed.has('states')) this._tree = reviewTree(this.files, this.states)
     if (changed.has('files')) this._expanded = new Set([...this._tree.children.values()].filter(node => !node.file).map(node => node.path))
@@ -51,6 +53,12 @@ export class NpmReviewTree extends LitElement {
       return [{ ...child, depth, open }, ...open ? children : []]
     })
   }
+  _lineCounts(file) {
+    if (!this._counts.has(file)) this._counts.set(file, reviewLineCounts(file))
+    const counts = this._counts.get(file)
+    return counts ? html`<span class="npm-review-line-counts" aria-label=${`${counts.additions} added, ${counts.deletions} removed lines`}>
+      <span class="add">+${counts.additions}</span><span class="del">−${counts.deletions}</span></span>` : nothing
+  }
   render() {
     const tree = this._tree ?? reviewTree(this.files, this.states)
     const rows = this._rows(tree)
@@ -66,11 +74,11 @@ export class NpmReviewTree extends LitElement {
       <div class="npm-review-tree-scroll"><ul aria-label="Review files">
         ${repeat(rows.slice(0, this._limit), row => row.path, row => html`<li>
           ${row.file ? html`<button type="button" class="npm-review-tree-file" style=${`padding-left:${8 + row.depth * 12}px`}
-            aria-current=${row.path === this.path ? 'true' : nothing} data-tooltip=${`${row.path} · ${verdictLabels[this.states.get(row.path)?.status] ?? 'Not reviewed'}`}
+            aria-current=${row.path === this.path ? 'true' : nothing}
             aria-label=${`${row.path}, ${verdictLabels[this.states.get(row.path)?.status] ?? 'Not reviewed'}`} @click=${() => this._select(row.path)}>
-            ${verdictIcon(this.states.get(row.path)?.status)}<span class="npm-review-filename">${row.name}</span>
+            ${verdictIcon(this.states.get(row.path)?.status)}${sourceFileIcon(row.path)}<span class="npm-review-filename" data-tooltip-truncated data-tooltip=${row.path}>${row.name}</span>
             ${this.states.get(row.path)?.notes ? html`<span class="npm-review-note-dot" aria-label="Has notes">•</span>` : nothing}
-            <span class=${`npm-review-change ${row.file.kind}`}>${{ added: 'A', removed: 'D', changed: 'M', renamed: '→' }[row.file.kind]}</span>
+            ${this._lineCounts(row.file)}<span class=${`npm-review-change ${row.file.kind}`}>${{ added: 'A', removed: 'D', changed: 'M', renamed: '→' }[row.file.kind]}</span>
           </button>` : html`<button type="button" class="npm-review-tree-directory" style=${`padding-left:${8 + row.depth * 12}px`}
             aria-expanded=${String(row.open)} aria-label=${`${row.path}, ${row.checked} of ${row.total} checked`}
             @click=${() => { const next = new Set(this._expanded); if (next.has(row.path)) next.delete(row.path); else next.add(row.path); this._expanded = next }}>

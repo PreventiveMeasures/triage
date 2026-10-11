@@ -103,7 +103,13 @@ export async function checkDependencyReviews(db) {
 async function checkCoverage(db, session) {
   const files = ['a.js', 'b.js', 'c.js', 'd.js']
   const change = action => db.changeDependencyReview(reviewContext, session, action, Date.now())
-  let review
+  let review = await change({ action: 'start', reviewId: null, revision: null })
+  const unchecked = () => change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one'], files,
+    final: { status: 'accept', comment: '' } })
+  await assert.rejects(unchecked(), /no-reviewed-files/u)
+  review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: null,
+    entry: { file: 'a.js', status: null, comment: 'A note is not a verdict.' } })
+  await assert.rejects(unchecked(), /no-reviewed-files/u)
   for (const [index, file] of files.entries()) {
     review = await change({ action: 'save', reviewId: review?.id ?? null, revision: review?.revision ?? null, entryId: null,
       entry: { file, status: index < 3 ? index === 1 ? 'accept-with-nits' : 'accept' : null, comment: index === 3 ? 'Still to review.' : '' } })

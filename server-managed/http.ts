@@ -2657,7 +2657,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
       if ((file !== null && (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')))
         || (entryId !== null && (typeof entryId !== 'string' || entryId.length === 0 || entryId.length > 100))
         || typeof comment !== 'string' || comment.length > 20000
-        || (status !== null && (file === null || typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && !comment.trim())) {
+        || (status !== null && (file === null || typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && !comment.trim() && entryId === null)) {
         sendJson(res, 400, { error: 'bad-review' }); return
       }
       change = { action: 'save', reviewId: reviewId as string | null, revision: revision as number | null, entryId: entryId as string | null,

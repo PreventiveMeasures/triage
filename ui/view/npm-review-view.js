@@ -4,14 +4,16 @@ import { allowedReviewVerdicts, summarizeReview } from '../../common/dependency-
 import { npmCompareSource } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
 import { NEXT_ICON } from './lit-icons.js'
-import { reviewBadge, reviewDate, reviewNote, reviewProgress, verdictLabel, verdictLabels } from './npm-review-presentation.js'
+import { reviewBadge, reviewDate, reviewNote, reviewProgress, reviewTitle, verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
 const busy = page => page._saving || page._loading
 const isFrozen = page => page._shownReview?.publishedAt != null
 const coverage = summary => summary.coverage === 'full' ? 'Full' : 'Partial'
 const errorMessage = page => page._error ? html`<p class="npm-review-error" role="alert">${page._error}</p>` : nothing
-const options = (status, allowed = Object.keys(verdictLabels)) => Object.entries(verdictLabels).map(([value, label]) =>
-  html`<option value=${value} ?disabled=${!allowed.includes(value)} ?selected=${status === value}>${label}</option>`)
+const verdictChoices = (name, status, change, disabled, allowed = Object.keys(verdictLabels)) => html`<div class="npm-review-verdict-options" role="group" aria-label="Verdict">
+  ${Object.entries(verdictLabels).map(([value, label]) => html`<label class=${`npm-review-verdict-choice ${value}`}>
+    <input type="radio" name=${name} aria-label=${label} value=${value} .checked=${live(status === value)} ?disabled=${disabled || !allowed.includes(value)}
+      @change=${() => change(value)}><span>${label}</span></label>`)}</div>`
 
 function summaryBar(page) {
   const frozen = isFrozen(page), review = page._shownReview, summary = page._summary
@@ -24,7 +26,7 @@ function summaryBar(page) {
       : 'Review files, then publish a final verdict.'}</p></div>
     <div class="npm-review-summary-actions"><div class="npm-review-progress-block"><span><strong>${summary.checkedFiles} of ${summary.totalFiles}</strong> files checked</span>
       ${reviewProgress(summary.checkedFiles, summary.totalFiles)}</div>
-      ${page._canEdit ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page) || page._unsaved} @click=${() => page._beginPublish()}>Finalize review ${NEXT_ICON}</button>`
+      ${page._canEdit ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page) || page._unsaved || !summary.checkedFiles} @click=${() => page._beginPublish()}>Finalize review ${NEXT_ICON}</button>`
         : frozen && page._writable && (page._activeReview || page._ownPublished.length === 0) ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page)} @click=${() => page._resume()}>Resume your review ${NEXT_ICON}</button>`
         : frozen && review.user === page.session?.id && page._writable ? html`<button type="button" class="npm-review-primary" ?disabled=${busy(page)}
           @click=${() => page._change({ action: 'continue', reviewId: review.id, revision: review.revision })}>Continue review ${NEXT_ICON}</button>` : nothing}
@@ -47,32 +49,34 @@ function toolbar(page) {
       <button type="button" class="npm-review-text-button" @click=${() => managedHistory?.navigate({ view: 'reviews' })}>My reviews</button></div></div>`
 }
 
-export function renderReviewEditor(page) {
-  const rows = page._shownReview?.entries.filter(row => row.file === page._file) ?? [], whole = page._file === null
-  if (!page._canEdit) {return html`<section class="npm-review-decision" aria-label="File review"><div class="npm-review-decision-head">
+export function renderReviewEditor(page, file = page._file, inline = false) {
+  const editor = page._editorState(file)
+  const rows = page._shownReview?.entries.filter(row => row.file === file) ?? [], whole = file === null
+  if (!page._canEdit) {return html`<section class=${`npm-review-decision${inline ? ' npm-review-inline-decision' : ''}`} aria-label="File review"><div class="npm-review-decision-head">
     <strong>${whole ? 'Review notes' : 'File review'}</strong><span class="npm-review-muted">${isFrozen(page) ? 'Frozen' : 'Read only'}</span></div>
     ${rows.length > 0 ? rows.map(row => html`<div class="npm-review-saved-entry">${row.status ? verdictLabel(row.status) : nothing}${reviewNote(row.comment)}</div>`)
       : html`<p class="npm-review-muted">${whole ? 'No review notes.' : 'This file was not reviewed.'}</p>`}
     ${page._writable ? nothing : html`<p class="npm-review-help">Triage access is required to add a review.</p>`}</section>`}
-  return html`<section class="npm-review-decision" aria-label=${whole ? 'Review notes editor' : 'File decision'}>
-    <div class="npm-review-decision-head"><strong>${whole ? 'Review notes' : html`Your verdict for <span class="mono">${page._file}</span>`}</strong>
-      <span class="npm-review-muted" role="status">${page._saving ? 'Saving…' : page._dirty ? 'Unsaved changes' : page._edit ? 'Saved privately' : 'Not reviewed'}</span></div>
-    <form class="npm-review-form" @submit=${event => { event.preventDefault(); void page._save(!whole) }}>
-      ${whole ? nothing : html`<div class="npm-review-verdict-field"><select aria-label="File verdict" .value=${live(page._status)} ?disabled=${busy(page)}
-        @change=${event => { page._status = event.target.value }}><option value="">Note only / not checked</option>${options(page._status)}</select>
-        ${page._status === 'accept-with-nits' ? html`<span class="npm-review-help">Non-blocking</span>` : nothing}</div>`}
+  return html`<section class=${`npm-review-decision${inline ? ' npm-review-inline-decision' : ''}`} aria-label=${whole ? 'Review notes editor' : 'File decision'}>
+    <div class="npm-review-decision-head"><strong>${whole ? 'Review notes' : html`Your verdict for <span class="mono">${file}</span>`}</strong>
+      <span class="npm-review-muted" role="status">${page._saving ? 'Saving…' : editor.dirty ? 'Unsaved changes' : editor.edit ? 'Saved privately' : 'Not reviewed'}</span></div>
+    <form class="npm-review-form" @submit=${event => { event.preventDefault(); void page._saveFile(file, !whole && !inline) }}>
+      ${whole ? nothing : html`<div class="npm-review-verdict-field">${verdictChoices(`file:${file}`, editor.status,
+        status => void page._setFileStatus(file, status), busy(page))}
+        ${editor.status ? html`<button type="button" class="npm-review-text-button" ?disabled=${busy(page)}
+          @click=${() => void page._setFileStatus(file, '')}>Clear verdict</button>` : nothing}</div>`}
       <textarea aria-label=${whole ? 'Review notes' : 'File note'} rows=${whole ? 6 : 2} maxlength="20000" placeholder=${whole ? 'Add context that spans more than one file…' : 'Add a note (optional)…'}
-        .value=${live(page._comment)} ?disabled=${busy(page)} @input=${event => { page._comment = event.target.value }}></textarea>
+        .value=${live(editor.comment)} ?disabled=${busy(page)} @input=${event => page._editFile(file, { _comment: event.target.value })}></textarea>
       <div class="npm-review-editor-footer"><span class="npm-review-help">${whole ? 'Notes do not mark files as checked.' : 'Visible only to you until published.'}</span>
-        <div class="npm-review-toolbar-group">${page._dirty ? html`<button type="button" class="npm-review-text-button" ?disabled=${busy(page)}
-          @click=${() => { page._drafts.delete(page._file); page._resetEditor(page._file) }}>Discard changes</button>` : nothing}
-          <button type="submit" class="npm-review-primary" ?disabled=${busy(page) || (!page._status && !page._comment.trim())}>${whole ? 'Save notes' : 'Save & next'} ${NEXT_ICON}</button></div></div>
+        <div class="npm-review-toolbar-group">${editor.dirty ? html`<button type="button" class="npm-review-text-button" ?disabled=${busy(page)}
+          @click=${() => page._discardFile(file)}>Discard changes</button>` : nothing}
+          <button type="submit" class="npm-review-primary" ?disabled=${busy(page) || (!editor.status && !editor.comment.trim() && !editor.edit?.id)}>${whole || inline ? 'Save notes' : 'Save & next'} ${NEXT_ICON}</button></div></div>
     </form>
     ${rows.length > 1 ? html`<details class="npm-review-entry-history"><summary>${rows.length} saved verdicts and notes</summary>
       ${rows.map(row => html`<div>${row.status ? verdictLabel(row.status) : 'Note'}${reviewNote(row.comment)}
-        <button type="button" class="npm-review-text-button" ?disabled=${busy(page) || page._dirty} @click=${() => page._open(page._file, row)}>Edit this entry</button></div>`)}</details>` : nothing}
-    ${rows.length > 0 ? html`<button type="button" class="npm-review-text-button npm-review-add-note" ?disabled=${busy(page) || page._dirty}
-      @click=${() => page._resetEditor(page._file, { id: null, status: null, comment: '' })}>Add another note</button>` : nothing}
+        <button type="button" class="npm-review-text-button" ?disabled=${busy(page) || editor.dirty} @click=${() => page._open(file, row)}>Edit this entry</button></div>`)}</details>` : nothing}
+    ${rows.length > 0 ? html`<button type="button" class="npm-review-text-button npm-review-add-note" ?disabled=${busy(page) || editor.dirty}
+      @click=${() => { page._editFile(file); page._resetEditor(file, { id: null, status: null, comment: '' }) }}>Add another note</button>` : nothing}
   </section>`
 }
 
@@ -82,26 +86,24 @@ export function renderReviewConfirmation(page, review) {
     <div class="npm-review-dialog-body"><section class="npm-review-coverage"><div><strong>${coverage(summary)} review</strong><span>${summary.checkedFiles} of ${summary.totalFiles} files checked</span></div>
       ${reviewProgress(summary.checkedFiles, summary.totalFiles)}<p>${summary.totalFiles > summary.checkedFiles ? html`${summary.totalFiles - summary.checkedFiles} files not checked.
         <button type="button" class="npm-review-text-button" @click=${() => { page._unchecked = true; page._closePanel() }}>View files</button>` : 'Every file has a verdict.'}</p></section>
-      <label>Final verdict<select aria-label="Final verdict" .value=${live(page._finalStatus)} ?disabled=${busy(page)}
-        @change=${event => { page._finalStatus = event.target.value }}>${options(page._finalStatus, allowed)}</select>
-        <span class="npm-review-help">File verdicts limit the final verdict to ${verdictLabels[summary.verdictLimit]} or less favorable.</span></label>
+      <div><strong>Final verdict</strong>${verdictChoices('final-verdict', page._finalStatus, status => { page._finalStatus = status }, busy(page), allowed)}</div>
       <label>Final note <span class="npm-review-muted">· optional</span><textarea aria-label="Final comment" rows="3" maxlength="20000" .value=${live(page._finalComment)}
         placeholder="Summarize your findings or explain what remains…" ?disabled=${busy(page)} @input=${event => { page._finalComment = event.target.value }}></textarea></label>
-      <fieldset class="npm-review-team-options"><legend>Publish to teams</legend>${page._teams.map(team => html`<label><span>${team.name}</span><input type="checkbox"
-        .checked=${page._selectedTeams.has(team.id)} ?disabled=${busy(page)} @change=${event => { const selected = new Set(page._selectedTeams);
-          if (event.target.checked) selected.add(team.id); else selected.delete(team.id); page._selectedTeams = selected }}></label>`)}
+      <fieldset class="npm-review-team-options"><legend>Publish to teams</legend>${page._teams.map(team => html`<mode-switch label=${team.name}
+        .checked=${page._selectedTeams.has(team.id)} .disabled=${busy(page)} @click=${() => { if (busy(page)) return; const selected = new Set(page._selectedTeams);
+          if (selected.has(team.id)) selected.delete(team.id); else selected.add(team.id); page._selectedTeams = selected }}></mode-switch>`)}
         <p class=${page._selectedTeams.size > 0 ? 'npm-review-help' : 'npm-review-error'}>${page._teams.length === 0 ? 'No teams you belong to have dependency review enabled.'
           : page._selectedTeams.size > 0 ? 'Only teams with dependency review enabled are listed.' : 'Select at least one team to publish.'}</p></fieldset>
       ${errorMessage(page)}</div>
     <footer class="npm-review-dialog-footer"><p>Publishing freezes your verdicts and notes. You can continue in a new review to make changes.</p>
-      <button type="submit" class="npm-review-primary" ?disabled=${busy(page) || page._unsaved || page._selectedTeams.size === 0 || !allowed.includes(page._finalStatus)}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
+      <button type="submit" class="npm-review-primary" ?disabled=${busy(page) || page._unsaved || !summary.checkedFiles || page._selectedTeams.size === 0 || !allowed.includes(page._finalStatus)}>Publish to ${page._selectedTeams.size} ${page._selectedTeams.size === 1 ? 'team' : 'teams'} ${NEXT_ICON}</button>
       <button type="button" class="npm-review-text-button" ?disabled=${page._saving} @click=${() => page._closePanel()}>Back to files</button></footer>
   </form>`
 }
 
 export function renderReviewPublished(page, review) {
   const own = review.user === page.session?.id, remaining = page._teams.filter(team => !review.teams.some(linked => linked.id === team.id))
-  const selected = page._additionalTeams.get(review.id) ?? new Set(remaining.map(team => team.id))
+  const selected = page._additionalTeams.get(review.id) ?? new Set(remaining.length === 1 ? remaining.map(team => team.id) : [])
   const chosen = remaining.filter(team => selected.has(team.id)).map(team => team.id)
   return html`<section class="npm-review-published"><div class="npm-review-history-heading"><strong>${review.userLogin}</strong>${reviewBadge(review)}</div>
     ${verdictLabel(review.status)}<p class="npm-review-help">${coverage(review)} · ${review.checkedFiles}/${review.totalFiles} files checked<br>
@@ -112,8 +114,9 @@ export function renderReviewPublished(page, review) {
       @click=${() => page._change({ action: 'continue', reviewId: review.id, revision: review.revision })}>Continue in a new review</button>` : nothing}
     ${own && page._writable && review.revokedAt === null && page._panel !== 'history' ? html`
       ${remaining.length > 0 ? html`<fieldset class="npm-review-team-options"><legend>Publish to more teams</legend>
-        ${remaining.map(team => html`<label><span>${team.name}</span><input type="checkbox" .checked=${selected.has(team.id)} ?disabled=${busy(page)}
-          @change=${event => { const next = new Set(selected); if (event.target.checked) next.add(team.id); else next.delete(team.id); page._additionalTeams = new Map(page._additionalTeams).set(review.id, next) }}></label>`)}
+        ${remaining.map(team => html`<mode-switch label=${team.name} .checked=${selected.has(team.id)} .disabled=${busy(page)}
+          @click=${() => { if (busy(page)) return; const next = new Set(selected); if (next.has(team.id)) next.delete(team.id); else next.add(team.id);
+            page._additionalTeams = new Map(page._additionalTeams).set(review.id, next) }}></mode-switch>`)}
         <button type="button" ?disabled=${busy(page) || chosen.length === 0} @click=${() => page._change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: chosen })}>Publish to more teams</button></fieldset>` : nothing}
       <div class="npm-review-revoke"><strong>Revoke review</strong><p class="npm-review-help">Marks this review as revoked. It stays frozen and linked to its teams.</p>
         <button type="button" class="npm-review-danger" ?disabled=${busy(page)} @click=${() => page._change({ action: 'revoke', reviewId: review.id, revision: review.revision })}>Revoke</button></div>` : nothing}
@@ -127,7 +130,7 @@ function panel(page) {
   const drafts = new Map(page._drafts)
   if (page._dirty) drafts.set(page._file, {})
   return html`<dialog class="npm-review-dialog" aria-label=${titles[page._panel]} @cancel=${event => { event.preventDefault(); page._closePanel() }}>
-    <header class="npm-review-dialog-head"><div><h2>${titles[page._panel]}</h2><p>${page.entry.npm.name} · ${page.entry.npm.version}</p></div>
+    <header class="npm-review-dialog-head"><div><h2>${titles[page._panel]}</h2><p>${reviewTitle(page._context)}</p></div>
       <button type="button" class="npm-review-icon-button" aria-label="Close panel" ?disabled=${page._saving} @click=${() => page._closePanel()}>×</button></header>
     ${page._panel === 'publish' ? renderReviewConfirmation(page, page._activeReview) : html`<div class="npm-review-dialog-body">
       ${page._panel === 'notes' ? renderReviewEditor(page) : page._panel === 'manage' ? renderReviewPublished(page, page._shownReview)
@@ -145,14 +148,16 @@ export function renderReview(page) {
   const states = page._fileStates
   return html`${summaryBar(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
     ${page._loading ? html`<div class="npm-review-loading" role="status">Loading reviews…</div>` : nothing}
-    <div class="npm-review-workbench"><npm-review-tree .files=${page._treeFiles} .states=${states} .path=${page._path} .unchecked=${page._unchecked}
+    <div class="npm-review-workbench bundle-code-view"><npm-review-tree class="bundle-code-rail" .files=${page._treeFiles} .states=${states} .path=${page._path} .unchecked=${page._unchecked}
       @review-file-select=${event => page._selectFile(event.detail.path)} @review-file-filter=${event => { page._unchecked = event.detail.unchecked }}></npm-review-tree>
+      <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize file tree"
+        data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>
       <div class="npm-review-content">${page._mode === 'code' ? html`<npm-review-code .base=${page._base} .other=${page.details} .files=${page._diff.files}
-        .path=${page._path} baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
+        .path=${page._path} .order=${page._files} baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
         @compare-code-select=${event => { event.stopPropagation(); page._selectFile(event.detail.path) }}></npm-review-code>
         ${page._path && page._panel !== 'notes' ? renderReviewEditor(page) : nothing}`
-        : html`<bundle-compare-all .base=${page._base} .other=${page.details} .files=${page._diff.files}
+        : html`<npm-review-diff .path=${page._path} .base=${page._base} .other=${page.details} .files=${page._diff.files}
           baseName=${page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package'} otherName=${`${page.entry.npm.name}@${page.entry.npm.version}`}
-          .reviewFile=${path => html`<div class="npm-review-diff-decision">${verdictLabel(states.get(path)?.status)}<button type="button" @click=${() => page._selectFile(path)}>${isFrozen(page) ? 'View file review' : 'Review this file'}</button></div>`}></bundle-compare-all>`}</div>
+          .reviewFile=${path => renderReviewEditor(page, path, true)}></npm-review-diff>`}</div>
     </div><span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${panel(page)}`
 }

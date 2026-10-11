@@ -1982,11 +1982,15 @@ support file reviews and whole-diff notes (a null file path).
 
 Triage users and above can save private review sets with notes and optional
 verdicts: **Accept**, **Accept with nits (non-blocking)**, **Request changes**, or
-**Reject**. In Manage teams, the **Enable dependency review** checkbox follows the
+**Reject**. In Manage teams, the **Enable dependency review** switch follows the
 npm scopes count. Only enabled, visible teams the author belongs to are offered
-for publication. All are selected initially; **Publish** requires at least one.
+for publication. A sole eligible team is selected initially; with multiple teams none are preselected.
+**Publish** requires at least one selected team.
 The account menu and review page link to **My reviews** (`/reviews`), a paginated
 list of the user's unpublished, published, and revoked review sets.
+
+Selecting a file verdict saves it immediately. Review always wraps source lines.
+At least one changed file must have a saved verdict before publishing.
 
 **Finalize review** opens a separate confirmation step with a required final
 verdict and optional final comment. File verdicts limit the final verdict: it

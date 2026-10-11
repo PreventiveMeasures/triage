@@ -37,3 +37,12 @@ export function takeReviewSelection(context) {
   selection = null
   return id
 }
+
+
+export function reviewTitle(context) {
+  const target = `${context.package} ${context.version}`
+  if (!context.basePackage) return target
+  return context.basePackage === context.package
+    ? `${context.package} ${context.baseVersion} -> ${context.version}`
+    : `${context.basePackage} ${context.baseVersion} -> ${target}`
+}

@@ -2283,3 +2283,16 @@ test('a file whose names the server could not give the new side\'s says why, its
   assert.doesNotMatch(off, /Hide renamed names|Renamed names are shown/u, 'neither, off: none of its lines marked')
 })
 
+
+test('review change navigation never falls through into the next file', async () => {
+  const { NpmReviewCode } = await import('../ui/view/npm-review-code.js')
+  const selected = [], viewer = new NpmReviewCode()
+  viewer._current = 'a.js'; viewer._order = ['a.js', 'b.js']
+  viewer.dispatchEvent = event => selected.push(event.detail.path)
+  viewer.querySelector = () => ({ getBoundingClientRect: () => ({ top: 0 }), querySelectorAll: () => [],
+    scrollTop: 0, clientHeight: 100, scrollHeight: 100 })
+  viewer._stepChange(1); viewer._stepChange(-1)
+  assert.deepEqual(selected, [])
+  viewer._select('b.js')
+  assert.deepEqual(selected, ['b.js'], 'explicit file navigation still works')
+})

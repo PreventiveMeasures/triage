@@ -69,11 +69,35 @@ export function managedCompareLocation(state, tab = state.bundleDetailsTab) {
 
 // The open bundle's tab location, whichever tab names one (Code, Compare).
 export function managedTabLocation(state, tab = state.bundleDetailsTab) {
-  if (tab === 'review' && state.npmReview?.bundle === state.selectedBundle) {
-    const { bundle: _bundle, ...location } = state.npmReview
+  const npm = state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm
+  const review = state.npmReview?.bundle === state.selectedBundle ? state.npmReview : null
+  const compare = state.bundleCompare?.bundle === state.selectedBundle ? state.bundleCompare : null
+  if (npm && tab === 'review' && state.bundleDetailsTab === 'compare' && compare?.target
+    && !(review?.started && review.user === state.managedSession?.id)) {
+    return { reviewPackage: npm.name, reviewSpec: compare.target, ...(compare.mode === 'diff' ? { reviewMode: 'diff' } : {}) }
+  }
+  if (npm && tab === 'compare' && state.bundleDetailsTab === 'review' && review?.reviewPackage === npm.name) {
+    return { compareSpec: review.reviewSpec, ...compareModeField(review.reviewMode === 'diff' ? 'diff' : compare?.mode ?? 'code') }
+  }
+  if (tab === 'review' && review) {
+    const { bundle: _bundle, started: _started, user: _user, ...location } = review
     return location
   }
   return managedCodeLocation(state, tab) ?? managedCompareLocation(state, tab)
+}
+
+// Tab clicks change state before persisting their route. Carry the comparison
+// across that boundary, keeping an already-started review's original base.
+export function prepareNpmReviewTab(state, tab) {
+  if (!state.bundles?.find(entry => entry.integrity === state.selectedBundle)?.npm || tab === state.bundleDetailsTab) return
+  const location = managedTabLocation(state, tab)
+  if (tab === 'review' && state.bundleDetailsTab === 'compare') {
+    const kept = state.npmReview?.bundle === state.selectedBundle && state.npmReview.started && state.npmReview.user === state.managedSession?.id
+    if (!kept) state.npmReview = { bundle: state.selectedBundle, ...location }
+  }
+  if (tab === 'compare' && state.bundleDetailsTab === 'review' && location?.compareSpec) {
+    state.bundleCompare = { bundle: state.selectedBundle, target: location.compareSpec, mode: location.compareMode ?? 'overview' }
+  }
 }
 
 export function managedTeamBundleEntries(teams) {
