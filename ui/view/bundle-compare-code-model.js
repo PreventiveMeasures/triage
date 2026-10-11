@@ -87,6 +87,10 @@ const LET = /\s*[\p{L}_$[{]/uy
 // What ends a concise arrow's body or begins a conditional in it: a `?` (not
 // `?.`, `??`), a `:`, a `,` or a `;`.
 const ARROW_ENDS = /(?<!\?)\?(?!\?|\.(?!\d))|[:,;]/gu
+// What follows a `for`'s `(…)` whose body is braced, and an unbraced body's
+// statement still going on, an `if`'s `else`: spaces or comments first.
+const BRACED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/uy
+const ELSE = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*else(?![\p{ID_Continue}$])/uy
 // What follows a key before its value: spaces or comments, then `:`.
 const KEYED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*:/uy
 // What follows an `import` that is no module's, a call (`import(…)`): not
@@ -154,8 +158,15 @@ function nameless(text) {
       scope = scopes[scope].parent
     }
   }
-  const endLoops = depth => {
-    while (loops.length > 0 && loops.at(-1).body && loops.at(-1).depth >= depth) scope = scopes[loops.pop().scope].parent
+  // A braced body ends at its `}`; an unbraced one with its statement, an
+  // `if`'s with its `else` (`for (…) if (x) f(); else g()`), read from `from`.
+  const endLoops = (depth, from) => {
+    ELSE.lastIndex = from
+    const otherwise = ELSE.test(text)
+    while (loops.length > 0 && loops.at(-1).body && loops.at(-1).depth >= depth) {
+      if (otherwise && !loops.at(-1).braced) return
+      scope = scopes[loops.pop().scope].parent
+    }
   }
   // Where a statement starts, a `function` or `class` declares its name.
   const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default'
@@ -236,7 +247,7 @@ function nameless(text) {
       if (mark !== '?') endArrows(opens.length, mark === ':')
       else if (arrows.at(-1)?.depth === opens.length) arrows.at(-1).conditionals++
     }
-    if (ends || segment.includes(';')) endLoops(opens.length)
+    if (ends || segment.includes(';')) endLoops(opens.length, at + raw.length)
     let end = segment.length
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
     if (end === 0) return
@@ -309,7 +320,7 @@ function nameless(text) {
       // A substitution's end, its template's text going on.
       opens.pop()
       endArrows(opens.length + 1)
-      endLoops(opens.length + 1)
+      endLoops(opens.length + 1, at)
       TEMPLATE.lastIndex = match.index + 1
       at = READ.lastIndex = TEMPLATE.test(text) ? TEMPLATE.lastIndex : text.length
       template(text.slice(match.index, at))
@@ -354,8 +365,9 @@ function nameless(text) {
         classBodies.pop()
         scope = scopes[scope].parent
       }
-      if (open === 'control' && loops.at(-1)?.depth === opens.length) loops.at(-1).body = true
-      else endLoops(first === '}' ? opens.length : opens.length + 1)
+      BRACED.lastIndex = at
+      if (open === 'control' && loops.at(-1)?.depth === opens.length && !loops.at(-1).body) Object.assign(loops.at(-1), { body: true, braced: BRACED.test(text) })
+      else endLoops(first === '}' ? opens.length : opens.length + 1, at)
       if (open === '(') {
         const group = groups.pop()
         BODY.lastIndex = ARROW.lastIndex = at
