@@ -101,6 +101,8 @@ const SHORTHAND = new RegExp(String.raw`${TRIVIA}(?:[,}]|=(?![=>]))`, 'uy')
 const AS = new RegExp(String.raw`${TRIVIA}as(?![\p{ID_Continue}$])`, 'uy')
 // What follows a name in an `export { … }` that re-exports another module's.
 const EXPORT_FROM = /[^}]*\}\s*from(?![\p{ID_Continue}$])/uy
+// A word that begins a line going on the line before: `x⏎instanceof a`.
+const INFIX = /(?:in|instanceof)(?![\p{ID_Continue}$])/uy
 // What follows a key before its value: spaces or comments, then `:`.
 const KEYED = new RegExp(`${TRIVIA}:`, 'uy')
 // What follows an `import` that is no module's, a call (`import(…)`): not
@@ -237,12 +239,15 @@ function nameless(text) {
   // `dynamic` once `eval` or a `with (…)` can read a name by its spelling:
   // renaming one then changes what runs; so once a name is escaped
   // (`\u0065val`), the one `\` code holds outside strings. So too where a
-  // decorator (`@dec a() {}`), whatever it reads, comes before a key. `parameters` where a `(…)` would
+  // decorator (`@dec a() {}`), whatever it reads, comes before a key; and
+  // where a line breaks after `await` (`awaited`) outside a module, a name
+  // there or an operator, as its function is `async` or not (`a => await⏎a()`),
+  // unknown here. `parameters` where a `(…)` would
   // be a function's parameters (after `function`, its name, a method's key
   // or `catch`), not a call's arguments.
   // `labeled` between a label and its `:`, after which a statement starts.
   const extending = []
-  let at = 0, casing = -1, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, modifier = null, naming = false, parameters = false
+  let at = 0, awaited = false, casing = -1, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, modifier = null, naming = false, parameters = false
   let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
@@ -267,12 +272,16 @@ function nameless(text) {
     // after a declared name with no value (`let x⏎+a`), only `=` or `,` goes on.
     const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
     // A line beginning with `(`, `[` or a template goes on the line before
-    // (`fn⏎(a)`, a call), as does one beginning with a `/` that divides (`x⏎/a/g`).
-    const divided = after === '' && text[at + raw.length] === '/' && divides(segment.trimEnd().at(-1) ?? last, segment)
+    // (`fn⏎(a)`, a call), as does one beginning with a `/` that divides (`x⏎/a/g`),
+    // `in` or `instanceof`.
+    INFIX.lastIndex = at + raw.length
+    const leads = after === '' && (/[([`]/u.test(text[at + raw.length] ?? '') || INFIX.test(text)
+      || (text[at + raw.length] === '/' && divides(segment.trimEnd().at(-1) ?? last, segment)))
     // Nor after a word a value must follow (`typeof⏎a`), but `return` and the like.
     const value = BEFORE_VALUE.has(last) && (last !== 'of' || inHead())
+    if (line !== -1 && before === '' && last === 'await') awaited = true
     const ends = !(line !== -1 && value && !restricted) && (restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
-      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !(after === '' && /[([`]/u.test(text[at + raw.length] ?? '')) && !divided)))
+      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !leads)))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
@@ -542,6 +551,7 @@ function nameless(text) {
   }
   const fnOf = step => scopes[step].fn ? step : fnOf(scopes[step].parent)
   if (!moduleLike && setAside.some(([, , name, from]) => blockFunctions.some(([own, block]) => own === name && !within(from, block) && within(from, fnOf(block))))) dynamic = true
+  if (awaited && !moduleLike) dynamic = true
   if (commonjs.some(([name, from]) => !declaredFrom(name, from, true))) moduleLike = true
   // A name no declaration in scope stands for is a global's, kept.
   for (const [piece, line, name, from] of setAside) {
