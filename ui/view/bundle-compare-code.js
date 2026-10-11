@@ -27,6 +27,7 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, TEXT_NODE_MAX, textNodes } from './source-text.js'
 import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
+import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { renameParts } from './bundle-compare-diff.js'
 import { renameTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
@@ -59,7 +60,15 @@ const OPEN_ALL_MAX = 300
 
 // View preferences shared by every comparison, and by the Diff view
 // (bundle-compare-all.js), reset on page reload like the rail's width.
-export const prefs = { layout: 'unified', ignoreWhitespace: false }
+export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false }
+// Renamed names are hidden in JavaScript alone, what a minifier renames: in
+// another language a short word (a CSS selector, a tag, prose) is no binding.
+export const renamable = path => /\.[cm]?js$/iu.test(path)
+const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
+
+// A file's line model by what it was diffed with: the settings, and whether
+// its sides were pretty-printed (see _pretty).
+export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${hidesRenames(path, settings)}\0${pretty}`
 
 // `${integrity}\0${path}` → the file's highlighted lines, or null when Prism
 // has no grammar for it or it is too large to color.
@@ -166,7 +175,7 @@ export class BundleCompareCode extends LitElement {
     this._open = new Map()
     this._models = new Map()
     this._modelCap = MODEL_CACHE
-    // `${path}\0${whitespace}` → fold run → lines revealed, and the rows
+    // A model's key (modelKey) → fold run → lines revealed, and the rows
     // shown before "Show more"; large files the user asked to diff anyway.
     this._expansions = new Map()
     this._limits = new Map()
@@ -376,26 +385,53 @@ export class BundleCompareCode extends LitElement {
 
   // ── The selected file ────────────────────────────────────────────
 
-  _model(path, before, after) {
-    const key = `${path}\0${prefs.ignoreWhitespace}`
+  _model(key, before, after, ignoreRenames = false) {
     // Re-inserted on every use, so the cache drops the least recent.
     let model = this._models.get(key)
     this._models.delete(key)
     if (!model) {
-      model = lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace })
+      model = lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace, ignoreRenames })
     }
     this._models.set(key, model)
     if (this._models.size > this._modelCap) this._models.delete(this._models.keys().next().value)
     return model
   }
 
-  // A file's two sides, and its line model where it has one to draw: none
-  // for a file that is not text, nor for one too large to diff unasked.
-  _fileState(path, entry) {
-    const { before, after } = fileContents(this.base, this.other, path, entry)
-    const textual = typeof before === 'string' && typeof after === 'string'
+  // A file's two sides, pretty-printed where the toggle has them so, and its
+  // line model where it has one to draw: none for a file that is not text,
+  // nor for one too large to diff unasked.
+  // `prettyAllowed` false where a view would pretty-print more than it can at once.
+  _fileState(path, entry, prettyAllowed = true) {
+    const contents = fileContents(this.base, this.other, path, entry)
+    const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
+    const pretty = textual ? this._pretty(path, entry, contents, prettyAllowed) : null
+    const { before, after } = pretty?.status === 'ready' ? pretty : contents
+    const key = modelKey(path, pretty?.status === 'ready')
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
-    return { before, after, textual, large, model: textual && !large ? this._model(path, before, after) : null }
+    return { before, after, textual, large, pretty, key, model: textual && !large ? this._model(key, before, after, hidesRenames(path)) : null }
+  }
+
+  // Whether each side of a file with text can be pretty-printed.
+  _printable(path, { kind, basePath = path }, { before, after } = fileContents(this.base, this.other, path, { kind, basePath })) {
+    return kind !== 'repointed' && typeof before === 'string' && typeof after === 'string'
+      && [[this.base, basePath, before], [this.other, path, after]].every(([details, file, text]) => text === '' || prettyPrintable(details, details, file, text))
+  }
+
+  // Both sides pretty-printed (pretty-source.js), as the Code tab shows a
+  // minified file, so minified versions diff line by line: null unless each
+  // side with text can be, `limited` where not `allowed`, else the toggle's
+  // state and, once both copies came, their texts.
+  _pretty(path, entry, contents, allowed = true) {
+    if (!this._printable(path, entry, contents)) return null
+    if (!allowed) return { status: 'limited' }
+    const { basePath = path } = entry, { before, after } = contents
+    const sides = [[this.base, basePath, before], [this.other, path, after]]
+    const copies = sides.map(([details, file, text]) => text === '' ? { status: 'ready', text } : prettyCopy(details, details, file, text, () => this.requestUpdate()))
+    if (copies.includes(null)) return { status: 'off' }
+    const failed = copies.find(copy => copy.status === 'error')
+    if (failed) return failed
+    if (copies.some(copy => copy.status === 'loading')) return { status: 'loading' }
+    return { status: 'ready', before: copies[0].text, after: copies[1].text }
   }
 
   // What a file shows in place of a diff: why there is none, or how to have
@@ -414,9 +450,11 @@ export class BundleCompareCode extends LitElement {
       </div>`
     }
     if (model.blocks.length > 0) return null
+    const hidden = [prefs.ignoreWhitespace && 'whitespace', hidesRenames(path) && 'renamed names'].filter(Boolean)
     return html`<div class="bundle-compare-code-message">
-      <p>${prefs.ignoreWhitespace ? 'Only whitespace changed in this file.' : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
+      <p>${hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : kind === 'renamed' ? 'Renamed without changes.' : 'The contents are the same.'}</p>
       ${prefs.ignoreWhitespace ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
+      ${hidesRenames(path) ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
     </div>`
   }
 
@@ -437,11 +475,11 @@ export class BundleCompareCode extends LitElement {
 
   // Highlighted lines of one side, or null until (or unless) Prism colors
   // it; the first ask starts the work and re-renders once it lands.
-  _highlighted(details, path, text) {
+  _highlighted(details, path, text, pretty = false) {
     if (!text) return null
     const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined, text)
     if (!lang) return null
-    const key = `${details.integrity}\0${path}`
+    const key = `${details.integrity}\0${path}${pretty ? '\0pretty' : ''}`
     if (highlightCache.has(key)) return highlightCache.get(key)
     if (!highlightPending.has(key)) {
       highlightPending.add(key)
@@ -460,7 +498,7 @@ export class BundleCompareCode extends LitElement {
     const entry = this._entries.get(path)
     const { kind } = entry
     const file = this._fileState(path, entry)
-    const { before, after, textual, model } = file
+    const { after, before, textual, model } = file
     // A file whose only change is a repointed import — moved there by a
     // rename or not — reads as its source, whatever the whitespace setting:
     // its two sides are one text.
@@ -470,8 +508,8 @@ export class BundleCompareCode extends LitElement {
     const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
     const body = kind === 'repointed' && before === undefined
       ? html`<div class="bundle-compare-code-message">Neither bundle carries this importer's source.</div>`
-      : asSource && model?.blocks.length === 0 ? this._renderSource(path, after, entry.repointed)
-      : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, model, before, after)
+      : asSource && model?.blocks.length === 0 ? this._renderSource(path, after, entry.repointed, file)
+      : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)
     return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
         <span class="bundle-code-file-nav">
           <button type="button" class="focus-code-nav-btn" aria-label="Previous file" data-tooltip="Previous file" ?disabled=${index <= 0} @click=${() => this._select(this._order[index - 1])}>
@@ -495,7 +533,7 @@ export class BundleCompareCode extends LitElement {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg>
           </button>
         </span>` : nothing}
-        ${this._toggles(diffable, textual)}
+        ${this._toggles(diffable, textual, file.pretty, renamable(path))}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
@@ -503,16 +541,27 @@ export class BundleCompareCode extends LitElement {
       </div>`
   }
 
-  // The diff's layout, whitespace and wrap toggles, as a file has use for
-  // them: a diff all three, a text the wrap alone.
-  _toggles(diffable, textual) {
-    return html`${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
+  // The diff's pretty-print, layout, whitespace, renamed names and wrap
+  // toggles, as a file has use for them: pretty-printing a minified file
+  // (`pretty` from _pretty), a diff the next two and, in JavaScript
+  // (`renames`), renamed names, a text the wrap.
+  _toggles(diffable, textual, pretty = null, renames = false) {
+    return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
+          aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
+          data-tooltip=${pretty.status === 'limited' ? 'Too many minified files to pretty-print together: open one in Code' : prettyTooltip(pretty)}
+          @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
+        ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
         </span>
         <button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace)} aria-label="Hide whitespace changes" data-tooltip="Hide whitespace changes"
           @click=${() => this._setWhitespace(!prefs.ignoreWhitespace)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
-        </button>` : nothing}
+        </button>
+        ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
+          data-tooltip="Hide short names renamed alike throughout the file, as a minifier renames them between builds"
+          @click=${() => this._setRenames(!prefs.ignoreRenames)}>
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
+        </button>` : nothing}` : nothing}
         ${textual ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(!!state.bundleSourceWrap)} aria-label="Wrap lines" data-tooltip="Wrap lines" ?hidden=${diffable && prefs.layout === 'split'}
           @click=${() => this._toggleWrap()}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3.5h12M2 8h9a2.5 2.5 0 0 1 0 5H8.5M10 11.5 8.5 13l1.5 1.5M2 13h3.5"/></svg>
@@ -591,9 +640,9 @@ export class BundleCompareCode extends LitElement {
 
   // An unchanged file, as the Code tab would show it: one column of
   // numbered lines, the ones importing a repointed specifier marked.
-  _renderSource(path, text, repointed) {
-    const model = this._model(path, text, text)
-    const lit = { model, b: this._highlighted(this._textSide(path), path, text) }
+  _renderSource(path, text, repointed, { key: modelKeyed, pretty }) {
+    const model = this._model(modelKeyed, text, text)
+    const lit = { model, b: this._highlighted(this._textSide(path), path, text, pretty?.status === 'ready') }
     const marked = new Set([...this._importLines(repointed, model.b).values()].flat())
     const key = `${path}\0source`
     const limit = this._limits.get(key) ?? ROW_LIMIT
@@ -612,6 +661,11 @@ export class BundleCompareCode extends LitElement {
 
   _setWhitespace(value) {
     prefs.ignoreWhitespace = value
+    this.requestUpdate()
+  }
+
+  _setRenames(value) {
+    prefs.ignoreRenames = value
     this.requestUpdate()
   }
 
@@ -663,8 +717,7 @@ export class BundleCompareCode extends LitElement {
     this._select(this._order[index + direction])
   }
 
-  _renderDiff(path, { kind, basePath = path }, model, before, after) {
-    const key = `${path}\0${prefs.ignoreWhitespace}`
+  _renderDiff(path, { kind, basePath = path }, { after, before, key, model, pretty }) {
     const expansion = this._expansions.get(key) ?? new Map()
     const split = prefs.layout === 'split'
     const rows = diffRows(model, expansion, { split })
@@ -673,8 +726,8 @@ export class BundleCompareCode extends LitElement {
     this._shownRows = { path, key, rows, limit }
     const lit = {
       model,
-      a: kind === 'added' ? null : this._highlighted(this.base, basePath, before),
-      b: kind === 'removed' ? null : this._highlighted(this.other, path, after),
+      a: kind === 'added' ? null : this._highlighted(this.base, basePath, before, pretty?.status === 'ready'),
+      b: kind === 'removed' ? null : this._highlighted(this.other, path, after, pretty?.status === 'ready'),
       expand: (run, change) => {
         const next = new Map(expansion)
         next.set(run, change === 'all' ? { all: true } : { ...next.get(run), [change]: (next.get(run)?.[change] ?? 0) + EXPAND_STEP })
@@ -729,6 +782,13 @@ export class BundleCompareCode extends LitElement {
     return html`<span class="diff-num">${line + 1}</span><span class="diff-sign">${sign}</span>${this._codeCell(lit, side, line, ranges)}`
   }
 
+  // An unchanged line's sign: `≈` for one whose names were renamed alike
+  // (lineDiff's ignoreRenames), naming the line it was.
+  _ctxSign(model, row) {
+    if (!model.renamed.has(row.a)) return ' '
+    return html`<span class="diff-renamed" data-tooltip=${`Renamed from: ${model.a[row.a].trim()}`}>≈</span>`
+  }
+
   _noEol(model, side, line) {
     return line != null && model.noEol[side] && line === model[side].length - 1
   }
@@ -755,7 +815,7 @@ export class BundleCompareCode extends LitElement {
     const { model } = lit
     if (row.kind === 'fold') return this._fold(row, lit)
     if (row.kind === 'ctx') {
-      return html`<div class="diff-row ctx" role="row"><span class="diff-num">${row.a + 1}</span>${this._cell(lit, 'b', row.b, ' ', null)}</div>`
+      return html`<div class="diff-row ctx" role="row"><span class="diff-num">${row.a + 1}</span>${this._cell(lit, 'b', row.b, this._ctxSign(model, row), null)}</div>`
     }
     const del = row.kind === 'del'
     const words = del ? this._words(model, row.a, row.pair)?.a : this._words(model, row.pair, row.b)?.b
@@ -776,8 +836,8 @@ export class BundleCompareCode extends LitElement {
     if (row.kind === 'fold') return this._fold(row, lit)
     if (row.kind === 'ctx') {
       return html`<div class="diff-row ctx" role="row">
-        <span class="diff-half">${this._cell(lit, 'a', row.a, ' ', null)}</span>
-        <span class="diff-half">${this._cell(lit, 'b', row.b, ' ', null)}</span>
+        <span class="diff-half">${this._cell(lit, 'a', row.a, this._ctxSign(model, row), null)}</span>
+        <span class="diff-half">${this._cell(lit, 'b', row.b, this._ctxSign(model, row), null)}</span>
       </div>`
     }
     const words = row.paired ? this._words(model, row.left, row.right) : null

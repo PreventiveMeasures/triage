@@ -24,15 +24,373 @@ export function textLines(text) {
   return lines
 }
 
+function changeBlocks(before, after, ignoreWhitespace) {
+  const text = diff(before, after, { format: 'unified', context: 0, whitespace: ignoreWhitespace ? 'all' : 'none' })
+  return text ? (parseDiff(text)[0]?.blocks ?? []).map(({ a0, a1, b0, b1 }) => ({ a0, a1, b0, b1 })) : []
+}
+
+// Words a minifier never renames, kept as they are when names are set aside.
+const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+  'default', 'delete', 'do', 'else', 'enum', 'eval', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'get',
+  'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'of', 'package', 'private', 'protected',
+  'public', 'return', 'set', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'undefined', 'var', 'void',
+  'while', 'with', 'yield', 'Infinity', 'NaN'])
+// Names a minifier gives: longer ones are an API's or a person's, and one
+// changed is a change.
+const RENAMED_MAX_LENGTH = 3
+// What a text is read in, from where it is: a string, a template, a
+// comment (a hashbang too, its first line), a regular expression (where a value starts: `/` after one
+// divides), a name (as JavaScript tells its characters: `a\u200Cb` is one),
+// a bracket, or what lies between, operators and numbers.
+const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$.\\\u200C\u200D])[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
+// What a line ending in goes on past its line break: an operator, not a
+// postfix `++` or `--` (`a++⏎b`).
+const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
+// The comments READ reads, in what lies between.
+const COMMENT = /\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
+// Words after which a value starts, so a `/` begins a regular expression.
+const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'extends', 'in', 'instanceof', 'new', 'of', 'return',
+  'throw', 'typeof', 'void', 'yield'])
+// Words a line break after ends their statement, whatever follows.
+const RESTRICTED = new Set(['break', 'continue', 'debugger', 'return', 'yield'])
+// Words a `{` after which opens a block, as do `)`, `;`, `{`, `}`, `=>` and
+// the start; any other opens an object, a pattern or a class body.
+const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
+// Words between a key's place and its key: `{ async a() {} }`.
+const MODIFIERS = new Set(['accessor', 'async', 'get', 'set', 'static'])
+// Words whose `(…)` a statement follows (`if (a) /b/.test(c)`), declaring
+// nothing as a function's `(…)` does.
+const CONTROL = new Set(['for', 'if', 'switch', 'while', 'with'])
+// Words between `export` and the name it exports: `export async function a`,
+// `export * as a`.
+const DECLARES = new Set(['as', 'async', 'class', 'function'])
+// Words the name after which a file declares: `function a`, `import b`.
+const NAMING = new Set(['as', 'class', 'function', 'import'])
+// After a function's `(…)` or a lone parameter, with or without a body.
+const BODY = /\s*(?:=>\s*)?\{/uy
+const ARROW = /\s*=>/uy
+const ARROW_BODY = /\s*=>\s*\{/uy
+// What a `let` declaring follows with, a name or a pattern: not `let(a)`,
+// a call where `let` is a name, as it may be outside strict code.
+const LET = /\s*[\p{L}_$[{]/uy
+// What a set-aside name leaves in its line.
+const NAMELESS = ''
+
+// A text with its short names set aside (`key`, its lines where the text's
+// are), and each line's names in order (`names`). Read as a whole, so a
+// comment or a template spanning lines keeps all of them. Set aside only
+// where a declaration in scope stands for them (`var`, `let`, `const`,
+// `function`, `class`, `import`, `catch` and parameters), a global (`Map`,
+// `$`) being no minifier's to rename. Kept as they are: strings, templates, comments,
+// regular expressions, keywords, names longer than a minifier gives,
+// properties: after `.`, before `:`, or in an object's, a pattern's or a
+// class's key place (`{ a, b() {}, c = 1 }`), and what a module exports
+// (`export { a as b }`, `export const c = 1`), since renaming one changes
+// what reads it.
+function nameless(text) {
+  const key = [], names = [[]], setAside = []
+  const opens = []
+  // Each block a scope, declaring what is declared in it (its function's
+  // parameters too, and a function expression's own name, `pending` until it
+  // opens, each read from it), seen from it and the blocks in it. So are a
+  // concise arrow's body (`arrows`, the depths where a `,` or `;` ends it)
+  // and a `for` from its `(` to the end of its body (`loops`). Each
+  // declaration is taken to be its block's, so a `var` read outside its
+  // block is a global's, kept.
+  const scopes = [{ names: new Set(), parent: -1 }]
+  const arrows = [], loops = []
+  let pending = null, scope = 0, self = null
+  const declare = name => scopes[scope].names.add(name)
+  const enter = (entries = []) => {
+    scopes.push({ names: new Set(entries.map(({ name }) => name)), parent: scope })
+    scope = scopes.length - 1
+    for (const { aside } of entries) if (aside) aside[3] = scope
+  }
+  const endArrows = depth => {
+    while (arrows.length > 0 && arrows.at(-1) >= depth) {
+      arrows.pop()
+      scope = scopes[scope].parent
+    }
+  }
+  const endLoops = depth => {
+    while (loops.length > 0 && loops.at(-1).body && loops.at(-1).depth >= depth) scope = scopes[loops.pop().scope].parent
+  }
+  // Where a statement starts, a `function` or `class` declares its name.
+  const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default'
+  const declaredFrom = (name, from) => {
+    for (let at = from; at !== -1; at = scopes[at].parent) if (scopes[at].names.has(name)) return true
+    return false
+  }
+  // Each `var`, `let` or `const` under way: the depth of its declarators,
+  // whether in their names (before `=`, patterns too) rather than what they
+  // are set to, whether exported. Each `(…)` under way but a statement's,
+  // and the names in it: parameters, if `=>` or `{` follows. The depths
+  // whose `=` began a default (`{ x = a }`), until their next `,`: no
+  // names declared there.
+  const declarations = [], defaulted = new Set(), groups = []
+  const inDefault = (from, to = opens.length) => {
+    for (const depth of defaulted) if (depth >= from && depth <= to) return true
+    return false
+  }
+  const inComputed = from => {
+    for (let depth = from; depth < opens.length; depth++) if (opens[depth] === 'computed') return true
+    return false
+  }
+  // `exporting` between `export` and its name; `naming` before a name
+  // declared as `function a` is, `named` by which word and whether as a
+  // statement; `extending` the depths of each `extends` whose class body is
+  // the next `{` there, a class in another's `extends` on top
+  // (`extends mixin(class extends B {}) {`).
+  // `dynamic` once `eval` or a `with (…)` can read a name by its spelling:
+  // renaming one then changes what runs; so once a name is escaped
+  // (`\u0065val`), the one `\` code holds outside strings. So too where a
+  // decorator (`@dec a() {}`), whatever it reads, comes before a key. `parameters` where a `(…)` would
+  // be a function's parameters (after `function`, its name, a method's key
+  // or `catch`), not a call's arguments.
+  // `labeled` between a label and its `:`, after which a statement starts.
+  const extending = []
+  let at = 0, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, naming = false, parameters = false
+  let named = { statement: true, word: null }
+  const keep = segment => {
+    key.push(segment)
+    for (let i = segment.indexOf('\n'); i !== -1; i = segment.indexOf('\n', i + 1)) names.push([])
+  }
+  // What lies between, as read (`raw`) and, its comments set aside but their
+  // line breaks, as code (`segment`).
+  const between = (raw, segment = raw) => {
+    keep(raw)
+    // Nor where a fragment opens, `<>` being JSX alone, whatever it holds.
+    if (segment.includes('\\') || segment.includes('@') || segment.includes('<>')) dynamic = true
+    // A line break ends these statements, whatever follows (`continue⏎+a`),
+    // a `/` after it starting a value.
+    const restricted = segment.includes('\n') && RESTRICTED.has(last)
+    if (restricted) last = ';'
+    // A line break no operator spans may end a statement, as `;` does, or a
+    // class field: even one alone between two names (`let x⏎f()`).
+    const line = segment.lastIndexOf('\n')
+    const after = segment.slice(line + 1).trimStart(), before = segment.slice(0, line).trimEnd()
+    // A `++` or `--` either side of it is the line's own (`a++⏎b`, `x⏎++a`);
+    // after a declared name with no value (`let x⏎+a`), only `=` or `,` goes on.
+    const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
+    const ends = restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
+      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after)))
+    if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
+    // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
+    if (ends && bare) last = ';'
+    // A concise arrow's body ends where its line, a `,`, a `;` or a
+    // conditional's `:` does (`x ? a => a : a()`).
+    if (ends || segment.includes(',') || segment.includes(';') || segment.includes(':')) endArrows(opens.length)
+    if (ends || segment.includes(';')) endLoops(opens.length)
+    let end = segment.length
+    while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
+    if (end === 0) return
+    last = segment[end - 1] === ':' && labeled ? ';' : segment[end - 1]
+    labeled = false
+    const declaration = declarations.at(-1)
+    const next = segment.lastIndexOf(','), set = segment.search(/(?<![=!<>])=(?![=>])[^=]*$/u)
+    if (declaration?.depth === opens.length && set !== next) declaration.binding = next > set
+    else if (set > next) defaulted.add(opens.length)
+    else if (next > set || segment.includes(';')) defaulted.delete(opens.length)
+    if (segment.includes(';')) while (declarations.length > 0 && opens.length <= declarations.at(-1).depth) declarations.pop()
+    // A generator's `*` leaves its name in its key place, or to be declared.
+    if (last === '*' && segment.slice(0, end - 1).trim() === '') return
+    exporting = naming = parameters = false
+    const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
+    keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
+  }
+  // Ending its line, a value ends its class field: the next name is a key.
+  const lineEnd = segment => {
+    const line = segment.lastIndexOf('\n')
+    if (line !== -1 && opens.at(-1) === 'object' && segment.slice(line + 1).trim() === '' && !CONTINUES.test(segment.slice(0, line).trimEnd())) keyPlace = true
+  }
+  for (READ.lastIndex = 0; ;) {
+    // A comment lies between what is read as spaces do, its line breaks
+    // ending statements as theirs do (`let x /*⏎*/ f()`).
+    let match = READ.exec(text)
+    while (match && (match[0][0] === '#' || /^\/[/*]/u.test(match[0]))) match = READ.exec(text)
+    const gap = text.slice(at, match?.index ?? text.length)
+    const code = gap.replaceAll(COMMENT, comment => comment.replaceAll(/[^\n]/gu, '') || ' ')
+    between(gap, code)
+    lineEnd(code)
+    if (!match) break
+    const [token] = match
+    const first = token[0]
+    if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last) || (last?.length > 1 && !BEFORE_VALUE.has(last)))) {
+      // A division: the `/` is an operator, and what follows is read again.
+      at = match.index
+      READ.lastIndex = at + 1
+      between('/')
+      at++
+      continue
+    }
+    at = READ.lastIndex
+    if (first === '"' || first === "'" || first === '`' || first === '/') {
+      keep(token)
+      // A module's name ends its `import` or `export … from`, as `;` does.
+      last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
+      exporting = keyPlace = naming = parameters = false
+    } else if (first === '(' || first === '[' || first === '{') {
+      key.push(token)
+      // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
+      const heritage = first === '{' && extending.at(-1) === opens.length
+      const block = first === '{' && !heritage && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
+      if (heritage) extending.pop()
+      // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
+      const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object'
+        : first === '(' && CONTROL.has(last) ? 'control' : first === '[' && keyPlace ? 'computed' : first
+      if (open === 'control' && last === 'for') {
+        enter()
+        loops.push({ body: false, depth: opens.length, scope })
+      }
+      opens.push(open)
+      if (open === '(') groups.push({ depth: opens.length, names: [], parameters })
+      if (open === 'block') enter(pending ?? [])
+      if (first === '{') pending = null
+      last = first
+      keyPlace = first === '{' && !block
+      exporting = naming = parameters = false
+    } else if (first === ')' || first === ']' || first === '}') {
+      key.push(token)
+      const open = opens.pop()
+      endArrows(opens.length + 1)
+      if (open === 'block') scope = scopes[scope].parent
+      if (open === 'control' && loops.at(-1)?.depth === opens.length) loops.at(-1).body = true
+      else endLoops(first === '}' ? opens.length : opens.length + 1)
+      if (open === '(') {
+        const group = groups.pop()
+        BODY.lastIndex = ARROW.lastIndex = at
+        ARROW_BODY.lastIndex = at
+        if (ARROW_BODY.test(text) || (group.parameters && BODY.test(text))) pending = self ? [...group.names, self] : group.names
+        else if (ARROW.test(text)) {
+          enter(group.names)
+          arrows.push(opens.length)
+        }
+        self = null
+      }
+      // After a statement's condition, as after `;`, a statement starts.
+      last = open === 'control' ? ';' : first
+      keyPlace = first === '}' && opens.at(-1) === 'object'
+      exporting = naming = parameters = false
+      for (const depth of defaulted) if (depth > opens.length) defaulted.delete(depth)
+      while (declarations.length > 0 && opens.length < declarations.at(-1).depth) declarations.pop()
+    } else {
+      const declaration = declarations.at(-1), group = groups.at(-1)
+      const binding = declaration?.binding && opens.length >= declaration.depth && !inDefault(declaration.depth + 1)
+        && !inComputed(declaration.depth)
+      const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
+      // A property: `.` before it, spaces or a comment between (`a . b`), or `:`
+      // after it; or a label, after `break` or `continue` (`break a`), which a
+      // line break still ends.
+      const jump = last === 'break' || last === 'continue'
+      const property = last === '.' || text[at] === ':' || jump
+      // A label where a statement starts (`a: {`), not a key: its block a block.
+      if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
+      let aside = null
+      if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || property) key.push(token)
+      else {
+        setAside.push(aside = [key.length, names.length - 1, token, scope])
+        key.push(NAMELESS)
+      }
+      ARROW_BODY.lastIndex = ARROW.lastIndex = at
+      // A pattern's key (`{ a: x }`) names what is read, not what is bound.
+      const read = text[at] === ':' || last === '.'
+      // A function expression's name is its own body's, a class expression's nobody's.
+      if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
+        if (named.word === 'function') self = { aside, name: token }
+      } else if (!read && (naming || binding)) declare(token)
+      else if (!read && ARROW_BODY.test(text)) pending = [{ aside, name: token }]
+      else if (!read && ARROW.test(text)) {
+        enter([{ aside, name: token }])
+        arrows.push(opens.length)
+      }
+      if (!read && group && !inDefault(group.depth) && !inComputed(group.depth)) group.names.push({ aside, name: token })
+      // A key or a property is no keyword: `{ const: a }`, `x.var`.
+      const word = keyPlace || property ? null : token
+      if (word === 'eval' || word === 'with') dynamic = true
+      parameters = keyPlace || word === 'function' || word === 'catch' || (naming && named.word === 'function')
+      if (word === 'extends') extending.push(opens.length)
+      if (binding && (word === 'in' || word === 'of')) declaration.binding = false
+      LET.lastIndex = at
+      if (word === 'const' || word === 'var' || (word === 'let' && LET.test(text))) declarations.push({ binding: true, depth: opens.length, exported: exporting })
+      if (word === 'export') exporting = true
+      else if (!DECLARES.has(word)) exporting = false
+      if (word === 'async') named = { statement: statement(last), word: null }
+      if (word === 'function' || word === 'class') named = { statement: last === 'async' ? named.statement : statement(last), word }
+      else if (NAMING.has(word)) named = { statement: true, word }
+      naming = NAMING.has(word) || (naming && word === 'async')
+      // `for await (` is a `for`'s condition still.
+      if (!(keyPlace && MODIFIERS.has(token)) && !(token === 'await' && last === 'for')) {
+        last = jump ? last : word ?? '_'
+        keyPlace = false
+      }
+    }
+  }
+  // A name no declaration in scope stands for is a global's, kept.
+  for (const [piece, line, name, from] of setAside) {
+    if (declaredFrom(name, from)) names[line].push(name)
+    else key[piece] = name
+  }
+  return { dynamic, key: key.join(''), names }
+}
+
+// The change blocks between two texts' lines with names renamed alike left
+// out, and the removed lines so left out. Lines pair up as they are with
+// their names set aside, then every pair, unchanged ones too, tells which
+// name became which; a pair whose names differ is left out only when each
+// of its names stands for the one other throughout, neither side's ever
+// standing for a second. Any other (a name renamed two ways, or two names
+// renamed to one, as a line's `a` → `b` beside unchanged lines naming both)
+// is a change.
+function renameBlocks(before, after, a, b, ignoreWhitespace) {
+  const na = nameless(before), nb = nameless(after)
+  if (na.dynamic || nb.dynamic) return { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
+  const found = changeBlocks(na.key, nb.key, ignoreWhitespace)
+  const pairs = []
+  let i = 0, j = 0
+  for (const block of [...found, { a0: a.length, a1: a.length, b0: b.length, b1: b.length }]) {
+    while (i < block.a0) pairs.push([i++, j++])
+    i = block.a1
+    j = block.b1
+  }
+  const backward = new Map(), forward = new Map()
+  const link = (map, from, to) => { if (!map.has(from)) map.set(from, new Set()); map.get(from).add(to) }
+  for (const [pa, pb] of pairs) na.names[pa].forEach((name, k) => { link(forward, name, nb.names[pb][k]); link(backward, nb.names[pb][k], name) })
+  const sole = (from, to) => forward.get(from).size === 1 && backward.get(to).size === 1
+  const blocks = [], renamed = new Set()
+  const add = block => {
+    const last = blocks.at(-1)
+    if (last && last.a1 === block.a0 && last.b1 === block.b0) { last.a1 = block.a1; last.b1 = block.b1 } else blocks.push({ ...block })
+  }
+  let next = 0
+  for (const [pa, pb] of pairs) {
+    while (next < found.length && found[next].a0 <= pa) add(found[next++])
+    const names = na.names[pa], others = nb.names[pb]
+    if (names.every((name, k) => name === others[k])) continue
+    if (names.every((name, k) => sole(name, others[k]))) renamed.add(pa)
+    else add({ a0: pa, a1: pa + 1, b0: pb, b1: pb + 1 })
+  }
+  while (next < found.length) add(found[next++])
+  return { blocks, renamed }
+}
+
+// A tag where a value starts (`(<a />`, `if (x) <b />`, `x + <i />`, `...<a />`, `return <i>`,
+// `yield <p>`, not after `<` but a spaced one (`x < <a />`), as `a<<b>>>0` has it; a fragment's `<>` before
+// what it holds, an entity too (`<>&amp;`), not `[&<>"']`'s): JSX, whose
+// tags are no bindings, so its file's names are not set aside. After the
+// words a regular expression may follow, BEFORE_VALUE (`extends <a />`).
+const JSX = new RegExp(String.raw`(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:${[...BEFORE_VALUE].join('|')}))[ \t]*<(?:\/?[\p{ID_Start}_$][-\p{ID_Continue}$.:\u200C\u200D]*(?:\s|\/?>)|>(?=[\s<{\p{L}]|&[\w#]+;))`, 'mu')
+
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
 // added file is diffed against '' and a removed one against it, so all
 // three kinds of change share one model. `ignoreWhitespace` is diff -w:
-// lines differing only in whitespace pair up as unchanged.
-export function lineDiff(before, after, { ignoreWhitespace = false } = {}) {
+// lines differing only in whitespace pair up as unchanged. With
+// `ignoreRenames`, so do lines differing only in short names renamed alike
+// throughout (renameBlocks), as a minifier renames them from one build to
+// the next; `renamed` holds such removed lines.
+export function lineDiff(before, after, { ignoreWhitespace = false, ignoreRenames = false } = {}) {
   const a = textLines(before), b = textLines(after)
-  const text = diff(before, after, { format: 'unified', context: 0, whitespace: ignoreWhitespace ? 'all' : 'none' })
-  const blocks = text ? (parseDiff(text)[0]?.blocks ?? []).map(({ a0, a1, b0, b1 }) => ({ a0, a1, b0, b1 })) : []
+  const { blocks, renamed } = ignoreRenames && !JSX.test(before) && !JSX.test(after) ? renameBlocks(before, after, a, b, ignoreWhitespace) : { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
   let additions = 0, deletions = 0
   for (const block of blocks) {
     additions += block.b1 - block.b0
@@ -42,7 +400,7 @@ export function lineDiff(before, after, { ignoreWhitespace = false } = {}) {
   // newline added or dropped at the end is a change of that line alone.
   const noEol = { a: before !== '' && !before.endsWith('\n'), b: after !== '' && !after.endsWith('\n') }
   // `words` keeps the marks of each pair a render asks for.
-  return { a, b, blocks, additions, deletions, noEol, words: new Map() }
+  return { a, b, blocks, renamed, additions, deletions, noEol, words: new Map() }
 }
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the

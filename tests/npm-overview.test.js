@@ -13,7 +13,8 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
   fetchNpmPackage() {}, fetchNpmSocket: () => Promise.resolve({ socket: null }), fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { NPM_LONG_LINE, npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileReadability, npmFileTypes, npmTakenDown, npmTextEncoding } = await import('../ui/view/npm-overview.js')
+const { npmAdvisoryStatus, npmFileExtension, npmFileExtensions, npmFileTypes, npmTakenDown } = await import('../ui/view/npm-overview.js')
+const { NPM_LONG_LINE, npmFileReadability, npmTextEncoding } = await import('../ui/view/file-readability.js')
 
 test('a file\'s extension follows its name\'s last dot, a declaration file\'s whole', () => {
   for (const [path, extension] of [

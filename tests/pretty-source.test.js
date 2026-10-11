@@ -3,15 +3,8 @@ import { createHash } from 'node:crypto'
 import { setImmediate } from 'node:timers/promises'
 import { beforeEach, mock, test } from 'node:test'
 
-const state = { bundleSourcePretty: false, bundleSourceFile: null }
-mock.module('../client/index.js', { exports: {
-  state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
-  readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
-} })
-const renders = []
-mock.module('../ui/view/render.js', { exports: { render() { renders.push(state.bundleSourceFile) } } })
-mock.module('../ui/view/dialogs/advisory-details-dialog.js', { exports: { openAdvisoryDetailsDialog() {} } })
-mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
+const state = { bundleSourcePretty: false }
+mock.module('../client/index.js', { exports: { state } })
 // Each request is answered by the next of `answers`, a text or an error.
 const answers = [], requests = []
 const answer = () => {
@@ -19,12 +12,13 @@ const answer = () => {
   return next instanceof Error ? Promise.reject(next) : Promise.resolve(next)
 }
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchNpmAdvisories: () => Promise.resolve({ versions: [], advisories: [] }), fetchNpmStats: () => Promise.resolve({}),
-  fetchNpmPackage() {}, fetchNpmSocket: () => Promise.resolve({ socket: null }), fetchNpmTags: () => Promise.resolve({ tags: [] }), fetchNpmVersions: () => Promise.resolve({ versions: [] }), fetchBundleContents() {}, fetchBundleMetadata() {},
   fetchPrettyBundleFile: (...args) => { requests.push(['bundle', ...args]); return answer() },
   fetchPrettyNpmFile: (...args) => { requests.push(['npm', ...args]); return answer() },
 } })
-const { prettyCopy, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { prettyCopy: copyOf, prettyPrintable, togglePrettySource } = await import('../ui/view/pretty-source.js')
+// Each copy asked for here notes its path once it comes, as a view repaints.
+const renders = []
+const prettyCopy = (details, entry, path, content) => copyOf(details, entry, path, content, () => renders.push(path))
 
 const minified = `${'var a=1;'.repeat(200)}\n`
 const readable = 'export const a = 1\n'
@@ -63,7 +57,6 @@ test('only a managed bundle\'s or npm version\'s minified code is offered pretty
 
 test('a bundle file\'s copy is asked for by its metadata hash once the toggle is on, and kept', async () => {
   const details = bundleOf({ 'dist/app.min.js': minified })
-  state.bundleSourceFile = 'dist/app.min.js'
   assert.equal(prettyCopy(details, managed, 'dist/app.min.js', minified), null, 'off by default')
   assert.equal(requests.length, 0)
   togglePrettySource()
@@ -71,7 +64,7 @@ test('a bundle file\'s copy is asked for by its metadata hash once the toggle is
   assert.deepEqual(prettyCopy(details, managed, 'dist/app.min.js', minified), { status: 'loading' })
   await settled()
   assert.deepEqual(requests, [['bundle', 'bundle-1', 'dist/app.min.js', hashOf(minified)]])
-  assert.deepEqual(renders, ['dist/app.min.js'], 'the open file repaints with its copy')
+  assert.deepEqual(renders, ['dist/app.min.js'], 'the view that asked repaints with its copy')
   assert.deepEqual(prettyCopy(details, managed, 'dist/app.min.js', minified), { status: 'ready', text: 'var a = 1;\n' })
   togglePrettySource()
   assert.equal(prettyCopy(details, managed, 'dist/app.min.js', minified), null)
@@ -105,6 +98,39 @@ test('a failure is shown, and asked again only where asking again may succeed', 
   assert.equal(prettyCopy(details, managed, 'b.min.js', `${minified}\n`).status, 'loading', 'a busy server is asked again')
   await settled()
   assert.equal(requests.length, 3)
+})
+
+test('a view asking for more copies than are kept keeps every one it waits for', async () => {
+  togglePrettySource()
+  // Compare's Diff view: both sides of five minified files, in one paint.
+  const files = Array.from({ length: 10 }, (_, i) => `f${i}.min.js`)
+  const details = bundleOf(Object.fromEntries(files.map((path, i) => [path, `${minified}${i}`])))
+  for (let i = 0; i < files.length; i++) answers.push(`copy ${i}`)
+  const paint = () => files.map((path, i) => prettyCopy(details, managed, path, `${minified}${i}`).status)
+  assert.deepEqual(new Set(paint()), new Set(['loading']))
+  await setImmediate()
+  assert.deepEqual(new Set(paint()), new Set(['ready']), 'none dropped while it came')
+  await new Promise(resolve => { setTimeout(resolve, 1) })
+  assert.deepEqual(new Set(paint()), new Set(['ready']), 'nor on a later paint')
+  assert.equal(requests.length, 10, 'and none asked for twice')
+})
+
+test('copies that come once their view moved on are dropped past those kept', async () => {
+  togglePrettySource()
+  // The Code view, one file after another, each asked for in a paint of its own before any came.
+  const files = Array.from({ length: 10 }, (_, i) => `g${i}.min.js`)
+  const details = bundleOf(Object.fromEntries(files.map((path, i) => [path, `${minified}${i}`])))
+  const comes = []
+  for (let i = 0; i < files.length; i++) answers.push(new Promise(resolve => { comes.push(resolve) }))
+  for (let i = 0; i < files.length; i++) {
+    prettyCopy(details, managed, files[i], `${minified}${i}`)
+    await new Promise(resolve => { setTimeout(resolve, 1) })
+  }
+  comes.forEach((come, i) => come(`copy ${i}`))
+  await setImmediate()
+  answers.push('again')
+  assert.equal(prettyCopy(details, managed, files[0], `${minified}0`).status, 'loading', 'the first, dropped once it came, is asked for again')
+  assert.equal(requests.length, 11)
 })
 
 test('a request a session change aborted is asked again on the next paint', async () => {

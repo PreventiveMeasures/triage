@@ -9,9 +9,12 @@ import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { stripCommonPathPrefix } from './format.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
-import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff } from './bundle-compare-code.js'
+import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey, renamable } from './bundle-compare-code.js'
 
 export const COMBINED_DIFF_MAX = 8000
+// Minified files pretty-printed together, both sides of each among the
+// copies pretty-source.js keeps: more would ask for as many copies at once.
+const COMBINED_PRETTY_MAX = 4
 
 // The files the Diff view lists, by path: each one added, removed, changed
 // or renamed (fileEntries). A file whose only change is an import resolving
@@ -57,7 +60,7 @@ class BundleCompareAll extends BundleCompareCode {
 
   willUpdate(changed) {
     super.willUpdate(changed)
-    if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(`${path}\0false`, model)
+    if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), model)
   }
 
   // Nothing to keep in view: the list scrolls as the reader does.
@@ -66,15 +69,20 @@ class BundleCompareAll extends BundleCompareCode {
   render() {
     const entries = combinedEntries(this._entries)
     const { prefix } = stripCommonPathPrefix(entries.map(([path]) => path))
-    const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry) }))
+    const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
+    const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
     const deletions = shown.reduce((sum, { file }) => sum + (file.model?.deletions ?? 0), 0)
+    // The toggle's state for every file, as for one file's two sides (_pretty): a failure first, then one still coming.
+    const pretties = shown.map(({ file }) => file.pretty).filter(Boolean)
+    const pretty = pretties.find(copy => copy.status === 'error') ?? pretties.find(copy => copy.status === 'loading') ?? pretties[0]
     return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
         <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
         ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
         ${prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
         <span class="bundle-code-main-spacer"></span>
-        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual))}
+        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), shown.some(({ file }) => file.textual), pretty,
+          shown.some(({ path, file }) => file.textual && renamable(path)))}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label="Every change">
         ${entries.length === 0 ? html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
@@ -84,7 +92,7 @@ class BundleCompareAll extends BundleCompareCode {
               <span class="bundle-code-main-spacer"></span>
               ${this._fileFigures(entry, file.model)}
             </header>
-            ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file.model, file.before, file.after)}
+            ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}
           </section>`)}
       </div>`
   }

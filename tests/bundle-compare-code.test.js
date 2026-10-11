@@ -3,8 +3,15 @@ import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import '../ui/view/frontend-install.js'
 
-mock.module('../client/index.js', { namedExports: { state: {}, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
+const state = {}
+mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
+// The server's pretty-printed copies, by bundle and path.
+const pretty = new Map()
+mock.module('../ui/view/client-managed.js', { namedExports: {
+  fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
+  fetchPrettyNpmFile() {},
+} })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
@@ -102,6 +109,76 @@ test('a changed text file renders its diff and a binary one says so', () => {
   assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u)
   const binary = renderText(view('assets/logo.png').render())
   assert.match(binary, /Binary file changed · 1 B → 1 B\. A text diff is not available\./u)
+})
+
+test('minified files diff pretty-printed, and names renamed alike throughout can be hidden', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  // A minifier's two builds: one function more, and every name after it moved.
+  const element = view('dist/app.min.js', [{ 'dist/app.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}\n` },
+    { 'dist/app.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);\n` }])
+  element.base.managedId = 'b1'
+  element.other.managedId = 'b2'
+  pretty.set('b1:dist/app.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\n')
+  pretty.set('b2:dist/app.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\n')
+  const off = renderText(element.render())
+  assert.match(off, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'a minified file offers pretty-printing')
+  state.bundleSourcePretty = true
+  assert.match(renderText(element.render()), /is-loading/u, 'busy while both copies are asked for')
+  // Until both copies came, each hashed first.
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const formatted = renderText(element.render())
+  assert.match(formatted, /class="add">\+5<\/span><span class="del">−4/u, 'each copy line by line')
+  element._setRenames(true)
+  const renames = renderText(element.render())
+  assert.match(renames, /class="add">\+1<\/span><span class="del">−0/u, 'what is new alone')
+  assert.match(renames, /class="diff-renamed" data-tooltip=Renamed from: var Y = 1;>≈/u)
+  assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
+})
+
+test('names are hidden renamed in JavaScript alone: in CSS a short selector changed shows', t => {
+  t.after(() => { element._setRenames(false) })
+  const element = view('dist/app.css', [{ 'dist/app.css': '#foo{color:red}\n' }, { 'dist/app.css': '#bar{color:red}\n' }])
+  element._setRenames(true)
+  const diff = renderText(element.render())
+  assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u)
+  assert.doesNotMatch(diff, /Hide renamed names/u, 'nor is it offered')
+})
+
+test('the Diff view pretty-prints no more minified files together than it keeps copies of', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  await import('../ui/view/bundle-compare-all.js')
+  const files = Array.from({ length: 5 }, (_, i) => `dist/f${i}.min.js`)
+  const code = view(files[0], [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}\n`]))])
+  code.base.managedId = 'b1'
+  code.other.managedId = 'b2'
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  state.bundleSourcePretty = true
+  const markup = renderText(all.render())
+  assert.match(markup, /\?disabled=true\s+data-tooltip=Too many minified files to pretty-print together: open one in Code/u)
+  assert.doesNotMatch(markup, /is-loading/u, 'none asked for')
+})
+
+test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only the first file\'s state', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  await import('../ui/view/bundle-compare-all.js')
+  const files = ['dist/g0.min.js', 'dist/g1.min.js']
+  const code = view(files[0], [Object.fromEntries(files.map(path => [path, `var Y=1;${'q(Y);'.repeat(250)}\n`])),
+    Object.fromEntries(files.map(path => [path, `var X=1;${'q(X);'.repeat(250)}\n`]))])
+  code.base.managedId = 'b3'
+  code.other.managedId = 'b4'
+  for (const id of ['b3', 'b4']) {
+    pretty.set(`${id}:${files[0]}`, 'var Y = 1;\n')
+    pretty.set(`${id}:${files[1]}`, Object.assign(new Error("This file couldn't be read as code."), { status: 422 }))
+  }
+  const all = new (customElements.get('bundle-compare-all'))()
+  for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
+  all.willUpdate(new Map([['base'], ['other'], ['files']]))
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print: This file couldn't be read as code\./u)
 })
 
 test('the kind filters hide files, keeping a modified file under Repointed when its imports moved', () => {
@@ -236,6 +313,7 @@ test('the Diff view lists every changed file\'s diff in one list, and counts the
   assert.deepEqual(heads, ['assets/logo.png', 'node_modules/left-pad/index.js', 'node_modules/zod/index.js', 'src/api.js', 'src/features/search.js', 'src/legacy.js'],
     'every added, removed and changed file, by path; a repointed importer has no text that changed')
   assert.match(markup, /6 files changed/u)
+  assert.match(markup, /aria-label="Hide renamed names"/u, 'its JavaScript files offer renamed names hidden')
   assert.match(markup, /Binary file changed/u)
   assert.equal([...markup.matchAll(/class=bundle-compare-diff-table/gu)].length, 5, 'a diff for every text file')
   assert.ok(counted.rows > heads.length && counted.rows < COMBINED_DIFF_MAX)
