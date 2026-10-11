@@ -316,6 +316,8 @@ export class BundleCompareCode extends LitElement {
     dependencies: { attribute: false },
     openDependency: { attribute: false },
     dependencyTags: { attribute: false },
+    reviewFile: { attribute: false },
+    reviewBadge: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
@@ -887,6 +889,7 @@ export class BundleCompareCode extends LitElement {
           <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
             aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
             ${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
+            ${this.reviewBadge?.(full) ?? nothing}
             ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
             ${this._alertTags(full, this._entries.get(full))}${this._runsTags(full, this._entries.get(full))}${this._flagTags(full, this._entries.get(full))}${this._treeTag(full, this._entries.get(full))}${this._installTags(full, this._entries.get(full), true)}${fileMetaTags(this._entries.get(full).meta, true)}
             ${this._treeCounts(full, this._entries.get(full))}
@@ -1334,6 +1337,7 @@ export class BundleCompareCode extends LitElement {
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${this._dependencyChanges(path)}
+        ${this.reviewFile?.(path, this.base) ?? nothing}
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
         ${body}
       </div>`

@@ -7,7 +7,7 @@
    and changed is amber — applied uniformly to chips, group accents, and
    the per-row size deltas. */
 
-.bundles-slide-body > bundle-compare {
+.bundles-slide-body > bundle-compare, npm-review > bundle-compare {
   display: flex;
   flex-direction: column;
   flex: 1;

@@ -716,7 +716,7 @@ report.addEventListener('click', (e) => {
   const bundleTab = e.target.closest('[data-bundle-tab]')
   if (bundleTab) {
     const tab = bundleTab.dataset.bundleTab
-    if (BUNDLE_TABS.has(tab)) {
+    if (BUNDLE_TABS.has(tab) || tab === 'review' && state.bundleDetails?.npm) {
       // Re-clicking the active tab is a UI no-op. Without this, the
       // reset below wiped the Code slide's open file (and the
       // Search sidebar) on a click that navigates nowhere. The

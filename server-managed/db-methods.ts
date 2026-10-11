@@ -1,5 +1,6 @@
 import { type LinkReportStore, linkReportMethods, linkRevision } from './link-reports.ts'
 import { type RepositoryAliasStore, repositoryAliasMethods } from './repository-aliases.ts'
+import { type DependencyReviewStore, dependencyReviewMethods } from './dependency-reviews.ts'
 import { type TeamNpmScopeStore, teamNpmScopeMethods } from './team-npm-scopes.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { teamCatalogRevision } from './team-catalog.ts'
@@ -354,6 +355,7 @@ export interface UserTeam {
   id: string
   slug: string
   name: string
+  dependencyReview?: boolean
   permissions: TeamUserPermissions
   cacheKey?: string
   reports: UserTeamReport[]
@@ -361,7 +363,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore {
+export interface ManagedDb extends DependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -909,7 +911,7 @@ function prepareStatements(db: ManagedSql) {
     setTeamHiddenStmt: db.prepare(`UPDATE managed_team SET hidden = ?, updated_at = ? WHERE id = ?`),
     selectTeamsStmt: db.prepare(`SELECT id, slug, name, hidden FROM managed_team ORDER BY name ASC`),
     selectTeamsForUserStmt: db.prepare(
-      `SELECT t.id AS id, t.slug AS slug, t.name AS name,
+      `SELECT t.id AS id, t.slug AS slug, t.name AS name, t.dependency_review AS dependencyReview,
               tu.view_dependencies AS dependencies, tu.view_security AS security
          FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
         WHERE tu.user_id = ? AND t.hidden = 0 ORDER BY t.name ASC, t.id ASC`,
@@ -1482,7 +1484,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       return (await selectUserRepoScopesStmt.all(userId)) as { repoId: number; path: string | null }[]
     },
     async listTeamsForUser(userId: string): Promise<UserTeam[]> {
-      const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string; dependencies: number; security: number }[]
+      const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string; dependencyReview: number; dependencies: number; security: number }[]
       const scopes = await stmts.selectUserTeamScopesStmt.all(userId) as { teamId: string; repoId: number; path: string; fullName: string }[]
       const links = await linkRevision(db)
       const reportsByTeam = new Map<string, UserTeamReport[]>()
@@ -1506,6 +1508,7 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       }
       return teams.map((t) => ({
         id: t.id, slug: t.slug, name: t.name,
+        ...(t.dependencyReview === 1 ? { dependencyReview: true } : {}),
         permissions: { dependencies: t.dependencies === 1, security: t.security === 1 },
         cacheKey: createHash('sha256').update(JSON.stringify([
           t.dependencies, t.security, links, scopes.filter(scope => scope.teamId === t.id),
@@ -1604,6 +1607,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...linkReportMethods(db, key),
     ...repositoryAliasMethods(db),
     ...teamNpmScopeMethods(db),
+    ...dependencyReviewMethods(db),
     ...bundleBuildLeaseMethods(db),
     ...upstreamCacheMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {

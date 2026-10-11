@@ -1,0 +1,38 @@
+export const REVIEW_VERDICTS = {
+  accept: 'Accept',
+  'accept-with-nits': 'Accept with nits (non-blocking)',
+  'request-changes': 'Request changes',
+  reject: 'Reject',
+}
+
+// Publication saves the exact changed paths. Only per-file verdicts check
+// files; the strongest one limits how favorable the final verdict can be.
+export function summarizeReview(entries, files) {
+  const verdicts = Object.keys(REVIEW_VERDICTS)
+  const checks = entries.filter(entry => entry.file !== null && verdicts.includes(entry.status))
+  const verdictLimit = verdicts.findLast(verdict => checks.some(entry => entry.status === verdict)) ?? 'accept'
+  if (files === null) return { coverage: null, checkedFiles: null, totalFiles: null, verdictLimit }
+  const checked = new Set(checks.map(entry => entry.file))
+  const checkedFiles = files.filter(file => checked.has(file)).length
+  return { coverage: checkedFiles === files.length ? 'full' : 'partial', checkedFiles, totalFiles: files.length, verdictLimit }
+}
+
+export function allowedReviewVerdicts(entries) {
+  const verdicts = Object.keys(REVIEW_VERDICTS)
+  return verdicts.slice(verdicts.indexOf(summarizeReview(entries, null).verdictLimit))
+}
+
+const markdownText = text => text.replaceAll(/[\\`*_{}[\]<>]/gu, '\\$&').replaceAll(/\r\n?/gu, '\n').replaceAll('\n', '\n  ')
+
+export function auditMarkdown(review) {
+  if (review.publishedAt === null || review.revokedAt !== null || review.coverage !== 'full'
+    || !['accept', 'accept-with-nits'].includes(review.status)) return null
+  const target = `${review.package} ${review.version} ${review.integrity}`
+  const dependency = review.basePackage === null ? target
+    : review.basePackage === review.package ? `${review.package} ${review.baseVersion} -> ${review.version} ${review.integrity}`
+    : `${review.basePackage} ${review.baseVersion} -> ${target}`
+  const notes = review.entries.filter(entry => entry.comment.trim()).map(entry =>
+    `* In ${markdownText(entry.file ?? 'the whole diff')}, ${markdownText(entry.comment)}`)
+  if (review.comment.trim()) notes.push(`* In the whole diff, ${markdownText(review.comment)}`)
+  return `Audited:\n\`\`\`\n${dependency}\n\`\`\`${notes.length > 0 ? `\n\nNotes:\n${notes.join('\n')}` : ''}`
+}

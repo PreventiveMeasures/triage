@@ -1876,6 +1876,13 @@ function renderImpl() {
       return
     }
   }
+  if (state.currentView === 'reviews') {
+    const slot = ensureReportSlot('dependency-reviews-slot')
+    if (slot) litRender(html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`, slot)
+    showReport()
+    document.title = 'DeepView — my reviews'
+    return
+  }
   // The npm viewer's lookup page; a package it opens shows as a bundle.
   if (state.currentView === 'npm') {
     const slot = ensureReportSlot('npm-slot')

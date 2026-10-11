@@ -220,6 +220,7 @@ class BundleCompareAll extends BundleCompareCode {
                 <span class="bundle-code-main-spacer"></span>
                 ${this._fileFigures(entry, file.model)}
               </header>
+              ${this.reviewFile?.(path, this.base) ?? nothing}
               ${this._fileBody(path, entry, file)}
             </section>`)}
           ${shown.length > this._fileLimit ? html`<button type="button" class="bundle-compare-code-action bundle-compare-all-more" @click=${() => this._more()}>Show more files (${(shown.length - this._fileLimit).toLocaleString()} remaining)</button>` : nothing}

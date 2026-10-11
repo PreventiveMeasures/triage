@@ -143,6 +143,7 @@ class BundleCompare extends LitElement {
     // with `target`, in `mode`.
     request: { attribute: false },
     source: { attribute: false },
+    review: { attribute: false },
     // Integrity of the bundle picked to compare against (null = none
     // chosen yet), the parsed bytes of that bundle once loaded, and a
     // coarse load status the body switches on.
@@ -840,7 +841,7 @@ class BundleCompare extends LitElement {
       <div class="bundle-compare-select-wrap">
         <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .versions=${Boolean(this.source)}
           label=${`${Noun} to compare`} placeholder=${this._nameFor(this.integrity)} @bundle-change=${event => this._pickBase(event.detail.value)}></bundle-selector>
-        ${hasTarget ? html`<button
+        ${hasTarget && this.source?.canSwap?.(this._targetIntegrity) !== false ? html`<button
             type="button"
             class="bundle-compare-swap"
             @click=${() => this._swap()}

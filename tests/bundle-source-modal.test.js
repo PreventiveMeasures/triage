@@ -30,6 +30,8 @@ mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, t
 } } })
 const { state } = await import('../client/state.ts')
 const { graph2 } = await import('../ui/view/graph/state.js')
+const npmPackage = await import('../ui/view/npm-package.js')
+mock.module('../ui/view/npm-package.js', { namedExports: { ...npmPackage, npmVersionList: () => ({ status: 'ready', versions: [] }) } })
 const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, renderIssuesGroupedByFile } = await import('../ui/view/render-bundle.js')
 
 function renderText(value) {
@@ -63,6 +65,25 @@ test('losing security access removes the advisory tab and restores Overview', t 
   const text = renderText(renderBundlesList([entry]))
   assert.doesNotMatch(text, /data-bundle-tab="advisories"|Failed to fetch advisories/u)
   assert.equal(state.bundleDetailsTab, 'overview')
+})
+
+test('npm Review tab requires membership in a team with dependency review enabled', t => {
+  const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams }
+  t.after(() => Object.assign(state, previous))
+  const entry = { name: 'lib@1.0.0', integrity: 'npm-review-tabs', npm: { name: 'lib', version: '1.0.0' } }
+  Object.assign(state, { selectedBundle: entry.integrity, bundles: [entry], bundleDetailsTab: 'review' })
+  for (const [session, teams, shown] of [
+    [null, [{ dependencyReview: true }], false],
+    [{ role: 'admin' }, [], false],
+    [{ role: 'triage' }, [{ dependencyReview: false }], false],
+    [{ role: 'triage' }, [{ dependencyReview: 'true' }], false],
+    [{ role: 'view' }, [{ dependencyReview: true }], true],
+    [{ role: 'triage' }, [{}, { dependencyReview: true }], true],
+    [{ role: 'view', publicShare: true }, [{ dependencyReview: true }], false],
+  ]) {
+    Object.assign(state, { managedSession: session, managedTeams: teams })
+    assert.equal(/data-bundle-tab="review"/u.test(renderText(renderBundlesList([entry]))), shown)
+  }
 })
 
 test('managed bundles have no Issues tab, and an Issues selection restores Overview', t => {

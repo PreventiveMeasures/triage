@@ -1218,6 +1218,11 @@ async function onSidebarClick(e) {
     void stopViewing(state.managedSession?.csrfToken)
     return
   }
+  if (e.target.closest('[data-action="my-reviews"]')) {
+    root?.querySelector('#user-menu')?.hidePopover?.()
+    void managedHistory.navigate({ view: 'reviews' })
+    return
+  }
   if (e.target.closest('[data-action="managed-logout"]')) {
     // Logout row inside the account menu — clears the server session (with the
     // double-submit CSRF token) then reloads so the app re-probes logged-out.
@@ -1366,6 +1371,7 @@ function renderAuthStatus() {
         </span>
       </div>
       ${session.viewer ? html`<button type="button" class="user-menu-row" data-action="view-as-stop">Return to @${session.viewer.login}</button>` : nothing}
+      ${session.role === 'none' ? nothing : html`<button type="button" class="user-menu-row" data-action="my-reviews">My reviews</button>`}
       <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'e2e mode' : 'Local mode'}</button>
       <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
@@ -2180,7 +2186,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
       && state.managedSession?.id === session?.id && state.managedSession?.role === session?.role) managedHistory.replaceRoute({ view: 'home' })
     return isCurrent()
   }
-  if (!managedNavigationPending && (state.currentWorkspace || previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name)) render({ animate: false })
+  if (!managedNavigationPending && (state.currentWorkspace || state.bundleDetails?.npm || previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name)) render({ animate: false })
   renderSidebar()
   // Catalog invalidation above also evicts the cached team report response.
   // Refresh list counts after every confirmed snapshot, including unchanged
@@ -2277,6 +2283,17 @@ async function restoreManagedPageContent(route, isCurrent) {
   }
   if (route.view === 'home') return goHome({ history: false })
   if (route.view === 'npm') return openNpmRoute(route, isCurrent, renderSidebar)
+  if (route.view === 'reviews') {
+    if (state.managedSession.publicShare) return false
+    cleanupGraph2()
+    state.currentView = 'reviews'
+    state.currentManagedTeam = null
+    state.currentManagedReport = null
+    document.body.classList.remove('report-fullscreen')
+    render({ animate: false })
+    renderSidebar()
+    return route
+  }
   if (route.view === 'manage-deduplication' && route.linkId) {
     return canAccessManagedPage(route.view) && await switchToManagedDeduplication(route.linkId)
   }

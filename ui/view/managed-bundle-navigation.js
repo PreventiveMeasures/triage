@@ -69,6 +69,10 @@ export function managedCompareLocation(state, tab = state.bundleDetailsTab) {
 
 // The open bundle's tab location, whichever tab names one (Code, Compare).
 export function managedTabLocation(state, tab = state.bundleDetailsTab) {
+  if (tab === 'review' && state.npmReview?.bundle === state.selectedBundle) {
+    const { bundle: _bundle, ...location } = state.npmReview
+    return location
+  }
   return managedCodeLocation(state, tab) ?? managedCompareLocation(state, tab)
 }
 

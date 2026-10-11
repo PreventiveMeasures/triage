@@ -93,6 +93,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
       id: t.id,
       slug: t.slug,
       name: t.name,
+      ...(!share && t.dependencyReview === true ? { dependencyReview: true } : {}),
       ...(t.permissions ? { permissions: { dependencies: t.permissions.dependencies === true, security: t.permissions.security === true } } : {}),
       ...(typeof t.cacheKey === 'string' ? { cacheKey: t.cacheKey } : {}),
       ...(teamApp(t.app) ? { app: teamApp(t.app) } : {}),

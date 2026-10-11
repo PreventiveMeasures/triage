@@ -1,3 +1,4 @@
+import { live } from 'lit/directives/live.js'
 import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage custom elements, registered by the lazy client-managed.js entry.
 // Manage data stays in the lazy bundle; the host supplies session updates and
@@ -1491,7 +1492,10 @@ class ManagedAdminTeams extends ManagedPage {
     const scopes = Array.isArray(team.npmScopes) ? team.npmScopes : []
     return html`<div class="sub npm-scopes">
       <div class="sub-head">
-        <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span></h3>
+        <h3 class="sub-title">npm scopes <span class="count">${scopes.length}</span>
+          <label class="npm-review-toggle"><input type="checkbox" .checked=${live(Boolean(team.dependencyReview))} ?disabled=${this._busy}
+            @change=${event => this._do(() => postTeam('/api/admin/teams/set-dependency-review', this._csrf, { teamId: team.id, enabled: event.target.checked }))}> Enable dependency review</label>
+        </h3>
         <p class="muted ui-hint">Members can open private packages in these scopes. Everyone can open public packages.</p>
       </div>
       <div class="add-row npm-scope-row">

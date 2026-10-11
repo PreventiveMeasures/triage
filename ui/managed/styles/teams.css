@@ -376,3 +376,7 @@
     grid-row: 1;
   }
 }
+
+.npm-review-toggle {
+  display: inline-flex; align-items: center; gap: .35rem; margin-left: .75rem; font-size: .85rem; font-weight: normal;
+}
