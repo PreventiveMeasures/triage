@@ -45,7 +45,7 @@ const RENAMED_MAX_LENGTH = 3
 // value starts: `/` after one divides), a name (as JavaScript tells its
 // characters: `a\u200Cb` is one), a bracket, or what lies between, operators
 // and numbers.
-const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\$]|\\[\s\S]|\$(?!\{))*(?:`|\$\{)|\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$.\\\u200C\u200D])[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
+const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\$]|\\[\s\S]|\$(?!\{))*(?:`|\$\{)|\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$\\\u200C\u200D]|(?<!\.\.)\.)[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
 // What a line ending in goes on past its line break: an operator, not a
 // postfix `++` or `--` (`a++⏎b`).
 const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
@@ -95,6 +95,10 @@ const GOES_ON = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(catch|else|finally|while)(?![\p
 // What follows a shorthand property: spaces or comments, then `,`, `}` or a
 // pattern's default's `=`.
 const SHORTHAND = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(?:[,}]|=(?![=>]))/uy
+// What follows a local name an `export { … }` renames.
+const AS = /\s*as(?![\p{ID_Continue}$])/uy
+// What follows a name in an `export { … }` that re-exports another module's.
+const EXPORT_FROM = /[^}]*\}\s*from(?![\p{ID_Continue}$])/uy
 // What follows a key before its value: spaces or comments, then `:`.
 const KEYED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*:/uy
 // What follows an `import` that is no module's, a call (`import(…)`): not
@@ -229,7 +233,7 @@ function nameless(text) {
   // or `catch`), not a call's arguments.
   // `labeled` between a label and its `:`, after which a statement starts.
   const extending = []
-  let at = 0, casing = -1, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, naming = false, parameters = false
+  let at = 0, casing = -1, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, modifier = null, naming = false, parameters = false
   let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
@@ -316,6 +320,9 @@ function nameless(text) {
     lineEnd(code)
     if (!match) break
     const first = match[0][0], token = match[0]
+    // A key's modifier just before (`static {`), comments or spaces between.
+    const modified = modifier
+    modifier = null
     // `of` is a `for`'s in its `(…)` alone, a name elsewhere (`of / 2`).
     const head = loops.at(-1)?.body === false && loops.at(-1).depth === opens.length - 1
     if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last)
@@ -361,7 +368,7 @@ function nameless(text) {
       if (own) classBodies.push({ depth: opens.length + 1, scoped: own.scoped })
       // An arrow's body after its `=>`, an object after a `>` (`0 > { a }`).
       // A class's `static {`, a block whose `var`s are its own.
-      const initializer = first === '{' && keyPlace && /(?<![\p{ID_Continue}$.])static$/u.test(code.trimEnd() || text.slice(0, match.index).trimEnd())
+      const initializer = first === '{' && keyPlace && modified === 'static'
       const block = first === '{' && !heritage && (last === null || ');{}'.includes(last) || BEFORE_BLOCK.has(last)
         || (last === '>' && code.trimEnd().endsWith('=>')) || initializer)
       // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
@@ -377,7 +384,7 @@ function nameless(text) {
       if (open === 'block') enter(pending ?? [], { fn: (pending !== null && !pendingGroup?.caught) || initializer, group: pendingGroup })
       if (first === '{') pending = pendingGroup = null
       last = first
-      keyPlace = first === '{' && !block
+      keyPlace = first === '{' && !block && open !== 'export'
       exporting = naming = parameters = false
     } else if (first === ')' || first === ']' || first === '}') {
       key.push(token)
@@ -412,7 +419,11 @@ function nameless(text) {
       const declaration = declarations.at(-1), group = groups.at(-1)
       const binding = declaration?.binding && opens.length >= declaration.depth && !inDefault(declaration.depth + 1)
         && !inComputed(declaration.depth)
-      const exported = opens.at(-1) === 'export' || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
+      // In an `export { … }`, a local name renamed `as` another is no name
+      // exported, but a re-export's are all another module's (`export { a } from "m"`).
+      AS.lastIndex = EXPORT_FROM.lastIndex = at
+      const reexport = opens.at(-1) === 'export' && EXPORT_FROM.test(text)
+      const exported = (opens.at(-1) === 'export' && (reexport || last === 'as' || !AS.test(text))) || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:`
       // after it, in a key's place spaces or a comment between too (`{ a : x }`),
       // not a conditional's (`c ? a : b`); a private one, `#` before it
@@ -421,7 +432,9 @@ function nameless(text) {
       const jump = last === 'break' || last === 'continue'
       KEYED.lastIndex = at
       const keyed = text[at] === ':' || (keyPlace && KEYED.test(text))
-      const property = last === '.' || last === '#' || keyed || jump
+      // A spread's or a rest's name, after `...`, is none (`{ ...a }`).
+      const member = last === '.' && !code.trimEnd().endsWith('...')
+      const property = member || last === '#' || keyed || jump
       // A label where a statement starts (`a: {`), not a key: its block a block.
       if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
       program.push(token)
@@ -436,9 +449,13 @@ function nameless(text) {
       SHORTHAND.lastIndex = at
       if (keyPlace && !binding && token.length <= RENAMED_MAX_LENGTH && !KEYWORDS.has(token) && opens.at(-1) === 'object'
         && classBodies.at(-1)?.depth !== opens.length && SHORTHAND.test(text)) setAside.push([key.length - 1, names.length - 1, token, scope])
+      // So is a name an `export { … }` exports as it is (`export { a }`), but
+      // not a re-export's.
+      if (exported && opens.at(-1) === 'export' && !reexport && last !== 'as' && token !== 'as' && token.length <= RENAMED_MAX_LENGTH
+        && !KEYWORDS.has(token)) setAside.push([key.length - 1, names.length - 1, token, scope])
       ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
-      const read = keyed || last === '.' || last === '#'
+      const read = keyed || member || last === '#'
       // A function or a class expression's name is its own body's.
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
@@ -487,6 +504,7 @@ function nameless(text) {
       else if (NAMING.has(word)) named = { statement: true, word }
       naming = NAMING.has(word) || (naming && word === 'async')
       // `for await (` is a `for`'s condition still.
+      if (keyPlace && MODIFIERS.has(token)) modifier = token
       if (!(keyPlace && MODIFIERS.has(token)) && !(token === 'await' && last === 'for')) {
         last = jump ? last : word ?? '_'
         keyPlace = false
