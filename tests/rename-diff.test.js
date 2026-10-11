@@ -334,6 +334,9 @@ test('outside strict code a function declared in a block gives no names, as it s
   for (const strict of [['"use strict";', ...sloppy], sloppy.map(line => line.replace('function f(x) {', 'function f(x) {\n  "use strict";'))]) {
     assert.equal(renameMap(text(strict), text(strict)).reason, undefined, 'strict code\'s are their blocks\' alone')
   }
+  for (const late of [['0;', '"use strict";', ...sloppy], sloppy.map(line => line.replace('function f(x) {', 'function f(x) {\n  g();\n  "use strict";'))]) {
+    assert.equal(renameMap(text(late), text(late)).reason, 'block-function', '"use strict" past a statement says nothing')
+  }
   assert.equal(renameMap(asModule(text(sloppy.slice(0, 7))), asModule(text(sloppy.slice(0, 7)))).reason, undefined, 'a module is strict')
   assert.equal(renameMap('class C { m() { if (x) { function a() {} } } }\nmodule.exports = C;\n', 'class C { m() { if (x) { function a() {} } } }\nmodule.exports = C;\n').reason, undefined,
     'so is a class')

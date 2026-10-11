@@ -48,10 +48,11 @@ function declared(pattern, out = []) {
   return out
 }
 
-// Whether statements begin by saying their code is strict.
+// Whether statements begin by saying their code is strict: among the strings
+// they open with, which a statement of any other kind ends.
 function saysStrict(statements) {
   for (const statement of statements) {
-    if (statement.directive === undefined) return false
+    if (typeof statement.directive !== 'string') return false
     if (statement.directive === 'use strict') return true
   }
   return false
