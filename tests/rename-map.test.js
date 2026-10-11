@@ -86,6 +86,10 @@ test('the properties through which either side reads names are told, as a rename
   assert.deepEqual(renameMap(text('a', 'a'), text('b', 'b'), { extension: 'cjs' }).reads, [])
   assert.deepEqual(renameMap(text('a', 'a.name'), text('b', 'b.name'), { extension: 'cjs' }).reads, ['name'])
   assert.deepEqual(renameMap(text('a', 'a["toString"]()'), text('b', 'b.stack'), { extension: 'cjs' }).reads, ['stack', 'toString'], 'either side, by a string too')
+  for (const read of ['(({ name: n }) => n)(a)', '(({ name }) => name)(a)', '(({ "name": n }) => n)(a)', '(({ [`name`]: n }) => n)(a)', 'a[`name`]', '(() => { let n; ({ name: n } = a); return n })()']) {
+    assert.deepEqual(renameMap(text('a', read), text('b', read.replaceAll('a)', 'b)').replace('a[', 'b[').replace('= a)', '= b)')), { extension: 'cjs' }).reads, ['name'], read)
+  }
+  assert.deepEqual(renameMap(text('a', '{ name: a }'), text('b', '{ name: b }'), { extension: 'cjs' }).reads, [], 'a key written, not read')
 })
 
 test('a check that should never fail, failing, shows the file with its names, and tells what failed', () => {

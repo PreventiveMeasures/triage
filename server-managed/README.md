@@ -911,7 +911,8 @@ copy is then formatted again, checked to change only its layout and
 again by oxc's minifier as the old copy, else used as it was. The two copies
 are then diffed as they are, `ignoreWhitespace=true` diff -w, and the change
 blocks checked to take the old copy's lines to the new one's, every line
-between them alike, by the worker and again by the server, which otherwise
+between them alike and, but for diff -w, the last line in a block where a
+newline was added or dropped after it, by the worker and again by the server, which otherwise
 answers none (422 `undiffable`). It answers Brotli-encoded `{ before,
 blocks, reason, reads, marks }`: the old copy as diffed, each change block
 `{ a0, a1, b0, b1 }` (its lines `[a0, a1)` replaced by the new copy's `[b0,
@@ -920,10 +921,11 @@ b1)`), and, where its names could not be given safely, why (`unparsed`,
 declared in a block outside strict code, where it sets its function's
 variable of that name too, `unverified`), the old copy then as it was;
 `reads`, the properties either copy reads through which a program may read
-a name (`name`, `toString`, `stack`, `callee`, `caller`, as `.name` or
-`["name"]`), so that a rename may change what it does; and `marks`, the
-change blocks of the diff of the two copies as pretty-printed whose old
-lines, given the new names, are their new lines (none where names were not
+a name (`name`, `toString`, `stack`, `callee`, `caller`, as `.name`,
+`["name"]` or `const { name } = f`), so that a rename may change what it
+does; and `marks`, the change blocks of the diff of the two copies as
+pretty-printed whose old lines, given the new names, are their new lines,
+no newline added or dropped after the last (none where names were not
 given), each checked by the server to be such a diff's blocks, in order and
 as many lines on either side. Each diff runs in a worker thread, off the event
 loop, two at a time per process, up to sixteen more waiting their turn (429

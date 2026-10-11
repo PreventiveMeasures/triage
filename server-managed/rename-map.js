@@ -30,8 +30,16 @@ const MINIFIED = /^[A-Za-z_$][\w$]*$/u
 // Properties through which code reads names: a function's or a class's
 // (`name`, its source by `toString`, a stack's frames, `arguments.callee` and
 // `caller`), which renaming changes. Read where it says so (`f.name`,
-// `f["name"]`), not where it does otherwise (`'' + f`, `f[k]`).
+// `f["name"]`, `const { name } = f`), not where it does otherwise (`'' + f`,
+// `f[k]`).
 const NAME_READS = new Set(['name', 'toString', 'stack', 'callee', 'caller'])
+// A property's name as a member or a pattern has it: its key's, or a
+// computed one's where it is a string written out (`["name"]`, `` [`name`] ``).
+function propertyName(key, computed) {
+  if (!computed) return key.type === 'Literal' ? String(key.value) : key.name
+  if (key.type === 'Literal' && typeof key.value === 'string') return key.value
+  return key.type === 'TemplateLiteral' && key.expressions.length === 0 ? key.quasis[0].value.cooked : null
+}
 // What a name renamed apart ends in, numbered past the first as it takes to
 // be one neither side uses: `e_old`, `e_old2`.
 const APART = '_old'
@@ -204,10 +212,16 @@ function analyze(text, extension) {
       case 'ImportAttribute': others.add(node.key); break
       case 'MemberExpression': {
         if (!node.computed) others.add(node.property)
-        const property = node.computed ? (node.property.type === 'Literal' && typeof node.property.value === 'string' ? node.property.value : null) : node.property.name
+        const property = propertyName(node.property, node.computed)
         if (NAME_READS.has(property)) reads.add(property)
         break
       }
+      case 'ObjectPattern':
+        for (const property of node.properties) {
+          const name = property.type === 'Property' ? propertyName(property.key, property.computed) : null
+          if (NAME_READS.has(name)) reads.add(name)
+        }
+        break
       case 'Property': case 'MethodDefinition': case 'PropertyDefinition': case 'AccessorProperty':
         if (node.computed) break
         if (node.shorthand) keeping.add(node.key)
