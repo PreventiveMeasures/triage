@@ -42,6 +42,8 @@ const RENAMED_MAX_LENGTH = 3
 // comment (a hashbang too, its first line), a regular expression (where a value starts: `/` after one
 // divides), a name, a bracket, or what lies between, operators and numbers.
 const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
+// The comments READ reads, in what lies between.
+const COMMENT = /\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
 // Words after which a value starts, so a `/` begins a regular expression.
 const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'extends', 'in', 'instanceof', 'new', 'of', 'return',
   'throw', 'typeof', 'void', 'yield'])
@@ -135,7 +137,8 @@ function nameless(text) {
   // (`extends mixin(class extends B {}) {`).
   // `dynamic` once `eval` or a `with (…)` can read a name by its spelling:
   // renaming one then changes what runs; so once a name is escaped
-  // (`\u0065val`), the one `\` code holds outside strings. `parameters` where a `(…)` would
+  // (`\u0065val`), the one `\` code holds outside strings. So too where a
+  // decorator (`@dec a() {}`), whatever it reads, comes before a key. `parameters` where a `(…)` would
   // be a function's parameters (after `function`, its name, a method's key
   // or `catch`), not a call's arguments.
   // `labeled` between a label and its `:`, after which a statement starts.
@@ -146,9 +149,11 @@ function nameless(text) {
     key.push(segment)
     for (let i = segment.indexOf('\n'); i !== -1; i = segment.indexOf('\n', i + 1)) names.push([])
   }
-  const between = segment => {
-    keep(segment)
-    if (segment.includes('\\')) dynamic = true
+  // What lies between, as read (`raw`) and, its comments set aside but their
+  // line breaks, as code (`segment`).
+  const between = (raw, segment = raw) => {
+    keep(raw)
+    if (segment.includes('\\') || segment.includes('@')) dynamic = true
     // A line break ends these statements, a `/` after it starting a value.
     if (segment.includes('\n') && (last === 'break' || last === 'continue' || last === 'debugger')) last = ';'
     // A line break no operator spans may end a statement, as `;` does, or a
@@ -188,10 +193,14 @@ function nameless(text) {
     if (line !== -1 && opens.at(-1) === 'object' && segment.slice(line + 1).trim() === '' && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd())) keyPlace = true
   }
   for (READ.lastIndex = 0; ;) {
-    const match = READ.exec(text)
+    // A comment lies between what is read as spaces do, its line breaks
+    // ending statements as theirs do (`let x /*⏎*/ f()`).
+    let match = READ.exec(text)
+    while (match && (match[0][0] === '#' || /^\/[/*]/u.test(match[0]))) match = READ.exec(text)
     const gap = text.slice(at, match?.index ?? text.length)
-    between(gap)
-    lineEnd(gap)
+    const code = gap.replaceAll(COMMENT, comment => comment.replaceAll(/[^\n]/gu, '') || ' ')
+    between(gap, code)
+    lineEnd(code)
     if (!match) break
     const [token] = match
     const first = token[0]
@@ -204,8 +213,7 @@ function nameless(text) {
       continue
     }
     at = READ.lastIndex
-    if (first === '#' || (first === '/' && (token[1] === '/' || token[1] === '*'))) keep(token)
-    else if (first === '"' || first === "'" || first === '`' || first === '/') {
+    if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
       // A module's name ends its `import` or `export … from`, as `;` does.
       last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
