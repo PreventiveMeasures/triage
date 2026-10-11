@@ -27,7 +27,7 @@ import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, changeStart, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { npmFileReadability } from './file-readability.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
@@ -407,13 +407,14 @@ export class BundleCompareCode extends LitElement {
 
   // ── The selected file ────────────────────────────────────────────
 
-  // `changes` the server's blocks, with renamed names hidden (rename-diff.js).
-  _model(key, before, after, changes = null) {
+  // `changes` the server's blocks, with renamed names hidden (rename-diff.js),
+  // found with whitespace changes hidden or not as `ignoreWhitespace` is.
+  _model(key, before, after, changes = null, ignoreWhitespace = prefs.ignoreWhitespace) {
     // Re-inserted on every use, so the cache drops the least recent.
     let model = this._models.get(key)
     this._models.delete(key)
     if (!model) {
-      model = lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace, changes })
+      model = lineDiff(before, after, { ignoreWhitespace, changes })
     }
     this._models.set(key, model)
     if (this._models.size > this._modelCap) this._models.delete(this._models.keys().next().value)
@@ -434,15 +435,24 @@ export class BundleCompareCode extends LitElement {
     const generated = textual && renamable(path) && renamable(entry.basePath ?? path) && (pretty?.status === 'ready' || pretty?.status === 'loading')
       && this._generated(path, entry, contents)
     const renames = generated && prefs.ignoreRenames && pretty.status === 'ready'
-    const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreRenames: renames })
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     const { basePath = path } = entry
-    const changes = renames && !large ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, prefs.ignoreWhitespace, () => this.requestUpdate()) : null
-    // The old side as the server diffed it, given the new side's names.
-    const shown = changes?.status === 'ready' ? changes.before : before
-    const model = textual && !large && (!changes || changes.status === 'ready')
-      ? this._model(key, shown, after, changes ? { blocks: changes.blocks } : null) : null
-    return { before: shown, after, textual, large, pretty, key, generated, renames, changes, model }
+    const diffed = ignoreWhitespace => {
+      const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: renames })
+      const changes = renames && !large ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate()) : null
+      // The old side as the server diffed it, given the new side's names.
+      const shown = changes?.status === 'ready' ? changes.before : before
+      const model = textual && !large && (!changes || changes.status === 'ready')
+        ? this._model(key, shown, after, changes ? { blocks: changes.blocks } : null, ignoreWhitespace) : null
+      return { key, changes, shown, model }
+    }
+    // Whitespace changes hidden would hide blanks of more than one kind
+    // changing (hidesMixedWhitespace): the file is diffed with them shown.
+    let found = diffed(prefs.ignoreWhitespace)
+    const mixedWhitespace = prefs.ignoreWhitespace && !!found.model && hidesMixedWhitespace(found.model)
+    if (mixedWhitespace) found = diffed(false)
+    const { key, changes, shown, model } = found
+    return { before: shown, after, textual, large, pretty, key, generated, renames, changes, model, mixedWhitespace }
   }
 
   // Whether a file's names are a minifier's on both sides, each minified, and
@@ -583,7 +593,7 @@ export class BundleCompareCode extends LitElement {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg>
           </button>
         </span>` : nothing}
-        ${this._toggles(diffable, textual, file.pretty, file.generated)}
+        ${this._toggles(diffable, textual, file.pretty, file.generated, file.mixedWhitespace)}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
@@ -595,7 +605,7 @@ export class BundleCompareCode extends LitElement {
   // toggles, as a file has use for them: pretty-printing a minified file
   // (`pretty` from _pretty), a diff the next two and, in JavaScript minified
   // on both sides (`renames`, _generated), renamed names, a text the wrap.
-  _toggles(diffable, textual, pretty = null, renames = false) {
+  _toggles(diffable, textual, pretty = null, renames = false, mixedWhitespace = false) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
           data-tooltip=${pretty.status === 'limited' ? 'Too many minified files to pretty-print together: open one in Code' : prettyTooltip(pretty)}
@@ -603,10 +613,7 @@ export class BundleCompareCode extends LitElement {
         ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
         </span>
-        <button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace)} aria-label="Hide whitespace changes" data-tooltip="Hide whitespace changes"
-          @click=${() => this._setWhitespace(!prefs.ignoreWhitespace)}>
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
-        </button>
+        ${this._whitespaceToggle(mixedWhitespace)}
         ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
           data-tooltip="Hide renamed names: the old side given the new side's names wherever a minifier renamed a variable alike throughout, an old one no new one stands for named apart (r_old)"
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
@@ -707,6 +714,16 @@ export class BundleCompareCode extends LitElement {
         <button type="button" class="bundle-compare-code-action" @click=${() => { this._limits.set(key, limit + ROW_LIMIT); this.requestUpdate() }}>Show ${Math.min(ROW_LIMIT, model.b.length - lines.length).toLocaleString()} more lines</button>
         <span>${(model.b.length - lines.length).toLocaleString()} not shown</span>
       </div>` : nothing}`
+  }
+
+  // Hiding whitespace changes, off for a file where that would hide blanks of
+  // more than one kind changing (`mixed`, see _fileState): all of its show.
+  _whitespaceToggle(mixed) {
+    const label = mixed ? 'Its whitespace changes mix spaces with tabs or other blanks, so all of them show' : 'Hide whitespace changes'
+    return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreWhitespace && !mixed)} aria-disabled=${mixed ? 'true' : nothing}
+      aria-label=${label} data-tooltip=${label} @click=${() => { if (!mixed) this._setWhitespace(!prefs.ignoreWhitespace) }}>
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
+    </button>`
   }
 
   _setWhitespace(value) {

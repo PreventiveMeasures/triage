@@ -43,6 +43,37 @@ export function lineDiff(before, after, { ignoreWhitespace = false, changes = nu
   return { a, b, blocks, additions, deletions, noEol, words: new Map() }
 }
 
+// The blanks diff -w leaves out of a line: the C locale's.
+const BLANK = /[ \t\n\v\f\r]/u
+
+// Whether diff -w, as `model` was found with it, hides a change in blanks of
+// more than one kind: a line it pairs as unchanged whose blanks differ from
+// its counterpart's between the same two characters where the two hold more
+// than one kind, as spaces turned to tabs, or a tab put among spaces. A
+// change in how many of one kind (re-indenting, spacing) is what -w is for.
+export function hidesMixedWhitespace({ a, b, blocks }) {
+  let ai = 0, bi = 0
+  for (let run = 0; run <= blocks.length; run++) {
+    const end = run < blocks.length ? blocks[run].a0 : a.length
+    for (; ai < end; ai++, bi++) if (a[ai] !== b[bi] && mixesBlanks(a[ai], b[bi])) return true
+    if (run < blocks.length) ({ a1: ai, b1: bi } = blocks[run])
+  }
+  return false
+}
+
+// Two lines alike but for their blanks: whether, before any of their other
+// characters or after the last, their blanks differ and hold more than one
+// kind between them.
+function mixesBlanks(x, y) {
+  for (let i = 0, j = 0; ; i++, j++) {
+    let gapX = '', gapY = ''
+    while (i < x.length && BLANK.test(x[i])) gapX += x[i++]
+    while (j < y.length && BLANK.test(y[j])) gapY += y[j++]
+    if (gapX !== gapY && new Set(gapX + gapY).size > 1) return true
+    if (i >= x.length || j >= y.length) return false
+  }
+}
+
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the
 // unchanged lines between changes that are out of context, and each change
 // block's lines. A fold is keyed by the index of the unchanged run it sits

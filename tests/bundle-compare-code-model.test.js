@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DIFF_CONTEXT, changeStart, diffRows, lineDiff, markHighlighted, markSegments, textLines, wordRanges } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, changeStart, diffRows, hidesMixedWhitespace, lineDiff, markHighlighted, markSegments, textLines, wordRanges } from '../ui/view/bundle-compare-code-model.js'
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
@@ -53,6 +53,14 @@ test('added and removed files are one block of every line', () => {
 test('ignoring whitespace pairs lines that differ only in it', () => {
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n', { ignoreWhitespace: true }).blocks.length, 0)
   assert.equal(lineDiff('a  b\nc\n', 'a b\nc\n').blocks.length, 1)
+})
+
+test('ignoring whitespace would hide blanks of more than one kind where they change between the same two characters', () => {
+  const hides = (before, after) => hidesMixedWhitespace(lineDiff(before, after, { ignoreWhitespace: true }))
+  for (const [before, after] of [['    a()\n', '\ta()\n'], ['f(a, b)\n', 'f(a,\tb)\n'], ['x = 1\n', 'x =\t 1\n'], ['\t x\n', '\t  x\n'], ['a\n  b\nc\n', 'a\n\tb\nc\n'],
+    ['x  \r\n', 'x\n']]) assert.equal(hides(before, after), true, JSON.stringify([before, after]))
+  for (const [before, after] of [['  a()\n', '    a()\n'], ['\t\ta()\n', '\ta()\n'], ['f(a,b)\n', 'f(a, b)\n'], ['x\r\n', 'x\n'], ['a\n', 'a\n'], ['a\n', 'b\n'],
+    ['  a\n', '\tb\n']]) assert.equal(hides(before, after), false, JSON.stringify([before, after]))
 })
 
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {

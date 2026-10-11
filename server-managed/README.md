@@ -209,7 +209,11 @@ Compare reviews the changes in **Code**, a file at a time beside the tree of
 changed files, or in **Diff**, every changed file's diff one after another in
 a single list, each under its name. Diff is offered only while that list is
 under 8,000 rows, its folded unchanged runs and each file's head counted; a
-link to a longer one opens the Overview.
+link to a longer one opens the Overview. Both can hide whitespace changes, as
+`diff -w` does, except in a file where that would hide blanks of more than
+one kind changing between the same two characters, such as spaces turned to
+tabs or a tab put among spaces: its changes all show, and the toggle is off
+for it.
 
 Manage pages require a manager or admin. Team, report, and team bundle URLs require
 the current user's team access. Unavailable pages return to the landing page;
