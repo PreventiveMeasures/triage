@@ -1059,7 +1059,9 @@ control. A version shows in the bundle view with four tabs:
   characters (the C0 ones but tab, line feed and carriage return, DEL, the
   C1 ones, and the bidirectional controls U+202A–U+202E and U+2066–U+2069),
   unexpected long lines (lines over 1,000 characters among readable ones),
-  minified (most of its text on such lines, or named `.min.` with any), source
+  minified (most of its text on such lines, or named `.min.` with any, or,
+  with none, its lines averaging over 110 characters and next to none of its
+  spaces outside strings ones a minifier drops, beside punctuation), source
   maps (`.map`), and inline source maps (code with a line that is a
   `sourceMappingURL` comment holding its map as a `data:` URL, minified or
   not, its tag giving the map's size). Prose (Markdown, text, licenses and

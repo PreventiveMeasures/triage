@@ -238,37 +238,101 @@ const SOURCE_MAP_COMMENT = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=/u
 const INLINE_SOURCE_MAP = /^\s*(?:\/\/|\/\*)[#@] sourceMappingURL=data:[^\s,]*,[\w+/=%.~-]*\s*(?:\*\/)?\s*$/u
 const SOURCE_MAP = /\.map$/iu
 const MINIFIED_NAME = /\.min\.[^/.]+$/iu
+// Code minified into lines shorter than NPM_LONG_LINE: outside its strings and
+// comments (`/* @__PURE__ */`), its lines average more than anyone writes and
+// next to none of its spaces are ones a minifier drops. Told only in what
+// minifiers write, as GitHub Linguist tells minified files only in JavaScript
+// and CSS, each by its strings and comments (matched in one pass, so that
+// neither starts inside the other, a comment with the spaces around it) and
+// the spaces it can do without.
+const MINIFIED_AVERAGE = 110
+const MINIFIED_SPACES = .01
+// What a regular expression set aside holds.
+const REGEX = '\uE000'
+const JS = {
+  // A hashbang, the file's first line (`#!/usr/bin/env node`), a comment.
+  // A regular expression first where a value starts (after `=>`, `...`, an operator or a keyword, not a property: `x.default/2`, `this.#in/2`), so a quote in it (`/["']/`) starts no string.
+  stringOrComment: /((?<=(?:^|\.\.\.|[(,=:[!&|?{};>+\-*/%^<~]|(?<![\p{ID_Continue}$.#])(?:await|case|default|delete|do|else|extends|in|instanceof|new|of|return|throw|typeof|void|yield))[ \t]*)\/(?![/*])(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|[ \t]*(?:\/\*[\s\S]*?\*\/|\/\/.*|(?<![\s\S])#!.*)[ \t]*/gmu,
+  // Beside punctuation (`a, b`, `x = 1`), not between two words, as
+  // JavaScript tells a word's characters (`return a`, `var π`, `var \u03c0`),
+  droppable: /(?<![\p{ID_Continue}$\\\u200C\u200D])[ \t]+|[ \t]+(?![\p{ID_Continue}$\\\u200C\u200D])/gu,
+  // nor between two `+`, two `-` or two `/` (`a+ +b` is no `a++b`, `a/ /b/`
+  // no comment), nor after a regular expression before a word (`/a/ in b`).
+  needed: (code, index, run) => ('+-/'.includes(code[index - 1]) && code[index + run.length] === code[index - 1])
+    || (code[index - 2] === REGEX && /[\p{ID_Continue}$\\\u200C\u200D]/u.test(code[index + run.length])),
+}
+const CSS = {
+  // No `//` comments, so `url(https://…)` is code.
+  stringOrComment: /("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|[ \t]*\/\*[\s\S]*?\*\/[ \t]*/gu,
+  // Beside braces, `;`, `,`, `>`, parentheses, after `:` (`a { color: red }`)
+  // and beside a selector's `+` or `~` (`.a + .b`), not those a selector or a
+  // value needs (`.a .b`, `1px solid #fff`, `a :hover`),
+  droppable: /(?<=[{};,:>(])[ \t]+|[ \t]+(?=[{};,>)!])|(?<=[+~])[ \t]+|[ \t]+(?=[+~])/gu,
+  // nor beside `+` or `~` in parentheses (`calc(1px + var(--x))`) or in a
+  // custom property's value, kept for a `calc()` to come (`--gap:1px + 2px`).
+  needed: (code, index, run, depth) => /[+~]/u.test(code[index - 1] + code[index + run.length])
+    && (depth > 0 || /^\s*--[^:]*:/u.test(code.slice(Math.max(...['{', ';', '}'].map(end => code.lastIndexOf(end, index))) + 1, index))),
+}
+const minifiable = path => /\.[cm]?js$/iu.test(path) ? JS : /\.css$/iu.test(path) ? CSS : null
+// Its code's lines' average length where they are minified into short ones, else 0.
+function minifiedAverage(text, { stringOrComment, droppable, needed }) {
+  // Its lines of code alone, as long as what is on them: a comment set aside
+  // leaves nothing but its line breaks, a string or template `""` and its, a
+  // regular expression `/REGEX/`, so the code either side stays apart.
+  const lines = text.replaceAll(stringOrComment, (match, string) => (string === undefined ? '' : string[0] === '/' ? `/${REGEX}/` : '""') + match.replaceAll(/[^\n]/gu, ''))
+    .replaceAll(/^[ \t]+/gmu, '')
+    .split('\n').filter(line => line.trim() !== '')
+  const code = lines.join('\n'), length = code.length - (lines.length - 1)
+  // Counted by character: a run aligning `=` is as many spaces as it is wide.
+  let depth = 0, dropped = 0, scanned = 0
+  for (const { 0: run, index } of code.matchAll(droppable)) {
+    for (; scanned < index; scanned++) depth = Math.max(0, depth + (code[scanned] === '(' ? 1 : code[scanned] === ')' ? -1 : 0))
+    if (!needed(code, index, run, depth)) dropped += run.length
+  }
+  return lines.length > 0 && length > MINIFIED_AVERAGE * lines.length && dropped < MINIFIED_SPACES * length ? Math.round(length / lines.length) : 0
+}
 
 // How a file reads, as its `category`, the first that holds (READABILITY):
 // binary (no text), controls (text holding control or bidirectional
 // characters), map (a source map), long (code with some lines longer than
 // anyone writes), inline-map (code with its source map in it, minified or
-// not), minified (code mostly on long lines, or named .min.), else utf8 or
-// ascii. Prose is readable whatever its lines' lengths, and an inline
-// source map's line counts for none, nor for how much of the code is on long
-// lines. With npmTextEncoding's `kind` and `controls`,
-// its `longest` line's length and `longLines`, and how long its inline map
-// is (`inlineMap`, 0 for none).
+// not), minified (code mostly on long lines, or named .min., or minified
+// into shorter lines: see MINIFIED_AVERAGE), else utf8 or ascii. Prose is
+// readable whatever its lines' lengths, and an inline source map's line
+// counts for none, nor for how much of the code is on long lines. With
+// npmTextEncoding's `kind` and `controls`, its `longest` line's length and
+// `longLines`, its code's lines' `average` length where it is minified into
+// short ones (strings and comments aside, see MINIFIED_AVERAGE; 0 otherwise),
+// and how long its inline map is (`inlineMap`, 0 for none).
 export function npmFileReadability(path, text) {
   const encoding = npmTextEncoding(text)
-  if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, inlineMap: 0 }
+  if (encoding.kind === 'binary') return { ...encoding, category: 'binary', longest: 0, longLines: 0, average: 0, inlineMap: 0 }
   let inlineMap = 0, longChars = 0, longLines = 0, longest = 0
   for (let at = 0; at <= text.length;) {
     const next = text.indexOf('\n', at)
     const end = next === -1 ? text.length : next
     const length = end - at - (text[end - 1] === '\r' ? 1 : 0)
     if (SOURCE_MAP_COMMENT.test(text.slice(at, at + 64)) && INLINE_SOURCE_MAP.test(text.slice(at, end))) inlineMap += length
-    else if (length > NPM_LONG_LINE) {
+    else {
+      if (length > NPM_LONG_LINE) {
+        longLines++
+        longChars += length
+      }
       longest = Math.max(longest, length)
-      longLines++
-      longChars += length
-    } else longest = Math.max(longest, length)
+    }
     at = end + 1
   }
-  const read = { ...encoding, longest, longLines, inlineMap }
+  const read = { ...encoding, longest, longLines, average: 0, inlineMap }
   if (encoding.controls) return { ...read, category: 'controls' }
   if (SOURCE_MAP.test(path)) return { ...read, category: 'map' }
-  if (longLines === 0 || PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
+  if (PROSE.test(path)) return { ...read, category: inlineMap > 0 ? 'inline-map' : encoding.kind }
+  if (longLines === 0) {
+    // None of its lines longer than MINIFIED_AVERAGE, none of its code's can
+    // average more: told without reading its code.
+    const language = minifiable(path)
+    const average = language !== null && longest > MINIFIED_AVERAGE ? minifiedAverage(text, language) : 0
+    return { ...read, average, category: inlineMap > 0 ? 'inline-map' : average > 0 ? 'minified' : encoding.kind }
+  }
   if (longChars / (text.length - inlineMap) < .5 && !MINIFIED_NAME.test(path)) return { ...read, category: 'long' }
   return { ...read, category: inlineMap > 0 ? 'inline-map' : 'minified' }
 }
@@ -327,14 +391,14 @@ function controlsNote(controls) {
   return `Control characters: ${named.join(', ')}${found.length > 6 ? `, and ${found.length - 6} more` : ''}`
 }
 
-function readabilityNote({ category, controls, longLines, longest, inlineMap }) {
+function readabilityNote({ average, category, controls, longLines, longest, inlineMap }) {
   const lines = () => `${longLines.toLocaleString('en')} ${longLines === 1 ? 'line' : 'lines'} over ${NPM_LONG_LINE} characters, the longest ${longest.toLocaleString('en')}`
   switch (category) {
     case 'binary': return 'Not UTF-8 text, or holding a NUL: there is no text to read'
     case 'controls': return controlsNote(controls)
     case 'map': return 'A source map'
     case 'inline-map': return `Inline source map, ${formatBytes(inlineMap)}${longLines > 0 ? `; minified: ${lines()}` : ''}`
-    case 'minified': return `Minified: ${lines()}`
+    case 'minified': return `Minified: ${longLines > 0 ? lines() : `its lines of code ${average.toLocaleString('en')} characters long on average, strings and comments aside, with few spaces`}`
     case 'long': return `${lines()}, among readable ones`
     default: return nothing
   }
