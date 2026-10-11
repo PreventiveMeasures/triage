@@ -212,11 +212,11 @@ describe('buildPackageGraph', () => {
   })
 
   it('maps direction flags when package order disagrees with file order', () => {
-    // File order: 'dependencies/b/x.js' < 'node_modules/a/x.js' (lo = the b-pkg
-    // file), but package order: 'a' < 'b' (lo = a). The import
+    // File order: 'lib/node_modules/b/x.js' < 'node_modules/a/x.js' (lo = the
+    // b-pkg file), but package order: 'a' < 'b' (lo = a). The import
     // b → a must land as fromHi on the package edge, not fromLo.
     const pg = buildPackageGraph(graphFrom({
-      'dependencies/b/x.js': { imports: ['node_modules/a/x.js'] },
+      'lib/node_modules/b/x.js': { imports: ['node_modules/a/x.js'] },
       'node_modules/a/x.js': { imports: [] },
     }))
     assert.equal(pg.edges.length, 1)

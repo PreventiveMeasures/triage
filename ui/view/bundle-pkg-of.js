@@ -5,9 +5,11 @@
 // views — and the test suite — can import on its own.
 
 // Bucket a bundle source path into a "package":
-//   - files under `node_modules/<pkg>/...` or `dependencies/<pkg>/...`
-//     return `<pkg>` (scoped names included);
-//   - own (first-party) source returns the single `__own__` bucket.
+//   - files under `node_modules/<pkg>/...` return `<pkg>` (scoped names
+//     included), as do Solidity files under Soldeer's
+//     `dependencies/<pkg>/...`, the one ecosystem installing there;
+//   - own (first-party) source returns the single `__own__` bucket: an
+//     ordinary `dependencies/` folder of anything else is own code.
 //
 // pnpm wraps each install in
 // `node_modules/.pnpm/<name>@<version>/node_modules/<name>/...` —
@@ -35,10 +37,13 @@ export function bundlePkgOf(path, { packageDir = null } = {}) {
       return npm && npm[1] !== '.pnpm' ? npm[1] : packageDir
     }
   } else {
-    const re = /(?:^|\/)(?:node_modules|dependencies)\/(@[^/]+\/[^/]+|[^/]+)/gu
+    const re = /\.sol$/iu.test(path)
+      ? /(?:^|\/)(?:node_modules\/(@[^/]+\/[^/]+|[^/]+)|dependencies\/(@[^/]+\/[^/]+|[^/]+)\/)/gu
+      : /(?:^|\/)node_modules\/(@[^/]+\/[^/]+|[^/]+)/gu
     let m
     while ((m = re.exec(path)) !== null) {
-      if (m[1] !== '.pnpm') return m[1]
+      const name = m[1] ?? m[2]
+      if (name !== '.pnpm') return name
     }
   }
   return '__own__'

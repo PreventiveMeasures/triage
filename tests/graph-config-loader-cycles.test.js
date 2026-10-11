@@ -28,12 +28,12 @@ test('Cosmiconfig excludes every config target while import-fresh remains limite
   for (const source of [...loaders.map(([name, file]) => `node_modules/${name}/${file}`), 'node_modules/import-fresh/dist/index.js']) {
     const cosmiconfig = source === 'node_modules/cosmiconfig/dist/loaders.js'
     for (const prefix of ['', '/project/', 'node_modules/outer/', 'node_modules/.pnpm/import-fresh@1.0.0/']) {
-      for (const target of ['metro.config.js', 'config/metro.config.js', '/project/tools/lint.config.js', 'vendor/dep/tool.config.js']) {
+      for (const target of ['metro.config.js', 'config/metro.config.js', '/project/tools/lint.config.js', 'vendor/dep/tool.config.js', 'dependencies/dep/metro.config.js']) {
         assert.equal(countsTowardsCycles(prefix + source, target), false, `${prefix + source} -> ${target}`)
         assert.equal(countsTowardsCycles(prefix + source, target, false), !cosmiconfig, 'only import-fresh requires own-source ownership')
       }
       for (const target of ['node_modules/react-native/react-native.config.js', 'node_modules/dep/metro.config.js',
-        'node_modules/@org/dep/metro.config.js', 'dependencies/dep/metro.config.js']) {
+        'node_modules/@org/dep/metro.config.js']) {
         assert.equal(countsTowardsCycles(prefix + source, target), !cosmiconfig, `${prefix + source} -> ${target}`)
         assert.equal(countsTowardsCycles(source, prefix + target, false), !cosmiconfig, `${source} -> ${prefix + target}`)
       }
