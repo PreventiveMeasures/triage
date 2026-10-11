@@ -77,36 +77,39 @@ const CONTROL = new Set(['for', 'if', 'switch', 'while', 'with'])
 const DECLARES = new Set(['as', 'async', 'class', 'function'])
 // Words the name after which a file declares: `function a`, `import b`.
 const NAMING = new Set(['as', 'class', 'function', 'import'])
+// Spaces or comments, what may lie between a token and the next.
+const TRIVIA = String.raw`(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*`
 // After a function's `(…)` or a lone parameter, with or without a body.
-const BODY = /\s*(?:=>\s*)?\{/uy
-const ARROW = /\s*=>/uy
-const ARROW_BODY = /\s*=>\s*\{/uy
+const BODY = new RegExp(String.raw`${TRIVIA}(?:=>${TRIVIA})?\{`, 'uy')
+const ARROW = new RegExp(`${TRIVIA}=>`, 'uy')
+const ARROW_BODY = new RegExp(String.raw`${TRIVIA}=>${TRIVIA}\{`, 'uy')
 // What a `let` declaring follows with, a name or a pattern: not `let(a)`,
 // a call where `let` is a name, as it may be outside strict code.
-const LET = /\s*[\p{L}_$[{]/uy
+const LET = new RegExp(String.raw`${TRIVIA}[\p{L}_$[{]`, 'uy')
 // What ends a concise arrow's body or begins a conditional in it: a `?` (not
 // `?.`, `??`), a `:`, a `,` or a `;`.
 const ARROW_ENDS = /(?<!\?)\?(?!\?|\.(?!\d))|[:,;]/gu
 // What follows a `for`'s `(…)` whose body is braced, and an unbraced body's
 // statement still going on: an `if`'s `else`, a `try`'s `catch` or
 // `finally`, a `do`'s `while`; spaces or comments first.
-const BRACED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/uy
-const GOES_ON = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(catch|else|finally|while)(?![\p{ID_Continue}$])/uy
+const BRACED = new RegExp(String.raw`${TRIVIA}\{`, 'uy')
+const GOES_ON = new RegExp(String.raw`${TRIVIA}(catch|else|finally|while)(?![\p{ID_Continue}$])`, 'uy')
 // What follows a shorthand property: spaces or comments, then `,`, `}` or a
 // pattern's default's `=`.
-const SHORTHAND = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(?:[,}]|=(?![=>]))/uy
+const SHORTHAND = new RegExp(String.raw`${TRIVIA}(?:[,}]|=(?![=>]))`, 'uy')
 // What follows a local name an `export { … }` renames.
-const AS = /\s*as(?![\p{ID_Continue}$])/uy
+const AS = new RegExp(String.raw`${TRIVIA}as(?![\p{ID_Continue}$])`, 'uy')
 // What follows a name in an `export { … }` that re-exports another module's.
 const EXPORT_FROM = /[^}]*\}\s*from(?![\p{ID_Continue}$])/uy
 // What follows a key before its value: spaces or comments, then `:`.
-const KEYED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*:/uy
+const KEYED = new RegExp(`${TRIVIA}:`, 'uy')
 // What follows an `import` that is no module's, a call (`import(…)`): not
 // `import.meta`, a module's alone.
-const IMPORT_CALL = /\s*\(/uy
+const IMPORT_CALL = new RegExp(String.raw`${TRIVIA}\(`, 'uy')
 // What follows a CommonJS module's own names, its top level a function's:
 // `require(…)`, `module.exports`, `exports.…`.
-const COMMONJS = new Map([['exports', /\s*\./uy], ['module', /\s*\.\s*exports(?![\p{ID_Continue}$])/uy], ['require', /\s*\(/uy]])
+const COMMONJS = new Map([['exports', new RegExp(String.raw`${TRIVIA}\.`, 'uy')],
+  ['module', new RegExp(String.raw`${TRIVIA}\.${TRIVIA}exports(?![\p{ID_Continue}$])`, 'uy')], ['require', new RegExp(String.raw`${TRIVIA}\(`, 'uy')]])
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
@@ -291,7 +294,9 @@ function nameless(text) {
     if (segment.includes(';')) while (declarations.length > 0 && opens.length <= declarations.at(-1).depth) declarations.pop()
     // A generator's `*` leaves its name in its key place, or to be declared.
     if (last === '*' && segment.slice(0, end - 1).trim() === '') return
-    exporting = naming = parameters = false
+    exporting = naming = false
+    // A number key (`1() {}`), as a key's name.
+    parameters = opens.at(-1) === 'object' && /(?:^|[,;])\s*\.?\d[\w.]*\s*$/u.test(segment)
     const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
     keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
   }
@@ -348,7 +353,9 @@ function nameless(text) {
       if (first === '/' && (last === '}' || last === 'await' || last === 'yield') && /[\p{ID_Start}_$\\]/u.test(token)) dynamic = true
       // A module's name ends its `import` or `export … from`, as `;` does.
       last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
-      exporting = keyPlace = naming = parameters = false
+      // A key's (`"m"() {}`), a `(…)` after it is a method's parameters.
+      parameters = keyPlace
+      exporting = keyPlace = naming = false
     } else if (first === '}' && opens.at(-1) === 'substitution') {
       // A substitution's end, its template's text going on.
       opens.pop()
@@ -413,7 +420,9 @@ function nameless(text) {
       // After a statement's condition, as after `;`, a statement starts.
       last = open === 'control' ? ';' : first
       keyPlace = first === '}' && opens.at(-1) === 'object'
-      exporting = naming = parameters = false
+      // A computed key's `]` (`[k]() {}`), as a key's name.
+      parameters = open === 'computed'
+      exporting = naming = false
       for (const depth of defaulted) if (depth > opens.length) defaulted.delete(depth)
       while (declarations.length > 0 && opens.length < declarations.at(-1).depth) declarations.pop()
     } else {
