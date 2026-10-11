@@ -221,7 +221,8 @@ function nameless(text) {
   // declared as `function a` is, `named` by which word and whether as a
   // statement; `extending` the depths of each `extends` whose class body is
   // the next `{` there, a class in another's `extends` on top
-  // (`extends mixin(class extends B {}) {`).
+  // (`extends mixin(class extends B {}) {`), as a class or a function there
+  // is, its body that `{` (`extends class {} {`, `extends function () {} {`).
   // `dynamic` once `eval` or a `with (…)` can read a name by its spelling:
   // renaming one then changes what runs; so once a name is escaped
   // (`\u0065val`), the one `\` code holds outside strings. So too where a
@@ -325,11 +326,11 @@ function nameless(text) {
       key.push(token)
       program.push(token)
       // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
-      const heritage = first === '{' && extending.at(-1) === opens.length
+      const body = first === '{' && extending.at(-1)?.depth === opens.length ? extending.pop() : null
+      const heritage = body !== null && body.word !== 'function'
       // An arrow's body after its `=>`, an object after a `>` (`0 > { a }`).
       const block = first === '{' && !heritage && (last === null || ');{}'.includes(last) || BEFORE_BLOCK.has(last)
         || (last === '>' && code.trimEnd().endsWith('=>')))
-      if (heritage) extending.pop()
       // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
       const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object'
         : first === '(' && CONTROL.has(last) ? 'control' : first === '[' && keyPlace ? 'computed' : first
@@ -405,7 +406,10 @@ function nameless(text) {
       const word = keyPlace || property ? null : token
       if (word === 'eval' || word === 'with') dynamic = true
       parameters = keyPlace || word === 'function' || word === 'catch' || (naming && named.word === 'function')
-      if (word === 'extends') extending.push(opens.length)
+      const within = extending.at(-1)?.depth === opens.length ? extending.at(-1) : null
+      if (word === 'extends' && within?.word !== 'class') extending.push({ depth: opens.length, word })
+      else if ((word === 'class' || word === 'function') && within) extending.push({ depth: opens.length, word })
+      else if (word === 'extends') within.word = word
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       LET.lastIndex = at
       if (word === 'const' || word === 'var' || (word === 'let' && LET.test(text))) declarations.push({ binding: true, depth: opens.length, exported: exporting })
