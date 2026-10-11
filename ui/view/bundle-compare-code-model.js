@@ -292,12 +292,14 @@ function nameless(text) {
     else if (set > next) defaulted.add(opens.length)
     else if (next > set || segment.includes(';')) defaulted.delete(opens.length)
     if (segment.includes(';')) while (declarations.length > 0 && opens.length <= declarations.at(-1).depth) declarations.pop()
-    // A generator's `*` leaves its name in its key place, or to be declared.
-    if (last === '*' && segment.slice(0, end - 1).trim() === '') return
+    // A generator's `*` or a private name's `#` (`static #m() {}`, `*#m() {}`)
+    // leaves its name in its key place, or to be declared.
+    const marked = /(?:\*\s*)?#?$/u.exec(segment.slice(0, end))[0].length
+    if (marked > 0 && segment.slice(0, end - marked).trim() === '') return
     exporting = naming = false
     // A number key (`1() {}`), as a key's name.
     parameters = opens.at(-1) === 'object' && /(?:^|[,;])\s*\.?\d[\w.]*\s*$/u.test(segment)
-    const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
+    const place = marked > 0 ? segment.slice(0, end - marked).trimEnd().at(-1) : last
     keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
   }
   // A template's text, kept as a string is: where it opens a substitution
@@ -310,10 +312,11 @@ function nameless(text) {
     last = open ? '(' : '"'
     exporting = keyPlace = naming = parameters = false
   }
-  // Ending its line, a value ends its class field: the next name is a key.
+  // Ending its line, a value ends its class field: the next name is a key,
+  // a private one's too (`x = 1⏎#m() {}`).
   const lineEnd = segment => {
     const line = segment.lastIndexOf('\n')
-    if (line !== -1 && opens.at(-1) === 'object' && segment.slice(line + 1).trim() === '' && !CONTINUES.test(segment.slice(0, line).trimEnd())) keyPlace = true
+    if (line !== -1 && opens.at(-1) === 'object' && /^#?$/u.test(segment.slice(line + 1).trim()) && !CONTINUES.test(segment.slice(0, line).trimEnd())) keyPlace = true
   }
   for (READ.lastIndex = 0; ;) {
     // A comment lies between what is read as spaces do, its line breaks
@@ -435,18 +438,19 @@ function nameless(text) {
       const reexport = opens.at(-1) === 'export' && EXPORT_FROM.test(text)
       const exported = (opens.at(-1) === 'export' && (reexport || last === 'as' || !AS.test(text))) || (exporting && !KEYWORDS.has(token)) || (binding && declaration.exported)
       // A property: `.` before it, spaces or a comment between (`a . b`), or `:`
-      // after it, in a key's place spaces or a comment between too (`{ a : x }`),
-      // not a conditional's (`c ? a : b`); a private one, `#` before it
-      // (`this.#a`); or a label, after `break` or `continue` (`break a`), which
-      // a line break still ends.
+      // after it in a key's place, spaces or a comment between too (`{ a : x }`),
+      // not a conditional's (`c?a:b`) nor a `case`'s (`case a:`); a private one,
+      // `#` before it (`this.#a`); or a label, where a statement starts (`a: {`)
+      // or after `break` or `continue` (`break a`), which a line break still ends.
       const jump = last === 'break' || last === 'continue'
       KEYED.lastIndex = at
-      const keyed = text[at] === ':' || (keyPlace && KEYED.test(text))
+      const colon = KEYED.test(text)
+      const keyed = keyPlace && colon, label = colon && !keyPlace && statement(last)
       // A spread's or a rest's name, after `...`, is none (`{ ...a }`).
       const member = last === '.' && !code.trimEnd().endsWith('...')
-      const property = member || last === '#' || keyed || jump
-      // A label where a statement starts (`a: {`), not a key: its block a block.
-      if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
+      const property = member || last === '#' || keyed || label || jump
+      // A label's block is a block.
+      if (label) labeled = true
       program.push(token)
       let aside = null
       if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || property) key.push(token)
@@ -465,7 +469,7 @@ function nameless(text) {
         && !KEYWORDS.has(token)) setAside.push([key.length - 1, names.length - 1, token, scope])
       ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
-      const read = keyed || member || last === '#'
+      const read = keyed || label || member || last === '#'
       // A function or a class expression's name is its own body's.
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
