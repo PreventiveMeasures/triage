@@ -79,18 +79,28 @@ function substitutionEnd(text, from) {
   }
 }
 // What a token adds to a substitution's code: a name or a bracket itself, a
-// template its own substitutions', a regular expression (or a division read
-// as one) its words that read names, a string or a comment nothing.
-const substituted = token => token[0] === '`' ? substitutions(token) : /^(?:["']|\/[/*]|<!--|-->|#!)/u.test(token) ? ' '
-  : token[0] === '/' ? ` ${token.match(/\b(?:eval|with)\b/gu)?.join(' ') ?? ''} ` : token
-// The code from `from` to `to`, what lies between its tokens with them.
+// template its own substitutions', a regular expression its words that read
+// names, a string `""` (no more of it), a comment nothing.
+const substituted = token => token[0] === '`' ? `\`${substitutions(token)}\`` : token[0] === '"' || token[0] === "'" ? '""'
+  : /^(?:\/[/*]|<!--|-->|#!)/u.test(token) ? ' ' : token[0] === '/' ? ` ${token.match(/\b(?:eval|with)\b/gu)?.join(' ') ?? ''} ` : token
+// The code from `from` to `to`, what lies between its tokens with them. A
+// `/` after a value divides, as in nameless (`x / \u0065val(a) / y`), what
+// follows read again.
 function substitutionCode(text, from, to) {
   for (let at = from, code = ''; ;) {
     SUBSTITUTION.lastIndex = at
     const match = SUBSTITUTION.exec(text)
     if (!match || match.index >= to) return `${code}${text.slice(at, to)}`
+    code += text.slice(at, match.index)
+    const before = code.trimEnd()
+    if (match[0][0] === '/' && !/^\/[/*]/u.test(match[0]) && /[\p{ID_Continue}$)\]"`]$/u.test(before)
+      && !BEFORE_VALUE.has(before.match(/[\p{ID_Continue}$]+$/u)?.[0])) {
+      code += '/'
+      at = match.index + 1
+      continue
+    }
     const next = match[0][0] === '`' ? Math.min(templateEnd(text, match.index), to) : SUBSTITUTION.lastIndex
-    code += `${text.slice(at, match.index)}${substituted(text.slice(match.index, next))}`
+    code += substituted(text.slice(match.index, next))
     at = next
   }
 }
