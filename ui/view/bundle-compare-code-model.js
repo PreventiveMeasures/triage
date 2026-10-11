@@ -168,7 +168,9 @@ function nameless(text) {
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
-    if (ends || segment.includes(',') || segment.includes(';')) endArrows(opens.length)
+    // A concise arrow's body ends where its line, a `,`, a `;` or a
+    // conditional's `:` does (`x ? a => a : a()`).
+    if (ends || segment.includes(',') || segment.includes(';') || segment.includes(':')) endArrows(opens.length)
     if (ends || segment.includes(';')) endLoops(opens.length)
     let end = segment.length
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
