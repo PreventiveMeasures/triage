@@ -82,6 +82,25 @@ const dirMarks = markup => Object.fromEntries([...markup.matchAll(/<summary[^]*?
 const fileMarks = markup => Object.fromEntries([...markup.matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)].map(([row]) => [
   /bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1], [...row.matchAll(/bundle-compare-code-letter (\w+)/gu)].map(m => m[1])]))
 
+test('the Code tree keeps a package the base records across a root move, and a removed file its format', () => {
+  const base = { integrity: 'base', kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'a.js': 'a', 'b.js': 'b', 'old.png': 'AA==' } }],
+      ['crates/foo', { name: 'foo', version: '0.1.0', ecosystem: 'cargo', files: { 'lib.rs': 'fn a() {}\n', 'old.rs': 'fn o() {}\n' } }]]),
+    formats: new Map([['old.png', 'resource:base64']]),
+  }) }
+  const sources = { 'src/a.js': 'a', 'src/b.js': 'b', 'src/crates/foo/lib.rs': 'fn b() {}\n', __prelude__: 'p' }
+  const other = { integrity: 'other', kind: 'sourcemap', json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources), mappings: '' } }
+  const element = new CompareCode()
+  element.base = base
+  element.other = other
+  element.files = computeBundleDiff(bundleFilesAsMap(base), bundleFilesAsMap(other), () => '__own__').files
+  element.resolutions = []
+  element.willUpdate(new Map([['base'], ['other'], ['files'], ['resolutions']]))
+  assert.deepEqual(element.files.root, { base: '', other: 'src/' })
+  assert.equal(element._tree().tree.dirs.get('src')?.dirs.get('crates')?.dirs.get('foo')?.package?.name, 'foo')
+  assert.equal(element._format('src/old.png'), 'resource:base64')
+})
+
 test('the Code view lists every differing file, repointed importers too, with kind letters on files and on new or gone directories', () => {
   const markup = renderText(view().render())
   const dirs = dirMarks(markup)

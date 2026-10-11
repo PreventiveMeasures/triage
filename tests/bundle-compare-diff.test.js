@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { bundleLayout, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, detectRoot, layoutPackageDirs, renameLabel, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleLayout, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, detectRoot, layoutPackageDirs, renameLabel, rootDir, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
 const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
 
 // All fixtures use ASCII content so a string's byte length equals its
@@ -521,6 +521,26 @@ describe('bundles taken from different roots', () => {
     assert.deepEqual([...layoutPackageDirs(new Map([['src/a.js', 'src'], ['src/b/c.js', 'src/b'], ['tools/t.js', 'tools']]), null,
       { root: { base: 'src/', other: '' }, paths: new Map([['src/a.js', 'a.js'], ['src/b/c.js', 'b/c.js']]) })],
     [['a.js', '.'], ['b/c.js', 'b'], ['tools/t.js', 'tools']], 'the root itself reads as `.`, a directory outside it as it is')
+  })
+
+  it('takes no root where two would pair as many, so the open bundle never decides', () => {
+    const one = ['a.js', 'b.js', 'x/c.js', 'x/d.js'], two = ['x/a.js', 'x/b.js', 'c.js', 'd.js']
+    assert.equal(detectRoot(one, two), null, 'x/ either way')
+    assert.equal(detectRoot(two, one), null)
+    const contents = paths => m(Object.fromEntries(paths.map(path => [path, path.at(-4)])))
+    const forward = computeBundleDiff(contents(one), contents(two), own)
+    const backward = computeBundleDiff(contents(two), contents(one), own)
+    assert.deepEqual([forward.totals.unchangedFiles, forward.totals.onlyBaseFiles], [backward.totals.unchangedFiles, backward.totals.onlyOtherFiles])
+    assert.equal(detectRoot(['a.js', 'b.js'], ['x/a.js', 'x/b.js', 'y/a.js', 'y/b.js']), null, 'two directories holding as many')
+  })
+
+  it('moves a base directory with the root', () => {
+    assert.equal(rootDir(null, 'crates/foo'), 'crates/foo')
+    assert.equal(rootDir({ base: '', other: 'src/' }, 'crates/foo'), 'src/crates/foo')
+    assert.equal(rootDir({ base: '', other: 'src/' }, '.'), '.')
+    assert.equal(rootDir({ base: 'src/', other: '' }, 'src/crates/foo'), 'crates/foo')
+    assert.equal(rootDir({ base: 'src/', other: '' }, 'src'), '.')
+    assert.equal(rootDir({ base: 'src/', other: '' }, 'tools'), 'tools')
   })
 
   it('keeps paths as they are where they line up, or only a few would move', () => {

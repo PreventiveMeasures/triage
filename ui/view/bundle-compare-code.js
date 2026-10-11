@@ -31,7 +31,7 @@ import { EXPAND_STEP, changeStart, diffRows, hidesMixedWhitespace, lineDiff, mar
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { npmFileReadability } from './file-readability.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
-import { renameParts, rootLabel } from './bundle-compare-diff.js'
+import { renameParts, rootDir, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, WRAP_ICON } from './lit-icons.js'
@@ -259,10 +259,13 @@ export class BundleCompareCode extends LitElement {
       || (!!entry.repointed && this._kinds.has('repointed'))
   }
 
+  // Both bundles' modules by directory, the base's moved with the root where
+  // the two differ by theirs, as the tree lays out its files.
   _modules() {
     const base = this.base?.kind === 'stasis' ? this.base.bundle?.modules : null
     const other = this.other?.kind === 'stasis' ? this.other.bundle?.modules : null
-    return base || other ? new Map([...(base ?? []), ...(other ?? [])]) : null
+    const root = this.files?.root
+    return base || other ? new Map([...[...base ?? []].map(([dir, info]) => [rootDir(root, dir), info]), ...(other ?? [])]) : null
   }
 
   // The base bundle's directories as the tree lays them out: the other
@@ -273,8 +276,9 @@ export class BundleCompareCode extends LitElement {
   }
 
   _format(path) {
-    const side = this._entries.get(path)?.kind === 'removed' ? this.base : this.other
-    return side?.kind === 'stasis' ? side.bundle?.formats?.get(path) : undefined
+    const entry = this._entries.get(path)
+    const [side, file] = entry?.kind === 'removed' ? [this.base, entry.basePath ?? path] : [this.other, path]
+    return side?.kind === 'stasis' ? side.bundle?.formats?.get(file) : undefined
   }
 
   // The tree over the files the kind filter keeps. The display prefix comes

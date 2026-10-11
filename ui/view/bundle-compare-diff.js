@@ -196,28 +196,31 @@ function through(root, path) {
 // files than the paths as they are, and at least half of the side it moves.
 export function detectRoot(basePaths, otherPaths) {
   const base = new Set(basePaths), other = new Set(otherPaths)
-  // The directory of `within` holding the most paths of `from` under it.
+  // The directory of `within` holding the most paths of `from` under it, or
+  // null where two hold as many.
   const likeliest = (within, from) => {
     const counts = new Map()
-    let best = null
     for (const path of within) {
       for (let at = path.indexOf('/'); at !== -1; at = path.indexOf('/', at + 1)) {
-        if (!from.has(path.slice(at + 1))) continue
-        const dir = path.slice(0, at + 1)
-        const count = (counts.get(dir) ?? 0) + 1
-        counts.set(dir, count)
-        if (count > (counts.get(best) ?? 0)) best = dir
+        if (from.has(path.slice(at + 1))) counts.set(path.slice(0, at + 1), (counts.get(path.slice(0, at + 1)) ?? 0) + 1)
       }
     }
-    return best
+    let best = null, tied = false
+    for (const [dir, count] of counts) {
+      if (count > (counts.get(best) ?? 0)) [best, tied] = [dir, false]
+      else if (count === counts.get(best)) tied = true
+    }
+    return tied ? null : best
   }
-  let found = null, paired = rootPaths(base, other, null).paired
-  for (const [root, side] of [[{ base: '', other: likeliest(other, base) }, base], [{ base: likeliest(base, other), other: '' }, other]]) {
-    if (root.base === null || root.other === null) continue
-    const result = rootPaths(base, other, root)
-    if (result.paired > paired && result.moved * 2 >= side.size) [found, paired] = [root, result.paired]
-  }
-  return found
+  const same = rootPaths(base, other, null).paired
+  const found = [[{ base: '', other: likeliest(other, base) }, base], [{ base: likeliest(base, other), other: '' }, other]]
+    .filter(([root]) => root.base !== null && root.other !== null)
+    .map(([root, side]) => ({ root, side, ...rootPaths(base, other, root) }))
+    .filter(({ side, paired, moved }) => paired > same && moved * 2 >= side.size)
+  // A move either way pairing as many is no answer: which bundle is open
+  // would decide what pairs.
+  if (found.length === 2 && found[0].paired === found[1].paired) return null
+  return found.toSorted((a, b) => b.paired - a.paired)[0]?.root ?? null
 }
 
 // A rename the way `git diff --stat` writes one: the directories both
@@ -261,12 +264,15 @@ export function bundleLayout(base, other) {
 // the file paired with it. The root's own `.` stays itself.
 export function layoutPackageDirs(baseDirs, otherDirs, { root, paths }) {
   if (!baseDirs && !otherDirs) return null
-  const dirOf = dir => {
-    if (!root || dir === '.') return dir
-    const to = through(root, `${dir}/`)
-    return to === null ? dir : to.slice(0, -1) || '.'
-  }
-  return new Map([...[...baseDirs ?? []].map(([path, dir]) => [paths.get(path) ?? path, dirOf(dir)]), ...otherDirs ?? []])
+  return new Map([...[...baseDirs ?? []].map(([path, dir]) => [paths.get(path) ?? path, rootDir(root, dir)]), ...otherDirs ?? []])
+}
+
+// A base directory as the other bundle lays it out: moved with the root, the
+// root itself `.`, and `.` or one outside a base root as it is.
+export function rootDir(root, dir) {
+  if (!root || dir === '.') return dir
+  const to = through(root, `${dir}/`)
+  return to === null ? dir : to.slice(0, -1) || '.'
 }
 
 // The directory a view leaves off paths, `prefix` (the other bundle's
