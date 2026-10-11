@@ -40,8 +40,9 @@ const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 
 const RENAMED_MAX_LENGTH = 3
 // What a text is read in, from where it is: a string, a template, a
 // comment (a hashbang too, its first line), a regular expression (where a value starts: `/` after one
-// divides), a name, a bracket, or what lies between, operators and numbers.
-const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
+// divides), a name (as JavaScript tells its characters: `a\u200Cb` is one),
+// a bracket, or what lies between, operators and numbers.
+const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$.\\\u200C\u200D])[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
 // What a line ending in goes on past its line break: an operator, not a
 // postfix `++` or `--` (`a++⏎b`).
 const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
@@ -56,7 +57,7 @@ const RESTRICTED = new Set(['break', 'continue', 'debugger', 'return', 'yield'])
 // the start; any other opens an object, a pattern or a class body.
 const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
 // Words between a key's place and its key: `{ async a() {} }`.
-const MODIFIERS = new Set(['async', 'get', 'set', 'static'])
+const MODIFIERS = new Set(['accessor', 'async', 'get', 'set', 'static'])
 // Words whose `(…)` a statement follows (`if (a) /b/.test(c)`), declaring
 // nothing as a function's `(…)` does.
 const CONTROL = new Set(['for', 'if', 'switch', 'while', 'with'])
@@ -377,7 +378,7 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
 // what it holds, an entity too (`<>&amp;`), not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside. After the
 // words a regular expression may follow, BEFORE_VALUE (`extends <a />`).
-const JSX = new RegExp(String.raw`(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:${[...BEFORE_VALUE].join('|')}))[ \t]*<(?:\/?[\p{L}_$][\p{L}\p{N}_$.:-]*(?:\s|\/?>)|>(?=[\s<{\p{L}]|&[\w#]+;))`, 'mu')
+const JSX = new RegExp(String.raw`(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:${[...BEFORE_VALUE].join('|')}))[ \t]*<(?:\/?[\p{ID_Start}_$][-\p{ID_Continue}$.:\u200C\u200D]*(?:\s|\/?>)|>(?=[\s<{\p{L}]|&[\w#]+;))`, 'mu')
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
 // `b[b0..b1)`, with the lines on each side and the count of each. An
