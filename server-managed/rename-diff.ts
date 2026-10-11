@@ -62,13 +62,14 @@ let activeDiffs = 0
 const kept = new Map<string, Buffer>()
 const pending = new Map<string, Promise<Buffer>>()
 
-function inWorker(before: string, after: string, extension: string, ignoreWhitespace: boolean): Promise<RenameDiff> {
+function inWorker(before: string, after: string, { base, other, ignoreWhitespace }: RenameDiffRequest): Promise<RenameDiff> {
   if (before.length + after.length > MAX_DIFF_CHARS) return Promise.reject(new PrettyError(413, 'diff-too-large'))
   if (activeDiffs >= MAX_ACTIVE_DIFFS) return Promise.reject(new PrettyError(429, 'diff-busy'))
   let worker: Worker
   try {
     worker = new Worker(new URL('./rename-diff-worker.js', import.meta.url), {
-      workerData: { before, after, extension, ignoreWhitespace }, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 1024 },
+      workerData: { before, after, extension: base.extension, otherExtension: other.extension, ignoreWhitespace }, execArgv: [],
+      resourceLimits: { maxOldGenerationSizeMb: 1024 },
     })
   } catch (err) {
     console.warn('managed: a rename diff could not start:', err)
@@ -96,7 +97,8 @@ function inWorker(before: string, after: string, extension: string, ignoreWhites
 // kept by their hashes where `keep`, readers asking for one meanwhile sharing it.
 export async function renameDiffOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep = true): Promise<OpenedBlob> {
   const [before, after] = await texts()
-  const key = `${request.base.hash}\0${request.other.hash}\0${request.ignoreWhitespace}`
+  // A file's type is part of how it is read: the same text as a script and as a module differ.
+  const key = `${request.base.hash}\0${request.base.extension}\0${request.other.hash}\0${request.other.extension}\0${request.ignoreWhitespace}`
   const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
   const found = kept.get(key)
   if (found) {
@@ -106,7 +108,7 @@ export async function renameDiffOf(request: RenameDiffRequest, texts: () => Prom
   }
   let job = pending.get(key)
   if (!job) {
-    pending.set(key, job = inWorker(before, after, request.base.extension, request.ignoreWhitespace)
+    pending.set(key, job = inWorker(before, after, request)
       .then(diff => encodeBrotli(Buffer.from(JSON.stringify(diff)))).finally(() => pending.delete(key)))
   }
   const body = await job

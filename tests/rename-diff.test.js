@@ -294,3 +294,17 @@ test('a line alike another place\'s with names set aside, paired between changes
   assert.deepEqual(model.a.slice(0, 6), before, 'K and its own names as they were')
   assert.deepEqual(model.blocks, [{ a0: 0, a1: 0, b0: 0, b1: 3 }, { a0: 6, a1: 6, b0: 9, b1: 10 }], 'what was added alone')
 })
+
+test('a function body\'s var named as a parameter is that parameter', () => {
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
+  // The old function returns its argument, the new one `undefined`.
+  const split = ignoring(['function f(a) {', '  var a;', '  return a;', '}', 'f(1);'], ['function f(b) {', '  var c;', '  return c;', '}', 'f(1);'])
+  assert.notDeepEqual(split.blocks, [], 'one binding renamed two ways is a change')
+  const alike = ignoring(['function f(a) {', '  var a = a || 1;', '  return a;', '}', 'f(1);'], ['function f(b) {', '  var b = b || 1;', '  return b;', '}', 'f(1);'])
+  assert.deepEqual(alike.blocks, [], 'renamed as one, it hides')
+})
+
+test('each side is parsed as its own extension has it, a file renamed from one type to another', () => {
+  const mapped = renameMap('let a = 1;\nf(a);\nexport {};\n', 'if (x) return;\nlet b = 1;\nf(b);\n', { extension: 'mjs', otherExtension: 'cjs' })
+  assert.equal(mapped.reason, undefined, 'a .cjs file\'s top-level `return` parses')
+})

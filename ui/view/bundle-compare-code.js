@@ -431,7 +431,8 @@ export class BundleCompareCode extends LitElement {
     const { before, after } = pretty?.status === 'ready' ? pretty : contents
     // Renamed names are hidden by the server, in the copies it pretty-printed
     // (rename-diff.js): offered while those come, hidden once they did.
-    const generated = textual && renamable(path) && (pretty?.status === 'ready' || pretty?.status === 'loading') && this._generated(path, entry, contents)
+    const generated = textual && renamable(path) && renamable(entry.basePath ?? path) && (pretty?.status === 'ready' || pretty?.status === 'loading')
+      && this._generated(path, entry, contents)
     const renames = generated && prefs.ignoreRenames && pretty.status === 'ready'
     const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreRenames: renames })
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)

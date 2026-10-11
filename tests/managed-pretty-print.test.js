@@ -282,6 +282,17 @@ test('a bundle file is diffed with another bundle\'s, both pretty-printed, renam
   assert.deepEqual((await h.send(bundleRenameDiff(base, other, builds()), 'admin')).json(), expected, 'kept, for any reader of both')
 })
 
+test('a rename diff is kept by both files\' types as well as their texts: a script\'s top level is not a module\'s', async t => {
+  const h = await setup(t)
+  const [before, after] = ['let a=1;f(a);\n', 'let b=1;f(b);\n']
+  const [base, other] = [await h.seed({ 'a.js': before, 'a.mjs': before }), await h.seed({ 'a.js': after, 'a.mjs': after })]
+  const params = path => ({ path, hash: fileHash(before), otherPath: path, otherHash: fileHash(after) })
+  const script = (await h.send(bundleRenameDiff(base, other, params('a.js')))).json()
+  assert.equal(script.blocks.length, 1, 'a script\'s top-level names are globals, kept')
+  const module = (await h.send(bundleRenameDiff(base, other, params('a.mjs')))).json()
+  assert.deepEqual(module.blocks, [], 'a module\'s are its own, renamed')
+})
+
 test('a bundle rename diff checks access to both bundles and refuses what it cannot answer', async t => {
   const h = await setup(t)
   const [base, other] = [await h.seed({ 'dist/app.min.js': built, 'app.css': 'a{b:c}' }), await h.seed({ 'dist/app.min.js': rebuilt })]

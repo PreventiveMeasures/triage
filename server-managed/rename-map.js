@@ -86,7 +86,10 @@ function analyze(text, extension) {
     scopes.push(made)
     return made
   }
+  // A function body's `var` or function named as one of its parameters is
+  // that parameter (`function f(a) { var a; return a }` returns its argument).
   const declare = (where, node) => {
+    if (where.parameters?.names.has(node.name)) where = where.parameters
     let variable = where.names.get(node.name)
     if (!variable) {
       where.names.set(node.name, variable = { id: variables.length, name: node.name, scope: where, kept: false, aside: false })
@@ -165,7 +168,7 @@ function analyze(text, extension) {
         work.push([parameter, parameters])
       }
       if (node.body?.type === 'BlockStatement') {
-        const body = scope(parameters, true)
+        const body = Object.assign(scope(parameters, true), { parameters })
         for (const statement of node.body.body) work.push([statement, body])
       } else if (node.body) work.push([node.body, parameters])
       continue
@@ -340,10 +343,10 @@ function bindsAlike(analysis, renamed) {
 // The old text with the new one's names, as above: `{ text, renamed, apart }`,
 // counting the variables renamed to a new one's name and those renamed apart,
 // or `{ reason }` where it can't be, as analyze has it, or where the renamed
-// text would not bind as the old one does (`unverified`); both texts a file's
-// with `extension`.
-export function renameMap(before, after, { extension = 'js' } = {}) {
-  const a = analyze(before, extension), b = analyze(after, extension)
+// text would not bind as the old one does (`unverified`); the old text a
+// file's with `extension`, the new one with `otherExtension`.
+export function renameMap(before, after, { extension = 'js', otherExtension = extension } = {}) {
+  const a = analyze(before, extension), b = analyze(after, otherExtension)
   if (a.reason || b.reason) return { reason: a.reason ?? b.reason }
   const { map, weak } = pairing(before, after, a, b)
   const apart = name => {

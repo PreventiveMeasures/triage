@@ -411,6 +411,20 @@ test('a rename diff that failed for a reason that may pass is asked for again wh
   assert.match(shown, /Only renamed names changed in this file\./u)
 })
 
+test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const minifiedLib = name => `var ${name}=1;${`q(${name});`.repeat(250)}module.exports=${name};\n`
+  const element = view('dist/lib.min.js', [{ 'dist/lib.min.jsx': minifiedLib('Y') }, { 'dist/lib.min.js': minifiedLib('X') }])
+  assert.equal(element._entries.get('dist/lib.min.js')?.basePath, 'dist/lib.min.jsx', 'a re-extensioned file')
+  element.base.managedId = 'b11'
+  element.other.managedId = 'b12'
+  pretty.set('b11:dist/lib.min.jsx', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
+  pretty.set('b12:dist/lib.min.js', 'var X = 1;\nq(X);\nmodule.exports = X;\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.doesNotMatch(renderText(element.render()), /Hide renamed names/u)
+})
+
 test('a file whose names the server could not give the new side\'s says why, its renamed names shown', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
   const element = view('dist/eval.min.js', [{ 'dist/eval.min.js': `var Y=1;eval("Y");${'q(Y);'.repeat(250)}\n` }, { 'dist/eval.min.js': `var X=1;eval("X");${'q(X);'.repeat(250)}\n` }])
