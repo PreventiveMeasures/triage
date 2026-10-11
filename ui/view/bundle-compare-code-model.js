@@ -348,8 +348,10 @@ function nameless(text) {
         classBodies.push(opens.length + 1)
       }
       // An arrow's body after its `=>`, an object after a `>` (`0 > { a }`).
+      // A class's `static {`, a block whose `var`s are its own.
+      const initializer = first === '{' && keyPlace && /(?<![\p{ID_Continue}$.])static$/u.test(code.trimEnd() || text.slice(0, match.index).trimEnd())
       const block = first === '{' && !heritage && (last === null || ');{}'.includes(last) || BEFORE_BLOCK.has(last)
-        || (last === '>' && code.trimEnd().endsWith('=>')))
+        || (last === '>' && code.trimEnd().endsWith('=>')) || initializer)
       // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
       const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object'
         : first === '(' && CONTROL.has(last) ? 'control' : first === '[' && keyPlace ? 'computed' : first
@@ -360,7 +362,7 @@ function nameless(text) {
       opens.push(open)
       if (open === '(') groups.push({ asides: setAside.length, caught: last === 'catch', depth: opens.length, names: [], parameters, scopes: scopes.length })
       // A function's body is its scope, a `catch`'s not.
-      if (open === 'block') enter(pending ?? [], { fn: pending !== null && !pendingGroup?.caught, group: pendingGroup })
+      if (open === 'block') enter(pending ?? [], { fn: (pending !== null && !pendingGroup?.caught) || initializer, group: pendingGroup })
       if (first === '{') pending = pendingGroup = null
       last = first
       keyPlace = first === '{' && !block
