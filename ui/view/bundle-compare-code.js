@@ -30,6 +30,7 @@ import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { npmFileReadability } from './file-readability.js'
+import { renameDiff, renameDiffable } from './rename-diff.js'
 import { renameParts } from './bundle-compare-diff.js'
 import { renameTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
@@ -397,12 +398,13 @@ export class BundleCompareCode extends LitElement {
 
   // ── The selected file ────────────────────────────────────────────
 
-  _model(key, before, after, ignoreRenames = false) {
+  // `changes` the server's blocks, with renamed names hidden (rename-diff.js).
+  _model(key, before, after, changes = null) {
     // Re-inserted on every use, so the cache drops the least recent.
     let model = this._models.get(key)
     this._models.delete(key)
     if (!model) {
-      model = lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace, ignoreRenames })
+      model = lineDiff(before, after, { ignoreWhitespace: prefs.ignoreWhitespace, changes })
     }
     this._models.set(key, model)
     if (this._models.size > this._modelCap) this._models.delete(this._models.keys().next().value)
@@ -418,18 +420,23 @@ export class BundleCompareCode extends LitElement {
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
     const pretty = textual ? this._pretty(path, entry, contents, prettyAllowed) : null
     const { before, after } = pretty?.status === 'ready' ? pretty : contents
-    const generated = textual && renamable(path) && this._generated(path, entry, contents)
-    const renames = generated && prefs.ignoreRenames
+    // Renamed names are hidden by the server, in the copies it pretty-printed
+    // (rename-diff.js): offered while those come, hidden once they did.
+    const generated = textual && renamable(path) && (pretty?.status === 'ready' || pretty?.status === 'loading') && this._generated(path, entry, contents)
+    const renames = generated && prefs.ignoreRenames && pretty.status === 'ready'
     const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreRenames: renames })
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
-    return { before, after, textual, large, pretty, key, generated, renames, model: textual && !large ? this._model(key, before, after, renames) : null }
+    const { basePath = path } = entry
+    const changes = renames && !large ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, prefs.ignoreWhitespace, () => this.requestUpdate()) : null
+    const model = textual && !large && (!changes || changes.status === 'ready') ? this._model(key, before, after, changes) : null
+    return { before, after, textual, large, pretty, key, generated, renames, changes, model }
   }
 
-  // Whether a file's names are a minifier's on both sides, each minified:
-  // renamed names are hidden there alone, an author's renamed to a
-  // minifier's (or to another author's) a change.
+  // Whether a file's names are a minifier's on both sides, each minified, and
+  // the server can diff it: renamed names are hidden there alone, an
+  // author's renamed to a minifier's (or to another author's) a change.
   _generated(path, { kind, basePath = path }, { before, after }) {
-    return kind !== 'repointed' && minified(this.base, basePath, before) && minified(this.other, path, after)
+    return kind !== 'repointed' && renameDiffable(this.base, this.other) && minified(this.base, basePath, before) && minified(this.other, path, after)
   }
 
   // Whether each side of a file with text can be pretty-printed.
@@ -457,7 +464,7 @@ export class BundleCompareCode extends LitElement {
 
   // What a file shows in place of a diff: why there is none, or how to have
   // one; null where there is a diff to show.
-  _fileMessage(path, { kind }, { before, after, textual, large, model, renames }) {
+  _fileMessage(path, { kind }, { before, after, textual, large, model, renames, changes }) {
     const size = value => formatBytes(value ?? 0)
     if (!textual) {
       const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
@@ -468,6 +475,13 @@ export class BundleCompareCode extends LitElement {
       return html`<div class="bundle-compare-code-message">
         <p>This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.</p>
         <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
+      </div>`
+    }
+    if (changes?.status === 'loading') return html`<div class="bundle-compare-code-message" aria-busy="true">Hiding renamed names…</div>`
+    if (changes?.status === 'error') {
+      return html`<div class="bundle-compare-code-message">
+        <p>Couldn't hide renamed names: ${changes.message}</p>
+        <button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>
       </div>`
     }
     if (model.blocks.length > 0) return null

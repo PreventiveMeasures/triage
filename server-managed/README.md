@@ -873,6 +873,22 @@ where storage is, and removed with the bundle; later requests stream them as
 they are. Access is checked before and again after formatting, and the
 endpoint supports HEAD.
 
+`GET /api/bundles/:id/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace=`
+diffs one of its JavaScript files (`.js`, `.mjs`, `.cjs`) with one of the
+`other` bundle's, for Compare's **Hide renamed names**: both pretty-printed as
+`pretty` has them (and kept as it keeps them), then diffed with the lines
+that differ only in names renamed alike left out (`common/rename-diff.js`),
+`ignoreWhitespace=true` diff -w. It answers `{ blocks, renamed }`: each
+change block `{ a0, a1, b0, b1 }`, the lines `[a0, a1)` of the base's copy
+replaced by `[b0, b1)` of the other's, and the base's lines left out as
+renamed, which the viewer draws as it draws its own diffs. Each diff runs in a
+worker thread, off the event loop, two at a time per process (429
+`diff-busy` past that), for at most a minute (504 `diff-timeout`); a file
+that does not format is refused as by `pretty`. The last few diffs are kept
+in memory by both files' hashes, each side read through the pretty-print
+cache first. The reader needs access to both bundles, checked before and
+again after the diff; a public link answers for two of its own bundles.
+
 `GET /api/bundles/:id/advisories` uses `@preventive/upstream` to audit the
 stored bundle's dependency ecosystems, names and versions. npm uses the registry,
 Cargo and Composer use OSV, and Soldeer and GitHub dependencies use published
@@ -1173,6 +1189,9 @@ control. A version shows in the bundle view with four tabs:
   `.cjs` without JSX) minified on both sides, its names a minifier's, that
   differ only in short names (three characters at most, as a minifier gives
   them) a declaration in scope stands for, renamed alike throughout the file.
+  The server works it out from the two copies (`GET /api/npm/rename-diff`
+  below, `GET /api/bundles/:id/rename-diff` for bundles), so it is offered
+  with the pretty-print toggle on, for a managed bundle's or a version's files.
   It is offered for those files alone: an author's name renamed, to a
   minifier's or to another author's, always shows. A global (`Map`, `$`) is
   kept, as is a name declared at a script's top level, a global another
@@ -1272,7 +1291,12 @@ which the client takes of the text it was sent. The files are loaded as for
 `package`, within the same four loads at once. A public version's copy is kept
 by content hash under `cache/npm/`, unencrypted, as what it is made from is
 public, and served as it is to anyone who may read a public version and names
-that hash; a private version's is made for each request and never kept.
+that hash; a private version's is made for each request and never kept. `GET
+/api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace=`
+diffs one of the version's JavaScript files with one of `otherVersion`'s of
+the same package, from both pretty-printed as `pretty` has them, as a
+bundle's are (`GET /api/bundles/:id/rename-diff`); a diff of two public
+versions' files is kept in memory among the last few, a private one's never.
 Responses are `private, no-store`. Nothing else derived from a package's
 files is kept on the server; its figures and advisories, which are public,
 are kept an hour, npm's asked for without the server's npm token, and GitHub

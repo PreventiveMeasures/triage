@@ -152,6 +152,15 @@
     },
     {
       "files": [
+        "common/rename-diff.js"
+      ],
+      "rules": {
+        "max-lines": "off",
+        "max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": [
         "common/finding-filters.js",
         "common/linked-workspace-groups.js",
         "common/workspace-groups.js"

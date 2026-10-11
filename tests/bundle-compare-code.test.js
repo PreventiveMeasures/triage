@@ -1,15 +1,25 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { computeFileHash } from '@preventive/report'
+import { renameDiff } from '../common/rename-diff.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
-// The server's pretty-printed copies, by bundle and path.
-const pretty = new Map()
+// The server's pretty-printed copies, by bundle and path, and its diffs of
+// two with renamed names hidden, worked out from them as it does (each asked
+// for noted; an error in place of the base's copy fails its diff).
+const pretty = new Map(), renameDiffs = []
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
   fetchPrettyNpmFile() {},
+  fetchBundleRenameDiff(id, other, params) {
+    renameDiffs.push({ id, other, ...params })
+    const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
+    return before instanceof Error ? Promise.reject(before) : Promise.resolve(renameDiff(before, after, { ignoreWhitespace: params.ignoreWhitespace }))
+  },
+  fetchNpmRenameDiff() {},
 } })
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 const { computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
@@ -121,6 +131,7 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   pretty.set('b2:dist/app.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
   const off = renderText(element.render())
   assert.match(off, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'a minified file offers pretty-printing')
+  assert.doesNotMatch(off, /Hide renamed names/u, 'renamed names are hidden in the copies alone')
   state.bundleSourcePretty = true
   assert.match(renderText(element.render()), /is-loading/u, 'busy while both copies are asked for')
   // Until both copies came, each hashed first.
@@ -128,10 +139,37 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   const formatted = renderText(element.render())
   assert.match(formatted, /class="add">\+6<\/span><span class="del">−5/u, 'each copy line by line')
   element._setRenames(true)
+  // The server diffs the two copies, asked by the files' paths and hashes.
+  assert.match(renderText(element.render()), /aria-busy="true">Hiding renamed names…/u)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const renames = renderText(element.render())
   assert.match(renames, /class="add">\+1<\/span><span class="del">−0/u, 'what is new alone')
   assert.match(renames, /class="diff-renamed" data-tooltip=Renamed from: var Y = 1;>≈/u)
   assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
+  const files = bundleFilesAsMap(element.base).get('dist/app.min.js'), others = bundleFilesAsMap(element.other).get('dist/app.min.js')
+  assert.deepEqual(renameDiffs, [{ id: 'b1', other: 'b2', path: 'dist/app.min.js', hash: await computeFileHash(files), otherPath: 'dist/app.min.js',
+    otherHash: await computeFileHash(others), ignoreWhitespace: false }], 'asked once, for the files as published')
+  renderText(element.render())
+  assert.equal(renameDiffs.length, 1, 'kept')
+})
+
+test('a diff the server could not hide renamed names in says why and shows them', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/lib.min.js', [{ 'dist/lib.min.js': `var Y=1;${'q(Y);'.repeat(250)}\n` }, { 'dist/lib.min.js': `var X=1;${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b5'
+  element.other.managedId = 'b6'
+  pretty.set('b5:dist/lib.min.js', 'var Y = 1;\nq(Y);\n')
+  pretty.set('b6:dist/lib.min.js', 'var X = 1;\nq(X);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  pretty.set('b5:dist/lib.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const failed = renderText(element.render())
+  assert.match(failed, /Couldn't hide renamed names: Comparing this file took too long\./u)
+  assert.match(failed, /Show renamed names<\/button>/u)
+  element._setRenames(false)
+  assert.match(renderText(element.render()), /class="add">\+2<\/span><span class="del">−2/u, 'shown, as the copies differ')
 })
 
 test('names are hidden renamed only as a minifier gave them, each side minified: an author\'s renamed shows', t => {

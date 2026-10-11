@@ -16,6 +16,7 @@ import { createDiskObjectStorage } from '../server-managed/object-storage-disk.t
 import { PRETTY_OPTIONS, createPrettyCache, prettyBody, sameCode } from '../server-managed/pretty-print.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
+import { renameDiff } from '../common/rename-diff.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
 import { managedStores } from './_managed-storage.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
@@ -96,6 +97,13 @@ async function setup(t) {
 
 const npmPretty = (name, version, path, hash) => `/api/npm/pretty?${new URLSearchParams({ name, version, path, hash })}`
 const bundlePretty = (id, path, hash) => `/api/bundles/${id}/pretty?${new URLSearchParams({ path, hash })}`
+const bundleRenameDiff = (id, other, params) => `/api/bundles/${id}/rename-diff?${new URLSearchParams({ other, ...params })}`
+const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion, ...params })}`
+
+// A minifier's two builds of a module: a function's names renamed, a number changed.
+const built = 'function add(a,b){return a+b}export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
+const rebuilt = 'function add(c,d){return c+d}export const x=add(1,2),y=[1,2,3].map(n=>n*3);\n'
+const builds = (path = 'dist/app.min.js', otherPath = path) => ({ path, hash: fileHash(built), otherPath, otherHash: fileHash(rebuilt) })
 
 test('pretty-printing takes code by extension, up to a size, and leaves template literals as they are', async () => {
   assert.deepEqual(['a.min.js', 'b.MJS', 'c.d.ts', 'd.tsx', 'e.css', 'f.json', 'g.md', 'h', 'i.js.map'].map(prettyExtension),
@@ -250,4 +258,79 @@ test('a public link reads its bundles\' files pretty-printed', async t => {
   assert.equal(res.text(), await formatted(minified))
   const refused = await h.send(bundlePretty(id, 'dist/app.min.js', 'sha512-nope'), null, { headers })
   assert.equal(refused.status, 400)
+})
+
+test('a bundle file is diffed with another bundle\'s, both pretty-printed, renamed names hidden', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed({ 'dist/app.min.js': built }), await h.seed({ 'dist/app.min.js': rebuilt })]
+  const res = await h.send(bundleRenameDiff(base, other, builds()))
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/json')
+  const expected = renameDiff(await formatted(built), await formatted(rebuilt))
+  assert.deepEqual(res.json(), expected)
+  assert.ok(expected.renamed.length > 0 && expected.blocks.length === 1, 'the renamed lines left out, the changed one shown')
+  assert.deepEqual(renameDiff(await formatted(built), await formatted(rebuilt), { ignoreWhitespace: true }),
+    (await h.send(bundleRenameDiff(base, other, { ...builds(), ignoreWhitespace: 'true' }))).json())
+  // Both copies were kept, as the pretty-print toggle's are.
+  for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v1'))).length, 1)
+  assert.deepEqual((await h.send(bundleRenameDiff(base, other, builds()), 'admin')).json(), expected, 'kept, for any reader of both')
+})
+
+test('a bundle rename diff checks access to both bundles and refuses what it cannot answer', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed({ 'dist/app.min.js': built, 'app.css': 'a{b:c}' }), await h.seed({ 'dist/app.min.js': rebuilt })]
+  // Diffed once, so that a refusal below is no kept diff's.
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()))).status, 200)
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()), 'outsider')).status, 404, 'no team grants the outsider the repository')
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()), null)).status, 401)
+  const cases = [
+    [bundleRenameDiff(base, other, { ...builds(), hash: 'sha512-nope' }), 400, 'bad-file'],
+    [bundleRenameDiff(base, other, { ...builds(), path: 'app.css', hash: fileHash('a{b:c}') }), 400, 'bad-file'],
+    [bundleRenameDiff(base, 'nope', builds()), 400, 'bad-file'],
+    [bundleRenameDiff(base, randomUUID(), builds()), 404, 'no-bundle'],
+    // A copy is its text's, at any path (as above): a file no copy is kept of.
+    [bundleRenameDiff(base, other, { ...builds('dist/missing.js', 'dist/app.min.js'), hash: fileHash('missing') }), 404, 'no-file'],
+    [bundleRenameDiff(base, other, { ...builds(), otherHash: fileHash('else') }), 409, 'hash-mismatch'],
+    // Each side is its own bundle's: the other's file named on this one is none of its.
+    [bundleRenameDiff(other, base, builds()), 409, 'hash-mismatch'],
+  ]
+  for (const [path, status, error] of cases) {
+    const res = await h.send(path)
+    assert.equal(res.status, status, path)
+    assert.equal(res.json().error, error, path)
+  }
+  assert.equal((await h.send(bundleRenameDiff(base, other, builds()), 'viewer', { method: 'HEAD' })).status, 405)
+})
+
+test('an npm file is diffed with another version\'s, both pretty-printed, renamed names hidden', async t => {
+  const h = await setup(t)
+  registry(t, [packageOf('lib', '1.0.0', { 'dist/lib.min.js': built }), packageOf('lib', '1.1.0', { 'dist/lib.min.js': rebuilt })])
+  const res = await h.send(npmRenameDiff('lib', '1.0.0', '1.1.0', builds('dist/lib.min.js')))
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), renameDiff(await formatted(built), await formatted(rebuilt)))
+  const cases = [
+    [npmRenameDiff('lib', '1.0.0', '', builds('dist/lib.min.js')), 400, 'bad-package'],
+    [npmRenameDiff('lib', '1.0.0', '1.1.0', { ...builds('dist/lib.min.js'), otherHash: 'sha512-nope' }), 400, 'bad-file'],
+    [npmRenameDiff('lib', '1.0.0', '2.0.0', builds('dist/lib.min.js')), 404, 'package-not-found'],
+    [npmRenameDiff('lib', '1.0.0', '1.1.0', { ...builds('dist/lib.min.js', 'dist/missing.js'), otherHash: fileHash('missing') }), 404, 'no-file'],
+    [npmRenameDiff('lib', '1.0.0', '1.1.0', { ...builds('dist/lib.min.js'), otherHash: fileHash('else') }), 409, 'hash-mismatch'],
+  ]
+  for (const [path, status, error] of cases) {
+    const reply = await h.send(path)
+    assert.equal(reply.status, status, path)
+    assert.equal(reply.json().error, error, path)
+  }
+  assert.equal((await h.send(npmRenameDiff('lib', '1.0.0', '1.1.0', builds('dist/lib.min.js')), null)).status, 401)
+})
+
+test('a public link diffs its bundles\' files with renamed names hidden, between its own bundles alone', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed({ 'dist/app.min.js': built }), await h.seed({ 'dist/app.min.js': rebuilt })]
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  const res = await h.send(bundleRenameDiff(base, other, builds()), null, { headers })
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.json(), renameDiff(await formatted(built), await formatted(rebuilt)))
+  assert.equal((await h.send(bundleRenameDiff(base, randomUUID(), builds()), null, { headers })).status, 404)
+  assert.equal((await h.send(bundleRenameDiff(base, other, { ...builds(), hash: 'nope' }), null, { headers })).status, 400)
 })

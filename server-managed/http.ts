@@ -35,6 +35,8 @@
 //   GET  /api/bundles/<id>/advisories → published dependency advisories (security access) | 401/403/404
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
 //   GET  /api/bundles/<id>/pretty?path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429
+//   GET  /api/bundles/<id>/rename-diff?path=&hash=&other=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript file diffed
+//        with another bundle's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/504
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
@@ -57,6 +59,8 @@
 //   GET  /api/npm/tags?name=&version= → the tags pointing to its publish commit | 400/401/404
 //   GET  /api/npm/socket?name=&version= → Socket's scores and alerts for a public version | 400/401/404
 //   GET  /api/npm/pretty?name=&version=&path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429/502
+//   GET  /api/npm/rename-diff?name=&version=&path=&hash=&otherVersion=&otherPath=&otherHash=&ignoreWhitespace= → a JavaScript
+//        file diffed with another version's, both pretty-printed, renamed names hidden | 400/401/404/409/413/422/429/502/504
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
 //   DELETE /api/auth/view-as     → ends the view (the view's CSRF token)
@@ -125,6 +129,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { type PrettyCache, PrettyError, prettyRequest } from './pretty-print.ts'
+import { prettyText, renameDiffOf, renameDiffRequest } from './rename-diff.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
 const SESSION_PATH = '/api/auth/session'
@@ -174,7 +179,9 @@ const NPM_ADVISORIES_PATH = '/api/npm/advisories'
 const NPM_TAGS_PATH = '/api/npm/tags'
 const NPM_SOCKET_PATH = '/api/npm/socket'
 const NPM_PRETTY_PATH = '/api/npm/pretty'
-const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PRETTY_PATH])
+const NPM_RENAME_DIFF_PATH = '/api/npm/rename-diff'
+const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PRETTY_PATH,
+  NPM_RENAME_DIFF_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -1310,6 +1317,32 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
   await sendEncoded(req, res, cached, contentType)
 }
 
+// GET /api/bundles/:id/rename-diff: one of its JavaScript files diffed with
+// one of the `other` bundle's, both pretty-printed, renamed names hidden
+// (rename-diff.ts), for a reader of both, checked again once it is worked out.
+async function handleBundleRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
+  const otherId = params.get('other') ?? '', request = renameDiffRequest(params)
+  if (!request || !/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-file' }); return }
+  const readable = async () => {
+    const [base, other] = await Promise.all([id, otherId].map(bundle => deps.db.getBundleAccessSnapshot(session.id, Date.now(), bundle)))
+    if (!base || !other) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    if (!base.bundle || !other.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
+    return [base.bundle, other.bundle] as const
+  }
+  const records = await readable()
+  if (!records) return
+  const { prettyCache } = deps
+  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let diff
+  try {
+    diff = await renameDiffOf(request, async () => [await prettyText(await prettyCache.bundle(records[0], request.base)),
+      await prettyText(await prettyCache.bundle(records[1], request.other))])
+  } catch (err) {
+    sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return
+  }
+  if (await readable()) sendJson(res, 200, diff)
+}
+
 // Published dependency advisories require security access, independently of access to
 // unpublished dependency findings. Managers retain their normal bundle access.
 async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, reason: string, repoAdvisories: boolean, details: boolean) {
@@ -2391,7 +2424,7 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined): Pro
   return { role: s.user.role, scopes: new Set(await deps.db.listUserNpmScopes(s.user.id)), userId: s.user.id }
 }
 
-// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,pretty}. Only readers with private access
+// GET /api/npm/{package,versions,download,stats,advisories,tags,socket,pretty,rename-diff}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
 // Access is checked again after the registry's answer.
@@ -2399,9 +2432,14 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   const name = params.get('name'), spec = params.get('version') ?? 'latest'
   const versioned = path === NPM_PACKAGE_PATH || path === NPM_DOWNLOAD_PATH || path === NPM_TAGS_PATH || path === NPM_SOCKET_PATH || path === NPM_PRETTY_PATH
-  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec))) { sendJson(res, 400, { error: 'bad-package' }); return }
+    || path === NPM_RENAME_DIFF_PATH
+  const otherSpec = params.get('otherVersion') ?? ''
+  if (!isNpmPackageName(name) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))) {
+    sendJson(res, 400, { error: 'bad-package' }); return
+  }
   const file = path === NPM_PRETTY_PATH ? prettyRequest(params) : null
-  if (path === NPM_PRETTY_PATH && !file) { sendJson(res, 400, { error: 'bad-file' }); return }
+  const diffed = path === NPM_RENAME_DIFF_PATH ? renameDiffRequest(params) : null
+  if ((path === NPM_PRETTY_PATH && !file) || (path === NPM_RENAME_DIFF_PATH && !diffed)) { sendJson(res, 400, { error: 'bad-file' }); return }
   const reader = await npmReader(deps, cookie)
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
@@ -2494,6 +2532,18 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if (!(await recheck(doc.private))) { pretty.stream.destroy(); return }
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       await sendEncoded(req, res, pretty, 'text/plain; charset=utf-8')
+      return
+    }
+    // One of its JavaScript files diffed with another version's, both
+    // pretty-printed, renamed names hidden (rename-diff.ts).
+    if (diffed) {
+      const { prettyCache } = deps
+      if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+      const other = await readNpmVersion(name, otherSpec, privileged, controller.signal)
+      if (other == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+      const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
+        await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
+      if (await recheck(doc.private || other.private)) sendJson(res, 200, diff)
       return
     }
     // The load stays held until this response is written or abandoned, and
@@ -2774,10 +2824,14 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
       return
     }
-    const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download|pretty)$/iu.exec(path)
+    const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download|pretty|rename-diff)$/iu.exec(path)
     if (bundleRead) {
-      if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       const id = bundleRead[1]!, part = bundleRead[2]!, { session } = workspaceSession!, { bundleCache, prettyCache } = deps
+      if (part === 'rename-diff') {
+        if (method !== 'GET') { send405(res, 'GET'); return }
+        await handleBundleRenameDiff(res, deps, session, id, url.searchParams); return
+      }
+      if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       if (part === 'download') { await handleGetBundle(req, res, deps, session, id); return }
       if (part !== 'pretty') { await handleBundleCache(req, res, deps, session, id, bundleCache && (rec => bundleCache.open(rec, part as BundleCachePart))); return }
       const file = prettyRequest(url.searchParams)
