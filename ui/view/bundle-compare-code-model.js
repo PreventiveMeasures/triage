@@ -324,7 +324,9 @@ function nameless(text) {
       program.push(token)
       // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
       const heritage = first === '{' && extending.at(-1) === opens.length
-      const block = first === '{' && !heritage && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
+      // An arrow's body after its `=>`, an object after a `>` (`0 > { a }`).
+      const block = first === '{' && !heritage && (last === null || ');{}'.includes(last) || BEFORE_BLOCK.has(last)
+        || (last === '>' && code.trimEnd().endsWith('=>')))
       if (heritage) extending.pop()
       // A `[…]` in a key's place is a computed key, its names references: `{ [a]: x }`.
       const open = first === '{' ? last === 'export' ? 'export' : block ? 'block' : 'object'
