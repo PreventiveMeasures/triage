@@ -19,7 +19,7 @@ const MODEL_NAMES = new Map([
 const DEVELOPER_NAMES = new Map([
   ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['moonshotai', 'Moonshot AI'],
   ['google', 'Google'], ['nvidia', 'NVIDIA'], ['qwen', 'Qwen'], ['deepseek', 'DeepSeek'],
-  ['x-ai', 'xAI'], ['z-ai', 'Z.ai'],
+  ['x-ai', 'xAI'], ['z-ai', 'Z.ai'], ['mistralai', 'Mistral AI'],
 ])
 
 const WORD_REPLACEMENTS = new Map([

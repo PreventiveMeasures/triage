@@ -10,6 +10,7 @@ test('unselected and OpenRouter providers expose every default model with Opus 5
   assert.deepEqual(defaultScanModels('openrouter'), catalogue)
   assert.ok(catalogue.models.some(model => model.id === 'qwen/qwen3.8-max'))
   assert.ok(catalogue.models.some(model => model.id === 'deepseek/deepseek-v4-pro'))
+  assert.ok(catalogue.models.some(model => model.id === 'mistralai/mistral-large-4-0'))
 })
 
 test('direct-provider defaults contain only their own models and keep GPT Pro pairs', () => {
