@@ -84,6 +84,9 @@ const ARROW_BODY = /\s*=>\s*\{/uy
 // What a `let` declaring follows with, a name or a pattern: not `let(a)`,
 // a call where `let` is a name, as it may be outside strict code.
 const LET = /\s*[\p{L}_$[{]/uy
+// What ends a concise arrow's body or begins a conditional in it: a `?` (not
+// `?.`, `??`), a `:`, a `,` or a `;`.
+const ARROW_ENDS = /(?<!\?)\?(?!\?|\.(?!\d))|[:,;]/gu
 // What follows an `import` that is no module's, a call (`import(…)`): not
 // `import.meta`, a module's alone.
 const IMPORT_CALL = /\s*\(/uy
@@ -112,7 +115,8 @@ function nameless(text) {
   // Each block a scope, declaring what is declared in it (its function's
   // parameters too, and a function expression's own name, `pending` until it
   // opens, each read from it), seen from it and the blocks in it. So are a
-  // concise arrow's body (`arrows`, the depths where a `,` or `;` ends it)
+  // concise arrow's body (`arrows`, the depths where a `,` or `;` ends it,
+  // with the conditionals begun in it whose `:` does not)
   // and a `for` from its `(` to the end of its body (`loops`). Each
   // declaration is taken to be its block's, so a `var` read outside its
   // block is a global's, kept.
@@ -125,8 +129,11 @@ function nameless(text) {
     scope = scopes.length - 1
     for (const { aside } of entries) if (aside) aside[3] = scope
   }
-  const endArrows = depth => {
-    while (arrows.length > 0 && arrows.at(-1) >= depth) {
+  // A conditional's `:` (`colon`) is the innermost one's begun, ending the
+  // arrows begun after its `?` alone.
+  const endArrows = (depth, colon = false) => {
+    while (arrows.length > 0 && arrows.at(-1).depth >= depth) {
+      if (colon && arrows.at(-1).conditionals > 0) return void arrows.at(-1).conditionals--
       arrows.pop()
       scope = scopes[scope].parent
     }
@@ -206,8 +213,13 @@ function nameless(text) {
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
     // A concise arrow's body ends where its line, a `,`, a `;` or a
-    // conditional's `:` does (`x ? a => a : a()`).
-    if (ends || segment.includes(',') || segment.includes(';') || segment.includes(':')) endArrows(opens.length)
+    // conditional's `:` does (`x ? a => a : a()`), not its own conditional's
+    // (`a => c ? a : a`).
+    if (ends) endArrows(opens.length)
+    for (const [mark] of segment.matchAll(ARROW_ENDS)) {
+      if (mark !== '?') endArrows(opens.length, mark === ':')
+      else if (arrows.at(-1)?.depth === opens.length) arrows.at(-1).conditionals++
+    }
     if (ends || segment.includes(';')) endLoops(opens.length)
     let end = segment.length
     while (end > 0 && segment.codePointAt(end - 1) <= 32) end--
@@ -321,7 +333,7 @@ function nameless(text) {
         if (ARROW_BODY.test(text) || (group.parameters && BODY.test(text))) pending = self ? [...group.names, self] : group.names
         else if (ARROW.test(text)) {
           enter(group.names)
-          arrows.push(opens.length)
+          arrows.push({ conditionals: 0, depth: opens.length })
         }
         self = null
       }
@@ -360,7 +372,7 @@ function nameless(text) {
       else if (!read && ARROW_BODY.test(text)) pending = [{ aside, name: token }]
       else if (!read && ARROW.test(text)) {
         enter([{ aside, name: token }])
-        arrows.push(opens.length)
+        arrows.push({ conditionals: 0, depth: opens.length })
       }
       if (!read && group && !inDefault(group.depth) && !inComputed(group.depth)) group.names.push({ aside, name: token })
       // A key or a property is no keyword: `{ const: a }`, `x.var`.

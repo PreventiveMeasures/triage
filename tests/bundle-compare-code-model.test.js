@@ -190,6 +190,9 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['f(function a() { a(c); });', 'f(function b() { b(c); });'], ['class X { m(a) { a(c); } }', 'class X { m(b) { b(c); } }'],
     ['x = { async *m(a) { a(c); } };', 'x = { async *m(b) { b(c); } };'], ['f(function* (a) { a(c); });', 'f(function* (b) { b(c); });'], ['f(a => a(c), 1);', 'f(b => b(c), 1);'], ['for (let a of c) a(c);', 'for (let b of c) b(c);'],
     ['for (let a = 0; a < c; a++) { f(a); }', 'for (let b = 0; b < c; b++) { f(b); }'], ['function a() {} a(c);', 'function b() {} b(c);'],
+    // A concise arrow's own conditional, its `:` ending none of it; an outer one's, the arrows begun in it.
+    ['f(a => c ? a : a);', 'f(b => c ? b : b);'], ['f(a => a ? 1 : a?.k ?? a);', 'f(b => b ? 1 : b?.k ?? b);'], ['f(a => c ? d => d : a);', 'f(b => c ? e => e : b);'],
+    ['f(a => x ? d => d : a);', 'f(b => x ? e => e : b);'],
   ]) assert.equal(lineDiff(asModule(`${before}\n`), asModule(`${after}\n`), { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')
   assert.equal(lineDiff(asModule('function f(a,  b) {}\n'), asModule('function f(c, d) {}\n'), { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
