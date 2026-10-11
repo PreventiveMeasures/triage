@@ -52,20 +52,23 @@ const COMMENT = /\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
 // `dynamic` in nameless.
 const DYNAMIC = /\b(?:eval|with)\b|[\\@]|<>/u
 
-// The code in a template's substitutions (`${…}`), its braces counted.
+// The code in a template's substitutions (`${…}`), read as code is (READ,
+// apart so its place stays), a brace in a string, a regular expression or a
+// comment counting for none. Read amiss, a substitution runs on: more is
+// tested, not less.
+const SUBSTITUTION = new RegExp(READ.source, 'gu')
 function substitutions(template) {
-  let code = '', depth = 0
+  let code = ''
   for (let i = 1; i < template.length - 1; i++) {
-    const char = template[i]
-    if (depth === 0) {
-      if (char === '\\') i++
-      else if (char === '$' && template[i + 1] === '{') {
-        depth = 1
-        i++
-      }
-    } else {
-      depth += char === '{' ? 1 : char === '}' ? -1 : 0
-      code += depth === 0 ? '\n' : char
+    if (template[i] === '\\') i++
+    else if (template[i] === '$' && template[i + 1] === '{') {
+      const start = i + 2
+      let depth = 1, match = null
+      SUBSTITUTION.lastIndex = start
+      while (depth > 0 && (match = SUBSTITUTION.exec(template))) depth += match[0] === '{' ? 1 : match[0] === '}' ? -1 : 0
+      if (depth > 0) return `${code}${template.slice(start)}`
+      code += `${template.slice(start, match.index)}\n`
+      i = match.index
     }
   }
   return code
