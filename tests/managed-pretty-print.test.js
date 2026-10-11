@@ -14,6 +14,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { PRETTY_OPTIONS, createPrettyCache, prettyBody, sameCode } from '../server-managed/pretty-print.ts'
+import { renameDiffOf } from '../server-managed/rename-diff.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
 import { changeBlocks } from '../common/line-diff.js'
@@ -293,15 +294,55 @@ test('a rename diff is kept by both files\' types as well as their texts: a scri
   assert.deepEqual(module.blocks, [], 'a module\'s are its own, renamed')
 })
 
+// A Diff view's four files, built (0) and rebuilt (1), and each one's diff's parameters.
+const files = n => Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`dist/${i}.min.js`, n === 0 ? built.replace('n*2', `n*${i + 2}`) : rebuilt.replace('n*3', `n*${i + 9}`)]))
+const fileDiffs = () => Object.keys(files(0)).map(path => ({ path, hash: fileHash(files(0)[path]), otherPath: path, otherHash: fileHash(files(1)[path]) }))
+
 test('rename diffs asked for at once past the workers running wait their turn', async t => {
   const h = await setup(t)
-  const files = n => Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`dist/${i}.min.js`, n === 0 ? built.replace('n*2', `n*${i + 2}`) : rebuilt.replace('n*3', `n*${i + 9}`)]))
   const [base, other] = [await h.seed(files(0)), await h.seed(files(1))]
-  const [olds, news] = [files(0), files(1)]
   // Each copy pretty-printed first, as the view has them by then.
-  for (const [id, texts] of [[base, olds], [other, news]]) for (const [path, text] of Object.entries(texts)) assert.equal((await h.send(bundlePretty(id, path, fileHash(text)))).status, 200)
-  const asked = await Promise.all(Object.keys(olds).map(path => h.send(bundleRenameDiff(base, other, { path, hash: fileHash(olds[path]), otherPath: path, otherHash: fileHash(news[path]) }))))
+  for (const [id, texts] of [[base, files(0)], [other, files(1)]]) for (const [path, text] of Object.entries(texts)) assert.equal((await h.send(bundlePretty(id, path, fileHash(text)))).status, 200)
+  const asked = await Promise.all(fileDiffs().map(params => h.send(bundleRenameDiff(base, other, params))))
   assert.deepEqual(asked.map(res => res.status), [200, 200, 200, 200], 'a Diff view\'s four files')
+})
+
+test('a private npm version\'s files diffed at once are formatted in their turns, none refused, and nothing kept', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [{ ...packageOf('@corp/lib', '1.0.0', files(0)), private: true }, { ...packageOf('@corp/lib', '1.1.0', files(1)), private: true }])
+  const diff = params => npmRenameDiff('@corp/lib', '1.0.0', '1.1.0', params)
+  assert.equal((await h.send(diff(fileDiffs()[0]))).status, 404, 'a reader without private access gets nothing')
+  // Each side is formatted again for its diff, two formats at most at once.
+  const asked = await Promise.all(fileDiffs().map(params => h.send(diff(params), 'admin')))
+  assert.deepEqual(asked.map(res => res.status), [200, 200, 200, 200], 'a Diff view\'s four files')
+  await assert.rejects(readdir(join(h.dir, 'cache', 'npm')), { code: 'ENOENT' })
+})
+
+test('a rename diff waiting its turn has its minute run out there, and leaves the queue', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const side = text => ({ path: 'a.js', hash: fileHash(text), extension: 'js' })
+  const diffed = { base: side(built), other: side(rebuilt), ignoreWhitespace: false }
+  const read = () => Promise.resolve([built, rebuilt])
+  let release
+  const held = new Promise(resolve => { release = resolve })
+  // Both workers' turns taken by diffs whose sides (a private version's, so
+  // read in their turn) are still being read, and the queue filled behind them.
+  const running = [0, 1].map(() => renameDiffOf(diffed, () => held, false))
+  const queued = Array.from({ length: 16 }, () => renameDiffOf(diffed, read, false))
+  await assert.rejects(renameDiffOf(diffed, read, false), { status: 429, message: 'diff-busy' })
+  t.mock.timers.tick(60_000)
+  for (const job of queued) await assert.rejects(job, { status: 504, message: 'diff-timeout' })
+  // Gone from the queue: the next one waits its turn, and gets it.
+  const next = renameDiffOf(diffed, read, false)
+  release([built, rebuilt])
+  const answers = await Promise.all([...running, next].map(async job => {
+    const chunks = []
+    for await (const chunk of (await job).stream) chunks.push(chunk)
+    return JSON.parse(brotliDecompressSync(Buffer.concat(chunks)).toString())
+  }))
+  for (const answer of answers) assert.deepEqual(answer, answers[0])
+  assert.equal(answers[0].reason, null, 'each one diffed, its names given')
 })
 
 test('a bundle rename diff checks access to both bundles and refuses what it cannot answer', async t => {

@@ -894,11 +894,12 @@ as diffed, each change block `{ a0, a1, b0, b1 }` (its lines `[a0, a1)`
 replaced by the new copy's `[b0, b1)`), and, where its names could not be
 given safely, why (`unparsed`, `dynamic` for `eval` or `with`, `jsx`,
 `block-function` for a function declared in a block outside strict code,
-where it sets its function's variable of that name too, `unverified`), the old copy then as it was. Each diff runs in a
-worker thread, off the event loop, two at a time per process, up to sixteen
-more waiting their turn (429 `diff-busy` past that, as a Diff view asks for
-every file it shows at once), for at most a minute (504 `diff-timeout`); a file
-that does not format is refused as by `pretty`. The last few answers are kept
+where it sets its function's variable of that name too, `unverified`), the
+old copy then as it was. Each diff runs in a worker thread, off the event
+loop, two at a time per process, up to sixteen more waiting their turn (429
+`diff-busy` past that, as a Diff view asks for every file it shows at once),
+for at most a minute, its wait included (504 `diff-timeout`); a file that does
+not format is refused as by `pretty`. The last few answers are kept
 in memory by both files' hashes, each side read through the pretty-print
 cache first. The reader needs access to both bundles, checked before and
 again after the diff; a public link answers for two of its own bundles.
@@ -1309,7 +1310,8 @@ that hash; a private version's is made for each request and never kept. `GET
 diffs one of the version's JavaScript files with one of `otherVersion`'s of
 the same package, from both pretty-printed as `pretty` has them, as a
 bundle's are (`GET /api/bundles/:id/rename-diff`); a diff of two public
-versions' files is kept in memory among the last few, a private one's never.
+versions' files is kept in memory among the last few, a private one's never,
+its sides, formatted again for it, read in its turn among the diffs waiting.
 Responses are `private, no-store`. Nothing else derived from a package's
 files is kept on the server; its figures and advisories, which are public,
 are kept an hour, npm's asked for without the server's npm token, and GitHub
