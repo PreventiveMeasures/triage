@@ -92,6 +92,9 @@ const ARROW_ENDS = /(?<!\?)\?(?!\?|\.(?!\d))|[:,;]/gu
 // `finally`, a `do`'s `while`; spaces or comments first.
 const BRACED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/uy
 const GOES_ON = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(catch|else|finally|while)(?![\p{ID_Continue}$])/uy
+// What follows a shorthand property: spaces or comments, then `,`, `}` or a
+// pattern's default's `=`.
+const SHORTHAND = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(?:[,}]|=(?![=>]))/uy
 // What follows a key before its value: spaces or comments, then `:`.
 const KEYED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*:/uy
 // What follows an `import` that is no module's, a call (`import(…)`): not
@@ -132,9 +135,10 @@ function nameless(text) {
   const scopes = [{ fn: true, names: new Set(), parent: -1 }]
   const arrows = [], loops = []
   let pending = null, pendingGroup = null, scope = 0, self = null
-  // A named class expression's name, its body's (`classes`, until its body,
-  // the `extends` marker its body takes, if any): its body is a scope too,
-  // `classBodies` their depths.
+  // Each class until its body (`classes`, with the `extends` marker its body
+  // takes, if any), and each class's body (`classBodies`, their depths): a
+  // named class expression's name is a scope from it to its body's end
+  // (`scoped`), its `extends` too.
   const classBodies = [], classes = []
   // A function declared in a block, with the block (`blockFunctions`): outside
   // a module, its function's too where the code is not strict, unknown here.
@@ -225,7 +229,7 @@ function nameless(text) {
   // or `catch`), not a call's arguments.
   // `labeled` between a label and its `:`, after which a statement starts.
   const extending = []
-  let at = 0, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, naming = false, parameters = false
+  let at = 0, casing = -1, dynamic = false, exporting = false, keyPlace = false, labeled = false, last = null, naming = false, parameters = false
   let named = { statement: true, word: null }
   const keep = segment => {
     key.push(segment)
@@ -270,6 +274,10 @@ function nameless(text) {
     if (end === 0) return
     last = segment[end - 1] === ':' && labeled ? ';' : segment[end - 1]
     labeled = false
+    if (casing === opens.length && segment.includes(':')) {
+      casing = -1
+      if (last === ':') last = ';'
+    }
     const declaration = declarations.at(-1)
     const next = segment.lastIndexOf(','), set = segment.search(/(?<![=!<>])=(?![=>])[^=]*$/u)
     if (declaration?.depth === opens.length && set !== next) declaration.binding = next > set
@@ -350,10 +358,7 @@ function nameless(text) {
       const body = first === '{' && extending.at(-1)?.depth === opens.length ? extending.pop() : null
       const heritage = body !== null && body.word !== 'function'
       const own = classes.at(-1)?.depth === opens.length && first === '{' && classes.at(-1).marker === body ? classes.pop() : null
-      if (own) {
-        enter([own])
-        classBodies.push(opens.length + 1)
-      }
+      if (own) classBodies.push({ depth: opens.length + 1, scoped: own.scoped })
       // An arrow's body after its `=>`, an object after a `>` (`0 > { a }`).
       // A class's `static {`, a block whose `var`s are its own.
       const initializer = first === '{' && keyPlace && /(?<![\p{ID_Continue}$.])static$/u.test(code.trimEnd() || text.slice(0, match.index).trimEnd())
@@ -380,10 +385,7 @@ function nameless(text) {
       const open = opens.pop()
       endArrows(opens.length + 1)
       if (open === 'block') leave()
-      if (classBodies.at(-1) === opens.length + 1) {
-        classBodies.pop()
-        leave()
-      }
+      if (classBodies.at(-1)?.depth === opens.length + 1 && classBodies.pop().scoped) leave()
       BRACED.lastIndex = at
       if (open === 'control' && loops.at(-1)?.depth === opens.length && !loops.at(-1).body) Object.assign(loops.at(-1), { body: true, braced: BRACED.test(text), doing: 0 })
       else endLoops(first === '}' ? opens.length : opens.length + 1, at)
@@ -429,13 +431,21 @@ function nameless(text) {
         setAside.push(aside = [key.length, names.length - 1, token, scope])
         key.push(NAMELESS)
       }
+      // An object's shorthand property is a name read too (`{ a }`), its key
+      // kept: not a pattern's declaring it, nor a class's field.
+      SHORTHAND.lastIndex = at
+      if (keyPlace && !binding && token.length <= RENAMED_MAX_LENGTH && !KEYWORDS.has(token) && opens.at(-1) === 'object'
+        && classBodies.at(-1)?.depth !== opens.length && SHORTHAND.test(text)) setAside.push([key.length - 1, names.length - 1, token, scope])
       ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
       const read = keyed || last === '.' || last === '#'
       // A function or a class expression's name is its own body's.
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
-        else if (named.word === 'class') classes.push({ aside, depth: opens.length, marker: null, name: token })
+        else if (named.word === 'class' && classes.at(-1)?.depth === opens.length) {
+          enter([{ aside, name: token }])
+          classes.at(-1).scoped = true
+        }
       } else if (!read && (naming || binding)) {
         declare(token, binding && declaration.hoisted)
         if (naming && named.word === 'function' && !scopes[scope].fn) blockFunctions.push([token, scope])
@@ -457,7 +467,10 @@ function nameless(text) {
       if (word === 'extends' && within?.word !== 'class') extending.push({ depth: opens.length, word })
       else if ((word === 'class' || word === 'function') && within) extending.push({ depth: opens.length, word })
       else if (word === 'extends') within.word = word
+      if (word === 'class') classes.push({ depth: opens.length, marker: within ? extending.at(-1) : null, scoped: false })
       if (word === 'do' && loops.at(-1)?.body && loops.at(-1).depth === opens.length) loops.at(-1).doing++
+      // A `case`'s or a `default`'s `:` begins a statement (`case 1: {`).
+      if ((word === 'case' || (word === 'default' && last !== 'export')) && opens.at(-1) === 'block') casing = opens.length
       if (word === 'extends' && classes.at(-1)?.depth === opens.length && classes.at(-1).marker === null) classes.at(-1).marker = extending.at(-1)
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       LET.lastIndex = at
