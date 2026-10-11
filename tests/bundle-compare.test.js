@@ -417,6 +417,31 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   assert.match(diff, /Added · only in pkg@2\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
 })
 
+test('a source\'s files list open, each with its type\'s icon, those the open one has tagged under its warning; its lines of code are counted; its dependencies open', () => {
+  const { view, source } = sourced()
+  const files = { icon: path => `<icon ${path}>`, tag: (shown, path) => `<tag ${shown.integrity} ${path}>`, warning: (shown, paths) => `<warning ${shown.integrity} ${paths.join(',')}>` }
+  const opened = []
+  view.source = { ...source('2.0.0'), files, openDependency: row => opened.push(row),
+    dependencies: () => ({ removed: [], added: [{ key: '\0dep', name: 'dep', kind: null, range: '^1.0.0', opens: 'dep' }, { key: '\0local', name: 'local', kind: null, range: 'file:..', opens: null }], changed: [] }) }
+  view.willUpdate(new Map([['source', null]]))
+  assert.ok(view._openSections.has('files'), 'a package version\'s files list open')
+  const map = (integrity, sources) => ({ integrity, kind: 'sourcemap', json: { version: 3, sources: Object.keys(sources), sourcesContent: Object.values(sources) } })
+  view.details = map('sha512-2.0.0', { 'kept.js': 'a\n\nb\n', 'new.js': 'n\n' })
+  view._otherDetails = map('sha512-1.0.0', { 'kept.js': 'a\n', 'gone.js': 'g\n' })
+  view._targetIntegrity = '1.0.0'
+  view._diffKey = null
+  const markup = renderText(view._renderDiff())
+  assert.match(markup, /<warning sha512-2\.0\.0 new\.js,kept\.js>/u, 'warned of what the open one adds or changes')
+  for (const path of ['gone.js', 'new.js', 'kept.js']) assert.match(markup, new RegExp(`<icon ${path}>`, 'u'))
+  assert.match(markup, /<tag sha512-2\.0\.0 new\.js>/u)
+  assert.match(markup, /<tag sha512-2\.0\.0 kept\.js>/u)
+  assert.doesNotMatch(markup, /<tag [^>]* gone\.js>/u, 'a file only the one compared with has is not')
+  assert.match(markup, /data-tooltip=2 B → 5 B · 1 → 2 LoC>/u, 'a changed file\'s lines of code')
+  assert.match(renderText(view._renderSummary(view._diffFor())), /LoC<\/span>\s*<span class="bundle-compare-metric-value">2 → 3<\/span>[^]*?\+1/u)
+  assert.match(markup, /<button type="button" class="bundle-compare-row bundle-compare-row-link"[^]*?data-tooltip=dep>dep</u, 'a dependency it can open is a link')
+  assert.match(markup, /<div class="bundle-compare-row">\s*<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=local>/u, 'one it can\'t is not')
+})
+
 test('a source opens the other side to swap, which compares with the old base once it arrives', async () => {
   const { view, calls, source, npm } = sourced()
   view._targetIntegrity = '1.0.0'

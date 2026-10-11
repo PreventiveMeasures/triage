@@ -60,6 +60,7 @@ import './bundle-scope-selector.js'
 import './bundle-compare-code.js'
 import { COMBINED_DIFF_MAX, combinedDiffRows } from './bundle-compare-all.js'
 import { compareModeOf } from '../../common/managed/routes.js'
+import { bundleLineCounts } from '../../common/bundle-metadata.js'
 
 // Cap the repointed-imports table's rendered rows so a pathological
 // compare can't stamp out tens of thousands of DOM nodes. The counts are
@@ -173,6 +174,9 @@ class BundleCompare extends LitElement {
   }
 
   willUpdate(changed) {
+    // A package version's files are what it is: listed open, unlike a
+    // bundle's, which can run to thousands.
+    if (changed.has('source') && this.source && !changed.get('source')) this._openSections = new Set([...this._openSections, 'files'])
     if ((changed.has('_otherDetails') || changed.has('details')) && this._status === 'ready'
       && !bundleCompareScopes(this.details, this._otherDetails).some(scope => scope.id === this._scope)) this._scope = ''
     // Reset only when the BASE bundle itself changes (integrity). A
@@ -367,9 +371,12 @@ class BundleCompare extends LitElement {
     this._notify()
   }
 
-  _fileRow(path, label, sizeTpl, tooltip = path) {
+  // A file's row; a source's `files` (see `source`) give it its type's icon,
+  // and a file in the open one its tag.
+  _fileRow(path, label, sizeTpl, tooltip = path, tagged = false) {
+    const files = this.source?.files
     return html`<li><button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => this._openFile(path)}>
-      <span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${sizeTpl}
+      ${files ? files.icon(path) : nothing}<span class="bundle-compare-row-path mono" data-tooltip-truncated data-tooltip=${tooltip}>${label}</span>${files && tagged ? files.tag(this.details, path) : nothing}${sizeTpl}
     </button></li>`
   }
 
@@ -399,12 +406,15 @@ class BundleCompare extends LitElement {
   // exists on a single side, the signed delta for a changed row, with
   // `base → other` in its tooltip. A side with no size to give shows a
   // dash, as does the delta it leaves undefined.
+  // A file's size, or how it changed; its lines of code, where it has any,
+  // in the tooltip.
   _sizeCells(r) {
     const bytes = value => value == null ? '—' : formatBytes(value)
+    const loc = count => `${count.toLocaleString()} LoC`
     return r.delta === undefined
-      ? html`<span class="bundle-compare-row-size">${bytes(r.bytes)}</span>`
+      ? html`<span class="bundle-compare-row-size" data-tooltip=${r.lines > 0 ? loc(r.lines) : nothing}>${bytes(r.bytes)}</span>`
       : html`<span class=${`bundle-compare-row-delta ${r.delta === null ? '' : dirClass(r.delta)}`}
-          data-tooltip=${`${bytes(r.baseBytes)} → ${bytes(r.otherBytes)}`}>${r.delta === null ? '—' : formatDelta(r.delta)}</span>`
+          data-tooltip=${`${bytes(r.baseBytes)} → ${bytes(r.otherBytes)}${r.baseLines > 0 || r.otherLines > 0 ? ` · ${r.baseLines.toLocaleString()} → ${loc(r.otherLines)}` : ''}`}>${r.delta === null ? '—' : formatDelta(r.delta)}</span>`
   }
 
   // Name | Size order for one group, kept per kind in the state field
@@ -424,8 +434,9 @@ class BundleCompare extends LitElement {
     const weight = r => kind === 'changed' ? Math.abs(r.delta) : r.bytes
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
-    const row = r => r.basePath == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r))
-      : this._fileRow(r.path, renameTemplate(displayOf(r.basePath), displayOf(r.path)), this._sizeCells(r), `${r.basePath} → ${r.path}`)
+    const tagged = kind !== 'removed'
+    const row = r => r.basePath == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged)
+      : this._fileRow(r.path, renameTemplate(displayOf(r.basePath), displayOf(r.path)), this._sizeCells(r), `${r.basePath} → ${r.path}`, tagged)
     return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file'), { lanes })
   }
 
@@ -475,16 +486,19 @@ class BundleCompare extends LitElement {
   // Changed the one it moved from and to; `kind` marks peer and optional.
   _depGroup(title, rows, kind, lanes) {
     const rangeChars = kind === 'changed' ? 0 : Math.min(MAX_VERSION_CHARS, Math.max(0, ...rows.map(r => r.range.length)))
-    return this._group(title, rows, kind, r => r.key, r => html`<li><div class="bundle-compare-row">
-      <span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
+    const cells = r => html`<span class="bundle-compare-row-path" data-tooltip-truncated data-tooltip=${r.name}>${r.name}</span>
       ${r.kind ? html`<span class="npm-dependency-kind">${r.kind}</span>` : nothing}
       ${kind === 'changed' ? html`<span class="bundle-compare-ver" aria-label=${`Changed: ${r.from} to ${r.to}`}>
           <span class="bundle-compare-ver-from">${r.from}</span>
           <span class="bundle-compare-ver-arrow" aria-hidden="true">→</span>
           <span class="bundle-compare-ver-to changed">${r.to}</span>
         </span>`
-        : html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${r.range}>${r.range}</span>`}
-    </div></li>`, nothing, { fill: true, lanes, style: rangeChars > 0 ? { '--compare-version-width': `${rangeChars}ch` } : {} })
+        : html`<span class="bundle-compare-dep-ver" data-tooltip-truncated data-tooltip=${r.range}>${r.range}</span>`}`
+    // One the source can open (`openDependency`), it opens.
+    const open = this.source?.openDependency
+    return this._group(title, rows, kind, r => r.key, r => html`<li>${open && r.opens
+      ? html`<button type="button" class="bundle-compare-row bundle-compare-row-link" @click=${() => open(r)}>${cells(r)}</button>`
+      : html`<div class="bundle-compare-row">${cells(r)}</div>`}</li>`, nothing, { fill: true, lanes, style: rangeChars > 0 ? { '--compare-version-width': `${rangeChars}ch` } : {} })
   }
 
   _renderDependencies(rows, baseName, otherName, lanes) {
@@ -598,6 +612,14 @@ class BundleCompare extends LitElement {
         : null
       const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
       this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
+      // Each side's lines of code (bundleLineCounts), on its rows and in
+      // the totals; a file that isn't text has none.
+      const baseLines = bundleLineCounts(from), otherLines = bundleLineCounts(to)
+      const linesOf = (lines, paths) => { let total = 0; for (const path of paths) total += lines.get(path) ?? 0; return total }
+      Object.assign(this._diff.totals, { baseLines: linesOf(baseLines, baseSources.keys()), otherLines: linesOf(otherLines, otherSources.keys()) })
+      for (const row of this._diff.files.onlyBase) row.lines = baseLines.get(row.path) ?? 0
+      for (const row of this._diff.files.onlyOther) row.lines = otherLines.get(row.path) ?? 0
+      for (const row of this._diff.files.changed) Object.assign(row, { baseLines: baseLines.get(row.basePath ?? row.path) ?? 0, otherLines: otherLines.get(row.path) ?? 0 })
       this._diff.resolutions = computeResolutionDiff(
         bundleCompareResolutions(from, this._scope),
         bundleCompareResolutions(to, this._scope),
@@ -659,6 +681,11 @@ class BundleCompare extends LitElement {
         <span class="bundle-compare-metric-value">${formatBytes(totals.baseBytes)} → ${formatBytes(totals.otherBytes)}</span>
         <span class=${`bundle-compare-metric-delta ${dirClass(totals.byteDelta)}`}>${formatDelta(totals.byteDelta)}${pct ? html`${' '}<span class="bundle-compare-pct">(${pct})</span>` : nothing}</span>
       </div>
+      ${totals.baseLines > 0 || totals.otherLines > 0 ? html`<div class="bundle-compare-metric">
+        <span class="bundle-compare-metric-label">LoC</span>
+        <span class="bundle-compare-metric-value">${totals.baseLines.toLocaleString()} → ${totals.otherLines.toLocaleString()}</span>
+        <span class=${`bundle-compare-metric-delta ${dirClass(totals.otherLines - totals.baseLines)}`}>${formatCountDelta(totals.otherLines - totals.baseLines)}</span>
+      </div>` : nothing}
       ${showDeps ? html`<div class="bundle-compare-metric">
         <span class="bundle-compare-metric-label">Deps</span>
         <span class="bundle-compare-metric-value">${vt.baseDeps.toLocaleString()} → ${vt.otherDeps.toLocaleString()}</span>
@@ -832,10 +859,13 @@ class BundleCompare extends LitElement {
     const fileLanes = fileKinds.every(kind => packageLanes.includes(kind)) ? packageLanes : fileKinds
 
     // The header and the group titles already say which bundle is which;
-    // the shared root the file rows drop rides on the Files heading.
+    // the shared root the file rows drop rides on the Files heading. Over
+    // it, a source's warning on the files the open one adds or changes.
+    const warning = listsFiles ? this.source?.files?.warning(this.details, [...files.added, ...files.changed].map(r => r.path)) : nothing
     return html`
       ${dependencies ? this._renderDependencies(dependencies, baseName, otherName, packageLanes)
         : this._renderPackages(diff.packageRows, baseName, otherName, packageLanes)}
+      ${warning ?? nothing}
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`

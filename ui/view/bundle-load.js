@@ -155,12 +155,12 @@ export function selectBundle(integrity, tab = state.currentView === 'bundles' ? 
 // Keep shared downloads alive between source tabs, but stop them when the
 // user returns to metadata or closes its source overlay. Parsed bodies stay
 // available for this bundle; only unfinished requests are cancelled. Import
-// links keep their source/history when moving from Search into Code.
+// links keep their source/history when moving from Search into Code. What
+// Compare compares with stays, for its tab to open with again.
 export function selectBundleTab(tab, { preserveSource = false } = {}) {
   if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile) && !bundleNeedsSources(tab, preserveSource ? state.bundleSourceFile : null)) beginViewNavigation()
   state.bundleDetailsTab = tab
   state.bundleCodeFileRequest = null
-  state.bundleCompare = null
   if (!preserveSource) {
     state.bundleSourceFile = null
     state.bundleCodeHistory = null

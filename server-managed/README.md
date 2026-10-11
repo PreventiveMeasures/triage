@@ -199,7 +199,10 @@ the tab; switching bundles retains it when available. Compare's two sides are
 both pickers, the one compared with first and the open bundle second, the
 changes reading from the first to the second. The first picks what to compare
 with; the second opens the bundle picked, compared with the same one (picking
-that one swaps the two). Compare offers accessible
+that one swaps the two). What it compares with stays while another tab of the
+bundle is open, as Back gives too, so its tab opens with it again. Its
+summary counts files, size and lines of code (non-blank lines of its text
+files) on each side; a file's lines are in its size's tooltip. Compare offers accessible
 bundles assigned to the same repository, including bundles not previously opened.
 Unattached bundles cannot be compared with each other. Past its Overview,
 Compare reviews the changes in **Code**, a file at a time beside the tree of
@@ -1154,7 +1157,12 @@ control. A version shows in the bundle view with four tabs:
 - **Compare**: the bundle Compare, with another version of the same package,
   picked from its versions newest first, each with the day it was published. Its Dependencies section, in place
   of Packages, lists the dependencies only one version has and the ranges
-  that changed. Files that are not text compare by digest. **Swap** opens
+  that changed, each opening its package, and a changed one whose ranges
+  each name a version (`^1.2.0` → `^1.3.0`) its Compare between those.
+  Files, open from the start, show each file's type, and the files the open
+  version adds or changes their category as in the Files list, under the
+  Overview's warning where any of those can't be reviewed by reading them.
+  Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
   are pickers in the same order as for bundles, the version compared with
   first: picking the open side's opens that version compared with the same

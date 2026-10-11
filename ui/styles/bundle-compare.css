@@ -166,6 +166,9 @@
 }
 
 .bundle-compare-section { margin-bottom: 1rem; }
+/* A source's warning on the files the open one adds or changes, spaced as a
+   section over Files. */
+.bundle-compare-body > .npm-readability-warning { margin-bottom: 1rem; }
 .bundle-compare-section-head {
   margin: 0 0 .4rem;
   font-size: .7rem;
@@ -329,6 +332,10 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
   white-space: nowrap;
 }
 .bundle-compare-row-path.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* A package version's file rows, as its Files list's: its type's icon, and a
+   tag one width down the list. */
+.bundle-compare-row > .source-file-icon { flex-shrink: 0; width: 13px; height: 13px; margin-right: -.2rem; }
+.bundle-compare-row > .npm-encoding-tag { box-sizing: border-box; width: 4.4rem; text-align: center; }
 .bundle-compare-pkg-dot {
   width: 8px;
   height: 8px;

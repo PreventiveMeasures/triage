@@ -22,7 +22,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmTags: () => Promise.resolve({ tags: [] }),
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
-const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmPublished, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
+const { forgetNpmSearch, loadNpmVersion, npmCompareSource, npmDependencies, npmDependencyChanges, npmEntryFile, npmInstallScripts, npmPackageData, npmPackageDetails, npmPackageEntries, npmPackageEntry, npmPackageRoute, npmPublished, npmRangeVersion, npmRecentSearches, npmVersionList, openNpmRoute, parseNpmPackageInput, searchNpm } = await import('../ui/view/npm-package.js')
 
 const data = {
   name: '@scope/pkg', version: '1.2.3', private: false, integrity: 'sha512-pkg', tarballSize: 99,
@@ -76,10 +76,17 @@ test('two versions differ in the dependencies they name and the ranges they ask 
     { dependencies: { kept: '^1.0.0', moved: '^1.0.0', gone: '^1.0.0' }, peerDependencies: { react: '>=17' } },
     { dependencies: { kept: '^1.0.0', moved: '^2.0.0', fresh: '^1.0.0' }, peerDependencies: { react: '>=18' }, optionalDependencies: { gone: '^1.0.0' } },
   ), {
-    removed: [{ key: '\0gone', name: 'gone', kind: null, range: '^1.0.0' }],
-    added: [{ key: '\0fresh', name: 'fresh', kind: null, range: '^1.0.0' }, { key: 'optional\0gone', name: 'gone', kind: 'optional', range: '^1.0.0' }],
-    changed: [{ key: '\0moved', name: 'moved', kind: null, from: '^1.0.0', to: '^2.0.0' }, { key: 'peer\0react', name: 'react', kind: 'peer', from: '>=17', to: '>=18' }],
+    removed: [{ key: '\0gone', name: 'gone', kind: null, range: '^1.0.0', opens: 'gone' }],
+    added: [{ key: '\0fresh', name: 'fresh', kind: null, range: '^1.0.0', opens: 'fresh' }, { key: 'optional\0gone', name: 'gone', kind: 'optional', range: '^1.0.0', opens: 'gone' }],
+    changed: [{ key: '\0moved', name: 'moved', kind: null, from: '^1.0.0', to: '^2.0.0', opens: 'moved' }, { key: 'peer\0react', name: 'react', kind: 'peer', from: '>=17', to: '>=18', opens: 'react' }],
   })
+})
+
+test('a range names the version it takes the lowest of, where it names one', () => {
+  for (const [range, version] of [['1.2.3', '1.2.3'], ['^1.2.3', '1.2.3'], ['~1.2.3-beta.1', '1.2.3-beta.1'], ['=v1.0.0', '1.0.0'], ['npm:other@^2.0.0', '2.0.0'],
+    ['npm:@scope/other@3.1.0', '3.1.0'], ['>=17', null], ['^1.2', null], ['1.x', null], ['*', null], ['latest', null], ['>=1.0.0 <2', null]]) {
+    assert.equal(npmRangeVersion(range), version, range)
+  }
 })
 
 test('Compare offers the package\'s other versions, read once a session, and loads them as versions', async () => {
@@ -155,7 +162,12 @@ test('a Compare link opens the version with the one it compares with', async () 
   assert.equal(managedRoutePath(route), '/npm/@scope/pkg@1.2.3/compare/1.0.0/code')
   const treemap = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'treemap' }, () => true, () => {})
   assert.equal(managedRoutePath(treemap), '/npm/@scope/pkg@1.2.3/treemap')
-  assert.equal(state.bundleCompare, null)
+  assert.deepEqual(state.bundleCompare, { bundle: 'sha512-pkg', target: '1.0.0', mode: 'code' }, 'kept while another tab of the version is open')
+  const back = await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '1.2.3', bundleTab: 'compare' }, () => true, () => {})
+  assert.equal(managedRoutePath(back), '/npm/@scope/pkg@1.2.3/compare/1.0.0/code', 'and Compare opens with it again')
+  answer = () => Promise.resolve({ ...data, version: '2.0.0', integrity: 'sha512-other' })
+  await openNpmRoute({ view: 'npm', packageName: '@scope/pkg', packageSpec: '2.0.0' }, () => true, () => {})
+  assert.equal(state.bundleCompare, null, 'not by another version')
 })
 
 test('Code opens on what main names, resolved as require would', () => {

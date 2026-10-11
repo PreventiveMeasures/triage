@@ -249,6 +249,7 @@ export function npmCompareSource(entry) {
     load: async id => (await loadNpmVersion(name, id)).details,
     // In place of Packages, which a single package has no use for.
     dependencies: (base, other) => npmDependencyChanges(base?.npm?.manifest, other?.npm?.manifest),
+    openDependency,
     // A swap or a pick on this side opens `base`, compared with `target`.
     open: (base, target, mode) => {
       if (!isManagedUiMode() || !managedHistory?.active) return
@@ -310,6 +311,9 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
     searching = null
   }
   cleanupGraph2()
+  // What the version's Compare compared with stays while another of its tabs
+  // is open, as Back gives, for Compare to open with again.
+  const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)
   if (tab === 'code' && route.file != null) {
@@ -318,7 +322,7 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   }
   if (tab === 'compare' && route.compareSpec != null) {
     state.bundleCompare = { bundle: entry.integrity, target: route.compareSpec, mode: compareModeOf(route.compareMode) }
-  }
+  } else if (compared) state.bundleCompare = compared
   state.bundleDetails = details
   state.npmLookup = { input: entry.name, pending: false, error: null }
   state.currentManagedTeam = null
@@ -428,13 +432,30 @@ export function npmDependencyChanges(base, other) {
   const index = manifest => new Map(npmDependencies(manifest).map(row => [`${row.kind ?? ''}\0${row.name}`, row]))
   const after = index(other), before = index(base)
   const added = [], changed = [], removed = []
-  for (const [key, { name, kind, range }] of before) {
+  for (const [key, { name, kind, range, opens }] of before) {
     const next = after.get(key)
-    if (!next) removed.push({ key, name, kind, range })
-    else if (next.range !== range) changed.push({ key, name, kind, from: range, to: next.range })
+    if (!next) removed.push({ key, name, kind, range, opens })
+    else if (next.range !== range) changed.push({ key, name, kind, from: range, to: next.range, opens: next.opens })
   }
-  for (const [key, { name, kind, range }] of after) if (!before.has(key)) added.push({ key, name, kind, range })
+  for (const [key, { name, kind, range, opens }] of after) if (!before.has(key)) added.push({ key, name, kind, range, opens })
   return { removed, added, changed }
+}
+
+// The version a range names, where it names one: `1.2.3`, or the lowest it
+// takes (`^1.2.3`, `~1.2.3`), an alias's (`npm:pkg@^1.2.3`) too.
+const RANGE_VERSION = /^(?:npm:(?:@[^/@]+\/)?[^/@]+@)?(?:[\^~]|=)?v?(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)$/u
+export const npmRangeVersion = range => RANGE_VERSION.exec(range.trim())?.[1] ?? null
+const aliasOf = range => /^npm:((?:@[^/@]+\/)?[^/@]+)@/u.exec(range)?.[1] ?? null
+
+// A dependency Compare lists opens its package, as the Overview's do; a
+// changed one whose ranges each name a version of the same package opens
+// its Compare between those.
+function openDependency({ opens, from, to }) {
+  if (!opens) return
+  const after = to && npmRangeVersion(to), before = from && npmRangeVersion(from)
+  if (!before || !after || before === after || aliasOf(from) !== aliasOf(to)) { navigateToNpm(opens); return }
+  if (!isManagedUiMode() || !managedHistory?.active) return
+  void managedHistory.navigate({ view: 'npm', packageName: opens, packageSpec: after, bundleTab: 'compare', compareSpec: before })
 }
 
 // The Overview's Dependencies column, in place of the Packages one a single

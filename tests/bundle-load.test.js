@@ -412,6 +412,16 @@ it('every source-to-metadata tab transition aborts contents and retains metadata
   }
 })
 
+it('a tab switch keeps what Compare compares with, for its tab to open with again; another bundle drops it', () => {
+  selectBundle(entry.integrity, 'compare')
+  state.bundleCompare = { bundle: entry.integrity, target: 'sha512-other', mode: 'code' }
+  selectBundleTab('overview')
+  selectBundleTab('compare')
+  assert.deepEqual(state.bundleCompare, { bundle: entry.integrity, target: 'sha512-other', mode: 'code' })
+  selectBundle('sha512-another', 'compare')
+  assert.equal(state.bundleCompare, null)
+})
+
 it('an immediate source-tab return retries the same metadata and cannot inherit the cancelled upgrade', async () => {
   state.bundles = [{ ...entry, managedId: 'managed-id', size: 123 }]
   await openBundle(entry.integrity)
