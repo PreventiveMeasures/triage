@@ -34,9 +34,11 @@
 // `options` are what the open one compares with, `choices` what may take
 // its place.
 //
-// Both sides are pickers. Picking the other side compares with it; picking
-// this side opens what was picked, compared with the same other side, and
-// picking the other side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
+// Both sides are pickers, the one picked to compare with first and the open
+// one second, the comparison reading from the first to the second: what the
+// open one adds is Added. Picking the first side compares with it; picking
+// the second opens what was picked, compared with the same first side, and
+// picking the first side's bundle there swaps the two. `dependencies` lists what replaces Packages: removed,
 // added and changed rows, `{ key, name, kind, range }` or, changed, with
 // `from` and `to` in place of `range`.
 import { LitElement, html, nothing } from 'lit'
@@ -583,20 +585,22 @@ class BundleCompare extends LitElement {
       // Every file each side mounts, resources included: a diff of
       // source alone would call two bundles identical when only their
       // images differ, and total less than the Overview does.
-      const baseSources = bundleCompareFiles(this.details, this._scope)
-      const otherSources = bundleCompareFiles(this._otherDetails, this._scope)
+      // From the bundle picked to the open one.
+      const [from, to] = [this._otherDetails, this.details]
+      const baseSources = bundleCompareFiles(from, this._scope)
+      const otherSources = bundleCompareFiles(to, this._scope)
       // Classify original paths and preserve recorded Stasis package
       // boundaries from either side. Own source has one identity.
-      const baseDirs = bundlePackageDirs(this.details)
-      const otherDirs = bundlePackageDirs(this._otherDetails)
+      const baseDirs = bundlePackageDirs(from)
+      const otherDirs = bundlePackageDirs(to)
       const packageDirs = baseDirs || otherDirs
         ? new Map([...(baseDirs ?? []), ...(otherDirs ?? [])])
         : null
       const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
       this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
       this._diff.resolutions = computeResolutionDiff(
-        bundleCompareResolutions(this.details, this._scope),
-        bundleCompareResolutions(this._otherDetails, this._scope),
+        bundleCompareResolutions(from, this._scope),
+        bundleCompareResolutions(to, this._scope),
         new Map(this._diff.files.changed.filter(row => row.basePath != null).map(row => [row.basePath, row.path])),
       )
       // Dependency versions come from the stasis per-module `{ name,
@@ -607,8 +611,8 @@ class BundleCompare extends LitElement {
       // alone.
       // Keyed by install directory, as the sizes are (`bundlePkgOf`).
       const versionKey = dir => bundlePkgOf('', { packageDir: dir })
-      const baseVersions = bundlePackageVersions(this.details, this._scope ? baseSources.keys() : null, versionKey)
-      const otherVersions = bundlePackageVersions(this._otherDetails, this._scope ? otherSources.keys() : null, versionKey)
+      const baseVersions = bundlePackageVersions(from, this._scope ? baseSources.keys() : null, versionKey)
+      const otherVersions = bundlePackageVersions(to, this._scope ? otherSources.keys() : null, versionKey)
       this._diff.versionUpdates = computeVersionUpdates(baseVersions, otherVersions)
       this._diff.packageRows = comparePackages(this._diff.packages, baseVersions, otherVersions)
       this._diffKey = key
@@ -620,7 +624,7 @@ class BundleCompare extends LitElement {
   // with the line models found on the way, kept with the comparison.
   _combinedFor() {
     const diff = this._diffFor()
-    return diff.combined ??= combinedDiffRows(this.details, this._otherDetails, diff.files)
+    return diff.combined ??= combinedDiffRows(this._otherDetails, this.details, diff.files)
   }
 
   // Whether the Diff view is offered: only while its list is short enough to
@@ -679,17 +683,17 @@ class BundleCompare extends LitElement {
     const noun = this.source?.noun ?? 'bundle'
     const Noun = `${noun[0].toUpperCase()}${noun.slice(1)}`
     return html`<div class="bundle-compare-picker">
-      <div class="bundle-compare-select-wrap bundle-compare-base-wrap">
-        <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .versions=${Boolean(this.source)}
-          label=${`${Noun} to compare`} placeholder=${this._nameFor(this.integrity)} @bundle-change=${event => this._pickBase(event.detail.value)}></bundle-selector>
+      <div class="bundle-compare-select-wrap">
+        <span class="bundle-compare-select-hint">Compare</span>
+        <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .versions=${Boolean(this.source)}
+          label=${`${Noun} to compare with`} placeholder=${`Choose a ${noun}…`} @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
+        ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>` : nothing}
       </div>
       <span class="bundle-compare-arrow" aria-hidden="true">→</span>
       <div class="bundle-compare-select-wrap">
-        <span class="bundle-compare-select-hint">Compare with</span>
-        <bundle-selector .bundles=${others} .value=${this._targetIntegrity} .noun=${noun} .versions=${Boolean(this.source)}
-          label=${`${Noun} to compare with`} placeholder=${`Choose a ${noun}…`} @bundle-change=${event => this._pick(event.detail.value)}></bundle-selector>
-        ${hasTarget ? html`<button type="button" class="bundle-compare-clear" aria-label="Clear comparison" @click=${() => this._pick(null)}>×</button>
-          <button
+        <bundle-selector .bundles=${this._baseOptions()} .value=${this._baseKey} .noun=${noun} .versions=${Boolean(this.source)}
+          label=${`${Noun} to compare`} placeholder=${this._nameFor(this.integrity)} @bundle-change=${event => this._pickBase(event.detail.value)}></bundle-selector>
+        ${hasTarget ? html`<button
             type="button"
             class="bundle-compare-swap"
             @click=${() => this._swap()}
@@ -788,19 +792,20 @@ class BundleCompare extends LitElement {
         ${picker}
         ${this._baseReady && ready ? this._renderSummary(this._diffFor()) : nothing}
       </header>
-      ${mode === 'code' ? html`<bundle-compare-code .base=${this.details} .other=${this._otherDetails} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
-          .path=${this._codePath} baseName=${this._nameFor(this.integrity)} otherName=${this._nameFor(this._targetIntegrity)}
+      ${mode === 'code' ? html`<bundle-compare-code .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files} .resolutions=${this._diffFor().resolutions.changed}
+          .path=${this._codePath} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}
           @compare-code-select=${event => { this._codePath = event.detail.path }}></bundle-compare-code>`
-        : mode === 'diff' ? html`<bundle-compare-all .base=${this.details} .other=${this._otherDetails} .files=${this._diffFor().files}
-          .models=${this._combinedFor().models} baseName=${this._nameFor(this.integrity)} otherName=${this._nameFor(this._targetIntegrity)}></bundle-compare-all>`
+        : mode === 'diff' ? html`<bundle-compare-all .base=${this._otherDetails} .other=${this.details} .files=${this._diffFor().files}
+          .models=${this._combinedFor().models} baseName=${this._nameFor(this._targetIntegrity)} otherName=${this._nameFor(this.integrity)}></bundle-compare-all>`
         : html`<div class="bundle-compare-body">${body}</div>`}
     </div>`
   }
 
   _renderDiff() {
     const diff = this._diffFor()
-    const otherName = this._nameFor(this._targetIntegrity)
-    const baseName = this._nameFor(this.integrity)
+    // From the one picked to the open one.
+    const baseName = this._nameFor(this._targetIntegrity)
+    const otherName = this._nameFor(this.integrity)
     // Display paths are prefix-stripped over the union of everything
     // listed, so the rows don't repeat a shared build-output root; the
     // click target keeps the original (un-stripped) key.
@@ -821,7 +826,7 @@ class BundleCompare extends LitElement {
     // lane for each kind Files lists; otherwise each lays out its own kinds,
     // Packages without an empty column.
     // A source may list its own dependencies in place of Packages.
-    const dependencies = this.source?.dependencies?.(this.details, this._otherDetails) ?? null
+    const dependencies = this.source?.dependencies?.(this._otherDetails, this.details) ?? null
     const packageLanes = LANES.filter(kind => (dependencies ?? diff.packageRows)[kind].length > 0)
     const fileKinds = listsFiles ? LANES.filter(kind => files[kind].length > 0) : []
     const fileLanes = fileKinds.every(kind => packageLanes.includes(kind)) ? packageLanes : fileKinds

@@ -29,7 +29,8 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Picker row — open bundle name → shared searchable bundle selector. */
+/* Picker row — the bundle compared with → the open one, each a searchable
+   bundle selector. */
 .bundle-compare-picker {
   display: flex;
   align-items: center;
@@ -38,24 +39,21 @@
   min-width: 0;
 }
 .bundle-compare-arrow { flex-shrink: 0; color: var(--muted); }
+/* The two halves share the row alike, the hint and clear button of the first
+   about as wide as the swap button of the second, so their selectors match. */
 .bundle-compare-select-wrap {
   display: inline-flex;
   align-items: center;
   gap: .35rem;
-  flex: 1 1 18rem; min-width: 0;
+  flex: 1 1 20rem; min-width: 0; max-width: 36rem;
 }
-/* Room for the swap button too, so a narrow row wraps the scope selector
-   rather than squeezing the bundle selector. */
-.bundle-compare-select-wrap:has(.bundle-compare-swap) { flex-basis: 24rem; }
-/* The open bundle's own picker: the narrower of the two, with no hint. */
-.bundle-compare-base-wrap { flex: 1 1 14rem; max-width: 24rem; }
 .bundle-compare-select-hint {
   font-size: .64rem;
   text-transform: uppercase;
   letter-spacing: .04em;
   color: var(--muted);
 }
-.bundle-compare-select-wrap bundle-selector { flex: 1; min-width: 0; max-width: 32rem; }
+.bundle-compare-select-wrap bundle-selector { flex: 1; min-width: 0; }
 /* Scope selector — at the right end of the picker row. */
 .bundle-compare-picker > bundle-scope-selector { margin-left: auto; }
 /* Clear button — a square as tall as the swap button, the glyph centered

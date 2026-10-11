@@ -83,7 +83,8 @@ test('Differences renders resolution-only changes as a collapsed File | Import |
   const row = markup.slice(markup.indexOf('<tbody>'))
   // Lazy up to the tag's end: a click handler renders inline here, `=>` and all.
   const cells = [...row.matchAll(/<td[^>]*>\s*<(?:button|code|span)[^]*?>([^<>]*)</gu)].map(m => m[1])
-  assert.deepEqual(cells, ['app.js', 'dep', 'a.js', 'b.js', 'node, import'])
+  // From the one picked to compare with, b.js, to the open one, a.js.
+  assert.deepEqual(cells, ['app.js', 'dep', 'b.js', 'a.js', 'node, import'])
   assert.match(markup, /File contents are unchanged; import resolutions differ/u)
   assert.doesNotMatch(markup, /These two bundles carry identical files/u)
   assert.match(renderText(view._renderSummary(view._diffFor())), /1 repointed resolution/u)
@@ -263,8 +264,8 @@ test('a package installed under an npm alias keeps one row, its versions joined 
       ['node_modules/alias', { name: 'actual-package', version, files: { 'index.js': code } }]]),
   }) })
   const view = compare()
-  view.details = side('base', '1.0.0', 'one')
-  view._otherDetails = side('other', '1.1.0', 'one, two')
+  view.details = side('other', '1.1.0', 'one, two')
+  view._otherDetails = side('base', '1.0.0', 'one')
   view._diffKey = null
   const { packageRows } = view._diffFor()
   assert.deepEqual(packageRows.removed, [])
@@ -369,8 +370,8 @@ test('the Overview lists a renamed file under Changed as `{old → new}`, and th
     modules: new Map([['.', { name: 'app', version: '1.0.0', files }]]),
   }) })
   const view = compare()
-  view.details = side('base', { 'src/app.js': 'one', 'src/util.js': 'u' })
-  view._otherDetails = side('other', { 'src/app.js': 'one', 'lib/util.ts': 'u: 1' })
+  view.details = side('other', { 'src/app.js': 'one', 'lib/util.ts': 'u: 1' })
+  view._otherDetails = side('base', { 'src/app.js': 'one', 'src/util.js': 'u' })
   view._diffKey = null
   view._openSections = new Set(['files'])
   const markup = renderText(view._renderDiff())
@@ -413,7 +414,7 @@ test('a source\'s options, names and loads stand in for the bundles on hand', as
   const diff = renderText(view._renderDiff())
   assert.match(diff, /<h3 class="bundle-compare-section-head">Dependencies<\/h3>/u, 'its dependencies in place of Packages')
   assert.doesNotMatch(diff, />Packages</u)
-  assert.match(diff, /Added · only in pkg@1\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
+  assert.match(diff, /Added · only in pkg@2\.0\.0[^]*dep[^]*npm-dependency-kind">peer[^]*\^1\.0\.0/u)
 })
 
 test('a source opens the other side to swap, which compares with the old base once it arrives', async () => {

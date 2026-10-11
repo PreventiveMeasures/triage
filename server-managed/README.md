@@ -196,9 +196,10 @@ fetching report contents or changing the catalogue used to open a team.
 Bundle links retain the clicked team, even when several teams share a repository.
 The optional tab suffix is omitted for Overview. Reload and Back/Forward restore
 the tab; switching bundles retains it when available. Compare's two sides are
-both pickers: the open bundle's opens the bundle picked, compared with the same
-one (picking that one swaps the two), and the other's picks what to compare
-with. Compare offers accessible
+both pickers, the one compared with first and the open bundle second, the
+changes reading from the first to the second. The first picks what to compare
+with; the second opens the bundle picked, compared with the same one (picking
+that one swaps the two). Compare offers accessible
 bundles assigned to the same repository, including bundles not previously opened.
 Unattached bundles cannot be compared with each other. Past its Overview,
 Compare reviews the changes in **Code**, a file at a time beside the tree of
@@ -1154,8 +1155,9 @@ control. A version shows in the bundle view with four tabs:
   of Packages, lists the dependencies only one version has and the ranges
   that changed. Files that are not text compare by digest. **Swap** opens
   the version compared with, comparing it with the one before. Both sides
-  are pickers, as for bundles: picking the open side's opens that version
-  compared with the same one, and picking the other side's swaps them. Code
+  are pickers in the same order as for bundles, the version compared with
+  first: picking the open side's opens that version compared with the same
+  one, and picking the other side's swaps them. Code
   and Diff review the changes as for bundles.
 
 A dist-tag link, such as `/npm/lodash`, is committed to history at the exact

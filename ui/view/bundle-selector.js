@@ -48,10 +48,13 @@ class BundleSelector extends SearchableSelector {
     .option .name { line-height: 1.3; }
     .option .bundle-icon { flex-basis: 1.35rem; width: 1.35rem; height: 1.35rem; margin-right: .15rem; }
     .secondary { line-height: 1.25; font-variant-numeric: tabular-nums; }
+    /* A column fits the longest number and the longest line under it, set in
+       .76em, so its characters are .76 of the number's wide. */
     :host([versions]) .group {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--option-width, 6ch) + 1rem)), 1fr)); gap: .1rem;
-      font-size: .76rem;
+      display: grid; gap: .1rem; font-size: .76rem;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(max(var(--option-width, 6ch), var(--secondary-width, 0ch) * .76) + 1rem)), 1fr));
     }
+    :host([versions]) .secondary { font-size: .76em; }
     :host([versions]) .option { flex-wrap: wrap; align-content: start; gap: 0 .4rem; padding: .3rem .45rem; font-variant-numeric: tabular-nums; }
     :host([versions]) .option > svg, :host([versions]) .option .bundle-icon { display: none; }
     :host([versions]) .option-copy { flex: 0 1 auto; }
@@ -72,8 +75,9 @@ class BundleSelector extends SearchableSelector {
   willUpdate(changed) {
     if (changed.has('bundles') && this.bundles) this.options = bundleOptions(this.bundles)
     if (changed.has('options') && this.versions) {
-      const longest = this.options.reduce((most, option) => Math.max(most, shownLabel(option).length), 0)
-      this.style.setProperty('--option-width', `${Math.min(longest, 28)}ch`)
+      const longest = text => Math.min(Math.max(0, ...this.options.map(option => text(option)?.length ?? 0)), 28)
+      this.style.setProperty('--option-width', `${longest(shownLabel)}ch`)
+      this.style.setProperty('--secondary-width', `${longest(option => option.secondary)}ch`)
     }
   }
 
