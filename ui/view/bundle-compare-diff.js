@@ -29,14 +29,19 @@ import { resolutionKey } from './bundle-compare-inputs.js'
 // `renames` (base path → other path, see detectRenames) names base files as
 // the other bundle does: a renamed importer's resolutions pair with its new
 // path's, reported under it, and a target renamed is the same target.
-// `basePaths` (computeBundleDiff's) names the rest where the bundles' roots
-// differ, a base target shown as the other bundle would lay it out.
-export function computeResolutionDiff(base, other, renames = new Map(), basePaths = new Map()) {
-  const renamed = path => renames.get(path) ?? basePaths.get(path) ?? path
+// `basePaths` and `root` (computeBundleDiff's `files`) name the rest where
+// the bundles' roots differ, a base target shown as the other bundle would
+// lay it out; a path no file has (an importer the bundle didn't capture, a
+// builtin) may read either as it is or through the root.
+export function computeResolutionDiff(base, other, renames = new Map(), basePaths = new Map(), root = null) {
+  const names = path => {
+    const known = renames.get(path) ?? basePaths.get(path)
+    return known === undefined ? [...new Set([path, through(root, path) ?? path])] : [known]
+  }
   const changed = []
   for (const before of base.values()) {
-    const after = other.get(resolutionKey(renamed(before.parent), before.specifier, before.conditions, before.platform))
-    if (after && renamed(before.target) !== after.target) {
+    const after = names(before.parent).map(parent => other.get(resolutionKey(parent, before.specifier, before.conditions, before.platform))).find(Boolean)
+    if (after && !names(before.target).includes(after.target)) {
       const { target: otherTarget, ...identity } = after
       changed.push({ ...identity, baseTarget: basePaths.get(before.target) ?? before.target, otherTarget })
     }
@@ -149,32 +154,38 @@ export function detectRenames(removed, added, pkgOf) {
 // above it. `paired` counts the files the other has, `moved` those reached
 // through the root.
 function rootPaths(base, other, root) {
-  const through = path => {
-    if (!root) return path
-    if (root.base === '') return `${root.other}${path}`
-    return path.startsWith(root.base) ? path.slice(root.base.length) : null
-  }
   const paths = new Map(), taken = new Set()
   let moved = 0
   for (const path of base) {
-    const to = through(path)
+    const to = through(root, path)
     if (to === null || !other.has(to)) continue
     paths.set(path, to)
     taken.add(to)
     if (to !== path) moved++
   }
-  let paired = paths.size
+  for (const path of base) {
+    if (paths.has(path) || !other.has(path) || taken.has(path)) continue
+    paths.set(path, path)
+    taken.add(path)
+  }
+  const paired = paths.size
+  // The rest clear of every path taken, a `../` more where one is.
   for (const path of base) {
     if (paths.has(path)) continue
-    if (other.has(path) && !taken.has(path)) {
-      paths.set(path, path)
-      taken.add(path)
-      paired++
-    } else {
-      paths.set(path, through(path) ?? `${'../'.repeat(root.base.split('/').length - 1)}${path}`)
-    }
+    let to = through(root, path) ?? `${'../'.repeat(root.base.split('/').length - 1)}${path}`
+    while (other.has(to) || taken.has(to)) to = `../${to}`
+    paths.set(path, to)
+    taken.add(to)
   }
   return { paths, paired, moved }
+}
+
+// A base path through `root` as the other bundle lays it out, or null for
+// one outside a base root.
+function through(root, path) {
+  if (!root) return path
+  if (root.base === '') return `${root.other}${path}`
+  return path.startsWith(root.base) ? path.slice(root.base.length) : null
 }
 
 // The directory one bundle's files sit under in the other, where that is

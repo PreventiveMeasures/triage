@@ -625,6 +625,7 @@ class BundleCompare extends LitElement {
         bundleCompareResolutions(to, this._scope),
         new Map(this._diff.files.changed.filter(row => row.renamedFrom != null).map(row => [row.basePath, row.path])),
         this._diff.files.basePaths,
+        this._diff.files.root,
       )
       // Dependency versions come from the stasis per-module `{ name,
       // version }` metadata, not the path/byte walk above, so they're

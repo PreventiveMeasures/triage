@@ -488,6 +488,17 @@ describe('bundles taken from different roots', () => {
     assert.equal(totals.identical, true)
   })
 
+  it('gives every base file a path of its own, one the root cannot place a `../` further out', () => {
+    const base = m({ 'src/a.js': 'a', 'src/b.js': 'b', 'a.js': 'x', '../a.js': 'y' })
+    const other = m({ 'a.js': 'a', 'b.js': 'b', '../a.js': 'y' })
+    const { files, totals } = computeBundleDiff(base, other, own)
+    assert.deepEqual(files.root, { base: 'src/', other: '' })
+    assert.equal(new Set(files.basePaths.values()).size, 4)
+    assert.deepEqual(files.onlyBase, [{ path: '../../a.js', basePath: 'a.js', bytes: 1 }])
+    assert.equal(totals.unchangedFiles, 3)
+    assert.equal(totals.baseBytes, 4)
+  })
+
   it('keeps paths as they are where they line up, or only a few would move', () => {
     assert.equal(detectRoot(['a.js', 'b.js', 'lib/a.js'], ['a.js', 'b.js', 'lib/a.js']), null)
     assert.equal(detectRoot(['a.js', 'b.js', 'c.js', 'd.js'], ['src/a.js', 'x.js', 'y.js', 'z.js']), null, 'one file of four')
