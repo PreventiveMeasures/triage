@@ -895,8 +895,9 @@ replaced by the new copy's `[b0, b1)`), and, where its names could not be
 given safely, why (`unparsed`, `dynamic` for `eval` or `with`, `jsx`,
 `block-function` for a function declared in a block read past it outside a
 module, `unverified`), the old copy then as it was. Each diff runs in a
-worker thread, off the event loop, two at a time per process (429
-`diff-busy` past that), for at most a minute (504 `diff-timeout`); a file
+worker thread, off the event loop, two at a time per process, up to sixteen
+more waiting their turn (429 `diff-busy` past that, as a Diff view asks for
+every file it shows at once), for at most a minute (504 `diff-timeout`); a file
 that does not format is refused as by `pretty`. The last few answers are kept
 in memory by both files' hashes, each side read through the pretty-print
 cache first. The reader needs access to both bundles, checked before and

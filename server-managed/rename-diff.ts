@@ -23,8 +23,11 @@ import { PrettyError, type PrettyRequest } from './pretty-print.ts'
 
 // What a minifier renames: JavaScript, as the viewer offers it for.
 const RENAMABLE = new Set(['js', 'mjs', 'cjs'])
-// Diffs worked out at once per process, each in a worker of its own.
+// Diffs worked out at once per process, each in a worker of its own, and
+// those waiting their turn past them (a Diff view asks for all it shows at
+// once), any more refused.
 const MAX_ACTIVE_DIFFS = 2
+const MAX_WAITING_DIFFS = 16
 // The longest a diff may take, and the most text it is asked of: both sides
 // pretty-printed, which the largest files formatted (MAX_PRETTY_BYTES) stay
 // under.
@@ -59,12 +62,26 @@ export async function prettyText(copy: OpenedBlob): Promise<string> {
 }
 
 let activeDiffs = 0
+const waiting: Array<() => void> = []
 const kept = new Map<string, Buffer>()
 const pending = new Map<string, Promise<Buffer>>()
 
-function inWorker(before: string, after: string, { base, other, ignoreWhitespace }: RenameDiffRequest): Promise<RenameDiff> {
-  if (before.length + after.length > MAX_DIFF_CHARS) return Promise.reject(new PrettyError(413, 'diff-too-large'))
-  if (activeDiffs >= MAX_ACTIVE_DIFFS) return Promise.reject(new PrettyError(429, 'diff-busy'))
+// A worker's turn, waited for behind those running; given up, it goes to the
+// next one waiting.
+async function turn(): Promise<void> {
+  if (activeDiffs < MAX_ACTIVE_DIFFS) { activeDiffs++; return }
+  if (waiting.length >= MAX_WAITING_DIFFS) throw new PrettyError(429, 'diff-busy')
+  await new Promise<void>(resolve => { waiting.push(resolve) })
+}
+function done() {
+  const next = waiting.shift()
+  if (next) next()
+  else activeDiffs--
+}
+
+async function inWorker(before: string, after: string, { base, other, ignoreWhitespace }: RenameDiffRequest): Promise<RenameDiff> {
+  if (before.length + after.length > MAX_DIFF_CHARS) throw new PrettyError(413, 'diff-too-large')
+  await turn()
   let worker: Worker
   try {
     worker = new Worker(new URL('./rename-diff-worker.js', import.meta.url), {
@@ -72,10 +89,10 @@ function inWorker(before: string, after: string, { base, other, ignoreWhitespace
       resourceLimits: { maxOldGenerationSizeMb: 1024 },
     })
   } catch (err) {
+    done()
     console.warn('managed: a rename diff could not start:', err)
-    return Promise.reject(new PrettyError(503, 'unavailable'))
+    throw new PrettyError(503, 'unavailable')
   }
-  activeDiffs++
   return new Promise<RenameDiff>((resolve, reject) => {
     const timer = setTimeout(() => { reject(new PrettyError(504, 'diff-timeout')); void worker.terminate() }, DIFF_TIMEOUT_MS)
     worker.once('message', (diff: RenameDiff) => { resolve(diff); void worker.terminate() })
@@ -86,7 +103,7 @@ function inWorker(before: string, after: string, { base, other, ignoreWhitespace
     // Gone without an answer: run out of memory, or terminated.
     worker.once('exit', () => {
       clearTimeout(timer)
-      activeDiffs--
+      done()
       reject(new PrettyError(422, 'undiffable'))
     })
   })

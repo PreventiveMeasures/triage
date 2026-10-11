@@ -293,6 +293,17 @@ test('a rename diff is kept by both files\' types as well as their texts: a scri
   assert.deepEqual(module.blocks, [], 'a module\'s are its own, renamed')
 })
 
+test('rename diffs asked for at once past the workers running wait their turn', async t => {
+  const h = await setup(t)
+  const files = n => Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`dist/${i}.min.js`, n === 0 ? built.replace('n*2', `n*${i + 2}`) : rebuilt.replace('n*3', `n*${i + 9}`)]))
+  const [base, other] = [await h.seed(files(0)), await h.seed(files(1))]
+  const [olds, news] = [files(0), files(1)]
+  // Each copy pretty-printed first, as the view has them by then.
+  for (const [id, texts] of [[base, olds], [other, news]]) for (const [path, text] of Object.entries(texts)) assert.equal((await h.send(bundlePretty(id, path, fileHash(text)))).status, 200)
+  const asked = await Promise.all(Object.keys(olds).map(path => h.send(bundleRenameDiff(base, other, { path, hash: fileHash(olds[path]), otherPath: path, otherHash: fileHash(news[path]) }))))
+  assert.deepEqual(asked.map(res => res.status), [200, 200, 200, 200], 'a Diff view\'s four files')
+})
+
 test('a bundle rename diff checks access to both bundles and refuses what it cannot answer', async t => {
   const h = await setup(t)
   const [base, other] = [await h.seed({ 'dist/app.min.js': built, 'app.css': 'a{b:c}' }), await h.seed({ 'dist/app.min.js': rebuilt })]
