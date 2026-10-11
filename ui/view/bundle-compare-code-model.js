@@ -259,8 +259,9 @@ function nameless(text) {
     const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
     // A line beginning with `(`, `[` or a template goes on the line before
     // (`fn⏎(a)`, a call).
-    const ends = restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
-      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !(after === '' && /[([`]/u.test(text[at + raw.length] ?? ''))))
+    // Nor after a word a value must follow (`typeof⏎a`), but `return` and the like.
+    const ends = !(line !== -1 && BEFORE_VALUE.has(last) && !restricted) && (restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
+      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !(after === '' && /[([`]/u.test(text[at + raw.length] ?? '')))))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
@@ -550,7 +551,10 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   }
   const backward = new Map(), forward = new Map()
   const link = (map, from, to) => { if (!map.has(from)) map.set(from, new Set()); map.get(from).add(to) }
-  for (const [pa, pb] of pairs) na.names[pa].forEach((name, k) => { link(forward, name, nb.names[pb][k]); link(backward, nb.names[pb][k], name) })
+  // A pair reading names on one side its other does not (`{ a }` declared on
+  // one alone) is a change, its names linked to none.
+  const even = (pa, pb) => na.names[pa].length === nb.names[pb].length
+  for (const [pa, pb] of pairs) if (even(pa, pb)) na.names[pa].forEach((name, k) => { link(forward, name, nb.names[pb][k]); link(backward, nb.names[pb][k], name) })
   const sole = (from, to) => forward.get(from).size === 1 && backward.get(to).size === 1
   const blocks = [], renamed = new Set()
   const add = block => {
@@ -561,8 +565,9 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
   for (const [pa, pb] of pairs) {
     while (next < found.length && found[next].a0 <= pa) add(found[next++])
     const names = na.names[pa], others = nb.names[pb]
-    if (names.every((name, k) => name === others[k])) continue
-    if (names.every((name, k) => sole(name, others[k]))) renamed.add(pa)
+    if (!even(pa, pb)) add({ a0: pa, a1: pa + 1, b0: pb, b1: pb + 1 })
+    else if (names.every((name, k) => name === others[k])) continue
+    else if (names.every((name, k) => sole(name, others[k]))) renamed.add(pa)
     else add({ a0: pa, a1: pa + 1, b0: pb, b1: pb + 1 })
   }
   while (next < found.length) add(found[next++])
