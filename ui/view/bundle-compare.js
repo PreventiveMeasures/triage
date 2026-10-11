@@ -659,7 +659,8 @@ class BundleCompare extends LitElement {
   }
 
   // Summary band — dependency, size and line deltas, then the file delta
-  // with its four bucket chips beside it, wrapping on their own so the mode
+  // with its bucket chips beside it (a removed, added or changed count of
+  // none left out), wrapping on their own so the mode
   // tabs keep to the right of the first line. Sits under the picker once a
   // comparison is live.
   _renderSummary(diff) {
@@ -694,9 +695,9 @@ class BundleCompare extends LitElement {
           <span class=${`bundle-compare-metric-delta ${dirClass(totals.fileDelta)}`}>${formatCountDelta(totals.fileDelta)}</span>
         </div>
         <div class="bundle-compare-chips">
-          <span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>
-          <span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>
-          <span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>
+          ${totals.onlyBaseFiles > 0 ? html`<span class="bundle-compare-chip removed">−${totals.onlyBaseFiles.toLocaleString()} removed</span>` : nothing}
+          ${totals.onlyOtherFiles > 0 ? html`<span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>` : nothing}
+          ${totals.changedFiles > 0 ? html`<span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>` : nothing}
           <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
           ${diff.resolutions.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
         </div>
