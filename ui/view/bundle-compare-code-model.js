@@ -47,6 +47,10 @@ const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s
 // What a line ending in goes on past its line break: an operator, not a
 // postfix `++` or `--` (`a++⏎b`).
 const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
+// A postfix `++` or `--` ending what lies before a `/`, which then divides
+// (`x++ / y`): a prefix one there would update a regular expression. An odd
+// run of signs ends in a `+` or `-` of its own, a value to follow (`x+++/a/`).
+const POSTFIX = /(?<!\+)(?:\+\+)+$|(?<!-)(?:--)+$/u
 // The comments READ reads, in what lies between.
 const COMMENT = /\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
 // What in code may read a name by its spelling or is past reading: see
@@ -93,8 +97,8 @@ function substitutionCode(text, from, to) {
     if (!match || match.index >= to) return `${code}${text.slice(at, to)}`
     code += text.slice(at, match.index)
     const before = code.trimEnd()
-    if (match[0][0] === '/' && !/^\/[/*]/u.test(match[0]) && /[\p{ID_Continue}$)\]"`]$/u.test(before)
-      && !BEFORE_VALUE.has(before.match(/[\p{ID_Continue}$]+$/u)?.[0])) {
+    if (match[0][0] === '/' && !/^\/[/*]/u.test(match[0]) && (POSTFIX.test(before) || /[\p{ID_Continue}$)\]"`]$/u.test(before)
+      && !BEFORE_VALUE.has(before.match(/[\p{ID_Continue}$]+$/u)?.[0]))) {
       code += '/'
       at = match.index + 1
       continue
@@ -289,7 +293,8 @@ function nameless(text) {
     // A template whole, its nested ones in it.
     if (first === '`') READ.lastIndex = templateEnd(text, match.index)
     const token = first === '`' ? text.slice(match.index, READ.lastIndex) : match[0]
-    if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last) || (last?.length > 1 && !BEFORE_VALUE.has(last)))) {
+    if (first === '/' && token[1] !== '/' && token[1] !== '*'
+      && (/^[\p{L}\p{N}_$)\]"]$/u.test(last) || (last?.length > 1 && !BEFORE_VALUE.has(last)) || POSTFIX.test(code.trimEnd()))) {
       // A division: the `/` is an operator, and what follows is read again.
       at = match.index
       READ.lastIndex = at + 1
