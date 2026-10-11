@@ -4,6 +4,9 @@ import { DIFF_CONTEXT, changeStart, diffRows, lineDiff, markHighlighted, markSeg
 
 const lines = n => Array.from({ length: n }, (_, i) => `line ${i + 1}`)
 const text = list => list.map(line => `${line}\n`).join('')
+// A module's text, its top level its own: a script's names declared there are
+// globals, never hidden.
+const asModule = code => `${code}${code.endsWith('\n') || code === '' ? '' : '\n'}export {}\n`
 
 test('lines are numbered as the diff numbers them', () => {
   assert.deepEqual(textLines(''), [])
@@ -56,7 +59,7 @@ test('ignoring whitespace pairs lines that differ only in it', () => {
 })
 
 test('names a minifier renamed alike throughout are left out, and only those', () => {
-  const ignoring = (before, after) => lineDiff(text(before), text(after), { ignoreRenames: true })
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
   // A new function shifts every name after it: each still stands for one.
   const before = ['var Y = 1;', 'function q(n) {', '  return Y + n;', '}', 'q(Y);']
   const after = ['var X = 1;', 'function Z(n) {', '  return X + n;', '}', 'Z(X);']
@@ -89,37 +92,57 @@ test('names a minifier renamed alike throughout are left out, and only those', (
     ['let a = 1; eval/* c */("a");', 'let b = 1; eval/* c */("a");'], ['let a = 1; (eval)("a");', 'let b = 1; (eval)("a");'],
     ['let x\n++a', 'let y\n++b'], ['let x\n+a()', 'let y\n+b()'], ['let a, b;\n<!-- a', 'let b, a;\n<!-- b'], ['let a, b;\n--> a', 'let b, a;\n--> b'], ['let a = 1; f(`${eval("a")}`);', 'let b = 1; f(`${eval("a")}`);'], ['let a = 1; f(`${`${eval("a")}`}`);', 'let b = 1; f(`${`${eval("a")}`}`);'], ['let a = 1; f(`${x / \\u0065val("a") / y}`);', 'let b = 1; f(`${x / \\u0065val("a") / y}`);'], ['let a = 1; const z = function(){} / \\u0065val("a") / y;', 'let b = 1; const z = function(){} / \\u0065val("a") / y;'], ['let a = 1; x++ / eval("a") / y;', 'let b = 1; x++ / eval("a") / y;'], ['let a = 1; x-- /* c */ / \\u0065val("a") / y;', 'let b = 1; x-- /* c */ / \\u0065val("a") / y;'], ['let a = 1; f(`${x++ / eval("a") / y}`);', 'let b = 1; f(`${x++ / eval("a") / y}`);'], ['let a = 1; f(`${function(){} / \\u0065val("a") / y}`);', 'let b = 1; f(`${function(){} / \\u0065val("a") / y}`);'], ['class C { #a = 1; #b = 2; m() { let a; return this.#a } }', 'class C { #a = 1; #b = 2; m() { let b; return this.#b } }'], ['let a; class C { #a; static has(o) { return #a in o } }', 'let b; class C { #b; static has(o) { return #b in o } }'], ['let a = 1; const z = 0 > { a, valueOf() { return 0 } };', 'let b = 1; const z = 0 > { b, valueOf() { return 0 } };'], ['let a = 1; const z = 1. / eval("a") / y;', 'let b = 1; const z = 1. / eval("a") / y;'], ['let a; class C extends class {} { a() {} }', 'let b; class C extends class {} { b() {} }'], ['let a; class C extends function () {} { a() {} }', 'let b; class C extends function () {} { b() {} }'], ['let a; class C extends class extends B {} { a() {} }', 'let b; class C extends class extends B {} { b() {} }'], ['let a = 1; f(`${1. / \\u0065val("a") / y}`);', 'let b = 1; f(`${1. / \\u0065val("a") / y}`);'], ['let a = 1; f(`${"}"; eval("a")}`);', 'let b = 1; f(`${"}"; eval("a")}`);'], ['let a = 1; f(`${/* } */ eval("a")}`);', 'let b = 1; f(`${/* } */ eval("a")}`);'], ['let b; obj.a\u200Cb();', 'let c; obj.a\u200Cc();'], ['let a; class C { accessor a = 1 }', 'let b; class C { accessor b = 1 }'], ['for (let a of []) continue\n+a()', 'for (let b of []) continue\n+b()'], ['function f() { for (let a of []) return\n-a() }', 'function f() { for (let b of []) return\n-b() }'], ['let a; const x = <>1<a/></>;', 'let b; const x = <>1<b/></>;'], ['let a; const x = <>-<a/></>;', 'let b; const x = <>-<b/></>;'], ['let amp; const x = <>&amp;</>;', 'let gt; const x = <>&gt;</>;'], ['let a; class X { f = x++\n a() {} }', 'let b; class X { f = x++\n b() {} }'], ['const f = x ? a => a : a();', 'const g = x ? b => b : b();'], ['let x /*\n*/ foo()', 'let y /*\n*/ bar()'], ['let a; class X { @dec a() {} }', 'let b; class X { @dec b() {} }'], ['let a\n/a/.test(x)', 'let b\n/b/.test(x)'], ['let(a); a();', 'let(b); b();'], ['let a; class X extends <a /> {}', 'let b; class X extends <b /> {}'], ['let a; import "x"\n/a/.test(y)', 'let b; import "x"\n/b/.test(y)'], ['let aé; render(<aé />)', 'let bø; render(<bø />)'], ['let a = 1; \\u0065val("a");', 'let b = 1; \\u0065val("a");'], ['let a; x < <a />;', 'let b; x < <b />;'], ['#!/usr/bin/a\nlet a, b;', '#!/usr/bin/b\nlet b, a;'], ['let a; const x = {...<a/>};', 'let b; const x = {...<b/>};'],
     ['let a; class X extends m(class Y extends Z {}) { a() {} }', 'let b; class X extends m(class Y extends Z {}) { b() {} }'], ['let a; class C extends /a/.constructor {}', 'let b; class C extends /b/.constructor {}'], ['let a; o: while (x) { if (y) break o\n/a/.test(z) && f(); break }', 'let b; o: while (x) { if (y) break o\n/b/.test(z) && f(); break }'], ['let x\n-a', 'let y\n-b'], ['let a, b; a: { b: { break a; } f(); }', 'let b, a; a: { b: { break b; } f(); }']]) {
-    assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
+    assert.equal(lineDiff(asModule(`${global}\n`), asModule(`${other}\n`), { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
-  assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
-  assert.deepEqual(lineDiff('let a;\nif (x) {}\n/^\\s*$/.test(s) && a();\n', 'let b;\nif (x) {}\n/^\\s*$/.test(s) && b();\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('let a;\na();\n'), asModule('let b;\nb();\n'), { ignoreRenames: true }).blocks, [], 'declared, it is')
+  assert.deepEqual(lineDiff(asModule('let a;\nif (x) {}\n/^\\s*$/.test(s) && a();\n'), asModule('let b;\nif (x) {}\n/^\\s*$/.test(s) && b();\n'), { ignoreRenames: true }).blocks, [],
     'a regular expression after a block, with no escaped name in it')
-  assert.deepEqual(lineDiff('let a;\nn = x+++/\\//.test(s);\na();\n', 'let b;\nn = x+++/\\//.test(s);\nb();\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('let a;\nn = x+++/\\//.test(s);\na();\n'), asModule('let b;\nn = x+++/\\//.test(s);\nb();\n'), { ignoreRenames: true }).blocks, [],
     'a regular expression after a postfix `++` and a `+`')
-  assert.deepEqual(lineDiff('let a;\nf(`${g(() => { if (c) {} /[\\w-]/.test(s) })}`);\na();\n', 'let b;\nf(`${g(() => { if (c) {} /[\\w-]/.test(s) })}`);\nb();\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('let a;\nf(`${g(() => { if (c) {} /[\\w-]/.test(s) })}`);\na();\n'), asModule('let b;\nf(`${g(() => { if (c) {} /[\\w-]/.test(s) })}`);\nb();\n'), { ignoreRenames: true }).blocks, [],
     'a regular expression after a block in a substitution, with no escaped name in it')
-  assert.deepEqual(lineDiff('class C { #x = 1; m() { let a = this.#x; return a } }\n', 'class C { #x = 1; m() { let b = this.#x; return b } }\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('class C { #x = 1; m() { let a = this.#x; return a } }\n'), asModule('class C { #x = 1; m() { let b = this.#x; return b } }\n'), { ignoreRenames: true }).blocks, [],
     'a private name kept, a binding beside it renamed')
-  assert.deepEqual(lineDiff('const f = x => /* c */ { let a = x; return a };\n', 'const f = x => /* c */ { let b = x; return b };\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('const f = x => /* c */ { let a = x; return a };\n'), asModule('const f = x => /* c */ { let b = x; return b };\n'), { ignoreRenames: true }).blocks, [],
     'an arrow\'s body a block, a comment before it')
-  assert.deepEqual(lineDiff('class C extends class extends function () {} {} { m() { let a = 1; return a } }\nif (x) { let a = 2; f(a) }\n',
-    'class C extends class extends function () {} {} { m() { let b = 1; return b } }\nif (x) { let b = 2; f(b) }\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('class C extends class extends function () {} {} { m() { let a = 1; return a } }\nif (x) { let a = 2; f(a) }\n'),
+    asModule('class C extends class extends function () {} {} { m() { let b = 1; return b } }\nif (x) { let b = 2; f(b) }\n'), { ignoreRenames: true }).blocks, [],
     'classes and a function in an `extends`, each with its body, the blocks after them blocks')
-  assert.deepEqual(lineDiff('let a;\nf(`${s.replace(/[\\u0300-\\u036f]/g, "") / 2}`);\na();\n', 'let b;\nf(`${s.replace(/[\\u0300-\\u036f]/g, "") / 2}`);\nb();\n',
+  assert.deepEqual(lineDiff(asModule('let a;\nf(`${s.replace(/[\\u0300-\\u036f]/g, "") / 2}`);\na();\n'), asModule('let b;\nf(`${s.replace(/[\\u0300-\\u036f]/g, "") / 2}`);\nb();\n'),
     { ignoreRenames: true }).blocks, [], 'a regular expression\'s escapes in a substitution turn nothing off')
-  assert.deepEqual(lineDiff('let a;\nf(`x${c ? `y${z}` : `w`}v`, { a: 1 });\na();\n', 'let b;\nf(`x${c ? `y${z}` : `w`}v`, { a: 1 });\nb();\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('let a;\nf(`x${c ? `y${z}` : `w`}v`, { a: 1 });\na();\n'), asModule('let b;\nf(`x${c ? `y${z}` : `w`}v`, { a: 1 });\nb();\n'), { ignoreRenames: true }).blocks, [],
     'a template nested in a substitution read whole')
-  assert.deepEqual(lineDiff('let a;\nf("</a><select id=\'" + x);\ng(`<div>${x}</div>`);\na();\n', 'let b;\nf("</a><select id=\'" + x);\ng(`<div>${x}</div>`);\nb();\n',
+  assert.deepEqual(lineDiff(asModule('let a;\nf("</a><select id=\'" + x);\ng(`<div>${x}</div>`);\na();\n'), asModule('let b;\nf("</a><select id=\'" + x);\ng(`<div>${x}</div>`);\nb();\n'),
     { ignoreRenames: true }).blocks, [], 'HTML in a string or a template is no JSX')
-  assert.deepEqual(lineDiff('let a;\nf(`${x.replace(/[^\\w]/g, "@")}`);\na();\n', 'let b;\nf(`${x.replace(/[^\\w]/g, "@")}`);\nb();\n', { ignoreRenames: true }).blocks, [],
+  assert.deepEqual(lineDiff(asModule('let a;\nf(`${x.replace(/[^\\w]/g, "@")}`);\na();\n'), asModule('let b;\nf(`${x.replace(/[^\\w]/g, "@")}`);\nb();\n'), { ignoreRenames: true }).blocks, [],
     'nor does a regular expression\'s `\\` or a string\'s `@` in a substitution turn renames off')
-  assert.deepEqual(lineDiff('let a;\na(`Failed with \\n ${x} @user`);\n', 'let b;\nb(`Failed with \\n ${x} @user`);\n', { ignoreRenames: true }).blocks, [], 'a template\'s text turns nothing off')
-  assert.deepEqual(lineDiff('let e\u0301;\nf(e\u0301);\n', 'let o\u0301;\nf(o\u0301);\n', { ignoreRenames: true }).blocks, [], 'a name with a combining mark, whole')
-  assert.deepEqual(lineDiff('let f = c ? x => x : y => y;\nf();\n', 'let g = c ? z => z : w => w;\ng();\n', { ignoreRenames: true }).blocks, [], 'arrows either side of a `:`')
-  assert.deepEqual(lineDiff('let a; // C:\\@x\na();\n', 'let b; // C:\\@x\nb();\n', { ignoreRenames: true }).blocks, [], 'a comment\'s `\\` or `@` turns nothing off')
-  assert.deepEqual(lineDiff('#!/usr/bin/env node\nlet a;\na();\n', '#!/usr/bin/env node\nlet b;\nb();\n', { ignoreRenames: true }).blocks, [], 'under a hashbang too')
-  assert.deepEqual(lineDiff('let a,\nc\n= 1\nf(a, c)\n', 'let b,\nd\n= 1\nf(b, d)\n', { ignoreRenames: true }).blocks, [], 'a declaration going on past a line break')
-  assert.deepEqual(lineDiff('x: { let a = 1; f(a); break x; }\n', 'x: { let b = 1; f(b); break x; }\n', { ignoreRenames: true }).blocks, [], 'a labeled block is a block')
+  assert.deepEqual(lineDiff(asModule('let a;\na(`Failed with \\n ${x} @user`);\n'), asModule('let b;\nb(`Failed with \\n ${x} @user`);\n'), { ignoreRenames: true }).blocks, [], 'a template\'s text turns nothing off')
+  assert.deepEqual(lineDiff(asModule('let e\u0301;\nf(e\u0301);\n'), asModule('let o\u0301;\nf(o\u0301);\n'), { ignoreRenames: true }).blocks, [], 'a name with a combining mark, whole')
+  assert.deepEqual(lineDiff(asModule('let f = c ? x => x : y => y;\nf();\n'), asModule('let g = c ? z => z : w => w;\ng();\n'), { ignoreRenames: true }).blocks, [], 'arrows either side of a `:`')
+  assert.deepEqual(lineDiff(asModule('let a; // C:\\@x\na();\n'), asModule('let b; // C:\\@x\nb();\n'), { ignoreRenames: true }).blocks, [], 'a comment\'s `\\` or `@` turns nothing off')
+  assert.deepEqual(lineDiff(asModule('#!/usr/bin/env node\nlet a;\na();\n'), asModule('#!/usr/bin/env node\nlet b;\nb();\n'), { ignoreRenames: true }).blocks, [], 'under a hashbang too')
+  assert.deepEqual(lineDiff(asModule('let a,\nc\n= 1\nf(a, c)\n'), asModule('let b,\nd\n= 1\nf(b, d)\n'), { ignoreRenames: true }).blocks, [], 'a declaration going on past a line break')
+  assert.deepEqual(lineDiff(asModule('x: { let a = 1; f(a); break x; }\n'), asModule('x: { let b = 1; f(b); break x; }\n'), { ignoreRenames: true }).blocks, [], 'a labeled block is a block')
+})
+
+test('a script\'s top level is every script\'s, its names globals never left out; a module\'s or a CommonJS one\'s is its own', () => {
+  const hidden = (before, after) => lineDiff(before, after, { ignoreRenames: true }).blocks
+  assert.deepEqual(hidden('let a;\na();\n', 'let b;\nb();\n'), [{ a0: 0, a1: 2, b0: 0, b1: 2 }], 'a script\'s, another script may read')
+  assert.deepEqual(hidden('function a() {}\na();\n', 'function b() {}\nb();\n'), [{ a0: 0, a1: 2, b0: 0, b1: 2 }], 'a function\'s name there too')
+  assert.deepEqual(hidden('!function () {\n  let a;\n  a();\n}();\n', '!function () {\n  let b;\n  b();\n}();\n'), [], 'a function\'s own, in a script')
+  for (const [before, after, why] of [
+    ['import x from "m";\nlet a;\na(x);\n', 'import x from "m";\nlet b;\nb(x);\n', 'a module\'s, by its `import`'],
+    ['let a;\na();\nexport default 1;\n', 'let b;\nb();\nexport default 1;\n', 'by its `export`'],
+    ['const a = require("m");\na();\n', 'const b = require("m");\nb();\n', 'a CommonJS module\'s, by its `require`'],
+    ['let a = 1;\nmodule.exports = a;\n', 'let b = 1;\nmodule.exports = b;\n', 'by its `module.exports`'],
+    ['let a = 1;\nexports.k = a;\n', 'let b = 1;\nexports.k = b;\n', 'by its `exports`'],
+    ['let a;\nf(import.meta);\na();\n', 'let b;\nf(import.meta);\nb();\n', 'by its `import.meta`'],
+  ]) assert.deepEqual(hidden(before, after), [], why)
+  for (const [before, after, why] of [
+    ['let a;\nimport("m").then(a);\n', 'let b;\nimport("m").then(b);\n', 'an `import(…)` is no module\'s'],
+    ['let a;\nf("require(m)");\na();\n', 'let b;\nf("require(m)");\nb();\n', 'nor a string\'s `require(`'],
+    ['let a;\nx.require(m);\na();\n', 'let b;\nx.require(m);\nb();\n', 'nor a property\'s'],
+  ]) assert.notDeepEqual(hidden(before, after), [], why)
 })
 
 test('names left out are short bindings: never keywords, properties or keys, strings, templates, regular expressions, comments or longer names', () => {
@@ -139,10 +162,10 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['x . foo();', 'x . bar();'], ['x./* c */foo();', 'x./* c */bar();'], ['export default /foo/;', 'export default /bar/;'],
     ['class X extends m(B) { a() {} }', 'class X extends m(B) { b() {} }'], ['class X { f = 1\n a = 2 }', 'class X { f = 1\n b = 2 }'],
     // Each name renamed declared, so that only what keeps it can show it.
-  ]) assert.equal(lineDiff(`let a, foo; ${before}\n`, `let b, bar; ${after}\n`, { ignoreRenames: true }).blocks.length, 1, `${before} → ${after}`)
+  ]) assert.equal(lineDiff(asModule(`let a, foo; ${before}\n`), asModule(`let b, bar; ${after}\n`), { ignoreRenames: true }).blocks.length, 1, `${before} → ${after}`)
   // Read as a whole: every line of a comment or a template spanning lines is kept.
   for (const [before, after] of [[['/*', ' * foo', ' */', 'f(a);'], ['/*', ' * bar', ' */', 'f(a);']], [['f(`', '  foo', '`);'], ['f(`', '  bar', '`);']]]) {
-    assert.deepEqual(lineDiff(text(['let foo;', ...before]), text(['let bar;', ...after]), { ignoreRenames: true }).blocks, [{ a0: 2, a1: 3, b0: 2, b1: 3 }], before.join('⏎'))
+    assert.deepEqual(lineDiff(asModule(text(['let foo;', ...before])), asModule(text(['let bar;', ...after])), { ignoreRenames: true }).blocks, [{ a0: 2, a1: 3, b0: 2, b1: 3 }], before.join('⏎'))
   }
   // Where a statement is, names are bindings still: a block's, an arrow's, and divided.
   for (const [before, after] of [
@@ -150,7 +173,7 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['x = { k: v => { a(c); } };', 'x = { k: v => { b(c); } };'], ['x = a / 2 / c;', 'x = b / 2 / c;'], ['x = { k: a, [c]: 1 };', 'x = { k: b, [c]: 1 };'],
     ['export const k = f(a, c);', 'export const k = f(b, c);'], ['export function f(a) { return a; }', 'export function f(b) { return b; }'],
     ['if (a) x = c / 2;', 'if (b) x = c / 2;'], ['x = /[&<>"\']/g.test(a);', 'x = /[&<>"\']/g.test(b);'],
-  ]) assert.equal(lineDiff(`let a; ${before}\n`, `let b; ${after}\n`, { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
+  ]) assert.equal(lineDiff(asModule(`let a; ${before}\n`), asModule(`let b; ${after}\n`), { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   // Declared by a function's parameters, an arrow's, a `catch`'s, an import.
   for (const [before, after] of [
     ['function f(a, c = 1) { a(c); }', 'function f(b, c = 1) { b(c); }'], ['f((a) => a(c));', 'f((b) => b(c));'], ['f(a => a(c));', 'f(b => b(c));'],
@@ -159,9 +182,9 @@ test('names left out are short bindings: never keywords, properties or keys, str
     ['f(function a() { a(c); });', 'f(function b() { b(c); });'], ['class X { m(a) { a(c); } }', 'class X { m(b) { b(c); } }'],
     ['x = { async *m(a) { a(c); } };', 'x = { async *m(b) { b(c); } };'], ['f(function* (a) { a(c); });', 'f(function* (b) { b(c); });'], ['f(a => a(c), 1);', 'f(b => b(c), 1);'], ['for (let a of c) a(c);', 'for (let b of c) b(c);'],
     ['for (let a = 0; a < c; a++) { f(a); }', 'for (let b = 0; b < c; b++) { f(b); }'], ['function a() {} a(c);', 'function b() {} b(c);'],
-  ]) assert.equal(lineDiff(`${before}\n`, `${after}\n`, { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
+  ]) assert.equal(lineDiff(asModule(`${before}\n`), asModule(`${after}\n`), { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')
-  assert.equal(lineDiff('function f(a,  b) {}\n', 'function f(c, d) {}\n', { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
+  assert.equal(lineDiff(asModule('function f(a,  b) {}\n'), asModule('function f(c, d) {}\n'), { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
 })
 
 test('changed lines pair with the added line they were edited into, in unified and split rows alike', () => {

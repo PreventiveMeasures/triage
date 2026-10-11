@@ -152,6 +152,11 @@ const ARROW_BODY = /\s*=>\s*\{/uy
 // What a `let` declaring follows with, a name or a pattern: not `let(a)`,
 // a call where `let` is a name, as it may be outside strict code.
 const LET = /\s*[\p{L}_$[{]/uy
+// What follows an `import` that is no module's, a call (`import(…)`): not
+// `import.meta`, a module's alone.
+const IMPORT_CALL = /\s*\(/uy
+// What a CommonJS module, its top level a function's, holds.
+const COMMONJS = /(?<![.\p{ID_Continue}$])(?:require\s*\(|module\s*\.\s*exports(?![\p{ID_Continue}$])|exports\s*\.)/u
 // What a set-aside name leaves in its line.
 const NAMELESS = ''
 
@@ -198,8 +203,12 @@ function nameless(text) {
   }
   // Where a statement starts, a `function` or `class` declares its name.
   const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default'
+  // A script's top level is every script's: a name declared there is a
+  // global another may read (`var a` in one, `a()` in the next), kept. A
+  // module's (`import`, `export`) or a CommonJS one's, a function's, is its own.
+  let moduleLike = false
   const declaredFrom = (name, from) => {
-    for (let at = from; at !== -1; at = scopes[at].parent) if (scopes[at].names.has(name)) return true
+    for (let at = from; at !== -1; at = scopes[at].parent) if ((at !== 0 || moduleLike) && scopes[at].names.has(name)) return true
     return false
   }
   // Each `var`, `let` or `const` under way: the depth of its declarators,
@@ -413,6 +422,8 @@ function nameless(text) {
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       LET.lastIndex = at
       if (word === 'const' || word === 'var' || (word === 'let' && LET.test(text))) declarations.push({ binding: true, depth: opens.length, exported: exporting })
+      IMPORT_CALL.lastIndex = at
+      if (word === 'export' || (word === 'import' && !IMPORT_CALL.test(text))) moduleLike = true
       if (word === 'export') exporting = true
       else if (!DECLARES.has(word)) exporting = false
       if (word === 'async') named = { statement: statement(last), word: null }
@@ -426,6 +437,7 @@ function nameless(text) {
       }
     }
   }
+  if (COMMONJS.test(program.join(''))) moduleLike = true
   // A name no declaration in scope stands for is a global's, kept.
   for (const [piece, line, name, from] of setAside) {
     if (declaredFrom(name, from)) names[line].push(name)

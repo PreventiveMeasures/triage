@@ -112,13 +112,13 @@ test('a changed text file renders its diff and a binary one says so', () => {
 
 test('minified files diff pretty-printed, and names renamed alike throughout can be hidden', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
-  // A minifier's two builds: one function more, and every name after it moved.
-  const element = view('dist/app.min.js', [{ 'dist/app.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}\n` },
-    { 'dist/app.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);\n` }])
+  // A minifier's two builds of a CommonJS module: one function more, and every name after it moved.
+  const element = view('dist/app.min.js', [{ 'dist/app.min.js': `var Y=1;function q(n){return Y+n}${'q(Y);'.repeat(250)}module.exports=q;\n` },
+    { 'dist/app.min.js': `var X=1;function Z(n){return X+n}${'Z(X);'.repeat(250)}Z(1);module.exports=Z;\n` }])
   element.base.managedId = 'b1'
   element.other.managedId = 'b2'
-  pretty.set('b1:dist/app.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\n')
-  pretty.set('b2:dist/app.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\n')
+  pretty.set('b1:dist/app.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
+  pretty.set('b2:dist/app.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
   const off = renderText(element.render())
   assert.match(off, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'a minified file offers pretty-printing')
   state.bundleSourcePretty = true
@@ -126,7 +126,7 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   // Until both copies came, each hashed first.
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const formatted = renderText(element.render())
-  assert.match(formatted, /class="add">\+5<\/span><span class="del">−4/u, 'each copy line by line')
+  assert.match(formatted, /class="add">\+6<\/span><span class="del">−5/u, 'each copy line by line')
   element._setRenames(true)
   const renames = renderText(element.render())
   assert.match(renames, /class="add">\+1<\/span><span class="del">−0/u, 'what is new alone')
