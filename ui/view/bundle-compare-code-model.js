@@ -42,6 +42,9 @@ const RENAMED_MAX_LENGTH = 3
 // comment (a hashbang too, its first line), a regular expression (where a value starts: `/` after one
 // divides), a name, a bracket, or what lies between, operators and numbers.
 const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{L}\p{N}_$.\\])[\p{L}_$][\p{L}\p{N}_$]*|[()[\]{}]/gu
+// What a line ending in goes on past its line break: an operator, not a
+// postfix `++` or `--` (`a++⏎b`).
+const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
 // The comments READ reads, in what lies between.
 const COMMENT = /\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
 // Words after which a value starts, so a `/` begins a regular expression.
@@ -164,7 +167,7 @@ function nameless(text) {
     // after a declared name with no value (`let x⏎+a`), only `=` or `,` goes on.
     const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
     const ends = line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
-      : !/(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after))
+      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
@@ -192,7 +195,7 @@ function nameless(text) {
   // Ending its line, a value ends its class field: the next name is a key.
   const lineEnd = segment => {
     const line = segment.lastIndexOf('\n')
-    if (line !== -1 && opens.at(-1) === 'object' && segment.slice(line + 1).trim() === '' && !/[,=+\-*/%&|^<>?:!~.]$/u.test(segment.slice(0, line).trimEnd())) keyPlace = true
+    if (line !== -1 && opens.at(-1) === 'object' && segment.slice(line + 1).trim() === '' && !CONTINUES.test(segment.slice(0, line).trimEnd())) keyPlace = true
   }
   for (READ.lastIndex = 0; ;) {
     // A comment lies between what is read as spaces do, its line breaks
