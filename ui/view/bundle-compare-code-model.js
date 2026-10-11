@@ -202,8 +202,10 @@ function nameless(text) {
   // between: after a value, `of` a name there (`of / 2`).
   const divides = (word, code) => /^[\p{L}\p{N}_$)\]"]$/u.test(word)
     || (word?.length > 1 && (!BEFORE_VALUE.has(word) || (word === 'of' && !inHead()))) || VALUE_END.test(code.trimEnd())
-  // Where a statement starts, a `function` or `class` declares its name.
-  const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default'
+  // Where a statement starts, a `function` or `class` declares its name: after
+  // `else` too, a function declared there its function's outside strict code
+  // (`else function a() {}`), as one in a block is.
+  const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default' || word === 'else'
   // A script's top level is every script's: a name declared there is a
   // global another may read (`var a` in one, `a()` in the next), kept. A
   // module's (`import`, `export`) or a CommonJS one's, a function's, is its

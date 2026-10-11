@@ -162,6 +162,11 @@ test('a script\'s top level is every script\'s, its names globals never left out
     'a function declared in a block, read past it')
   assert.deepEqual(hidden('function f() { if (x) { function a() {} a() } }\nmodule.exports = f;\n', 'function f() { if (x) { function b() {} b() } }\nmodule.exports = f;\n'), [],
     'read in its block alone')
+  // One declared after `else` is its function's too, outside strict code: no expression's own name.
+  assert.equal(hidden('function f(x) { if (x) g(); else function a() {} return a }\nmodule.exports = f;\n', 'function f(x) { if (x) g(); else function b() {} return a }\nmodule.exports = f;\n').length, 1,
+    'a function declared after `else`, read past it')
+  assert.deepEqual(hidden('function f(x) { if (x) g(); else function a() {} return a }\nmodule.exports = f;\n', 'function f(x) { if (x) g(); else function b() {} return b }\nmodule.exports = f;\n'), [],
+    'renamed alike')
 })
 
 test('names left out are short bindings: never keywords, properties or keys, strings, templates, regular expressions, comments or longer names', () => {
