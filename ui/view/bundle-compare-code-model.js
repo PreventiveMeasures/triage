@@ -38,12 +38,14 @@ const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 
 // Names a minifier gives: longer ones are an API's or a person's, and one
 // changed is a change.
 const RENAMED_MAX_LENGTH = 3
-// What a text is read in, from where it is: a string, a template, a
-// comment (a hashbang too, its first line, and a script's `<!--` or
-// line-opening `-->`), a regular expression (where a value starts: `/` after one
-// divides), a name (as JavaScript tells its characters: `a\u200Cb` is one),
-// a bracket, or what lies between, operators and numbers.
-const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$.\\\u200C\u200D])[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
+// What a text is read in, from where it is: a string, a template's text (to
+// its end or a substitution's `${`, whose code is read as any, the text going
+// on after its `}`: TEMPLATE), a comment (a hashbang too, its first line, and
+// a script's `<!--` or line-opening `-->`), a regular expression (where a
+// value starts: `/` after one divides), a name (as JavaScript tells its
+// characters: `a\u200Cb` is one), a bracket, or what lies between, operators
+// and numbers.
+const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\$]|\\[\s\S]|\$(?!\{))*(?:`|\$\{)|\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$.\\\u200C\u200D])[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
 // What a line ending in goes on past its line break: an operator, not a
 // postfix `++` or `--` (`a++⏎b`).
 const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
@@ -55,78 +57,8 @@ const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
 const VALUE_END = /(?<!\+)(?:\+\+)+$|(?<!-)(?:--)+$|\d\.$/u
 // The comments READ reads, in what lies between.
 const COMMENT = /\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
-// What in code may read a name by its spelling or is past reading: see
-// `dynamic` in nameless.
-const DYNAMIC = /\b(?:eval|with)\b|[\\@]|<>/u
-
-// Templates and their substitutions (`${…}`), read as code is (READ, apart
-// so its place stays): READ alone ends a template at a nested one's
-// backtick (`${c ? `x` : `y`}`). Read amiss, a substitution runs on to the
-// end: more is tested, not less.
-const SUBSTITUTION = new RegExp(READ.source, 'gu')
-// Where the template whose backtick is at `start` ends, past its own.
-function templateEnd(text, start) {
-  for (let i = start + 1; i < text.length; i++) {
-    if (text[i] === '\\') i++
-    else if (text[i] === '`') return i + 1
-    else if (text[i] === '$' && text[i + 1] === '{') i = substitutionEnd(text, i + 2) - 1
-  }
-  return text.length
-}
-// Where the substitution from `from` (past its `${`) ends, past its `}`: a
-// brace in a string, a regular expression or a comment counts for none.
-function substitutionEnd(text, from) {
-  let depth = 1
-  for (SUBSTITUTION.lastIndex = from; ;) {
-    const match = SUBSTITUTION.exec(text)
-    if (!match) return text.length
-    if (match[0][0] === '`') SUBSTITUTION.lastIndex = templateEnd(text, match.index)
-    else if ((depth += match[0] === '{' ? 1 : match[0] === '}' ? -1 : 0) === 0) return SUBSTITUTION.lastIndex
-  }
-}
-// What a token adds to a substitution's code: a name or a bracket itself, a
-// template its own substitutions', a regular expression its words that read
-// names, a string `""` (no more of it), a comment nothing.
-const substituted = token => token[0] === '`' ? `\`${substitutions(token)}\`` : token[0] === '"' || token[0] === "'" ? '""'
-  : /^(?:\/[/*]|<!--|-->|#!)/u.test(token) ? ' ' : token[0] === '/' ? ` ${token.match(/\b(?:eval|with)\b/gu)?.join(' ') ?? ''} ` : token
-// The code from `from` to `to`, what lies between its tokens with them. A
-// `/` after a value divides, as in nameless (`x / \u0065val(a) / y`), what
-// follows read again.
-function substitutionCode(text, from, to) {
-  for (let at = from, code = ''; ;) {
-    SUBSTITUTION.lastIndex = at
-    const match = SUBSTITUTION.exec(text)
-    if (!match || match.index >= to) return `${code}${text.slice(at, to)}`
-    code += text.slice(at, match.index)
-    const before = code.trimEnd()
-    if (match[0][0] === '/' && !/^\/[/*]/u.test(match[0]) && (VALUE_END.test(before) || /[\p{ID_Continue}$)\]"`]$/u.test(before)
-      && !BEFORE_VALUE.has(before.match(/[\p{ID_Continue}$]+$/u)?.[0]))) {
-      code += '/'
-      at = match.index + 1
-      continue
-    }
-    const next = match[0][0] === '`' ? Math.min(templateEnd(text, match.index), to) : SUBSTITUTION.lastIndex
-    const token = text.slice(match.index, next)
-    code += substituted(token)
-    // After a `}`, a `/` read as a regular expression may divide (as in
-    // nameless): an escaped name in it is kept, its `\` turning renames off.
-    if (token[0] === '/' && before.endsWith('}') && token.includes('\\u')) code += '\\'
-    at = next
-  }
-}
-// The code in a template's substitutions, a nested template's too.
-function substitutions(template) {
-  let code = ''
-  for (let i = 1; i < template.length - 1; i++) {
-    if (template[i] === '\\') i++
-    else if (template[i] === '$' && template[i + 1] === '{') {
-      const end = substitutionEnd(template, i + 2)
-      code += `${substitutionCode(template, i + 2, end - 1)}\n`
-      i = end - 1
-    }
-  }
-  return code
-}
+// A template's text after a substitution's `}`, to its end or the next `${`.
+const TEMPLATE = /(?:[^`\\$]|\\[\s\S]|\$(?!\{))*(?:`|\$\{)/uy
 // Words after which a value starts, so a `/` begins a regular expression.
 const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'extends', 'in', 'instanceof', 'new', 'of', 'return',
   'throw', 'typeof', 'void', 'yield'])
@@ -290,6 +222,16 @@ function nameless(text) {
     const place = last === '*' ? segment.slice(0, end - 1).trimEnd().at(-1) : last
     keyPlace = (place === ',' || place === ';') && opens.at(-1) === 'object'
   }
+  // A template's text, kept as a string is: where it opens a substitution
+  // (`${`), code follows, a value starting there as after `(`.
+  const template = token => {
+    keep(token)
+    const open = token.endsWith('${')
+    program.push(`""${token.replaceAll(/[^\n]/gu, '')}${open ? '{' : ''}`)
+    if (open) opens.push('substitution')
+    last = open ? '(' : '"'
+    exporting = keyPlace = naming = parameters = false
+  }
   // Ending its line, a value ends its class field: the next name is a key.
   const lineEnd = segment => {
     const line = segment.lastIndexOf('\n')
@@ -305,10 +247,7 @@ function nameless(text) {
     between(gap, code)
     lineEnd(code)
     if (!match) break
-    const first = match[0][0]
-    // A template whole, its nested ones in it.
-    if (first === '`') READ.lastIndex = templateEnd(text, match.index)
-    const token = first === '`' ? text.slice(match.index, READ.lastIndex) : match[0]
+    const first = match[0][0], token = match[0]
     if (first === '/' && token[1] !== '/' && token[1] !== '*'
       && (/^[\p{L}\p{N}_$)\]"]$/u.test(last) || (last?.length > 1 && !BEFORE_VALUE.has(last)) || VALUE_END.test(code.trimEnd()))) {
       // A division: the `/` is an operator, and what follows is read again.
@@ -319,11 +258,10 @@ function nameless(text) {
       continue
     }
     at = READ.lastIndex
-    if (first === '"' || first === "'" || first === '`' || first === '/') {
+    if (first === '`') template(token)
+    else if (first === '"' || first === "'" || first === '/') {
       keep(token)
       program.push(`""${token.replaceAll(/[^\n]/gu, '')}`)
-      // A template's substitutions are code, kept whole: `${eval("a")}`.
-      if (first === '`' && DYNAMIC.test(substitutions(token))) dynamic = true
       // After a `}` a `/` may divide what a function, a class or an object
       // was (`function(){} / \u0065val(a) / y`), unknown here: read as a
       // regular expression, one holding what may read a name turns renames off.
@@ -331,6 +269,16 @@ function nameless(text) {
       // A module's name ends its `import` or `export … from`, as `;` does.
       last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
       exporting = keyPlace = naming = parameters = false
+    } else if (first === '}' && opens.at(-1) === 'substitution') {
+      // A substitution's end, its template's text going on.
+      opens.pop()
+      endArrows(opens.length + 1)
+      endLoops(opens.length + 1)
+      TEMPLATE.lastIndex = match.index + 1
+      at = READ.lastIndex = TEMPLATE.test(text) ? TEMPLATE.lastIndex : text.length
+      template(text.slice(match.index, at))
+      for (const depth of defaulted) if (depth > opens.length) defaulted.delete(depth)
+      while (declarations.length > 0 && opens.length < declarations.at(-1).depth) declarations.pop()
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
       program.push(token)
