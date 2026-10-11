@@ -303,6 +303,10 @@ function nameless(text) {
       program.push(`""${token.replaceAll(/[^\n]/gu, '')}`)
       // A template's substitutions are code, kept whole: `${eval("a")}`.
       if (first === '`' && DYNAMIC.test(substitutions(token))) dynamic = true
+      // After a `}` a `/` may divide what a function, a class or an object
+      // was (`function(){} / \u0065val(a) / y`), unknown here: read as a
+      // regular expression, one holding what may read a name turns renames off.
+      if (first === '/' && last === '}' && /\\u|\b(?:eval|with)\b/u.test(token)) dynamic = true
       // A module's name ends its `import` or `export … from`, as `;` does.
       last = first !== '/' && (last === 'import' || last === 'from') ? ';' : '"'
       exporting = keyPlace = naming = parameters = false
