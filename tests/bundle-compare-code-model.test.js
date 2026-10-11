@@ -148,6 +148,8 @@ test('a script\'s top level is every script\'s, its names globals never left out
     ['let a;\nimport("m").then(a);\n', 'let b;\nimport("m").then(b);\n', 'an `import(…)` is no module\'s'],
     ['let a;\nf("require(m)");\na();\n', 'let b;\nf("require(m)");\nb();\n', 'nor a string\'s `require(`'],
     ['let a;\nx.require(m);\na();\n', 'let b;\nx.require(m);\nb();\n', 'nor a property\'s'],
+    ['let a = 1;\nfunction f(require) { require("x") }\nout(a);\n', 'let b = 1;\nfunction f(require) { require("x") }\nout(b);\n', 'nor a parameter\'s'],
+    ['var require = g();\nlet a;\nrequire("x");\na();\n', 'var require = g();\nlet b;\nrequire("x");\nb();\n', 'nor the script\'s own'],
   ]) assert.notDeepEqual(hidden(before, after), [], why)
 })
 
