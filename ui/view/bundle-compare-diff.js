@@ -262,9 +262,24 @@ export function bundleLayout(base, other) {
 // directories moved with the root: a workspace package keyed by its
 // directory stays one package, and a base-only boundary still applies to
 // the file paired with it. The root's own `.` stays itself.
-export function layoutPackageDirs(baseDirs, otherDirs, { root, paths }) {
+export function layoutPackageDirs(baseDirs, otherDirs, layout) {
   if (!baseDirs && !otherDirs) return null
-  return new Map([...[...baseDirs ?? []].map(([path, dir]) => [paths.get(path) ?? path, rootDir(root, dir)]), ...otherDirs ?? []])
+  const files = Map.groupBy([...baseDirs ?? []], ([, dir]) => dir)
+  const dirs = new Map([...files].map(([dir, entries]) => [dir, layoutDir(layout, dir, entries.map(([path]) => path.slice(dir.length + 1)))]))
+  return new Map([...[...baseDirs ?? []].map(([path, dir]) => [layout.paths.get(path) ?? path, dirs.get(dir)]), ...otherDirs ?? []])
+}
+
+// A base module's directory as the other bundle lays out its files: where
+// `paths` placed one of them (`files`, by their paths in the module), a
+// fallback the root could not place clear of others included, else moved
+// with the root (rootDir). The root's own `.` stays itself.
+export function layoutDir({ root, paths }, dir, files) {
+  if (!root || dir === '.') return dir
+  for (const file of files) {
+    const to = paths.get(`${dir}/${file}`)
+    if (to?.endsWith(`/${file}`)) return to.slice(0, -file.length - 1)
+  }
+  return rootDir(root, dir)
 }
 
 // A base directory as the other bundle lays it out, as rootPaths lays out its

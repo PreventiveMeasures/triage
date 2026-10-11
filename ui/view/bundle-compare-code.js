@@ -31,7 +31,7 @@ import { EXPAND_STEP, changeStart, diffRows, hidesMixedWhitespace, lineDiff, mar
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { npmFileReadability } from './file-readability.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
-import { renameParts, rootDir, rootLabel } from './bundle-compare-diff.js'
+import { layoutDir, renameParts, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import './bundle-code-splitter.js'
 import { COLLAPSE_DIRS_ICON, COPY_ICON, NEXT_ICON, PREV_ICON, WRAP_ICON } from './lit-icons.js'
@@ -264,8 +264,8 @@ export class BundleCompareCode extends LitElement {
   _modules() {
     const base = this.base?.kind === 'stasis' ? this.base.bundle?.modules : null
     const other = this.other?.kind === 'stasis' ? this.other.bundle?.modules : null
-    const root = this.files?.root
-    return base || other ? new Map([...[...base ?? []].map(([dir, info]) => [rootDir(root, dir), info]), ...(other ?? [])]) : null
+    const layout = { root: this.files?.root, paths: this.files?.basePaths ?? new Map() }
+    return base || other ? new Map([...[...base ?? []].map(([dir, info]) => [layoutDir(layout, dir, Object.keys(info.files ?? {})), info]), ...(other ?? [])]) : null
   }
 
   // The base bundle's directories as the tree lays them out: the other
