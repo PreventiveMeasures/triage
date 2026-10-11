@@ -196,6 +196,10 @@ function nameless(text) {
   }
   // In a `for`'s `(…)`, where `of` is its word: a name elsewhere (`of⏎a()`).
   const inHead = () => loops.at(-1)?.body === false && loops.at(-1).depth === opens.length - 1
+  // Whether a `/` divides, after the word or mark `word` and the code `code`
+  // between: after a value, `of` a name there (`of / 2`).
+  const divides = (word, code) => /^[\p{L}\p{N}_$)\]"]$/u.test(word)
+    || (word?.length > 1 && (!BEFORE_VALUE.has(word) || (word === 'of' && !inHead()))) || VALUE_END.test(code.trimEnd())
   // Where a statement starts, a `function` or `class` declares its name.
   const statement = word => word === null || word === ';' || word === '{' || word === '}' || word === 'export' || word === 'default'
   // A script's top level is every script's: a name declared there is a
@@ -263,11 +267,12 @@ function nameless(text) {
     // after a declared name with no value (`let x⏎+a`), only `=` or `,` goes on.
     const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
     // A line beginning with `(`, `[` or a template goes on the line before
-    // (`fn⏎(a)`, a call).
+    // (`fn⏎(a)`, a call), as does one beginning with a `/` that divides (`x⏎/a/g`).
+    const divided = after === '' && text[at + raw.length] === '/' && divides(segment.trimEnd().at(-1) ?? last, segment)
     // Nor after a word a value must follow (`typeof⏎a`), but `return` and the like.
     const value = BEFORE_VALUE.has(last) && (last !== 'of' || inHead())
     const ends = !(line !== -1 && value && !restricted) && (restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
-      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !(after === '' && /[([`]/u.test(text[at + raw.length] ?? '')))))
+      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !(after === '' && /[([`]/u.test(text[at + raw.length] ?? '')) && !divided)))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
@@ -335,10 +340,7 @@ function nameless(text) {
     // A key's modifier just before (`static {`), comments or spaces between.
     const modified = modifier
     modifier = null
-    // `of` is a `for`'s in its `(…)` alone, a name elsewhere (`of / 2`).
-    const head = inHead()
-    if (first === '/' && token[1] !== '/' && token[1] !== '*' && (/^[\p{L}\p{N}_$)\]"]$/u.test(last)
-      || (last?.length > 1 && (!BEFORE_VALUE.has(last) || (last === 'of' && !head))) || VALUE_END.test(code.trimEnd()))) {
+    if (first === '/' && token[1] !== '/' && token[1] !== '*' && divides(last, code)) {
       // A division: the `/` is an operator, and what follows is read again.
       at = match.index
       READ.lastIndex = at + 1
