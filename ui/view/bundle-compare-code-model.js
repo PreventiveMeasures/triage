@@ -50,6 +50,8 @@ const COMMENT = /\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
 // Words after which a value starts, so a `/` begins a regular expression.
 const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else', 'extends', 'in', 'instanceof', 'new', 'of', 'return',
   'throw', 'typeof', 'void', 'yield'])
+// Words a line break after ends their statement, whatever follows.
+const RESTRICTED = new Set(['break', 'continue', 'debugger', 'return', 'yield'])
 // Words a `{` after which opens a block, as do `)`, `;`, `{`, `}`, `=>` and
 // the start; any other opens an object, a pattern or a class body.
 const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
@@ -158,8 +160,10 @@ function nameless(text) {
     keep(raw)
     // Nor where a fragment opens, `<>` being JSX alone, whatever it holds.
     if (segment.includes('\\') || segment.includes('@') || segment.includes('<>')) dynamic = true
-    // A line break ends these statements, a `/` after it starting a value.
-    if (segment.includes('\n') && (last === 'break' || last === 'continue' || last === 'debugger')) last = ';'
+    // A line break ends these statements, whatever follows (`continue⏎+a`),
+    // a `/` after it starting a value.
+    const restricted = segment.includes('\n') && RESTRICTED.has(last)
+    if (restricted) last = ';'
     // A line break no operator spans may end a statement, as `;` does, or a
     // class field: even one alone between two names (`let x⏎f()`).
     const line = segment.lastIndexOf('\n')
@@ -167,8 +171,8 @@ function nameless(text) {
     // A `++` or `--` either side of it is the line's own (`a++⏎b`, `x⏎++a`);
     // after a declared name with no value (`let x⏎+a`), only `=` or `,` goes on.
     const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
-    const ends = line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
-      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after))
+    const ends = restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
+      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after)))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
