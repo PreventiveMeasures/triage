@@ -37,6 +37,13 @@ function bundleOf(files) {
 }
 const managed = { managedId: 'bundle-1' }
 const settled = () => setImmediate()
+// Turns until `done()` holds, for a copy asked for only once its file is
+// hashed (an npm version's details carry no hashes), which on a loaded
+// machine can take any number of turns.
+async function settledUntil(done) {
+  const deadline = Date.now() + 10_000
+  while (!done() && Date.now() < deadline) await settled()
+}
 
 beforeEach(() => {
   state.bundleSourcePretty = false
@@ -82,10 +89,12 @@ test('a bundle file\'s copy is asked for by its metadata hash once the toggle is
 
 test('an npm file\'s copy is asked for by its version and the hash of its text', async () => {
   const npm = { integrity: 'sha512-npm-hash', kind: 'sourcemap', npm: { name: '@scope/lib', version: '2.0.0' }, json: { version: 3, sources: ['lib.min.js'], sourcesContent: [minified] } }
+  const copy = () => prettyCopy(npm, { npm: npm.npm }, 'lib.min.js', minified)
   togglePrettySource()
   answers.push('pretty')
-  prettyCopy(npm, { npm: npm.npm }, 'lib.min.js', minified)
-  for (let i = 0; i < 50 && requests.length === 0; i++) await settled()
+  copy()
+  // Until it is read: a request left pending would take a later test's answer.
+  await settledUntil(() => copy().status !== 'loading')
   assert.deepEqual(requests, [['npm', '@scope/lib', '2.0.0', 'lib.min.js', hashOf(minified)]])
 })
 
