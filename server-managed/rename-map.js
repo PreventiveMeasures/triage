@@ -101,7 +101,7 @@ function analyze(text, extension) {
   const fnOf = where => where.fn ? where : fnOf(where.parent)
   // Two variables that must keep one name, read from then on as the first.
   const join = (kept, gone) => {
-    if (kept === gone) return
+    if (kept === gone || !variables.includes(gone)) return
     for (const at of scopes) for (const [name, variable] of at.names) if (variable === gone) at.names.set(name, kept)
     for (const [node, [variable, where]] of declarations) if (variable === gone) declarations.set(node, [kept, where])
     variables.splice(variables.indexOf(gone), 1)
@@ -126,9 +126,13 @@ function analyze(text, extension) {
           for (const id of declared(declarator.id)) {
             const variable = declare(node.kind === 'var' ? fnOf(where) : where, id)
             // A `var` named as a `catch`'s parameter it is in declares its
-            // function's, its value going to the parameter (`catch (a) { var a
-            // = 2 }`): the two keep one name.
-            for (let at = where; node.kind === 'var' && !at.fn; at = at.parent) if (at.caught && at.names.has(id.name)) join(at.names.get(id.name), variable)
+            // function's, its value going to the nearest such parameter
+            // (`catch (a) { var a = 2 }`): the two keep one name.
+            for (let at = where; node.kind === 'var' && !at.fn; at = at.parent) {
+              if (!at.caught || !at.names.has(id.name)) continue
+              join(at.names.get(id.name), variable)
+              break
+            }
           }
         }
         break

@@ -317,3 +317,8 @@ test('a var named as the catch parameter it is in keeps one name with it', () =>
   assert.notDeepEqual(ignoring(lines('a', 'a', 'a', 'a'), lines('b', 'c', 'b', 'c')).blocks, [], 'renamed apart, it is a change')
   assert.deepEqual(ignoring(lines('a', 'a', 'a', 'a'), lines('b', 'b', 'b', 'b')).blocks, [], 'renamed as one, it hides')
 })
+
+test('a var joins the nearest catch parameter of its name alone, nested catches of that name left whole', () => {
+  const nested = asModule(text(['function f() {', '  try {', '    g();', '  } catch (a) {', '    try {', '      h();', '    } catch (a) {', '      var a;', '      out({ a });', '    }', '  }', '}', 'f();']))
+  assert.equal(renameMap(nested, nested).text, nested, 'the same file reads as it is')
+})
