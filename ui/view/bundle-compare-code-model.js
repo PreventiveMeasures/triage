@@ -119,21 +119,31 @@ function nameless(text) {
   // opens, each read from it), seen from it and the blocks in it. So are a
   // concise arrow's body (`arrows`, the depths where a `,` or `;` ends it,
   // with the conditionals begun in it whose `:` does not)
-  // and a `for` from its `(` to the end of its body (`loops`). Each
-  // declaration is taken to be its block's, so a `var` read outside its
-  // block is a global's, kept.
-  const scopes = [{ names: new Set(), parent: -1 }]
+  // and a `for` from its `(` to the end of its body (`loops`). A `var` is
+  // its function's (`fn`, the top level's too), any other declaration its
+  // block's; what a function's parameters read is in their scope
+  // (`(a, b = a) =>`), the scopes in them too (`pendingGroup` the group
+  // they are of, until its body).
+  const scopes = [{ fn: true, names: new Set(), parent: -1 }]
   const arrows = [], loops = []
-  let pending = null, scope = 0, self = null
+  let pending = null, pendingGroup = null, scope = 0, self = null
   // A named class expression's name, its body's (`classes`, until its body,
   // the `extends` marker its body takes, if any): its body is a scope too,
   // `classBodies` their depths.
   const classBodies = [], classes = []
-  const declare = name => scopes[scope].names.add(name)
-  const enter = (entries = []) => {
-    scopes.push({ names: new Set(entries.map(({ name }) => name)), parent: scope })
+  const declare = (name, hoisted = false) => {
+    let at = scope
+    if (hoisted) while (!scopes[at].fn) at = scopes[at].parent
+    scopes[at].names.add(name)
+  }
+  const enter = (entries = [], { fn = false, group = null } = {}) => {
+    const outer = scope
+    scopes.push({ fn, names: new Set(entries.map(({ name }) => name)), parent: scope })
     scope = scopes.length - 1
     for (const { aside } of entries) if (aside) aside[3] = scope
+    if (!group) return
+    for (let i = group.asides; i < setAside.length; i++) if (setAside[i][3] === outer) setAside[i][3] = scope
+    for (let i = group.scopes; i < scope; i++) if (scopes[i].parent === outer) scopes[i].parent = scope
   }
   // A conditional's `:` (`colon`) is the innermost one's begun, ending the
   // arrows begun after its `?` alone.
@@ -327,9 +337,10 @@ function nameless(text) {
         loops.push({ body: false, depth: opens.length, scope })
       }
       opens.push(open)
-      if (open === '(') groups.push({ depth: opens.length, names: [], parameters })
-      if (open === 'block') enter(pending ?? [])
-      if (first === '{') pending = null
+      if (open === '(') groups.push({ asides: setAside.length, caught: last === 'catch', depth: opens.length, names: [], parameters, scopes: scopes.length })
+      // A function's body is its scope, a `catch`'s not.
+      if (open === 'block') enter(pending ?? [], { fn: pending !== null && !pendingGroup?.caught, group: pendingGroup })
+      if (first === '{') pending = pendingGroup = null
       last = first
       keyPlace = first === '{' && !block
       exporting = naming = parameters = false
@@ -349,9 +360,11 @@ function nameless(text) {
         const group = groups.pop()
         BODY.lastIndex = ARROW.lastIndex = at
         ARROW_BODY.lastIndex = at
-        if (ARROW_BODY.test(text) || (group.parameters && BODY.test(text))) pending = self ? [...group.names, self] : group.names
-        else if (ARROW.test(text)) {
-          enter(group.names)
+        if (ARROW_BODY.test(text) || (group.parameters && BODY.test(text))) {
+          pending = self ? [...group.names, self] : group.names
+          pendingGroup = group
+        } else if (ARROW.test(text)) {
+          enter(group.names, { fn: true, group })
           arrows.push({ conditionals: 0, depth: opens.length })
         }
         self = null
@@ -392,8 +405,11 @@ function nameless(text) {
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
         else if (named.word === 'class') classes.push({ aside, depth: opens.length, marker: null, name: token })
-      } else if (!read && (naming || binding)) declare(token)
-      else if (!read && ARROW_BODY.test(text)) pending = [{ aside, name: token }]
+      } else if (!read && (naming || binding)) declare(token, binding && declaration.hoisted)
+      else if (!read && ARROW_BODY.test(text)) {
+        pending = [{ aside, name: token }]
+        pendingGroup = null
+      }
       else if (!read && ARROW.test(text)) {
         enter([{ aside, name: token }])
         arrows.push({ conditionals: 0, depth: opens.length })
@@ -410,7 +426,7 @@ function nameless(text) {
       if (word === 'extends' && classes.at(-1)?.depth === opens.length && classes.at(-1).marker === null) classes.at(-1).marker = extending.at(-1)
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       LET.lastIndex = at
-      if (word === 'const' || word === 'var' || (word === 'let' && LET.test(text))) declarations.push({ binding: true, depth: opens.length, exported: exporting })
+      if (word === 'const' || word === 'var' || (word === 'let' && LET.test(text))) declarations.push({ binding: true, depth: opens.length, exported: exporting, hoisted: word === 'var' })
       IMPORT_CALL.lastIndex = at
       if (word === 'export' || (word === 'import' && !IMPORT_CALL.test(text))) moduleLike = true
       const after = COMMONJS.get(word)
