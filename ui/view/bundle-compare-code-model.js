@@ -104,7 +104,11 @@ function substitutionCode(text, from, to) {
       continue
     }
     const next = match[0][0] === '`' ? Math.min(templateEnd(text, match.index), to) : SUBSTITUTION.lastIndex
-    code += substituted(text.slice(match.index, next))
+    const token = text.slice(match.index, next)
+    code += substituted(token)
+    // After a `}`, a `/` read as a regular expression may divide (as in
+    // nameless): an escaped name in it is kept, its `\` turning renames off.
+    if (token[0] === '/' && before.endsWith('}') && token.includes('\\u')) code += '\\'
     at = next
   }
 }
