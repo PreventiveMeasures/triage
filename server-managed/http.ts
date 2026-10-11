@@ -123,7 +123,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
+import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { type PrettyCache, PrettyError, prettyRequest } from './pretty-print.ts'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
 
@@ -2420,8 +2420,25 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   let token: Promise<string | null> | undefined
   const githubToken = () => token ??= ensureUserAccessToken(deps.config, deps.db, reader.userId, Date.now()).catch(() => null)
   const githubRepoOf = (doc: NpmVersionDocument) => (doc.manifest['github'] as { github?: string } | undefined)?.github ?? null
+  const privileged = canReadPrivateNpm(reader, name)
+  // The latest version, read once a request: the package's figures and
+  // advisories go by the repository it names.
+  let latest: Promise<NpmVersionDocument | null> | undefined
+  const latestDoc = () => latest ??= readNpmVersion(name, 'latest', privileged, controller.signal)
+  const advisoryOptions: NpmAdvisoryOptions = {
+    githubToken,
+    repo: async () => { const doc = await latestDoc(); return doc && githubRepoOf(doc) },
+    cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
+    debug: deps.config.debug,
+  }
+  // The figures of the repository the latest version names, noted as its
+  // repository for npmKnown; null where it names none, or they can't be had.
+  const githubFigures = (doc: NpmVersionDocument) => {
+    const repo = githubRepoOf(doc)
+    npmLatestRepo(name, repo)
+    return repo === null ? null : npmGithubStats(repo, githubToken).catch(() => null)
+  }
   try {
-    const privileged = canReadPrivateNpm(reader, name)
     if (path === NPM_VERSIONS_PATH) {
       const versions = await readNpmVersions(name, privileged, controller.signal, { times: true })
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
@@ -2435,15 +2452,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (path === NPM_ADVISORIES_PATH) {
       const versions = await readNpmVersions(name, privileged, controller.signal)
       if (versions == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      const list = await npmAdvisories(name, versions.versions, {
-        githubToken,
-        repo: async () => {
-          const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
-          return doc && githubRepoOf(doc)
-        },
-        cache: signal => auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug),
-        debug: deps.config.debug,
-      })
+      const list = await npmAdvisories(name, versions.versions, advisoryOptions)
       if (await recheck(versions.private)) sendJson(res, 200, { name, ...list })
       return
     }
@@ -2453,20 +2462,19 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       // npm's downloads, which need nothing of the version, are asked at once;
       // none is answered before the package's access is.
       const downloadsAsked = npmDownloads(name).catch(() => null)
-      const doc = await readNpmVersion(name, 'latest', privileged, controller.signal)
+      const doc = await latestDoc()
       if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
-      const repo = githubRepoOf(doc)
-      npmLatestRepo(name, repo)
-      const [downloads, github] = await Promise.all([downloadsAsked, repo === null ? null : npmGithubStats(repo, githubToken).catch(() => null)])
+      const [downloads, github] = await Promise.all([downloadsAsked, githubFigures(doc)])
       if (await recheck(doc.private)) sendJson(res, 200, { name, downloads, github })
       return
     }
     const doc = await readNpmVersion(name, spec, privileged, controller.signal)
     if (doc == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
+    if (spec === 'latest') latest = Promise.resolve(doc)
+    const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
     // Its publish commit's tags, where its repository is public on GitHub and
     // the reader has a token to ask with; none where they can't be had.
     if (path === NPM_TAGS_PATH) {
-      const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
       const tags = repo === null || sha === null ? [] : await npmCommitTags(repo, sha, doc.version, githubToken).catch(() => [])
       if (await recheck(doc.private)) sendJson(res, 200, { name, version: doc.version, tags })
       return
@@ -2493,8 +2501,21 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // gone takes none, as its close has passed.
     if (res.destroyed) return
     const download = path === NPM_DOWNLOAD_PATH
-    const load = download ? loadNpmTarball(doc)
-      : loadNpmPackageBody(doc, () => npmKnown(name, doc.version, doc.private, githubRepoOf(doc), bundleCommitHash(doc.manifest['gitHead'])))
+    // A version's files take longest to load: what the viewer asks for beside
+    // them is asked for meanwhile, so that what is answered by the time they
+    // are encoded comes with them (npmKnown), and the rest is on its way when
+    // the viewer asks. Nothing waits on it, and a failure is left for the
+    // viewer's own request to meet. Its version list, read only for its
+    // advisories, is read only where registry reads leave room for readers'.
+    if (!download) {
+      const quiet = (asked: Promise<unknown>) => { asked.catch(() => {}) }
+      quiet(npmDownloads(name))
+      quiet(latestDoc().then(found => found && githubFigures(found)))
+      quiet(readNpmVersions(name, privileged, controller.signal, { spare: true }).then(versions => versions && npmAdvisories(name, versions.versions, advisoryOptions)))
+      if (repo !== null && sha !== null) quiet(npmCommitTags(repo, sha, doc.version, githubToken))
+      if (!doc.private) quiet(npmSocketReport(name, doc.version))
+    }
+    const load = download ? loadNpmTarball(doc) : loadNpmPackageBody(doc, () => npmKnown(name, doc.version, doc.private, repo, sha))
     res.once('close', load.release)
     const bytes = await load.result
     if (!(await recheck(doc.private))) return

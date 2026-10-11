@@ -1181,10 +1181,15 @@ server already keeps about the package, so the viewer need not ask for it:
 `stats`, `advisories`, `tags` and `socket`, each as its own route below
 answers it, `stats` where the figures of the repository the latest version
 names are kept too, `advisories` where kept for a version list that has this
-version, and `tags` and `socket` for this version. Nothing is asked for it,
-and what isn't kept is left out, for the viewer to ask its route; the version
-list, never kept, is always asked for apart. A version naming no repository
-or commit has no tags to ask for, and a private one no Socket report. `GET
+version, and `tags` and `socket` for this version. While the version's files
+load, the server asks for each of these itself, as its route would, so that
+what is answered by the time the files are encoded comes with them; nothing
+waits on it, and what isn't answered yet is left out, for the viewer's own
+request to share. The advisories' version list is read for this only where
+registry reads leave room for two more of readers' own. The version list the
+viewer shows, never kept, is always asked for apart. A version naming no
+repository or commit has no tags to ask for, and a private one no Socket
+report. `GET
 /api/npm/versions?name=` returns `{ name, private, distTags, versions,
 times }`, newest first, `times` when each was published (ISO dates, from the
 registry's whole document rather than its abbreviated one), and `GET /api/npm/download?name=&version=` the tarball.

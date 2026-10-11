@@ -106,8 +106,10 @@ async function readDocument(name: string, url: string, privileged: boolean, opti
 
 let documentBytes = 0
 
-async function withDocumentBudget<T>(limit: number, read: () => Promise<T>): Promise<T> {
-  if (documentBytes + limit > MAX_DOCUMENT_BYTES) throw new NpmPackageError(429, 'npm-busy')
+// A `spare` read, one no reader waits on, is made only where it leaves room
+// for two of the largest documents more: readers' own reads come first.
+async function withDocumentBudget<T>(limit: number, read: () => Promise<T>, spare = false): Promise<T> {
+  if (documentBytes + limit + (spare ? 2 * PACKUMENT_BYTES : 0) > MAX_DOCUMENT_BYTES) throw new NpmPackageError(429, 'npm-busy')
   documentBytes += limit
   try { return await read() } finally { documentBytes -= limit }
 }
@@ -204,9 +206,10 @@ export function readNpmVersion(name: string, spec: string, privileged: boolean, 
 
 // The package's dist-tags and versions, newest published first, from its
 // abbreviated document; with `times`, from its whole one, which alone has
-// when each was published, `times` by version (ISO dates). Null where the
-// registry has none for this reader.
-export function readNpmVersions(name: string, privileged: boolean, signal: AbortSignal, { times = false } = {}) {
+// when each was published, `times` by version (ISO dates); with `spare`, as
+// a read no reader waits on (withDocumentBudget). Null where the registry has
+// none for this reader.
+export function readNpmVersions(name: string, privileged: boolean, signal: AbortSignal, { times = false, spare = false } = {}) {
   if (!isNpmPackageName(name)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
   return withDocumentBudget(PACKUMENT_BYTES, async () => {
     const accept = times ? 'application/json' : 'application/vnd.npm.install-v1+json'
@@ -220,7 +223,7 @@ export function readNpmVersions(name: string, privileged: boolean, signal: Abort
     if (!times) return listed
     const time = stringRecord(json['time']) ?? {}
     return { ...listed, times: Object.fromEntries(versions.filter(version => isPublishTime(time[version])).map(version => [version, time[version]!])) }
-  })
+  }, spare)
 }
 
 const isPublishTime = (value: string | undefined) => typeof value === 'string' && value.length <= 40 && !Number.isNaN(Date.parse(value))

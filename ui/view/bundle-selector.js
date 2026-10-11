@@ -55,7 +55,7 @@ class BundleSelector extends SearchableSelector {
       grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(max(var(--option-width, 6ch), var(--secondary-width, 0ch) * .76) + 1rem)), 1fr));
     }
     :host([versions]) .secondary { font-size: .76em; }
-    :host([versions]) .option { flex-wrap: wrap; align-content: start; gap: 0 .4rem; padding: .3rem .45rem; font-variant-numeric: tabular-nums; }
+    :host([versions]) .option { flex-wrap: wrap; align-content: start; gap: 0 .8rem; padding: .3rem .45rem; font-variant-numeric: tabular-nums; }
     :host([versions]) .option > svg, :host([versions]) .option .bundle-icon { display: none; }
     :host([versions]) .option-copy { flex: 0 1 auto; }
     :host([versions]) .option .detail { font-size: .62rem; line-height: 1.6; }

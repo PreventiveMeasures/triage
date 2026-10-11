@@ -414,6 +414,19 @@ test('registry documents read at once are held to a budget: four version lists, 
   assert.equal((await readNpmVersion('listed-e', '1.0.0', false, signal)).version, '1.0.0', 'a read frees its bytes once done')
 })
 
+test('a read no reader waits on leaves room for two version lists of readers\' own', async t => {
+  const pkgs = ['a', 'b', 'c'].map(name => packageOf(`spare-${name}`, '1.0.0', { 'index.js': '' }))
+  registry(t, pkgs)
+  const answer = globalThis.fetch, gate = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', (input, init) => gate.promise.then(() => answer(input, init)))
+  const { signal } = new AbortController()
+  const lists = [readNpmVersions('spare-a', false, signal), readNpmVersions('spare-b', false, signal, { spare: true })]
+  await assert.rejects(readNpmVersions('spare-c', false, signal, { spare: true }), /npm-busy/u, 'two in flight leave room for two more, not three')
+  lists.push(readNpmVersions('spare-c', false, signal))
+  gate.resolve()
+  assert.deepEqual((await Promise.all(lists)).map(list => list.name), ['spare-a', 'spare-b', 'spare-c'])
+})
+
 // npm's downloads API, GitHub and npm's bulk advisories, beside the registry
 // `registry` mocks; what each was asked, with its credentials.
 function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, socket = {}, badges = {} }) {
@@ -643,7 +656,7 @@ test('Socket\'s scores and alerts for a public version, the file each names as t
     [['scored/1.0.0', null], ['@pub/scored/2.0.0', null], ['capped/1.0.0', null], ['unseen/1.0.0', null]], 'its badge too, kept with it')
 })
 
-test('a version carries what is kept about its package, each part as its own route answers it, asking for none of it', async t => {
+test('a version carries what is kept about its package, each part as its own route answers it, and asks for the rest as it loads', async t => {
   const h = await setup(t)
   withToken(t)
   const repository = { type: 'git', url: 'git+https://github.com/org/known.git' }
@@ -657,19 +670,35 @@ test('a version carries what is kept about its package, each part as its own rou
     advisories: { 'known-pkg': [] },
     socket: { 'pkg:npm/known-pkg@1.1.0': { id: '1', type: 'npm', name: 'known-pkg', version: '1.1.0', alerts: [{ type: 'malware', severity: 'critical', category: 'supplyChainRisk' }] } },
   })
+  // The registry answers at once; npm's downloads and advisories, GitHub and
+  // Socket once the gate opens. Each URL is noted as it is asked.
+  const answer = globalThis.fetch, requested = []
+  let gate = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = String(input)
+    requested.push(url)
+    if (!url.startsWith(`${REGISTRY}/`) || url.includes('/-/npm/v1/security/')) await gate.promise
+    return answer(input, init)
+  })
   const knownOf = async (name, version, who) => (await h.send(packagePath(name, version), who)).json().known
-  assert.deepEqual(await knownOf('known-pkg', '1.1.0'), {}, 'nothing kept yet')
-  assert.deepEqual(asked, [], 'and nothing asked for')
+  assert.deepEqual(await knownOf('known-pkg', '1.1.0'), {}, 'nothing kept yet, nor answered before its files are')
+  assert.ok(requested.some(url => url.includes('/downloads/range/last-year/known-pkg')) && requested.some(url => url.includes('pkg%3Anpm%2Fknown-pkg%401.1.0')),
+    'its downloads and Socket\'s report asked for as it loaded')
+  gate.resolve()
   const stats = (await h.send('/api/npm/stats?name=known-pkg')).json()
   const advisories = (await h.send('/api/npm/advisories?name=known-pkg')).json()
   const socket = (await h.send('/api/npm/socket?name=known-pkg&version=1.1.0')).json()
+  assert.deepEqual(asked.map(([what]) => what).filter(what => ['downloads', 'advisories', 'socket'].includes(what)).toSorted(), ['advisories', 'downloads', 'socket'],
+    'the viewer\'s own requests share what the version asked for')
   const answered = asked.length
   assert.deepEqual(await knownOf('known-pkg', '1.1.0'), { stats, advisories, socket }, 'the tags of its commit need the reader\'s token, so none are kept')
+  assert.equal(asked.length, answered, 'nothing kept is asked for again')
   assert.deepEqual(await knownOf('known-pkg', '1.0.0'), { stats, advisories }, 'Socket\'s report is on the version')
-  assert.equal(asked.length, answered, 'what is kept is all it carries')
+  gate = Promise.withResolvers()
   assert.deepEqual(await knownOf('known-bare', '1.0.0'), { tags: { name: 'known-bare', version: '1.0.0', tags: [] } }, 'a version naming no repository has no tags to ask for')
   assert.deepEqual(await knownOf('@acme/known', '1.0.0', 'admin'), { socket: { name: '@acme/known', version: '1.0.0', socket: null } }, 'nor a private package a report')
-  assert.equal(asked.length, answered, 'Socket is never asked about it')
+  assert.ok(!requested.some(url => url.includes('socket.dev') && url.includes('acme')), 'Socket is never asked about it')
+  gate.resolve()
 })
 
 test('Socket is never asked about a private package, whoever reads it', async t => {
