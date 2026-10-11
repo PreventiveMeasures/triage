@@ -39,15 +39,16 @@ const KEYWORDS = new Set(['arguments', 'as', 'async', 'await', 'break', 'case', 
 // changed is a change.
 const RENAMED_MAX_LENGTH = 3
 // What a text is read in, from where it is: a string, a template, a
-// comment (a hashbang too, its first line), a regular expression (where a value starts: `/` after one
+// comment (a hashbang too, its first line, and a script's `<!--` or
+// line-opening `-->`), a regular expression (where a value starts: `/` after one
 // divides), a name (as JavaScript tells its characters: `a\u200Cb` is one),
 // a bracket, or what lies between, operators and numbers.
-const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$.\\\u200C\u200D])[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
+const READ = /"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'|`(?:[^`\\]|\\[\s\S])*`|\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)|\/(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*|(?<![\p{ID_Continue}$.\\\u200C\u200D])[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|[()[\]{}]/gu
 // What a line ending in goes on past its line break: an operator, not a
 // postfix `++` or `--` (`a++⏎b`).
 const CONTINUES = /(?<![+-])[,=+\-*/%&|^<>?:!~.]$|(?<=[^+]|^)\+$|(?<=[^-]|^)-$/u
 // The comments READ reads, in what lies between.
-const COMMENT = /\/\/.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
+const COMMENT = /\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\S]*?(?:\*\/|$)/gu
 // What in code may read a name by its spelling or is past reading: see
 // `dynamic` in nameless.
 const DYNAMIC = /\b(?:eval|with)\b|[\\@]|<>/u
@@ -232,7 +233,7 @@ function nameless(text) {
     // A comment lies between what is read as spaces do, its line breaks
     // ending statements as theirs do (`let x /*⏎*/ f()`).
     let match = READ.exec(text)
-    while (match && (match[0][0] === '#' || /^\/[/*]/u.test(match[0]))) match = READ.exec(text)
+    while (match && /^(?:#!|\/[/*]|<!--|-->)/u.test(match[0])) match = READ.exec(text)
     const gap = text.slice(at, match?.index ?? text.length)
     const code = gap.replaceAll(COMMENT, comment => comment.replaceAll(/[^\n]/gu, '') || ' ')
     between(gap, code)
