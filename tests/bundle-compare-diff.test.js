@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, detectRoot, renameLabel, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { bundleLayout, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, detectRoot, layoutPackageDirs, renameLabel, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { bundlePkgOf } = await import('../ui/view/bundle-pkg-of.js')
 
 // All fixtures use ASCII content so a string's byte length equals its
 // `.length` — keeps the expected-bytes assertions readable.
@@ -497,6 +498,29 @@ describe('bundles taken from different roots', () => {
     assert.deepEqual(files.onlyBase, [{ path: '../../a.js', basePath: 'a.js', bytes: 1 }])
     assert.equal(totals.unchangedFiles, 3)
     assert.equal(totals.baseBytes, 4)
+  })
+
+  it('keeps package boundaries across the root, recorded on one side or both', () => {
+    const base = m({ 'crates/foo/lib.rs': 'v1', 'crates/foo/old.rs': 'o', 'node_modules/x/i.js': 'x', 'a.js': 'a', 'b.js': 'b' })
+    const baseDirs = new Map([['crates/foo/lib.rs', 'crates/foo'], ['crates/foo/old.rs', 'crates/foo'], ['node_modules/x/i.js', 'node_modules/x'], ['a.js', '.'], ['b.js', '.']])
+    const other = m({ 'src/crates/foo/lib.rs': 'v2', 'src/node_modules/x/i.js': 'x', 'src/a.js': 'a', 'src/b.js': 'b', __prelude__: 'p' })
+    const compare = otherDirs => {
+      const layout = bundleLayout(base.keys(), other)
+      const dirs = layoutPackageDirs(baseDirs, otherDirs, layout)
+      return { dirs, diff: computeBundleDiff(base, other, path => bundlePkgOf(path, { packageDir: dirs?.get(path) }), layout) }
+    }
+    const { dirs, diff: againstMap } = compare(null)
+    assert.deepEqual([...dirs], [['src/crates/foo/lib.rs', 'src/crates/foo'], ['src/crates/foo/old.rs', 'src/crates/foo'],
+      ['src/node_modules/x/i.js', 'src/node_modules/x'], ['src/a.js', '.'], ['src/b.js', '.']])
+    assert.deepEqual(againstMap.packages.changed.map(row => row.pkg).toSorted(), ['__own__', 'src/crates/foo'], 'a sourcemap side keeps the boundary the base records, own source gaining __prelude__')
+    const otherDirs = new Map([['src/crates/foo/lib.rs', 'src/crates/foo'], ['src/node_modules/x/i.js', 'src/node_modules/x'], ['src/a.js', '.'], ['src/b.js', '.'], ['__prelude__', '.']])
+    const { diff: againstStasis } = compare(otherDirs)
+    assert.deepEqual(againstStasis.packages.changed.map(row => row.pkg).toSorted(), ['__own__', 'src/crates/foo'], 'one package, not removed and added')
+    assert.deepEqual([...againstStasis.packages.onlyBase, ...againstStasis.packages.onlyOther], [])
+    assert.equal(layoutPackageDirs(null, null, { root: null, paths: new Map() }), null)
+    assert.deepEqual([...layoutPackageDirs(new Map([['src/a.js', 'src'], ['src/b/c.js', 'src/b'], ['tools/t.js', 'tools']]), null,
+      { root: { base: 'src/', other: '' }, paths: new Map([['src/a.js', 'a.js'], ['src/b/c.js', 'b/c.js']]) })],
+    [['a.js', '.'], ['b/c.js', 'b'], ['tools/t.js', 'tools']], 'the root itself reads as `.`, a directory outside it as it is')
   })
 
   it('keeps paths as they are where they line up, or only a few would move', () => {

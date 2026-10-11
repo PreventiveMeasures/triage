@@ -246,6 +246,29 @@ export function renameParts(from, to, { extension = true } = {}) {
   return parts
 }
 
+// How the base bundle's files read in the other's layout: the root between
+// them (detectRoot) and each base path through it (rootPaths).
+export function bundleLayout(base, other) {
+  const paths = [...base]
+  const root = detectRoot(paths, other.keys())
+  return { root, paths: rootPaths(paths, other, root).paths }
+}
+
+// Both bundles' recorded package boundaries (`bundlePackageDirs`, either
+// may be null) by path as the other lays its files out, the base's
+// directories moved with the root: a workspace package keyed by its
+// directory stays one package, and a base-only boundary still applies to
+// the file paired with it. The root's own `.` stays itself.
+export function layoutPackageDirs(baseDirs, otherDirs, { root, paths }) {
+  if (!baseDirs && !otherDirs) return null
+  const dirOf = dir => {
+    if (!root || dir === '.') return dir
+    const to = through(root, `${dir}/`)
+    return to === null ? dir : to.slice(0, -1) || '.'
+  }
+  return new Map([...[...baseDirs ?? []].map(([path, dir]) => [paths.get(path) ?? path, dirOf(dir)]), ...otherDirs ?? []])
+}
+
 // The directory a view leaves off paths, `prefix` (the other bundle's
 // layout), with the root the bundles differ by read at it: `{ prefix, from:
 // './dir/', to: './src/dir/' }` — the base's place for it and the other's. A
@@ -303,18 +326,17 @@ function emptyPkgAcc() {
 // detectRoot), the base's are compared as the other lays them out: a row's
 // `path` (and `renamedFrom`) reads that way, and `basePath` names the file
 // in the base bundle wherever that differs from `path`. `files.basePaths`
-// maps every base file to how it reads.
+// maps every base file to how it reads. `layout` (bundleLayout) may come
+// from the caller, to key `pkgOf` by the same paths: it is asked of files
+// as the other bundle lays them out.
 // `identical` is true when the two bundles carry the same files with
 // byte-identical content, resources included.
-export function computeBundleDiff(base, other, pkgOf) {
-  const root = detectRoot(base.keys(), other.keys())
-  const { paths: basePaths } = rootPaths([...base.keys()], other, root)
+export function computeBundleDiff(base, other, pkgOf, layout = bundleLayout(base.keys(), other)) {
+  const { root, paths: basePaths } = layout
   // The base's files as the other lays them out, and back.
   const baseFile = new Map([...basePaths].map(([from, to]) => [to, from]))
   base = new Map([...base].map(([path, content]) => [basePaths.get(path), content]))
   const atBase = path => baseFile.get(path) === path ? {} : { basePath: baseFile.get(path) }
-  // A file's package by its own side's path, as `pkgOf` knows it.
-  const pkgOfPath = path => pkgOf(other.has(path) ? path : baseFile.get(path) ?? path)
   const onlyBase = []
   const onlyOther = []
   const changed = []
@@ -326,7 +348,7 @@ export function computeBundleDiff(base, other, pkgOf) {
   let unchangedFiles = 0
   const pkgs = new Map()
   const pkgAcc = (path) => {
-    const key = pkgOfPath(path)
+    const key = pkgOf(path)
     let acc = pkgs.get(key)
     if (!acc) { acc = emptyPkgAcc(); pkgs.set(key, acc) }
     return acc
@@ -374,7 +396,7 @@ export function computeBundleDiff(base, other, pkgOf) {
     }
   }
 
-  const renames = detectRenames(onlyBase.map(row => row.path), onlyOther.map(row => row.path), pkgOfPath)
+  const renames = detectRenames(onlyBase.map(row => row.path), onlyOther.map(row => row.path), pkgOf)
   if (renames.size > 0) {
     const renamedTo = new Set(renames.values())
     for (const [from, to] of renames) {

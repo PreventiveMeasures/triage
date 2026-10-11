@@ -52,7 +52,7 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates, rootLabel } from './bundle-compare-diff.js'
+import { bundleLayout, comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates, layoutPackageDirs, rootLabel } from './bundle-compare-diff.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
@@ -604,14 +604,12 @@ class BundleCompare extends LitElement {
       const baseSources = bundleCompareFiles(from, this._scope)
       const otherSources = bundleCompareFiles(to, this._scope)
       // Classify original paths and preserve recorded Stasis package
-      // boundaries from either side. Own source has one identity.
-      const baseDirs = bundlePackageDirs(from)
-      const otherDirs = bundlePackageDirs(to)
-      const packageDirs = baseDirs || otherDirs
-        ? new Map([...(baseDirs ?? []), ...(otherDirs ?? [])])
-        : null
+      // boundaries from either side, as the open one lays its files out
+      // where their roots differ. Own source has one identity.
+      const layout = bundleLayout(baseSources.keys(), otherSources)
+      const packageDirs = layoutPackageDirs(bundlePackageDirs(from), bundlePackageDirs(to), layout)
       const pkgOf = (p) => bundlePkgOf(p, { packageDir: packageDirs?.get(p) })
-      this._diff = computeBundleDiff(baseSources, otherSources, pkgOf)
+      this._diff = computeBundleDiff(baseSources, otherSources, pkgOf, layout)
       // Each side's lines of code (bundleLineCounts), on its rows and in
       // the totals; a file that isn't text has none.
       const baseLines = bundleLineCounts(from), otherLines = bundleLineCounts(to)
