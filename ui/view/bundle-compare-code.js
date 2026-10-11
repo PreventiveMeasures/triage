@@ -25,7 +25,8 @@ import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
-import { LONG_LINE, TEXT_NODE_MAX, textNodes } from './source-text.js'
+import { LONG_LINE, sourceText } from './source-text.js'
+import { controlMarkup } from './control-chars.js'
 import { EXPAND_STEP, changeStart, diffRows, lineDiff, markHighlighted, markSegments, wordRanges } from './bundle-compare-code-model.js'
 import { renameParts } from './bundle-compare-diff.js'
 import { renameTemplate } from './bundle-compare-rename.js'
@@ -576,7 +577,7 @@ export class BundleCompareCode extends LitElement {
     return html`<button type="button" class="bundle-compare-code-repointed-line bundle-compare-diff-table" ?disabled=${!linked}
       aria-label=${`Go to line ${line + 1}`} @click=${() => this._goToLine(line + 1)}>
       <span class="diff-num">${line + 1}</span>
-      <code>${source.length <= 240 && typeof markup === 'string' ? unsafeHTML(markup) : `${at > 0 ? '…' : ''}${source.slice(at, at + 240)}${source.length > at + 240 ? '…' : ''}`}</code>
+      <code>${source.length <= 240 && typeof markup === 'string' ? unsafeHTML(controlMarkup(markup, true)) : sourceText(`${at > 0 ? '…' : ''}${source.slice(at, at + 240)}${source.length > at + 240 ? '…' : ''}`, true)}</code>
     </button>`
   }
 
@@ -718,10 +719,20 @@ export class BundleCompareCode extends LitElement {
     return model.words.get(key)
   }
 
-  _code(text, markup, ranges) {
-    if (typeof markup === 'string') return unsafeHTML(markHighlighted(markup, ranges))
-    if (ranges) return markSegments(text, ranges).map(part => part.marked ? html`<mark class="diff-word">${part.text}</mark>` : part.text)
-    return text.length > TEXT_NODE_MAX ? textNodes(text) : text
+  // A line's code, its changed words marked and control characters boxed
+  // (control-chars.js). `lineEnd` says a newline ends the line, so a CR
+  // before it is the CRLF's own, shown only where it is what changed.
+  _code(text, markup, ranges, lineEnd) {
+    const end = lineEnd && !(text.endsWith('\r') && ranges?.at(-1)?.[1] === text.length)
+    if (typeof markup === 'string') return unsafeHTML(controlMarkup(markHighlighted(markup, ranges), end))
+    if (ranges) {
+      const parts = markSegments(text, ranges)
+      return parts.map((part, i) => {
+        const content = sourceText(part.text, end && i === parts.length - 1)
+        return part.marked ? html`<mark class="diff-word">${content}</mark>` : content
+      })
+    }
+    return sourceText(text, end)
   }
 
   // One side of a line: number, sign, code. `side` is 'a' or 'b'.
@@ -769,7 +780,8 @@ export class BundleCompareCode extends LitElement {
 
   _codeCell(lit, side, line, ranges) {
     const text = lit.model[side][line]
-    return html`<span class=${classMap({ 'diff-code': true, 'diff-long': text.length > LONG_LINE })}>${this._code(text, lit[side]?.[line], ranges)}${this._noEol(lit.model, side, line) ? html`<span class="diff-no-eol" data-tooltip="No newline at end of file" aria-label="No newline at end of file">⊘</span>` : nothing}</span>`
+    const noEol = this._noEol(lit.model, side, line)
+    return html`<span class=${classMap({ 'diff-code': true, 'diff-long': text.length > LONG_LINE })}>${this._code(text, lit[side]?.[line], ranges, !noEol)}${noEol ? html`<span class="diff-no-eol" data-tooltip="No newline at end of file" aria-label="No newline at end of file">⊘</span>` : nothing}</span>`
   }
 
   _splitRow(row, lit, startOf) {

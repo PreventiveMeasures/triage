@@ -45,6 +45,7 @@ import {
   setCurrentBundleGraphPrep,
 } from './render-bundle.js'
 import { focusCodeHistory, getFocusCode } from './focus-code.js'
+import { sourceText } from './source-text.js'
 import { openSyncUploadDialog } from './dialogs/sync-upload-dialog.js'
 import { openObjstoreRecoveryDialog } from './dialogs/objstore-recovery-dialog.js'
 import { openSyncSuggestDialog } from './dialogs/sync-suggest-dialog.js'
@@ -1046,7 +1047,7 @@ function focusCodeLinesTemplate(code) {
     </aside>
     <pre class="focus-code-source" tabindex="-1" aria-label=${code.file}><code>${typeof highlighted === 'string'
       ? unsafeHTML(highlighted)
-      : content}</code></pre>
+      : sourceText(content)}</code></pre>
   </div>`
 }
 

@@ -49,3 +49,21 @@
 .token.inserted { color: var(--code-inserted); }
 .token.italic { font-style: italic; }
 .token.bold { font-weight: bold; }
+/* A control character the code shows as a box (view/control-chars.js): its
+   label, small, on the text's baseline. Smaller than the code, so the line
+   keeps the height the viewers' gutters count on, and not selectable, so a
+   copy leaves the label out. The viewers' own markup, not Prism's: the class
+   is as safe unscoped. */
+.code-control {
+  padding: 0 .3em;
+  margin: 0 .1em;
+  border-radius: 3px;
+  font-size: .8em;
+  font-style: normal;
+  font-weight: normal;
+  color: var(--warning);
+  background: rgb(from var(--warning) r g b / .14);
+  box-shadow: inset 0 0 0 1px rgb(from var(--warning) r g b / .45);
+  white-space: nowrap;
+  user-select: none;
+}

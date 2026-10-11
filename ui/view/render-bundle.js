@@ -27,7 +27,8 @@ import { styleMap } from 'lit/directives/style-map.js'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 import { FILE_ICONS, REPORT_LOGOS, displayName, groupOf } from './file-display.js'
 import { sourcePackageIcon as packageIconFor, sourceFileIcon } from './source-file-icon.js'
-import { LONG_LINE, TEXT_NODE_MAX, textNodes } from './source-text.js'
+import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
+import { controlMarkup, hasControls } from './control-chars.js'
 import { bundleFileGithub } from './bundle-file-github.js'
 import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
@@ -695,23 +696,25 @@ function _topSeverityOf(findings) {
 // source-text.js): text nodes of at most TEXT_NODE_MAX, one line still where
 // it spans several, and a line over LONG_LINE wrapped whether the viewer
 // wraps lines or not, in a block of its own (see `.bundle-source-long-line`).
-// Highlighted sources, 1 MiB at most, have no line that long.
+// Highlighted sources, 1 MiB at most, have no line that long. Control
+// characters show as boxes (control-chars.js).
 let _plainSource = { content: '', parts: '' }
 function plainSource(content) {
-  if (content.length <= TEXT_NODE_MAX) return content
+  if (content.length <= TEXT_NODE_MAX && !hasControls(content)) return content
   if (_plainSource.content === content) return _plainSource.parts
+  const text = slice => [sourceText(slice)].flat()
   const parts = []
   let plain = 0
   for (let from = 0; from < content.length;) {
     const at = content.indexOf('\n', from)
     const end = at === -1 ? content.length : at + 1
     if ((at === -1 ? end : at) - from > LONG_LINE) {
-      parts.push(...textNodes(content.slice(plain, from)), html`<span class="bundle-source-long-line">${textNodes(content.slice(from, end))}</span>`)
+      parts.push(...text(content.slice(plain, from)), html`<span class="bundle-source-long-line">${text(content.slice(from, end))}</span>`)
       plain = end
     }
     from = end
   }
-  parts.push(...textNodes(content.slice(plain)))
+  parts.push(...text(content.slice(plain)))
   _plainSource = { content, parts }
   return parts
 }
@@ -749,7 +752,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
     // the empty `.then` body doesn't trip promise/always-return.
     ;(async () => {
       const highlightedHtml = await prismHighlight(content, lang, bundleSourceLinkResolver(details, path))
-      _bundleHighlightCache.set(cacheKey, highlightedHtml ?? null)
+      _bundleHighlightCache.set(cacheKey, typeof highlightedHtml === 'string' ? controlMarkup(highlightedHtml) : null)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — Lit only patches what changed, so the cost
       // is just the highlighted string injected via unsafeHTML.
