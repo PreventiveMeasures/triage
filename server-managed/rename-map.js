@@ -99,6 +99,13 @@ function analyze(text, extension) {
     return variable
   }
   const fnOf = where => where.fn ? where : fnOf(where.parent)
+  // Two variables that must keep one name, read from then on as the first.
+  const join = (kept, gone) => {
+    if (kept === gone) return
+    for (const at of scopes) for (const [name, variable] of at.names) if (variable === gone) at.names.set(name, kept)
+    for (const [node, [variable, where]] of declarations) if (variable === gone) declarations.set(node, [kept, where])
+    variables.splice(variables.indexOf(gone), 1)
+  }
   // Names that are none of a variable's (a property, a key, a label), and
   // those whose variable keeps its name.
   const keeping = new Set(), others = new Set()
@@ -115,7 +122,15 @@ function analyze(text, extension) {
       case 'JSXElement': case 'JSXFragment': return { reason: 'jsx' }
       case 'WithStatement': return { reason: 'dynamic' }
       case 'VariableDeclaration':
-        for (const declarator of node.declarations) for (const id of declared(declarator.id)) declare(node.kind === 'var' ? fnOf(where) : where, id)
+        for (const declarator of node.declarations) {
+          for (const id of declared(declarator.id)) {
+            const variable = declare(node.kind === 'var' ? fnOf(where) : where, id)
+            // A `var` named as a `catch`'s parameter it is in declares its
+            // function's, its value going to the parameter (`catch (a) { var a
+            // = 2 }`): the two keep one name.
+            for (let at = where; node.kind === 'var' && !at.fn; at = at.parent) if (at.caught && at.names.has(id.name)) join(at.names.get(id.name), variable)
+          }
+        }
         break
       case 'FunctionDeclaration':
         if (node.id && !where.fn) blockFunctions.push(declare(where, node.id))
@@ -177,7 +192,7 @@ function analyze(text, extension) {
     if (BLOCKS.has(node.type)) inner = scope(where, false)
     else if (node.type === 'StaticBlock') inner = scope(where, true)
     else if (node.type === 'CatchClause') {
-      inner = scope(where, false)
+      inner = Object.assign(scope(where, false), { caught: true })
       for (const id of declared(node.param)) declare(inner, id)
     }
     for (const field in node) {

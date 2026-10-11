@@ -308,3 +308,12 @@ test('each side is parsed as its own extension has it, a file renamed from one t
   const mapped = renameMap('let a = 1;\nf(a);\nexport {};\n', 'if (x) return;\nlet b = 1;\nf(b);\n', { extension: 'mjs', otherExtension: 'cjs' })
   assert.equal(mapped.reason, undefined, 'a .cjs file\'s top-level `return` parses')
 })
+
+test('a var named as the catch parameter it is in keeps one name with it', () => {
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
+  const lines = (caught, declared, read, returned) => ['function f() {', '  try {', '    throw 1;', `  } catch (${caught}) {`, `    var ${declared} = 2;`, `    out(${read});`,
+    '  }', `  return ${returned};`, '}', 'f();']
+  // The first calls out(2) and returns undefined, the second out(1) and returns 2.
+  assert.notDeepEqual(ignoring(lines('a', 'a', 'a', 'a'), lines('b', 'c', 'b', 'c')).blocks, [], 'renamed apart, it is a change')
+  assert.deepEqual(ignoring(lines('a', 'a', 'a', 'a'), lines('b', 'b', 'b', 'b')).blocks, [], 'renamed as one, it hides')
+})
