@@ -84,7 +84,7 @@ const RENAME_REASONS = {
   unparsed: "the file couldn't be parsed",
   dynamic: 'the file reads names by their spelling (eval or with)',
   jsx: 'the file holds JSX',
-  'block-function': 'a function declared in a block is read outside it',
+  'block-function': 'the file declares a function in a block outside strict code',
   unverified: "the old side with the new names couldn't be checked to read as before",
 }
 

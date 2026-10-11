@@ -111,17 +111,19 @@ test('a script\'s top level is every script\'s, its names globals never left out
   // its statement or not.
   assert.notDeepEqual(hidden('const f = a => await\n  a();\nmodule.exports = f;\n', 'const f = b => await\n  b();\nmodule.exports = f;\n'), [],
     'a line break after `await`, outside a module')
-  // A function declared in a block, read past it in its function outside a module: its function's or
-  // another, as the code is strict or not.
+  // A function declared in a block outside strict code sets its function's variable of that name
+  // too: no names are given then; in strict code it is its block's alone.
   assert.equal(hidden('function f() { if (x) { function a() {} } return a }\nmodule.exports = f;\n', 'function f() { if (x) { function b() {} } return a }\nmodule.exports = f;\n').length, 1,
     'a function declared in a block, read past it')
-  assert.deepEqual(hidden('function f() { if (x) { function a() {} a() } }\nmodule.exports = f;\n', 'function f() { if (x) { function b() {} b() } }\nmodule.exports = f;\n'), [],
-    'read in its block alone')
-  // One declared after `else` is its function's too, outside strict code: no expression's own name.
+  assert.notDeepEqual(hidden('function f() { if (x) { function a() {} a() } }\nmodule.exports = f;\n', 'function f() { if (x) { function b() {} b() } }\nmodule.exports = f;\n'), [],
+    'read in its block alone, outside strict code')
+  assert.deepEqual(hidden('"use strict";\nfunction f() { if (x) { function a() {} a() } }\nmodule.exports = f;\n', '"use strict";\nfunction f() { if (x) { function b() {} b() } }\nmodule.exports = f;\n'), [],
+    'in strict code')
+  // One declared after `else`, no expression's own name, is one in a block: outside strict code, no names given.
   assert.equal(hidden('function f(x) { if (x) g(); else function a() {} return a }\nmodule.exports = f;\n', 'function f(x) { if (x) g(); else function b() {} return a }\nmodule.exports = f;\n').length, 1,
     'a function declared after `else`, read past it')
-  assert.deepEqual(hidden('function f(x) { if (x) g(); else function a() {} return a }\nmodule.exports = f;\n', 'function f(x) { if (x) g(); else function b() {} return b }\nmodule.exports = f;\n'), [],
-    'renamed alike')
+  assert.notDeepEqual(hidden('function f(x) { if (x) g(); else function a() {} return a }\nmodule.exports = f;\n', 'function f(x) { if (x) g(); else function b() {} return b }\nmodule.exports = f;\n'), [],
+    'renamed alike, outside strict code')
 })
 
 test('names left out are short bindings: never keywords, properties or keys, strings, templates, regular expressions, comments or longer names', () => {
@@ -321,4 +323,18 @@ test('a var named as the catch parameter it is in keeps one name with it', () =>
 test('a var joins the nearest catch parameter of its name alone, nested catches of that name left whole', () => {
   const nested = asModule(text(['function f() {', '  try {', '    g();', '  } catch (a) {', '    try {', '      h();', '    } catch (a) {', '      var a;', '      out({ a });', '    }', '  }', '}', 'f();']))
   assert.equal(renameMap(nested, nested).text, nested, 'the same file reads as it is')
+})
+
+test('outside strict code a function declared in a block gives no names, as it sets its function\'s variable too', () => {
+  // Renaming the block's `a` to `b` would have it set the function's `var b`: `f(true)` returning a function.
+  const sloppy = ['function f(x) {', '  var b = 1;', '  if (x) {', '    function a() {}', '  }', '  return b;', '}', 'module.exports = f;']
+  const renamed = sloppy.map(line => line.replace('function a()', 'function b()'))
+  assert.equal(renameMap(text(sloppy), text(renamed)).reason, 'block-function')
+  assert.equal(renameMap('if (x) function a() {}\nmodule.exports = 1;\n', 'if (x) function b() {}\nmodule.exports = 1;\n').reason, 'block-function', 'one an `if` holds')
+  for (const strict of [['"use strict";', ...sloppy], sloppy.map(line => line.replace('function f(x) {', 'function f(x) {\n  "use strict";'))]) {
+    assert.equal(renameMap(text(strict), text(strict)).reason, undefined, 'strict code\'s are their blocks\' alone')
+  }
+  assert.equal(renameMap(asModule(text(sloppy.slice(0, 7))), asModule(text(sloppy.slice(0, 7)))).reason, undefined, 'a module is strict')
+  assert.equal(renameMap('class C { m() { if (x) { function a() {} } } }\nmodule.exports = C;\n', 'class C { m() { if (x) { function a() {} } } }\nmodule.exports = C;\n').reason, undefined,
+    'so is a class')
 })

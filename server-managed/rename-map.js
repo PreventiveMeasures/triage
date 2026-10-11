@@ -48,21 +48,25 @@ function declared(pattern, out = []) {
   return out
 }
 
+// Whether statements begin by saying their code is strict.
+function saysStrict(statements) {
+  for (const statement of statements) {
+    if (statement.directive === undefined) return false
+    if (statement.directive === 'use strict') return true
+  }
+  return false
+}
+
 const resolve = (name, from, names = at => at.names) => {
   for (let at = from; at; at = at.parent) if (names(at).has(name)) return names(at).get(name)
   return null
 }
-const within = (from, of) => {
-  for (let at = from; at; at = at.parent) if (at === of) return true
-  return false
-}
-
 // A text's scopes and variables, each name in it a variable's (`occurrences`,
 // with the scope it is read from, in order) or a global's (`globals`), or
 // `{ reason }` where names can't all be followed: a text that does not parse
 // (`unparsed`), reads a name by its spelling (`eval`, `with`: `dynamic`) or
-// holds JSX (`jsx`), or, outside a module, reads a function declared in a
-// block past it, its function's in sloppy code alone (`block-function`).
+// holds JSX (`jsx`), or, outside strict code, declares a function in a block,
+// which there sets its function's variable of that name too (`block-function`).
 // Parsed as its `extension` has it: an `.mjs` file a module, a `.cjs` one a
 // CommonJS module, any other a module where it says so (`import`, `export`).
 // A variable is renamable (`aside`) where its name is short and a declaration
@@ -80,9 +84,11 @@ function analyze(text, extension) {
     if (parsed.errors.length > 0) return { reason: 'unparsed' }
     program = parsed.program
   } catch { return { reason: 'unparsed' } }
-  const blockFunctions = [], declarations = new Map(), scopes = [], variables = []
+  const declarations = new Map(), scopes = [], variables = []
+  // Strict code is a module's, a class's, and a function's or a script's that
+  // says so (`"use strict"`), with all within it.
   const scope = (parent, fn) => {
-    const made = { parent, fn, names: new Map() }
+    const made = { parent, fn, names: new Map(), strict: parent?.strict ?? false }
     scopes.push(made)
     return made
   }
@@ -109,7 +115,7 @@ function analyze(text, extension) {
   // Names that are none of a variable's (a property, a key, a label), and
   // those whose variable keeps its name.
   const keeping = new Set(), others = new Set()
-  const root = scope(null, true)
+  const root = Object.assign(scope(null, true), { strict: program.sourceType === 'module' || saysStrict(program.body) })
   // Each node with the scope it is read in, a work list rather than a
   // recursion, as a minified file's expressions can nest deeply.
   const references = [], work = [[program, root]]
@@ -137,8 +143,12 @@ function analyze(text, extension) {
         }
         break
       case 'FunctionDeclaration':
-        if (node.id && !where.fn) blockFunctions.push(declare(where, node.id))
-        else if (node.id) declare(where, node.id)
+        if (node.id && !where.fn && !where.strict) return { reason: 'block-function' }
+        if (node.id) declare(where, node.id)
+        break
+      // A function an `if` holds without braces is one in a block.
+      case 'IfStatement':
+        if (!where.strict && [node.consequent, node.alternate].some(clause => clause?.type === 'FunctionDeclaration')) return { reason: 'block-function' }
         break
       case 'ClassDeclaration': if (node.id) declare(where, node.id); break
       case 'ImportDeclaration':
@@ -182,6 +192,7 @@ function analyze(text, extension) {
         continue
       }
       const parameters = scope(named, true)
+      if (node.body?.type === 'BlockStatement' && saysStrict(node.body.body)) parameters.strict = true
       for (const parameter of node.params) {
         for (const id of declared(parameter)) declare(parameters, id)
         work.push([parameter, parameters])
@@ -194,6 +205,7 @@ function analyze(text, extension) {
     }
     let inner = where
     if (BLOCKS.has(node.type)) inner = scope(where, false)
+    else if (node.type === 'ClassBody') inner = Object.assign(scope(where, false), { strict: true })
     else if (node.type === 'StaticBlock') inner = scope(where, true)
     else if (node.type === 'CatchClause') {
       inner = Object.assign(scope(where, false), { caught: true })
@@ -217,8 +229,6 @@ function analyze(text, extension) {
       globals.push([node, where])
       if (COMMONJS.has(node.name)) commonjs = true
     }
-    if (program.sourceType !== 'module'
-      && blockFunctions.some(fn => fn.name === node.name && fn !== variable && !within(where, fn.scope) && within(where, fnOf(fn.scope)))) return { reason: 'block-function' }
   }
   for (const [node, variable] of occurrences) if (keeping.has(node)) variable.kept = true
   const own = program.sourceType === 'module' || program.sourceType === 'commonjs' || commonjs
