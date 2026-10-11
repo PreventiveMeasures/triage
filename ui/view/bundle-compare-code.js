@@ -79,6 +79,15 @@ function minified(details, path, text) {
   return files.get(path)
 }
 
+// Why the server left a file's old names as they were (rename-map.js).
+const RENAME_REASONS = {
+  unparsed: "the file couldn't be parsed",
+  dynamic: 'the file reads names by their spelling (eval or with)',
+  jsx: 'the file holds JSX',
+  'block-function': 'a function declared in a block is read outside it',
+  unverified: "the old side with the new names couldn't be checked to read as before",
+}
+
 // A file's line model by what it was diffed with: the settings, and whether
 // its sides were pretty-printed (see _pretty).
 export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${hidesRenames(path, settings)}\0${pretty}`
@@ -428,8 +437,11 @@ export class BundleCompareCode extends LitElement {
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     const { basePath = path } = entry
     const changes = renames && !large ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, prefs.ignoreWhitespace, () => this.requestUpdate()) : null
-    const model = textual && !large && (!changes || changes.status === 'ready') ? this._model(key, before, after, changes) : null
-    return { before, after, textual, large, pretty, key, generated, renames, changes, model }
+    // The old side as the server diffed it, given the new side's names.
+    const shown = changes?.status === 'ready' ? changes.before : before
+    const model = textual && !large && (!changes || changes.status === 'ready')
+      ? this._model(key, shown, after, changes ? { blocks: changes.blocks } : null) : null
+    return { before: shown, after, textual, large, pretty, key, generated, renames, changes, model }
   }
 
   // Whether a file's names are a minifier's on both sides, each minified, and
@@ -510,11 +522,13 @@ export class BundleCompareCode extends LitElement {
 
   // Highlighted lines of one side, or null until (or unless) Prism colors
   // it; the first ask starts the work and re-renders once it lands.
-  _highlighted(details, path, text, pretty = false) {
+  // `copy` names a text other than the file's own: `pretty`, or the old side
+  // given another file's names (`renamed` and that file).
+  _highlighted(details, path, text, copy = '') {
     if (!text) return null
     const lang = langForPath(path, details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined, text)
     if (!lang) return null
-    const key = `${details.integrity}\0${path}${pretty ? '\0pretty' : ''}`
+    const key = `${details.integrity}\0${path}${copy ? `\0${copy}` : ''}`
     if (highlightCache.has(key)) return highlightCache.get(key)
     if (!highlightPending.has(key)) {
       highlightPending.add(key)
@@ -593,7 +607,7 @@ export class BundleCompareCode extends LitElement {
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5v2.5h12V9.5"/></svg>
         </button>
         ${renames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.ignoreRenames)} aria-label="Hide renamed names"
-          data-tooltip="Hide short names renamed alike throughout the file, as a minifier renames them between builds"
+          data-tooltip="Hide renamed names: the old side given the new side's names wherever a minifier renamed a variable alike throughout, an old one no new one stands for marked ʹ"
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
         </button>` : nothing}` : nothing}
@@ -677,7 +691,7 @@ export class BundleCompareCode extends LitElement {
   // numbered lines, the ones importing a repointed specifier marked.
   _renderSource(path, text, repointed, { key: modelKeyed, pretty }) {
     const model = this._model(modelKeyed, text, text)
-    const lit = { model, b: this._highlighted(this._textSide(path), path, text, pretty?.status === 'ready') }
+    const lit = { model, b: this._highlighted(this._textSide(path), path, text, pretty?.status === 'ready' ? 'pretty' : '') }
     const marked = new Set([...this._importLines(repointed, model.b).values()].flat())
     const key = `${path}\0source`
     const limit = this._limits.get(key) ?? ROW_LIMIT
@@ -752,7 +766,7 @@ export class BundleCompareCode extends LitElement {
     this._select(this._order[index + direction])
   }
 
-  _renderDiff(path, { kind, basePath = path }, { after, before, key, model, pretty }) {
+  _renderDiff(path, { kind, basePath = path }, { after, before, key, model, pretty, changes }) {
     const expansion = this._expansions.get(key) ?? new Map()
     const split = prefs.layout === 'split'
     const rows = diffRows(model, expansion, { split })
@@ -761,8 +775,9 @@ export class BundleCompareCode extends LitElement {
     this._shownRows = { path, key, rows, limit }
     const lit = {
       model,
-      a: kind === 'added' ? null : this._highlighted(this.base, basePath, before, pretty?.status === 'ready'),
-      b: kind === 'removed' ? null : this._highlighted(this.other, path, after, pretty?.status === 'ready'),
+      a: kind === 'added' ? null : this._highlighted(this.base, basePath, before,
+        changes?.status === 'ready' ? `renamed\0${this.other.integrity}\0${path}` : pretty?.status === 'ready' ? 'pretty' : ''),
+      b: kind === 'removed' ? null : this._highlighted(this.other, path, after, pretty?.status === 'ready' ? 'pretty' : ''),
       expand: (run, change) => {
         const next = new Map(expansion)
         next.set(run, change === 'all' ? { all: true } : { ...next.get(run), [change]: (next.get(run)?.[change] ?? 0) + EXPAND_STEP })
@@ -777,7 +792,8 @@ export class BundleCompareCode extends LitElement {
       started = change
       return true
     }
-    return html`<div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split, wrapped: split || !!state.bundleSourceWrap })}
+    return html`${changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
+      <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split, wrapped: split || !!state.bundleSourceWrap })}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
         ${split ? html`<div class="diff-row diff-split-head" role="row">
           <span class="diff-half">Before<strong data-tooltip-truncated data-tooltip=${this.baseName}>${this.baseName}</strong></span>
@@ -827,13 +843,6 @@ export class BundleCompareCode extends LitElement {
     return html`<span class="diff-num">${line + 1}</span><span class="diff-sign">${sign}</span>${this._codeCell(lit, side, line, ranges)}`
   }
 
-  // An unchanged line's sign: `≈` for one whose names were renamed alike
-  // (lineDiff's ignoreRenames), naming the line it was.
-  _ctxSign(model, row) {
-    if (!model.renamed.has(row.a)) return ' '
-    return html`<span class="diff-renamed" data-tooltip=${`Renamed from: ${model.a[row.a].trim()}`}>≈</span>`
-  }
-
   _noEol(model, side, line) {
     return line != null && model.noEol[side] && line === model[side].length - 1
   }
@@ -860,7 +869,7 @@ export class BundleCompareCode extends LitElement {
     const { model } = lit
     if (row.kind === 'fold') return this._fold(row, lit)
     if (row.kind === 'ctx') {
-      return html`<div class="diff-row ctx" role="row"><span class="diff-num">${row.a + 1}</span>${this._cell(lit, 'b', row.b, this._ctxSign(model, row), null)}</div>`
+      return html`<div class="diff-row ctx" role="row"><span class="diff-num">${row.a + 1}</span>${this._cell(lit, 'b', row.b, ' ', null)}</div>`
     }
     const del = row.kind === 'del'
     const words = del ? this._words(model, row.a, row.pair)?.a : this._words(model, row.pair, row.b)?.b
@@ -882,8 +891,8 @@ export class BundleCompareCode extends LitElement {
     if (row.kind === 'fold') return this._fold(row, lit)
     if (row.kind === 'ctx') {
       return html`<div class="diff-row ctx" role="row">
-        <span class="diff-half">${this._cell(lit, 'a', row.a, this._ctxSign(model, row), null)}</span>
-        <span class="diff-half">${this._cell(lit, 'b', row.b, this._ctxSign(model, row), null)}</span>
+        <span class="diff-half">${this._cell(lit, 'a', row.a, ' ', null)}</span>
+        <span class="diff-half">${this._cell(lit, 'b', row.b, ' ', null)}</span>
       </div>`
     }
     const words = row.paired ? this._words(model, row.left, row.right) : null

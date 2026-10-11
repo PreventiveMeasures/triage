@@ -102,7 +102,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
   if (bundleRoute![2] === 'advisories' && !snapshot.permissions.security) { json(res, 403, { error: 'security-access-required' }); return }
   if (bundleRoute![2] === 'rename-diff') {
     if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
-    await serveRenameDiff(res, deps, bundle, snapshot.bundles.find(item => item.id === url.searchParams.get('other')), url, send); return
+    await serveRenameDiff(res, deps, bundle, snapshot.bundles.find(item => item.id === url.searchParams.get('other')), url, stream); return
   }
   await serveBundle(res, deps, bundle, bundleRoute![2]!, url, recheck, stream)
 }
@@ -110,7 +110,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
 // One of a bundle's JavaScript files diffed with one of `other`, another of
 // the link's bundles (rename-diff.ts).
 async function serveRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, url: URL,
-  send: (body: unknown) => Promise<void>) {
+  stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
   const request = renameDiffRequest(url.searchParams)
   if (!request) { json(res, 400, { error: 'bad-file' }); return }
   if (!other) { json(res, 404, { error: 'no-bundle' }); return }
@@ -124,7 +124,7 @@ async function serveRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, bundl
     if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
     throw err
   }
-  await send(diff)
+  await stream(diff, 'br')
 }
 
 async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, part: string, url: URL,

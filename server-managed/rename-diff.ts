@@ -1,19 +1,24 @@
 // Compare's diff of a JavaScript file minified on both sides with the names a
-// minifier renamed alike left out (GET /api/bundles/:id/rename-diff, GET
+// minifier renamed alike hidden (GET /api/bundles/:id/rename-diff, GET
 // /api/npm/rename-diff): both sides pretty-printed, as the pretty-print toggle
-// has them (pretty-print.ts), then diffed by common/rename-diff.js in a worker,
-// off the event loop and two at a time per process. The last few diffs are
-// kept in memory by both files' hashes, a private npm version's never, each
-// read again through the pretty-print cache first, which checks that its
-// source holds a file of that hash. Access is the caller's to check.
+// has them (pretty-print.ts), the old one given the new one's names, checked
+// safe (rename-map.js), and formatted again, checked to change only its layout
+// (pretty-format.ts), then the two diffed as they are; in a worker, off the
+// event loop and two at a time per process. Answered as Brotli-encoded JSON,
+// `{ before, blocks, reason }` (rename-diff-worker.js). The last few answers
+// are kept in memory by both files' hashes, a private npm version's never,
+// each side read again through the pretty-print cache first, which checks
+// that its source holds a file of that hash. Access is the caller's to check.
 import { Buffer } from 'node:buffer'
+import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 import { Worker } from 'node:worker_threads'
 import { brotliDecompress } from 'node:zlib'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { prettyExtension } from '../common/pretty-print.js'
-import type { RenameDiff } from '../common/rename-diff.js'
+import type { ChangeBlock } from '../common/line-diff.js'
 import type { OpenedBlob } from './blob-store.ts'
+import { encodeBrotli } from './brotli.ts'
 import { PrettyError, type PrettyRequest } from './pretty-print.ts'
 
 // What a minifier renames: JavaScript, as the viewer offers it for.
@@ -25,8 +30,10 @@ const MAX_ACTIVE_DIFFS = 2
 // under.
 const DIFF_TIMEOUT_MS = 60_000
 const MAX_DIFF_CHARS = 64 * 1024 * 1024
-// Diffs kept, the one read last last.
-const KEPT_DIFFS = 32
+// Answers kept, the one read last last: each holds the old side as diffed.
+const KEPT_DIFFS = 8
+
+export interface RenameDiff { before: string; blocks: ChangeBlock[]; reason: string | null }
 
 export interface RenameDiffRequest { base: PrettyRequest; other: PrettyRequest; ignoreWhitespace: boolean }
 
@@ -52,16 +59,16 @@ export async function prettyText(copy: OpenedBlob): Promise<string> {
 }
 
 let activeDiffs = 0
-const kept = new Map<string, RenameDiff>()
-const pending = new Map<string, Promise<RenameDiff>>()
+const kept = new Map<string, Buffer>()
+const pending = new Map<string, Promise<Buffer>>()
 
-function inWorker(before: string, after: string, ignoreWhitespace: boolean): Promise<RenameDiff> {
+function inWorker(before: string, after: string, extension: string, ignoreWhitespace: boolean): Promise<RenameDiff> {
   if (before.length + after.length > MAX_DIFF_CHARS) return Promise.reject(new PrettyError(413, 'diff-too-large'))
   if (activeDiffs >= MAX_ACTIVE_DIFFS) return Promise.reject(new PrettyError(429, 'diff-busy'))
   let worker: Worker
   try {
     worker = new Worker(new URL('./rename-diff-worker.js', import.meta.url), {
-      workerData: { before, after, ignoreWhitespace }, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 1024 },
+      workerData: { before, after, extension, ignoreWhitespace }, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 1024 },
     })
   } catch (err) {
     console.warn('managed: a rename diff could not start:', err)
@@ -84,23 +91,28 @@ function inWorker(before: string, after: string, ignoreWhitespace: boolean): Pro
   })
 }
 
-// The diff of the two files a request names, `texts` reading both sides
-// pretty-printed (and so checking each is its source's): kept by their hashes
-// where `keep`, readers asking for one meanwhile sharing it.
-export async function renameDiffOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep = true): Promise<RenameDiff> {
+// The answer for the two files a request names, Brotli-encoded, `texts`
+// reading both sides pretty-printed (and so checking each is its source's):
+// kept by their hashes where `keep`, readers asking for one meanwhile sharing it.
+export async function renameDiffOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep = true): Promise<OpenedBlob> {
   const [before, after] = await texts()
   const key = `${request.base.hash}\0${request.other.hash}\0${request.ignoreWhitespace}`
+  const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
   const found = kept.get(key)
   if (found) {
     kept.delete(key)
     kept.set(key, found)
-    return found
+    return opened(found)
   }
   let job = pending.get(key)
-  if (!job) pending.set(key, job = inWorker(before, after, request.ignoreWhitespace).finally(() => pending.delete(key)))
-  const diff = await job
-  if (!keep) return diff
-  kept.set(key, diff)
-  if (kept.size > KEPT_DIFFS) kept.delete(kept.keys().next().value!)
-  return diff
+  if (!job) {
+    pending.set(key, job = inWorker(before, after, request.base.extension, request.ignoreWhitespace)
+      .then(diff => encodeBrotli(Buffer.from(JSON.stringify(diff)))).finally(() => pending.delete(key)))
+  }
+  const body = await job
+  if (keep) {
+    kept.set(key, body)
+    if (kept.size > KEPT_DIFFS) kept.delete(kept.keys().next().value!)
+  }
+  return opened(body)
 }

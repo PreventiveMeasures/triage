@@ -152,10 +152,10 @@
     },
     {
       "files": [
-        "common/rename-diff.js"
+        "server-managed/rename-map.js"
       ],
       "rules": {
-        "max-lines": "off",
+        "max-depth": "off",
         "max-lines-per-function": "off"
       }
     },

@@ -7,7 +7,6 @@
 import { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
 import { computeFileHash } from '@preventive/report'
-import { format } from 'oxfmt'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
@@ -15,6 +14,7 @@ import type { OpenedBlob } from './blob-store.ts'
 import { type BundleCacheStorage, readBundleDetails } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
+import { formatChecked } from './pretty-format.ts'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
 import { loadNpmFiles } from './npm-loads.ts'
@@ -25,6 +25,8 @@ import { type NpmVersionDocument, npmFileText } from './npm-packages.ts'
 const PRETTY_VERSION = 1
 // Formats running at once per process, each holding its file's syntax tree.
 const MAX_ACTIVE_FORMATS = 2
+
+export { PRETTY_OPTIONS, sameCode } from './pretty-format.ts'
 
 export class PrettyError extends Error {
   status: number
@@ -45,48 +47,6 @@ export function prettyRequest(params: URLSearchParams): PrettyRequest | null {
 const prettyFile = ({ hash, extension }: PrettyRequest) =>
   `pretty-v${PRETTY_VERSION}/${Buffer.from(hash.slice('sha512-'.length), 'base64').toString('hex')}.${extension}.br`
 
-// How files are formatted: changing what is written no more than layout
-// needs, so a copy reads as the file does (sameCode). Keys keep their
-// quotes, no trailing commas or arrow parameters' parentheses are added, and
-// template literals' contents are left as they are, as formatting what they
-// hold would change their strings.
-export const PRETTY_OPTIONS = {
-  quoteProps: 'preserve', trailingComma: 'none', arrowParens: 'avoid', embeddedLanguageFormatting: 'off',
-} as const
-
-// A number literal, outside an identifier.
-const NUMBER = /(?<![\p{L}\p{N}_$])(?:0[box][\d_a-f]+n?|\d[\d_]*(?:\.[\d_]*)?(?:e[+-]?\d+)?n?)|(?<![\p{N}.])\.\d[\d_]*(?:e[+-]?\d+)?/giu
-
-// A number literal spelled as the formatter spells it: in lowercase, with a
-// leading zero, and no `+`, leading zeros or zero exponent, nor trailing zeros
-// or dot in its fraction.
-function numberSpelling(literal: string): string {
-  const number = literal.toLowerCase()
-  const parts = /^0[box]|n$/u.test(number) ? null : /^([^e]*)(?:e([+-]?)0*(\d+))?$/u.exec(number)
-  if (!parts) return number
-  const [, mantissa = '', sign = '', exponent = ''] = parts
-  const fraction = (mantissa.startsWith('.') ? `0${mantissa}` : mantissa).replace(/(\.\d*?)0+$/u, '$1').replace(/\.$/u, '')
-  return exponent === '' || /^0+$/u.test(exponent) ? fraction : `${fraction}e${sign === '-' ? '-' : ''}${exponent}`
-}
-
-// The text in one form, which formatting leaves as it is: numbers spelled
-// alike, strings in double quotes with no quote escaped, regular expressions'
-// flags in order, and without whitespace, parentheses or semicolons, all of
-// which formatting may add or drop. CSS goes without quotes, which formatting
-// adds to attribute selectors' values, and in lowercase, as it may lowercase
-// keywords.
-function codeForm(text: string, css: boolean): string {
-  const form = text.replaceAll(NUMBER, numberSpelling).replaceAll(/\\(?=["'])|[\s();]/gu, '').replaceAll("'", '"')
-    .replaceAll(/(?<=\/)[dgimsuvy]{2,}(?![\p{L}\p{N}_$])/gu, flags => [...flags].toSorted().join(''))
-  return css ? form.replaceAll('"', '').toLowerCase() : form
-}
-
-// Whether `formatted` is `text` but for its layout: a quick check, apart from
-// the formatter, that it lost or changed nothing else.
-export function sameCode(text: string, formatted: string, css = false): boolean {
-  return codeForm(text, css) === codeForm(formatted, css)
-}
-
 let activeFormats = 0
 
 // The text formatted and Brotli-encoded, where formatting changed only its
@@ -95,14 +55,12 @@ export async function prettyBody(text: string, extension: string): Promise<Buffe
   if (Buffer.byteLength(text) > MAX_PRETTY_BYTES) throw new PrettyError(413, 'file-too-large')
   if (activeFormats >= MAX_ACTIVE_FORMATS) throw new PrettyError(429, 'pretty-busy')
   activeFormats++
-  let result: Awaited<ReturnType<typeof format>>
-  try { result = await format(`pretty.${extension}`, text, PRETTY_OPTIONS) }
-  catch { throw new PrettyError(422, 'unformattable') }
+  let result
+  try { result = await formatChecked(text, extension) }
   finally { activeFormats-- }
-  if (result.errors.length > 0) throw new PrettyError(422, 'unformattable')
-  if (!sameCode(text, result.code, extension === 'css')) {
-    console.warn(`managed: pretty-printing a .${extension} file changed more than its layout; not served`)
-    throw new PrettyError(422, 'pretty-mismatch')
+  if ('error' in result) {
+    if (result.error === 'pretty-mismatch') console.warn(`managed: pretty-printing a .${extension} file changed more than its layout; not served`)
+    throw new PrettyError(422, result.error)
   }
   return encodeBrotli(Buffer.from(result.code))
 }

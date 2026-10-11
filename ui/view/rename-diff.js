@@ -1,8 +1,8 @@
 // Compare's diff of a JavaScript file minified on both sides with renamed
-// names hidden: worked out by the server from the two files pretty-printed
-// (server-managed/rename-diff.ts), asked for by both files' paths and their
-// texts' hashes, as their copies are (pretty-source.js). The viewer keeps the
-// last few it read, for the session.
+// names hidden: worked out by the server from the two files pretty-printed,
+// the old one given the new one's names (server-managed/rename-diff.ts),
+// asked for by both files' paths and their texts' hashes, as their copies are
+// (pretty-source.js). The viewer keeps the last few it read, for the session.
 import { computeFileHash } from '@preventive/report'
 import { fetchBundleRenameDiff, fetchNpmRenameDiff } from './client-managed.js'
 
@@ -11,8 +11,9 @@ import { fetchBundleRenameDiff, fetchNpmRenameDiff } from './client-managed.js'
 const KEPT_DIFFS = 16
 
 // Diffs by both sides' integrity and path and the whitespace setting:
-// `{ status: 'loading' }`, `{ status: 'ready', blocks, renamed }`, or
-// `{ status: 'error', message }`.
+// `{ status: 'loading' }`, `{ status: 'ready', before, blocks, reason }` (the
+// old side as diffed, the change blocks, and why its names are its own where
+// they could not be given safely), or `{ status: 'error', message }`.
 const diffs = new Map()
 // What a diff asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
@@ -28,10 +29,10 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     const [hash, otherHash] = await Promise.all([[base, basePath, before], [other, path, after]]
       .map(([details, file, text]) => details.fileHashes?.get(file) ?? computeFileHash(text)))
     const params = { path: basePath, hash, otherPath: path, otherHash, ignoreWhitespace }
-    const { blocks, renamed } = base.npm
+    const { before: renamed, blocks, reason } = base.npm
       ? await fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
       : await fetchBundleRenameDiff(base.managedId, other.managedId, params)
-    next = { status: 'ready', blocks, renamed }
+    next = { status: 'ready', before: renamed, blocks, reason }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {

@@ -16,7 +16,7 @@ import { createDiskObjectStorage } from '../server-managed/object-storage-disk.t
 import { PRETTY_OPTIONS, createPrettyCache, prettyBody, sameCode } from '../server-managed/pretty-print.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
-import { renameDiff } from '../common/rename-diff.js'
+import { changeBlocks } from '../common/line-diff.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
 import { managedStores } from './_managed-storage.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
@@ -100,6 +100,12 @@ const bundlePretty = (id, path, hash) => `/api/bundles/${id}/pretty?${new URLSea
 const bundleRenameDiff = (id, other, params) => `/api/bundles/${id}/rename-diff?${new URLSearchParams({ other, ...params })}`
 const npmRenameDiff = (name, version, otherVersion, params) => `/api/npm/rename-diff?${new URLSearchParams({ name, version, otherVersion, ...params })}`
 
+// What a rename diff of the two builds below answers: the old one with the
+// new one's names, formatted, diffed with the new one.
+async function renamedBuilds(ignoreWhitespace = false) {
+  const before = (await formatted(built)).replace('add(a, b)', 'add(c, d)').replace('a + b', 'c + d')
+  return { before, blocks: changeBlocks(before, await formatted(rebuilt), ignoreWhitespace), reason: null }
+}
 // A minifier's two builds of a module: a function's names renamed, a number changed.
 const built = 'function add(a,b){return a+b}export const x=add(1,2),y=[1,2,3].map(n=>n*2);\n'
 const rebuilt = 'function add(c,d){return c+d}export const x=add(1,2),y=[1,2,3].map(n=>n*3);\n'
@@ -266,11 +272,11 @@ test('a bundle file is diffed with another bundle\'s, both pretty-printed, renam
   const res = await h.send(bundleRenameDiff(base, other, builds()))
   assert.equal(res.status, 200)
   assert.equal(res.headers['content-type'], 'application/json')
-  const expected = renameDiff(await formatted(built), await formatted(rebuilt))
+  assert.equal(res.headers['content-encoding'], 'br')
+  const expected = await renamedBuilds()
   assert.deepEqual(res.json(), expected)
-  assert.ok(expected.renamed.length > 0 && expected.blocks.length === 1, 'the renamed lines left out, the changed one shown')
-  assert.deepEqual(renameDiff(await formatted(built), await formatted(rebuilt), { ignoreWhitespace: true }),
-    (await h.send(bundleRenameDiff(base, other, { ...builds(), ignoreWhitespace: 'true' }))).json())
+  assert.equal(expected.blocks.length, 1, 'the renamed lines alike, the changed one shown')
+  assert.deepEqual((await h.send(bundleRenameDiff(base, other, { ...builds(), ignoreWhitespace: 'true' }))).json(), await renamedBuilds(true))
   // Both copies were kept, as the pretty-print toggle's are.
   for (const id of [base, other]) assert.equal((await readdir(join(h.dir, 'cache-encrypted-v1', 'bundles', id, 'pretty-v1'))).length, 1)
   assert.deepEqual((await h.send(bundleRenameDiff(base, other, builds()), 'admin')).json(), expected, 'kept, for any reader of both')
@@ -307,7 +313,7 @@ test('an npm file is diffed with another version\'s, both pretty-printed, rename
   registry(t, [packageOf('lib', '1.0.0', { 'dist/lib.min.js': built }), packageOf('lib', '1.1.0', { 'dist/lib.min.js': rebuilt })])
   const res = await h.send(npmRenameDiff('lib', '1.0.0', '1.1.0', builds('dist/lib.min.js')))
   assert.equal(res.status, 200)
-  assert.deepEqual(res.json(), renameDiff(await formatted(built), await formatted(rebuilt)))
+  assert.deepEqual(res.json(), await renamedBuilds())
   const cases = [
     [npmRenameDiff('lib', '1.0.0', '', builds('dist/lib.min.js')), 400, 'bad-package'],
     [npmRenameDiff('lib', '1.0.0', '1.1.0', { ...builds('dist/lib.min.js'), otherHash: 'sha512-nope' }), 400, 'bad-file'],
@@ -330,7 +336,7 @@ test('a public link diffs its bundles\' files with renamed names hidden, between
   const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
   const res = await h.send(bundleRenameDiff(base, other, builds()), null, { headers })
   assert.equal(res.status, 200)
-  assert.deepEqual(res.json(), renameDiff(await formatted(built), await formatted(rebuilt)))
+  assert.deepEqual(res.json(), await renamedBuilds())
   assert.equal((await h.send(bundleRenameDiff(base, randomUUID(), builds()), null, { headers })).status, 404)
   assert.equal((await h.send(bundleRenameDiff(base, other, { ...builds(), hash: 'nope' }), null, { headers })).status, 400)
 })

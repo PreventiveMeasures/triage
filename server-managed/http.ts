@@ -1320,7 +1320,7 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
 // GET /api/bundles/:id/rename-diff: one of its JavaScript files diffed with
 // one of the `other` bundle's, both pretty-printed, renamed names hidden
 // (rename-diff.ts), for a reader of both, checked again once it is worked out.
-async function handleBundleRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
+async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
   const otherId = params.get('other') ?? '', request = renameDiffRequest(params)
   if (!request || !/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-file' }); return }
   const readable = async () => {
@@ -1340,7 +1340,8 @@ async function handleBundleRenameDiff(res: ServerResponse, deps: ManagedHttpDeps
   } catch (err) {
     sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return
   }
-  if (await readable()) sendJson(res, 200, diff)
+  if (await readable()) await sendEncoded(req, res, diff, 'application/json')
+  else diff.stream.destroy()
 }
 
 // Published dependency advisories require security access, independently of access to
@@ -2543,7 +2544,9 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if (other == null) { sendJson(res, 404, { error: 'package-not-found' }); return }
       const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
         await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
-      if (await recheck(doc.private || other.private)) sendJson(res, 200, diff)
+      if (!(await recheck(doc.private || other.private))) { diff.stream.destroy(); return }
+      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      await sendEncoded(req, res, diff, 'application/json')
       return
     }
     // The load stays held until this response is written or abandoned, and
@@ -2829,7 +2832,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const id = bundleRead[1]!, part = bundleRead[2]!, { session } = workspaceSession!, { bundleCache, prettyCache } = deps
       if (part === 'rename-diff') {
         if (method !== 'GET') { send405(res, 'GET'); return }
-        await handleBundleRenameDiff(res, deps, session, id, url.searchParams); return
+        await handleBundleRenameDiff(req, res, deps, session, id, url.searchParams); return
       }
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
       if (part === 'download') { await handleGetBundle(req, res, deps, session, id); return }

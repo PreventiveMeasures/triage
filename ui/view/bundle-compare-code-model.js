@@ -1,7 +1,7 @@
 // Pure model behind the Compare slide's Code view — no Lit, no DOM, no
 // `state`. Two texts in, what a review needs out: the change blocks
 // between them (common/line-diff.js, or the server's with renamed names
-// hidden: common/rename-diff.js), the rows a unified or split
+// hidden: server-managed/rename-diff.ts), the rows a unified or split
 // diff shows with unchanged runs folded down to their context, the
 // words that changed inside a changed line, and those words marked in a
 // line's syntax-highlighted markup.
@@ -26,11 +26,11 @@ const MIN_FOLD = 4
 // added file is diffed against '' and a removed one against it, so all
 // three kinds of change share one model. `ignoreWhitespace` is diff -w:
 // lines differing only in whitespace pair up as unchanged. `changes` are
-// blocks found elsewhere, the server's with names renamed alike left out
-// (common/rename-diff.js), `renamed` naming the removed lines so left out.
+// blocks found elsewhere: the server's, its old side given the new one's
+// names (server-managed/rename-diff.ts).
 export function lineDiff(before, after, { ignoreWhitespace = false, changes = null } = {}) {
   const a = textLines(before), b = textLines(after)
-  const blocks = changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace), renamed = new Set(changes?.renamed)
+  const blocks = changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
   let additions = 0, deletions = 0
   for (const block of blocks) {
     additions += block.b1 - block.b0
@@ -40,7 +40,7 @@ export function lineDiff(before, after, { ignoreWhitespace = false, changes = nu
   // newline added or dropped at the end is a change of that line alone.
   const noEol = { a: before !== '' && !before.endsWith('\n'), b: after !== '' && !after.endsWith('\n') }
   // `words` keeps the marks of each pair a render asks for.
-  return { a, b, blocks, renamed, additions, deletions, noEol, words: new Map() }
+  return { a, b, blocks, additions, deletions, noEol, words: new Map() }
 }
 
 // The rows of a diff: unchanged (`ctx`) lines, `fold` rows standing for the

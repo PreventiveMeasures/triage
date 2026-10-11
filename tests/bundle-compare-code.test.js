@@ -2,14 +2,16 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
-import { renameDiff } from '../common/rename-diff.js'
+import { changeBlocks } from '../common/line-diff.js'
+import { renameMap } from '../server-managed/rename-map.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
 mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // The server's pretty-printed copies, by bundle and path, and its diffs of
-// two with renamed names hidden, worked out from them as it does (each asked
-// for noted; an error in place of the base's copy fails its diff).
+// two with renamed names hidden, worked out from them as it does, the old side
+// given the new side's names (each asked for noted; an error in place of the
+// base's copy fails its diff).
 const pretty = new Map(), renameDiffs = []
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
@@ -17,7 +19,9 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchBundleRenameDiff(id, other, params) {
     renameDiffs.push({ id, other, ...params })
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
-    return before instanceof Error ? Promise.reject(before) : Promise.resolve(renameDiff(before, after, { ignoreWhitespace: params.ignoreWhitespace }))
+    if (before instanceof Error) return Promise.reject(before)
+    const { text = before, reason = null } = renameMap(before, after)
+    return Promise.resolve({ before: text, blocks: changeBlocks(text, after, params.ignoreWhitespace), reason })
   },
   fetchNpmRenameDiff() {},
 } })
@@ -144,7 +148,8 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const renames = renderText(element.render())
   assert.match(renames, /class="add">\+1<\/span><span class="del">−0/u, 'what is new alone')
-  assert.match(renames, /class="diff-renamed" data-tooltip=Renamed from: var Y = 1;>≈/u)
+  assert.match(renames, /var X = 1;/u, 'the old side read with the new names')
+  assert.doesNotMatch(renames, /var Y = 1;/u)
   assert.match(renames, /aria-pressed=true aria-label="Hide renamed names"/u)
   const files = bundleFilesAsMap(element.base).get('dist/app.min.js'), others = bundleFilesAsMap(element.other).get('dist/app.min.js')
   assert.deepEqual(renameDiffs, [{ id: 'b1', other: 'b2', path: 'dist/app.min.js', hash: await computeFileHash(files), otherPath: 'dist/app.min.js',
@@ -380,4 +385,20 @@ test('a diff shows control characters as boxes, and a CRLF\'s CR only where it i
   assert.deepEqual(rows.del.map(boxes), [['CR'], []], 'the CR a line lost shows, not the one both sides end a line with')
   assert.deepEqual(rows.add.map(boxes), [[], []])
   assert.deepEqual(rows.ctx.map(boxes), [['ESC']])
+})
+
+test('a file whose names the server could not give the new side\'s says why, its renamed names shown', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false) })
+  const element = view('dist/eval.min.js', [{ 'dist/eval.min.js': `var Y=1;eval("Y");${'q(Y);'.repeat(250)}\n` }, { 'dist/eval.min.js': `var X=1;eval("X");${'q(X);'.repeat(250)}\n` }])
+  element.base.managedId = 'b7'
+  element.other.managedId = 'b8'
+  pretty.set('b7:dist/eval.min.js', 'var Y = 1;\neval("Y");\nq(Y);\n')
+  pretty.set('b8:dist/eval.min.js', 'var X = 1;\neval("X");\nq(X);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const shown = renderText(element.render())
+  assert.match(shown, /Renamed names are shown: the file reads names by their spelling \(eval or with\)\./u)
+  assert.match(shown, /class="add">\+3<\/span><span class="del">−3/u)
 })

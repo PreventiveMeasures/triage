@@ -1,25 +1,26 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { renameDiff } from '../common/rename-diff.js'
 import { lineDiff as viewDiff } from '../ui/view/bundle-compare-code-model.js'
+import { renameMap } from '../server-managed/rename-map.js'
 
 const text = list => list.map(line => `${line}\n`).join('')
 // A module's text, its top level its own: a script's names declared there are
 // globals, never hidden.
 const asModule = code => `${code}${code.endsWith('\n') || code === '' ? '' : '\n'}export {}\n`
-// The diff Compare shows: with `ignoreRenames`, the server's (renameDiff)
-// drawn by the viewer's model, as it draws it; else the viewer's own.
+// The diff Compare shows: with `ignoreRenames`, the old side given the new
+// side's names (renameMap) diffed as it is, as the server diffs it; its
+// formatting again changes only layout, and these are formatted already.
 const lineDiff = (before, after, { ignoreRenames = false, ignoreWhitespace = false } = {}) =>
-  viewDiff(before, after, { ignoreWhitespace, changes: ignoreRenames ? renameDiff(before, after, { ignoreWhitespace }) : null })
+  viewDiff(ignoreRenames ? renameMap(before, after).text ?? before : before, after, { ignoreWhitespace })
 
-test('names a minifier renamed alike throughout are left out, and only those', () => {
+test('names a minifier renamed alike throughout are given the new side\'s, and only those', () => {
   const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
   // A new function shifts every name after it: each still stands for one.
   const before = ['var Y = 1;', 'function q(n) {', '  return Y + n;', '}', 'q(Y);']
   const after = ['var X = 1;', 'function Z(n) {', '  return X + n;', '}', 'Z(X);']
   const model = ignoring(before, after)
   assert.deepEqual(model.blocks, [])
-  assert.deepEqual([...model.renamed], [0, 1, 2, 4])
+  assert.deepEqual(model.a, model.b, 'the old side reads with the new names')
   assert.equal(lineDiff(text(before), text(after)).blocks.length, 2, 'off, they all show')
   const inserted = ignoring(before, ['function H(n) {', '  return n;', '}', ...after])
   assert.deepEqual(inserted.blocks, [{ a0: 0, a1: 0, b0: 0, b1: 3 }], 'what is new shows, the names it moved do not')
@@ -27,7 +28,7 @@ test('names a minifier renamed alike throughout are left out, and only those', (
   // A collision anywhere keeps a line: `a` → `b` beside lines that keep both.
   const edited = ignoring(['var a = 1, b = 2;', 'f(a);', 'return a;'], ['var a = 1, b = 2;', 'f(a);', 'return b;'])
   assert.deepEqual(edited.blocks, [{ a0: 2, a1: 3, b0: 2, b1: 3 }])
-  assert.equal(edited.renamed.size, 0)
+  assert.deepEqual(edited.a, edited.b.with(2, 'return a;'), 'and keeps its own')
   assert.equal(ignoring(['var a, b;', 'f(a);', 'g(b);'], ['var c, d;', 'f(c);', 'g(c);']).blocks.length, 1, 'two names renamed to one')
   assert.equal(ignoring(['let a, d;', 'f(a);', 'g(a);'], ['let b, c;', 'f(b);', 'g(c);']).blocks.length, 1, 'one name renamed two ways')
   assert.deepEqual(ignoring(['var a, b;', 'f(a);', 'g(b);'], ['var b, a;', 'f(b);', 'g(a);']).blocks, [], 'two names swapped each stand for one')
@@ -67,7 +68,7 @@ test('names a minifier renamed alike throughout are left out, and only those', (
   assert.deepEqual(lineDiff(asModule('let a;\nf(`${xs.map(e => e + a)}`);\n'), asModule('let b;\nf(`${xs.map(t => t + b)}`);\n'), { ignoreRenames: true }).blocks, [],
     'an arrow\'s in one, its parameter its own')
   const spanning = lineDiff(asModule('let a;\nf(`x\n${a}\ny`);\ng();\n'), asModule('let b;\nf(`x\n${b}\ny`);\ng();\n'), { ignoreRenames: true })
-  assert.deepEqual([spanning.blocks, [...spanning.renamed]], [[], [0, 2]], 'on its own line of a template spanning lines')
+  assert.deepEqual([spanning.blocks, spanning.a], [[], spanning.b], 'on its own line of a template spanning lines')
   assert.deepEqual(lineDiff(asModule('let a;\nf(`${s.replace(/[\\u0300-\\u036f]/g, "") / 2}`);\na();\n'), asModule('let b;\nf(`${s.replace(/[\\u0300-\\u036f]/g, "") / 2}`);\nb();\n'),
     { ignoreRenames: true }).blocks, [], 'a regular expression\'s escapes in a substitution turn nothing off')
   assert.deepEqual(lineDiff(asModule('let a;\nf(`x${c ? `y${z}` : `w`}v`, { a: 1 });\na();\n'), asModule('let b;\nf(`x${c ? `y${z}` : `w`}v`, { a: 1 });\nb();\n'), { ignoreRenames: true }).blocks, [],
@@ -206,4 +207,70 @@ test('names left out are short bindings: never keywords, properties or keys, str
   ]) assert.equal(lineDiff(asModule(`${before}\n`), asModule(`${after}\n`), { ignoreRenames: true }).blocks.length, 0, `${before} → ${after}`)
   assert.equal(lineDiff('f(a)', 'f(a)\n', { ignoreRenames: true }).blocks.length, 1, 'a newline added at the end is a change')
   assert.equal(lineDiff(asModule('function f(a,  b) {}\n'), asModule('function f(c, d) {}\n'), { ignoreRenames: true, ignoreWhitespace: true }).blocks.length, 0, 'with whitespace too')
+})
+
+test('a rename is all or nothing: every line it is on reads with the new name, removed ones too', () => {
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
+  // A minifier's shift (`_e` → `$e`, `$e` → `ke`) beside an unchanged local `r`
+  // in one function, while another function's own `r` became `i`.
+  const before = ['var _e = globalThis,', '  $e = _e.ShadowRoot;', 'function s(e) {', '  let r = _e.litNonce;', '  return r + e;', '}',
+    'function u(t) {', '  let r = t * 2;', '  return $e(r);', '}', 'function w() {', '  return _e.gone;', '}']
+  const after = ['var $e = globalThis,', '  ke = $e.ShadowRoot;', 'function s(e) {', '  let r = $e.litNonce;', '  return r + e;', '}',
+    'function u(t) {', '  let i = t * 3;', '  return ke(i);', '}']
+  const model = ignoring(before, after)
+  assert.deepEqual(model.blocks, [{ a0: 7, a1: 8, b0: 7, b1: 8 }, { a0: 9, a1: 12, b0: 9, b1: 9 }], 'what changed alone, the renamed lines all alike')
+  assert.equal(model.a[7], '  let i = t * 2;', 'a changed line reads with the new names')
+  assert.equal(model.a[11], '  return $e.gone;', 'so does a removed one')
+})
+
+test('an old variable no new one stands for reads apart, never as the new one of its name', () => {
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
+  // `abc` and `x` swapped their values: `f(abc)` reads the other one now.
+  const swapped = ignoring(['var abc = 1,', '  x = 2;', 'f(abc);'], ['var x = 1,', '  abc = 2;', 'f(abc);'])
+  assert.deepEqual(swapped.blocks, [{ a0: 0, a1: 3, b0: 0, b1: 3 }], 'the same text reading another variable is a change')
+  assert.deepEqual(swapped.a.slice(0, 3), ['var abcʹ = 1,', '  xʹ = 2;', 'f(abcʹ);'])
+  // One removed, a new one of its name added: no line reads the old as the new.
+  const replaced = ignoring(['let n = f();', 'g(n);', 'h(1);'], ['h(1);', 'let n = k();', 'g(n);'])
+  assert.ok(replaced.a.includes('g(nʹ);'))
+})
+
+test('names are given only where the old side then reads as it did', () => {
+  // `a` → `$` would read the global `$` in `f` as `a`.
+  const captured = renameMap(asModule('let a = 1;\nfunction f() {\n  return $(a);\n}\n'), asModule('let $ = 1;\nfunction f() {\n  return $($);\n}\n'))
+  assert.match(captured.text, /^let a = 1;$/mu)
+  assert.match(captured.text, /return \$\(a\);/u)
+  // Names part of what a file says keep theirs: an import by its name, a shorthand property.
+  const imported = renameMap(asModule('import { x } from "m";\nf(x);\n'), asModule('import { y } from "m";\nf(y);\n'))
+  assert.match(imported.text, /import \{ x \} from "m";\nf\(x\);/u)
+  const shorthand = renameMap(asModule('let a = 1;\nf({ a });\n'), asModule('let b = 1;\nf({ b });\n'))
+  assert.match(shorthand.text, /f\(\{ a \}\)/u)
+  for (const [before, reason] of [['let a = (;', 'unparsed'], ['let a = 1;\neval("a");', 'dynamic'], ['let a = <b />;', 'jsx'],
+    ['function f() {\n  if (x) {\n    function a() {}\n  }\n  return a;\n}\nmodule.exports = f;\n', 'block-function']]) {
+    assert.equal(renameMap(before, before.replaceAll('a', 'b')).reason, reason, reason)
+  }
+})
+
+test('a variable on changed lines alone keeps its counterpart where those lines pair in order', () => {
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
+  const model = ignoring(['let x = 1;', 'f(xs.map(n => n * 2));'], ['let y = 1;', 'f(xs.map(n => n * 3));'])
+  assert.equal(model.a[1], 'f(xs.map(n => n * 2));', 'no name apart where the change is the number alone')
+  // What unchanged lines say wins: `a` → `b` there, a changed line's `a` → `a` says nothing.
+  const said = ignoring(['let a = 1;', 'f(a);', 'g(a, 1);'], ['let b = 1;', 'f(b);', 'g(a, 2);'])
+  assert.deepEqual(said.a.slice(0, 3), ['let b = 1;', 'f(b);', 'g(b, 1);'])
+})
+
+test('variables pair each with the one it most stands for, a stray line outweighed and a tie pairing neither', () => {
+  const ignoring = (before, after) => lineDiff(asModule(text(before)), asModule(text(after)), { ignoreRenames: true })
+  // `a` with `c` first; `b`, left `d`, with it: what changed is what `g` reads.
+  const two = ignoring(['var a, b;', 'f(a);', 'g(b);'], ['var c, d;', 'f(c);', 'g(c);'])
+  assert.deepEqual(two.a.slice(0, 3), ['var c, d;', 'f(c);', 'g(d);'])
+  assert.deepEqual(two.blocks, [{ a0: 2, a1: 3, b0: 2, b1: 3 }])
+  // Four lines say `v` is `w`, one stray pair of lines says it is `n`.
+  const stray = ignoring(['var v = {};', 'h(v);', 'k(v);', 'm(v);', 'function f(n) {', '  e = v;', '}'],
+    ['var w = {};', 'h(w);', 'k(w);', 'm(w);', 'function f(n) {', '  e = n;', '}'])
+  assert.deepEqual(stray.a.slice(0, 4), ['var w = {};', 'h(w);', 'k(w);', 'm(w);'])
+  assert.deepEqual(stray.blocks, [{ a0: 5, a1: 6, b0: 5, b1: 6 }], 'the one line that reads another variable')
+  // Two old variables each told once for one new one: neither paired.
+  const tie = ignoring(['let a = 1, b = 2;', 'f(a);', 'f(b);'], ['let c = 1;', 'f(c);', 'f(c);'])
+  assert.deepEqual(tie.a.slice(1, 3), ['f(a);', 'f(b);'])
 })

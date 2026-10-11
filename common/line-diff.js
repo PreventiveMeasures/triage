@@ -1,6 +1,6 @@
 // The change blocks between two texts' lines, found by @preventive/diff: what
-// the viewer's Compare diffs (ui/view/bundle-compare-code-model.js), and what
-// the server's diff with renamed names hidden (rename-diff.js) is made of.
+// the viewer's Compare diffs (ui/view/bundle-compare-code-model.js), and the
+// server's diff with renamed names hidden (server-managed/rename-diff.ts).
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
