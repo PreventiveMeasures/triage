@@ -4,6 +4,7 @@
 // asked for by both files' paths and their texts' hashes, as their copies are
 // (pretty-source.js). The viewer keeps the last few it read, for the session.
 import { computeFileHash } from '@preventive/report'
+import { blocksHold } from '../../common/line-diff.js'
 import { fetchBundleRenameDiff, fetchNpmRenameDiff } from './client-managed.js'
 
 // Diffs kept, the one read last last; a view asks again on every paint for
@@ -19,6 +20,11 @@ const diffs = new Map()
 // What a diff asked for calls once it comes: the view that last asked.
 const notifiers = new Map()
 
+// What an answer that would hide a change is told as: one not shaped as the
+// server answers, or whose blocks do not take its old side to the new side
+// as the view draws it (one the server diffed another copy of, say).
+const MISMATCH = "The server's diff doesn't match this file as shown."
+
 // Whether the server can diff a comparison's files: both a managed bundle's,
 // or both a version's of one npm package.
 export const renameDiffable = (base, other) => !!(base?.managedId && other?.managedId)
@@ -33,7 +39,9 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
     const { before: renamed, blocks, reason } = base.npm
       ? await fetchNpmRenameDiff(base.npm.name, base.npm.version, other.npm.version, params)
       : await fetchBundleRenameDiff(base.managedId, other.managedId, params)
-    next = { status: 'ready', before: renamed, blocks, reason }
+    next = typeof renamed === 'string' && Array.isArray(blocks) && (reason == null || typeof reason === 'string')
+      ? { status: 'ready', before: renamed, blocks, reason: reason ?? null }
+      : { status: 'error', message: MISMATCH, retry: false }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {
@@ -54,11 +62,17 @@ async function load(key, asked, base, basePath, before, other, path, after, igno
 
 // A file's diff with renamed names hidden, `basePath` and `before` its base
 // side's path and text, `path` and `after` the other's, asked for the first
-// time it is wanted, `notify` called once it comes.
-export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify) {
+// time it is wanted, `notify` called once it comes; checked, once it has, to
+// take its old side to `drawn`, the new side as the view draws it, else told
+// as an error (asked for again with the rest), as it would hide a change.
+export function renameDiff(base, basePath, before, other, path, after, ignoreWhitespace, notify, drawn) {
   const key = `${base.integrity}\0${basePath}\0${other.integrity}\0${path}\0${ignoreWhitespace}`
   const asked = diffs.get(key)
-  const diff = asked ?? { status: 'loading' }
+  let diff = asked ?? { status: 'loading' }
+  if (diff.status === 'ready' && diff.drawn !== drawn) {
+    if (blocksHold(diff.before, drawn, diff.blocks, ignoreWhitespace)) diff.drawn = drawn
+    else diff = { status: 'error', message: MISMATCH, retry: true }
+  }
   diffs.delete(key)
   diffs.set(key, diff)
   if (diff.status === 'loading') notifiers.set(key, notify)

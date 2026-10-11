@@ -891,16 +891,27 @@ passes through, nor a function body's variable as a parameter. The renamed
 copy must then bind as the old one did by oxc's minifier (oxc-minify), whose
 scope analysis is apart from this one: both copies are mangled, every
 variable named by its place alone, and must read the same, so that a mistake
-in the first analysis costs a file its names, never its sense. It is then
-formatted again, checked to change only its layout. The two copies are then
-diffed as they are, `ignoreWhitespace=true` diff -w. It answers
-Brotli-encoded `{ before, blocks, reason }`: the old copy as diffed, each
-change block `{ a0, a1, b0, b1 }` (its lines `[a0, a1)` replaced by the new
-copy's `[b0, b1)`), and, where its names could not be
-given safely, why (`unparsed`, `dynamic` for `eval` or `with`, `jsx`,
-`block-function` for a function declared in a block outside strict code,
-where it sets its function's variable of that name too, `unverified`), the
-old copy then as it was. Each diff runs in a worker thread, off the event
+in the first analysis costs a file its names, never its sense. Checks that
+should never fail stand between the steps, and any that does, or anything
+else that goes wrong, leaves the old copy as it was (`unverified`, logged):
+each analysis hangs together (every name it would rename written as that
+name where it is), the pairing takes each new variable once, every name
+given is one a variable may have and either its counterpart's or one apart,
+the renamed copy read again binds as the old one with the names given and
+has no error oxc's semantic check finds, and V8 compiles it, without running
+it, where it compiled the old one (a script's or a CommonJS module's). The
+renamed copy is then formatted again, checked to change only its layout and
+again by oxc's minifier as the old copy, else used as it was. The two copies
+are then diffed as they are, `ignoreWhitespace=true` diff -w, and the change
+blocks checked to take the old copy's lines to the new one's, every line
+between them alike, by the worker and again by the server, which otherwise
+answers none (422 `undiffable`). It answers Brotli-encoded `{ before,
+blocks, reason }`: the old copy as diffed, each change block `{ a0, a1, b0,
+b1 }` (its lines `[a0, a1)` replaced by the new copy's `[b0, b1)`), and,
+where its names could not be given safely, why (`unparsed`, `dynamic` for
+`eval` or `with`, `jsx`, `block-function` for a function declared in a block
+outside strict code, where it sets its function's variable of that name
+too, `unverified`), the old copy then as it was. Each diff runs in a worker thread, off the event
 loop, two at a time per process, up to sixteen more waiting their turn (429
 `diff-busy` past that, as a Diff view asks for every file it shows at once),
 for at most a minute, its wait included (504 `diff-timeout`); a file that does
@@ -1215,7 +1226,11 @@ control. A version shows in the bundle view with four tabs:
   as the new one. The server works it out from the two copies (`GET
   /api/npm/rename-diff` below, `GET /api/bundles/:id/rename-diff` for bundles),
   so it is offered with the pretty-print toggle on, for a managed bundle's or
-  a version's files, and says why where it shows the old names after all. It
+  a version's files, and says why where it shows the old names after all.
+  The viewer checks the server's change blocks again against the new side as
+  it draws it, and shows the names where they would not take the old side to
+  it (as where the server diffed another copy), asking again when the names
+  are hidden again: a diff never hides a change for a name renamed. It
   is offered for those files alone: an author's name renamed, to a
   minifier's or to another author's, always shows. A global (`Map`, `$`) is
   kept, as is a name declared at a script's top level, a global another

@@ -13,6 +13,8 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // given the new side's names (each asked for noted; an error in place of the
 // base's copy fails its diff).
 const pretty = new Map(), renameDiffs = []
+// Bundles whose diffs the server answers with blocks that hide a change.
+const misanswered = new Set()
 mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleFile: (id, path) => (pretty.get(`${id}:${path}`) instanceof Error ? Promise.reject(pretty.get(`${id}:${path}`)) : Promise.resolve(pretty.get(`${id}:${path}`))),
   fetchPrettyNpmFile() {},
@@ -21,7 +23,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     const [before, after] = [pretty.get(`${id}:${params.path}`), pretty.get(`${other}:${params.otherPath}`)]
     if (before instanceof Error) return Promise.reject(before)
     const { text = before, reason = null } = renameMap(before, after)
-    return Promise.resolve({ before: text, blocks: changeBlocks(text, after, params.ignoreWhitespace), reason })
+    return Promise.resolve({ before: text, blocks: misanswered.has(id) ? [] : changeBlocks(text, after, params.ignoreWhitespace), reason })
   },
   fetchNpmRenameDiff() {},
 } })
@@ -409,6 +411,31 @@ test('a rename diff that failed for a reason that may pass is asked for again wh
   const shown = renderText(element.render())
   assert.doesNotMatch(shown, /Couldn't hide renamed names/u)
   assert.match(shown, /Only renamed names changed in this file\./u)
+})
+
+test('a diff the server answers that would hide a change shows the names, and is asked for again', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
+  const element = view('dist/told.min.js', [{ 'dist/told.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(1);\n` }, { 'dist/told.min.js': `var X=1;${'q(X);'.repeat(250)}f(2);\n` }])
+  element.base.managedId = 'b11'
+  element.other.managedId = 'b12'
+  pretty.set('b11:dist/told.min.js', 'var Y = 1;\nq(Y);\nf(1);\n')
+  pretty.set('b12:dist/told.min.js', 'var X = 1;\nq(X);\nf(2);\n')
+  state.bundleSourcePretty = true
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
+  // No blocks, though `f(1)` became `f(2)`: drawn, the change would be hidden.
+  misanswered.add('b11')
+  element._setRenames(true)
+  await settle()
+  assert.match(renderText(element.render()), /Couldn't hide renamed names: The server's diff doesn't match this file as shown\./u)
+  misanswered.clear()
+  element._setRenames(false)
+  element._setRenames(true)
+  await settle()
+  const shown = renderText(element.render())
+  assert.doesNotMatch(shown, /Couldn't hide renamed names/u)
+  assert.match(shown, /diff-row add/u, 'the change shown')
+  assert.doesNotMatch(shown, /Only renamed names changed/u)
 })
 
 test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {

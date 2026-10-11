@@ -16,7 +16,7 @@ import { Worker } from 'node:worker_threads'
 import { brotliDecompress } from 'node:zlib'
 import { FILE_HASH } from '../common/bundle-metadata.js'
 import { prettyExtension } from '../common/pretty-print.js'
-import type { ChangeBlock } from '../common/line-diff.js'
+import { type ChangeBlock, blocksHold } from '../common/line-diff.js'
 import type { OpenedBlob } from './blob-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import { PrettyError, type PrettyRequest } from './pretty-print.ts'
@@ -90,6 +90,15 @@ async function inTurn<T>(deadline: number, work: () => Promise<T>): Promise<T> {
   try { return await work() } finally { done() }
 }
 
+// Whether a worker's answer is one as rename-diff-worker.js gives it, its
+// blocks taking the old side it answered to the new one asked of: checked
+// again here, apart from the worker, as an answer that is not would hide a
+// change.
+function answers(diff: unknown, after: string, ignoreWhitespace: boolean): diff is RenameDiff {
+  const { before, blocks, reason } = (diff ?? {}) as Partial<RenameDiff>
+  return typeof before === 'string' && (reason === null || typeof reason === 'string') && blocksHold(before, after, blocks, ignoreWhitespace)
+}
+
 // Settled once the worker is gone, so that its turn is given up only then.
 function inWorker(before: string, after: string, { base, other, ignoreWhitespace }: RenameDiffRequest, deadline: number): Promise<RenameDiff> {
   if (before.length + after.length > MAX_DIFF_CHARS) throw new PrettyError(413, 'diff-too-large')
@@ -106,7 +115,11 @@ function inWorker(before: string, after: string, { base, other, ignoreWhitespace
   return new Promise<RenameDiff>((resolve, reject) => {
     let diff: RenameDiff | null = null, failure = new PrettyError(422, 'undiffable')
     const timer = setTimeout(() => { failure = new PrettyError(504, 'diff-timeout'); void worker.terminate() }, deadline - Date.now())
-    worker.once('message', (answer: RenameDiff) => { diff = answer; void worker.terminate() })
+    worker.once('message', (answer: unknown) => {
+      if (answers(answer, after, ignoreWhitespace)) diff = answer
+      else console.warn('managed: a rename diff answered what does not take its old side to the new')
+      void worker.terminate()
+    })
     worker.once('error', err => { console.warn('managed: a rename diff failed:', err) })
     // Gone: answered, run out of memory, or terminated.
     worker.once('exit', () => {

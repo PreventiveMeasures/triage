@@ -437,7 +437,8 @@ export class BundleCompareCode extends LitElement {
     const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreRenames: renames })
     const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
     const { basePath = path } = entry
-    const changes = renames && !large ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, prefs.ignoreWhitespace, () => this.requestUpdate()) : null
+    const changes = renames && !large
+      ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, prefs.ignoreWhitespace, () => this.requestUpdate(), after) : null
     // The old side as the server diffed it, given the new side's names.
     const shown = changes?.status === 'ready' ? changes.before : before
     const model = textual && !large && (!changes || changes.status === 'ready')
