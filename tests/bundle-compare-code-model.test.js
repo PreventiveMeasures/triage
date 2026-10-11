@@ -92,6 +92,10 @@ test('names a minifier renamed alike throughout are left out, and only those', (
     assert.equal(lineDiff(`${global}\n`, `${other}\n`, { ignoreRenames: true }).blocks.length, 1, `${global} → ${other}`)
   }
   assert.deepEqual(lineDiff('let a;\na();\n', 'let b;\nb();\n', { ignoreRenames: true }).blocks, [], 'declared, it is')
+  assert.deepEqual(lineDiff('let a;\nf("</a><select id=\'" + x);\ng(`<div>${x}</div>`);\na();\n', 'let b;\nf("</a><select id=\'" + x);\ng(`<div>${x}</div>`);\nb();\n',
+    { ignoreRenames: true }).blocks, [], 'HTML in a string or a template is no JSX')
+  assert.deepEqual(lineDiff('let a;\nf(`${x.replace(/[^\\w]/g, "@")}`);\na();\n', 'let b;\nf(`${x.replace(/[^\\w]/g, "@")}`);\nb();\n', { ignoreRenames: true }).blocks, [],
+    'nor does a regular expression\'s `\\` or a string\'s `@` in a substitution turn renames off')
   assert.deepEqual(lineDiff('let a;\na(`Failed with \\n ${x} @user`);\n', 'let b;\nb(`Failed with \\n ${x} @user`);\n', { ignoreRenames: true }).blocks, [], 'a template\'s text turns nothing off')
   assert.deepEqual(lineDiff('let e\u0301;\nf(e\u0301);\n', 'let o\u0301;\nf(o\u0301);\n', { ignoreRenames: true }).blocks, [], 'a name with a combining mark, whole')
   assert.deepEqual(lineDiff('let f = c ? x => x : y => y;\nf();\n', 'let g = c ? z => z : w => w;\ng();\n', { ignoreRenames: true }).blocks, [], 'arrows either side of a `:`')

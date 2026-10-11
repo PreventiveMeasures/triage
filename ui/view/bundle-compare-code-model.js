@@ -54,21 +54,27 @@ const COMMENT = /\/\/.*|<!--.*|(?<=(?:^|\n)[ \t]*)-->.*|(?<![\s\S])#!.*|\/\*[\s\
 const DYNAMIC = /\b(?:eval|with)\b|[\\@]|<>/u
 
 // The code in a template's substitutions (`${…}`), read as code is (READ,
-// apart so its place stays), a brace in a string, a regular expression or a
-// comment counting for none. Read amiss, a substitution runs on: more is
+// apart so its place stays): what lies between its tokens, its names and
+// brackets; of a regular expression (or a division read as one) its words
+// that read names; of a string or a comment nothing, so a brace, a `\` or a
+// word in one counts for none. Read amiss, a substitution runs on: more is
 // tested, not less.
 const SUBSTITUTION = new RegExp(READ.source, 'gu')
+const substituted = token => /^(?:["'`]|\/[/*]|<!--|-->|#!)/u.test(token) ? ' '
+  : token[0] === '/' ? ` ${token.match(/\b(?:eval|with)\b/gu)?.join(' ') ?? ''} ` : token
 function substitutions(template) {
   let code = ''
   for (let i = 1; i < template.length - 1; i++) {
     if (template[i] === '\\') i++
     else if (template[i] === '$' && template[i + 1] === '{') {
-      const start = i + 2
-      let depth = 1, match = null
-      SUBSTITUTION.lastIndex = start
-      while (depth > 0 && (match = SUBSTITUTION.exec(template))) depth += match[0] === '{' ? 1 : match[0] === '}' ? -1 : 0
-      if (depth > 0) return `${code}${template.slice(start)}`
-      code += `${template.slice(start, match.index)}\n`
+      let depth = 1, from = i + 2, match = null
+      SUBSTITUTION.lastIndex = from
+      while (depth > 0 && (match = SUBSTITUTION.exec(template))) {
+        depth += match[0] === '{' ? 1 : match[0] === '}' ? -1 : 0
+        code += `${template.slice(from, match.index)}${depth > 0 ? substituted(match[0]) : '\n'}`
+        from = SUBSTITUTION.lastIndex
+      }
+      if (depth > 0) return `${code}${template.slice(from)}`
       i = match.index
     }
   }
@@ -114,7 +120,9 @@ const NAMELESS = ''
 // (`export { a as b }`, `export const c = 1`), since renaming one changes
 // what reads it.
 function nameless(text) {
-  const key = [], names = [[]], setAside = []
+  // `program` the text as code, a string, template or regular expression
+  // `""` and a comment its line breaks: what JSX is looked for in.
+  const key = [], names = [[]], program = [], setAside = []
   const opens = []
   // Each block a scope, declaring what is declared in it (its function's
   // parameters too, and a function expression's own name, `pending` until it
@@ -185,6 +193,7 @@ function nameless(text) {
   // line breaks, as code (`segment`).
   const between = (raw, segment = raw) => {
     keep(raw)
+    program.push(segment)
     // Nor where a fragment opens, `<>` being JSX alone, whatever it holds.
     if (segment.includes('\\') || segment.includes('@') || segment.includes('<>')) dynamic = true
     // A line break ends these statements, whatever follows (`continue⏎+a`),
@@ -252,6 +261,7 @@ function nameless(text) {
     at = READ.lastIndex
     if (first === '"' || first === "'" || first === '`' || first === '/') {
       keep(token)
+      program.push(`""${token.replaceAll(/[^\n]/gu, '')}`)
       // A template's substitutions are code, kept whole: `${eval("a")}`.
       if (first === '`' && DYNAMIC.test(substitutions(token))) dynamic = true
       // A module's name ends its `import` or `export … from`, as `;` does.
@@ -259,6 +269,7 @@ function nameless(text) {
       exporting = keyPlace = naming = parameters = false
     } else if (first === '(' || first === '[' || first === '{') {
       key.push(token)
+      program.push(token)
       // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
       const heritage = first === '{' && extending.at(-1) === opens.length
       const block = first === '{' && !heritage && (last === null || ');{}>'.includes(last) || BEFORE_BLOCK.has(last))
@@ -279,6 +290,7 @@ function nameless(text) {
       exporting = naming = parameters = false
     } else if (first === ')' || first === ']' || first === '}') {
       key.push(token)
+      program.push(token)
       const open = opens.pop()
       endArrows(opens.length + 1)
       if (open === 'block') scope = scopes[scope].parent
@@ -313,6 +325,7 @@ function nameless(text) {
       const property = last === '.' || text[at] === ':' || jump
       // A label where a statement starts (`a: {`), not a key: its block a block.
       if (text[at] === ':' && !keyPlace && statement(last)) labeled = true
+      program.push(token)
       let aside = null
       if (token.length > RENAMED_MAX_LENGTH || KEYWORDS.has(token) || keyPlace || exported || property) key.push(token)
       else {
@@ -358,7 +371,7 @@ function nameless(text) {
     if (declaredFrom(name, from)) names[line].push(name)
     else key[piece] = name
   }
-  return { dynamic, key: key.join(''), names }
+  return { dynamic, jsx: JSX.test(program.join('')), key: key.join(''), names }
 }
 
 // The change blocks between two texts' lines with names renamed alike left
@@ -371,7 +384,7 @@ function nameless(text) {
 // is a change.
 function renameBlocks(before, after, a, b, ignoreWhitespace) {
   const na = nameless(before), nb = nameless(after)
-  if (na.dynamic || nb.dynamic) return { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
+  if (na.dynamic || nb.dynamic || na.jsx || nb.jsx) return { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
   const found = changeBlocks(na.key, nb.key, ignoreWhitespace)
   const pairs = []
   let i = 0, j = 0
@@ -406,6 +419,8 @@ function renameBlocks(before, after, a, b, ignoreWhitespace) {
 // what it holds, an entity too (`<>&amp;`), not `[&<>"']`'s): JSX, whose
 // tags are no bindings, so its file's names are not set aside. After the
 // words a regular expression may follow, BEFORE_VALUE (`extends <a />`).
+// Looked for in the code alone (nameless's `program`): HTML in a string or a
+// template (`"</a><select id='"`) is none.
 const JSX = new RegExp(String.raw`(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b(?:${[...BEFORE_VALUE].join('|')}))[ \t]*<(?:\/?[\p{ID_Start}_$][-\p{ID_Continue}$.:\u200C\u200D]*(?:\s|\/?>)|>(?=[\s<{\p{L}]|&[\w#]+;))`, 'mu')
 
 // The change blocks between two texts, each `a[a0..a1)` replaced by
@@ -418,7 +433,7 @@ const JSX = new RegExp(String.raw`(?:^|\.\.\.|<[ \t]|[()=,:?&|!{};>[+\-*/%^~]|\b
 // the next; `renamed` holds such removed lines.
 export function lineDiff(before, after, { ignoreWhitespace = false, ignoreRenames = false } = {}) {
   const a = textLines(before), b = textLines(after)
-  const { blocks, renamed } = ignoreRenames && !JSX.test(before) && !JSX.test(after) ? renameBlocks(before, after, a, b, ignoreWhitespace) : { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
+  const { blocks, renamed } = ignoreRenames ? renameBlocks(before, after, a, b, ignoreWhitespace) : { blocks: changeBlocks(before, after, ignoreWhitespace), renamed: new Set() }
   let additions = 0, deletions = 0
   for (const block of blocks) {
     additions += block.b1 - block.b0
