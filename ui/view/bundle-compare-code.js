@@ -446,15 +446,16 @@ export class BundleCompareCode extends LitElement {
         ? renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, () => this.requestUpdate(), after) : null
       const ready = changes?.status === 'ready'
       // Where either side reads names (`f.name`, `f.toString()`), a rename may
-      // change what the code does, which hiding renamed names could hide: they
-      // show then, as they do marked.
-      const reading = ready && !marking && changes.reason === null && changes.reads.length > 0
-      const hiding = ready && !marking && !reading
-      const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marking && ready })
+      // change what the code does, which hiding renamed names could hide: its
+      // renamed lines are marked then, as the viewer may ask for anywhere.
+      const reading = ready && changes.reason === null && changes.reads.length > 0
+      const marked = ready && (marking || reading)
+      const hiding = ready && !marked
+      const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marked })
       // The old side as the server diffed it, given the new side's names, where they are hidden.
       const shown = hiding ? changes.before : before
       const model = textual && !large && (!changes || ready)
-        ? this._model(key, shown, after, hiding ? { changes: { blocks: changes.blocks } } : marking ? { marks: changes.marks } : {}, ignoreWhitespace) : null
+        ? this._model(key, shown, after, hiding ? { changes: { blocks: changes.blocks } } : marked ? { marks: changes.marks } : {}, ignoreWhitespace) : null
       return { key, changes, reading, hiding, shown, model }
     }
     // Whitespace changes hidden would hide blanks of more than one kind
@@ -606,7 +607,7 @@ export class BundleCompareCode extends LitElement {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg>
           </button>
         </span>` : nothing}
-        ${this._toggles(diffable, textual, file.pretty, file.generated, file.mixedWhitespace)}
+        ${this._toggles(diffable, textual, file.pretty, file.generated, file.mixedWhitespace, file.reading)}
       </header>
       <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
         ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
@@ -618,7 +619,7 @@ export class BundleCompareCode extends LitElement {
   // toggles, as a file has use for them: pretty-printing a minified file
   // (`pretty` from _pretty), a diff the next two and, in JavaScript minified
   // on both sides (`renames`, _generated), renamed names, a text the wrap.
-  _toggles(diffable, textual, pretty = null, renames = false, mixedWhitespace = false) {
+  _toggles(diffable, textual, pretty = null, renames = false, mixedWhitespace = false, reading = false) {
     return html`${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print" ?disabled=${pretty.status === 'limited'}
           data-tooltip=${pretty.status === 'limited' ? 'Too many minified files to pretty-print together: open one in Code' : prettyTooltip(pretty)}
@@ -632,11 +633,7 @@ export class BundleCompareCode extends LitElement {
           @click=${() => this._setRenames(!prefs.ignoreRenames)}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 5h9m-2.5-2.5L11 5 8.5 7.5M14 11H5m2.5-2.5L5 11l2.5 2.5"/></svg>
         </button>` : nothing}
-        ${renames && prefs.ignoreRenames ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.markRenames)} aria-label="Mark renamed lines"
-          data-tooltip="Mark renamed lines rather than hide them: the diff of the files as they are, the lines that differ in names renamed alone drawn faint and counted apart, as code that reads its own names can change what it does when they are renamed"
-          @click=${() => this._setMarks(!prefs.markRenames)}>
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3.5 3 3-6 6H3.5v-3zM2 14.5h12"/></svg>
-        </button>` : nothing}` : nothing}
+        ${renames && prefs.ignoreRenames ? this._marksToggle(reading) : nothing}` : nothing}
         ${textual ? html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(!!state.bundleSourceWrap)} aria-label="Wrap lines" data-tooltip="Wrap lines" ?hidden=${diffable && prefs.layout === 'split'}
           @click=${() => this._toggleWrap()}>
           ${WRAP_ICON}
@@ -744,6 +741,19 @@ export class BundleCompareCode extends LitElement {
     </button>`
   }
 
+  // Marking renamed lines rather than hiding them, on for a file that reads
+  // names (`reading`, see _fileState) whatever the viewer asks: off there
+  // only as it may be turned off for the others.
+  _marksToggle(reading) {
+    const kept = reading && !prefs.markRenames
+    const label = kept ? 'Its renamed lines are marked rather than hidden, as it reads names, which a rename changes'
+      : 'Mark renamed lines rather than hide them: the diff of the files as they are, the lines that differ in names renamed alone drawn faint and counted apart, as code that reads its own names can change what it does when they are renamed'
+    return html`<button type="button" class="bundle-compare-code-toggle" aria-pressed=${String(prefs.markRenames || reading)} aria-disabled=${kept ? 'true' : nothing}
+      aria-label="Mark renamed lines" data-tooltip=${label} @click=${() => { if (!kept) this._setMarks(!prefs.markRenames) }}>
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3.5 3 3-6 6H3.5v-3zM2 14.5h12"/></svg>
+    </button>`
+  }
+
   _setWhitespace(value) {
     prefs.ignoreWhitespace = value
     this.requestUpdate()
@@ -835,8 +845,7 @@ export class BundleCompareCode extends LitElement {
       return true
     }
     return html`${changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
-      ${reading ? html`<p class="bundle-compare-code-note">Renamed names are shown: the file reads names (${changes.reads.map(read => `.${read}`).join(', ')}), which a rename changes.
-        <button type="button" class="bundle-compare-code-action" @click=${() => this._setMarks(true)}>Mark renamed lines</button></p>` : nothing}
+      ${reading && !prefs.markRenames ? html`<p class="bundle-compare-code-note">Renamed lines are marked rather than hidden: the file reads names (${changes.reads.map(read => `.${read}`).join(', ')}), which a rename changes.</p>` : nothing}
       <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split, wrapped: split || !!state.bundleSourceWrap })}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
         ${split ? html`<div class="diff-row diff-split-head" role="row">

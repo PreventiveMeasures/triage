@@ -468,7 +468,7 @@ test('a diff the server answers that would hide a change shows the names, and is
   assert.doesNotMatch(shown, /Only renamed names changed/u)
 })
 
-test('names a file reads keep renamed names from being hidden, and they can be marked instead, the file as it is', async t => {
+test('names a file reads keep renamed names from being hidden: its renamed lines are marked instead, the file as it is', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setMarks(false); element._setRenames(false); misanswered.clear() })
   const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=1;${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=1;${'q(X);'.repeat(250)}f(X.name);\n` }])
   element.base.managedId = 'b13'
@@ -482,17 +482,17 @@ test('names a file reads keep renamed names from being hidden, and they can be m
   element._setRenames(true)
   await settle()
   const read = renderText(element.render())
-  assert.match(read, /Renamed names are shown: the file reads names \(\.name\), which a rename changes\./u)
-  assert.match(read, /var <mark class="diff-word">Y<\/mark> = 1;/u, 'the old side as it is')
-  assert.match(read, /class="add">\+4<\/span><span class="del">−4/u)
+  assert.match(read, /Renamed lines are marked rather than hidden: the file reads names \(\.name\), which a rename changes\./u)
+  assert.match(read, /aria-pressed=true aria-disabled=true\s+aria-label="Mark renamed lines"/u, 'marking on, and kept on')
+  assert.match(read, /var <mark class="diff-word">Y<\/mark> = 1;/u, 'the old side as it is, marked')
+  assert.match(read, /diff-row del renamed/u)
+  assert.match(read, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, counted')
+  assert.match(read, /≈3/u, 'the renamed lines counted apart')
   element._setMarks(true)
   const marked = renderText(element.render())
-  assert.match(marked, /aria-pressed=true aria-label="Mark renamed lines"/u)
-  assert.match(marked, /var <mark class="diff-word">Y<\/mark> = 1;/u, 'the old side as it is, marked')
-  assert.match(marked, /diff-row del renamed/u)
-  assert.match(marked, /class="add">\+1<\/span><span class="del">−1/u, 'what changed besides, counted')
-  assert.match(marked, /≈3/u, 'the renamed lines counted apart')
-  assert.doesNotMatch(marked, /Renamed names are shown/u)
+  assert.match(marked, /diff-row del renamed/u, 'marked as asked, too')
+  assert.doesNotMatch(marked, /Renamed lines are marked rather than hidden/u, 'no note where the viewer asked for it')
+  assert.match(marked, /aria-pressed=true aria-disabled=\s+aria-label="Mark renamed lines"/u, 'and the toggle free to turn it off for other files')
 })
 
 test('a block the server marks that the view finds a change in is drawn as one', async t => {

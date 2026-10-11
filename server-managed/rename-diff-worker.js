@@ -5,8 +5,8 @@
 // reason }`: the old side as diffed, the change blocks, and why the old side
 // is as it was, where its names could not be given safely (as renameMap says),
 // `reads`, the properties through which either side reads names (a view
-// hiding renamed names hides none where any are read, as a rename may then
-// change what the code does), and `marks`, the blocks of the diff of the
+// marks renamed lines rather than hiding them where any are read, as a rename
+// may then change what the code does), and `marks`, the blocks of the diff of the
 // files as they are, the old side's own names, that differ in names renamed
 // alone: what a view marking renamed lines draws apart rather than hiding.
 // Where the blocks found would not take the old side to the new, it answers

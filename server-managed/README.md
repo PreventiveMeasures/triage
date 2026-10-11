@@ -1245,13 +1245,14 @@ control. A version shows in the bundle view with four tabs:
   The viewer checks the server's change blocks again against the new side as
   it draws it, and shows the names where they would not take the old side to
   it (as where the server diffed another copy), asking again when the names
-  are hidden again: a diff never hides a change for a name renamed. Where
-  either side reads names (`.name`, `.toString`, `.stack`, `.callee`,
-  `.caller`), whose values a rename changes, it shows them and says so.
+  are hidden again: a diff never hides a change for a name renamed.
   **Mark renamed lines**, beside it, rather diffs the two sides as they are,
   drawing faint and counting apart (`≈`) the lines the server finds differ
   in names renamed alone, each where the viewer finds so too: short names
-  alone differ, no property, key, keyword, string or comment. It
+  alone differ, no property, key, keyword, string, comment or regular
+  expression. Where either side reads names (`.name`, `.toString`, `.stack`,
+  `.callee`, `.caller`), whose values a rename changes, renamed lines are
+  marked so rather than hidden, whatever the toggle, and it says so. It
   is offered for those files alone: an author's name renamed, to a
   minifier's or to another author's, always shows. A global (`Map`, `$`) is
   kept, as is a name declared at a script's top level, a global another
