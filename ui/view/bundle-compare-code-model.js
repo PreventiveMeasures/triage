@@ -87,10 +87,12 @@ const LET = /\s*[\p{L}_$[{]/uy
 // What ends a concise arrow's body or begins a conditional in it: a `?` (not
 // `?.`, `??`), a `:`, a `,` or a `;`.
 const ARROW_ENDS = /(?<!\?)\?(?!\?|\.(?!\d))|[:,;]/gu
-// What follows a `for`'s `(…)` whose body is braced, and an unbraced body's
-// statement still going on, an `if`'s `else`: spaces or comments first.
+// What follows a `for`'s `(…)` whose body is braced or a `do`, and an
+// unbraced body's statement still going on: an `if`'s `else`, a `try`'s
+// `catch` or `finally`, a `do`'s `while`; spaces or comments first.
 const BRACED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/uy
-const ELSE = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*else(?![\p{ID_Continue}$])/uy
+const DO = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*do(?![\p{ID_Continue}$])/uy
+const GOES_ON = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*(catch|else|finally|while)(?![\p{ID_Continue}$])/uy
 // What follows a key before its value: spaces or comments, then `:`.
 const KEYED = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*:/uy
 // What follows an `import` that is no module's, a call (`import(…)`): not
@@ -135,6 +137,9 @@ function nameless(text) {
   // the `extends` marker its body takes, if any): its body is a scope too,
   // `classBodies` their depths.
   const classBodies = [], classes = []
+  // A function declared in a block, with the block (`blockFunctions`): outside
+  // a module, its function's too where the code is not strict, unknown here.
+  const blockFunctions = []
   const declare = (name, hoisted = false) => {
     let at = scope
     if (hoisted) while (!scopes[at].fn) at = scopes[at].parent
@@ -159,12 +164,15 @@ function nameless(text) {
     }
   }
   // A braced body ends at its `}`; an unbraced one with its statement, an
-  // `if`'s with its `else` (`for (…) if (x) f(); else g()`), read from `from`.
+  // `if`'s with its `else` (`for (…) if (x) f(); else g()`), a `try`'s with
+  // its `catch` or `finally`, a `do`'s (`doing`) with its `while`, read from
+  // `from`: a `while` past a body that is no `do` begins one of its own.
   const endLoops = (depth, from) => {
-    ELSE.lastIndex = from
-    const otherwise = ELSE.test(text)
+    GOES_ON.lastIndex = from
+    const next = GOES_ON.exec(text)?.[1]
     while (loops.length > 0 && loops.at(-1).body && loops.at(-1).depth >= depth) {
-      if (otherwise && !loops.at(-1).braced) return
+      const loop = loops.at(-1)
+      if (!loop.braced && next && (next !== 'while' || loop.doing)) return void (loop.doing &&= next !== 'while')
       scope = scopes[loops.pop().scope].parent
     }
   }
@@ -234,8 +242,10 @@ function nameless(text) {
     // A `++` or `--` either side of it is the line's own (`a++⏎b`, `x⏎++a`);
     // after a declared name with no value (`let x⏎+a`), only `=` or `,` goes on.
     const bare = declarations.at(-1)?.binding && declarations.at(-1).depth === opens.length
+    // A line beginning with `(`, `[` or a template goes on the line before
+    // (`fn⏎(a)`, a call).
     const ends = restricted || (line !== -1 && (bare ? !/[,=]$/u.test(before) && !/^[,=]/u.test(after)
-      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after)))
+      : !CONTINUES.test(before) && !/^(?!\+\+|--)[,=+\-*/%&|^<>?:.)\]}]/u.test(after) && !(after === '' && /[([`]/u.test(text[at + raw.length] ?? ''))))
     if (ends && declarations.at(-1)?.depth === opens.length) declarations.pop()
     // Ending a declared name, the line break ends its statement: `let a⏎/a/`.
     if (ends && bare) last = ';'
@@ -366,7 +376,8 @@ function nameless(text) {
         scope = scopes[scope].parent
       }
       BRACED.lastIndex = at
-      if (open === 'control' && loops.at(-1)?.depth === opens.length && !loops.at(-1).body) Object.assign(loops.at(-1), { body: true, braced: BRACED.test(text) })
+      DO.lastIndex = at
+      if (open === 'control' && loops.at(-1)?.depth === opens.length && !loops.at(-1).body) Object.assign(loops.at(-1), { body: true, braced: BRACED.test(text), doing: DO.test(text) })
       else endLoops(first === '}' ? opens.length : opens.length + 1, at)
       if (open === '(') {
         const group = groups.pop()
@@ -417,7 +428,10 @@ function nameless(text) {
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
         else if (named.word === 'class') classes.push({ aside, depth: opens.length, marker: null, name: token })
-      } else if (!read && (naming || binding)) declare(token, binding && declaration.hoisted)
+      } else if (!read && (naming || binding)) {
+        declare(token, binding && declaration.hoisted)
+        if (naming && named.word === 'function' && !scopes[scope].fn) blockFunctions.push([token, scope])
+      }
       else if (!read && ARROW_BODY.test(text)) {
         pending = [{ aside, name: token }]
         pendingGroup = null
@@ -457,6 +471,15 @@ function nameless(text) {
       }
     }
   }
+  // Read past its block in its function, outside a module, a function declared
+  // in a block may be the function's or another, as the code is strict or not
+  // (`function f() { if (x) { function a() {} } return a }`): renames go.
+  const within = (from, of) => {
+    for (let step = from; step !== -1; step = scopes[step].parent) if (step === of) return true
+    return false
+  }
+  const fnOf = step => scopes[step].fn ? step : fnOf(scopes[step].parent)
+  if (!moduleLike && setAside.some(([, , name, from]) => blockFunctions.some(([own, block]) => own === name && !within(from, block) && within(from, fnOf(block))))) dynamic = true
   if (commonjs.some(([name, from]) => !declaredFrom(name, from, true))) moduleLike = true
   // A name no declaration in scope stands for is a global's, kept.
   for (const [piece, line, name, from] of setAside) {
