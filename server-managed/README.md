@@ -898,9 +898,9 @@ each analysis hangs together (every name it would rename written as that
 name where it is), the pairing takes each new variable once, every name
 given is one a variable may have and either its counterpart's or one apart,
 the renamed copy read again binds as the old one with the names given and
-has no error oxc's semantic check finds, and V8 compiles it, without running
-it, where it compiled the old one (a script's or a CommonJS module's). The
-renamed copy is then formatted again, checked to change only its layout and
+has no error oxc's semantic check finds. No file reviewed is ever given to
+Node's `vm` or otherwise compiled or run: only parsed, by oxc. The renamed
+copy is then formatted again, checked to change only its layout and
 again by oxc's minifier as the old copy, else used as it was. The two copies
 are then diffed as they are, `ignoreWhitespace=true` diff -w, and the change
 blocks checked to take the old copy's lines to the new one's, every line
@@ -1219,8 +1219,9 @@ control. A version shows in the bundle view with four tabs:
   **Hide renamed names** diffs a JavaScript file (`.js`, `.mjs`, `.cjs`
   without JSX) minified on both sides, its names a minifier's, with the old
   side given the new side's names wherever a minifier renamed a variable
-  alike throughout: short names (three characters at most, as a minifier
-  gives them) a declaration in scope stands for, on every line, removed ones
+  alike throughout: short ASCII names (three characters at most, as a
+  minifier gives them, none a reader can't tell from another) a declaration
+  in scope stands for, on every line, removed ones
   too, so that the two sides then diff as they are. An old variable no new
   one stands for reads as `r_old` where the new side uses its name `r`, never
   as the new one. The server works it out from the two copies (`GET

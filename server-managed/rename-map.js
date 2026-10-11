@@ -17,14 +17,16 @@
 // would not are renamed apart instead. The renamed text must then bind as the
 // old one did by oxc's minifier, whose scope analysis is apart from this one,
 // else it is not used: a mistake here costs a file its names, never its sense.
-import vm from 'node:vm'
 import { minifySync } from 'oxc-minify'
 import { parseSync } from 'oxc-parser'
 import { changeBlocks } from '../common/line-diff.js'
 
 // Names a minifier gives: longer ones are an API's or a person's, and one
-// changed is a change.
+// changed is a change. ASCII alone, as a minifier gives: no name renamed to
+// or from one a reader can't tell from another (Cyrillic `а` for `a`, or one
+// with a zero-width joiner in it).
 const RENAMED_MAX_LENGTH = 3
+const MINIFIED = /^[A-Za-z_$][\w$]*$/u
 // What a name renamed apart ends in, numbered past the first as it takes to
 // be one neither side uses: `e_old`, `e_old2`.
 const APART = '_old'
@@ -242,6 +244,20 @@ function analyze(text, extension) {
       else if (value && typeof value.type === 'string' && field !== 'type') work.push([value, field === 'discriminant' ? where : inner])
     }
   }
+  // A `var` named as a name a block it hoists past declares does not compile
+  // (`{ let a; { var a } }`), but past a `catch` whose simple parameter it is,
+  // or past one of its name beyond such a one: a redeclaration oxc's semantic
+  // check misses beside a `catch`, told here as one it finds.
+  for (const variable of variables) {
+    for (const path of variable.through ?? []) {
+      let caught = false
+      for (const at of path) {
+        const there = at.names.get(variable.name)
+        if (there === variable) caught ||= Boolean(at.caught)
+        else if (there && !(at.caught && at.simple && caught)) return { reason: 'unparsed' }
+      }
+    }
+  }
   // Every name read resolved, from where it is read outward; one no
   // declaration stands for is a global's.
   let commonjs = false
@@ -259,7 +275,7 @@ function analyze(text, extension) {
   }
   for (const [node, variable] of occurrences) if (keeping.has(node)) variable.kept = true
   const own = program.sourceType === 'module' || program.sourceType === 'commonjs' || commonjs
-  for (const variable of variables) variable.aside = variable.name.length <= RENAMED_MAX_LENGTH && !variable.kept && (own || variable.scope !== root)
+  for (const variable of variables) variable.aside = variable.name.length <= RENAMED_MAX_LENGTH && MINIFIED.test(variable.name) && !variable.kept && (own || variable.scope !== root)
   // A shorthand property's two names are one, at one place.
   const byStart = (x, y) => x[0].start - y[0].start
   occurrences.sort(byStart)
@@ -313,7 +329,7 @@ function checkGiven(a, b, map, given) {
     const name = given.get(variable)
     if (name === variable.name) continue
     holds(variable.aside, `${variable.name}, which keeps its name, named ${name}`)
-    holds(IDENTIFIER.test(name) && !RESERVED.has(name), `${variable.name} named ${name}, which no variable may be`)
+    holds(IDENTIFIER.test(name) && MINIFIED.test(name) && !RESERVED.has(name), `${variable.name} named ${name}, which no variable may be`)
     holds(map.has(variable) ? map.get(variable).name === name : name.startsWith(variable.name + APART) && !a.names.has(name) && !b.names.has(name),
       `${variable.name} named ${name}, neither its counterpart's name nor one apart`)
   }
@@ -337,17 +353,6 @@ function checkRenamed(a, given, text, extension) {
     backward.set(other, variable)
   })
   a.globals.forEach(([node], i) => holds(r.globals[i][0].name === node.name, `the global ${node.name} read as ${r.globals[i][0].name}`))
-}
-
-// Whether V8, apart from both analyses here, compiles a script's text, or a
-// CommonJS module's wrapped as Node wraps it, without running it; a module's
-// it can't compile so, which the other checks alone stand for.
-function compiles(text, { module, commonjs }) {
-  if (module) return true
-  try {
-    void new vm.Script(commonjs ? `(function (exports, require, module, __filename, __dirname) {\n${text}\n})` : text)
-    return true
-  } catch { return false }
 }
 
 // A text's lines with its renamable variables' names set aside (`key`), and
@@ -555,7 +560,6 @@ function renamedNames(before, after, { extension = 'js', otherExtension = extens
   text += before.slice(at)
   holds(before !== after || text === before, 'a text renamed as itself changed')
   checkRenamed(a, given, text, extension)
-  holds(!compiles(before, a) || compiles(text, a), 'the renamed text does not compile')
   if (!bindsAlike(before, text, a)) return { reason: 'unverified' }
   let renamed = 0, separated = 0
   for (const variable of a.variables) {

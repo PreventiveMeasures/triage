@@ -50,21 +50,26 @@ test('oxc\'s minifier tells a rename that binds otherwise from one that does not
 
 test('a var is named as no declaration of a block it passes through, nor a body\'s variable as a parameter', () => {
   // A new side that does not compile, as oxc's minifier writes some: a `var` named as the `const` of a
-  // block it hoists past. Where oxc finds the error, the new side gives no names; where it does not (a
-  // `catch` parameter of the name between), the two keep theirs, the rest of the file taking its own.
+  // block it hoists past. It gives no names, whether oxc's semantic check finds the redeclaration or,
+  // beside a `catch` parameter of the name, misses it and analysis finds it, as it does in a renamed text.
   const found = (constant, variable) => `"use strict";\nfunction f() {\n  {\n    const ${constant} = 5;\n    log(${constant});\n    {\n      var ${variable} = 1;\n    }\n  }\n}\n`
   assert.equal(renameMap(found('a', 'c'), found('e', 'e'), { extension: 'cjs' }).reason, 'unparsed')
   const missed = (parameter, constant, caught) => ['"use strict";', `function f(${parameter}) {`, '  {', `    const ${constant} = 5;`, `    log(${constant} + ${parameter});`,
     '    try {', '      g();', `    } catch (${caught}) {`, `      var ${caught} = ${parameter};`, '    }', '  }', '}', 'module.exports = f;'].map(line => `${line}\n`).join('')
   assert.ok(!compiles(missed('t', 'e', 'e')), 'the new side does not compile')
-  const mapped = renameMap(missed('x', 'a', 'c'), missed('t', 'e', 'e'), { extension: 'cjs' })
-  assert.equal(mapped.text, missed('t', 'a', 'c'))
-  assert.ok(compiles(mapped.text))
+  assert.equal(renameMap(missed('x', 'a', 'c'), missed('t', 'e', 'e'), { extension: 'cjs' }).reason, 'unparsed')
+  assert.equal(renameMap(missed('x', 'a', 'c'), missed('t', 'a', 'c'), { extension: 'cjs' }).text, missed('t', 'a', 'c'), 'one that compiles gives its names')
   // Past a default, a body's `var` named as a parameter starts as its value: `typeof c` reads
   // undefined, `typeof b` would read 1.
   const defaults = name => `function f(a, b = 1) {\n  log(typeof ${name});\n  var ${name} = 2;\n  return ${name} + a;\n}\nmodule.exports = f;\n`
   const renamed = renameMap(defaults('c'), defaults('b'), { extension: 'cjs' })
   assert.deepEqual(run(`${renamed.text}module.exports(1);`), run(`${defaults('c')}module.exports(1);`), renamed.text)
+})
+
+test('a name is renamed only from and to an ASCII one, as a minifier gives: none a reader can\'t tell from another', () => {
+  const text = name => `var ${name} = 1;\nf(${name});\nexport {}\n`
+  assert.equal(renameMap(text('a'), text('b')).text, text('b'))
+  for (const [from, to] of [['a', '\u0430'], ['\u0430', 'b'], ['a', 'a\u200D']]) assert.equal(renameMap(text(from), text(to)).text, text(from), `${JSON.stringify(from)} → ${JSON.stringify(to)} kept`)
 })
 
 test('a check that should never fail, failing, shows the file with its names, and tells what failed', () => {

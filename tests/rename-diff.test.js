@@ -78,7 +78,8 @@ test('names a minifier renamed alike throughout are given the new side\'s, and o
   assert.deepEqual(lineDiff(asModule('let a;\nf(`${x.replace(/[^\\w]/g, "@")}`);\na();\n'), asModule('let b;\nf(`${x.replace(/[^\\w]/g, "@")}`);\nb();\n'), { ignoreRenames: true }).blocks, [],
     'nor does a regular expression\'s `\\` or a string\'s `@` in a substitution turn renames off')
   assert.deepEqual(lineDiff(asModule('let a;\na(`Failed with \\n ${x} @user`);\n'), asModule('let b;\nb(`Failed with \\n ${x} @user`);\n'), { ignoreRenames: true }).blocks, [], 'a template\'s text turns nothing off')
-  assert.deepEqual(lineDiff(asModule('let e\u0301;\nf(e\u0301);\n'), asModule('let o\u0301;\nf(o\u0301);\n'), { ignoreRenames: true }).blocks, [], 'a name with a combining mark, whole')
+  assert.deepEqual(lineDiff(asModule('let e\u0301;\nf(e\u0301);\n'), asModule('let o\u0301;\nf(o\u0301);\n'), { ignoreRenames: true }).blocks, [{ a0: 0, a1: 2, b0: 0, b1: 2 }],
+    'a name with a combining mark, no minifier\'s, shown renamed')
   assert.deepEqual(lineDiff(asModule('let f = c ? x => x : y => y;\nf();\n'), asModule('let g = c ? z => z : w => w;\ng();\n'), { ignoreRenames: true }).blocks, [], 'arrows either side of a `:`')
   assert.deepEqual(lineDiff(asModule('let a; // C:\\@x\na();\n'), asModule('let b; // C:\\@x\nb();\n'), { ignoreRenames: true }).blocks, [], 'a comment\'s `\\` or `@` turns nothing off')
   assert.deepEqual(lineDiff(asModule('#!/usr/bin/env node\nlet a;\na();\n'), asModule('#!/usr/bin/env node\nlet b;\nb();\n'), { ignoreRenames: true }).blocks, [], 'under a hashbang too')
