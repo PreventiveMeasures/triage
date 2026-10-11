@@ -66,7 +66,7 @@ const BEFORE_VALUE = new Set(['await', 'case', 'default', 'delete', 'do', 'else'
 const RESTRICTED = new Set(['break', 'continue', 'debugger', 'return', 'yield'])
 // Words a `{` after which opens a block, as do `)`, `;`, `{`, `}`, `=>` and
 // the start; any other opens an object, a pattern or a class body.
-const BEFORE_BLOCK = new Set(['do', 'else', 'finally', 'try'])
+const BEFORE_BLOCK = new Set(['catch', 'do', 'else', 'finally', 'try'])
 // Words between a key's place and its key: `{ async a() {} }`.
 const MODIFIERS = new Set(['accessor', 'async', 'get', 'set', 'static'])
 // Words whose `(…)` a statement follows (`if (a) /b/.test(c)`), declaring
@@ -125,6 +125,10 @@ function nameless(text) {
   const scopes = [{ names: new Set(), parent: -1 }]
   const arrows = [], loops = []
   let pending = null, scope = 0, self = null
+  // A named class expression's name, its body's (`classes`, until its body,
+  // the `extends` marker its body takes, if any): its body is a scope too,
+  // `classBodies` their depths.
+  const classBodies = [], classes = []
   const declare = name => scopes[scope].names.add(name)
   const enter = (entries = []) => {
     scopes.push({ names: new Set(entries.map(({ name }) => name)), parent: scope })
@@ -307,6 +311,11 @@ function nameless(text) {
       // A class's body after its `extends`, whatever that ends with: `extends mixin(Base) {`.
       const body = first === '{' && extending.at(-1)?.depth === opens.length ? extending.pop() : null
       const heritage = body !== null && body.word !== 'function'
+      const own = classes.at(-1)?.depth === opens.length && first === '{' && classes.at(-1).marker === body ? classes.pop() : null
+      if (own) {
+        enter([own])
+        classBodies.push(opens.length + 1)
+      }
       // An arrow's body after its `=>`, an object after a `>` (`0 > { a }`).
       const block = first === '{' && !heritage && (last === null || ');{}'.includes(last) || BEFORE_BLOCK.has(last)
         || (last === '>' && code.trimEnd().endsWith('=>')))
@@ -330,6 +339,10 @@ function nameless(text) {
       const open = opens.pop()
       endArrows(opens.length + 1)
       if (open === 'block') scope = scopes[scope].parent
+      if (classBodies.at(-1) === opens.length + 1) {
+        classBodies.pop()
+        scope = scopes[scope].parent
+      }
       if (open === 'control' && loops.at(-1)?.depth === opens.length) loops.at(-1).body = true
       else endLoops(first === '}' ? opens.length : opens.length + 1)
       if (open === '(') {
@@ -375,9 +388,10 @@ function nameless(text) {
       ARROW_BODY.lastIndex = ARROW.lastIndex = at
       // A pattern's key (`{ a: x }`) names what is read, not what is bound.
       const read = keyed || last === '.' || last === '#'
-      // A function expression's name is its own body's, a class expression's nobody's.
+      // A function or a class expression's name is its own body's.
       if (!read && naming && !KEYWORDS.has(token) && !named.statement) {
         if (named.word === 'function') self = { aside, name: token }
+        else if (named.word === 'class') classes.push({ aside, depth: opens.length, marker: null, name: token })
       } else if (!read && (naming || binding)) declare(token)
       else if (!read && ARROW_BODY.test(text)) pending = [{ aside, name: token }]
       else if (!read && ARROW.test(text)) {
@@ -393,6 +407,7 @@ function nameless(text) {
       if (word === 'extends' && within?.word !== 'class') extending.push({ depth: opens.length, word })
       else if ((word === 'class' || word === 'function') && within) extending.push({ depth: opens.length, word })
       else if (word === 'extends') within.word = word
+      if (word === 'extends' && classes.at(-1)?.depth === opens.length && classes.at(-1).marker === null) classes.at(-1).marker = extending.at(-1)
       if (binding && (word === 'in' || word === 'of')) declaration.binding = false
       LET.lastIndex = at
       if (word === 'const' || word === 'var' || (word === 'let' && LET.test(text))) declarations.push({ binding: true, depth: opens.length, exported: exporting })
