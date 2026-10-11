@@ -1,8 +1,10 @@
 import { bundleFilesAsMap } from './bundle-sources.js'
 
-// Use the union of named trees. A tree absent from one side contains no files
-// there; falling back to all files would invent additions/removals. Unlike a
-// single-bundle graph, retain a scope that includes every file on one side.
+// Use the union of named trees. A tree absent from one stasis bundle contains
+// no files there; falling back to all files would invent additions/removals.
+// A bundle that names no trees (a sourcemap) is compared whole under any of
+// them. Unlike a single-bundle graph, retain a scope that includes every file
+// on one side.
 export function bundleCompareScopes(...details) {
   const names = new Set()
   for (const item of details) {
@@ -15,6 +17,7 @@ export function bundleCompareScopes(...details) {
   // some side. Keep every scope when at least one does, otherwise hide the
   // selector, as single-bundle views do (see common/bundle-reasons.js).
   const narrows = name => details.some(item => {
+    if (item?.kind !== 'stasis') return false
     const files = bundleFilesAsMap(item)
     const paths = item?.bundle?.reason?.[name]
     return new Set(Array.isArray(paths) ? paths.filter(path => files.has(path)) : []).size < files.size
@@ -25,7 +28,7 @@ export function bundleCompareScopes(...details) {
 
 export function bundleCompareFiles(details, scope = '') {
   const files = bundleFilesAsMap(details)
-  if (!scope) return files
+  if (!scope || details?.kind !== 'stasis') return files
   const paths = details?.bundle?.reason?.[scope.replace(/^reason:/u, '')]
   const selected = new Set(Array.isArray(paths) ? paths : [])
   return new Map([...files].filter(([path]) => selected.has(path)))

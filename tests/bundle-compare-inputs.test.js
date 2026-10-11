@@ -41,7 +41,16 @@ test('custom trees retain their exact paths and sourcemaps have no named trees',
   const map = { kind: 'sourcemap', json: { sources: ['file.js'], sourcesContent: ['source'] } }
   assert.deepEqual(bundleCompareScopes(map), [])
   assert.equal(bundleCompareFiles(map).size, 1)
-  assert.equal(bundleCompareFiles(map, 'reason:run').size, 0)
+  assert.equal(bundleCompareFiles(map, 'reason:run').size, 1, 'a sourcemap is compared whole under any tree')
+})
+test('a tree narrows only the stasis side of a comparison with a sourcemap', () => {
+  const stasis = details({ 'cli.js': 'cli', 'metro.js': 'metro' }, { run: ['cli.js'], metro: ['metro.js'] })
+  const map = { kind: 'sourcemap', json: { sources: ['metro.js', 'other.js'], sourcesContent: ['metro', 'other'] } }
+  assert.deepEqual(bundleCompareScopes(stasis, map).map(scope => scope.id), ['reason:metro', 'reason:run'])
+  const diff = computeBundleDiff(bundleCompareFiles(stasis, 'reason:metro'), bundleCompareFiles(map, 'reason:metro'), () => '__own__')
+  assert.deepEqual([diff.totals.baseFiles, diff.totals.otherFiles, diff.totals.unchangedFiles, diff.totals.onlyOtherFiles], [1, 2, 1, 1])
+  const whole = details({ 'metro.js': 'metro' }, { metro: ['metro.js'] })
+  assert.deepEqual(bundleCompareScopes(whole, map), [], 'a sourcemap alone narrows nothing')
 })
 test('dependency versions follow the selected tree, including multiple installed versions', () => {
   const bundle = details({}, { run: ['node_modules/dep/a.js'] }, [
