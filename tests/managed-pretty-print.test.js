@@ -319,30 +319,47 @@ test('a private npm version\'s files diffed at once are formatted in their turns
   await assert.rejects(readdir(join(h.dir, 'cache', 'npm')), { code: 'ENOENT' })
 })
 
+// A rename diff's answer, read.
+async function renameDiffRead(job) {
+  const chunks = []
+  for await (const chunk of (await job).stream) chunks.push(chunk)
+  return JSON.parse(brotliDecompressSync(Buffer.concat(chunks)).toString())
+}
+const diffSide = text => ({ path: 'a.js', hash: fileHash(text), extension: 'js' })
+const diffed = { base: diffSide(built), other: diffSide(rebuilt), ignoreWhitespace: false }
+const readBuilds = () => Promise.resolve([built, rebuilt])
+
 test('a rename diff waiting its turn has its minute run out there, and leaves the queue', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  const side = text => ({ path: 'a.js', hash: fileHash(text), extension: 'js' })
-  const diffed = { base: side(built), other: side(rebuilt), ignoreWhitespace: false }
-  const read = () => Promise.resolve([built, rebuilt])
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 30_000 })
   let release
   const held = new Promise(resolve => { release = resolve })
   // Both workers' turns taken by diffs whose sides (a private version's, so
-  // read in their turn) are still being read, and the queue filled behind them.
+  // read in their turn) are still being read, their minutes running past
+  // those of the diffs then queued behind them: the clock set back once they
+  // have their turns.
   const running = [0, 1].map(() => renameDiffOf(diffed, () => held, false))
-  const queued = Array.from({ length: 16 }, () => renameDiffOf(diffed, read, false))
-  await assert.rejects(renameDiffOf(diffed, read, false), { status: 429, message: 'diff-busy' })
+  await new Promise(resolve => { setImmediate(resolve) })
+  t.mock.timers.setTime(0)
+  const queued = Array.from({ length: 16 }, () => renameDiffOf(diffed, readBuilds, false))
+  await assert.rejects(renameDiffOf(diffed, readBuilds, false), { status: 429, message: 'diff-busy' })
   t.mock.timers.tick(60_000)
   for (const job of queued) await assert.rejects(job, { status: 504, message: 'diff-timeout' })
   // Gone from the queue: the next one waits its turn, and gets it.
-  const next = renameDiffOf(diffed, read, false)
+  const next = renameDiffOf(diffed, readBuilds, false)
   release([built, rebuilt])
-  const answers = await Promise.all([...running, next].map(async job => {
-    const chunks = []
-    for await (const chunk of (await job).stream) chunks.push(chunk)
-    return JSON.parse(brotliDecompressSync(Buffer.concat(chunks)).toString())
-  }))
+  const answers = await Promise.all([...running, next].map(renameDiffRead))
   for (const answer of answers) assert.deepEqual(answer, answers[0])
   assert.equal(answers[0].reason, null, 'each one diffed, its names given')
+})
+
+test('a private rename diff still reading its sides when its minute runs out answers 504 and gives up its turn', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  // Its version's files still downloading, say.
+  const running = [0, 1].map(() => renameDiffOf(diffed, () => new Promise(() => {}), false))
+  await new Promise(resolve => { setImmediate(resolve) })
+  t.mock.timers.tick(60_000)
+  for (const job of running) await assert.rejects(job, { status: 504, message: 'diff-timeout' })
+  assert.equal((await renameDiffRead(renameDiffOf(diffed, readBuilds, false))).reason, null, 'the next one has a turn at once')
 })
 
 test('a bundle rename diff checks access to both bundles and refuses what it cannot answer', async t => {

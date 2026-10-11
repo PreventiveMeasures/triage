@@ -117,6 +117,13 @@ function inWorker(before: string, after: string, { base, other, ignoreWhitespace
   })
 }
 
+// `work` given until `deadline`: past it, answered 504 and left to finish on its own.
+function byDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => { reject(new PrettyError(504, 'diff-timeout')) }, deadline - Date.now()) })
+  return Promise.race([work, late]).finally(() => { clearTimeout(timer) })
+}
+
 const encoded = (diff: RenameDiff) => encodeBrotli(Buffer.from(JSON.stringify(diff)))
 const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
 
@@ -127,11 +134,12 @@ const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: R
 export async function renameDiffOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep = true): Promise<OpenedBlob> {
   // Sides not kept are formatted again for each diff (pretty-print.ts), so
   // they are read in its turn: the files a Diff view asks for at once wait
-  // here rather than being refused by the formats running.
+  // here rather than being refused by the formats running. Within its minute
+  // too, its turn not held past it by a version's files still downloading.
   if (!keep) {
     const deadline = Date.now() + DIFF_TIMEOUT_MS
     return opened(await encoded(await inTurn(deadline, async () => {
-      const [before, after] = await texts()
+      const [before, after] = await byDeadline(texts(), deadline)
       return inWorker(before, after, request, deadline)
     })))
   }
