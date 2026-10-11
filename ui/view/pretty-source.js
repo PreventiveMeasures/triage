@@ -4,13 +4,20 @@
 // and keeps the copy (server-managed/pretty-print.ts). The viewer keeps the
 // last few copies it read, for the session; a copy's line numbers are its
 // own, so the file's line links and marks stay with the file as published.
+import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../../common/pretty-print.js'
 import { utf8ByteLength } from '../../common/utf8.js'
 import { fetchPrettyBundleFile, fetchPrettyNpmFile } from './client-managed.js'
-import { npmFileReadability } from './npm-overview.js'
-import { render } from './render.js'
+import { npmFileReadability } from './file-readability.js'
+
+// The pretty-print toggles' icon, for the Code tab's bar and Compare's.
+export const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
+
+// What a pretty-print toggle says of the copy it shows.
+export const prettyTooltip = copy => copy?.status === 'loading' ? 'Pretty-printing…'
+  : copy?.status === 'error' ? `Couldn't pretty-print: ${copy.message}` : 'Pretty-print'
 
 // Copies kept, the one read last last; each can run to megabytes.
 const KEPT_COPIES = 8
@@ -19,11 +26,13 @@ const KEPT_COPIES = 8
 // text }`, or `{ status: 'error', message, retry }`, `retry` where asking
 // again may succeed.
 const copies = new Map()
+// What a copy asked for calls once it comes: the view that last asked.
+const notifiers = new Map()
 const copyKey = (details, path) => `${details.integrity}\0${path}`
 
 // Whether each file of a bundle or npm version can be formatted, by its
 // details: in a language the server formats, no larger than it formats, and
-// minified, as the npm Overview tells (npmFileReadability).
+// minified (npmFileReadability).
 const formattable = new WeakMap()
 
 // Whether the open file can be pretty-printed: a formattable file of a
@@ -38,12 +47,34 @@ export function prettyPrintable(details, entry, path, content) {
   return files.get(path)
 }
 
+// Copies asked for in the task now running and in the last one that asked,
+// as a view painting asks for all it shows (Compare's Diff view, both sides
+// of every changed file): kept past KEPT_COPIES, as are those still coming,
+// so a view showing more than that never drops one it shows or waits for and
+// asks for it again.
+let asking = false, wanted = new Set(), wantedBefore = new Set()
+
 function keep(key, copy) {
   copies.delete(key)
   copies.set(key, copy)
-  for (const old of copies.keys()) {
+  if (!asking) {
+    asking = true
+    wantedBefore = wanted
+    wanted = new Set()
+    setTimeout(() => { asking = false })
+  }
+  wanted.add(key)
+  evict()
+}
+
+// Past KEPT_COPIES, the least recent no view waits for: as one is asked for,
+// and as one comes that may be wanted no longer.
+function evict() {
+  for (const [old, kept] of copies) {
     if (copies.size <= KEPT_COPIES) break
+    if (wanted.has(old) || wantedBefore.has(old) || kept.status === 'loading') continue
     copies.delete(old)
+    notifiers.delete(old)
   }
 }
 
@@ -57,22 +88,33 @@ async function load(key, copy, entry, path, content, known) {
     next = { status: 'ready', text }
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
-    if (err?.name === 'AbortError') { if (copies.get(key) === copy) copies.delete(key); return }
+    if (err?.name === 'AbortError') {
+      if (copies.get(key) === copy) {
+        copies.delete(key)
+        notifiers.delete(key)
+      }
+      return
+    }
     next = { status: 'error', message: err?.message ?? String(err), retry: !(err?.status >= 400 && err.status < 500 && err.status !== 429) }
   }
   if (copies.get(key) !== copy) return
   copies.set(key, next)
-  if (state.bundleSourceFile === path) render()
+  const notify = notifiers.get(key)
+  notifiers.delete(key)
+  notify?.()
+  evict()
 }
 
 // A printable file's pretty-printed copy while the toggle is on, asked for
-// the first time it is wanted; null while it is off.
-export function prettyCopy(details, entry, path, content) {
+// the first time it is wanted, `notify` called once it comes; null while it
+// is off.
+export function prettyCopy(details, entry, path, content, notify) {
   if (!state.bundleSourcePretty) return null
   const key = copyKey(details, path)
   const asked = copies.get(key)
   const copy = asked ?? { status: 'loading' }
   keep(key, copy)
+  if (copy.status === 'loading') notifiers.set(key, notify)
   if (!asked) load(key, copy, entry, path, content, details.fileHashes?.get(path))
   return copy
 }
