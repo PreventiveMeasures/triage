@@ -121,3 +121,20 @@ test('a renamed importer pairs its resolutions with its new path\'s, and a renam
   assert.deepEqual(computeResolutionDiff(base, other).changed.map(row => `${row.parent} ${row.specifier}`), ['main.js ./src/b.js'],
     'without the renames, the moved importer pairs with nothing')
 })
+
+test('pairs resolutions across bundles taken from different roots', () => {
+  const nested = (target, files) => ({ kind: 'stasis', bundle: Bundle.parse(new Bundle({
+    entries: new Set(['src/app.js']), reason: {},
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files }]]),
+    imports: new Map([['node, import', new Map([['src/app.js', new Map([['dep', target]])]])]]),
+  }).serialize()) })
+  const base = details(imports([['dep', 'a.js']]))
+  const files = { 'src/app.js': 'import "dep"', 'src/a.js': 'a', 'src/b.js': 'b', __prelude__: 'p' }
+  const result = other => {
+    const { basePaths } = computeBundleDiff(bundleCompareFiles(base), bundleCompareFiles(other), () => '__own__').files
+    return computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other), new Map(), basePaths)
+  }
+  assert.equal(result(nested('src/a.js', files)).totalChanges, 0, 'the same target under the root')
+  assert.deepEqual(result(nested('src/b.js', files)).changed.map(row => [row.parent, row.baseTarget, row.otherTarget]),
+    [['src/app.js', 'src/a.js', 'src/b.js']], 'the base target shown under the root')
+})

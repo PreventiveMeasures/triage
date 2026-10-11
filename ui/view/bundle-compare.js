@@ -52,8 +52,8 @@ import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { buildBundleDetails, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
-import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates } from './bundle-compare-diff.js'
-import { renameTemplate } from './bundle-compare-rename.js'
+import { comparePackages, computeBundleDiff, computeResolutionDiff, computeVersionUpdates, rootLabel } from './bundle-compare-diff.js'
+import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { bundleCompareFiles, bundleCompareResolutions, bundleCompareScopes } from './bundle-compare-inputs.js'
 import './bundle-selector.js'
 import './bundle-scope-selector.js'
@@ -435,8 +435,8 @@ class BundleCompare extends LitElement {
     const sorted = rows.toSorted((a, b) => (sort === 'size' ? weight(b) - weight(a) : 0) || a.path.localeCompare(b.path))
     // A renamed file reads `src/{a.js → a.ts}`, the old part red, the new green.
     const tagged = kind !== 'removed'
-    const row = r => r.basePath == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged)
-      : this._fileRow(r.path, renameTemplate(displayOf(r.basePath), displayOf(r.path)), this._sizeCells(r), `${r.basePath} → ${r.path}`, tagged)
+    const row = r => r.renamedFrom == null ? this._fileRow(r.path, displayOf(r.path), this._sizeCells(r), r.path, tagged)
+      : this._fileRow(r.path, renameTemplate(displayOf(r.renamedFrom), displayOf(r.path)), this._sizeCells(r), `${r.renamedFrom} → ${r.path}`, tagged)
     return this._group(title, sorted, kind, (r) => r.path, row, this._sortActions('_fileSort', kind, 'file'), { lanes })
   }
 
@@ -617,13 +617,14 @@ class BundleCompare extends LitElement {
       const baseLines = bundleLineCounts(from), otherLines = bundleLineCounts(to)
       const linesOf = (lines, paths) => { let total = 0; for (const path of paths) total += lines.get(path) ?? 0; return total }
       Object.assign(this._diff.totals, { baseLines: linesOf(baseLines, baseSources.keys()), otherLines: linesOf(otherLines, otherSources.keys()) })
-      for (const row of this._diff.files.onlyBase) row.lines = baseLines.get(row.path) ?? 0
+      for (const row of this._diff.files.onlyBase) row.lines = baseLines.get(row.basePath ?? row.path) ?? 0
       for (const row of this._diff.files.onlyOther) row.lines = otherLines.get(row.path) ?? 0
       for (const row of this._diff.files.changed) Object.assign(row, { baseLines: baseLines.get(row.basePath ?? row.path) ?? 0, otherLines: otherLines.get(row.path) ?? 0 })
       this._diff.resolutions = computeResolutionDiff(
         bundleCompareResolutions(from, this._scope),
         bundleCompareResolutions(to, this._scope),
-        new Map(this._diff.files.changed.filter(row => row.basePath != null).map(row => [row.basePath, row.path])),
+        new Map(this._diff.files.changed.filter(row => row.renamedFrom != null).map(row => [row.basePath, row.path])),
+        this._diff.files.basePaths,
       )
       // Dependency versions come from the stasis per-module `{ name,
       // version }` metadata, not the path/byte walk above, so they're
@@ -839,12 +840,12 @@ class BundleCompare extends LitElement {
     const allPaths = [
       ...diff.files.onlyBase.map((r) => r.path),
       ...diff.files.onlyOther.map((r) => r.path),
-      ...diff.files.changed.flatMap((r) => r.basePath == null ? [r.path] : [r.path, r.basePath]),
+      ...diff.files.changed.flatMap((r) => r.renamedFrom == null ? [r.path] : [r.path, r.renamedFrom]),
     ]
-    const { prefix, stripped } = stripCommonPathPrefix(allPaths)
-    const displayMap = new Map()
-    for (let i = 0; i < allPaths.length; i++) displayMap.set(allPaths[i], stripped[i])
-    const displayOf = (p) => displayMap.get(p) ?? p
+    // Where the bundles' roots differ, the heading reads the move at the root.
+    const root = rootLabel(diff.files.root, stripCommonPathPrefix(allPaths).prefix)
+    const { prefix } = root
+    const displayOf = (p) => prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p
 
     const fileCount = diff.files.onlyBase.length + diff.files.onlyOther.length + diff.files.changed.length
     const files = { removed: diff.files.onlyBase, added: diff.files.onlyOther, changed: diff.files.changed }
@@ -869,11 +870,11 @@ class BundleCompare extends LitElement {
       ${diff.totals.identical
         ? diff.resolutions.totalChanges > 0
           ? html`<div class="bundle-compare-caption">File contents are unchanged; import resolutions differ.</div>`
-          : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'}).</div>`
+          : html`<div class="bundle-compare-identical">These two bundles carry identical files (${diff.totals.unchangedFiles.toLocaleString()} ${diff.totals.unchangedFiles === 1 ? 'file' : 'files'})${root.from ? html`, moved <span class="mono">${rootTemplate(root)}</span>` : ''}.</div>`
         : this._collapsible('files', 'Files', fileCount, () => this._cols(fileLanes, html`
             ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, fileLanes)}
             ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, fileLanes)}
-            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`), prefix)}
+            ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`), root.from ? `${root.from} → ${root.to}` : prefix)}
       ${this._renderResolutions(diff.resolutions)}
     `
   }

@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, renameLabel, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
+const { comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, detectRenames, detectRoot, renameLabel, versionDirection } = await import('../ui/view/bundle-compare-diff.js')
 
 // All fixtures use ASCII content so a string's byte length equals its
 // `.length` — keeps the expected-bytes assertions readable.
@@ -418,7 +418,7 @@ describe('renames', () => {
     const base = m({ 'own/src/a.js': 'aaaa', 'own/keep.js': 'k', 'own/gone.js': 'g' })
     const other = m({ 'own/lib/a.ts': 'aaaaaa', 'own/keep.js': 'k', 'own/new.js': 'n' })
     const { totals, files, packages } = computeBundleDiff(base, other, firstSeg)
-    assert.deepEqual(files.changed, [{ path: 'own/lib/a.ts', basePath: 'own/src/a.js', baseBytes: 4, otherBytes: 6, delta: 2, modified: true }])
+    assert.deepEqual(files.changed, [{ path: 'own/lib/a.ts', renamedFrom: 'own/src/a.js', basePath: 'own/src/a.js', baseBytes: 4, otherBytes: 6, delta: 2, modified: true }])
     assert.deepEqual(files.onlyBase.map(row => row.path), ['own/gone.js'])
     assert.deepEqual(files.onlyOther.map(row => row.path), ['own/new.js'])
     assert.equal(totals.changedFiles, 1)
@@ -429,7 +429,7 @@ describe('renames', () => {
     assert.equal(totals.identical, false)
     assert.deepEqual(packages.changed.map(row => row.pkg), ['own'])
     const pure = computeBundleDiff(m({ 'own/src/a.js': 'a' }), m({ 'own/lib/a.js': 'a' }), firstSeg)
-    assert.deepEqual(pure.files.changed, [{ path: 'own/lib/a.js', basePath: 'own/src/a.js', baseBytes: 1, otherBytes: 1, delta: 0, modified: false }])
+    assert.deepEqual(pure.files.changed, [{ path: 'own/lib/a.js', renamedFrom: 'own/src/a.js', basePath: 'own/src/a.js', baseBytes: 1, otherBytes: 1, delta: 0, modified: false }])
     assert.equal(pure.totals.identical, false, 'a rename alone is a change')
   })
 
@@ -441,5 +441,57 @@ describe('renames', () => {
     assert.equal(renameLabel('src/a.js', 'lib/a.js'), '{src → lib}/a.js')
     assert.equal(renameLabel('x/src/y/a.js', 'x/lib/y/a.js'), 'x/{src → lib}/y/a.js')
     assert.equal(renameLabel('node_modules/a/src/x.ts', 'node_modules/a/lib/x.js'), 'node_modules/a/{src/x.ts → lib/x.js}')
+  })
+})
+
+describe('bundles taken from different roots', () => {
+  const own = () => 'own'
+  const flat = m({ 'dir/file/a.js': 'a', 'dir/file/b.js': 'b' })
+  const nested = m({ 'src/dir/file/a.js': 'a', 'src/dir/file/b.js': 'b', __prelude__: 'p' })
+
+  it('compares one bundle as if under the directory the other holds it in', () => {
+    const { files, totals } = computeBundleDiff(flat, nested, own)
+    assert.deepEqual(files.root, { base: '', other: 'src/' })
+    assert.deepEqual(files.changed, [], 'not changed, nor renamed')
+    assert.deepEqual(files.onlyBase, [])
+    assert.deepEqual(files.onlyOther.map(row => row.path), ['__prelude__'], "the other's own extra stays added")
+    assert.equal(totals.renamedFiles, 0)
+    assert.equal(totals.unchangedFiles, 2)
+    assert.deepEqual([...files.basePaths], [['dir/file/a.js', 'src/dir/file/a.js'], ['dir/file/b.js', 'src/dir/file/b.js']])
+  })
+
+  it('works the other way round, a base file outside the root above it', () => {
+    const { files } = computeBundleDiff(nested, flat, own)
+    assert.deepEqual(files.root, { base: 'src/', other: '' })
+    assert.deepEqual(files.changed, [])
+    assert.deepEqual(files.onlyBase, [{ path: '../__prelude__', basePath: '__prelude__', bytes: 1 }])
+  })
+
+  it('names the base file wherever it differs, for changed, removed and renamed files', () => {
+    const base = m({ 'dir/a.js': 'a', 'dir/b.js': 'b', 'dir/c.js': 'c', 'dir/gone.js': 'g', 'dir/d.js': 'd' })
+    const other = m({ 'src/dir/a.js': 'aa', 'src/dir/b.js': 'b', 'src/dir/c.js': 'c', 'src/dir/d.ts': 'd', __prelude__: 'p' })
+    const { files, totals } = computeBundleDiff(base, other, own)
+    assert.deepEqual(files.root, { base: '', other: 'src/' })
+    assert.deepEqual(files.changed, [
+      { path: 'src/dir/a.js', basePath: 'dir/a.js', baseBytes: 1, otherBytes: 2, delta: 1 },
+      { path: 'src/dir/d.ts', renamedFrom: 'src/dir/d.js', basePath: 'dir/d.js', baseBytes: 1, otherBytes: 1, delta: 0, modified: false },
+    ])
+    assert.deepEqual(files.onlyBase, [{ path: 'src/dir/gone.js', basePath: 'dir/gone.js', bytes: 1 }])
+    assert.equal(totals.renamedFiles, 1)
+  })
+
+  it('pairs a file both keep at their own root as it is', () => {
+    const base = m({ 'package.json': '{}', 'dir/a.js': 'a', 'dir/b.js': 'b' })
+    const other = m({ 'package.json': '{}', 'src/dir/a.js': 'a', 'src/dir/b.js': 'b' })
+    const { files, totals } = computeBundleDiff(base, other, own)
+    assert.deepEqual(files.root, { base: '', other: 'src/' })
+    assert.equal(totals.identical, true)
+  })
+
+  it('keeps paths as they are where they line up, or only a few would move', () => {
+    assert.equal(detectRoot(['a.js', 'b.js', 'lib/a.js'], ['a.js', 'b.js', 'lib/a.js']), null)
+    assert.equal(detectRoot(['a.js', 'b.js', 'c.js', 'd.js'], ['src/a.js', 'x.js', 'y.js', 'z.js']), null, 'one file of four')
+    assert.equal(detectRoot(['own/src/a.js', 'own/keep.js'], ['own/lib/a.ts', 'own/keep.js']), null)
+    assert.equal(computeBundleDiff(m({ 'a.js': 'a' }), m({ 'a.js': 'b' }), own).files.root, null)
   })
 })
