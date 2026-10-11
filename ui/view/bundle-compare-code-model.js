@@ -156,7 +156,8 @@ function nameless(text) {
   // line breaks, as code (`segment`).
   const between = (raw, segment = raw) => {
     keep(raw)
-    if (segment.includes('\\') || segment.includes('@')) dynamic = true
+    // Nor where a fragment opens, `<>` being JSX alone, whatever it holds.
+    if (segment.includes('\\') || segment.includes('@') || segment.includes('<>')) dynamic = true
     // A line break ends these statements, a `/` after it starting a value.
     if (segment.includes('\n') && (last === 'break' || last === 'continue' || last === 'debugger')) last = ';'
     // A line break no operator spans may end a statement, as `;` does, or a
