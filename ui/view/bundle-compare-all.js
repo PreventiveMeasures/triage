@@ -1,15 +1,14 @@
 // `<bundle-compare-all>` — the Compare slide's Diff view: every file that
 // differs, its review diff under its name, one after another in a single
-// list, as `git diff` prints them. It is the Code view
-// (bundle-compare-code.js) without its tree, drawing each diff the same way:
+// list, as `git diff` prints them, in the order the Code view's tree lists
+// them, beside that tree: picking a file scrolls to it, and the file at the
+// list's top is the tree's as it scrolls. Each diff draws as Code draws one
+// (bundle-compare-code.js):
 // unified or split, unchanged runs folded and expandable, syntax colored,
 // changed words marked. Compare offers it only for a comparison it can list
 // in fewer than COMBINED_DIFF_MAX rows (combinedDiffRows).
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
-import { stripCommonPathPrefix } from './format.js'
-import { rootLabel } from './bundle-compare-diff.js'
-import { rootTemplate } from './bundle-compare-rename.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
 import { BundleCompareCode, diffCounts, fileContents, fileEntries, isLargeDiff, modelKey } from './bundle-compare-code.js'
 
@@ -65,13 +64,60 @@ class BundleCompareAll extends BundleCompareCode {
     if (changed.has('models')) for (const [path, model] of this.models ?? []) this._models.set(modelKey(path, false, { ignoreWhitespace: false, ignoreRenames: false }), model)
   }
 
-  // Nothing to keep in view: the list scrolls as the reader does.
-  updated() {}
+  // The rail's file at the top of the list, kept in view in the rail.
+  updated() {
+    if (this._current !== this._shownPath) {
+      this._shownPath = this._current
+      this.querySelector('.bundle-compare-code-tree .bundle-code-tree-link.current')?.scrollIntoView({ block: 'nearest' })
+    }
+  }
+
+  // A file picked in the rail: the list scrolls to it, its head at the top,
+  // and it stays the rail's while it is in view, though the list ends too
+  // soon to bring it to the top.
+  _select(path) {
+    if (!path) return
+    this._current = this._picked = path
+    this.requestUpdate()
+    void this.updateComplete.then(() => this._section(path)?.scrollIntoView({ block: 'start' }))
+  }
+
+  _section(path) {
+    return [...this.querySelectorAll('.bundle-compare-all-file')].find(section => section.dataset.path === path) ?? null
+  }
+
+  // As the list scrolls, the file whose diff is at its top is the rail's,
+  // a frame at a time.
+  _spy() {
+    if (this._spying) return
+    this._spying = requestAnimationFrame(() => {
+      this._spying = 0
+      const body = this.querySelector('.bundle-compare-diff')
+      if (!body) return
+      const { top, bottom } = body.getBoundingClientRect()
+      const picked = this._picked && this._section(this._picked)?.getBoundingClientRect()
+      if (picked && picked.bottom > top && picked.top < bottom) return
+      this._picked = null
+      let at = null
+      for (const section of body.querySelectorAll(':scope > .bundle-compare-all-file')) {
+        if (section.getBoundingClientRect().top > top + 4) break
+        at = section
+      }
+      const path = at?.dataset.path ?? this._order[0] ?? null
+      if (path !== this._current) {
+        this._current = path
+        this.requestUpdate()
+      }
+    })
+  }
 
   render() {
-    const entries = combinedEntries(this._entries)
-    const root = rootLabel(this.files?.root, stripCommonPathPrefix(entries.map(([path]) => path)).prefix)
-    const { prefix } = root
+    const rail = this._railState()
+    const { prefix, order } = rail
+    this._order = order
+    if (!order.includes(this._current)) this._current = order[0] ?? null
+    if (this._current) this._reveal(this._current, prefix)
+    const entries = order.map(path => [path, this._entries.get(path)])
     const prettyAllowed = entries.filter(([path, entry]) => this._printable(path, entry)).length <= COMBINED_PRETTY_MAX
     const shown = entries.map(([path, entry]) => ({ path, entry, file: this._fileState(path, entry, prettyAllowed) }))
     const additions = shown.reduce((sum, { file }) => sum + (file.model?.additions ?? 0), 0)
@@ -79,26 +125,29 @@ class BundleCompareAll extends BundleCompareCode {
     // The toggle's state for every file, as for one file's two sides (_pretty): a failure first, then one still coming.
     const pretties = shown.map(({ file }) => file.pretty).filter(Boolean)
     const pretty = pretties.find(copy => copy.status === 'error') ?? pretties.find(copy => copy.status === 'loading') ?? pretties[0]
-    return html`<header class="bundle-code-main-bar bundle-compare-code-bar">
-        <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
-        ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
-        ${root.from ? html`<span class="bundle-compare-all-prefix mono" data-tooltip=${`Root moved: ${root.from} → ${root.to}`}>${rootTemplate(root)}</span>`
-          : prefix ? html`<span class="bundle-compare-all-prefix mono" data-tooltip-truncated data-tooltip=${prefix}>${prefix}</span>` : nothing}
-        <span class="bundle-code-main-spacer"></span>
-        ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), pretty, shown.some(({ file }) => file.generated))}
-      </header>
-      <div class="bundle-compare-diff" tabindex="0" aria-label="Every change">
-        ${entries.length === 0 ? html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
-          : repeat(shown, ({ path }) => path, ({ path, entry, file }) => html`<section class="bundle-compare-all-file" aria-label=${path}>
-            <header class="bundle-code-main-bar bundle-compare-all-file-head">
-              ${this._fileName(path, entry, prefix)}
-              <span class="bundle-code-main-spacer"></span>
-              ${this._fileFigures(entry, file.model)}
-              ${file.mixedWhitespace ? this._whitespaceToggle(true) : nothing}
-            </header>
-            ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}
-          </section>`)}
-      </div>`
+    return html`<div class="bundle-code-view bundle-compare-code">
+      ${this._renderRail(rail, this._current)}
+      <div class="bundle-code-main">
+        <header class="bundle-code-main-bar bundle-compare-code-bar">
+          <span class="bundle-compare-all-title">${entries.length.toLocaleString()} ${entries.length === 1 ? 'file' : 'files'} changed</span>
+          ${additions + deletions > 0 ? diffCounts(additions, deletions) : nothing}
+          <span class="bundle-code-main-spacer"></span>
+          ${this._toggles(shown.some(({ file }) => file.model?.blocks.length > 0), pretty, shown.some(({ file }) => file.generated))}
+        </header>
+        <div class="bundle-compare-diff" tabindex="0" aria-label="Every change" @scroll=${() => this._spy()}>
+          ${entries.length === 0 ? html`<div class="bundle-code-placeholder">${this._entries.size === 0 ? 'No files differ in this comparison.' : 'No changed files match.'}</div>`
+            : repeat(shown, ({ path }) => path, ({ path, entry, file }) => html`<section class="bundle-compare-all-file" aria-label=${path} data-path=${path}>
+              <header class="bundle-code-main-bar bundle-compare-all-file-head">
+                ${this._fileName(path, entry, prefix)}
+                <span class="bundle-code-main-spacer"></span>
+                ${this._fileFigures(entry, file.model)}
+                ${file.mixedWhitespace ? this._whitespaceToggle(true) : nothing}
+              </header>
+              ${this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)}
+            </section>`)}
+        </div>
+      </div>
+    </div>`
   }
 }
 

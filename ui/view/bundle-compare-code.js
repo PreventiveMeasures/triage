@@ -309,22 +309,24 @@ export class BundleCompareCode extends LitElement {
     for (let i = 1; i < parts.length; i++) this._open.set(parts.slice(0, i).join('/'), true)
   }
 
-  render() {
+  // The rail's tree as its path and kind filters leave it, and its files in
+  // the order it lists them.
+  _railState() {
     const { prefix, root, tree, shown } = this._tree()
     const filtered = this._query ? filterBundleSourceTree(tree, this._query, prefix) : tree
-    const order = filtered ? orderedFiles(filtered) : []
-    const current = this._entries.has(this.path) ? this.path : order[0] ?? null
-    if (current && current !== this._current) this._reveal(current, prefix)
-    this._current = current
-    this._order = order
+    return { prefix, root, tree, shown, filtered, order: filtered ? orderedFiles(filtered) : [] }
+  }
+
+  // The rail: the files that differ as a tree, filtered by path and kind,
+  // `current` marked, and the splitter beside it. Picking a file is _select.
+  _renderRail({ prefix, root, tree, shown, filtered }, current) {
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
       if (entry.kind !== 'repointed') counts[entry.kind]++
       if (entry.modified) counts.changed++
       if (entry.repointed) counts.repointed++
     }
-    return html`<div class="bundle-code-view bundle-compare-code">
-      <aside class="bundle-code-rail">
+    return html`<aside class="bundle-code-rail">
         <div class="bundle-code-rail-head">
           <span class="bundle-code-rail-label">Changes</span>
           <span class="bundle-code-rail-count">${this._entries.size.toLocaleString()}</span>
@@ -353,12 +355,23 @@ export class BundleCompareCode extends LitElement {
         </div>
       </aside>
       <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical"
-        aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>
+        aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>`
+  }
+
+  render() {
+    const rail = this._railState()
+    const current = this._entries.has(this.path) ? this.path : rail.order[0] ?? null
+    if (current && current !== this._current) this._reveal(current, rail.prefix)
+    this._current = current
+    this._order = rail.order
+    return html`<div class="bundle-code-view bundle-compare-code">
+      ${this._renderRail(rail, current)}
       <div class="bundle-code-main">
-        ${current ? this._renderFile(current, prefix) : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`}
+        ${current ? this._renderFile(current, rail.prefix) : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`}
       </div>
     </div>`
   }
+
 
   _toggleKind(kind) {
     const kinds = new Set(this._kinds)

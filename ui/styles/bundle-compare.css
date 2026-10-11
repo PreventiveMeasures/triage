@@ -489,18 +489,11 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 }
 
 /* ── Diff mode ─────────────────────────────────────────────────────
-   Every changed file's diff in one list (bundle-compare-all.js), each
-   under a head that stays in view while its diff scrolls past. */
-bundle-compare-all { flex-direction: column; min-width: 0; background: var(--bg); }
+   Every changed file's diff in one list (bundle-compare-all.js) beside
+   Code's rail, each under a head that stays in view while its diff
+   scrolls past. */
+bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-all-title { flex-shrink: 0; font-size: .78rem; font-weight: 600; }
-.bundle-compare-all-prefix {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: .72rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .bundle-compare-all-file + .bundle-compare-all-file { margin-top: .75rem; }
 .bundle-compare-all-file-head { position: sticky; top: 0; z-index: 3; border-top: 1px solid var(--border); }
 .bundle-compare-all-file:first-child .bundle-compare-all-file-head { border-top: 0; }
@@ -513,7 +506,7 @@ bundle-compare-all { flex-direction: column; min-width: 0; background: var(--bg)
   flex: 1;
   min-height: 0;
 }
-bundle-compare-code > .bundle-code-view {
+:is(bundle-compare-code, bundle-compare-all) > .bundle-code-view {
   display: flex;
   flex: 1;
   min-width: 0;

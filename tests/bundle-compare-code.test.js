@@ -330,7 +330,7 @@ test('a file whose whitespace changes mix kinds of blank is diffed as it is whil
   for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
   all.models = combinedDiffRows(code.base, code.other, code.files).models
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
-  const sections = Object.fromEntries([...renderText(all.render()).matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+)>([^]*?)<\/section>/gu)].map(m => [m[1], m[2]]))
+  const sections = Object.fromEntries([...renderText(all.render()).matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=[^\s>]+>([^]*?)<\/section>/gu)].map(m => [m[1], m[2]]))
   assert.match(sections['src/tabs.js'], /aria-disabled=true/u, 'the Diff view marks it in its head')
   assert.match(sections['src/tabs.js'], /class=bundle-compare-diff-table/u)
   assert.doesNotMatch(sections['src/spaces.js'], /aria-disabled|bundle-compare-diff-table/u)
@@ -433,7 +433,7 @@ test('a renamed file whose contents are the same but whose import was repointed 
   assert.doesNotMatch(markup, /Unified<\/button>/u, 'no diff layout to choose')
 })
 
-test('the Diff view lists every changed file\'s diff in one list, and counts the rows it would show', async () => {
+test('the Diff view lists every changed file\'s diff in one list, in its rail\'s order, and counts the rows it would show', async () => {
   const { COMBINED_DIFF_MAX, combinedDiffRows } = await import('../ui/view/bundle-compare-all.js')
   const CompareAll = customElements.get('bundle-compare-all')
   const code = view()
@@ -443,15 +443,17 @@ test('the Diff view lists every changed file\'s diff in one list, and counts the
   all.models = counted.models
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   const markup = renderText(all.render())
-  const heads = [...markup.matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+)>/gu)].map(m => m[1])
-  assert.deepEqual(heads, ['assets/logo.png', 'node_modules/left-pad/index.js', 'node_modules/zod/index.js', 'src/api.js', 'src/features/search.js', 'src/legacy.js'],
-    'every added, removed and changed file, by path; a repointed importer has no text that changed')
+  const heads = [...markup.matchAll(/<section class="bundle-compare-all-file" aria-label=([^\s>]+) data-path=\1>/gu)].map(m => m[1])
+  assert.deepEqual(heads, ['assets/logo.png', 'node_modules/left-pad/index.js', 'node_modules/zod/index.js', 'src/features/search.js', 'src/api.js', 'src/legacy.js'],
+    'every added, removed and changed file, as the rail lists them; a repointed importer has no text that changed')
+  const rail = [...markup.matchAll(/<button type="button" class=bundle-code-tree-link[^]*?<\/button>/gu)].map(([row]) => /bundle-code-tree-name[^>]*data-tooltip=([^\s>]+)>/u.exec(row)[1])
+  assert.deepEqual(rail, heads, 'the rail lists them beside the list')
   assert.match(markup, /6 files changed/u)
   assert.doesNotMatch(markup, /aria-label="Hide renamed names"/u, 'its JavaScript files, an author\'s names in them, offer no renamed names hidden')
   assert.match(markup, /Binary file changed/u)
   assert.equal([...markup.matchAll(/class=bundle-compare-diff-table/gu)].length, 5, 'a diff for every text file')
   assert.ok(counted.rows > heads.length && counted.rows < COMBINED_DIFF_MAX)
-  assert.deepEqual([...counted.models.keys()].toSorted(), heads.filter(path => path !== 'assets/logo.png'), 'the line models found counting')
+  assert.deepEqual([...counted.models.keys()].toSorted(), heads.filter(path => path !== 'assets/logo.png').toSorted(), 'the line models found counting')
   // Counted only until it passes the limit; two rows a file at least, so too
   // many files for it are told without a diff.
   const capped = combinedDiffRows(code.base, code.other, code.files, 13)
