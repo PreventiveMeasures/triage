@@ -1172,7 +1172,6 @@ async function onSidebarClick(e) {
     return
   }
   if (e.target.closest('#sidebar-toggle')) {
-    if (isManagedUiMode()) return
     hostEl.classList.toggle('collapsed')
     try { localStorage.setItem('deepview.sidebarCollapsed', hostEl.classList.contains('collapsed') ? '1' : '0') } catch {}
   }
@@ -1326,6 +1325,7 @@ function renderViewAsStatus(session) {
   const banner = root?.querySelector('#view-as-status')
   if (!banner) return
   banner.hidden = !session?.viewer
+  hostEl?.toggleAttribute('data-view-as', session?.viewer != null)
   litRender(session?.viewer ? html`<span class="view-as-label"><span>Viewing as <strong>@${session.login}</strong></span>
       <span class="view-as-note">Read only · changes are not saved</span></span>
     <button type="button" class="view-as-stop" data-action="view-as-stop" aria-label=${`Stop viewing as ${session.login}`}>Stop</button>` : nothing, banner)
@@ -1372,13 +1372,10 @@ function renderBrandTag() {
   }
 }
 
-// Managed mode pins the sidebar open — no collapse affordance (a fuller
-// management surface lives here). The mode is mirrored onto the host so CSS can
-// hide the collapse toggle.
-function applyCollapsibility() {
+// The mode is mirrored onto the host so CSS can scope managed-only chrome.
+function applyModeControls() {
   if (hostEl) hostEl.dataset.mode = clientModeLabel()
   if (isManagedUiMode()) {
-    hostEl?.classList.remove('collapsed')
     // Managed workspaces do not own local artifacts or passkey encryption.
     // Keep the nodes mounted so switching to local can restore the full e2e
     // surface without rebuilding the sidebar component.
@@ -1402,7 +1399,7 @@ function renderSyncStatus(status) {
   const btn = root?.querySelector('#sync-status')
   if (!btn) return
   renderBrandTag()
-  applyCollapsibility()
+  applyModeControls()
   if (state.serverMode === 'managed' && state.localMode) {
     btn.hidden = true
     triageSync.setForcedOff(true)

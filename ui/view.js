@@ -480,10 +480,19 @@ window.addEventListener('hashchange', () => {
   lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
   try {
     // In WCO mode the sidebar header is the surface the OS controls
-    // overlay onto; collapsing it would strand close / min / max over a
-    // 32px strip, so ignore the persisted flag and pin the sidebar open.
-    const isAppHeader = window.matchMedia?.('(display-mode: window-controls-overlay)').matches
-    if (!isAppHeader && !isManagedUiMode() && localStorage.getItem('deepview.sidebarCollapsed') === '1') sidebar.classList.add('collapsed')
+    // overlay onto, and CSS hides the collapse toggle there; collapsing it
+    // would strand close / min / max over a 32px strip with no way back,
+    // so the persisted flag applies only outside WCO — re-applied as the
+    // user collapses or restores the title bar without reloading.
+    const appHeader = window.matchMedia?.('(display-mode: window-controls-overlay)')
+    const applySavedCollapse = () => {
+      let saved = false
+      try { saved = localStorage.getItem('deepview.sidebarCollapsed') === '1' } catch {}
+      sidebar.classList.toggle('collapsed', saved && !appHeader?.matches)
+    }
+    applySavedCollapse()
+    appHeader?.addEventListener('change', applySavedCollapse)
+    const isAppHeader = appHeader?.matches
     // Installed-PWA modes (standalone OR window-controls-overlay) —
     // launched as a standalone app, not a browser tab, so app-level
     // page zoom (ctrl/cmd+wheel, ctrl/cmd+ +/-/0, touch-pinch) should be
